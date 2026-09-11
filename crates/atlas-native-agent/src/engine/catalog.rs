@@ -29,15 +29,17 @@
 //! # The context window
 //!
 //! `context_window` is the gateway's prompt ceiling for that model, and local
-//! auto-compaction fires at 90% of whatever it says. It is the gateway's
-//! number to state (it is being asked to — `docs/requests/gateway-catalogue-
-//! metadata.md`), and until it does the field is simply absent: the engine
-//! then has no ceiling to compact against, and the gateway's `413` is what
-//! ends a long thread. Two caveats travel with the number and neither is
-//! fixable here: the engine counts real usage-reported tokens while the
-//! gateway's `413` gate estimates `ceil(bytes/3)`, so the two meters can
-//! cross; and remote compaction is capability-gated to OpenAI and Azure, so
-//! only local summarisation defends the ceiling.
+//! auto-compaction fires at 90% of whatever it says. The gateway states it
+//! per row (server commit `e37ea88`, answering `docs/requests/gateway-
+//! catalogue-metadata.md`), already clamped to its own gate limit, so the
+//! number written here is one the engine may compact against. For a row the
+//! gateway has not annotated the field is absent, the engine has no ceiling,
+//! and the gateway's `413` is what ends a long thread. Two caveats travel
+//! with the number and neither is fixable here: the engine counts real
+//! usage-reported tokens while the gateway's `413` gate estimates
+//! `ceil(bytes/3)`, so the two meters can cross; and remote compaction is
+//! capability-gated to OpenAI and Azure, so only local summarisation defends
+//! the ceiling.
 //!
 //! # The gateway is not Vertex-only
 //!
@@ -62,6 +64,10 @@ use serde_json::json;
 /// The file the engine reads the catalogue from.
 const CATALOG_FILE: &str = "models.json";
 
+/// The modalities the engine's `InputModality` can name. Anything else the
+/// gateway states is dropped rather than written — see [`row`].
+const ENGINE_MODALITIES: [&str; 3] = ["text", "image", "audio"];
+
 /// One catalogue row, as the engine's `ModelInfo`.
 ///
 /// Authored as JSON and parsed rather than built as a struct literal, for two
@@ -70,17 +76,40 @@ const CATALOG_FILE: &str = "models.json";
 /// of them defaulted, so a struct literal would have to restate every default
 /// and would break on every upstream field addition.
 ///
-/// `description` and `context_window` are `Option` because the gateway does
-/// not send them yet. `description` is a required *key* on the engine's
-/// record, so an absent one is written as `null`; `context_window` is
-/// defaulted there, so an absent one is omitted.
+/// `description`, `context_window` and `input_modalities` are `Option`
+/// because the gateway serves `null` for an unannotated model. `description`
+/// is a required *key* on the engine's record, so an absent one is written as
+/// `null`; `context_window` is defaulted there, so an absent one is omitted;
+/// absent modalities fall back to text and image, which every gateway model
+/// took before the field was on the wire.
+///
+/// Modalities are filtered to the ones the engine's record can name. The
+/// gateway's closed set includes `video`; the engine's does not, and one
+/// unknown string in `models.json` fails the whole catalogue load — an
+/// engine that will not start over a capability hint on one row. `text` is
+/// always kept, since a model that takes no text takes no turn.
 pub fn row(
     slug: &str,
     display_name: &str,
     description: Option<&str>,
     context_window: Option<i64>,
+    input_modalities: Option<&[String]>,
     priority: i32,
 ) -> Value {
+    let input_modalities: Vec<&str> = match input_modalities {
+        Some(stated) => {
+            let mut kept: Vec<&str> = stated
+                .iter()
+                .map(String::as_str)
+                .filter(|m| ENGINE_MODALITIES.contains(m))
+                .collect();
+            if !kept.contains(&"text") {
+                kept.insert(0, "text");
+            }
+            kept
+        }
+        None => vec!["text", "image"],
+    };
     let mut row = json!({
         "slug": slug,
         "display_name": display_name,
@@ -119,10 +148,10 @@ pub fn row(
         "use_responses_lite": false,
         "experimental_supported_tools": [],
 
-        // Every gateway model takes images. The gateway's 2 MB body cap is
-        // what bounds them, and that is a policy for the app to enforce
-        // (D15c), not a capability to deny here.
-        "input_modalities": ["text", "image"],
+        // The gateway's word when it gives one, text+image otherwise. The
+        // gateway's 2 MB body cap is what bounds attachments, and that is a
+        // policy for the app to enforce (D15c), not a capability to deny here.
+        "input_modalities": input_modalities,
         "supports_image_detail_original": false,
 
         "truncation_policy": { "mode": "tokens", "limit": 10000 },
@@ -189,7 +218,7 @@ mod tests {
         // The whole point: the engine's remote fetch cannot read the gateway's
         // list, so this row is what the engine knows about a model. A row that
         // does not parse leaves the picker empty and no model selectable.
-        let model = parse(row("claude-opus-5", "Claude Opus 5", Some("big"), Some(200_000), 1));
+        let model = parse(row("claude-opus-5", "Claude Opus 5", Some("big"), Some(200_000), None, 1));
         assert_eq!(model.slug, "claude-opus-5");
         assert_eq!(model.display_name, "Claude Opus 5");
         assert_eq!(model.description.as_deref(), Some("big"));
@@ -202,7 +231,7 @@ mod tests {
     fn a_row_without_metadata_still_parses_and_states_no_ceiling() {
         // What every row looks like until the gateway sends metadata: the
         // slug doubles as the name, and there is no window to compact against.
-        let model = parse(row("gemini-3.6-flash", "gemini-3.6-flash", None, None, 3));
+        let model = parse(row("gemini-3.6-flash", "gemini-3.6-flash", None, None, None, 3));
         assert_eq!(model.description, None);
         assert_eq!(model.context_window, None);
         assert_eq!(model.max_context_window, None);
@@ -210,11 +239,30 @@ mod tests {
     }
 
     #[test]
+    fn modalities_the_engine_cannot_name_are_dropped_and_text_is_kept() {
+        // The gateway's closed set has `video`; the engine's record does not.
+        // One unknown string would fail the whole catalogue load, so the row
+        // keeps what the engine can name and always keeps text.
+        let names = |value: Value| -> Vec<String> {
+            parse(value)
+                .input_modalities
+                .iter()
+                .map(|m| format!("{m:?}").to_ascii_lowercase())
+                .collect()
+        };
+        let stated: Vec<String> = ["video", "image", "text", "audio"].iter().map(ToString::to_string).collect();
+        assert_eq!(names(row("m", "m", None, None, Some(&stated), 1)), ["image", "text", "audio"]);
+        let video_only: Vec<String> = vec!["video".to_string()];
+        assert_eq!(names(row("m", "m", None, None, Some(&video_only), 1)), ["text"]);
+        assert_eq!(names(row("m", "m", None, None, None, 1)), ["text", "image"]);
+    }
+
+    #[test]
     fn no_row_advertises_a_control_this_wire_cannot_carry() {
         // Each of these rides a request field the gateway answers with a 400.
         // A row that claims them puts a knob in the UI that silently does
         // nothing, which is worse than not offering it.
-        let model = parse(row("m", "m", None, None, 1));
+        let model = parse(row("m", "m", None, None, None, 1));
         assert!(model.supported_reasoning_levels.is_empty());
         assert!(!model.support_verbosity);
         assert!(!model.supports_reasoning_summary_parameter);
@@ -228,7 +276,7 @@ mod tests {
         // With no `instructions_template` the engine logs a warning and returns
         // an empty string, and the agent runs with no system prompt at all —
         // visible only as an agent that has forgotten how to do its job.
-        let model = parse(row("m", "m", None, None, 1));
+        let model = parse(row("m", "m", None, None, None, 1));
         let instructions = model.get_model_instructions(/*personality*/ None);
         assert!(instructions.len() > 1_000, "no usable system prompt ({} bytes)", instructions.len());
     }
@@ -238,7 +286,7 @@ mod tests {
         // The dialect flattens freeform tools and turns the reply back, so this
         // stays on. If that round trip is ever removed, this row becomes a tool
         // the model is offered and cannot successfully call.
-        assert!(parse(row("m", "m", None, None, 1)).apply_patch_tool_type.is_some());
+        assert!(parse(row("m", "m", None, None, None, 1)).apply_patch_tool_type.is_some());
     }
 
     #[tokio::test]
@@ -247,7 +295,7 @@ mod tests {
             panic!("tempdir");
         };
         let response: ModelsResponse = match serde_json::from_value(json!({
-            "models": [row("m", "m", None, None, 1)]
+            "models": [row("m", "m", None, None, None, 1)]
         })) {
             Ok(response) => response,
             Err(err) => panic!("parse: {err:#}"),

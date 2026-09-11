@@ -2801,11 +2801,8 @@ mod tests {
                         .iter()
                         .map(|(id, entitled)| GatewayRow {
                             id: id.to_string(),
-                            publisher: None,
                             entitled: *entitled,
-                            display_name: None,
-                            description: None,
-                            context_window: None,
+                            ..GatewayRow::default()
                         })
                         .collect(),
                 }),
