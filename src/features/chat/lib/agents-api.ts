@@ -12,6 +12,7 @@ import type { AgentCatalog, CatalogChangeReason } from "@/types/agent-catalog";
 import type {
   AgentDelta,
   ImageAttachment,
+  NativeModelsRefresh,
   SessionKey,
   SessionInit,
   SessionMessage,
@@ -173,6 +174,10 @@ export const agents = {
   setMode: (key: SessionKey, modeId: string) => invoke<void>("agents_set_mode", { key, modeId }),
   setModel: (key: SessionKey, modelId: string) =>
     invoke<void>("agents_set_model", { key, modelId }),
+  /** Re-fetch the native agent's model list from the gateway (ADR-0007). The
+   *  picker's Refresh. May restart the native connection — see the result's
+   *  `reconnected`. */
+  refreshNativeModels: () => invoke<NativeModelsRefresh>("native_agent_refresh_models"),
   setEffort: (key: SessionKey, effort: string) =>
     invoke<void>("agents_set_effort", { key, effort }),
 

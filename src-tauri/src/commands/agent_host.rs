@@ -80,6 +80,21 @@ pub struct SessionModeInfo {
     pub description: Option<String>,
 }
 
+/// What the picker's Refresh got back (ADR-0007).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeModelsRefresh {
+    /// The list, as the picker shows it.
+    pub models: Vec<SessionModeInfo>,
+    /// The first entitled row: what a new session starts on.
+    pub default_model: String,
+    /// Anything the user can see changed.
+    pub changed: bool,
+    /// The native connection was dropped so the engine picks up the new
+    /// rows. Open native sessions were told, and rebind on their next send.
+    pub reconnected: bool,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionInit {
     pub key: SessionKey,
@@ -242,6 +257,10 @@ pub struct AgentHost {
     projector: Arc<DeltaProjector>,
     store: Arc<AgentServerStore>,
     registry: Arc<AgentRegistryStore>,
+    /// Atlas's config directory — what the native engine's home is derived
+    /// from. Kept so the model-catalogue refresh can find the cache the
+    /// connection reads (ADR-0007) without a connection being open.
+    config_dir: PathBuf,
     agents: Mutex<HashMap<AgentId, AgentRecord>>,
     /// One uuid per plugin id, for the life of the process. The frontend spawns
     /// per tab and expects a stable handle back; the ported manager keeps one
@@ -304,9 +323,10 @@ fn select_native_agent(config_dir: &Path) -> Arc<dyn atlas_agent_servers::AgentS
     } else {
         EngineSettings::gateway(config_dir, cwd)
     };
+    // No model in this line: none is named in code (ADR-0007). The
+    // connection logs the catalogue it resolved when it connects.
     tracing::info!(
         provider = %settings.provider.base_url,
-        model = %settings.model,
         home = %settings.home.path().display(),
         "native agent: Atlas Agent",
     );
@@ -374,6 +394,7 @@ impl AgentHost {
             projector,
             store,
             registry,
+            config_dir,
             agents: Mutex::new(HashMap::new()),
             by_plugin: Mutex::new(HashMap::new()),
             sessions: Mutex::new(HashMap::new()),
@@ -683,6 +704,135 @@ impl AgentHost {
         self.forget_request_elicitations(&ThreadAgentId::new(CERSEI_AGENT_ID));
         self.manager.drop_connection(&Agent::Native);
         lock(&self.sessions).retain(|_, session| session.agent != Agent::Native);
+    }
+
+    /// Re-fetch the native agent's model catalogue from the gateway
+    /// (ADR-0007): the picker's Refresh.
+    ///
+    /// The fetcher is the app's — the gateway, over the registered token and
+    /// org sources. [`Self::refresh_native_models_with`] is the same routine
+    /// with the fetcher supplied, so a test can drive it against a fake.
+    pub async fn refresh_native_models(&self) -> Result<NativeModelsRefresh> {
+        use atlas_native_agent::engine::config::GATEWAY_BASE_URL;
+        use atlas_native_agent::engine::GatewayCatalogueFetcher;
+        let fetcher = GatewayCatalogueFetcher::registered(GATEWAY_BASE_URL);
+        self.refresh_native_models_with(&fetcher).await
+    }
+
+    /// See [`Self::refresh_native_models`].
+    ///
+    /// Three outcomes, decided by comparing what the gateway now says with
+    /// what the live engine loaded at connect:
+    ///
+    /// - **No live engine**: the cache is rewritten and the next spawn reads
+    ///   it. Nothing to reconcile.
+    /// - **Same fingerprint** (same slugs and context windows): labels swap
+    ///   into the live connection. No teardown.
+    /// - **Different fingerprint**: the engine loaded rows it will not reload,
+    ///   and a slug it does not know gets invented metadata the gateway
+    ///   `400`s. So the connection is dropped, exactly as sign-out drops it,
+    ///   and every open native session is told so; the next spawn reconnects
+    ///   on the fresh cache without a network round trip. A running turn
+    ///   blocks this — the cache is already written, so nothing is lost by
+    ///   asking the user to stop first.
+    pub async fn refresh_native_models_with(
+        &self,
+        fetcher: &dyn atlas_native_agent::engine::CatalogueFetcher,
+    ) -> Result<NativeModelsRefresh> {
+        use atlas_native_agent::engine::catalog_cache::{project, refresh_now};
+        use atlas_native_agent::engine::{EngineConnection, EngineHome, SystemClock};
+
+        let home = EngineHome::under_config_dir(&self.config_dir);
+        let cache = refresh_now(home.path(), fetcher, &SystemClock)
+            .await
+            .map_err(|err| HostError::classified(format!("could not refresh models: {err}")))?;
+        let Some(projected) = project(&cache) else {
+            // Written anyway: the next connect will refuse on the same
+            // grounds, honestly, rather than run on the previous list.
+            return Err(HostError::new(
+                "the gateway lists no models this organisation may use",
+                ErrorClass::Fatal,
+            ));
+        };
+        let models: Vec<SessionModeInfo> = projected
+            .picker
+            .iter()
+            .map(|model| SessionModeInfo {
+                id: model.id.as_str().to_string(),
+                name: model.name.to_string(),
+                description: model.description.as_deref().map(str::to_string),
+            })
+            .collect();
+        let default_model = projected.default_model.clone();
+
+        let live = self
+            .manager
+            .connected(&Agent::Native)
+            .and_then(|connection| connection.downcast::<EngineConnection>());
+        let Some(live) = live else {
+            return Ok(NativeModelsRefresh {
+                models,
+                default_model,
+                changed: true,
+                reconnected: false,
+            });
+        };
+
+        let before = live.catalogue_snapshot();
+        if before.fingerprint == projected.fingerprint {
+            let next = atlas_native_agent::engine::connection::LiveCatalogue {
+                picker: projected.picker,
+                default_model: projected.default_model,
+                fingerprint: projected.fingerprint,
+                fetched_at: cache.fetched_at,
+                stale: false,
+            };
+            live.replace_catalogue_metadata(next).map_err(HostError::from)?;
+            let before_labels: Vec<(String, Option<String>)> = before
+                .picker
+                .iter()
+                .map(|m| (m.name.to_string(), m.description.as_deref().map(str::to_string)))
+                .collect();
+            let after_labels: Vec<(String, Option<String>)> = models
+                .iter()
+                .map(|m| (m.name.clone(), m.description.clone()))
+                .collect();
+            let changed = before_labels != after_labels;
+            return Ok(NativeModelsRefresh {
+                models,
+                default_model,
+                changed,
+                reconnected: false,
+            });
+        }
+
+        let native_sessions: Vec<String> = lock(&self.sessions)
+            .iter()
+            .filter(|(_, record)| record.agent == Agent::Native)
+            .map(|(id, _)| id.clone())
+            .collect();
+        let running = native_sessions
+            .iter()
+            .any(|id| self.thread(id).is_ok_and(|handle| lock_thread(&handle).is_generating()));
+        if running {
+            return Err(HostError::new(
+                "A turn is running. Stop it, then refresh models again — the new list applies at the next restart.",
+                ErrorClass::Fatal,
+            ));
+        }
+        for id in &native_sessions {
+            self.projector.note_agent_disconnected(
+                &acp::SessionId::new(id.as_str()),
+                "the model list changed; restart to continue",
+            );
+        }
+        self.drop_native_connection();
+        Ok(NativeModelsRefresh {
+            models,
+            default_model,
+            changed: true,
+            reconnected: true,
+        })
     }
 
     pub async fn new_session(
@@ -2620,6 +2770,115 @@ mod tests {
             host.manager().connected(&Agent::Native).is_none(),
             "sign-out leaves nothing running",
         );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A scripted gateway for the model-list refresh (ADR-0007).
+    struct FakeCatalogue {
+        rows: Vec<(&'static str, bool)>,
+        error: Option<atlas_native_agent::engine::FetchError>,
+    }
+
+    impl atlas_native_agent::engine::CatalogueFetcher for FakeCatalogue {
+        fn fetch(
+            &self,
+        ) -> futures::future::BoxFuture<
+            '_,
+            std::result::Result<
+                atlas_native_agent::engine::catalog_cache::GatewayCatalogue,
+                atlas_native_agent::engine::FetchError,
+            >,
+        > {
+            use atlas_native_agent::engine::catalog_cache::{GatewayCatalogue, GatewayRow};
+            use futures::FutureExt;
+            let answer = match &self.error {
+                Some(err) => Err(err.clone()),
+                None => Ok(GatewayCatalogue {
+                    has_grant: true,
+                    rows: self
+                        .rows
+                        .iter()
+                        .map(|(id, entitled)| GatewayRow {
+                            id: id.to_string(),
+                            publisher: None,
+                            entitled: *entitled,
+                            display_name: None,
+                            description: None,
+                            context_window: None,
+                        })
+                        .collect(),
+                }),
+            };
+            async move { answer }.boxed()
+        }
+
+        fn org(&self) -> Option<String> {
+            Some("org_1".to_string())
+        }
+    }
+
+    /// ADR-0007: the picker's Refresh rewrites the cache the next connect
+    /// reads and answers with the list — with no engine open, that is the
+    /// whole job, and the next spawn picks the rows up without a request.
+    #[tokio::test]
+    async fn refreshing_models_rewrites_the_cache_the_next_connect_reads() {
+        use atlas_native_agent::engine::catalog_cache::load_cache;
+        let native = Arc::new(RebindingNative { fresh_id: "s-1" });
+        let (host, dir) = fresh_host_with_native(native);
+
+        let refreshed = host
+            .refresh_native_models_with(&FakeCatalogue {
+                rows: vec![("model-a", true), ("model-locked", false), ("model-b", true)],
+                error: None,
+            })
+            .await
+            .expect("the gateway answered");
+
+        let ids: Vec<&str> = refreshed.models.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, ["model-a", "model-b"], "entitled rows, gateway order");
+        assert_eq!(refreshed.default_model, "model-a");
+        assert!(refreshed.changed);
+        assert!(!refreshed.reconnected, "nothing was open, so nothing was torn down");
+
+        let home = atlas_native_agent::engine::EngineHome::under_config_dir(&dir);
+        let cache = load_cache(home.path()).await.expect("the cache was written");
+        assert_eq!(cache.org.as_deref(), Some("org_1"), "keyed by the org it was fetched for");
+        assert_eq!(cache.rows.len(), 3, "the gateway's rows verbatim, locked one included");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A refresh the gateway refuses reaches the frontend classified, so a
+    /// credential failure routes to sign-in and an empty grant reads as the
+    /// setup problem it is — never as "the button did nothing".
+    #[tokio::test]
+    async fn a_refused_refresh_is_classified_for_the_frontend() {
+        let native = Arc::new(RebindingNative { fresh_id: "s-1" });
+        let (host, dir) = fresh_host_with_native(native);
+
+        let Err(denied) = host
+            .refresh_native_models_with(&FakeCatalogue {
+                rows: vec![],
+                error: Some(atlas_native_agent::engine::FetchError::Unauthorized(String::new())),
+            })
+            .await
+        else {
+            panic!("a 401 is a refusal");
+        };
+        assert!(matches!(denied.class, ErrorClass::Auth), "{denied:?}");
+
+        let Err(nothing) = host
+            .refresh_native_models_with(&FakeCatalogue {
+                rows: vec![("model-locked", false)],
+                error: None,
+            })
+            .await
+        else {
+            panic!("a list with nothing entitled is no list");
+        };
+        assert!(matches!(nothing.class, ErrorClass::Fatal), "{nothing:?}");
+        assert!(nothing.message.contains("no models"), "{}", nothing.message);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -1000,6 +1000,7 @@ dependencies = [
  "codex-test-binary-support",
  "ctor 0.6.3",
  "futures",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "tempfile",

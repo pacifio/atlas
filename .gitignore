@@ -43,6 +43,9 @@ skills-lock.json
 !docs/atlas-agent-codex-port-spec.md
 !docs/research/*.md
 !docs/reference/*.md
+# Requests to other teams (the server team's gateway changes): the desktop
+# code cites them, so they have to be in the repo it lives in.
+!docs/requests/*.md
 # The bundled `atlas-self-configure` skill's content — `include_str!`'d into
 # the binary at compile time (`commands/skills.rs`), so it has to ship from a
 # fresh clone the same way the vendored Codex prompts below do.

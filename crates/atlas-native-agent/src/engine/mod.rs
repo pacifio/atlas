@@ -16,8 +16,10 @@
 //! side by side:
 //!
 //! - [`auth`] — the D10 token provider (`ExternalAuth` over an Atlas access JWT)
-//! - [`catalog`] — the Atlas-authored model catalogue (D3), because the
-//!   gateway's own `/models` is shape-incompatible with the engine's fetch
+//! - [`catalog_cache`] — the gateway's model catalogue, fetched and cached
+//!   (ADR-0007); [`catalog`] projects one of its rows into the engine's record,
+//!   because the gateway's own `/models` is shape-incompatible with the
+//!   engine's fetch
 //! - [`config`] — engine config assembly, which the spec puts *here* rather than
 //!   in `src-tauri`: the seam is the only place that knows both Atlas's settings
 //!   and the engine's shape
@@ -25,6 +27,7 @@
 pub mod approvals;
 pub mod auth;
 pub mod catalog;
+pub mod catalog_cache;
 pub mod commands;
 pub mod config;
 pub mod connection;
@@ -39,7 +42,10 @@ pub mod sink;
 pub(crate) mod test_support;
 
 pub use auth::{AtlasExternalAuth, AtlasTokenSource, Clock, SystemClock};
-pub use catalog::{atlas_catalog, DEFAULT_MODEL};
+pub use catalog_cache::{
+    CatalogueCache, CatalogueFetcher, CatalogueUnavailable, FetchError, GatewayCatalogueFetcher,
+    ProjectedCatalogue,
+};
 // Re-exported so `src-tauri` names only this crate (the quarantine rule):
 // the org source lives in the vendored API layer because that is where the
 // header is attached, but the host registers it from Atlas's auth state.

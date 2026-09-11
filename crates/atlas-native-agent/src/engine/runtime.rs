@@ -51,6 +51,7 @@ use codex_exec_server::EnvironmentManager;
 use codex_exec_server::ExecServerRuntimePaths;
 use codex_feedback::CodexFeedback;
 use codex_login::auth::ExternalAuth;
+use codex_protocol::openai_models::ModelsResponse;
 use codex_protocol::protocol::SessionSource;
 
 use crate::engine::config::EngineSettings;
@@ -115,12 +116,20 @@ impl Drop for EngineRuntime {
 ///
 /// The runtime comes back with the client because it has to outlive it: the
 /// client's worker task and everything the engine spawned are running on it.
+///
+/// `catalogue` is the model list the engine loads (ADR-0007): required on the
+/// gateway dialect, ignored on the Responses one. It is resolved by the
+/// caller — the connection, on the host runtime — because resolving it may
+/// mean a network round trip, and that has no business on the engine's own
+/// startup task.
 pub async fn start_engine(
     settings: &EngineSettings,
     external_auth: Option<Arc<dyn ExternalAuth>>,
+    catalogue: Option<&ModelsResponse>,
 ) -> Result<(EngineRuntime, InProcessAppServerClient)> {
     let runtime = EngineRuntime::start()?;
     let settings = settings.clone();
+    let catalogue = catalogue.cloned();
 
     // `spawn` rather than `block_on`: this is called from the host runtime, and
     // blocking one of its workers on engine startup would stall the UI. The
@@ -128,7 +137,7 @@ pub async fn start_engine(
     // engine spawns from inside it — runs on the engine's workers.
     let client = runtime
         .handle()
-        .spawn(async move { start_engine_inner(&settings, external_auth).await })
+        .spawn(async move { start_engine_inner(&settings, external_auth, catalogue.as_ref()).await })
         .await
         .context("the engine's startup task panicked")??;
 
@@ -138,8 +147,9 @@ pub async fn start_engine(
 async fn start_engine_inner(
     settings: &EngineSettings,
     external_auth: Option<Arc<dyn ExternalAuth>>,
+    catalogue: Option<&ModelsResponse>,
 ) -> Result<InProcessAppServerClient> {
-    let config = Arc::new(Box::pin(settings.build_config()).await?);
+    let config = Arc::new(Box::pin(settings.build_config(catalogue)).await?);
 
     // The engine re-enters this binary for sandboxed execution. `self_exe` is
     // the one process-level assumption the embedding makes, and this is where

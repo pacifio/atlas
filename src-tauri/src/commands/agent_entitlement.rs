@@ -131,6 +131,21 @@ pub fn classify(status: u16, body: &str) -> Entitlement {
 /// One command with the switch inside rather than a `cfg`-gated pair: two
 /// definitions of the same command name read as a duplicate registration to the
 /// IPC contract guard, which cannot see that they are mutually exclusive.
+/// Re-fetch the native agent's model list from the gateway (ADR-0007).
+///
+/// The picker's Refresh. Rewrites the on-disk catalogue cache and, if the
+/// set of models the engine loaded has changed, restarts the native
+/// connection so it picks the new rows up; see
+/// `AgentHost::refresh_native_models_with` for the three outcomes.
+#[tauri::command]
+pub async fn native_agent_refresh_models(
+    host: tauri::State<'_, std::sync::Arc<crate::commands::agent_host::AgentHost>>,
+) -> Result<crate::commands::agent_host::NativeModelsRefresh, crate::commands::agents::CmdError> {
+    host.refresh_native_models()
+        .await
+        .map_err(crate::commands::agents::CmdError::from)
+}
+
 #[tauri::command]
 pub async fn native_agent_entitlement(
     state: tauri::State<'_, crate::commands::auth::AuthState>,

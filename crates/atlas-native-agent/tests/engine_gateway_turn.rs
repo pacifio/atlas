@@ -20,12 +20,98 @@ use agent_client_protocol::schema::v1 as acp;
 use atlas_acp_thread::{AcpThreadEvent, AgentConnection, AgentId};
 use atlas_agent_servers::ThreadEventSink;
 use atlas_native_agent::engine::auth::{AtlasExternalAuth, AtlasTokenSource};
+use atlas_native_agent::engine::catalog_cache::{CatalogueFetcher, GatewayCatalogueFetcher};
 use atlas_native_agent::engine::config::{EngineHome, EngineProvider, EngineSettings};
 use atlas_native_agent::engine::connection::EngineConnection;
 use codex_login::auth::ExternalAuthFuture;
 use serde_json::Value;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
+
+/// The catalogue the MOCK gateway serves (ADR-0007).
+///
+/// Test data, not product data: nothing in the crate names a model any more,
+/// so the ids the request-body assertions in this file expect have to come
+/// from the gateway the tests stand up. The first entitled row is what a
+/// session runs on before any pick, which is why `FIXTURE_DEFAULT` is the
+/// first entry.
+const FIXTURE_MODELS: [&str; 6] = [
+    "claude-sonnet-4-6",
+    "claude-opus-5",
+    "claude-opus-4-8",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash-lite",
+    "glm-5.3-flash",
+];
+const FIXTURE_DEFAULT: &str = FIXTURE_MODELS[0];
+/// Listed by the gateway, `entitled: false`. Must never reach the picker.
+const FIXTURE_LOCKED: &str = "openai/gpt-5.6-sol";
+
+fn catalogue_body() -> Value {
+    let mut data: Vec<Value> = FIXTURE_MODELS
+        .iter()
+        .map(|id| {
+            serde_json::json!({
+                "id": id, "object": "model", "created": 1786320000,
+                "owned_by": "google-vertex-ai", "publisher": "test", "entitled": true,
+            })
+        })
+        .collect();
+    data.push(serde_json::json!({
+        "id": FIXTURE_LOCKED, "object": "model", "created": 1786320000,
+        "owned_by": "google-vertex-ai", "publisher": "openai", "entitled": false,
+    }));
+    serde_json::json!({ "object": "list", "data": data, "hasGrant": true })
+}
+
+/// `GET /v1/catalogue`, answering the fixture.
+fn catalogue_mock() -> Mock {
+    Mock::given(method("GET"))
+        .and(path("/v1/catalogue"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(catalogue_body()))
+}
+
+/// The real fetcher, pointed at the mock. No org: the tests are personal.
+fn fetcher(server: &MockServer, token: Arc<dyn AtlasTokenSource>) -> Arc<dyn CatalogueFetcher> {
+    Arc::new(GatewayCatalogueFetcher::new(
+        format!("{}/v1", server.uri()),
+        token,
+        Arc::new(|| None),
+    ))
+}
+
+fn gateway_settings(home: &std::path::Path, server: &MockServer) -> EngineSettings {
+    EngineSettings::new(
+        EngineHome::at(home.join("engine")),
+        EngineProvider::gateway(format!("{}/v1", server.uri())),
+        // ADR-0007: no model is pinned; the first entitled row is the default.
+        None,
+        home.to_path_buf(),
+    )
+}
+
+fn event_sink() -> (ThreadEventSink, std::sync::mpsc::Receiver<AcpThreadEvent>) {
+    let (tx, events) = std::sync::mpsc::channel();
+    let tx = Arc::new(std::sync::Mutex::new(tx));
+    let sink: ThreadEventSink = Arc::new(move |_id: &acp::SessionId| {
+        let (thread_tx, mut thread_rx) = tokio::sync::mpsc::unbounded_channel();
+        let out = tx.clone();
+        tokio::spawn(async move {
+            while let Some(event) = thread_rx.recv().await {
+                if out
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .send(event)
+                    .is_err()
+                {
+                    return;
+                }
+            }
+        });
+        thread_tx
+    });
+    (sink, events)
+}
 
 /// A token source that always mints. The gateway provider names no `env_key`,
 /// so without one of these the engine has no credential to send at all.
@@ -162,6 +248,7 @@ async fn harness_with_token(
     token: Arc<dyn AtlasTokenSource>,
 ) -> Harness {
     let server = MockServer::start().await;
+    catalogue_mock().mount(&server).await;
     for (times, template) in mocks {
         let mock = Mock::given(method("POST"))
             .and(path("/v1/chat/completions"))
@@ -175,34 +262,10 @@ async fn harness_with_token(
     let Ok(home) = tempfile::tempdir() else {
         panic!("tempdir");
     };
-    let settings = EngineSettings::new(
-        EngineHome::at(home.path().join("engine")),
-        EngineProvider::gateway(format!("{}/v1", server.uri())),
-        atlas_native_agent::engine::catalog::DEFAULT_MODEL,
-        home.path().to_path_buf(),
-    );
+    let settings = gateway_settings(home.path(), &server);
+    let (sink, events) = event_sink();
 
-    let (tx, events) = std::sync::mpsc::channel();
-    let tx = Arc::new(std::sync::Mutex::new(tx));
-    let sink: ThreadEventSink = Arc::new(move |_id: &acp::SessionId| {
-        let (thread_tx, mut thread_rx) = tokio::sync::mpsc::unbounded_channel();
-        let out = tx.clone();
-        tokio::spawn(async move {
-            while let Some(event) = thread_rx.recv().await {
-                if out
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .send(event)
-                    .is_err()
-                {
-                    return;
-                }
-            }
-        });
-        thread_tx
-    });
-
-    let external_auth = Arc::new(AtlasExternalAuth::new(token));
+    let external_auth = Arc::new(AtlasExternalAuth::new(token.clone()));
     let connection = match EngineConnection::connect_full(
         AgentId::new("cersei"),
         settings,
@@ -210,6 +273,7 @@ async fn harness_with_token(
         Some(external_auth),
         None,
         None,
+        Some(fetcher(&server, token)),
     )
     .await
     {
@@ -586,31 +650,246 @@ async fn the_model_picker_offers_the_gateway_catalogue_and_nothing_else() {
 
     let ids: Vec<String> = models.iter().map(|m| m.id.as_str().to_string()).collect();
     assert_eq!(
-        ids,
-        [
-            "claude-sonnet-4-6",
-            "claude-opus-5",
-            "claude-opus-4-8",
-            "gemini-3.6-flash",
-            "gemini-3.5-flash-lite",
-            "glm-5.3-flash",
-        ],
-        "the picker must offer exactly what the gateway serves",
+        ids, FIXTURE_MODELS,
+        "the picker must offer exactly the entitled rows, in the gateway's order",
     );
     assert!(
-        !ids.iter()
-            .any(|id| id.starts_with("gpt-") || id.starts_with("openai/")),
-        "a model the gateway cannot generate from must never be offerable: {ids:?}",
+        !ids.iter().any(|id| id == FIXTURE_LOCKED),
+        "a row the gateway lists but does not entitle must never be offerable: {ids:?}",
     );
     // No prices. The BYOK picker shows per-million provider rates, which are
     // not what an Atlas turn costs — it is metered against the account's cap.
     assert!(models.iter().all(|m| m.cost.is_none()));
+    // Until the gateway sends a display name, the slug is the name.
+    assert!(models.iter().all(|m| &*m.name == m.id.as_str()));
+
+    // Before any pick the session is on the first entitled row — the only
+    // default there is, now that none is named in code (ADR-0007).
+    let Ok(current) = selector.selected_model().await else {
+        panic!("a fresh session still has a current model");
+    };
+    assert_eq!(current.id.as_str(), FIXTURE_DEFAULT);
 
     // And a model outside the catalogue is refused here rather than becoming a
-    // 403 on the next turn, well after the click that caused it.
+    // 403 on the next turn, well after the click that caused it — the
+    // unentitled row included.
     assert!(
         selector.select_model(AgentModelId::new("gpt-5.1")).await.is_err(),
         "selecting a model the account cannot use must fail at the click",
+    );
+    assert!(
+        selector.select_model(AgentModelId::new(FIXTURE_LOCKED)).await.is_err(),
+        "an unentitled row is not selectable either",
+    );
+}
+
+/// The cache file the seam writes, pre-seeded so a test can stand in for
+/// "the app connected before" without a first connect.
+async fn seed_cache(home: &std::path::Path, ids: &[&str], fetched_at: u64) {
+    use atlas_native_agent::engine::catalog_cache::{
+        write_cache, CatalogueCache, GatewayCatalogue, GatewayRow,
+    };
+    let rows = ids
+        .iter()
+        .map(|id| GatewayRow {
+            id: id.to_string(),
+            publisher: None,
+            entitled: true,
+            display_name: None,
+            description: None,
+            context_window: None,
+        })
+        .collect();
+    let cache = CatalogueCache::new(GatewayCatalogue { has_grant: true, rows }, None, fetched_at);
+    if let Err(err) = write_cache(&home.join("engine"), &cache).await {
+        panic!("seeding the catalogue cache: {err:#}");
+    }
+}
+
+fn now_unix() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+async fn picker_ids(connection: &Arc<EngineConnection>) -> Vec<String> {
+    use atlas_acp_thread::AgentModelList;
+    let thread = match connection.clone().new_session(vec![PathBuf::from(".")]).await {
+        Ok(thread) => thread,
+        Err(err) => panic!("the engine should start a thread: {err:#}"),
+    };
+    let session_id = thread
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .session_id()
+        .clone();
+    let Some(selector) = connection.model_selector(&session_id) else {
+        panic!("selector");
+    };
+    let Ok(AgentModelList::Flat(models)) = selector.list_models().await else {
+        panic!("flat list");
+    };
+    models.iter().map(|m| m.id.as_str().to_string()).collect()
+}
+
+#[tokio::test]
+async fn no_cache_and_an_unreachable_catalogue_fails_connect_honestly() {
+    // ADR-0007, decision 1: nothing authored stands in. A first launch with
+    // no network is a connect that says why, not a picker with a guessed
+    // list and a first turn that fails on a model the org may not run.
+    let server = MockServer::start().await; // no /v1/catalogue route → 404
+    let Ok(home) = tempfile::tempdir() else {
+        panic!("tempdir");
+    };
+    let (sink, _events) = event_sink();
+    let token: Arc<dyn AtlasTokenSource> = Arc::new(StaticToken);
+    let result = EngineConnection::connect_full(
+        AgentId::new("cersei"),
+        gateway_settings(home.path(), &server),
+        sink,
+        Some(Arc::new(AtlasExternalAuth::new(token.clone()))),
+        None,
+        None,
+        Some(fetcher(&server, token)),
+    )
+    .await;
+    let Err(err) = result else {
+        panic!("with no cache and no catalogue the connect must fail");
+    };
+    let message = format!("{err:#}");
+    assert!(message.contains("model list"), "the user reads why: {message}");
+    assert!(message.contains("HTTP 404"), "and the cause travels with it: {message}");
+    assert!(
+        !home.path().join("engine").join("models.json").exists(),
+        "no engine catalogue may be written from nothing",
+    );
+}
+
+#[tokio::test]
+async fn a_stale_cache_carries_the_connection_when_the_gateway_is_down() {
+    // The app connected once, long ago; today the gateway answers 503. The
+    // agent still runs, on the list it last saw.
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/catalogue"))
+        .respond_with(ResponseTemplate::new(503))
+        .mount(&server)
+        .await;
+    let Ok(home) = tempfile::tempdir() else {
+        panic!("tempdir");
+    };
+    seed_cache(home.path(), &["cached-a", "cached-b"], 1).await;
+
+    let (sink, _events) = event_sink();
+    let token: Arc<dyn AtlasTokenSource> = Arc::new(StaticToken);
+    let connection = EngineConnection::connect_full(
+        AgentId::new("cersei"),
+        gateway_settings(home.path(), &server),
+        sink,
+        Some(Arc::new(AtlasExternalAuth::new(token.clone()))),
+        None,
+        None,
+        Some(fetcher(&server, token)),
+    )
+    .await
+    .unwrap_or_else(|err| panic!("a stale cache must carry the connect: {err:#}"));
+
+    assert_eq!(picker_ids(&connection).await, ["cached-a", "cached-b"]);
+    let live = connection.catalogue_snapshot();
+    assert!(live.stale, "and the connection knows the list is not fresh");
+    assert_eq!(live.default_model, "cached-a");
+}
+
+#[tokio::test]
+async fn a_fresh_cache_skips_the_fetch() {
+    // Under the TTL the cache IS the catalogue: no request goes out, and a
+    // gateway that would answer differently is not consulted.
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/catalogue"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(catalogue_body()))
+        .expect(0)
+        .mount(&server)
+        .await;
+    let Ok(home) = tempfile::tempdir() else {
+        panic!("tempdir");
+    };
+    seed_cache(home.path(), &["fresh-only"], now_unix()).await;
+
+    let (sink, _events) = event_sink();
+    let token: Arc<dyn AtlasTokenSource> = Arc::new(StaticToken);
+    let connection = EngineConnection::connect_full(
+        AgentId::new("cersei"),
+        gateway_settings(home.path(), &server),
+        sink,
+        Some(Arc::new(AtlasExternalAuth::new(token.clone()))),
+        None,
+        None,
+        Some(fetcher(&server, token)),
+    )
+    .await
+    .unwrap_or_else(|err| panic!("a fresh cache must carry the connect: {err:#}"));
+
+    assert_eq!(picker_ids(&connection).await, ["fresh-only"]);
+    assert!(!connection.catalogue_snapshot().stale);
+    // `expect(0)` is verified when the server drops.
+}
+
+#[tokio::test]
+async fn a_relabelled_catalogue_swaps_in_place_but_a_changed_one_does_not() {
+    // The engine loaded its rows once. Same slugs with new names may replace
+    // the picker's labels on the live connection; a new slug may not, because
+    // the engine would invent metadata for it and the gateway would 400.
+    use atlas_native_agent::engine::catalog_cache::{
+        project, CatalogueCache, GatewayCatalogue, GatewayRow,
+    };
+    use atlas_native_agent::engine::connection::LiveCatalogue;
+
+    let h = harness(vec![(None, sse_ok(answer("ok")))]).await;
+    let before = h.connection.catalogue_snapshot();
+
+    let rows = |ids: &[&str], named: bool| -> Vec<GatewayRow> {
+        ids.iter()
+            .map(|id| GatewayRow {
+                id: id.to_string(),
+                publisher: None,
+                entitled: true,
+                display_name: named.then(|| format!("Name of {id}")),
+                description: None,
+                context_window: None,
+            })
+            .collect()
+    };
+    let live_from = |rows: Vec<GatewayRow>| -> LiveCatalogue {
+        let cache = CatalogueCache::new(GatewayCatalogue { has_grant: true, rows }, None, 7);
+        let Some(projected) = project(&cache) else {
+            panic!("rows");
+        };
+        LiveCatalogue {
+            picker: projected.picker,
+            default_model: projected.default_model,
+            fingerprint: projected.fingerprint,
+            fetched_at: 7,
+            stale: false,
+        }
+    };
+
+    let relabelled = live_from(rows(&FIXTURE_MODELS, true));
+    assert_eq!(relabelled.fingerprint, before.fingerprint);
+    if let Err(err) = h.connection.replace_catalogue_metadata(relabelled) {
+        panic!("same slugs, new names must swap in place: {err:#}");
+    }
+    let after = h.connection.catalogue_snapshot();
+    assert_eq!(&*after.picker[0].name, format!("Name of {FIXTURE_DEFAULT}").as_str());
+
+    let mut grown: Vec<&str> = FIXTURE_MODELS.to_vec();
+    grown.push("brand-new-model");
+    let changed = live_from(rows(&grown, false));
+    assert_ne!(changed.fingerprint, before.fingerprint);
+    assert!(
+        h.connection.replace_catalogue_metadata(changed).is_err(),
+        "a new slug needs a reconnect, and the swap must refuse it",
     );
 }
 
@@ -828,32 +1107,14 @@ async fn connection_at(
     home: &std::path::Path,
     server: &MockServer,
 ) -> (Arc<EngineConnection>, std::sync::mpsc::Receiver<AcpThreadEvent>) {
-    let settings = EngineSettings::new(
-        EngineHome::at(home.join("engine")),
-        EngineProvider::gateway(format!("{}/v1", server.uri())),
-        atlas_native_agent::engine::catalog::DEFAULT_MODEL,
-        home.to_path_buf(),
-    );
-    let (tx, events) = std::sync::mpsc::channel();
-    let tx = Arc::new(std::sync::Mutex::new(tx));
-    let sink: ThreadEventSink = Arc::new(move |_id: &acp::SessionId| {
-        let (thread_tx, mut thread_rx) = tokio::sync::mpsc::unbounded_channel();
-        let out = tx.clone();
-        tokio::spawn(async move {
-            while let Some(event) = thread_rx.recv().await {
-                if out
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .send(event)
-                    .is_err()
-                {
-                    return;
-                }
-            }
-        });
-        thread_tx
-    });
-    let external_auth = Arc::new(AtlasExternalAuth::new(Arc::new(StaticToken)));
+    // Mounted per connection: a restart is a new process, and the catalogue
+    // it fetches (or, with a fresh cache under `home`, does not) is part of
+    // what "restart" means.
+    catalogue_mock().mount(server).await;
+    let settings = gateway_settings(home, server);
+    let (sink, events) = event_sink();
+    let token: Arc<dyn AtlasTokenSource> = Arc::new(StaticToken);
+    let external_auth = Arc::new(AtlasExternalAuth::new(token.clone()));
     let connection = EngineConnection::connect_full(
         AgentId::new("cersei"),
         settings,
@@ -861,6 +1122,7 @@ async fn connection_at(
         Some(external_auth),
         None,
         None,
+        Some(fetcher(server, token)),
     )
     .await
     .unwrap_or_else(|err| panic!("the engine should start in-process: {err:#}"));
@@ -1091,7 +1353,7 @@ async fn review_runs_inline_on_this_thread_and_this_model() {
     let body = h.last_request_body().await;
     assert_eq!(
         body["model"],
-        atlas_native_agent::engine::catalog::DEFAULT_MODEL,
+        FIXTURE_DEFAULT,
         "the review must run on the session's model, not a reviewer pin",
     );
     assert!(
