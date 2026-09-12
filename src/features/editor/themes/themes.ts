@@ -103,7 +103,7 @@ const atlasMono: EditorColorTheme = {
     foldBorder: "#2a2a2a",
     foldFg: "#8a8a8a",
 
-    comment: "#8a8a8a",
+    comment: "#929292",
     keyword: "#e6e6e6",
     string: "#b0b0b0",
     number: "#c2c2c2",
@@ -199,7 +199,7 @@ const oneDark: EditorColorTheme = {
     foldBorder: "#3e4451",
     foldFg: "#5c6370",
 
-    comment: "#5c6370",
+    comment: "#707681",
     keyword: "#c678dd",
     string: "#98c379",
     number: "#d19a66",
@@ -247,7 +247,7 @@ const monokai: EditorColorTheme = {
     foldBorder: "#49483e",
     foldFg: "#75715e",
 
-    comment: "#75715e",
+    comment: "#797563",
     keyword: "#f92672",
     string: "#e6db74",
     number: "#ae81ff",
@@ -295,7 +295,7 @@ const tokyoNight: EditorColorTheme = {
     foldBorder: "#292e42",
     foldFg: "#565f89",
 
-    comment: "#565f89",
+    comment: "#6c7498",
     keyword: "#bb9af7",
     string: "#9ece6a",
     number: "#ff9e64",
