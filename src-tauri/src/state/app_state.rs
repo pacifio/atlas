@@ -389,16 +389,28 @@ impl AppState {
     /// floor as an unrecognized key. The caller feeds this to
     /// `atlas_config::bootstrap` for the one-time `config.toml` export.
     pub fn load(app: &AppHandle) -> (Self, Option<serde_json::Value>) {
-        let Some(path) = Self::path(app) else {
-            return (Self::default(), None);
-        };
-        let Ok(raw) = std::fs::read_to_string(&path) else {
-            return (Self::default(), None);
-        };
-        let legacy_settings = serde_json::from_str::<serde_json::Value>(&raw)
-            .ok()
+        let raw = Self::path(app).and_then(|path| std::fs::read_to_string(&path).ok());
+        Self::from_raw(raw.as_deref())
+    }
+
+    /// The parse+migrate half of [`load`], split out so it is reachable without
+    /// an `AppHandle`.
+    ///
+    /// `None` is a FIRST RUN (no `state.json` yet, or no resolvable app data
+    /// dir) and still migrates. It used to return `Self::default()` directly,
+    /// which skipped `migrate()` and so left `organisations` empty — and every
+    /// render surface filters strictly by the active org while `addWorkspace`
+    /// refuses outright without one. The visible symptom was a fresh install
+    /// where "Open Folder" opened the picker and then did nothing at all: the
+    /// frontend's `hydrate` documents "Rust `migrate()` guarantees a default
+    /// 'Personal' org", and that held on every path except the first launch.
+    fn from_raw(raw: Option<&str>) -> (Self, Option<serde_json::Value>) {
+        let legacy_settings = raw
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
             .and_then(|v| v.get("settings").cloned());
-        let mut state: AppState = serde_json::from_str(&raw).unwrap_or_default();
+        let mut state: AppState = raw
+            .map(|raw| serde_json::from_str(raw).unwrap_or_default())
+            .unwrap_or_default();
         state.migrate();
         (state, legacy_settings)
     }
@@ -595,6 +607,24 @@ mod tests {
         state.apply_patch(frontend_payload());
 
         assert_eq!(state.telemetry_anon_id.as_deref(), Some("device-uuid"));
+    }
+
+    /// A first run — no `state.json` on disk — must still come up with the
+    /// default Organisation. Without one `requireActiveOrgId()` is `undefined`
+    /// in the frontend and `addWorkspace` bails with a log line and no UI
+    /// feedback, so "Open Folder" picks a directory and silently does nothing.
+    #[test]
+    fn a_first_run_still_gets_the_default_organisation() {
+        let (state, legacy) = AppState::from_raw(None);
+
+        assert_eq!(state.organisations.len(), 1, "no default org on a fresh install");
+        assert_eq!(state.organisations[0].name, "Personal");
+        assert_eq!(
+            state.active_organisation_id.as_deref(),
+            Some(state.organisations[0].id.as_str()),
+            "default org exists but nothing is active"
+        );
+        assert!(legacy.is_none());
     }
 
     /// A patch with unknown/extra keys (an older or newer frontend) still parses,
