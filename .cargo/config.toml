@@ -38,3 +38,17 @@
 # test` and `tauri dev` are unaffected by any of this.
 [env]
 MACOSX_DEPLOYMENT_TARGET = "11.0"
+
+# MSVC reads source files in the system ANSI codepage, not UTF-8. On a
+# Chinese/Japanese Windows (GBK 936, Shift-JIS 932) a lead byte inside a UTF-8
+# comment pairs with the byte after it and swallows the newline, so the next
+# line of code disappears into the comment. `numkong` (via `usearch` ->
+# `atlas-memory`) has `// ... has no INF` comments written with real U+221E /
+# U+2192 characters, and on cp936 they broke `cast/serial.h` with a cascade of
+# "C2059: syntax error: 'if'" ~880 lines in. `/utf-8` tells cl the source is
+# UTF-8 and the same command then exits 0.
+#
+# Target-scoped, so nothing changes for the macOS builds; cc-rs appends these
+# to each crate's own flags rather than replacing them.
+CFLAGS_x86_64_pc_windows_msvc = "/utf-8"
+CXXFLAGS_x86_64_pc_windows_msvc = "/utf-8"

@@ -40,7 +40,12 @@ if (!env.ATLAS_POSTHOG_KEY && env.POSTHOG_KEY) env.ATLAS_POSTHOG_KEY = env.POSTH
 if (!env.ATLAS_POSTHOG_HOST && env.POSTHOG_HOST) env.ATLAS_POSTHOG_HOST = env.POSTHOG_HOST;
 
 // Make locally-installed bins (e.g. `tauri`) resolvable when spawning directly.
-env.PATH = `${join(root, "node_modules", ".bin")}${delimiter}${env.PATH ?? ""}`;
+// Windows spells the variable `Path`, and `{...process.env}` is a plain object —
+// so assigning `env.PATH` there would ADD a second key holding only `.bin` and
+// leave the real `Path` behind, and which of the two the child inherits depends
+// on how libuv dedupes them. Write back through whatever case is already there.
+const pathKey = Object.keys(env).find((k) => k.toLowerCase() === "path") ?? "PATH";
+env[pathKey] = `${join(root, "node_modules", ".bin")}${delimiter}${env[pathKey] ?? ""}`;
 
 const [cmd, ...args] = process.argv.slice(2);
 if (!cmd) {
