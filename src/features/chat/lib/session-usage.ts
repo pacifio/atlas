@@ -100,9 +100,11 @@ export interface SessionUsageView {
   pill: {
     label: string;
     tint: "none" | "warn" | "error";
-    /** 0..1 context share for the ring, or `null` for no ring. */
+    /** 0..1 context share for the ring, or `null` when no window is known. */
     ringFrac: number | null;
     state: "context" | "tokens" | "idle" | "compacting";
+    /** Tooltip / aria-label: used tokens, total window, and percentage. */
+    hint: string;
   };
 }
 
@@ -127,6 +129,17 @@ export function contextStatus(pct: number): ContextStatus {
 }
 
 const nz = (n: number | null | undefined): number => (n && n > 0 ? n : 0);
+
+const IDLE_HINT = "Session usage — context, tokens, cost and what Atlas recorded";
+
+function contextReading(used: number, size: number, pct: number): string {
+  return `${used.toLocaleString()} of ${size.toLocaleString()} tokens used (${Math.round(Math.min(pct, 999))}%)`;
+}
+
+/** Screen-reader / tooltip copy for a known context window. */
+export function contextUsageHint(used: number, size: number, pct: number): string {
+  return `Context: ${contextReading(used, size, pct)}`;
+}
 
 export function deriveSessionUsage(i: SessionUsageInput): SessionUsageView {
   // ── The split: live first, the record when live has nothing yet (a
@@ -238,21 +251,40 @@ export function deriveSessionUsage(i: SessionUsageInput): SessionUsageView {
       : null;
 
   // ── The pill ──────────────────────────────────────────────────────────
+  // The ring stays in the layout even without a window (dashed track) and
+  // keeps its fill while compacting, so a mid-run gauge tick cannot swap the
+  // glyph and shove the footer.
+  const ringFrac = context ? Math.min(1, context.pct / 100) : null;
   let pill: SessionUsageView["pill"];
   if (i.compacting) {
-    pill = { label: "Compacting…", tint: "none", ringFrac: null, state: "compacting" };
+    pill = {
+      label: "Compacting…",
+      tint: "none",
+      ringFrac,
+      state: "compacting",
+      hint: context
+        ? `Compacting context — ${contextReading(context.used, context.size, context.pct)}`
+        : "Compacting the context window",
+    };
   } else if (context) {
     const status = contextStatus(context.pct);
     pill = {
       label: `${Math.round(Math.min(context.pct, 999))}%`,
       tint: status === "full" ? "error" : status === "warn" ? "warn" : "none",
-      ringFrac: Math.min(1, context.pct / 100),
+      ringFrac,
       state: "context",
+      hint: contextUsageHint(context.used, context.size, context.pct),
     };
   } else if (splitTotal > 0) {
-    pill = { label: fmtTokens(splitTotal), tint: "none", ringFrac: null, state: "tokens" };
+    pill = {
+      label: fmtTokens(splitTotal),
+      tint: "none",
+      ringFrac: null,
+      state: "tokens",
+      hint: `Session usage — ${fmtTokens(splitTotal)} tokens`,
+    };
   } else {
-    pill = { label: "Usage", tint: "none", ringFrac: null, state: "idle" };
+    pill = { label: "Usage", tint: "none", ringFrac: null, state: "idle", hint: IDLE_HINT };
   }
 
   return {

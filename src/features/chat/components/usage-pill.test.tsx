@@ -46,6 +46,8 @@ describe("UsagePill", () => {
     const button = screen.getByRole("button");
     expect(button.textContent).toContain("Usage");
     expect(button.dataset.usageState).toBe("idle");
+    // Always a ring, never the old speedometer: unknown window → dashed track.
+    expect(button.querySelector("[data-usage-ring='unknown']")).toBeTruthy();
     fireEvent.click(button);
     expect(sections()).toEqual(["empty"]);
   });
@@ -56,9 +58,25 @@ describe("UsagePill", () => {
     const button = screen.getByRole("button");
     expect(button.textContent).toContain("42%");
     expect(button.dataset.usageState).toBe("context");
+    expect(button.querySelector("[data-usage-ring='known']")).toBeTruthy();
+    expect(button.getAttribute("title")).toContain("tokens used (42%)");
+    expect(button.getAttribute("aria-label")).toContain((84_200).toLocaleString());
+    expect(button.getAttribute("aria-label")).toContain((200_000).toLocaleString());
     fireEvent.click(button);
     // Codex over ACP: a gauge and nothing else — no Tokens, no Cost.
     expect(sections()).toEqual(["context"]);
+  });
+
+  it("updates the ring fill mid-run without swapping the glyph", () => {
+    render(<UsagePill tabId={TAB} />);
+    act(() => patch({ contextUsage: { used: 20_000, size: 200_000, cost: 0 } }));
+    const button = screen.getByRole("button");
+    const ring = button.querySelector("[data-usage-ring='known']");
+    expect(button.textContent).toContain("10%");
+    act(() => patch({ contextUsage: { used: 84_200, size: 200_000, cost: 0 } }));
+    expect(button.textContent).toContain("42%");
+    expect(button.querySelector("[data-usage-ring='known']")).toBe(ring);
+    expect(button.getAttribute("title")).toContain("tokens used (42%)");
   });
 
   it("adds token rows and an estimated cost when a split and a price exist", () => {
@@ -140,7 +158,30 @@ describe("UsagePill", () => {
   it("says it is compacting while the agent compacts", () => {
     render(<UsagePill tabId={TAB} />);
     act(() => patch({ compacting: true }));
-    expect(screen.getByRole("button").textContent).toContain("Compacting…");
-    expect(screen.getByRole("button").dataset.usageState).toBe("compacting");
+    const button = screen.getByRole("button");
+    expect(button.textContent).toContain("Compacting…");
+    expect(button.dataset.usageState).toBe("compacting");
+    // Same 12 px ring as every other state — a pulse-dot swap was a layout hitch.
+    expect(button.querySelector("svg[data-usage-ring]")).toBeTruthy();
+  });
+
+  it("keeps token counts when the agent reports a split but no window", () => {
+    render(<UsagePill tabId={TAB} />);
+    act(() =>
+      patch({
+        usage: {
+          input_tokens: 1_000,
+          output_tokens: 250,
+          cache_creation_tokens: 0,
+          cache_read_tokens: 0,
+          cost: 0,
+        },
+      }),
+    );
+    const button = screen.getByRole("button");
+    expect(button.textContent).toContain("1.3K");
+    expect(button.dataset.usageState).toBe("tokens");
+    expect(button.querySelector("[data-usage-ring='unknown']")).toBeTruthy();
+    expect(button.getAttribute("title")).toContain("1.3K tokens");
   });
 });

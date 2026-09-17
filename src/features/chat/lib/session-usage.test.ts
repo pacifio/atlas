@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   CONTEXT_WARN,
   contextStatus,
+  contextUsageHint,
   deriveSessionUsage,
   estimateCost,
   type SessionUsageInput,
@@ -69,6 +70,14 @@ describe("contextStatus", () => {
   });
 });
 
+describe("contextUsageHint", () => {
+  it("spells out used tokens, the window, and the percentage", () => {
+    expect(contextUsageHint(84_200, 200_000, 42.1)).toBe(
+      `Context: ${(84_200).toLocaleString()} of ${(200_000).toLocaleString()} tokens used (42%)`,
+    );
+  });
+});
+
 describe("estimateCost", () => {
   it("prices per million tokens, cache halves at their own rates", () => {
     expect(estimateCost({ input: 1_000_000, output: 0, cacheRead: 0, cacheWrite: 0 }, price)).toBe(
@@ -103,6 +112,7 @@ describe("deriveSessionUsage", () => {
     expect(v.cost).toBeNull();
     expect(v.pill).toMatchObject({ label: "42%", state: "context", tint: "none" });
     expect(v.pill.ringFrac).toBeCloseTo(0.421);
+    expect(v.pill.hint).toBe(contextUsageHint(84_200, 200_000, 42.1));
   });
 
   it("the pill tints amber at the warning band and red at the window", () => {
@@ -119,9 +129,15 @@ describe("deriveSessionUsage", () => {
     expect(v.tokens?.map((r) => r.key)).toEqual(["input", "output", "cacheRead"]);
     expect(v.tokens?.find((r) => r.key === "cacheRead")?.frac).toBe(1);
     expect(v.tokens?.find((r) => r.key === "output")?.frac).toBeCloseTo(0.0625);
-    // No context → the split is the headline.
+    // No context → the split is the headline, and the ring stays empty
+    // (dashed) rather than inventing a proportion.
     expect(v.headline).toMatchObject({ kind: "tokens", total: 5_250 });
-    expect(v.pill).toMatchObject({ label: "5.3K", state: "tokens" });
+    expect(v.pill).toMatchObject({
+      label: "5.3K",
+      state: "tokens",
+      ringFrac: null,
+      hint: "Session usage — 5.3K tokens",
+    });
   });
 
   it("estimates cost from the price map and says so; an unpriced model shows none", () => {
@@ -216,8 +232,20 @@ describe("deriveSessionUsage", () => {
       contextSize: 200,
       compacting: true,
     });
-    expect(v.pill).toMatchObject({ label: "Compacting…", state: "compacting" });
+    expect(v.pill).toMatchObject({
+      label: "Compacting…",
+      state: "compacting",
+      ringFrac: 0.5,
+    });
+    expect(v.pill.hint).toContain("tokens used (50%)");
     expect(v.compacting).toBe(true);
+  });
+
+  it("an agent that never reports a window gets no ring fill", () => {
+    const v = deriveSessionUsage({ ...base, contextUsed: 4_000, contextSize: 0 });
+    expect(v.headline).toBeNull();
+    expect(v.pill.ringFrac).toBeNull();
+    expect(v.pill.state).toBe("idle");
   });
 
   it("a quota section exists only when a window was reported", () => {

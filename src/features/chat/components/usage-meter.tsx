@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils";
 
 /**
- * The Usage popup's two gauges.
+ * The Usage popup's two gauges, and the pill's context ring.
  *
  * `TickMeter` is the reference card's meter: a row of thin ticks whose colour
  * runs green → amber → red along the scale, with a marker at the current
@@ -9,8 +9,11 @@ import { cn } from "@/lib/utils";
  * scale IS the window: 0 % on the left, the model's limit on the right, the
  * warning band starting at 80 % where the ACP thread starts warning too.
  *
- * `UsageRing` is the pill's 12 px arc — the plan pill's ring, at the pill's
- * size.
+ * `UsageRing` is the pill's 12 px arc. It replaced the lucide Gauge glyph:
+ * the icon now *carries* the window fill it previously only labelled. Geometry
+ * is fixed (no text inside) and the arc animates via `stroke-dashoffset`,
+ * which is not a layout property — a value landing mid-run repaints without
+ * reflowing the composer footer.
  */
 
 const TICKS = 48;
@@ -60,47 +63,75 @@ export function TickMeter({
   );
 }
 
+/** Rendered box, in px. The 20×20 viewBox scales into it. */
+const RING_PX = 12;
+/** Radius inside the 20×20 viewBox — leaves room for the 4-wide stroke. */
+const RING_R = 7;
+const RING_C = 2 * Math.PI * RING_R;
+/** A 4/20 stroke on a 12px box is ~2.4 device px of ring: heavy enough that
+ *  the arc reads as a fill rather than a hairline at this size. */
+const RING_STROKE = 4;
+const RING_VIEW = 20;
+const RING_CX = RING_VIEW / 2;
+
+/** Circumference offset for a 0..1 fill. Exported so tests can check the
+ *  proportion without scraping SVG presentation attributes. */
+export function ringDashOffset(frac: number): number {
+  const f = Math.max(0, Math.min(1, frac));
+  return RING_C * (1 - f);
+}
+
 export function UsageRing({
   frac,
-  size = 12,
+  size = RING_PX,
   className,
 }: {
-  /** 0..1 */
-  frac: number;
+  /** 0..1 window fill, or `null` when the agent reports no limit. */
+  frac: number | null;
   size?: number;
   className?: string;
 }) {
-  const r = 6;
-  const c = 2 * Math.PI * r;
-  const f = Math.max(0, Math.min(1, frac));
+  const f = frac === null ? null : Math.max(0, Math.min(1, frac));
   return (
     <svg
       width={size}
       height={size}
-      viewBox="0 0 16 16"
-      className={cn("shrink-0 -rotate-90", className)}
+      viewBox={`0 0 ${RING_VIEW} ${RING_VIEW}`}
+      className={cn("shrink-0", className)}
       aria-hidden
+      focusable="false"
+      data-usage-ring={f === null ? "unknown" : "known"}
     >
+      {/* Track. With no reported limit it's the whole glyph, and it goes
+          dashed — a solid empty ring is what 0%-of-a-known-window looks like,
+          and "we don't know the capacity" must not read as "nothing used". */}
       <circle
-        cx="8"
-        cy="8"
-        r={r}
+        cx={RING_CX}
+        cy={RING_CX}
+        r={RING_R}
         fill="none"
         stroke="currentColor"
-        strokeWidth="2.5"
-        className="opacity-25"
+        strokeWidth={RING_STROKE}
+        className={f === null ? "opacity-40" : "opacity-25"}
+        strokeDasharray={f === null ? "2.6 2.2" : undefined}
       />
-      <circle
-        cx="8"
-        cy="8"
-        r={r}
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2.5"
-        strokeLinecap="round"
-        strokeDasharray={`${Math.max(0.001, f) * c} ${c}`}
-        style={{ transition: "stroke-dasharray 300ms cubic-bezier(0.32,0.72,0,1)" }}
-      />
+      {f !== null ? (
+        <circle
+          cx={RING_CX}
+          cy={RING_CX}
+          r={RING_R}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={RING_STROKE}
+          // Butt caps: round ones pad both ends of the arc and overstate
+          // small readings. The criterion is proportional accuracy.
+          strokeLinecap="butt"
+          strokeDasharray={RING_C}
+          strokeDashoffset={ringDashOffset(f)}
+          transform={`rotate(-90 ${RING_CX} ${RING_CX})`}
+          style={{ transition: "stroke-dashoffset 300ms cubic-bezier(0.32,0.72,0,1)" }}
+        />
+      ) : null}
     </svg>
   );
 }
