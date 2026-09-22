@@ -105,7 +105,7 @@ fn linux_write_text(text: &str) -> Result<(), String> {
         }
     }
 
-    Err("could not find a clipboard utility (please install wl-clipboard or xclip)".to_string())
+    Err("failed to write to clipboard via supported helpers (wl-copy, xclip, xsel)".to_string())
 }
 
 #[cfg(target_os = "macos")]

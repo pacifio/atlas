@@ -209,6 +209,7 @@ optdepends=(
     'xdg-terminal-exec: Open folders in default terminal'
     'wl-clipboard: Wayland clipboard support'
     'xclip: X11 clipboard support'
+    'xsel: Alternative X11 clipboard support'
 )
 provides=("tryatlas=\${pkgver}" "atl=\${pkgver}")
 source_${ARCH}=("atlas-\${pkgver}-linux-${ARCH}.tar.gz::https://github.com/${REPO}/releases/download/${RELEASE_TAG}/atlas-\${pkgver}-linux-${ARCH}.tar.gz")
@@ -264,6 +265,7 @@ Priority: optional
 Architecture: ${DEB_ARCH}
 Maintainer: Atlas Team <contact@tryatlas.cc>
 Depends: libwebkit2gtk-4.1-0, libgtk-3-0, libayatana-appindicator3-1, bubblewrap, libglib2.0-0
+Suggests: wl-clipboard, xclip, xsel
 Provides: tryatlas (= ${VERSION}), atl (= ${VERSION})
 Description: Atlas — agent-first ideation and planning tool
  Atlas is an agent-first IDE and planning tool for software development.

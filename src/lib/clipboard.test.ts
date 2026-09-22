@@ -72,4 +72,23 @@ describe("copyText", () => {
     expect(ok).toBe(false);
     execMock.mockRestore();
   });
+
+  it("cleans up textarea DOM node even if execCommand throws", async () => {
+    vi.mocked(invoke).mockRejectedValueOnce(new Error("IPC failed"));
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn().mockRejectedValueOnce(new Error("NotAllowedError")) },
+      writable: true,
+      configurable: true,
+    });
+    const removeChildSpy = vi.spyOn(document.body, "removeChild");
+    const execMock = vi.spyOn(document, "execCommand").mockImplementationOnce(() => {
+      throw new Error("execCommand failed");
+    });
+
+    const ok = await copyText("throw test");
+    expect(ok).toBe(false);
+    expect(removeChildSpy).toHaveBeenCalled();
+    execMock.mockRestore();
+    removeChildSpy.mockRestore();
+  });
 });
