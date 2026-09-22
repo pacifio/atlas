@@ -50,7 +50,8 @@ function OrcaRouterLogo({
   return (
     <img
       src={orcaLogo}
-      alt="OrcaRouter"
+      alt=""
+      aria-hidden="true"
       width={size}
       height={size}
       className={cn("object-contain select-none pointer-events-none", className)}

@@ -4,11 +4,12 @@ import { render } from "@testing-library/react";
 import { ProviderLogo } from "./provider-logo";
 
 describe("ProviderLogo", () => {
-  it("renders an img for orcarouter provider", () => {
+  it("renders a decorative img for orcarouter provider", () => {
     const { container } = render(<ProviderLogo id="orcarouter" size={18} />);
     const img = container.querySelector("img");
     expect(img).not.toBeNull();
-    expect(img?.getAttribute("alt")).toBe("OrcaRouter");
+    expect(img?.getAttribute("alt")).toBe("");
+    expect(img?.getAttribute("aria-hidden")).toBe("true");
     expect(img?.getAttribute("width")).toBe("18");
   });
 

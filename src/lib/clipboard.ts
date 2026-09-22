@@ -27,9 +27,15 @@ export async function copyText(text: string): Promise<boolean> {
     return true;
   } catch {
     try {
+      if (!navigator?.clipboard?.writeText) {
+        throw new Error("navigator.clipboard.writeText unavailable");
+      }
       await navigator.clipboard.writeText(text);
       return true;
     } catch {
+      if (typeof document === "undefined" || !document.body) {
+        return false;
+      }
       const textarea = document.createElement("textarea");
       textarea.value = text;
       textarea.style.position = "fixed";
@@ -43,7 +49,9 @@ export async function copyText(text: string): Promise<boolean> {
       } catch {
         return false;
       } finally {
-        document.body.removeChild(textarea);
+        if (textarea.parentNode) {
+          textarea.parentNode.removeChild(textarea);
+        }
       }
     }
   }

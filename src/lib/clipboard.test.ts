@@ -73,6 +73,46 @@ describe("copyText", () => {
     execMock.mockRestore();
   });
 
+  it("falls back to document.execCommand when navigator.clipboard is undefined", async () => {
+    vi.mocked(invoke).mockRejectedValueOnce(new Error("IPC failed"));
+    Object.defineProperty(navigator, "clipboard", {
+      value: undefined,
+      writable: true,
+      configurable: true,
+    });
+    const execMock = vi.spyOn(document, "execCommand").mockReturnValueOnce(true);
+
+    const ok = await copyText("test undefined clipboard");
+    expect(ok).toBe(true);
+    expect(execMock).toHaveBeenCalledWith("copy");
+    execMock.mockRestore();
+  });
+
+  it("returns false if document.body is unavailable", async () => {
+    vi.mocked(invoke).mockRejectedValueOnce(new Error("IPC failed"));
+    Object.defineProperty(navigator, "clipboard", {
+      value: undefined,
+      writable: true,
+      configurable: true,
+    });
+    const originalBody = document.body;
+    try {
+      Object.defineProperty(document, "body", {
+        value: null,
+        writable: true,
+        configurable: true,
+      });
+      const ok = await copyText("test no body");
+      expect(ok).toBe(false);
+    } finally {
+      Object.defineProperty(document, "body", {
+        value: originalBody,
+        writable: true,
+        configurable: true,
+      });
+    }
+  });
+
   it("cleans up textarea DOM node even if execCommand throws", async () => {
     vi.mocked(invoke).mockRejectedValueOnce(new Error("IPC failed"));
     Object.defineProperty(navigator, "clipboard", {

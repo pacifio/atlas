@@ -38,70 +38,53 @@ pub fn clipboard_write_text(text: String) -> Result<(), String> {
 
 #[cfg(target_os = "linux")]
 fn linux_write_text(text: &str) -> Result<(), String> {
+    let is_wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
+    linux_write_text_with_runner(text, is_wayland, default_command_runner)
+}
+
+#[cfg(any(target_os = "linux", test))]
+#[allow(dead_code)]
+fn default_command_runner(program: &str, args: &[&str], input: &str) -> bool {
     use std::io::Write;
     use std::process::{Command, Stdio};
 
-    // If WAYLAND_DISPLAY is set, try wl-copy first
-    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-        if let Ok(mut child) = Command::new("wl-copy")
-            .stdin(Stdio::piped())
-            .spawn()
-        {
-            if let Some(mut stdin) = child.stdin.take() {
-                let _ = stdin.write_all(text.as_bytes());
-            }
-            if let Ok(status) = child.wait() {
-                if status.success() {
-                    return Ok(());
-                }
-            }
-        }
-    }
-
-    // Try xclip (standard for X11 sessions)
-    if let Ok(mut child) = Command::new("xclip")
-        .args(["-selection", "clipboard"])
+    let Ok(mut child) = Command::new(program)
+        .args(args)
         .stdin(Stdio::piped())
         .spawn()
-    {
-        if let Some(mut stdin) = child.stdin.take() {
-            let _ = stdin.write_all(text.as_bytes());
-        }
-        if let Ok(status) = child.wait() {
-            if status.success() {
-                return Ok(());
-            }
-        }
+    else {
+        return false;
+    };
+
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(input.as_bytes());
     }
 
-    // Try wl-copy fallback if WAYLAND_DISPLAY wasn't set but wl-copy is present
-    if let Ok(mut child) = Command::new("wl-copy")
-        .stdin(Stdio::piped())
-        .spawn()
-    {
-        if let Some(mut stdin) = child.stdin.take() {
-            let _ = stdin.write_all(text.as_bytes());
-        }
-        if let Ok(status) = child.wait() {
-            if status.success() {
-                return Ok(());
-            }
-        }
-    }
+    child.wait().map(|status| status.success()).unwrap_or(false)
+}
 
-    // Try xsel fallback
-    if let Ok(mut child) = Command::new("xsel")
-        .args(["--clipboard", "--input"])
-        .stdin(Stdio::piped())
-        .spawn()
-    {
-        if let Some(mut stdin) = child.stdin.take() {
-            let _ = stdin.write_all(text.as_bytes());
-        }
-        if let Ok(status) = child.wait() {
-            if status.success() {
-                return Ok(());
-            }
+#[cfg(any(target_os = "linux", test))]
+fn linux_write_text_with_runner<F>(text: &str, is_wayland: bool, mut runner: F) -> Result<(), String>
+where
+    F: FnMut(&str, &[&str], &str) -> bool,
+{
+    let candidates: &[(&str, &[&str])] = if is_wayland {
+        &[
+            ("wl-copy", &[]),
+            ("xclip", &["-selection", "clipboard"]),
+            ("xsel", &["--clipboard", "--input"]),
+        ]
+    } else {
+        &[
+            ("xclip", &["-selection", "clipboard"]),
+            ("wl-copy", &[]),
+            ("xsel", &["--clipboard", "--input"]),
+        ]
+    };
+
+    for (program, args) in candidates {
+        if runner(program, args, text) {
+            return Ok(());
         }
     }
 
@@ -361,11 +344,136 @@ mod tests {
     use super::*;
 
     #[test]
-    #[cfg(target_os = "linux")]
-    fn test_linux_clipboard_write() {
-        if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-            let res = clipboard_write_text("atlas test copy".to_string());
-            assert!(res.is_ok());
-        }
+    fn test_linux_clipboard_wayland_success_first_helper() {
+        let mut calls = Vec::new();
+        let res = linux_write_text_with_runner("hello", true, |prog, args, input| {
+            calls.push((
+                prog.to_string(),
+                args.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+                input.to_string(),
+            ));
+            true
+        });
+        assert!(res.is_ok());
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "wl-copy");
+        assert_eq!(calls[0].1, Vec::<String>::new());
+        assert_eq!(calls[0].2, "hello");
+    }
+
+    #[test]
+    fn test_linux_clipboard_wayland_fallback_xclip() {
+        let mut calls = Vec::new();
+        let res = linux_write_text_with_runner("hello", true, |prog, args, input| {
+            calls.push((
+                prog.to_string(),
+                args.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+                input.to_string(),
+            ));
+            prog == "xclip"
+        });
+        assert!(res.is_ok());
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].0, "wl-copy");
+        assert_eq!(calls[1].0, "xclip");
+        assert_eq!(calls[1].1, vec!["-selection", "clipboard"]);
+        assert_eq!(calls[1].2, "hello");
+    }
+
+    #[test]
+    fn test_linux_clipboard_wayland_fallback_xsel() {
+        let mut calls = Vec::new();
+        let res = linux_write_text_with_runner("hello", true, |prog, args, input| {
+            calls.push((
+                prog.to_string(),
+                args.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+                input.to_string(),
+            ));
+            prog == "xsel"
+        });
+        assert!(res.is_ok());
+        assert_eq!(calls.len(), 3);
+        assert_eq!(calls[0].0, "wl-copy");
+        assert_eq!(calls[1].0, "xclip");
+        assert_eq!(calls[2].0, "xsel");
+        assert_eq!(calls[2].1, vec!["--clipboard", "--input"]);
+        assert_eq!(calls[2].2, "hello");
+    }
+
+    #[test]
+    fn test_linux_clipboard_x11_success_first_helper() {
+        let mut calls = Vec::new();
+        let res = linux_write_text_with_runner("hello x11", false, |prog, args, input| {
+            calls.push((
+                prog.to_string(),
+                args.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+                input.to_string(),
+            ));
+            true
+        });
+        assert!(res.is_ok());
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "xclip");
+        assert_eq!(calls[0].1, vec!["-selection", "clipboard"]);
+        assert_eq!(calls[0].2, "hello x11");
+    }
+
+    #[test]
+    fn test_linux_clipboard_x11_fallback_wl_copy() {
+        let mut calls = Vec::new();
+        let res = linux_write_text_with_runner("hello", false, |prog, args, input| {
+            calls.push((
+                prog.to_string(),
+                args.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+                input.to_string(),
+            ));
+            prog == "wl-copy"
+        });
+        assert!(res.is_ok());
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].0, "xclip");
+        assert_eq!(calls[1].0, "wl-copy");
+    }
+
+    #[test]
+    fn test_linux_clipboard_x11_fallback_xsel() {
+        let mut calls = Vec::new();
+        let res = linux_write_text_with_runner("hello", false, |prog, args, input| {
+            calls.push((
+                prog.to_string(),
+                args.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+                input.to_string(),
+            ));
+            prog == "xsel"
+        });
+        assert!(res.is_ok());
+        assert_eq!(calls.len(), 3);
+        assert_eq!(calls[0].0, "xclip");
+        assert_eq!(calls[1].0, "wl-copy");
+        assert_eq!(calls[2].0, "xsel");
+    }
+
+    #[test]
+    fn test_linux_clipboard_all_fail() {
+        let mut calls = Vec::new();
+        let res = linux_write_text_with_runner("fail", false, |prog, args, input| {
+            calls.push((
+                prog.to_string(),
+                args.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+                input.to_string(),
+            ));
+            false
+        });
+        assert!(res.is_err());
+        assert_eq!(calls.len(), 3);
+        assert_eq!(
+            res.unwrap_err(),
+            "failed to write to clipboard via supported helpers (wl-copy, xclip, xsel)"
+        );
+    }
+
+    #[test]
+    fn test_default_command_runner_handles_missing_binary() {
+        assert!(!default_command_runner("non_existent_binary_xyz_123", &[], "test"));
     }
 }

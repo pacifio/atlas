@@ -129,6 +129,8 @@ ln -sf atl "${PREFIX}/bin/tryatlas"
 if [ ! -e "${PREFIX}/bin/atlas" ]; then
   ln -sf atl "${PREFIX}/bin/atlas"
 fi
+# Remove legacy desktop launcher aliases if present from earlier versions
+rm -f "${PREFIX}/share/applications/atlas.desktop" "${PREFIX}/share/applications/atl.desktop" "${PREFIX}/share/applications/tryatlas.desktop"
 install -m 644 share/applications/dev.atlas.ide.desktop "${PREFIX}/share/applications/dev.atlas.ide.desktop"
 cp -r share/icons "${PREFIX}/share/"
 cp -r share/licenses/atlas/* "${PREFIX}/share/licenses/atlas/"
@@ -277,6 +279,8 @@ set -e
 if [ ! -e /usr/bin/atlas ]; then
   ln -sf atl /usr/bin/atlas
 fi
+# Remove legacy desktop launcher aliases if present from earlier versions
+rm -f /usr/share/applications/atlas.desktop /usr/share/applications/atl.desktop /usr/share/applications/tryatlas.desktop
 if command -v update-desktop-database >/dev/null 2>&1; then
   update-desktop-database -q /usr/share/applications || true
 fi
@@ -292,6 +296,7 @@ set -e
 if [ -L /usr/bin/atlas ] && [ "$(readlink /usr/bin/atlas)" = "atl" ]; then
   rm -f /usr/bin/atlas
 fi
+rm -f /usr/share/applications/atlas.desktop /usr/share/applications/atl.desktop /usr/share/applications/tryatlas.desktop
 if command -v update-desktop-database >/dev/null 2>&1; then
   update-desktop-database -q /usr/share/applications || true
 fi
@@ -355,6 +360,8 @@ cp -r ${STAGE_DIR}/share/licenses/atlas/* %{buildroot}/usr/share/licenses/tryatl
 if [ ! -e /usr/bin/atlas ]; then
   ln -sf atl /usr/bin/atlas
 fi
+# Remove legacy desktop launcher aliases if present from earlier versions
+rm -f /usr/share/applications/atlas.desktop /usr/share/applications/atl.desktop /usr/share/applications/tryatlas.desktop
 if command -v update-desktop-database >/dev/null 2>&1; then
   update-desktop-database /usr/share/applications || true
 fi
@@ -366,6 +373,7 @@ fi
 if [ -L /usr/bin/atlas ] && [ "\$(readlink /usr/bin/atlas)" = "atl" ]; then
   rm -f /usr/bin/atlas
 fi
+rm -f /usr/share/applications/atlas.desktop /usr/share/applications/atl.desktop /usr/share/applications/tryatlas.desktop
 if command -v update-desktop-database >/dev/null 2>&1; then
   update-desktop-database /usr/share/applications || true
 fi
