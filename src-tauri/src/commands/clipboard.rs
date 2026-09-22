@@ -38,7 +38,9 @@ pub fn clipboard_write_text(text: String) -> Result<(), String> {
 
 #[cfg(target_os = "linux")]
 fn linux_write_text(text: &str) -> Result<(), String> {
-    let is_wayland = std::env::var_os("WAYLAND_DISPLAY").is_some()
+    let is_wayland = std::env::var_os("WAYLAND_DISPLAY")
+        .map(|s| !s.is_empty())
+        .unwrap_or(false)
         || std::env::var_os("XDG_SESSION_TYPE").map(|s| s == "wayland").unwrap_or(false);
     linux_write_text_with_runner(text, is_wayland, default_command_runner)
 }
@@ -62,10 +64,10 @@ fn default_command_runner(program: &str, args: &[&str], input: &str) -> bool {
 
     if let Some(mut stdin) = child.stdin.take() {
         if stdin.write_all(input.as_bytes()).is_err() || stdin.flush().is_err() {
-            return match child.wait() {
-                Ok(status) => status.success(),
-                Err(_) => false,
-            };
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+            return false;
         }
     } else {
         return false;
@@ -80,7 +82,12 @@ fn default_command_runner(program: &str, args: &[&str], input: &str) -> bool {
         match child.try_wait() {
             Ok(Some(status)) => return status.success(),
             Ok(None) => std::thread::sleep(Duration::from_millis(5)),
-            Err(_) => return false,
+            Err(_) => {
+                std::thread::spawn(move || {
+                    let _ = child.wait();
+                });
+                return false;
+            }
         }
     }
 
@@ -529,5 +536,23 @@ mod tests {
         let elapsed = start.elapsed();
         assert!(ok);
         assert!(elapsed < std::time::Duration::from_millis(500));
+    }
+
+    #[test]
+    fn test_default_command_runner_stdin_failure_does_not_block() {
+        let start = std::time::Instant::now();
+        let ok = default_command_runner(
+            "sh",
+            &["-c", "exec 0<&-; sleep 1"],
+            &"a".repeat(1_000_000),
+        );
+        let elapsed = start.elapsed();
+        assert!(!ok);
+        assert!(elapsed < std::time::Duration::from_millis(500));
+    }
+
+    #[test]
+    fn test_default_command_runner_empty_input() {
+        assert!(default_command_runner("cat", &[], ""));
     }
 }
