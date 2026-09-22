@@ -90,13 +90,12 @@ fn default_command_runner(program: &str, args: &[&str], input: &str) -> bool {
         }
     }
 
-    // Wait for the helper process to finish and verify actual exit status.
-    // Standard Linux helpers (wl-copy, xclip, xsel) read until EOF, hand off the
-    // selection to the compositor or background daemon, and exit with code 0.
-    // If the helper fails to connect to the display server, it exits with non-zero.
-    let wait_timeout = Duration::from_millis(2000);
+    // Give the helper a brief startup window to detect immediate failure (e.g. invalid
+    // arguments, missing dependencies, or display connection rejected on launch). If it
+    // exits with an error status, return false so fallback helpers can be attempted.
+    let startup_check = Duration::from_millis(100);
     let start = Instant::now();
-    while start.elapsed() < wait_timeout {
+    while start.elapsed() < startup_check {
         match child.try_wait() {
             Ok(Some(status)) => return status.success(),
             Ok(None) => std::thread::sleep(Duration::from_millis(10)),
@@ -108,10 +107,14 @@ fn default_command_runner(program: &str, args: &[&str], input: &str) -> bool {
         }
     }
 
-    // Process timed out without completing; terminate and reap.
-    let _ = child.kill();
-    let _ = child.wait();
-    false
+    // On X11, clipboard helpers such as xclip and xsel must remain running as the
+    // selection owner to serve subsequent paste requests from other applications.
+    // Since stdin was successfully delivered and the helper did not exit with an error,
+    // treat the handoff as success and reap the child asynchronously when it terminates.
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    true
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -548,12 +551,12 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
-    fn test_default_command_runner_hanging_process_times_out() {
+    fn test_default_command_runner_persistent_helper_stays_alive_and_succeeds() {
         let start = std::time::Instant::now();
-        let ok = default_command_runner("sleep", &["10"], "test");
+        let ok = default_command_runner("sleep", &["2"], "test");
         let elapsed = start.elapsed();
-        assert!(!ok);
-        assert!(elapsed < std::time::Duration::from_millis(3000));
+        assert!(ok);
+        assert!(elapsed < std::time::Duration::from_millis(500));
     }
 
     #[test]
