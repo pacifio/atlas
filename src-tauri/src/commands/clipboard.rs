@@ -25,11 +25,87 @@ pub fn clipboard_write_text(text: String) -> Result<(), String> {
     {
         macos_write_text(&text)
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        linux_write_text(&text)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         let _ = text;
-        Err("clipboard writes are only implemented on macOS".to_string())
+        Err("clipboard writes are only implemented on macOS and Linux".to_string())
     }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_write_text(text: &str) -> Result<(), String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    // If WAYLAND_DISPLAY is set, try wl-copy first
+    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        if let Ok(mut child) = Command::new("wl-copy")
+            .stdin(Stdio::piped())
+            .spawn()
+        {
+            if let Some(mut stdin) = child.stdin.take() {
+                let _ = stdin.write_all(text.as_bytes());
+            }
+            if let Ok(status) = child.wait() {
+                if status.success() {
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    // Try xclip (standard for X11 sessions)
+    if let Ok(mut child) = Command::new("xclip")
+        .args(["-selection", "clipboard"])
+        .stdin(Stdio::piped())
+        .spawn()
+    {
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(text.as_bytes());
+        }
+        if let Ok(status) = child.wait() {
+            if status.success() {
+                return Ok(());
+            }
+        }
+    }
+
+    // Try wl-copy fallback if WAYLAND_DISPLAY wasn't set but wl-copy is present
+    if let Ok(mut child) = Command::new("wl-copy")
+        .stdin(Stdio::piped())
+        .spawn()
+    {
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(text.as_bytes());
+        }
+        if let Ok(status) = child.wait() {
+            if status.success() {
+                return Ok(());
+            }
+        }
+    }
+
+    // Try xsel fallback
+    if let Ok(mut child) = Command::new("xsel")
+        .args(["--clipboard", "--input"])
+        .stdin(Stdio::piped())
+        .spawn()
+    {
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(text.as_bytes());
+        }
+        if let Ok(status) = child.wait() {
+            if status.success() {
+                return Ok(());
+            }
+        }
+    }
+
+    Err("could not find a clipboard utility (please install wl-clipboard or xclip)".to_string())
 }
 
 #[cfg(target_os = "macos")]
@@ -276,6 +352,20 @@ fn sweep_scratch(dir: &std::path::Path) {
             .unwrap_or(false)
         {
             let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_linux_clipboard_write() {
+        if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+            let res = clipboard_write_text("atlas test copy".to_string());
+            assert!(res.is_ok());
         }
     }
 }

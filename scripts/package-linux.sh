@@ -130,9 +130,6 @@ if [ ! -e "${PREFIX}/bin/atlas" ]; then
   ln -sf atl "${PREFIX}/bin/atlas"
 fi
 install -m 644 share/applications/dev.atlas.ide.desktop "${PREFIX}/share/applications/dev.atlas.ide.desktop"
-ln -sf dev.atlas.ide.desktop "${PREFIX}/share/applications/atlas.desktop" || cp share/applications/dev.atlas.ide.desktop "${PREFIX}/share/applications/atlas.desktop"
-ln -sf dev.atlas.ide.desktop "${PREFIX}/share/applications/atl.desktop" || true
-ln -sf dev.atlas.ide.desktop "${PREFIX}/share/applications/tryatlas.desktop" || true
 cp -r share/icons "${PREFIX}/share/"
 cp -r share/licenses/atlas/* "${PREFIX}/share/licenses/atlas/"
 if command -v update-desktop-database >/dev/null 2>&1; then
@@ -210,6 +207,8 @@ depends=(
 )
 optdepends=(
     'xdg-terminal-exec: Open folders in default terminal'
+    'wl-clipboard: Wayland clipboard support'
+    'xclip: X11 clipboard support'
 )
 provides=("tryatlas=\${pkgver}" "atl=\${pkgver}")
 source_${ARCH}=("atlas-\${pkgver}-linux-${ARCH}.tar.gz::https://github.com/${REPO}/releases/download/${RELEASE_TAG}/atlas-\${pkgver}-linux-${ARCH}.tar.gz")
@@ -220,8 +219,6 @@ package() {
     install -Dm755 bin/atlas "\${pkgdir}/usr/bin/atl"
     ln -sf atl "\${pkgdir}/usr/bin/tryatlas"
     install -Dm644 share/applications/dev.atlas.ide.desktop "\${pkgdir}/usr/share/applications/dev.atlas.ide.desktop"
-    ln -sf dev.atlas.ide.desktop "\${pkgdir}/usr/share/applications/tryatlas.desktop"
-    ln -sf dev.atlas.ide.desktop "\${pkgdir}/usr/share/applications/atl.desktop"
     for size in 32 64 128 256 512; do
         if [ -f "share/icons/hicolor/\${size}x\${size}/apps/atlas.png" ]; then
             install -Dm644 "share/icons/hicolor/\${size}x\${size}/apps/atlas.png" \\

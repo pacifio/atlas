@@ -30,12 +30,34 @@ import Voyage from "@lobehub/icons/es/Voyage/components/Color";
 import HuggingFace from "@lobehub/icons/es/HuggingFace/components/Color";
 import Jina from "@lobehub/icons/es/Jina/components/Mono";
 import ElevenLabs from "@lobehub/icons/es/ElevenLabs/components/Mono";
+import orcaLogo from "@/assets/orcarouter.png";
 
 type IconComp = ComponentType<{
   size?: number;
   style?: CSSProperties;
   className?: string;
 }>;
+
+function OrcaRouterLogo({
+  size = 18,
+  className,
+  style,
+}: {
+  size?: number;
+  className?: string;
+  style?: CSSProperties;
+}) {
+  return (
+    <img
+      src={orcaLogo}
+      alt="OrcaRouter"
+      width={size}
+      height={size}
+      className={cn("object-contain select-none pointer-events-none", className)}
+      style={{ width: size, height: size, ...style }}
+    />
+  );
+}
 
 // Keyed by the BYOK provider id (see features/settings/lib/providers.ts).
 const LOGOS: Record<string, IconComp> = {
@@ -60,6 +82,7 @@ const LOGOS: Record<string, IconComp> = {
   huggingface: HuggingFace,
   jina: Jina,
   elevenlabs: ElevenLabs,
+  orcarouter: OrcaRouterLogo,
 };
 
 /**
