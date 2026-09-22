@@ -350,13 +350,17 @@ mod tests {
     fn test_linux_clipboard_wayland_success_first_helper() {
         let mut calls = Vec::new();
         let res = linux_write_text_with_runner("hello", true, |prog, args, input| {
-            calls.push((prog.to_string(), args.to_vec(), input.to_string()));
+            calls.push((
+                prog.to_string(),
+                args.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                input.to_string(),
+            ));
             true
         });
         assert!(res.is_ok());
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].0, "wl-copy");
-        assert_eq!(calls[0].1, Vec::<&str>::new());
+        assert_eq!(calls[0].1, Vec::<String>::new());
         assert_eq!(calls[0].2, "hello");
     }
 
@@ -364,7 +368,11 @@ mod tests {
     fn test_linux_clipboard_wayland_fallback_xclip() {
         let mut calls = Vec::new();
         let res = linux_write_text_with_runner("hello", true, |prog, args, input| {
-            calls.push((prog.to_string(), args.to_vec(), input.to_string()));
+            calls.push((
+                prog.to_string(),
+                args.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                input.to_string(),
+            ));
             prog == "xclip"
         });
         assert!(res.is_ok());
@@ -379,7 +387,11 @@ mod tests {
     fn test_linux_clipboard_wayland_fallback_xsel() {
         let mut calls = Vec::new();
         let res = linux_write_text_with_runner("hello", true, |prog, args, input| {
-            calls.push((prog.to_string(), args.to_vec(), input.to_string()));
+            calls.push((
+                prog.to_string(),
+                args.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                input.to_string(),
+            ));
             prog == "xsel"
         });
         assert!(res.is_ok());
@@ -395,7 +407,11 @@ mod tests {
     fn test_linux_clipboard_x11_success_first_helper() {
         let mut calls = Vec::new();
         let res = linux_write_text_with_runner("hello x11", false, |prog, args, input| {
-            calls.push((prog.to_string(), args.to_vec(), input.to_string()));
+            calls.push((
+                prog.to_string(),
+                args.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                input.to_string(),
+            ));
             true
         });
         assert!(res.is_ok());
@@ -409,7 +425,11 @@ mod tests {
     fn test_linux_clipboard_x11_fallback_wl_copy() {
         let mut calls = Vec::new();
         let res = linux_write_text_with_runner("hello", false, |prog, args, input| {
-            calls.push((prog.to_string(), args.to_vec(), input.to_string()));
+            calls.push((
+                prog.to_string(),
+                args.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                input.to_string(),
+            ));
             prog == "wl-copy"
         });
         assert!(res.is_ok());
@@ -422,7 +442,11 @@ mod tests {
     fn test_linux_clipboard_x11_fallback_xsel() {
         let mut calls = Vec::new();
         let res = linux_write_text_with_runner("hello", false, |prog, args, input| {
-            calls.push((prog.to_string(), args.to_vec(), input.to_string()));
+            calls.push((
+                prog.to_string(),
+                args.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                input.to_string(),
+            ));
             prog == "xsel"
         });
         assert!(res.is_ok());
@@ -436,7 +460,11 @@ mod tests {
     fn test_linux_clipboard_all_fail() {
         let mut calls = Vec::new();
         let res = linux_write_text_with_runner("fail", false, |prog, args, input| {
-            calls.push((prog.to_string(), args.to_vec(), input.to_string()));
+            calls.push((
+                prog.to_string(),
+                args.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                input.to_string(),
+            ));
             false
         });
         assert!(res.is_err());
