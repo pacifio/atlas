@@ -50,6 +50,7 @@ fn linux_write_text(text: &str) -> Result<(), String> {
 fn default_command_runner(program: &str, args: &[&str], input: &str) -> bool {
     use std::io::Write;
     use std::process::{Command, Stdio};
+    use std::sync::mpsc;
     use std::time::{Duration, Instant};
 
     let Ok(mut child) = Command::new(program)
@@ -62,42 +63,55 @@ fn default_command_runner(program: &str, args: &[&str], input: &str) -> bool {
         return false;
     };
 
-    if let Some(mut stdin) = child.stdin.take() {
-        if stdin.write_all(input.as_bytes()).is_err() || stdin.flush().is_err() {
-            std::thread::spawn(move || {
-                let _ = child.wait();
-            });
+    let Some(mut stdin) = child.stdin.take() else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return false;
+    };
+
+    // Feed stdin on a background thread so pipe buffer saturation (>64KB on Linux)
+    // never hangs the calling thread if the helper fails to drain stdin immediately.
+    let input_bytes = input.as_bytes().to_vec();
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let res = stdin.write_all(&input_bytes).and_then(|_| stdin.flush());
+        drop(stdin); // Send EOF to helper
+        let _ = tx.send(res);
+    });
+
+    // Bounded timeout for feeding stdin
+    let write_timeout = Duration::from_millis(1500);
+    match rx.recv_timeout(write_timeout) {
+        Ok(Ok(())) => {}
+        _ => {
+            let _ = child.kill();
+            let _ = child.wait();
             return false;
         }
-    } else {
-        return false;
     }
 
-    // Give the process a brief window to fail on startup (e.g. invalid arguments
-    // or inability to connect to the display server). If it exits immediately with
-    // an error status, return false so fallback helpers can be attempted.
+    // Wait for the helper process to finish and verify actual exit status.
+    // Standard Linux helpers (wl-copy, xclip, xsel) read until EOF, hand off the
+    // selection to the compositor or background daemon, and exit with code 0.
+    // If the helper fails to connect to the display server, it exits with non-zero.
+    let wait_timeout = Duration::from_millis(2000);
     let start = Instant::now();
-    let timeout = Duration::from_millis(50);
-    while start.elapsed() < timeout {
+    while start.elapsed() < wait_timeout {
         match child.try_wait() {
             Ok(Some(status)) => return status.success(),
-            Ok(None) => std::thread::sleep(Duration::from_millis(5)),
+            Ok(None) => std::thread::sleep(Duration::from_millis(10)),
             Err(_) => {
-                std::thread::spawn(move || {
-                    let _ = child.wait();
-                });
+                let _ = child.kill();
+                let _ = child.wait();
                 return false;
             }
         }
     }
 
-    // Persistent helpers (such as xclip or xsel on X11) stay alive to act as the
-    // selection owner. Return success after writing input while preserving the
-    // helper's lifetime, and reap the child process in the background when it exits.
-    std::thread::spawn(move || {
-        let _ = child.wait();
-    });
-    true
+    // Process timed out without completing; terminate and reap.
+    let _ = child.kill();
+    let _ = child.wait();
+    false
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -515,43 +529,49 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn test_default_command_runner_immediate_success() {
         assert!(default_command_runner("true", &[], "test"));
     }
 
     #[test]
+    #[cfg(unix)]
     fn test_default_command_runner_immediate_failure() {
         assert!(!default_command_runner("false", &[], "test"));
     }
 
     #[test]
+    #[cfg(unix)]
     fn test_default_command_runner_stdin_reading_binary() {
         assert!(default_command_runner("cat", &[], "hello world"));
     }
 
     #[test]
-    fn test_default_command_runner_persistent_helper_does_not_block() {
+    #[cfg(unix)]
+    fn test_default_command_runner_hanging_process_times_out() {
         let start = std::time::Instant::now();
-        let ok = default_command_runner("sleep", &["2"], "test");
+        let ok = default_command_runner("sleep", &["10"], "test");
         let elapsed = start.elapsed();
-        assert!(ok);
-        assert!(elapsed < std::time::Duration::from_millis(500));
+        assert!(!ok);
+        assert!(elapsed < std::time::Duration::from_millis(3000));
     }
 
     #[test]
+    #[cfg(unix)]
     fn test_default_command_runner_stdin_failure_does_not_block() {
         let start = std::time::Instant::now();
         let ok = default_command_runner(
             "sh",
-            &["-c", "exec 0<&-; sleep 1"],
+            &["-c", "exec 0<&-; sleep 10"],
             &"a".repeat(1_000_000),
         );
         let elapsed = start.elapsed();
         assert!(!ok);
-        assert!(elapsed < std::time::Duration::from_millis(500));
+        assert!(elapsed < std::time::Duration::from_millis(2500));
     }
 
     #[test]
+    #[cfg(unix)]
     fn test_default_command_runner_empty_input() {
         assert!(default_command_runner("cat", &[], ""));
     }
