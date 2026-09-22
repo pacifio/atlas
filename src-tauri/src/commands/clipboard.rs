@@ -48,6 +48,7 @@ fn linux_write_text(text: &str) -> Result<(), String> {
 fn default_command_runner(program: &str, args: &[&str], input: &str) -> bool {
     use std::io::Write;
     use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
 
     let Ok(mut child) = Command::new(program)
         .args(args)
@@ -60,10 +61,36 @@ fn default_command_runner(program: &str, args: &[&str], input: &str) -> bool {
     };
 
     if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(input.as_bytes());
+        if stdin.write_all(input.as_bytes()).is_err() || stdin.flush().is_err() {
+            return match child.wait() {
+                Ok(status) => status.success(),
+                Err(_) => false,
+            };
+        }
+    } else {
+        return false;
     }
 
-    child.wait().map(|status| status.success()).unwrap_or(false)
+    // Give the process a brief window to fail on startup (e.g. invalid arguments
+    // or inability to connect to the display server). If it exits immediately with
+    // an error status, return false so fallback helpers can be attempted.
+    let start = Instant::now();
+    let timeout = Duration::from_millis(50);
+    while start.elapsed() < timeout {
+        match child.try_wait() {
+            Ok(Some(status)) => return status.success(),
+            Ok(None) => std::thread::sleep(Duration::from_millis(5)),
+            Err(_) => return false,
+        }
+    }
+
+    // Persistent helpers (such as xclip or xsel on X11) stay alive to act as the
+    // selection owner. Return success after writing input while preserving the
+    // helper's lifetime, and reap the child process in the background when it exits.
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    true
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -478,5 +505,29 @@ mod tests {
     #[test]
     fn test_default_command_runner_handles_missing_binary() {
         assert!(!default_command_runner("non_existent_binary_xyz_123", &[], "test"));
+    }
+
+    #[test]
+    fn test_default_command_runner_immediate_success() {
+        assert!(default_command_runner("true", &[], "test"));
+    }
+
+    #[test]
+    fn test_default_command_runner_immediate_failure() {
+        assert!(!default_command_runner("false", &[], "test"));
+    }
+
+    #[test]
+    fn test_default_command_runner_stdin_reading_binary() {
+        assert!(default_command_runner("cat", &[], "hello world"));
+    }
+
+    #[test]
+    fn test_default_command_runner_persistent_helper_does_not_block() {
+        let start = std::time::Instant::now();
+        let ok = default_command_runner("sleep", &["2"], "test");
+        let elapsed = start.elapsed();
+        assert!(ok);
+        assert!(elapsed < std::time::Duration::from_millis(500));
     }
 }
