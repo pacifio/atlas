@@ -131,4 +131,31 @@ describe("copyText", () => {
     execMock.mockRestore();
     removeChildSpy.mockRestore();
   });
+
+  it("configures fallback textarea with fixed top/left coordinates and readonly attribute", async () => {
+    vi.mocked(invoke).mockRejectedValueOnce(new Error("IPC failed"));
+    Object.defineProperty(navigator, "clipboard", {
+      value: undefined,
+      writable: true,
+      configurable: true,
+    });
+    let capturedTextarea: HTMLTextAreaElement | undefined;
+    const appendChildSpy = vi.spyOn(document.body, "appendChild").mockImplementationOnce((node) => {
+      capturedTextarea = node as HTMLTextAreaElement;
+      return node;
+    });
+    const execMock = vi.spyOn(document, "execCommand").mockReturnValueOnce(true);
+
+    const ok = await copyText("sample text");
+    expect(ok).toBe(true);
+    expect(capturedTextarea).toBeDefined();
+    const el = capturedTextarea!;
+    expect(el.style.position).toBe("fixed");
+    expect(el.style.top).toMatch(/^0(?:px)?$/);
+    expect(el.style.left).toMatch(/^0(?:px)?$/);
+    expect(el.hasAttribute("readonly")).toBe(true);
+
+    execMock.mockRestore();
+    appendChildSpy.mockRestore();
+  });
 });

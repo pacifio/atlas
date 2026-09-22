@@ -340,6 +340,7 @@ Provides:       tryatlas = %{version}-%{release}
 Provides:       atl = %{version}-%{release}
 AutoReqProv:    no
 Requires:       webkit2gtk4.1, gtk3, libayatana-appindicator-gtk3, bubblewrap, glib2
+Suggests:       wl-clipboard, xclip, xsel
 
 %description
 Atlas is an agent-first IDE and planning tool for software development.
@@ -384,7 +385,7 @@ fi
 %files
 /usr/bin/atl
 /usr/bin/tryatlas
-/usr/share/applications/*.desktop
+/usr/share/applications/dev.atlas.ide.desktop
 /usr/share/icons/hicolor/*/apps/atlas.png
 /usr/share/licenses/tryatlas/*
 EOF
