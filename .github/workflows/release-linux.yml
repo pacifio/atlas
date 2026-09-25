@@ -97,6 +97,14 @@ jobs:
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
 
+      - name: Expand swap space to prevent runner OOM
+        run: |
+          sudo fallocate -l 10G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -h
+
       - name: Build frontend & Tauri Linux packages (deb, rpm, AppImage)
         env:
           POSTHOG_KEY: ${{ secrets.POSTHOG_KEY }}
