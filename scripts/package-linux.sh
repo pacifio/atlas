@@ -36,8 +36,8 @@ case "$ARCH" in
     ;;
 esac
 
-# Extract version from package.json
-VERSION="$(node -p 'JSON.parse(require("fs").readFileSync("package.json")).version')"
+# Extract version from environment or package.json
+VERSION="${VERSION:-$(node -p 'JSON.parse(require("fs").readFileSync("package.json")).version')}"
 VERSION="${VERSION#alpha-}"
 VERSION="${VERSION#exp-}"
 VERSION="${VERSION#v}"

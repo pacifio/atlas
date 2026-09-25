@@ -7,13 +7,13 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version (leave empty to read from package.json)'
+        description: 'Release version (leave empty to detect or read from package.json)'
         required: false
-        default: ''
+        default: '0.3.4'
       tag:
         description: 'Release tag name (leave empty to match git tag or alpha-<version>)'
         required: false
-        default: ''
+        default: 'alpha-0.3.4'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -97,12 +97,49 @@ jobs:
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
 
+      - name: Synchronize version across manifests
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          node -e '
+            const fs = require("fs");
+            const ver = process.env.VERSION;
+            if (!ver) process.exit(0);
+
+            // Update package.json
+            const pkgPath = "package.json";
+            if (fs.existsSync(pkgPath)) {
+              const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+              pkg.version = ver;
+              fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
+              console.log("Updated package.json version to " + ver);
+            }
+
+            // Update src-tauri/tauri.conf.json
+            const tauriConfPath = "src-tauri/tauri.conf.json";
+            if (fs.existsSync(tauriConfPath)) {
+              const tauriConf = JSON.parse(fs.readFileSync(tauriConfPath, "utf8"));
+              tauriConf.version = ver;
+              fs.writeFileSync(tauriConfPath, JSON.stringify(tauriConf, null, 2) + "\n");
+              console.log("Updated tauri.conf.json version to " + ver);
+            }
+
+            // Update src-tauri/Cargo.toml
+            const cargoPath = "src-tauri/Cargo.toml";
+            if (fs.existsSync(cargoPath)) {
+              let cargo = fs.readFileSync(cargoPath, "utf8");
+              cargo = cargo.replace(/^version = ".*"/m, `version = "${ver}"`);
+              fs.writeFileSync(cargoPath, cargo);
+              console.log("Updated Cargo.toml version to " + ver);
+            }
+          '
+
       - name: Expand swap space to prevent runner OOM
         run: |
-          sudo fallocate -l 10G /swapfile
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
+          sudo fallocate -l 10G /swapfile_extra || sudo dd if=/dev/zero of=/swapfile_extra bs=1M count=10240
+          sudo chmod 600 /swapfile_extra
+          sudo mkswap /swapfile_extra
+          sudo swapon /swapfile_extra
           free -h
 
       - name: Build frontend & Tauri Linux packages (deb, rpm, AppImage)
@@ -130,6 +167,7 @@ jobs:
         env:
           ATLAS_BIN: ${{ steps.find_bin.outputs.bin_path }}
           RELEASE_TAG: ${{ steps.meta.outputs.tag }}
+          VERSION: ${{ steps.meta.outputs.version }}
         run: |
           ./scripts/package-linux.sh x86_64
 
