@@ -38,9 +38,12 @@ import {
   FolderGit2,
   GitBranch,
   Hash,
+  Layers,
   MessageSquare,
+  MessagesSquare,
   Scale,
   SquareSlash,
+  User,
   Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -875,6 +878,15 @@ function CategoryIcon({ kind }: { kind: MentionKind }) {
       return <MessageSquare size={size} />;
     case "past_session":
       return <MessageSquare size={size} />;
+    // Organisation kinds reuse the icons their surfaces already use: the
+    // commit avatar's person, the comms panel's conversations, the Timeline
+    // tab's layers — so a recorded session never looks like a past session.
+    case "member":
+      return <User size={size} />;
+    case "conversation":
+      return <MessagesSquare size={size} />;
+    case "recorded_session":
+      return <Layers size={size} />;
   }
 }
 
@@ -912,6 +924,16 @@ function secondaryLabel(m: MentionData): string {
       return m.sessionTitle;
     case "past_session":
       return "session transcript";
+    case "member":
+      return m.email;
+    case "conversation":
+      return m.conversationKind === "channel"
+        ? "channel"
+        : m.conversationKind === "group_dm"
+          ? "group DM"
+          : "direct message";
+    case "recorded_session":
+      return "recorded session · Timeline";
   }
 }
 
@@ -970,5 +992,11 @@ function mentionTitle(m: MentionData): string {
       return m.content;
     case "past_session":
       return m.sessionTitle;
+    case "member":
+      return `${m.displayName} <${m.email}>`;
+    case "conversation":
+      return m.displayName;
+    case "recorded_session":
+      return `Recorded session ${m.sessionId}`;
   }
 }

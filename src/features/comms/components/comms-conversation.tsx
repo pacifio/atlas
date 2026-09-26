@@ -38,7 +38,7 @@ import { DraftsTab } from "./drafts-tab";
 import { FilesTab } from "./files-tab";
 import { RenameChannelMenu } from "./rename-channel-menu";
 import { CallActivity } from "./call-activity";
-import { useLayoutStore } from "@/features/layout/stores/layout-store";
+import { openSpaceTab } from "@/features/spaces/lib/open-space";
 import { useCommsStore, type ConvSubTab } from "../stores/comms-store";
 import {
   conversationTitle,
@@ -465,24 +465,9 @@ function SubTabStrip({
   convId: string;
   title: string;
 }) {
-  // The realtime canvas opens as a CENTER tab (like a draft), not a sub-tab —
-  // a canvas wants the whole window and should not move when somebody posts a
-  // message underneath it. Open-or-refocus, one tab per conversation.
+  // The realtime canvas opens as a CENTER tab, one per conversation.
   const openSpace = () => {
-    const layout = useLayoutStore.getState();
-    const tabId = `spaces-${convId}`;
-    if (layout.tabs.some((t) => t.id === tabId)) {
-      layout.actions.setActiveTab(tabId);
-      return;
-    }
-    layout.actions.addTab({
-      id: tabId,
-      type: "spaces",
-      title: `${title} — Space`,
-      closable: true,
-      dirty: false,
-      data: { convId },
-    });
+    openSpaceTab(convId, title);
   };
   const tabs: { id: ConvSubTab; label: string; icon: LucideIcon }[] = [
     { id: "messages", label: "Messages", icon: MessageCircle },

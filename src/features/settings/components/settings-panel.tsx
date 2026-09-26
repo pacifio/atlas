@@ -543,6 +543,15 @@ function GeneralSettings() {
         />
       </SettingRow>
       <SettingRow
+        label="Let Atlas Agent act in your organisation"
+        description="In a Project bound to the cloud, Atlas Agent can read your organisation's recorded sessions, comments, members and conversations, and act there as you. Anything that reaches another person asks you first. Each action shows in the chat and the Logs panel."
+      >
+        <Toggle
+          checked={settings.agentOrgAccess}
+          onChange={(next) => updateSettings({ agentOrgAccess: next })}
+        />
+      </SettingRow>
+      <SettingRow
         label="Atlas CLI"
         description={`Adds an \`atlas\` command to your shell — type \`atlas .\` in any terminal to open the current folder as a project. Refreshed automatically on every launch so an older copy never lingers. ${cliInstalledLine}.`}
       >

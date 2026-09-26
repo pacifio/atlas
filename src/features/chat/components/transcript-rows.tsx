@@ -18,6 +18,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 
 import {
   ArrowRightLeft,
   BookOpen,
+  Building2,
   ChevronRight,
   Paperclip,
   Brain,
@@ -455,6 +456,9 @@ const TOOL_ICON: Record<MarkerTool, LucideIcon> = {
   delete: Trash2,
   move: ArrowRightLeft,
   file: File,
+  // An organisation call (ADR-0014): the building the organisation screens
+  // already use.
+  org: Building2,
   tool: Wrench,
 };
 

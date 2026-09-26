@@ -67,6 +67,52 @@ pub struct EngineSession {
     /// engine-side thread setting the selection had written: the picker
     /// changed nothing about the next turn. The turn path reads this instead.
     selected_model: Option<String>,
+    /// The last card to join this session's line, as the signal it sends when
+    /// it is answered. See [`PromptPlace`].
+    prompt_tail: Option<tokio::sync::oneshot::Receiver<()>>,
+    /// The host tools the user allowed for the rest of this session, as
+    /// `(server, tool)` (`engine::tool_approvals`). The engine keeps no session
+    /// approval for a tool that always asks, so the seam does.
+    allowed_for_session: std::collections::HashSet<(String, String)>,
+}
+
+/// A card's place in its session's line: one card at a time (ADR-0013).
+///
+/// A tool permission and a clarifying question both pin a card above the
+/// composer, and both block the turn on the user. The engine can ask for two
+/// at once — parallel tool calls can each want approval while the model's own
+/// question is open — and the chat would stack them, the second covering the
+/// first. So the engine's requests queue per session in the order they reached
+/// the pump, and each card is raised only once the one ahead of it is
+/// answered.
+///
+/// A chain rather than a lock, deliberately: a place is taken *synchronously*,
+/// on the pump, which is what fixes the order to arrival order. Awaiting a
+/// fair lock from a spawned task would order the cards by whichever task the
+/// runtime happened to poll first.
+///
+/// Dropping the place is what lets the next card up, so an answer, a failure
+/// to raise and a panic all release the line alike.
+pub struct PromptPlace {
+    /// The signal from the card ahead; `None` when nothing is waiting ahead.
+    ahead: Option<tokio::sync::oneshot::Receiver<()>>,
+    /// Held until this card is answered; dropped, it releases the next one.
+    _answered: tokio::sync::oneshot::Sender<()>,
+}
+
+impl PromptPlace {
+    /// Whether another card was still open when this one joined the line.
+    pub fn is_queued(&self) -> bool {
+        self.ahead.is_some()
+    }
+
+    /// Waits until every card ahead has been answered.
+    pub async fn wait(&mut self) {
+        if let Some(ahead) = self.ahead.take() {
+            // `Err` is the normal release: the place ahead was dropped.
+            let _ = ahead.await;
+        }
+    }
 }
 
 #[derive(Default)]
@@ -78,6 +124,11 @@ pub struct EngineSessions {
     /// `thread/start` has answered and the session exists.
     mcp_startup: Mutex<HashMap<String, HashMap<String, bool>>>,
     mcp_settled: tokio::sync::Notify,
+    /// The MCP servers the HOST offered each engine thread — Atlas's own,
+    /// which never elicit — as opposed to every server the engine reports.
+    /// What tells the engine's own approval for a call to one of them from a
+    /// tool server's elicitation (`engine::tool_approvals`).
+    host_servers: Mutex<HashMap<String, std::collections::HashSet<String>>>,
 }
 
 /// How long a turn waits for its thread's host MCP servers to finish starting.
@@ -110,8 +161,29 @@ impl EngineSessions {
                 skills: Vec::new(),
                 command_output: HashMap::new(),
                 selected_model: None,
+                prompt_tail: None,
+                allowed_for_session: std::collections::HashSet::new(),
             },
         );
+    }
+
+    /// Takes the next place in `session_id`'s line of cards. Called on the
+    /// pump, in arrival order — see [`PromptPlace`].
+    pub fn join_prompt_line(&self, session_id: &acp::SessionId) -> PromptPlace {
+        let (answered, signal) = tokio::sync::oneshot::channel();
+        let ahead = self
+            .lock()
+            .get_mut(session_id)
+            .and_then(|session| session.prompt_tail.replace(signal))
+            // A card ahead that has already been answered is not in the way.
+            .and_then(|mut ahead| match ahead.try_recv() {
+                Err(tokio::sync::oneshot::error::TryRecvError::Empty) => Some(ahead),
+                _ => None,
+            });
+        PromptPlace {
+            ahead,
+            _answered: answered,
+        }
     }
 
     pub fn thread(&self, session_id: &acp::SessionId) -> Option<AcpThreadHandle> {
@@ -129,11 +201,42 @@ impl EngineSessions {
     /// Records that `thread_id` was configured with these host MCP servers.
     /// A server the engine already reported keeps its settled state.
     pub fn expect_mcp_servers(&self, thread_id: &str, servers: impl IntoIterator<Item = String>) {
+        let servers: Vec<String> = servers.into_iter().collect();
+        self.host_servers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .entry(thread_id.to_string())
+            .or_default()
+            .extend(servers.iter().cloned());
         let mut startup = self.mcp_startup_lock();
         let entry = startup.entry(thread_id.to_string()).or_default();
         for server in servers {
             entry.entry(server).or_insert(false);
         }
+    }
+
+    /// Whether `server` is one the host offered `thread_id`.
+    pub fn is_host_server(&self, thread_id: &str, server: &str) -> bool {
+        self.host_servers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(thread_id)
+            .is_some_and(|servers| servers.contains(server))
+    }
+
+    /// Remembers that the user allowed `server`'s `tool` for the rest of this
+    /// session.
+    pub fn allow_for_session(&self, session_id: &acp::SessionId, server: &str, tool: &str) {
+        if let Some(session) = self.lock().get_mut(session_id) {
+            session.allowed_for_session.insert((server.to_string(), tool.to_string()));
+        }
+    }
+
+    /// Whether the user allowed `server`'s `tool` for the rest of this session.
+    pub fn allowed_for_session(&self, session_id: &acp::SessionId, server: &str, tool: &str) -> bool {
+        self.lock()
+            .get(session_id)
+            .is_some_and(|s| s.allowed_for_session.contains(&(server.to_string(), tool.to_string())))
     }
 
     /// The engine's report on one MCP server's startup for one thread.

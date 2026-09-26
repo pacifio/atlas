@@ -325,6 +325,111 @@ impl Comment {
     }
 }
 
+/// Why an inbox entry concerns its reader. Only a comment write produces one,
+/// and the kind is the strongest reason the reader was owed it: named in the
+/// body, the author of the root being replied to, or the author of the Session
+/// commented on.
+///
+/// A kind this build does not know reads as [`InboxKind::SessionComment`],
+/// the weakest of the three — the same fallback the server applies to a
+/// stored kind it cannot parse, so an unknown row is never rendered as the
+/// strongest signal the inbox has.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "String", into = "&'static str")]
+pub enum InboxKind {
+    /// `artifact_mention`: the reader was named in the comment.
+    Mention,
+    /// `artifact_reply`: a reply on a thread the reader started.
+    Reply,
+    /// `artifact_session_comment`: a comment on a Session the reader recorded.
+    SessionComment,
+}
+
+impl InboxKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Mention => "artifact_mention",
+            Self::Reply => "artifact_reply",
+            Self::SessionComment => "artifact_session_comment",
+        }
+    }
+}
+
+impl From<String> for InboxKind {
+    fn from(stored: String) -> Self {
+        match stored.as_str() {
+            "artifact_mention" => Self::Mention,
+            "artifact_reply" => Self::Reply,
+            _ => Self::SessionComment,
+        }
+    }
+}
+
+impl From<InboxKind> for &'static str {
+    fn from(kind: InboxKind) -> Self {
+        kind.as_str()
+    }
+}
+
+/// One thing that concerns the reader, from `GET /inbox`.
+///
+/// The row stores who acted by id; a client resolves the name. `actor_name`
+/// is set only for a **guest** holding a share link, who is in nobody's
+/// directory and so has no id to resolve.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InboxEntry {
+    pub id: String,
+    pub kind: InboxKind,
+    #[serde(default)]
+    pub org_id: String,
+    #[serde(default)]
+    pub workspace_id: String,
+    #[serde(default)]
+    pub workspace_slug: String,
+    pub session_id: String,
+    #[serde(default)]
+    pub session_title: Option<String>,
+    pub comment_id: String,
+    pub anchor_kind: AnchorKind,
+    #[serde(default)]
+    pub anchor_id: String,
+    pub actor_id: String,
+    #[serde(default)]
+    pub actor_name: Option<String>,
+    /// The comment, shortened — empty once its text has been deleted.
+    #[serde(default)]
+    pub excerpt: String,
+    pub created_at: String,
+    /// `None` while unread. Only the reader marks an entry read, and never
+    /// through this crate.
+    #[serde(default)]
+    pub read_at: Option<String>,
+    /// A deep link to the anchored comment, relative to the web app's origin.
+    #[serde(default)]
+    pub path: String,
+}
+
+impl InboxEntry {
+    pub fn is_unread(&self) -> bool {
+        self.read_at.is_none()
+    }
+}
+
+/// One page of the inbox, newest first.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InboxPage {
+    #[serde(default)]
+    pub entries: Vec<InboxEntry>,
+    /// Unread across every Workspace the query covers, **not** this page's
+    /// share — the server counts the total, because a badge is a total.
+    #[serde(default)]
+    pub unread: u64,
+    #[serde(default)]
+    pub next_cursor: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -361,6 +466,46 @@ mod tests {
         assert_eq!(row.message_count, 0);
         assert_eq!(row.author_id, None);
         assert!(!row.incomplete);
+    }
+
+    #[test]
+    fn an_inbox_page_decodes_in_the_servers_shape() {
+        let page: InboxPage = serde_json::from_value(serde_json::json!({
+            "entries": [{
+                "id": "n1",
+                "kind": "artifact_reply",
+                "orgId": "org_1",
+                "workspaceId": "ws_1",
+                "workspaceSlug": "atlas",
+                "sessionId": "ses_1",
+                "sessionTitle": null,
+                "commentId": "c1",
+                "anchorKind": "tool_call",
+                "anchorId": "tc_1",
+                "actorId": "user_ada",
+                "actorName": null,
+                "excerpt": "looks good",
+                "createdAt": "2026-09-20T10:04:11.000Z",
+                "readAt": null,
+                "path": "/timeline?org=org_1&workspace=ws_1&session=ses_1&comment=c1",
+            }],
+            "unread": 60,
+            "nextCursor": "1758362651000:n1",
+        }))
+        .expect("decodes");
+        assert_eq!(page.unread, 60, "the total, not the page's share");
+        assert_eq!(page.next_cursor.as_deref(), Some("1758362651000:n1"));
+        let entry = &page.entries[0];
+        assert_eq!(entry.kind, InboxKind::Reply);
+        assert_eq!(entry.anchor_kind, AnchorKind::ToolCall);
+        assert!(entry.is_unread());
+    }
+
+    #[test]
+    fn an_inbox_kind_this_build_does_not_know_reads_as_the_weakest() {
+        let kind: InboxKind = serde_json::from_value(serde_json::json!("artifact_nudge")).unwrap();
+        assert_eq!(kind, InboxKind::SessionComment);
+        assert_eq!(serde_json::to_value(InboxKind::Mention).unwrap(), serde_json::json!("artifact_mention"));
     }
 
     #[test]

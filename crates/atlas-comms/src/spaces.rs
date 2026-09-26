@@ -26,7 +26,7 @@ use tokio::sync::{broadcast, mpsc};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
 use crate::conn::{classify_handshake, ticket_request, ExitReason};
-use crate::{spaces_socket_url, TokenSource};
+use crate::{spaces_socket_url, CommsError, TokenSource};
 
 /// Backoff for the Spaces socket — the web client's numbers (500ms · 2^n,
 /// capped at 10s), not the chat socket's. A canvas reconnect is user-visible
@@ -355,6 +355,156 @@ impl SpacesManager {
     }
 }
 
+/// How long a one-shot [`SpacesManager::create_page`] waits for its answer.
+/// A tree write on the Space's object is one SQL insert; ten seconds is a
+/// server that is not answering, not one that is busy.
+pub const PAGE_CREATE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// A `page.create` control frame, as the contract (`SpacePageCreate`) shapes
+/// it. Every field is optional there: an absent one is left out of the frame,
+/// never sent as `null`, because `parent_id: null` and `icon: null` are
+/// statements ("at the root", "no icon") where absence is not.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct PageCreate {
+    /// `"page"` (the server's default) or `"folder"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    /// The folder it goes in; absent lands it at the root.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+}
+
+impl PageCreate {
+    /// A page at the root of the Space, with a name.
+    pub fn root_page(name: impl Into<String>) -> Self {
+        Self { name: Some(name.into()), ..Self::default() }
+    }
+
+    /// The frame as it goes on the wire.
+    pub fn frame(&self) -> String {
+        let mut value = serde_json::to_value(self).unwrap_or_else(|_| serde_json::json!({}));
+        value["t"] = serde_json::json!("page.create");
+        value.to_string()
+    }
+}
+
+impl SpacesManager {
+    /// Create one page in a conversation's Space from Rust, and answer its id.
+    ///
+    /// On a **connection of its own**, dialled for this one frame and closed
+    /// after, never the renderer's canvas socket: the server answers
+    /// `page.created` to the socket that asked and to no other, so a private
+    /// socket is what makes the answer unambiguously this call's — on a shared
+    /// one, a page the person creates at the same moment would race it. The
+    /// tree broadcast that follows reaches every open canvas as usual, so a
+    /// Space open in the window shows the new page at once.
+    ///
+    /// Authenticated exactly as the canvas socket is (one re-mint on a 401,
+    /// the JWT being able to expire between minting and dialling); a 403 —
+    /// not a member of the conversation — is [`CommsError::Forbidden`].
+    pub async fn create_page(&self, org_id: &str, conv_id: &str, page: &PageCreate) -> crate::Result<String> {
+        let mut reminted = false;
+        loop {
+            let token = self.inner.tokens.mint().await?;
+            let request = ticket_request(spaces_socket_url(org_id, conv_id), &token)?;
+            match tokio_tungstenite::connect_async(request).await {
+                Ok((stream, _response)) => {
+                    let (write, read) = stream.split();
+                    return await_page_created(write, read, page.frame(), PAGE_CREATE_TIMEOUT).await;
+                }
+                Err(err) => match classify_handshake(&err) {
+                    // Never the error itself: it can carry the request, and
+                    // the request the ticket.
+                    ExitReason::Unauthorized if !reminted => reminted = true,
+                    ExitReason::Unauthorized => return Err(CommsError::Unauthorized),
+                    ExitReason::Forbidden | ExitReason::Evicted => return Err(CommsError::Forbidden),
+                    ExitReason::Closed => return Err(CommsError::Transport("closed during the handshake".into())),
+                    ExitReason::Transport(reason) => return Err(CommsError::Transport(reason)),
+                },
+            }
+        }
+    }
+}
+
+/// One `page.create` over an open Space socket: send the frame, then read
+/// until the server answers it — `page.created` with the new page's id, or an
+/// `error` frame (the contract's chat envelope: a full Space, an archived
+/// conversation, a malformed name), which is [`CommsError::Refused`] with the
+/// server's code and words. The greeting and tree broadcasts in between are
+/// passed over. A close before the answer, or no answer within `timeout`, is
+/// an error that says the page may or may not exist — the frame went out, so
+/// only the Space can say which.
+///
+/// The socket is closed politely whatever the outcome.
+pub(crate) async fn await_page_created<W, R, E>(
+    mut write: W,
+    mut read: R,
+    frame: String,
+    timeout: Duration,
+) -> crate::Result<String>
+where
+    W: futures_util::Sink<WsMessage> + Unpin,
+    W::Error: std::fmt::Display,
+    R: futures_util::Stream<Item = Result<WsMessage, E>> + Unpin,
+    E: std::fmt::Display,
+{
+    if let Err(e) = write.send(WsMessage::Text(frame.into())).await {
+        return Err(CommsError::Transport(e.to_string()));
+    }
+    let answer = tokio::time::timeout(timeout, async {
+        loop {
+            match read.next().await {
+                Some(Ok(WsMessage::Text(text))) => {
+                    let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else { continue };
+                    match value.get("t").and_then(|t| t.as_str()) {
+                        Some("page.created") => {
+                            return match value.get("page_id").and_then(|id| id.as_str()) {
+                                Some(id) if !id.is_empty() => Ok(id.to_string()),
+                                _ => Err(CommsError::Protocol("page.created without a page_id".into())),
+                            };
+                        }
+                        Some("error") => {
+                            let error = &value["error"];
+                            return Err(CommsError::Refused {
+                                code: error["code"].as_str().unwrap_or("error").to_string(),
+                                message: error["message"].as_str().unwrap_or("the Space refused the page").to_string(),
+                                detail: error.get("detail").cloned(),
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+                Some(Ok(WsMessage::Close(frame))) => {
+                    let revoked = frame.as_ref().is_some_and(|f| u16::from(f.code) == 1008);
+                    return Err(if revoked {
+                        CommsError::Forbidden
+                    } else {
+                        CommsError::Transport("the Space closed before answering; the page may not exist".into())
+                    });
+                }
+                Some(Ok(_)) => {}
+                Some(Err(e)) => return Err(CommsError::Transport(e.to_string())),
+                None => {
+                    return Err(CommsError::Transport("the Space closed before answering; the page may not exist".into()))
+                }
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| {
+        Err(CommsError::Transport(format!(
+            "the Space did not answer within {}s; the page may or may not have been created",
+            timeout.as_secs()
+        )))
+    });
+    let _ = write.send(WsMessage::Close(None)).await;
+    answer
+}
+
 fn backoff_ms(attempt: u32) -> u64 {
     RECONNECT_BASE_MS
         .saturating_mul(1u64 << attempt.min(20))
@@ -424,5 +574,88 @@ mod tests {
             serde_json::to_string(&ev).unwrap(),
             r#"{"kind":"binary","data":"AQI="}"#
         );
+    }
+
+    #[test]
+    fn a_root_page_create_frame_names_the_page_and_nothing_else() {
+        let frame: serde_json::Value = serde_json::from_str(&PageCreate::root_page("Architecture").frame()).unwrap();
+        assert_eq!(frame, serde_json::json!({ "t": "page.create", "name": "Architecture" }));
+    }
+
+    #[test]
+    fn a_page_create_frame_carries_every_field_it_was_given() {
+        let page = PageCreate {
+            kind: Some("folder".into()),
+            name: Some("Plans".into()),
+            icon: Some("🗂".into()),
+            parent_id: Some("p-1".into()),
+        };
+        let frame: serde_json::Value = serde_json::from_str(&page.frame()).unwrap();
+        assert_eq!(
+            frame,
+            serde_json::json!({ "t": "page.create", "kind": "folder", "name": "Plans", "icon": "🗂", "parent_id": "p-1" })
+        );
+    }
+
+    type Frames = Vec<Result<WsMessage, std::convert::Infallible>>;
+
+    fn text(value: serde_json::Value) -> Result<WsMessage, std::convert::Infallible> {
+        Ok(WsMessage::Text(value.to_string().into()))
+    }
+
+    #[tokio::test]
+    async fn page_created_answers_the_new_pages_id_past_the_greeting_and_the_tree() {
+        let mut sent: Vec<WsMessage> = Vec::new();
+        let frames: Frames = vec![
+            text(serde_json::json!({ "t": "space.hello", "pages": [] })),
+            text(serde_json::json!({ "t": "page.tree", "pages": [] })),
+            text(serde_json::json!({ "t": "page.created", "page_id": "p-new" })),
+        ];
+        let frame = PageCreate::root_page("Architecture").frame();
+        let id = await_page_created(&mut sent, futures_util::stream::iter(frames), frame.clone(), PAGE_CREATE_TIMEOUT)
+            .await
+            .unwrap();
+        assert_eq!(id, "p-new");
+        assert_eq!(sent.first(), Some(&WsMessage::Text(frame.into())), "the frame went out first");
+        assert!(matches!(sent.last(), Some(WsMessage::Close(None))), "and the socket was closed");
+    }
+
+    #[tokio::test]
+    async fn an_error_frame_is_the_servers_refusal_with_its_code_and_words() {
+        let mut sent: Vec<WsMessage> = Vec::new();
+        let frames: Frames = vec![text(serde_json::json!({
+            "t": "error",
+            "error": { "code": "quota_exceeded", "message": "A Space holds at most 200 pages and folders.", "detail": { "limit": 200 } },
+        }))];
+        let err = await_page_created(&mut sent, futures_util::stream::iter(frames), "{}".into(), PAGE_CREATE_TIMEOUT)
+            .await
+            .unwrap_err();
+        match err {
+            CommsError::Refused { code, message, detail } => {
+                assert_eq!(code, "quota_exceeded");
+                assert!(message.contains("200 pages"));
+                assert_eq!(detail, Some(serde_json::json!({ "limit": 200 })));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_close_before_the_answer_says_the_page_may_not_exist() {
+        let mut sent: Vec<WsMessage> = Vec::new();
+        let frames: Frames = vec![text(serde_json::json!({ "t": "space.hello" }))];
+        let err = await_page_created(&mut sent, futures_util::stream::iter(frames), "{}".into(), PAGE_CREATE_TIMEOUT)
+            .await
+            .unwrap_err();
+        assert!(matches!(&err, CommsError::Transport(m) if m.contains("may not exist")), "{err:?}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn no_answer_within_the_timeout_is_an_error_that_says_it_may_exist() {
+        let mut sent: Vec<WsMessage> = Vec::new();
+        let silent = futures_util::stream::pending::<Result<WsMessage, std::convert::Infallible>>();
+        let err = await_page_created(&mut sent, silent, "{}".into(), PAGE_CREATE_TIMEOUT).await.unwrap_err();
+        assert!(matches!(&err, CommsError::Transport(m) if m.contains("did not answer within 10s")), "{err:?}");
+        assert!(matches!(sent.last(), Some(WsMessage::Close(None))));
     }
 }

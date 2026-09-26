@@ -669,11 +669,13 @@ pub fn install_manager(app: &AppHandle) {
         let gate: super::memory_server::SharingGate =
             Arc::new(move |cwd: &str| gate_app.state::<MemorySharingState>().is_enabled(cwd));
         // The UI tool server (ADR-0012): each call is one UI action, emitted
-        // to the window and answered through `ui_action_respond`.
+        // to the window and answered through `ui_action_respond`. The
+        // organisation tool server's window tools cross on the same bridge,
+        // under their own event name.
         let emit_app = app.clone();
         let ui_bridge = Arc::new(super::ui_server::UiBridge::new(Arc::new(
             move |request: &super::ui_server::UiRequest| {
-                emit_app.emit(super::ui_server::UI_ACTION_EVENT, request).map_err(|e| e.to_string())
+                emit_app.emit(super::ui_server::action_event(request), request).map_err(|e| e.to_string())
             },
         )));
         app.manage(ui_bridge.clone());
@@ -685,15 +687,54 @@ pub fn install_manager(app: &AppHandle) {
                 .try_state::<crate::state::AtlasConfigHandle>()
                 .is_some_and(|config| config.lock().effective().agent_ui_navigation)
         });
-        let ui_router = super::ui_server::router(super::ui_server::UiTools::new(ui_bridge, navigation.clone()));
+        let ui_router =
+            super::ui_server::router(super::ui_server::UiTools::new(ui_bridge.clone(), navigation.clone()));
+        // The organisation tool server (ADR-0014): calls act in the
+        // organisation the session's Project is bound to, through the clients
+        // the app already holds. Its setting, "Let Atlas Agent act in your
+        // organisation", is read on every offer and every call, like the
+        // navigation one.
+        let org_app = app.clone();
+        let org_access: super::org_server::OrgAccessGate = Arc::new(move || {
+            org_app
+                .try_state::<crate::state::AtlasConfigHandle>()
+                .is_some_and(|config| config.lock().effective().agent_org_access)
+        });
+        // Every call is audited: its record goes to the window, which writes
+        // the call's Logs row.
+        let audit_app = app.clone();
+        // The account and the Project's binding, read by the offer and again
+        // by every call, so signing out or unbinding stops a running session.
+        let session_orgs: Arc<dyn super::org_server::SessionOrgs> =
+            Arc::new(super::org_server::AppSessionOrgs::new(app.clone()));
+        let org_tools = super::org_server::OrgTools::new(
+            Arc::new(super::org_server::AppOrganisationCloud::new(app.clone())),
+            org_access.clone(),
+            session_orgs.clone(),
+        )
+        .with_audit(Arc::new(move |record: &super::org_server::OrgActionRecord| {
+            let _ = audit_app.emit(super::org_server::ORG_ACTION_EVENT, record);
+        }))
+        // Drawing on a Space page crosses to the window: the page's codec
+        // lives in the frontend.
+        .with_window(ui_bridge);
+        let org_router = super::org_server::router(org_tools.clone());
         // Every agent that can take the server is handed it on each session
         // request, with a token of its own. It is the only way memory reaches
         // an agent (ADR-0010): nothing is prepended to a prompt. A connection
-        // that carries UI control is also handed the UI tool server, on the
-        // same token.
+        // that carries UI control is also handed the UI tool server, and one
+        // that carries organisation access the organisation tool server, all
+        // on the same token.
         host.set_session_mcp(Arc::new(
             super::memory_server::MemorySessionOffers::new(server.clone(), gate.clone())
-                .with_ui(super::ui_server::UiOffer::new(navigation)),
+                .with_ui(super::ui_server::UiOffer::new(navigation))
+                // The same tools describe an outward call on the approval
+                // card — whom it reaches, and the full body — and keep the
+                // user's approval of it, which the call checks (ADR-0014).
+                .with_org(
+                    super::org_server::OrgOffer::new(org_access, session_orgs)
+                        .describing_with(org_tools),
+                ),
         ));
         // `memory_search` also answers from the project's indexed documents.
         let index_app = app.clone();
@@ -739,7 +780,7 @@ pub fn install_manager(app: &AppHandle) {
                 bootstrap: Some(bootstrap),
                 evict: Some(evict),
             },
-            vec![ui_router],
+            vec![ui_router, org_router],
         );
     }
 

@@ -1,8 +1,9 @@
 //! The MCP surface of the UI tool server: the tools, their instructions, and
 //! the handler that turns each call into one UI action.
 //!
-//! Rust validates nothing beyond "the arguments are an object": what a tool
-//! does, and what it answers, is the frontend's (`src/features/ui-actions`).
+//! Rust validates nothing beyond "the arguments are an object" — and the two
+//! ids that open a Space page ([`space_page_refusal`]): what a tool does, and
+//! what it answers, is the frontend's (`src/features/ui-actions`).
 //! Schemas are kept flat, with one-clause descriptions, because every native
 //! turn carries them in its fixed prefix.
 
@@ -24,6 +25,7 @@ use uuid::Uuid;
 use super::bridge::{UiBridge, UiRequest};
 use super::{NavigationGate, UI_PATH};
 use crate::commands::memory_server::{Grant, TOOLS_LIST_TTL_MS};
+use crate::commands::org_server::is_org_id;
 
 /// What the server tells the agent about itself. The engine shows it as the
 /// description of the `atlas_ui` tool namespace.
@@ -62,11 +64,12 @@ pub(super) fn tools() -> Vec<Tool> {
         tool(
             "ui_open",
             "Open something in the active project and make it the active tab. file: optional 1-based line/column/endLine/endColumn. \
-             diff: git diff of `path`. tab: a plain tab type. thread: a chat by session id. Paths may be relative to your cwd.",
+             diff: git diff of `path`. tab: a plain tab type. thread: a chat by session id. space_page: a conversation's Space \
+             on pageId. Paths may be relative to your cwd.",
             json!({
                 "type": "object",
                 "properties": {
-                    "target": { "type": "string", "enum": ["file", "diff", "settings", "tab", "thread", "new_chat", "timeline", "url", "knowledge"] },
+                    "target": { "type": "string", "enum": ["file", "diff", "settings", "tab", "thread", "new_chat", "timeline", "url", "knowledge", "space_page"] },
                     "path": { "type": "string" },
                     "line": { "type": "integer" },
                     "column": { "type": "integer" },
@@ -80,7 +83,9 @@ pub(super) fn tools() -> Vec<Tool> {
                     "sessionId": { "type": "string" },
                     "agent": { "type": "string" },
                     "url": { "type": "string" },
-                    "noteId": { "type": "string" }
+                    "noteId": { "type": "string" },
+                    "conversationId": { "type": "string" },
+                    "pageId": { "type": "string" }
                 },
                 "required": ["target"]
             }),
@@ -164,6 +169,21 @@ fn tool_error(message: impl Into<String>) -> CallToolResult {
     CallToolResult::error(vec![Content::text(message.into())])
 }
 
+/// Why a `ui_open` of a Space page is refused before the window is asked, or
+/// `None`. The page is opened by two ids — the conversation's and the page's
+/// — and they reach the window only in an organisation id's shape
+/// ([`is_org_id`]), so nothing else rides into the Space's routes as one.
+fn space_page_refusal(name: &str, args: &Value) -> Option<String> {
+    if name != "ui_open" || args.get("target").and_then(Value::as_str) != Some("space_page") {
+        return None;
+    }
+    ["conversationId", "pageId"].into_iter().find_map(|key| match args.get(key).and_then(Value::as_str) {
+        Some(id) if is_org_id(id) => None,
+        Some(id) => Some(format!("ui_open: {key} \"{id}\" is not an id")),
+        None => Some(format!("ui_open: target space_page needs {key}")),
+    })
+}
+
 #[derive(Clone)]
 pub struct UiTools {
     bridge: Arc<UiBridge>,
@@ -184,6 +204,9 @@ impl UiTools {
             return tool_error(format!("unknown tool `{name}`"));
         }
         let args = Value::Object(request.arguments.unwrap_or_default());
+        if let Some(refusal) = space_page_refusal(&name, &args) {
+            return tool_error(refusal);
+        }
         let asked = UiRequest {
             request_id: Uuid::new_v4(),
             session_id: grant.session_id,
@@ -192,12 +215,8 @@ impl UiTools {
             tool: name,
             args,
         };
-        match self.bridge.request(asked).await {
-            Ok(reply) if reply.ok => {
-                let result = reply.result.unwrap_or_else(|| json!({}));
-                CallToolResult::success(vec![Content::text(result.to_string())])
-            }
-            Ok(reply) => tool_error(reply.error.unwrap_or_else(|| "the Atlas window refused the action".to_string())),
+        match self.bridge.perform(asked).await {
+            Ok(result) => CallToolResult::success(vec![Content::text(result.to_string())]),
             Err(e) => tool_error(e),
         }
     }

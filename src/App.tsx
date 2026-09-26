@@ -67,6 +67,7 @@ import { AgentOAuthModalHost } from "@/features/agents/components/agent-oauth-mo
 import { watchRemovedAgents } from "@/features/chat/lib/removed-agents";
 import { AgentElicitationHost } from "@/features/chat/components/agent-elicitation-host";
 import { UiActionBridge } from "@/features/ui-actions/components/ui-action-bridge";
+import { OrgActionLogBridge } from "@/features/org-actions/components/org-action-log-bridge";
 import { initWindowFocusTracking, isWindowFocused } from "@/lib/window-focus";
 import { primeNativeNotificationPermission, sendNativeNotification } from "@/lib/native-notify";
 import { logEvent } from "@/features/log/lib/log";
@@ -1571,6 +1572,7 @@ export function App() {
           arrive before the agent has any session to route them by. */}
       <AgentElicitationHost />
       <UiActionBridge />
+      <OrgActionLogBridge />
       <NotificationPanel />
       <FeedbackPanel />
       <UpdateAvailableModal />

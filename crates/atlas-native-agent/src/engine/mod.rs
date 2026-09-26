@@ -23,6 +23,11 @@
 //! - [`config`] — engine config assembly, which the spec puts *here* rather than
 //!   in `src-tauri`: the seam is the only place that knows both Atlas's settings
 //!   and the engine's shape
+//! - [`approvals`] and [`questions`] — the two things the engine may ask the
+//!   user mid-turn: tool permission, and a clarifying question (ADR-0013);
+//!   [`tool_approvals`] is the permission for an outward action on one of
+//!   Atlas's own tool servers (ADR-0014), which the engine asks as an MCP
+//!   elicitation of its own
 
 pub mod approvals;
 pub mod auth;
@@ -33,10 +38,12 @@ pub mod config;
 pub mod connection;
 pub mod mcp;
 pub mod modes;
+pub mod questions;
 pub mod replay;
 pub mod runtime;
 pub mod server;
 pub mod sink;
+pub mod tool_approvals;
 
 #[cfg(test)]
 pub(crate) mod test_support;

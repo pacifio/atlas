@@ -26,7 +26,7 @@ use crate::state::{
     SendStatus, StateDelta,
 };
 use crate::store::CommsStore;
-use crate::wire::{ClientFrame, Message, ReactionRow, ServerFrame, CHAT_TYPING_INTERVAL_MS};
+use crate::wire::{SessionReference, ClientFrame, Message, ReactionRow, ServerFrame, CHAT_TYPING_INTERVAL_MS};
 use crate::{chat_base, socket_url, OrgTarget, TokenSource};
 
 const RECONNECT_BASE_MS: u64 = 1_000;
@@ -749,6 +749,7 @@ impl CommsManager {
                 reply_to_id: sent.reply_to_id.clone(),
                 attachments: sent.attachments.clone(),
                 code_refs: Vec::new(),
+                artifact_refs: sent.artifact_refs.clone(),
             });
         }
     }
@@ -756,6 +757,11 @@ impl CommsManager {
     // -- outbound ------------------------------------------------------------
 
     /// Write a message. Returns the `client_msg_id` that identifies it.
+    ///
+    /// `artifact_refs` are the recorded sessions and checkpoints it points at
+    /// (at most [`CHAT_MESSAGE_ARTIFACT_REF_MAX`](crate::wire::CHAT_MESSAGE_ARTIFACT_REF_MAX)),
+    /// kept on the optimistic row so the card draws at once, and on the
+    /// pending send so a resend carries them too.
     ///
     /// The optimistic row is created here, in Rust, because the `ack` carries
     /// only ids — the body has to be remembered somewhere, and splitting that
@@ -771,6 +777,7 @@ impl CommsManager {
         body: String,
         reply_to_id: Option<String>,
         attachments: Vec<String>,
+        artifact_refs: Vec<SessionReference>,
     ) -> Result<String> {
         if self.session().is_none() {
             return Err(CommsError::Protocol("no organisation is connected".into()));
@@ -806,6 +813,7 @@ impl CommsManager {
             created_at: now,
             attachments: self.attachment_meta(&attachments),
             code_refs: Vec::new(),
+            artifact_refs: artifact_refs.clone(),
             draft_id: None,
         };
 
@@ -817,6 +825,7 @@ impl CommsManager {
                 body: body.clone(),
                 reply_to_id: reply_to_id.clone(),
                 attachments: attachments.clone(),
+                artifact_refs: artifact_refs.clone(),
                 sent_at: now,
             },
         );
@@ -848,6 +857,7 @@ impl CommsManager {
             reply_to_id,
             attachments,
             code_refs: Vec::new(),
+            artifact_refs,
         });
 
         Ok(client_msg_id)
@@ -901,6 +911,7 @@ impl CommsManager {
                     row.message.body.clear();
                     row.message.attachments.clear();
                     row.message.code_refs.clear();
+                    row.message.artifact_refs.clear();
                     found = Some((conv_id.clone(), row.clone()));
                     break;
                 }
@@ -1792,6 +1803,7 @@ pub fn to_wire(row: &LocalMessage) -> WireMessage {
         created_at: row.message.created_at,
         attachments: row.message.attachments.clone(),
         code_refs: row.message.code_refs.clone(),
+        artifact_refs: row.message.artifact_refs.clone(),
         draft_id: row.message.draft_id.clone(),
         client_msg_id: row.client_msg_id.clone(),
         status: match row.status {
@@ -2239,6 +2251,7 @@ mod tests {
             created_at: 1,
             attachments: vec![],
             code_refs: vec![],
+            artifact_refs: vec![],
             draft_id: None,
         };
         assert!(!mgr.adopt_page(&stale, "c1", vec![message], false));
@@ -2272,7 +2285,7 @@ mod tests {
     async fn send_without_a_target_is_an_error_with_no_side_effects() {
         let mgr = fresh();
         let mut rx = mgr.subscribe();
-        assert!(mgr.send("c1", "hello".into(), None, vec![]).is_err());
+        assert!(mgr.send("c1", "hello".into(), None, vec![], vec![]).is_err());
         assert!(mgr.inner.pending.lock().unwrap().is_empty());
         assert!(mgr.with_state(|s| s.messages.is_empty()));
         assert!(rx.try_recv().is_err());
@@ -2413,6 +2426,7 @@ mod tests {
                     created_at: 1,
                     attachments: vec![],
                     code_refs: vec![],
+                    artifact_refs: vec![],
                     draft_id: None,
                 })],
             );
@@ -2465,6 +2479,7 @@ mod tests {
                     created_at: 1,
                     attachments: vec![],
                     code_refs: vec![],
+                    artifact_refs: vec![],
                     draft_id: None,
                 })],
             );

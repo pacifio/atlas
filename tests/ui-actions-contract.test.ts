@@ -85,4 +85,19 @@ describe("UI action contract", () => {
     expect(offered.length, "the schema enum parsed").toBeGreaterThan(1);
     expect([...offered].sort()).toEqual([...tsList(file, list)].sort());
   });
+
+  /// A Space page is opened by two ids that Rust checks before the window is
+  /// asked; a key renamed on one side would be refused, or read unchecked.
+  it.each(["conversationId", "pageId"])(
+    "ui_open's space_page id %s is offered, checked in Rust and read by the window",
+    (key) => {
+      const rust = read("src-tauri/src/commands/ui_server/tools.rs");
+      const start = rust.indexOf('"ui_open",');
+      const schema = rust.slice(start, rust.indexOf("tool(", start));
+      expect(schema).toContain(`"${key}": { "type": "string" }`);
+      const check = rust.slice(rust.indexOf("fn space_page_refusal"));
+      expect(check.slice(0, check.indexOf("\n}\n"))).toContain(`"${key}"`);
+      expect(read("src/features/ui-actions/lib/ui-open.ts")).toContain(`a.str("${key}")`);
+    },
+  );
 });

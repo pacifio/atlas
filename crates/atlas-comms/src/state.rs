@@ -26,6 +26,8 @@ pub struct PendingSend {
     pub body: String,
     pub reply_to_id: Option<String>,
     pub attachments: Vec<String>,
+    /// Sent whole on every resend, like the body.
+    pub artifact_refs: Vec<crate::wire::SessionReference>,
     /// When it was written, for the no-ack timeout.
     pub sent_at: i64,
 }
@@ -350,6 +352,7 @@ pub fn apply_frame(
                 row.message.body.clear();
                 row.message.attachments.clear();
                 row.message.code_refs.clear();
+                row.message.artifact_refs.clear();
                 let mut deltas = vec![StateDelta::MessageUpdated {
                     conv_id: conv_id.clone(),
                     id: id.clone(),

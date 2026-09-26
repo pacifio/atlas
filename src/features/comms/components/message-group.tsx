@@ -36,6 +36,7 @@ import { aggregateReactions, formatClock } from "../lib/derive";
 import { useCommsStore } from "../stores/comms-store";
 import { ArcProgress } from "./arc-progress";
 import { AudioPlayer } from "./audio-player";
+import { SessionReferenceCard } from "./session-reference-card";
 import { CHAT_REACTION_EMOJI } from "../types";
 import type { ChatAttachment, CommsMessage, OrgMemberProfile } from "../types";
 
@@ -275,6 +276,7 @@ function MessageContent({
   const pending = message.status === "sending";
   const failed = message.status === "failed";
   const hasBody = message.body.trim().length > 0;
+  const references = message.artifact_refs ?? [];
 
   return (
     <div className={cn(pending && "opacity-60")}>
@@ -293,6 +295,24 @@ function MessageContent({
         <div className={cn("flex flex-col gap-1.5", hasBody && "mt-1.5")}>
           {message.attachments.map((a) => (
             <AttachmentView key={a.id} attachment={a} convId={message.conv_id} />
+          ))}
+        </div>
+      )}
+
+      {/* Session References — from the web's picker or the agent's
+          `org_send` alike: each opens its recorded session on the Timeline. */}
+      {references.length > 0 && (
+        <div
+          className={cn(
+            "flex flex-col gap-1.5",
+            (hasBody || message.attachments.length > 0) && "mt-1.5",
+          )}
+        >
+          {references.map((r) => (
+            <SessionReferenceCard
+              key={`${r.kind}:${r.session_id}:${r.kind === "checkpoint" ? r.row_id : ""}`}
+              reference={r}
+            />
           ))}
         </div>
       )}

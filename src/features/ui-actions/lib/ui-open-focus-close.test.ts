@@ -27,6 +27,28 @@ const invokeMock = vi.hoisted(() =>
           ],
         },
       ];
+    if (cmd === "spaces_summary") {
+      if ((_args as { convId: string }).convId !== "c-design") throw "Space not found";
+      const row = (id: string, kind: "page" | "folder", name: string) => ({
+        id,
+        kind,
+        name,
+        icon: null,
+        parent_id: null,
+        sort: 0,
+        created_at: 0,
+        updated_at: 0,
+      });
+      return {
+        protocol: 1,
+        doc_version: 1,
+        space_id: "sp-1",
+        conv_id: "c-design",
+        pages: [row("p-arch", "page", "Architecture"), row("f-docs", "folder", "Docs")],
+        active_page_id: null,
+        archived: false,
+      };
+    }
     if (
       cmd === "file_mtime_ms" &&
       String((_args as { path?: string })?.path).includes("only-at-root")
@@ -45,6 +67,8 @@ import { useSettingsNav } from "@/features/settings/stores/settings-nav-store";
 import { useArtifactsStore } from "@/features/artifacts/stores/artifacts-store";
 import { useKnowledgeStore } from "@/features/knowledge/stores/knowledge-store";
 import { useProjectStore } from "@/features/projects/stores/project-store";
+import { useCommsStore } from "@/features/comms/stores/comms-store";
+import { useSpacesStore } from "@/features/spaces/stores/spaces-store";
 import { performUiAction } from "./ui-actions";
 import { seedWindow, tab, uiRequest } from "./test-fixtures";
 import type { UiActionReply } from "./types";
@@ -189,6 +213,54 @@ describe("ui_open", () => {
     expect(error(await act("ui_open", { target: "thread", sessionId: "sess-nope" }))).toMatch(
       /atlas/,
     );
+  });
+
+  it("opens a conversation's Space on a page, through the Space tab the conversation opens", async () => {
+    useCommsStore.setState({
+      conversations: [
+        { id: "c-design", kind: "channel", name: "design", member_ids: null },
+      ] as never,
+    });
+    const opened = result(
+      await act("ui_open", { target: "space_page", conversationId: "c-design", pageId: "p-arch" }),
+    );
+    expect(opened).toEqual({
+      tabId: "spaces-c-design",
+      conversationId: "c-design",
+      pageId: "p-arch",
+      page: "Architecture",
+    });
+    const tab = layout().tabs.find((t) => t.id === "spaces-c-design");
+    expect(tab).toMatchObject({
+      type: "spaces",
+      title: "design — Space",
+      data: { convId: "c-design" },
+    });
+    expect(layout().activeTabId).toBe("spaces-c-design");
+    expect(useSpacesStore.getState().requestedPages["c-design"]).toBe("p-arch");
+
+    // Asked again, the same tab is refocused, not a second one opened.
+    result(
+      await act("ui_open", { target: "space_page", conversationId: "c-design", pageId: "p-arch" }),
+    );
+    expect(layout().tabs.filter((t) => t.type === "spaces")).toHaveLength(1);
+  });
+
+  it("refuses a Space page that is not there, naming what is missing", async () => {
+    useCommsStore.setState({
+      conversations: [
+        { id: "c-design", kind: "channel", name: "design", member_ids: null },
+      ] as never,
+    });
+    const open = (conversationId: string, pageId: string) =>
+      act("ui_open", { target: "space_page", conversationId, pageId });
+    expect(error(await open("c-gone", "p-arch"))).toMatch(/no conversation c-gone/);
+    expect(error(await open("c-design", "p-nope"))).toMatch(/no page p-nope/);
+    expect(error(await open("c-design", "f-docs"))).toMatch(/"Docs" is a folder/);
+    expect(
+      error(await act("ui_open", { target: "space_page", conversationId: "c-design" })),
+    ).toMatch(/pageId/);
+    expect(layout().tabs.some((t) => t.type === "spaces")).toBe(false);
   });
 
   it("has no project target: UI actions never switch projects", async () => {

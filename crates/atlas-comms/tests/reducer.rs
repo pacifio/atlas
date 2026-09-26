@@ -118,6 +118,7 @@ fn ack_promotes_the_optimistic_row_in_place() {
             body: "hello".into(),
             reply_to_id: None,
             attachments: vec![],
+            artifact_refs: vec![],
             sent_at: NOW,
         },
     );
@@ -135,6 +136,7 @@ fn ack_promotes_the_optimistic_row_in_place() {
                 created_at: NOW,
                 attachments: vec![],
                 code_refs: vec![],
+                artifact_refs: vec![],
                 draft_id: None,
             },
             client_msg_id: Some("cm1".into()),
@@ -180,6 +182,7 @@ fn our_own_send_arriving_from_another_device_does_not_double() {
             body: "hello".into(),
             reply_to_id: None,
             attachments: vec![],
+            artifact_refs: vec![],
             sent_at: NOW,
         },
     );
@@ -197,6 +200,7 @@ fn our_own_send_arriving_from_another_device_does_not_double() {
                 created_at: NOW,
                 attachments: vec![],
                 code_refs: vec![],
+                artifact_refs: vec![],
                 draft_id: None,
             },
             client_msg_id: Some("cm1".into()),

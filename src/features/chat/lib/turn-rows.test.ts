@@ -250,6 +250,46 @@ describe("the icon a marker leads with", () => {
     expect(memory.tool).toBe("search");
   });
 
+  /// An organisation call (ADR-0014) is one row like a UI action, wearing the
+  /// organisation icon and naming what it was about; the table itself is
+  /// tested in `org-actions/lib/org-tool-rows.test.ts`.
+  it("gives an organisation call the organisation icon and a one-line subject", () => {
+    const answer = JSON.stringify({
+      content: [{ type: "text", text: JSON.stringify({ member: { name: "Grace Hopper" } }) }],
+    });
+    const [row] = markers(
+      turn(
+        toolCall({
+          kind: "other",
+          toolName: "atlas_org.org_members",
+          arguments: { name: "grace@acme.dev" },
+          result: answer,
+        }),
+      ),
+    );
+    expect(row.tool).toBe("org");
+    expect(row.verb).toBe("Looked up");
+    expect(row.detail).toBe("Grace Hopper");
+    expect(row.opens).toBe("output");
+  });
+
+  it("names an organisation call that failed by what it asked, in the failed state", () => {
+    const [row] = markers(
+      turn(
+        toolCall({
+          kind: "other",
+          toolName: "atlas_org.org_conversations",
+          status: "failed",
+          arguments: { name: "#design" },
+          result: '{"error":"\\"#design\\" matches 2 conversations; ask the user which one"}',
+        }),
+      ),
+    );
+    expect(row.tool).toBe("org");
+    expect(row.state).toBe("failed");
+    expect(`${row.verb} ${row.detail}`).toBe("Looked up #design");
+  });
+
   it("does not sniff substrings out of unrelated names", () => {
     // The guard on the sniff list: "confirm" contains "rm", "webhook" contains
     // "web". A wrong icon is worse than the generic one.

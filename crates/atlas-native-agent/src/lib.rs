@@ -35,8 +35,15 @@
 //!   the user's Atlas account through the D10 token provider, not with an ACP
 //!   auth method. It advertises none, which is what makes the sign-in flow skip
 //!   it.
-//! - **Elicitations.** Nothing is asked of the user mid-turn except tool
-//!   permission, which has its own path.
+//! - **Elicitations, bar one.** Nothing is asked of the user mid-turn except
+//!   tool permission and a clarifying question (ADR-0013). Permission has its
+//!   own path; the question is the engine's `request_user_input` tool, raised
+//!   as an elicitation on the thread so the existing question card answers it
+//!   ([`engine::questions`]). MCP servers' elicitations stay refused: a tool
+//!   server returns candidates and the model asks. The one elicitation served
+//!   is the engine's OWN — its approval before an outward action on one of
+//!   Atlas's tool servers (ADR-0014), which is tool permission in an MCP
+//!   envelope and goes to the approval card ([`engine::tool_approvals`]).
 
 pub mod engine;
 

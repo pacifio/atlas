@@ -474,6 +474,9 @@ impl AcpConnection {
                 // A subprocess: Atlas cannot vouch for what it does with the
                 // window, so it is never offered the UI tool server.
                 ui_control: false,
+                // Likewise for the organisation: a binary Atlas does not own
+                // is never handed the user's organisation (ADR-0014).
+                org_access: false,
                 cwd: cwd.to_path_buf(),
                 session_id: session_id.cloned(),
             },

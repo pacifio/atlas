@@ -136,6 +136,31 @@ async fn a_refusal_from_the_window_is_a_tool_error_the_model_can_read() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_space_page_opens_by_its_conversation_and_page_ids_and_a_malformed_id_never_reaches_the_window() {
+    let tokens = Arc::new(MemoryTokens::default());
+    let (bridge, asked) = answering_bridge(|_| UiReply { ok: true, result: Some(json!({ "tabId": "spaces-c-1" })), error: None });
+    let server = serve(tokens.clone(), bridge, navigation(true)).await;
+    let client = connect(&server.url_at(UI_PATH), &tokens.mint("s1", "atlas-agent", "/p")).await.unwrap();
+
+    let open = json!({ "target": "space_page", "conversationId": "c-1", "pageId": "01J8Z3K4M5N6P7Q8R9S0T1V2W3" });
+    let (err, text) = call(&client, "ui_open", open.clone()).await;
+    assert!(!err, "{text}");
+    assert_eq!(asked.lock().last().map(|r| r.args.clone()), Some(open));
+
+    for (args, words) in [
+        (json!({ "target": "space_page", "pageId": "p-1" }), "conversationId"),
+        (json!({ "target": "space_page", "conversationId": "c-1" }), "pageId"),
+        (json!({ "target": "space_page", "conversationId": "c-1", "pageId": "../p-2" }), "pageId"),
+        (json!({ "target": "space_page", "conversationId": "c 1", "pageId": "p-1" }), "conversationId"),
+    ] {
+        let (err, text) = call(&client, "ui_open", args.clone()).await;
+        assert!(err && text.contains(words), "{args}: {text}");
+    }
+    assert_eq!(asked.lock().len(), 1, "only the well-formed call crossed to the window");
+    client.cancel().await.ok();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn with_navigation_off_nothing_crosses_to_the_window() {
     let tokens = Arc::new(MemoryTokens::default());
     let (bridge, asked) = answering_bridge(|_| UiReply { ok: true, result: None, error: None });
@@ -268,6 +293,7 @@ fn session_request(ui_control: bool) -> SessionMcpRequest {
         agent_id: atlas_acp_thread::AgentId::new("atlas-agent"),
         http_mcp: true,
         ui_control,
+        org_access: false,
         cwd: std::path::PathBuf::from("/p"),
         session_id: None,
     }

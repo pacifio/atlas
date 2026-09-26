@@ -586,7 +586,7 @@ pub fn comms_send(
     }
     Ok(SendReceipt {
         client_msg_id: mgr
-            .send(&conv_id, body, reply_to_id, attachments)
+            .send(&conv_id, body, reply_to_id, attachments, Vec::new())
             .map_err(map_err)?,
     })
 }

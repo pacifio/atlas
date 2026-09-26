@@ -39,6 +39,9 @@ export interface ToolCallRef {
   status?: string;
   rawInput?: unknown;
   content?: unknown;
+  /** On a permission request: the tool's own name, kept when the title names
+   *  the act instead (`permission_tool_call` in `atlas-agent-delta`). */
+  toolName?: string;
   [k: string]: unknown;
 }
 

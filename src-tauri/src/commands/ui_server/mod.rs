@@ -44,6 +44,24 @@ pub const UI_PATH: &str = "/ui";
 /// Rust → window: one UI action to perform. Answered by [`ui_action_respond`].
 pub const UI_ACTION_EVENT: &str = "atlas:ui-action";
 
+/// The window event one bridged request goes out on. The bridge is one
+/// implementation for every call that crosses to the window: the UI tool
+/// server's actions go out as [`UI_ACTION_EVENT`], and the organisation tool
+/// server's window tools ([`WINDOW_TOOLS`], e.g. drawing on a Space page,
+/// whose codec lives in the frontend) as [`ORG_WINDOW_ACTION_EVENT`], so each
+/// half of the frontend hears only its own. Both are answered through
+/// [`ui_action_respond`], on the same pending map.
+///
+/// [`WINDOW_TOOLS`]: crate::commands::org_server::WINDOW_TOOLS
+/// [`ORG_WINDOW_ACTION_EVENT`]: crate::commands::org_server::ORG_WINDOW_ACTION_EVENT
+pub fn action_event(request: &UiRequest) -> &'static str {
+    if crate::commands::org_server::WINDOW_TOOLS.contains(&request.tool.as_str()) {
+        crate::commands::org_server::ORG_WINDOW_ACTION_EVENT
+    } else {
+        UI_ACTION_EVENT
+    }
+}
+
 /// Whether the user lets Atlas Agent act on the window (Settings → General →
 /// "Let Atlas Agent navigate the app"). Checked when a session is offered the
 /// server and on every call, so switching it off stops the agent at once.

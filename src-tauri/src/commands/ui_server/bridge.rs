@@ -87,6 +87,19 @@ impl UiBridge {
         }
     }
 
+    /// Send `request` and read the answer as a tool reads it: the window's
+    /// result, or the words the model is told — the window's own refusal, or
+    /// why it never answered. The one reading both servers that cross to the
+    /// window use (the UI tool server, and the organisation tool server's
+    /// window tools), so a refusal reads the same from either.
+    pub async fn perform(&self, request: UiRequest) -> Result<Value, String> {
+        match self.request(request).await {
+            Ok(reply) if reply.ok => Ok(reply.result.unwrap_or_else(|| Value::Object(Default::default()))),
+            Ok(reply) => Err(reply.error.unwrap_or_else(|| "the Atlas window refused the action".to_string())),
+            Err(e) => Err(e),
+        }
+    }
+
     /// Deliver the window's answer. `false` for an id nobody is waiting on.
     pub fn respond(&self, request_id: Uuid, reply: UiReply) -> bool {
         match self.pending.lock().remove(&request_id) {

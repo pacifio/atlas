@@ -16,6 +16,10 @@ import { useChatStore, findTabByAcpSession } from "@/features/chat/stores/chat-s
 import { openAgentSession, openNewAgentChat } from "@/features/chat/lib/open-agent-session";
 import { threadProjects } from "@/features/chat/lib/history-api";
 import { resumeAgentFor } from "@/features/chat/lib/sidebar-agents";
+import { useCommsStore } from "@/features/comms/stores/comms-store";
+import { conversationTitle } from "@/features/comms/lib/derive";
+import { spacesApi } from "@/features/spaces/lib/spaces-api";
+import { openSpaceOnPage } from "@/features/spaces/lib/open-space";
 import { readArgs, refuse } from "./args";
 import { activeProject, resolvePath, tabInScope } from "./scope";
 import type { UiActionRequest } from "./types";
@@ -30,6 +34,7 @@ const TARGETS = [
   "timeline",
   "url",
   "knowledge",
+  "space_page",
 ] as const;
 
 /** Tab types that open with no data of their own, one per column. Files,
@@ -137,9 +142,39 @@ export async function performOpen(request: UiActionRequest): Promise<unknown> {
       useKnowledgeStore.getState().actions.requestOpen(noteId);
       return { tabId, noteId };
     }
+    case "space_page":
+      return openSpacePage(a.str("conversationId"), a.str("pageId"));
     default:
       return refuse(`ui_open: unknown target "${target}"; one of ${TARGETS.join(", ")}`);
   }
+}
+
+/** Open a conversation's Space on one of its pages — the way the
+ *  conversation's own Space button opens it, landed on the page. The
+ *  conversation must be one this window's chat holds, and the page a page
+ *  (not a folder) in its Space's tree, read afresh. Spaces are the
+ *  organisation's, not a project's, so no project is involved. */
+async function openSpacePage(convId: string, pageId: string) {
+  const comms = useCommsStore.getState();
+  const conv = comms.conversations.find((c) => c.id === convId);
+  if (!conv)
+    return refuse(
+      `no conversation ${convId} in this window's organisation chat; you may not be in it`,
+    );
+  let pages;
+  try {
+    pages = (await spacesApi.summary(convId)).pages;
+  } catch (e) {
+    return refuse(
+      `the conversation's Space could not be read: ${typeof e === "string" ? e : String(e)}`,
+    );
+  }
+  const page = pages.find((p) => p.id === pageId);
+  if (!page) return refuse(`the conversation's Space has no page ${pageId}`);
+  if (page.kind !== "page") return refuse(`"${page.name}" is a folder, not a page`);
+  const members = new Map(comms.members.map((m) => [m.id, m]));
+  const tabId = openSpaceOnPage(convId, conversationTitle(conv, members, comms.me), pageId);
+  return { tabId, conversationId: convId, pageId, page: page.name };
 }
 
 /** Focus a thread's chat if it is open here, else resume it from the active

@@ -747,6 +747,15 @@
 .atlas-mention-chip[data-mention-kind="past_session"] {
   color: var(--secondary-foreground);
 }
+.atlas-mention-chip[data-mention-kind="member"] {
+  color: var(--primary);
+}
+.atlas-mention-chip[data-mention-kind="conversation"] {
+  color: var(--primary);
+}
+.atlas-mention-chip[data-mention-kind="recorded_session"] {
+  color: var(--atlas-status-success-foreground);
+}
 
 /* Hover preview card for media (`@file` image/video) mention chips. Appended to
    document.body by the CM ChipWidget; positioned inline via fixed coords. */

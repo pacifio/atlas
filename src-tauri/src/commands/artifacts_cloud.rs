@@ -408,7 +408,6 @@ pub async fn chat_comment_target(
     let Some(state) = app.try_state::<ArtifactsCloudState>() else { return Ok(None) };
     let Some(org_id) = state.org_id() else { return Ok(None) };
     tauri::async_runtime::spawn_blocking(move || {
-        use atlas_checkpoint::Source;
         let Some(store) = crate::commands::capture::open_reader(&project_path)? else {
             return Ok(None);
         };
@@ -417,24 +416,42 @@ pub async fn chat_comment_target(
             return Ok(None);
         }
         let Some(remote_project_id) = binding.remote_workspace_id else { return Ok(None) };
-        let workspace_id =
-            crate::commands::capture::project_id_for(std::path::Path::new(&project_path));
-        let mut row_id = None;
-        for source in [Source::Acp, Source::Native] {
-            row_id = store
-                .session_id_for(&workspace_id, source, &native_session_id)
-                .map_err(|e| e.to_string())?;
-            if row_id.is_some() {
-                break;
-            }
-        }
-        let Some(session_id) = row_id else { return Ok(None) };
+        let Some(session_id) = recorded_session_id(&store, &project_path, &native_session_id)?
+        else {
+            return Ok(None);
+        };
         let entries =
             atlas_checkpoint::session_anchors(&store, &session_id).map_err(|e| e.to_string())?;
         Ok(Some(CommentTarget { remote_project_id, session_id, entries }))
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// The captured row a live chat session is recorded in, which is also its id
+/// on the server — the "current session" join. A chat is keyed by the id its
+/// agent answered with; the row by `(Project, source, that id)`, and which
+/// source recorded it is not known here, so both are tried.
+///
+/// Shared by [`chat_comment_target`] and the organisation tool server's
+/// current recorded session, so the chat's comment pane and the agent can
+/// never disagree about which recorded session a chat is.
+pub(crate) fn recorded_session_id(
+    store: &atlas_checkpoint::Store,
+    project_path: &str,
+    native_session_id: &str,
+) -> Result<Option<String>, String> {
+    use atlas_checkpoint::Source;
+    let workspace_id = crate::commands::capture::project_id_for(std::path::Path::new(project_path));
+    for source in [Source::Acp, Source::Native] {
+        let row_id = store
+            .session_id_for(&workspace_id, source, native_session_id)
+            .map_err(|e| e.to_string())?;
+        if row_id.is_some() {
+            return Ok(row_id);
+        }
+    }
+    Ok(None)
 }
 
 /// Follow one Session's entries and comments in realtime.

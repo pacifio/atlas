@@ -37,11 +37,13 @@ mod model;
 mod socket;
 
 pub use board::{CloudBoard, OrgBoard, ProjectKey};
-pub use client::{ArtifactsClient, CommentTarget, NewComment};
+pub use client::{
+    ArtifactsClient, BoardQuery, CommentTarget, NewComment, BOARD_PAGE_MAX, ENTRY_PAGE_MAX, SEARCH_MAX_CHARS,
+};
 pub use error::{Error, Result};
 pub use manager::{ArtifactsEvent, ArtifactsManager, ManagerConfig};
 pub use model::{
-    AnchorKind, Comment, EntryPayload, RemoteEntry, RemoteEntryCounts, RemoteProject,
+    AnchorKind, Comment, EntryPayload, InboxEntry, InboxKind, InboxPage, RemoteEntry, RemoteEntryCounts, RemoteProject,
     RemoteSession, RemoteToolTally, SessionBoardPage, SessionDetailPage,
 };
 pub use socket::{ClientFrame, ExitReason, Keepalive, ServerFrame};

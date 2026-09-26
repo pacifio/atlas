@@ -72,6 +72,85 @@ pub struct CodeRef {
     pub snippet: String,
 }
 
+/// A **Session Reference**: a recorded session, or one checkpoint inside it,
+/// carried by a message (the contract's `ChatArtifactRef`, ATL-329; the wire
+/// keeps its field name, `artifact_refs`): its own list beside
+/// `code_refs`, at most [`CHAT_MESSAGE_ARTIFACT_REF_MAX`] on a message.
+///
+/// A snapshot, like a code reference's snippet: the figures are what the
+/// sender saw when the reference was drawn, and the server does not re-derive
+/// them. What the server does check is the one thing a client must not
+/// decide — that `workspace_ref_id` is a Workspace this organisation owns,
+/// visible to all of it (`visibility = 'org'`) and not archived. A restricted
+/// Workspace is refused even to its own members, and one bad reference
+/// refuses the whole message.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SessionReference {
+    /// The whole recorded session: what it was, when it began, how much of it
+    /// there is.
+    Session(ReferencedSession),
+    /// One checkpoint (commit) inside a recorded session.
+    Checkpoint(ReferencedCheckpoint),
+}
+
+impl SessionReference {
+    /// The Workspace the referenced recorded session lives in — the id the
+    /// server checks.
+    pub fn workspace_ref_id(&self) -> &str {
+        match self {
+            Self::Session(r) => &r.workspace_ref_id,
+            Self::Checkpoint(r) => &r.workspace_ref_id,
+        }
+    }
+}
+
+/// `{kind: "session", …}`: a recorded session as a reference card draws it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReferencedSession {
+    /// The Workspace (its `workspace_refs` id — the Workspace registry id).
+    pub workspace_ref_id: String,
+    /// The recorded session; what the card links to.
+    pub session_id: String,
+    /// Its title when the reference was drawn; `null` for an untitled run.
+    #[serde(default)]
+    pub session_title: Option<String>,
+    /// The agent that ran it, as the record names it.
+    #[serde(default)]
+    pub agent: Option<String>,
+    /// When it began, epoch milliseconds; `null` when the sender had no figure.
+    #[serde(default)]
+    pub started_at: Option<i64>,
+    #[serde(default)]
+    pub messages: u64,
+    #[serde(default)]
+    pub tool_calls: u64,
+    #[serde(default)]
+    pub checkpoints: u64,
+}
+
+/// `{kind: "checkpoint", …}`: one commit inside a recorded session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReferencedCheckpoint {
+    pub workspace_ref_id: String,
+    pub session_id: String,
+    #[serde(default)]
+    pub session_title: Option<String>,
+    /// The checkpoint's own row id, which a deep link anchors on.
+    pub row_id: String,
+    pub commit_sha: String,
+    /// The branch it landed on, when the record has one.
+    #[serde(default)]
+    pub branch: Option<String>,
+    #[serde(default)]
+    pub insertions: u64,
+    #[serde(default)]
+    pub deletions: u64,
+    /// How many distinct paths the commit touched.
+    #[serde(default)]
+    pub files: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Message {
     pub id: String,
@@ -88,6 +167,9 @@ pub struct Message {
     pub attachments: Vec<Attachment>,
     #[serde(default)]
     pub code_refs: Vec<CodeRef>,
+    /// Recorded sessions and checkpoints this message points at.
+    #[serde(default)]
+    pub artifact_refs: Vec<SessionReference>,
     #[serde(default)]
     pub draft_id: Option<String>,
 }
@@ -427,6 +509,8 @@ pub struct MessageNew {
     #[serde(default)]
     pub code_refs: Vec<CodeRef>,
     #[serde(default)]
+    pub artifact_refs: Vec<SessionReference>,
+    #[serde(default)]
     pub draft_id: Option<String>,
     /// Echoed back so a client can recognise its own send arriving on another
     /// device. Absent on frames from other authors.
@@ -447,6 +531,7 @@ impl MessageNew {
             created_at: self.created_at,
             attachments: self.attachments,
             code_refs: self.code_refs,
+            artifact_refs: self.artifact_refs,
             draft_id: self.draft_id,
         }
     }
@@ -539,6 +624,9 @@ pub enum ClientFrame {
         attachments: Vec<String>,
         #[serde(skip_serializing_if = "Vec::is_empty")]
         code_refs: Vec<CodeRef>,
+        /// At most [`CHAT_MESSAGE_ARTIFACT_REF_MAX`], sent whole.
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        artifact_refs: Vec<SessionReference>,
     },
 
     #[serde(rename = "edit")]
@@ -580,6 +668,17 @@ pub enum ClientFrame {
     /// Cursor state, ≤16KB decoded. Ephemeral: no table, no journal, no seq.
     #[serde(rename = "draft.awareness")]
     DraftAwareness { draft_id: String, state: String },
+
+    /// Send a draft (ATL-201): marks it sent and posts one ordinary message
+    /// linking it. The references the draft was written with ride on the
+    /// frame — the server never reads a draft's bytes — and are checked
+    /// exactly as a `send`'s are (ATL-329).
+    #[serde(rename = "draft.send")]
+    DraftSend {
+        draft_id: String,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        artifact_refs: Vec<SessionReference>,
+    },
 }
 
 /// The reaction allowlist, vendored verbatim from the contract. A `react`
@@ -615,5 +714,170 @@ pub fn is_allowed_reaction(emoji: &str) -> bool {
 pub const CHAT_BODY_MAX_BYTES: usize = 16 * 1024;
 pub const CHANNEL_NAME_MAX: usize = 80;
 pub const CHAT_MESSAGE_ATTACHMENT_MAX: usize = 10;
+/// The most recorded-session and checkpoint references one message carries.
+pub const CHAT_MESSAGE_ARTIFACT_REF_MAX: usize = 3;
+/// A reference's `session_title` bound, in UTF-16 code units (zod's `max`).
+pub const CHAT_ARTIFACT_REF_TITLE_MAX: usize = 200;
 pub const CHAT_PIN_LIMIT: usize = 100;
 pub const CHAT_TYPING_INTERVAL_MS: u64 = 3_000;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn session_ref() -> SessionReference {
+        SessionReference::Session(ReferencedSession {
+            workspace_ref_id: "ws_1".into(),
+            session_id: "s_1".into(),
+            session_title: Some("Fix the flaky login test".into()),
+            agent: Some("atlas-agent".into()),
+            started_at: Some(1_790_000_000_000),
+            messages: 12,
+            tool_calls: 30,
+            checkpoints: 2,
+        })
+    }
+
+    fn checkpoint_ref() -> SessionReference {
+        SessionReference::Checkpoint(ReferencedCheckpoint {
+            workspace_ref_id: "ws_1".into(),
+            session_id: "s_1".into(),
+            session_title: None,
+            row_id: "row_9".into(),
+            commit_sha: "abc1234def".into(),
+            branch: None,
+            insertions: 4,
+            deletions: 1,
+            files: 2,
+        })
+    }
+
+    #[test]
+    fn a_send_carries_its_session_reference_in_the_servers_shape() {
+        let frame = ClientFrame::Send {
+            conv_id: "c1".into(),
+            client_msg_id: "cm1".into(),
+            body: "the report".into(),
+            reply_to_id: None,
+            attachments: vec![],
+            code_refs: vec![],
+            artifact_refs: vec![session_ref()],
+        };
+        assert_eq!(
+            serde_json::to_value(&frame).unwrap(),
+            json!({
+                "t": "send",
+                "conv_id": "c1",
+                "client_msg_id": "cm1",
+                "body": "the report",
+                "artifact_refs": [{
+                    "kind": "session",
+                    "workspace_ref_id": "ws_1",
+                    "session_id": "s_1",
+                    "session_title": "Fix the flaky login test",
+                    "agent": "atlas-agent",
+                    "started_at": 1_790_000_000_000i64,
+                    "messages": 12,
+                    "tool_calls": 30,
+                    "checkpoints": 2,
+                }],
+            })
+        );
+    }
+
+    #[test]
+    fn a_send_without_references_leaves_the_list_off() {
+        let frame = ClientFrame::Send {
+            conv_id: "c1".into(),
+            client_msg_id: "cm1".into(),
+            body: "hi".into(),
+            reply_to_id: None,
+            attachments: vec![],
+            code_refs: vec![],
+            artifact_refs: vec![],
+        };
+        assert!(serde_json::to_value(&frame).unwrap().get("artifact_refs").is_none());
+    }
+
+    #[test]
+    fn a_checkpoint_reference_names_its_nulls_rather_than_inventing_values() {
+        assert_eq!(
+            serde_json::to_value(checkpoint_ref()).unwrap(),
+            json!({
+                "kind": "checkpoint",
+                "workspace_ref_id": "ws_1",
+                "session_id": "s_1",
+                "session_title": null,
+                "row_id": "row_9",
+                "commit_sha": "abc1234def",
+                "branch": null,
+                "insertions": 4,
+                "deletions": 1,
+                "files": 2,
+            })
+        );
+    }
+
+    #[test]
+    fn a_draft_send_carries_the_drafts_references() {
+        let frame = ClientFrame::DraftSend {
+            draft_id: "d1".into(),
+            artifact_refs: vec![session_ref(), checkpoint_ref()],
+        };
+        let value = serde_json::to_value(&frame).unwrap();
+        assert_eq!(value["t"], "draft.send");
+        assert_eq!(value["draft_id"], "d1");
+        assert_eq!(value["artifact_refs"][0]["kind"], "session");
+        assert_eq!(value["artifact_refs"][1]["kind"], "checkpoint");
+        assert_eq!(value["artifact_refs"][1]["row_id"], "row_9");
+    }
+
+    #[test]
+    fn a_received_message_reads_its_references_and_the_servers_defaults() {
+        // As the server journals it: a session reference with its defaulted
+        // fields left out, and a checkpoint one in full.
+        let frame: ServerFrame = serde_json::from_value(json!({
+            "t": "message.new",
+            "seq": 7,
+            "conv_id": "c1",
+            "id": "m1",
+            "author_id": "u1",
+            "body": "see the run",
+            "created_at": 1,
+            "artifact_refs": [
+                { "kind": "session", "workspace_ref_id": "ws_1", "session_id": "s_1" },
+                serde_json::to_value(checkpoint_ref()).unwrap(),
+            ],
+        }))
+        .unwrap();
+        let ServerFrame::MessageNew(new) = frame else { panic!("not a message.new") };
+        let message = new.into_message();
+        assert_eq!(
+            message.artifact_refs,
+            vec![
+                SessionReference::Session(ReferencedSession {
+                    workspace_ref_id: "ws_1".into(),
+                    session_id: "s_1".into(),
+                    session_title: None,
+                    agent: None,
+                    started_at: None,
+                    messages: 0,
+                    tool_calls: 0,
+                    checkpoints: 0,
+                }),
+                checkpoint_ref(),
+            ]
+        );
+        assert_eq!(message.artifact_refs[0].workspace_ref_id(), "ws_1");
+    }
+
+    #[test]
+    fn a_message_written_before_references_existed_still_reads() {
+        let message: Message = serde_json::from_value(json!({
+            "id": "m1", "conv_id": "c1", "seq": 1, "author_id": "u1", "body": "old", "created_at": 1,
+        }))
+        .unwrap();
+        assert!(message.artifact_refs.is_empty());
+    }
+}

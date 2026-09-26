@@ -22,6 +22,7 @@ use axum::response::Response;
 use parking_lot::Mutex;
 
 use crate::commands::agent_host::SessionLifecycle;
+use crate::commands::org_server::OrgScope;
 
 /// What a token grants: tool access to one scope's memory, as one session.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,6 +32,14 @@ pub struct Grant {
     pub agent: String,
     /// The session's launch directory; resolves to the scope's record.
     pub cwd: String,
+    /// The organisation and Workspace the session's Project is bound to,
+    /// resolved when the offer that minted this token was decided (ADR-0014).
+    /// `None` for a session not handed the organisation tool server — and for
+    /// a token the session lifecycle minted, which never carries one: a
+    /// session that moved to another directory moved to another Project, and
+    /// is not in the organisation it was offered until it is offered again.
+    /// The organisation tools act in this one and in no other.
+    pub org: Option<OrgScope>,
 }
 
 #[derive(Default)]
@@ -66,6 +75,7 @@ impl MemoryTokens {
                 session_id: session_id.to_string(),
                 agent: agent.to_string(),
                 cwd: cwd.to_string(),
+                org: None,
             },
         );
         table.by_session.insert(session_id.to_string(), token.clone());
@@ -75,8 +85,11 @@ impl MemoryTokens {
     /// Mint a token for a session request whose session id is not known yet
     /// (a new session's arrives with the agent's answer). Live at once, so an
     /// agent that connects while opening the session is admitted; it names no
-    /// session until [`bind`](Self::bind).
-    pub fn mint_unbound(&self, agent: &str, cwd: &str) -> String {
+    /// session until [`bind`](Self::bind). `org` is the organisation the offer
+    /// resolved from the session's Project binding, carried from the first
+    /// request, so an organisation tool called before the bind already knows
+    /// where it acts.
+    pub fn mint_unbound(&self, agent: &str, cwd: &str, org: Option<OrgScope>) -> String {
         let token = format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple());
         self.table.lock().by_token.insert(
             token.clone(),
@@ -84,6 +97,7 @@ impl MemoryTokens {
                 session_id: String::new(),
                 agent: agent.to_string(),
                 cwd: cwd.to_string(),
+                org,
             },
         );
         token
@@ -121,6 +135,16 @@ impl MemoryTokens {
     #[cfg(test)]
     pub fn token_for(&self, session_id: &str) -> Option<String> {
         self.table.lock().by_session.get(session_id).cloned()
+    }
+
+    /// What `session_id`'s live token grants, if it has one — the grant a
+    /// call from that session is answered under, read without its token: the
+    /// native seam asks about a waiting call by session (an outward action's
+    /// approval card, ADR-0014).
+    pub fn grant_for_session(&self, session_id: &str) -> Option<Grant> {
+        let table = self.table.lock();
+        let token = table.by_session.get(session_id)?;
+        table.by_token.get(token).cloned()
     }
 
     /// Revoke `session_id`'s token. Idempotent.

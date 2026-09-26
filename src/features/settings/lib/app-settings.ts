@@ -84,6 +84,13 @@ export interface AppSettings {
    *  terminal (ADR-0012). Off: new sessions are not offered the tools and
    *  every UI action in a running one is refused. Default ON. */
   agentUiNavigation: boolean;
+  /** Let Atlas Agent act in your organisation, as you, through its
+   *  organisation tool server: read the recorded sessions, comments, members
+   *  and conversations of the organisation a cloud-bound Project belongs to,
+   *  and act there; anything that reaches another person asks first
+   *  (ADR-0014). Off: new sessions are not offered the tools and every call
+   *  in a running one is refused. Default ON. */
+  agentOrgAccess: boolean;
   /** Terminal notifications master switch: a command finishing (failed, or
    *  longer than `terminalNotifyMinDurationMs`) or wanting input raises an
    *  in-app notification, a toast when the terminal is off screen, and a
@@ -143,6 +150,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   updaterIgnoredVersion: null,
   enterToSend: true,
   agentUiNavigation: true,
+  agentOrgAccess: true,
   terminalNotifications: true,
   terminalNotifyMinDurationMs: 10_000,
   terminalNotifyOnFailure: true,

@@ -85,4 +85,6 @@ pub use session::{
     SessionRegistry,
 };
 pub use session_list::AcpSessionList;
-pub use session_mcp::{SessionMcpOffer, SessionMcpRequest, SessionMcpServers};
+pub use session_mcp::{
+    AskFirst, CallDescription, CallToApprove, OutwardConsent, SessionMcpOffer, SessionMcpRequest, SessionMcpServers,
+};

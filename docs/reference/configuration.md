@@ -117,6 +117,13 @@ enterToSend = true
 # UI tools are withdrawn and every call is refused. (default: true)
 agentUiNavigation = true
 
+# Let Atlas Agent act in your organisation, as you: read the recorded
+# sessions, comments, members and conversations of the organisation a
+# cloud-bound Project belongs to. Anything that reaches another person
+# asks you first. Off: its organisation tools are withdrawn and every
+# call is refused. (default: true)
+agentOrgAccess = true
+
 # Terminal notifications: a command that fails, runs longer than
 # terminalNotifyMinDurationMs, or asks for input raises an in-app
 # notification, a toast when its terminal is off screen and a macOS
@@ -173,6 +180,7 @@ wrote; `toml_edit` just preserves whatever comments are already there.
 | `updaterIgnoredVersion` | string, or absent | absent | — |
 | `enterToSend` | boolean | `true` | — |
 | `agentUiNavigation` | boolean | `true` | — |
+| `agentOrgAccess` | boolean | `true` | — |
 | `terminalNotifications` | boolean | `true` | — |
 | `terminalNotifyMinDurationMs` | integer | `10000` | 0 ≤ n ≤ 3600000 |
 | `terminalNotifyOnFailure` | boolean | `true` | — |

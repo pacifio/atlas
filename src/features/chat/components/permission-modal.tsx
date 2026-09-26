@@ -15,6 +15,10 @@ import { ApprovalCard, type Answer } from "./approval-card";
 import type { PermissionOptionRef, PendingPermission } from "@/types/acp";
 import { type AgentType } from "@/types/agent";
 import { agentMeta } from "@/features/agents/lib/agent-meta";
+import {
+  outwardApprovalOf,
+  type OutwardApproval,
+} from "@/features/org-actions/lib/outward-approval";
 
 function isAllow(kind: string) {
   return kind === "allow_once" || kind === "allow_always";
@@ -194,6 +198,7 @@ function PermissionModalImpl({ tabId, onSendMessage }: PermissionModalProps) {
   const title = current.toolCall.title ?? current.toolCall.kind ?? "Tool call";
   const planMarkdown = extractPlanMarkdown(current.toolCall);
   const questions = extractQuestions(current.toolCall);
+  const outward = outwardApprovalOf(current.toolCall);
   const queueNote = queueLength > 1 ? `${queueLength - 1} more pending after this` : null;
 
   // Numbered option list — shared by both layouts.
@@ -334,16 +339,24 @@ function PermissionModalImpl({ tabId, onSendMessage }: PermissionModalProps) {
       >
         <div className="flex items-start gap-2 px-3 pt-3">
           <div className="flex-1 min-w-0">
-            <div className="text-base font-medium leading-snug text-foreground">
-              The agent wants to run <span className="font-mono text-foreground">{title}</span>?
-            </div>
+            {outward ? (
+              <OutwardActionHeading approval={outward} />
+            ) : (
+              <div className="text-base font-medium leading-snug text-foreground">
+                The agent wants to run <span className="font-mono text-foreground">{title}</span>?
+              </div>
+            )}
             {queueNote && (
               <div className="mt-0.5 text-xs text-secondary-foreground">{queueNote}</div>
             )}
           </div>
         </div>
 
-        <ToolCallPreview tc={current.toolCall} />
+        {outward ? (
+          <OutwardActionBody approval={outward} />
+        ) : (
+          <ToolCallPreview tc={current.toolCall} />
+        )}
 
         <div className="px-3 py-2.5">{optionList}</div>
 
@@ -421,6 +434,37 @@ function PermissionOption({
         </Kbd>
       )}
     </button>
+  );
+}
+
+/**
+ * An outward action's headline (ADR-0014): the act and whom it reaches, then
+ * the recipient in full — in place of "The agent wants to run …?", which
+ * reads wrongly for a message.
+ */
+export function OutwardActionHeading({ approval }: { approval: OutwardApproval }) {
+  return (
+    <>
+      <div className="text-base font-medium leading-snug text-foreground">{approval.title}</div>
+      <div className="mt-0.5 text-xs text-secondary-foreground">{approval.recipient}</div>
+    </>
+  );
+}
+
+/**
+ * The exact words an outward action will post, in the tool-call preview's
+ * box: the whole body, never truncated, scrolling inside the card when long.
+ */
+export function OutwardActionBody({ approval }: { approval: OutwardApproval }) {
+  return (
+    <div className="mx-3 mt-2 rounded-md border border-border bg-background px-3 py-2">
+      <div
+        data-testid="outward-body"
+        className="max-h-64 overflow-auto whitespace-pre-wrap text-sm leading-snug text-foreground"
+      >
+        {approval.body}
+      </div>
+    </div>
   );
 }
 

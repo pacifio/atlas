@@ -47,6 +47,7 @@ skills-lock.json
 !docs/archive/*.md
 !docs/atlas-agent-rename-spec.md
 !docs/research/*.md
+!docs/qa/*.md
 !docs/reference/*.md
 # Requests to other teams (the server team's gateway changes): the desktop
 # code cites them, so they have to be in the repo it lives in.

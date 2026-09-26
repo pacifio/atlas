@@ -11,6 +11,8 @@ import {
   type SpaceReadOnlyReason,
 } from "./spaces-api";
 import { subscribeSpaceBus } from "./spaces-bus";
+import { acquireSpaceSocket, registerOpenPage, releaseSpaceSocket } from "./live-spaces";
+import { landingPage } from "./open-space";
 import {
   applyAwareness,
   decodeSpaceFrame,
@@ -71,6 +73,9 @@ export function useSpaceSession(convId: string) {
   const connRef = useRef<SpaceConnState>("disconnected");
   const readOnlyRef = useRef<SpaceReadOnlyReason | null>(null);
   const actorsRef = useRef<ReadonlyMap<string, SpaceActor>>(new Map());
+  /** Unregisters the open page from `live-spaces`, so a write from outside
+   *  the canvas (Atlas Agent drawing on it) goes into this doc. */
+  const unregisterPageRef = useRef<(() => void) | null>(null);
 
   // ---- awareness publisher: 50ms trailing, patch-merged -------------------
   const mineRef = useRef<SpaceAwarenessState>({});
@@ -205,6 +210,8 @@ export function useSpaceSession(convId: string) {
       if (pageIdRef.current === id) return;
       // The tail of an edit must go out on the OLD page's slot.
       flushOutbound();
+      unregisterPageRef.current?.();
+      unregisterPageRef.current = null;
       pageIdRef.current = id;
       slotRef.current = null;
       heldRef.current = [];
@@ -252,18 +259,14 @@ export function useSpaceSession(convId: string) {
               error: null,
             });
             // Reconnect: re-open the page we were on (fresh slot). First
-            // hello: land on the remembered page, else the first real page.
+            // hello: land on the page asked for from outside the canvas,
+            // else the remembered page, else the first real page.
             const current = pageIdRef.current;
             if (current !== null && msg.pages.some((p) => p.id === current)) {
               requestPage(current);
             } else {
-              const landing =
-                (msg.active_page_id !== null &&
-                msg.pages.some((p) => p.id === msg.active_page_id && p.kind === "page")
-                  ? msg.active_page_id
-                  : null) ??
-                msg.pages.find((p) => p.kind === "page")?.id ??
-                null;
+              const asked = useSpacesStore.getState().actions.takeRequestedPage(convId);
+              const landing = landingPage(msg.pages, msg.active_page_id, asked);
               if (landing !== null) openPage(landing);
             }
             break;
@@ -277,6 +280,8 @@ export function useSpaceSession(convId: string) {
             const doc = docRef.current;
             if (doc) {
               applyPageContent(doc, msg);
+              unregisterPageRef.current?.();
+              unregisterPageRef.current = registerOpenPage(convId, msg.page_id, doc, msg.read_only);
               // The reconnect catch-up: held edits go AFTER the server's,
               // so its log stays replayable.
               if (heldRef.current.length > 0 && msg.read_only === null) {
@@ -365,6 +370,18 @@ export function useSpaceSession(convId: string) {
     return off;
   }, [convId, openPage, patch, publishAwareness, requestPage]);
 
+  // A page asked for from outside the canvas (`openSpaceOnPage`) while it is
+  // already showing this Space: switch to it at once. Before the first
+  // hello has landed on a page, the hello takes the request instead.
+  const requested = useSpacesStore((s) => s.requestedPages[convId] ?? null);
+  useEffect(() => {
+    if (requested === null || pageIdRef.current === null) return;
+    const store = useSpacesStore.getState();
+    const asked = store.actions.takeRequestedPage(convId);
+    const pages = store.byConv[convId]?.pages ?? [];
+    if (asked !== null && landingPage(pages, null, asked) === asked) openPage(asked);
+  }, [convId, openPage, requested]);
+
   // ---- lifecycle ----------------------------------------------------------
   useEffect(() => {
     // REST pre-flight first: it maps 401/403/404 to words, and lazily
@@ -377,15 +394,19 @@ export function useSpaceSession(convId: string) {
       .catch((e) => {
         patch(convId, { error: typeof e === "string" ? e : "This Space could not be opened." });
       });
-    spacesApi.connect(convId).catch((e) => {
+    // Held, not owned: a write from outside the canvas may share the socket.
+    acquireSpaceSocket(convId).catch((e) => {
       console.error("spaces: connect failed:", convId, e);
     });
     return () => {
       // A mid-drag edit must not die with the unmount.
       flushOutbound();
       if (outboundTimer.current !== undefined) window.clearTimeout(outboundTimer.current);
-      // Cursor off the canvas for everyone else, then the socket down.
-      void spacesApi.disconnect(convId).catch(() => {});
+      // Cursor off the canvas for everyone else, then the socket down —
+      // unless something else still holds it.
+      unregisterPageRef.current?.();
+      unregisterPageRef.current = null;
+      releaseSpaceSocket(convId);
       docRef.current?.destroy();
       undoRef.current?.destroy();
       docRef.current = null;

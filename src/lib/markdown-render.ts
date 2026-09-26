@@ -76,6 +76,9 @@ const MENTION_PREFIX_KIND: Record<string, string> = {
   "@branch": "branch",
   "@msg": "past_message",
   "@session": "past_session",
+  "@member": "member",
+  "@conversation": "conversation",
+  "@recorded-session": "recorded_session",
   "#skill": "skill",
   "#command": "command",
   "#agent": "agent",
@@ -88,7 +91,7 @@ const MENTION_PREFIX_KIND: Record<string, string> = {
 // to the next whitespace, and its trailing punctuation is peeled back off into
 // plain text.
 const MENTION_TOKEN_RE =
-  /(?<![\w/])([@#](?:file|folder|symbol|note|repo|branch|msg|session|skill|command|agent|rule)):(?:"([^"\n]+)"|(?!")(\S+))/g;
+  /(?<![\w/])([@#](?:file|folder|symbol|note|repo|branch|msg|session|member|conversation|recorded-session|skill|command|agent|rule)):(?:"([^"\n]+)"|(?!")(\S+))/g;
 
 // Tokens are lifted out of the source BEFORE remark parses it, and parked
 // behind private-use placeholders. Left in, GFM gets to them first: a Retina
@@ -215,6 +218,34 @@ const MENTION_GLYPH: Record<string, [string, Record<string, string | number>][]>
   ],
   past_message: [["path", { d: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" }]],
   past_session: [["path", { d: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" }]],
+  member: [
+    ["path", { d: "M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" }],
+    ["circle", { cx: "12", cy: "7", r: "4" }],
+  ],
+  conversation: [
+    [
+      "path",
+      {
+        d: "M16 10a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 14.286V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z",
+      },
+    ],
+    [
+      "path",
+      {
+        d: "M20 9a2 2 0 0 1 2 2v10.286a.71.71 0 0 1-1.212.502l-2.202-2.202A2 2 0 0 0 17.172 19H10a2 2 0 0 1-2-2v-1",
+      },
+    ],
+  ],
+  recorded_session: [
+    [
+      "path",
+      {
+        d: "M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z",
+      },
+    ],
+    ["path", { d: "M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12" }],
+    ["path", { d: "M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17" }],
+  ],
 };
 
 /** Build the kind glyph as a hast `<span class=icon><svg>…</svg></span>`. */

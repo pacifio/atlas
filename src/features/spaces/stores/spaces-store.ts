@@ -46,19 +46,26 @@ interface SpacesState {
    * no author rather than a guessed one.
    */
   pageAuthors: Record<string, Record<string, string>>;
+  /** A page asked for from outside the canvas (`openSpaceOnPage`), per
+   *  conversation, until its canvas takes it. */
+  requestedPages: Record<string, string>;
   actions: {
     patch: (convId: string, patch: Partial<SpaceMeta>) => void;
     adoptSummary: (convId: string, summary: SpaceSummary) => void;
     notePageAuthor: (convId: string, pageId: string, userId: string) => void;
+    requestPage: (convId: string, pageId: string) => void;
+    /** The page asked for, taken — so it is landed on once. */
+    takeRequestedPage: (convId: string) => string | null;
     /** Org-switch teardown: every Space belongs to exactly one org. */
     clearAll: () => void;
   };
 }
 
 export const useSpacesStore = createSelectors(
-  create<SpacesState>((set) => ({
+  create<SpacesState>((set, get) => ({
     byConv: {},
     pageAuthors: {},
+    requestedPages: {},
     actions: {
       patch: (convId, patch) =>
         set((s) => ({
@@ -87,7 +94,19 @@ export const useSpacesStore = createSelectors(
             [convId]: { ...s.pageAuthors[convId], [pageId]: userId },
           },
         })),
-      clearAll: () => set({ byConv: {}, pageAuthors: {} }),
+      requestPage: (convId, pageId) =>
+        set((s) => ({ requestedPages: { ...s.requestedPages, [convId]: pageId } })),
+      takeRequestedPage: (convId) => {
+        const asked = get().requestedPages[convId] ?? null;
+        if (asked !== null) {
+          set((s) => {
+            const { [convId]: _taken, ...rest } = s.requestedPages;
+            return { requestedPages: rest };
+          });
+        }
+        return asked;
+      },
+      clearAll: () => set({ byConv: {}, pageAuthors: {}, requestedPages: {} }),
     },
   })),
 );

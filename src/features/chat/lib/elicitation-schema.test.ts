@@ -137,6 +137,58 @@ describe("elicitationAnswerContent", () => {
   });
 });
 
+/** Atlas Agent's clarifying question (ADR-0013), exactly as the native seam
+ *  raises it (`crates/atlas-native-agent/src/engine/questions.rs`): one titled
+ *  `oneOf` per question under the engine's question id, and a `<id>__other`
+ *  companion marked for it. The seam's own tests pin that output; this pins
+ *  that the card reads it as a question, and that the content it sends back
+ *  lands on the keys the seam reads. */
+describe("Atlas Agent's clarifying question", () => {
+  const nativeSchema = {
+    type: "object",
+    properties: {
+      which_comment: {
+        type: "string",
+        title: "Comment",
+        description: "Which comment should I resolve?",
+        oneOf: [
+          { const: "The first one", title: "The first one", description: "Only the oldest" },
+          { const: "All four", title: "All four", description: "Every open comment" },
+        ],
+      },
+      which_comment__other: {
+        type: "string",
+        title: "Other",
+        _meta: { _askUserQuestionCustomAnswer: { questionId: "which_comment" } },
+      },
+    },
+  };
+  const form = elicitationQuestionForm(
+    parseElicitationSchema(nativeSchema),
+    "Which comment should I resolve?",
+  );
+
+  it("renders on the question card with its options, not the form dialog", () => {
+    expect(form).not.toBeNull();
+    expect(form!.questions).toHaveLength(1);
+    expect(form!.questions[0].header).toBe("Comment");
+    expect(form!.questions[0].question).toBe("Which comment should I resolve?");
+    expect(form!.questions[0].options.map((o) => o.label)).toEqual(["The first one", "All four"]);
+  });
+
+  it("answers a pick under the engine's question id", () => {
+    expect(elicitationAnswerContent(form!, [{ selected: ["All four"], custom: "" }])).toEqual({
+      which_comment: "All four",
+    });
+  });
+
+  it("answers Other on the companion the seam reads", () => {
+    expect(
+      elicitationAnswerContent(form!, [{ selected: [], custom: "only the one from Priya" }]),
+    ).toEqual({ which_comment__other: "only the one from Priya" });
+  });
+});
+
 describe("parseElicitationSchema", () => {
   it("reads titles, descriptions and required-ness", () => {
     const [f] = parseElicitationSchema({

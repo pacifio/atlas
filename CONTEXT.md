@@ -106,6 +106,24 @@ The **injected-context envelope** — `<atlas-memory>` … `</atlas-memory>` —
   an editor with unsaved changes is refused the same way. These are refusals, not prompts: there is
   no override.
 
+## Organisation actions (Atlas Agent)
+
+*Decided 2026-09-26. The cloud-side words are the server's own (its `CONTEXT.md`, §Session Artifacts), so the two glossaries do not drift.*
+
+- **Workspace** — the cloud aggregate a Project is bound to: the organisation-visible record of that Project's recorded sessions, checkpoints and comments, and the thing the server scopes reads and the socket to. This is the *one* sense in which "workspace" is a live word here; the storage-key sense under **Project** stays deprecated. A Project binds to at most one Workspace.
+- **Recorded session** — the Timeline's record of a Session: written locally first (`atlas-checkpoint`), synced into the Workspace, and what teammates see and comment on. It carries an author, and it is **live** while its agent is still writing (the server's rule: written within 90 s and active within 60 min). The running chat's own recorded session is the **current** one. *Avoid: capture, for this concept; "capture" is the client-internal name of the recorder, not the record.*
+- **Comment** — a teammate's note on a recorded session, anchored to the session or to one of its messages, tool calls or checkpoints; threaded (a root and replies); a root can be **resolved** by anyone who can read the Workspace. Mentions inside a comment are user ids the server parses.
+- **Session Reference** — a chat message's pointer to a recorded session (or a checkpoint), carried on the message and rendered as a card. The proper way for a session report to point at its session; a plain link is the fallback when the Workspace is not organisation-visible.
+
+- **Organisation** — the tenant a signed-in user belongs to, with a roster of members. A Project is tagged to one. *Avoid: org API / teams API as product names; there is one organisation surface, and "teams" is not a thing the server has.*
+- **Member** — a user in an organisation's roster, with exactly one **role**: `admin`, `product_owner`, `developer` or `member`. There is no *owner*; the member who created the organisation is an admin. On the recorded-work surface roles are flat: anyone who can see a Workspace can read, comment, resolve and search it. Admin is only for managing the organisation, its members and its Workspaces.
+- **Chat** — the organisation's messaging: **conversations** (a *channel*, a *DM* or a *group DM*), their messages, and **Spaces**. This is what "the teams API" meant. A **Space** belongs to a conversation and holds **pages**: canvases of nodes (note, text, shape, media, group) joined by edges. *Avoid: teams, workspace chat.*
+- **Organisation tool server** — the third in-process tool server (after memory, ADR-0010, and UI, ADR-0012), `atlas_org`, through which Atlas Agent reads the organisation (recorded sessions, comments, members, conversations) and acts in it (posts, DMs, resolves comments, writes Space pages). Mounted on the same listener and the same per-session token as the other two; offered only to a connection that carries **organisation access** (a connection property, like UI control, never an agent-id check), switched by one setting, and only when the session's Project is cloud-bound. A tool call acts in the organisation the session's Project is bound to, never in whichever organisation the window is showing.
+- **Outward action** — a tool call that reaches another person: sending a message, creating a DM or channel, posting. An outward action asks the user first (allow once / allow for this session / reject), in the user's name, like a shell command. Resolving a comment and creating a page are *not* outward actions: visible, reversible, auto-approved with an audit row.
+- **Session report** — a prose summary Atlas Agent writes from a recorded session, plus the link to it on the timeline, sent as one chat message. It is written, not rendered: it is not a page and not a file.
+- **Clarifying question** — a structured question Atlas Agent puts to the user mid-turn, with options, when a request is ambiguous ("four comments match; which?"). Blocks the turn; rendered on the same question card ACP agents already use. A capability of Atlas Agent in every mode, not of the organisation tools alone.
+- **Member activity** — what an admin can ask for about a member: the recorded sessions, checkpoints, insertions, deletions and Atlas-recorded tokens attributed to that member over a window. Folded on the client from the recorded sessions; the server has no per-member metric. *Avoid: performance, productivity, code shipped* — it counts what was recorded through Atlas and nothing else.
+
 ## Vendored engine licensing (Apache-2.0)
 
 `vendor/atlas-engine/` is a hard fork of an upstream engine under **Apache-2.0** (ADR-0003;

@@ -54,6 +54,7 @@ pub mod memory_summarize;
 pub mod models;
 pub mod shared_memory;
 pub mod memory_server;
+pub mod org_server;
 pub mod ui_server;
 pub mod memory_delta;
 pub mod memory_extract;

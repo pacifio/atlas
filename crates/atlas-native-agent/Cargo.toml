@@ -90,6 +90,10 @@ atlas-engine-test-binary-support = { workspace = true }
 # adds no new lockfile entry.
 ctor = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+# ADR-0013's config test reads the question-tool feature, and the modes it
+# opens, off the loaded config. Both are already in the graph through core.
+atlas-engine-features = { workspace = true }
+atlas-engine-tools = { workspace = true }
 # The live thread feed's own predicate, so the history test asserts "the
 # recorder will fire" rather than guessing which events matter.
 atlas-thread-metadata = { path = "../atlas-thread-metadata" }

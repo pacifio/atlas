@@ -46,6 +46,24 @@ pub struct MessagePage {
     pub reactions: Vec<ReactionRow>,
 }
 
+/// `GET /workspaces`: the Workspaces a message in this organisation may
+/// reference — the ones it owns that are visible to all of it
+/// (`visibility = 'org'`) and not archived. Restricted Workspaces are left out
+/// outright, because the send path refuses a reference to one: this list and
+/// that check are the same query on the server.
+#[derive(Debug, Clone, Deserialize)]
+pub struct WorkspaceList {
+    #[serde(default)]
+    pub workspaces: Vec<WorkspaceName>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct WorkspaceName {
+    /// The Workspace registry id — what a reference's `workspace_ref_id` names.
+    pub id: String,
+    pub name: String,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct PinList {
     #[serde(default)]
@@ -213,6 +231,11 @@ impl RestClient {
     pub async fn conversations(&self, org: &str) -> Result<ConversationList> {
         self.json(reqwest::Method::GET, "/conversations", org, None)
             .await
+    }
+
+    /// The Workspaces a message may reference ([`WorkspaceList`]).
+    pub async fn workspaces(&self, org: &str) -> Result<WorkspaceList> {
+        self.json(reqwest::Method::GET, "/workspaces", org, None).await
     }
 
     pub async fn reads(&self, org: &str) -> Result<ReadList> {

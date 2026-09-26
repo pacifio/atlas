@@ -328,6 +328,30 @@ impl EngineSettings {
                 key("stream_max_retries"),
                 TomlValue::Integer(self.stream_max_retries as i64),
             ),
+            // ADR-0013: the model may ask the user a clarifying question
+            // mid-turn, in every permission mode. Upstream gates its question
+            // tool to the Plan collaboration mode; Atlas's four modes are
+            // approval/sandbox pairs that all run in the engine's `Default`
+            // collaboration mode, and this is the engine's own switch for
+            // opening `Default` — so nothing under the vendored engine
+            // changes. Reversed by deleting this row; the seam's handler for
+            // the question can stay.
+            //
+            // Set here rather than in the per-thread overrides `mcp.rs`
+            // builds: every thread the engine loads reads these, including a
+            // forked one, which is started with no per-thread config at all.
+            (
+                "features.default_mode_request_user_input".to_string(),
+                TomlValue::Boolean(true),
+            ),
+            // The feature is marked under development upstream, and the
+            // engine posts a warning naming it into every new thread unless
+            // told not to. Turning it on is Atlas's decision, not something
+            // the user did or can act on.
+            (
+                "suppress_unstable_features_warning".to_string(),
+                TomlValue::Boolean(true),
+            ),
         ];
         if cfg!(target_os = "windows") {
             // Windows shell commands ran with no sandbox at all. File writes
@@ -648,6 +672,34 @@ mod tests {
                 atlas_engine_protocol::config_types::WindowsSandboxLevel::RestrictedToken,
             );
         }
+    }
+
+    /// ADR-0013: the clarifying-question tool is offered in every permission
+    /// mode, not only in the engine's Plan collaboration mode. Atlas's four
+    /// modes all run in the engine's `Default` collaboration mode, so the
+    /// feature that opens `Default` is what makes the tool available in
+    /// default, acceptEdits, plan and bypass alike. Read off the config the
+    /// engine actually loads — a mistyped key is dropped silently, and the
+    /// tool would answer "unavailable in Default mode" instead.
+    #[tokio::test]
+    async fn the_question_tool_is_available_in_every_permission_mode() {
+        use atlas_engine_features::Feature;
+        use atlas_engine_protocol::config_types::ModeKind;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let config = settings(tmp.path()).build_config(None).await.expect("config loads");
+
+        assert!(config.features.enabled(Feature::DefaultModeRequestUserInput));
+        assert!(config.experimental_request_user_input_enabled, "the tool is registered");
+        assert!(
+            atlas_engine_tools::request_user_input_available_modes(&config.features)
+                .contains(&ModeKind::Default),
+            "every Atlas permission mode runs in the engine's Default collaboration mode",
+        );
+        // Upstream marks the feature under development, which would post an
+        // "Under-development features enabled" warning into every new chat.
+        // Turning it on is Atlas's decision (ADR-0013), not the user's.
+        assert!(config.suppress_unstable_features_warning);
     }
 
     #[test]

@@ -285,6 +285,22 @@ impl SessionMcpServers for SessionMcpSlot {
     fn offer(&self, request: &SessionMcpRequest) -> SessionMcpOffer {
         atlas_agent_servers::session_mcp::offer_for(lock(&self.0).as_ref(), request)
     }
+
+    fn describe_call(
+        &self,
+        call: atlas_agent_servers::CallToApprove<'_>,
+    ) -> futures::future::BoxFuture<'static, Option<atlas_agent_servers::CallDescription>> {
+        match lock(&self.0).as_ref() {
+            Some(servers) => servers.describe_call(call),
+            None => Box::pin(async { None }),
+        }
+    }
+
+    fn approved_call(&self, call: atlas_agent_servers::CallToApprove<'_>) {
+        if let Some(servers) = lock(&self.0).as_ref() {
+            servers.approved_call(call);
+        }
+    }
 }
 
 pub struct AgentHost {
