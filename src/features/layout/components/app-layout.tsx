@@ -76,7 +76,7 @@ export function AppLayout() {
     // `relative` so the project rail + scrim can be absolutely-positioned
     // OVERLAYS. The main column below is the only in-flow child, so it always
     // fills the window and NEVER reflows when the rail toggles.
-    <div className="relative flex h-screen">
+    <div className="relative flex h-screen w-screen max-w-full overflow-hidden">
       {/* DOCKED project sidebar — an in-flow left column (solid, not glass)
           that pushes the whole shell right. Full-height so it sits beside the
           titlebar; the sidebar's own top bar already dodges the traffic lights.

@@ -25,11 +25,124 @@ pub fn clipboard_write_text(text: String) -> Result<(), String> {
     {
         macos_write_text(&text)
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        linux_write_text(&text)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         let _ = text;
-        Err("clipboard writes are only implemented on macOS".to_string())
+        Err("clipboard writes are only implemented on macOS and Linux".to_string())
     }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_write_text(text: &str) -> Result<(), String> {
+    let is_wayland = std::env::var_os("WAYLAND_DISPLAY")
+        .map(|s| !s.is_empty())
+        .unwrap_or(false)
+        || std::env::var_os("XDG_SESSION_TYPE").map(|s| s == "wayland").unwrap_or(false);
+    linux_write_text_with_runner(text, is_wayland, default_command_runner)
+}
+
+#[cfg(any(target_os = "linux", test))]
+#[allow(dead_code)]
+fn default_command_runner(program: &str, args: &[&str], input: &str) -> bool {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    let Ok(mut child) = Command::new(program)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return false;
+    };
+
+    let Some(mut stdin) = child.stdin.take() else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return false;
+    };
+
+    // Feed stdin on a background thread so pipe buffer saturation (>64KB on Linux)
+    // never hangs the calling thread if the helper fails to drain stdin immediately.
+    let input_bytes = input.as_bytes().to_vec();
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let res = stdin.write_all(&input_bytes).and_then(|_| stdin.flush());
+        drop(stdin); // Send EOF to helper
+        let _ = tx.send(res);
+    });
+
+    // Bounded timeout for feeding stdin
+    let write_timeout = Duration::from_millis(1500);
+    match rx.recv_timeout(write_timeout) {
+        Ok(Ok(())) => {}
+        _ => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return false;
+        }
+    }
+
+    // Give the helper a brief startup window to detect immediate failure (e.g. invalid
+    // arguments, missing dependencies, or display connection rejected on launch). If it
+    // exits with an error status, return false so fallback helpers can be attempted.
+    let startup_check = Duration::from_millis(100);
+    let start = Instant::now();
+    while start.elapsed() < startup_check {
+        match child.try_wait() {
+            Ok(Some(status)) => return status.success(),
+            Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return false;
+            }
+        }
+    }
+
+    // On X11, clipboard helpers such as xclip and xsel must remain running as the
+    // selection owner to serve subsequent paste requests from other applications.
+    // Since stdin was successfully delivered and the helper did not exit with an error,
+    // treat the handoff as success and reap the child asynchronously when it terminates.
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    true
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_write_text_with_runner<F>(text: &str, is_wayland: bool, mut runner: F) -> Result<(), String>
+where
+    F: FnMut(&str, &[&str], &str) -> bool,
+{
+    let candidates: &[(&str, &[&str])] = if is_wayland {
+        &[
+            ("wl-copy", &[]),
+            ("xclip", &["-selection", "clipboard"]),
+            ("xsel", &["--clipboard", "--input"]),
+        ]
+    } else {
+        &[
+            ("xclip", &["-selection", "clipboard"]),
+            ("wl-copy", &[]),
+            ("xsel", &["--clipboard", "--input"]),
+        ]
+    };
+
+    for (program, args) in candidates {
+        if runner(program, args, text) {
+            return Ok(());
+        }
+    }
+
+    Err("failed to write to clipboard via supported helpers (wl-copy, xclip, xsel)".to_string())
 }
 
 #[cfg(target_os = "macos")]
@@ -277,5 +390,192 @@ fn sweep_scratch(dir: &std::path::Path) {
         {
             let _ = std::fs::remove_file(entry.path());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_linux_clipboard_wayland_success_first_helper() {
+        let mut calls = Vec::new();
+        let res = linux_write_text_with_runner("hello", true, |prog, args, input| {
+            calls.push((
+                prog.to_string(),
+                args.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                input.to_string(),
+            ));
+            true
+        });
+        assert!(res.is_ok());
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "wl-copy");
+        assert_eq!(calls[0].1, Vec::<String>::new());
+        assert_eq!(calls[0].2, "hello");
+    }
+
+    #[test]
+    fn test_linux_clipboard_wayland_fallback_xclip() {
+        let mut calls = Vec::new();
+        let res = linux_write_text_with_runner("hello", true, |prog, args, input| {
+            calls.push((
+                prog.to_string(),
+                args.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                input.to_string(),
+            ));
+            prog == "xclip"
+        });
+        assert!(res.is_ok());
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].0, "wl-copy");
+        assert_eq!(calls[1].0, "xclip");
+        assert_eq!(calls[1].1, vec!["-selection", "clipboard"]);
+        assert_eq!(calls[1].2, "hello");
+    }
+
+    #[test]
+    fn test_linux_clipboard_wayland_fallback_xsel() {
+        let mut calls = Vec::new();
+        let res = linux_write_text_with_runner("hello", true, |prog, args, input| {
+            calls.push((
+                prog.to_string(),
+                args.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                input.to_string(),
+            ));
+            prog == "xsel"
+        });
+        assert!(res.is_ok());
+        assert_eq!(calls.len(), 3);
+        assert_eq!(calls[0].0, "wl-copy");
+        assert_eq!(calls[1].0, "xclip");
+        assert_eq!(calls[2].0, "xsel");
+        assert_eq!(calls[2].1, vec!["--clipboard", "--input"]);
+        assert_eq!(calls[2].2, "hello");
+    }
+
+    #[test]
+    fn test_linux_clipboard_x11_success_first_helper() {
+        let mut calls = Vec::new();
+        let res = linux_write_text_with_runner("hello x11", false, |prog, args, input| {
+            calls.push((
+                prog.to_string(),
+                args.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                input.to_string(),
+            ));
+            true
+        });
+        assert!(res.is_ok());
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "xclip");
+        assert_eq!(calls[0].1, vec!["-selection", "clipboard"]);
+        assert_eq!(calls[0].2, "hello x11");
+    }
+
+    #[test]
+    fn test_linux_clipboard_x11_fallback_wl_copy() {
+        let mut calls = Vec::new();
+        let res = linux_write_text_with_runner("hello", false, |prog, args, input| {
+            calls.push((
+                prog.to_string(),
+                args.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                input.to_string(),
+            ));
+            prog == "wl-copy"
+        });
+        assert!(res.is_ok());
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].0, "xclip");
+        assert_eq!(calls[1].0, "wl-copy");
+    }
+
+    #[test]
+    fn test_linux_clipboard_x11_fallback_xsel() {
+        let mut calls = Vec::new();
+        let res = linux_write_text_with_runner("hello", false, |prog, args, input| {
+            calls.push((
+                prog.to_string(),
+                args.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                input.to_string(),
+            ));
+            prog == "xsel"
+        });
+        assert!(res.is_ok());
+        assert_eq!(calls.len(), 3);
+        assert_eq!(calls[0].0, "xclip");
+        assert_eq!(calls[1].0, "wl-copy");
+        assert_eq!(calls[2].0, "xsel");
+    }
+
+    #[test]
+    fn test_linux_clipboard_all_fail() {
+        let mut calls = Vec::new();
+        let res = linux_write_text_with_runner("fail", false, |prog, args, input| {
+            calls.push((
+                prog.to_string(),
+                args.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                input.to_string(),
+            ));
+            false
+        });
+        assert!(res.is_err());
+        assert_eq!(calls.len(), 3);
+        assert_eq!(
+            res.unwrap_err(),
+            "failed to write to clipboard via supported helpers (wl-copy, xclip, xsel)"
+        );
+    }
+
+    #[test]
+    fn test_default_command_runner_handles_missing_binary() {
+        assert!(!default_command_runner("non_existent_binary_xyz_123", &[], "test"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_default_command_runner_immediate_success() {
+        assert!(default_command_runner("true", &[], "test"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_default_command_runner_immediate_failure() {
+        assert!(!default_command_runner("false", &[], "test"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_default_command_runner_stdin_reading_binary() {
+        assert!(default_command_runner("cat", &[], "hello world"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_default_command_runner_persistent_helper_stays_alive_and_succeeds() {
+        let start = std::time::Instant::now();
+        let ok = default_command_runner("sleep", &["2"], "test");
+        let elapsed = start.elapsed();
+        assert!(ok);
+        assert!(elapsed < std::time::Duration::from_millis(500));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_default_command_runner_stdin_failure_does_not_block() {
+        let start = std::time::Instant::now();
+        let ok = default_command_runner(
+            "sh",
+            &["-c", "exec 0<&-; sleep 10"],
+            &"a".repeat(1_000_000),
+        );
+        let elapsed = start.elapsed();
+        assert!(!ok);
+        assert!(elapsed < std::time::Duration::from_millis(2500));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_default_command_runner_empty_input() {
+        assert!(default_command_runner("cat", &[], ""));
     }
 }

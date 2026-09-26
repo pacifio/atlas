@@ -36,8 +36,8 @@ case "$ARCH" in
     ;;
 esac
 
-# Extract version from package.json
-VERSION="$(node -p 'JSON.parse(require("fs").readFileSync("package.json")).version')"
+# Extract version from environment or package.json
+VERSION="${VERSION:-$(node -p 'JSON.parse(require("fs").readFileSync("package.json")).version')}"
 VERSION="${VERSION#alpha-}"
 VERSION="${VERSION#exp-}"
 VERSION="${VERSION#v}"
@@ -129,10 +129,9 @@ ln -sf atl "${PREFIX}/bin/tryatlas"
 if [ ! -e "${PREFIX}/bin/atlas" ]; then
   ln -sf atl "${PREFIX}/bin/atlas"
 fi
+# Remove legacy desktop launcher aliases if present from earlier versions
+rm -f "${PREFIX}/share/applications/atlas.desktop" "${PREFIX}/share/applications/atl.desktop" "${PREFIX}/share/applications/tryatlas.desktop"
 install -m 644 share/applications/dev.atlas.ide.desktop "${PREFIX}/share/applications/dev.atlas.ide.desktop"
-ln -sf dev.atlas.ide.desktop "${PREFIX}/share/applications/atlas.desktop" || cp share/applications/dev.atlas.ide.desktop "${PREFIX}/share/applications/atlas.desktop"
-ln -sf dev.atlas.ide.desktop "${PREFIX}/share/applications/atl.desktop" || true
-ln -sf dev.atlas.ide.desktop "${PREFIX}/share/applications/tryatlas.desktop" || true
 cp -r share/icons "${PREFIX}/share/"
 cp -r share/licenses/atlas/* "${PREFIX}/share/licenses/atlas/"
 if command -v update-desktop-database >/dev/null 2>&1; then
@@ -210,6 +209,9 @@ depends=(
 )
 optdepends=(
     'xdg-terminal-exec: Open folders in default terminal'
+    'wl-clipboard: Wayland clipboard support'
+    'xclip: X11 clipboard support'
+    'xsel: Alternative X11 clipboard support'
 )
 provides=("tryatlas=\${pkgver}" "atl=\${pkgver}")
 source_${ARCH}=("atlas-\${pkgver}-linux-${ARCH}.tar.gz::https://github.com/${REPO}/releases/download/${RELEASE_TAG}/atlas-\${pkgver}-linux-${ARCH}.tar.gz")
@@ -220,8 +222,6 @@ package() {
     install -Dm755 bin/atlas "\${pkgdir}/usr/bin/atl"
     ln -sf atl "\${pkgdir}/usr/bin/tryatlas"
     install -Dm644 share/applications/dev.atlas.ide.desktop "\${pkgdir}/usr/share/applications/dev.atlas.ide.desktop"
-    ln -sf dev.atlas.ide.desktop "\${pkgdir}/usr/share/applications/tryatlas.desktop"
-    ln -sf dev.atlas.ide.desktop "\${pkgdir}/usr/share/applications/atl.desktop"
     for size in 32 64 128 256 512; do
         if [ -f "share/icons/hicolor/\${size}x\${size}/apps/atlas.png" ]; then
             install -Dm644 "share/icons/hicolor/\${size}x\${size}/apps/atlas.png" \\
@@ -267,6 +267,7 @@ Priority: optional
 Architecture: ${DEB_ARCH}
 Maintainer: Atlas Team <contact@tryatlas.cc>
 Depends: libwebkit2gtk-4.1-0, libgtk-3-0, libayatana-appindicator3-1, bubblewrap, libglib2.0-0
+Suggests: wl-clipboard, xclip, xsel
 Provides: tryatlas (= ${VERSION}), atl (= ${VERSION})
 Description: Atlas — agent-first ideation and planning tool
  Atlas is an agent-first IDE and planning tool for software development.
@@ -278,6 +279,8 @@ set -e
 if [ ! -e /usr/bin/atlas ]; then
   ln -sf atl /usr/bin/atlas
 fi
+# Remove legacy desktop launcher aliases if present from earlier versions
+rm -f /usr/share/applications/atlas.desktop /usr/share/applications/atl.desktop /usr/share/applications/tryatlas.desktop
 if command -v update-desktop-database >/dev/null 2>&1; then
   update-desktop-database -q /usr/share/applications || true
 fi
@@ -293,6 +296,7 @@ set -e
 if [ -L /usr/bin/atlas ] && [ "$(readlink /usr/bin/atlas)" = "atl" ]; then
   rm -f /usr/bin/atlas
 fi
+rm -f /usr/share/applications/atlas.desktop /usr/share/applications/atl.desktop /usr/share/applications/tryatlas.desktop
 if command -v update-desktop-database >/dev/null 2>&1; then
   update-desktop-database -q /usr/share/applications || true
 fi
@@ -336,6 +340,7 @@ Provides:       tryatlas = %{version}-%{release}
 Provides:       atl = %{version}-%{release}
 AutoReqProv:    no
 Requires:       webkit2gtk4.1, gtk3, libayatana-appindicator-gtk3, bubblewrap, glib2
+Suggests:       wl-clipboard, xclip, xsel
 
 %description
 Atlas is an agent-first IDE and planning tool for software development.
@@ -356,6 +361,8 @@ cp -r ${STAGE_DIR}/share/licenses/atlas/* %{buildroot}/usr/share/licenses/tryatl
 if [ ! -e /usr/bin/atlas ]; then
   ln -sf atl /usr/bin/atlas
 fi
+# Remove legacy desktop launcher aliases if present from earlier versions
+rm -f /usr/share/applications/atlas.desktop /usr/share/applications/atl.desktop /usr/share/applications/tryatlas.desktop
 if command -v update-desktop-database >/dev/null 2>&1; then
   update-desktop-database /usr/share/applications || true
 fi
@@ -367,6 +374,7 @@ fi
 if [ -L /usr/bin/atlas ] && [ "\$(readlink /usr/bin/atlas)" = "atl" ]; then
   rm -f /usr/bin/atlas
 fi
+rm -f /usr/share/applications/atlas.desktop /usr/share/applications/atl.desktop /usr/share/applications/tryatlas.desktop
 if command -v update-desktop-database >/dev/null 2>&1; then
   update-desktop-database /usr/share/applications || true
 fi
@@ -377,7 +385,7 @@ fi
 %files
 /usr/bin/atl
 /usr/bin/tryatlas
-/usr/share/applications/*.desktop
+/usr/share/applications/dev.atlas.ide.desktop
 /usr/share/icons/hicolor/*/apps/atlas.png
 /usr/share/licenses/tryatlas/*
 EOF

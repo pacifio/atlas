@@ -27,10 +27,36 @@ export async function copyText(text: string): Promise<boolean> {
     return true;
   } catch {
     try {
+      if (!navigator?.clipboard?.writeText) {
+        throw new Error("navigator.clipboard.writeText unavailable");
+      }
       await navigator.clipboard.writeText(text);
       return true;
     } catch {
-      return false;
+      if (typeof document === "undefined" || !document.body) {
+        return false;
+      }
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.style.position = "fixed";
+      textarea.style.top = "0";
+      textarea.style.left = "0";
+      textarea.style.opacity = "0";
+      textarea.style.pointerEvents = "none";
+      textarea.setAttribute("readonly", "");
+      document.body.appendChild(textarea);
+      try {
+        textarea.focus();
+        textarea.select();
+        textarea.setSelectionRange(0, textarea.value.length);
+        return document.execCommand("copy");
+      } catch {
+        return false;
+      } finally {
+        if (textarea.parentNode) {
+          textarea.parentNode.removeChild(textarea);
+        }
+      }
     }
   }
 }
