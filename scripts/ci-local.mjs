@@ -34,7 +34,9 @@
  *     applying them here would rebuild your whole target/ under a second
  *     profile and lose incremental builds.
  *   - the OS, unless asked. Every job runs on this machine by default. A job
- *     CI runs on macOS (the app) is skipped on any other OS.
+ *     CI runs on macOS (the app) is skipped on any other OS, and so is the
+ *     app's Linux compile check (OS_BOUND) except on Linux; under `--linux`
+ *     it runs in the container.
  *
  * `--linux` runs the jobs CI runs on Ubuntu in a container instead, built from
  * scripts/ci-linux/Dockerfile. It is the only local way to exercise Linux-only
@@ -80,6 +82,10 @@ if (typeof Bun === "undefined") {
 
 /** Jobs that plan or gate other jobs rather than check anything. */
 const NOT_CHECKS = new Set(["changes", "ci-ok"]);
+/** Jobs that compile for their runner's OS. Anywhere else they would repeat
+ *  the macOS `app` job's check under the wrong `cfg`, so they run only there. */
+const OS_BOUND = new Set(["app-linux"]);
+const HOST_OS = { darwin: "macos", win32: "windows" }[process.platform] ?? process.platform;
 /** A step matching this changes the machine it runs on; see the docblock. */
 const MUTATES_MACHINE = /\bsudo\b|git config --global/;
 
@@ -160,7 +166,7 @@ function plannedNames(argv) {
     dialect: dialectPackages(ciYmlText),
   });
   const names = new Set(["frontend", ...p.crates.map((c) => c.crate)]);
-  if (p.app) names.add(ciYml.jobs.app.name);
+  if (p.app) names.add(ciYml.jobs.app.name).add(ciYml.jobs["app-linux"].name);
   if (p.engineDialect) names.add(ciYml.jobs["engine-dialect"].name);
   return { names, why: `${p.reason} since ${base.slice(0, 12)}` };
 }
@@ -342,7 +348,7 @@ function containerRun(ctx, cwd, command, { interactive = false } = {}) {
 /** Where a job runs: in the container, on this machine, or not at all. */
 function placement(job, linux) {
   if (job.os === "linux" && linux) return "container";
-  if (job.os === "macos" && process.platform !== "darwin") return "skip";
+  if ((job.os === "macos" || OS_BOUND.has(job.id)) && job.os !== HOST_OS) return "skip";
   return "native";
 }
 
@@ -372,7 +378,7 @@ function main(argv) {
     console.log(`ci-local: ${jobs.length} of ${all.length} jobs (${why})`);
   }
   // Fastest feedback first: the frontend takes about a minute, the app longest.
-  const rank = { frontend: 0, crates: 1, "engine-dialect": 2, app: 3 };
+  const rank = { frontend: 0, crates: 1, "engine-dialect": 2, "app-linux": 3, app: 4 };
   jobs.sort((a, b) => (rank[a.id] ?? 1) - (rank[b.id] ?? 1));
 
   for (const j of jobs) j.where = placement(j, linux);

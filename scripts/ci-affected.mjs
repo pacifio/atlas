@@ -321,6 +321,7 @@ const firstParty = (names) =>
 function summarise(p, crates) {
   const jobs = [
     ["app (src-tauri)", p.app],
+    ["app (src-tauri, Linux)", p.app],
     ["engine dialect", p.engineDialect],
     ...crates.map((c) => [c.crate, p.crates.some((x) => x.crate === c.crate)]),
   ];

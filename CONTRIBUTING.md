@@ -197,9 +197,11 @@ bun run ci:local --shell              # a shell in that container
 ```
 
 By default every job runs on your machine, and a job CI runs on macOS (the app)
-is skipped on any other OS. CI runs every other job on arm64 Ubuntu, so from a
-Mac or Windows the Linux-only paths go untested; the engine's bubblewrap
-sandbox is the one that bites. `--linux` runs those jobs in a container built
+is skipped on any other OS. So is the app's Linux compile check, except on
+Linux: on a Mac it would only repeat the macOS build. CI
+runs every other job on arm64 Ubuntu, so from a Mac or Windows the Linux-only
+paths go untested; the engine's bubblewrap sandbox and code gated on
+`target_os = "macos"` are the ones that bite. `--linux` runs those jobs in a container built
 from `scripts/ci-linux/Dockerfile`, with Rust, Bun and Node at the pinned
 versions. It's opt-in because the first run is a cold build; the target dir,
 cargo registry and a Linux `node_modules` then live in Docker volumes for that

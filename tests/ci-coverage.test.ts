@@ -123,7 +123,9 @@ describe("CI's Rust jobs", () => {
   const src = readFileSync(WORKFLOW, "utf8");
 
   it("finds the jobs", () => {
-    expect([...jobs.keys()]).toEqual(expect.arrayContaining(["frontend", "app", "crates"]));
+    expect([...jobs.keys()]).toEqual(
+      expect.arrayContaining(["frontend", "app", "app-linux", "crates"]),
+    );
   });
 
   it("runs exactly one clippy pass per matrix crate", () => {
@@ -141,7 +143,7 @@ describe("CI's Rust jobs", () => {
     const wrapped = [...jobs].filter(([, block]) => /^\s*RUSTC_WRAPPER:\s*sccache\b/m.test(block));
     // Floor guard: the app, engine dialect and per-crate jobs.
     expect(wrapped.map(([id]) => id)).toEqual(
-      expect.arrayContaining(["app", "engine-dialect", "crates"]),
+      expect.arrayContaining(["app", "app-linux", "engine-dialect", "crates"]),
     );
     for (const [id, block] of wrapped) {
       const steps = stepsOf(block);

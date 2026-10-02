@@ -164,9 +164,9 @@ jobs:
     # Without this job every other check can be green while the app does not
     # build at all; `crates` only covers the libraries underneath it.
     #
-    # Runs on macOS because that is the supported platform (see CONTRIBUTING),
-    # and because Tauri on Linux would additionally need webkit2gtk/gtk3
-    # system packages installed before it could compile.
+    # Runs on macOS because that is the supported platform (see CONTRIBUTING).
+    # `app-linux` checks that the app still compiles for Linux, without
+    # running its tests.
     #
     # This is the slowest job in the pipeline by a wide margin on a cold cache.
     name: app (src-tauri)
@@ -213,6 +213,46 @@ jobs:
       # in the manifest, #60) already carries its own denies, and this is the
       # crate where the #54 cfg outage happened — the deny has to be able to
       # fail a build here, not only warn.
+      - name: Clippy (workspace lint table)
+        working-directory: src-tauri
+        run: cargo clippy --locked --all-targets
+
+  app-linux:
+    # The app compiled for Linux, which the macOS `app` job cannot see. A
+    # module gated `#[cfg(target_os = "macos")]` (`mod menu`, the dock, the
+    # private window APIs) can be named from code every platform compiles,
+    # and every job stays green until a Linux release tag or a contributor on
+    # Windows finds it (#328). Linux and Windows lack the same macOS-only
+    # modules, so this catches most Windows breaks of that shape as well.
+    #
+    # Clippy only, no tests: the question is "does it compile, and does it
+    # pass the lint table, for this OS". Clippy type-checks every target and
+    # emits metadata only, so there is no app link, which is most of the
+    # `app` job's time. Same arguments as the `app` job's clippy step.
+    name: app (src-tauri, Linux)
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
+    runs-on: ubuntu-24.04-arm
+    env:
+      RUSTC_WRAPPER: sccache # see the app job
+    steps:
+      - uses: actions/checkout@v5
+      # What Tauri links against on Linux; the same set release-linux.yml
+      # installs, minus its packaging tools. scripts/ci-linux/Dockerfile
+      # carries the same list for `ci:local --linux`.
+      - name: Install the GTK and WebKit headers Tauri builds against
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+            librsvg2-dev libglib2.0-dev
+      - name: Install the pinned Rust toolchain # see the app job
+        run: rustup toolchain install
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .
+          save-if: ${{ github.event_name == 'push' }}
       - name: Clippy (workspace lint table)
         working-directory: src-tauri
         run: cargo clippy --locked --all-targets
@@ -387,7 +427,7 @@ jobs:
     # every PR that does not touch them. This job always runs and fails if
     # anything it waits on failed or was cancelled.
     name: CI passed
-    needs: [changes, frontend, app, engine-dialect, crates]
+    needs: [changes, frontend, app, app-linux, engine-dialect, crates]
     if: always()
     runs-on: ubuntu-24.04-arm
     steps:

@@ -474,7 +474,7 @@ mod tests {
     use super::*;
 
     fn caps(names: &[&str]) -> ServerCaps {
-        parse_server_caps(&names.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+        parse_server_caps(&names.iter().map(ToString::to_string).collect::<Vec<_>>())
     }
 
     fn note(json: &str) -> Notification {

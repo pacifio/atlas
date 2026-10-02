@@ -280,6 +280,7 @@ describe("the CI workflow follows the plan", () => {
 
   it("gates each planned job on the changes job's output", () => {
     expect(block("app")).toMatch(/^ {4}if: needs\.changes\.outputs\.app == 'true'$/m);
+    expect(block("app-linux")).toMatch(/^ {4}if: needs\.changes\.outputs\.app == 'true'$/m);
     expect(block("engine-dialect")).toMatch(
       /^ {4}if: needs\.changes\.outputs\.engine-dialect == 'true'$/m,
     );

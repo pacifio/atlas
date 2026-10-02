@@ -23,14 +23,16 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PATH=/opt/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # The -sys crates in Cargo.lock that the Linux jobs compile: openssl-sys,
-# aws-lc-sys (cmake, clang), libdbus-sys, libsqlite3-sys. The GTK/WebKit ones
-# belong to the app, which CI builds on macOS only. bubblewrap is the engine's
-# Linux sandbox; CI installs it for `sandbox: true` crates, and ci-local skips
-# that `sudo apt-get` step because it is already here.
+# aws-lc-sys (cmake, clang), libdbus-sys, libsqlite3-sys. The GTK/WebKit
+# headers are for the `app-linux` job, which installs the same list. bubblewrap
+# is the engine's Linux sandbox; CI installs it for `sandbox: true` crates.
+# ci-local skips both jobs' `sudo apt-get` steps because they are already here.
 RUN apt-get update -qq \
  && apt-get install -y -qq --no-install-recommends \
       build-essential pkg-config cmake clang perl python3 \
       libssl-dev libdbus-1-dev libsqlite3-dev \
+      libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+      librsvg2-dev libglib2.0-dev \
       git curl ca-certificates unzip xz-utils procps \
       bubblewrap \
  && rm -rf /var/lib/apt/lists/*
