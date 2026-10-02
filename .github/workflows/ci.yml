@@ -57,9 +57,9 @@ env:
   #
   # Cache budget: GitHub gives the repo 10 GB, and it sat at ~9.7 GB before
   # sccache. Going over is not an error, it is least-recently-used eviction,
-  # i.e. the caches quietly thrash each other. So only pushes to `main` and the
-  # version branches write — the same scope rust-cache's `save-if` uses below.
-  # A pull request reads its base branch's entries and writes none: a PR that
+  # i.e. the caches quietly thrash each other. So only pushes (to `main` and the
+  # version branches) and manual `workflow_dispatch` runs write — the same scope
+  # rust-cache's `save-if` uses below. A pull request reads its base branch's entries and writes none: a PR that
   # edits the engine recompiles what it touched on each push, which is the
   # price of not letting every open PR park its own copy of the engine in the
   # budget. Keys are content hashes of each rustc invocation, so jobs on the
@@ -67,7 +67,7 @@ env:
   # storing it per job. To purge everything sccache wrote, change
   # SCCACHE_GHA_VERSION.
   SCCACHE_GHA_ENABLED: 'true'
-  SCCACHE_GHA_RW_MODE: ${{ github.event_name == 'push' && 'READ_WRITE' || 'READ_ONLY' }}
+  SCCACHE_GHA_RW_MODE: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && 'READ_WRITE' || 'READ_ONLY' }}
 
 # Every job runs on aarch64: the Linux jobs on `ubuntu-24.04-arm`, the app
 # job on `macos-latest` (Apple Silicon). The team develops on Apple Silicon, so
@@ -190,11 +190,11 @@ jobs:
       - uses: mozilla-actions/sccache-action@v0.0.11
       # One cargo workspace since #38: the lockfile and the target dir both
       # live at the repo root, so that is what the cache keys off. Saved from
-      # pushes only, for the cache budget (see SCCACHE_GHA_RW_MODE).
+      # pushes and workflow_dispatch runs only, for the cache budget (see SCCACHE_GHA_RW_MODE).
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: .
-          save-if: ${{ github.event_name == 'push' }}
+          save-if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
       - name: Configure git identity for test repos
         run: |
           git config --global user.name "CI"
@@ -248,7 +248,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: .
-          save-if: ${{ github.event_name == 'push' }}
+          save-if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
       # Some of the vendored suites build scratch git repositories; same reason
       # as in `crates`.
       - name: Configure git identity for test repos
@@ -313,7 +313,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: ${{ matrix.crate == 'atlas-kb-server' && 'crates/atlas-kb-server' || '.' }}
-          save-if: ${{ github.event_name == 'push' }}
+          save-if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
       # Several suites build real git repositories in a tempdir, and `git
       # commit` refuses to run without an identity. Set for every crate so
       # adding such a test to another crate doesn't fail mysteriously.

@@ -25,6 +25,12 @@ permissions:
 env:
   CARGO_INCREMENTAL: 0
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  # Set workflow-wide safely here: unlike ci.yml which has multiple jobs, release-linux
+  # has a single job that sets up sccache before any cargo call, and the Docker Arch
+  # build runs in its own container without host env vars.
+  RUSTC_WRAPPER: sccache
+  SCCACHE_GHA_ENABLED: 'true'
+  SCCACHE_GHA_RW_MODE: 'READ_WRITE'
 
 jobs:
   build-linux:
@@ -90,6 +96,9 @@ jobs:
 
       - name: Setup Rust toolchain
         run: rustup toolchain install
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.11
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -230,6 +239,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           files: |
             dist/artifacts/*
         env:
