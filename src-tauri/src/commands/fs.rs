@@ -143,7 +143,9 @@ pub async fn capture_screenshot(
             .unwrap_or_default();
 
         let dir = match project_path.as_deref() {
-            Some(p) => Path::new(p).join(".atlas").join("screenshots"),
+            Some(p) => Path::new(p)
+                .join(atlas_profile::dir_name())
+                .join("screenshots"),
             None => std::env::temp_dir(),
         };
         let _ = fs::create_dir_all(&dir);
@@ -626,67 +628,128 @@ fn pattern_present(contents: &str, pattern: &str) -> bool {
 
 /// Outcome of an `ensure_atlas_gitignore` run. Mostly for logging /
 /// telemetry — the frontend doesn't act on the variant.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum EnsureAtlasGitignoreResult {
-    /// `.git` directory wasn't present — we don't manage `.gitignore` for
-    /// non-git projects (no value to the user).
+    /// `.git` wasn't present — we don't manage ignore files for non-git
+    /// projects (no value to the user).
     NotGitRepo,
-    /// `.gitignore` already contained an entry that matches `.atlas/` —
-    /// nothing changed.
+    /// The ignore file already contained an entry that matches Atlas's
+    /// directory — nothing changed.
     AlreadyPresent,
-    /// `.gitignore` existed but didn't list `.atlas/`; we appended.
+    /// The ignore file existed but didn't list the directory; we appended.
     Added,
-    /// No `.gitignore` existed; we created one with just `.atlas/`.
+    /// No ignore file existed; we created one with just the directory.
     Created,
 }
 
-const ATLAS_GITIGNORE_PATTERN: &str = ".atlas/";
+/// Atlas's state directory as an ignore line: `.atlas/`, or `.atlas-dev/`
+/// under the dev profile (`atlas-profile`). Each profile ignores only its own
+/// directory, and leaves the other profile's line alone.
+fn gitignore_pattern(dir_name: &str) -> String {
+    format!("{dir_name}/")
+}
 
-/// Idempotent: makes sure the project's `.gitignore` contains `.atlas/`
-/// (Atlas's own state directory). Safe to call on every project open.
+/// Idempotent: keeps Atlas's own state directory out of the project's version
+/// control. Safe to call on every project open.
 ///
-/// Logic per the user-facing setting:
+/// The default profile lists `.atlas/` in the project's `.gitignore`:
 ///   1. No `.git` → nothing to do.
 ///   2. `.gitignore` missing → create it with just `.atlas/`.
 ///   3. `.gitignore` present, doesn't list `.atlas/` (in any common
 ///      form) → append.
 ///   4. `.gitignore` present and already lists it → no-op.
 ///
+/// The dev profile (`bun run dev:app`) must not edit a tracked file in every
+/// repository a contributor opens, so it lists `.atlas-dev/` in the
+/// repository's `info/exclude` instead — the same ignore semantics, but local
+/// to the clone and never committed. Already listed in `.gitignore` (as in
+/// Atlas's own repo) counts too.
+///
 /// Off the main thread (it touches the filesystem).
 #[tauri::command]
 pub async fn ensure_atlas_gitignore(
     project_path: String,
 ) -> Result<EnsureAtlasGitignoreResult, String> {
-    tokio::task::spawn_blocking(move || ensure_atlas_gitignore_sync(&project_path))
-        .await
-        .map_err(|e| e.to_string())?
+    tokio::task::spawn_blocking(move || {
+        ensure_atlas_ignored(Path::new(&project_path), atlas_profile::current())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
-fn ensure_atlas_gitignore_sync(project_path: &str) -> Result<EnsureAtlasGitignoreResult, String> {
-    let root = Path::new(project_path);
+fn ensure_atlas_ignored(
+    root: &Path,
+    profile: atlas_profile::Profile,
+) -> Result<EnsureAtlasGitignoreResult, String> {
     if !root.join(".git").exists() {
         return Ok(EnsureAtlasGitignoreResult::NotGitRepo);
     }
-
+    let dir_name = profile.dir_name();
     let gitignore = root.join(".gitignore");
+    if !profile.is_dev() {
+        return ensure_listed(&gitignore, dir_name);
+    }
+    if fs::read_to_string(&gitignore).is_ok_and(|g| atlas_pattern_present(&g, dir_name)) {
+        return Ok(EnsureAtlasGitignoreResult::AlreadyPresent);
+    }
+    let exclude = git_common_dir(root)?.join("info").join("exclude");
+    if let Some(info) = exclude.parent() {
+        fs::create_dir_all(info)
+            .map_err(|e| format!("could not create {}: {e}", info.display()))?;
+    }
+    ensure_listed(&exclude, dir_name)
+}
 
-    if !gitignore.exists() {
-        fs::write(&gitignore, format!("{ATLAS_GITIGNORE_PATTERN}\n"))
-            .map_err(|e| format!("could not create .gitignore: {e}"))?;
-        tracing::info!(
-            target: "atlas::gitignore",
-            "created {} with {}",
-            gitignore.display(),
-            ATLAS_GITIGNORE_PATTERN
-        );
+/// The repository's common git directory, where `info/exclude` lives.
+///
+/// - `<root>/.git` is a directory: that directory.
+/// - `<root>/.git` is a file (a linked worktree, a submodule): it reads
+///   `gitdir: <path>`, relative to `root` when not absolute. A linked
+///   worktree's gitdir (`<main>/.git/worktrees/<name>`) also holds a
+///   `commondir` file naming the shared directory (relative to the gitdir),
+///   and git reads `info/exclude` from there, not from the per-worktree dir.
+fn git_common_dir(root: &Path) -> Result<std::path::PathBuf, String> {
+    let dot_git = root.join(".git");
+    if dot_git.is_dir() {
+        return Ok(dot_git);
+    }
+    let pointer = fs::read_to_string(&dot_git)
+        .map_err(|e| format!("could not read {}: {e}", dot_git.display()))?;
+    let target = pointer
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("gitdir:"))
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .ok_or_else(|| format!("{} has no `gitdir:` line", dot_git.display()))?;
+    let git_dir = root.join(target);
+    let common = match fs::read_to_string(git_dir.join("commondir")) {
+        Ok(common) if !common.trim().is_empty() => git_dir.join(common.trim()),
+        _ => git_dir,
+    };
+    // Never invent a git directory: `info/` is created inside it, not it.
+    if !common.is_dir() {
+        return Err(format!("git directory {} does not exist", common.display()));
+    }
+    Ok(common)
+}
+
+/// Make sure `file` lists `<dir_name>/`: create it with just that line, or
+/// append the line, unless an equivalent one is already there.
+fn ensure_listed(file: &Path, dir_name: &str) -> Result<EnsureAtlasGitignoreResult, String> {
+    let pattern = gitignore_pattern(dir_name);
+    let shown = file.display();
+
+    if !file.exists() {
+        fs::write(file, format!("{pattern}\n"))
+            .map_err(|e| format!("could not create {shown}: {e}"))?;
+        tracing::info!(target: "atlas::gitignore", "created {shown} with {pattern}");
         return Ok(EnsureAtlasGitignoreResult::Created);
     }
 
-    let existing =
-        fs::read_to_string(&gitignore).map_err(|e| format!("could not read .gitignore: {e}"))?;
+    let existing = fs::read_to_string(file).map_err(|e| format!("could not read {shown}: {e}"))?;
 
-    if atlas_pattern_present(&existing) {
+    if atlas_pattern_present(&existing, dir_name) {
         return Ok(EnsureAtlasGitignoreResult::AlreadyPresent);
     }
 
@@ -694,30 +757,213 @@ fn ensure_atlas_gitignore_sync(project_path: &str) -> Result<EnsureAtlasGitignor
     if !next.is_empty() && !next.ends_with('\n') {
         next.push('\n');
     }
-    next.push_str(ATLAS_GITIGNORE_PATTERN);
+    next.push_str(&pattern);
     next.push('\n');
 
-    fs::write(&gitignore, next).map_err(|e| format!("could not write .gitignore: {e}"))?;
-    tracing::info!(
-        target: "atlas::gitignore",
-        "appended {} to {}",
-        ATLAS_GITIGNORE_PATTERN,
-        gitignore.display()
-    );
+    fs::write(file, next).map_err(|e| format!("could not write {shown}: {e}"))?;
+    tracing::info!(target: "atlas::gitignore", "appended {pattern} to {shown}");
     Ok(EnsureAtlasGitignoreResult::Added)
 }
 
-/// True if any line in `.gitignore` already matches `.atlas/` in any of
-/// the equivalent forms users commonly write. Comment lines (`#…`) and
-/// blank lines are skipped; trailing whitespace is ignored.
-fn atlas_pattern_present(contents: &str) -> bool {
+/// True if any line in `.gitignore` already matches `<dir_name>/` (`.atlas/`)
+/// in any of the equivalent forms users commonly write (`.atlas`, `.atlas/`,
+/// `/.atlas`, `/.atlas/`). Comment lines (`#…`) and blank lines are skipped;
+/// trailing whitespace is ignored.
+fn atlas_pattern_present(contents: &str, dir_name: &str) -> bool {
     contents.lines().any(|raw| {
         let line = raw.trim();
         if line.is_empty() || line.starts_with('#') {
             return false;
         }
-        matches!(line, ".atlas" | ".atlas/" | "/.atlas" | "/.atlas/")
+        let line = line.strip_prefix('/').unwrap_or(line);
+        let line = line.strip_suffix('/').unwrap_or(line);
+        line == dir_name
     })
+}
+
+#[cfg(test)]
+mod gitignore_tests {
+    use super::{atlas_pattern_present, gitignore_pattern};
+
+    #[test]
+    fn every_common_spelling_of_the_directory_counts() {
+        for line in [".atlas", ".atlas/", "/.atlas", "/.atlas/", "  .atlas/  "] {
+            let contents = format!("node_modules\n{line}\n");
+            assert!(atlas_pattern_present(&contents, ".atlas"), "{line:?}");
+        }
+        assert!(!atlas_pattern_present("# .atlas/\n\n", ".atlas"));
+        assert!(!atlas_pattern_present(".atlas-old/\n", ".atlas"));
+        assert!(!atlas_pattern_present("//.atlas//\n", ".atlas"));
+        assert_eq!(gitignore_pattern(".atlas"), ".atlas/");
+    }
+
+    /// The dev profile looks for, and adds, its own directory only: the
+    /// released app's `.atlas/` line does not cover `.atlas-dev/`.
+    #[test]
+    fn each_profile_matches_only_its_own_directory() {
+        assert!(!atlas_pattern_present(".atlas/\n", ".atlas-dev"));
+        assert!(atlas_pattern_present(
+            ".atlas/\n.atlas-dev/\n",
+            ".atlas-dev"
+        ));
+        assert!(!atlas_pattern_present(".atlas-dev/\n", ".atlas"));
+        assert_eq!(gitignore_pattern(".atlas-dev"), ".atlas-dev/");
+    }
+}
+
+/// `ensure_atlas_ignored` against real directories, under both profiles.
+#[cfg(test)]
+mod ignore_file_tests {
+    use super::{ensure_atlas_ignored, EnsureAtlasGitignoreResult as R};
+    use atlas_profile::Profile;
+    use std::fs;
+    use std::path::Path;
+
+    fn read(p: impl AsRef<Path>) -> String {
+        fs::read_to_string(p).unwrap()
+    }
+
+    /// A plain clone: `<root>/.git/` is a directory, with no `info/` yet.
+    fn repo() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join(".git")).unwrap();
+        dir
+    }
+
+    #[test]
+    fn neither_profile_touches_a_project_without_git() {
+        let dir = tempfile::tempdir().unwrap();
+        for p in [Profile::Default, Profile::Dev] {
+            assert_eq!(ensure_atlas_ignored(dir.path(), p), Ok(R::NotGitRepo));
+        }
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn the_default_profile_creates_then_appends_to_gitignore() {
+        let dir = repo();
+        let root = dir.path();
+        assert_eq!(ensure_atlas_ignored(root, Profile::Default), Ok(R::Created));
+        assert_eq!(read(root.join(".gitignore")), ".atlas/\n");
+        assert_eq!(
+            ensure_atlas_ignored(root, Profile::Default),
+            Ok(R::AlreadyPresent)
+        );
+
+        fs::write(root.join(".gitignore"), "node_modules").unwrap();
+        assert_eq!(ensure_atlas_ignored(root, Profile::Default), Ok(R::Added));
+        assert_eq!(read(root.join(".gitignore")), "node_modules\n.atlas/\n");
+        assert!(
+            !root.join(".git/info").exists(),
+            "the default profile leaves .git alone"
+        );
+    }
+
+    #[test]
+    fn the_dev_profile_never_edits_gitignore() {
+        let dir = repo();
+        let root = dir.path();
+        fs::write(root.join(".gitignore"), "node_modules\n").unwrap();
+
+        // `info/` is missing in a fresh `.git`: created, then the line.
+        assert_eq!(ensure_atlas_ignored(root, Profile::Dev), Ok(R::Created));
+        assert_eq!(read(root.join(".git/info/exclude")), ".atlas-dev/\n");
+        assert_eq!(read(root.join(".gitignore")), "node_modules\n");
+
+        // Idempotent.
+        assert_eq!(
+            ensure_atlas_ignored(root, Profile::Dev),
+            Ok(R::AlreadyPresent)
+        );
+        assert_eq!(read(root.join(".git/info/exclude")), ".atlas-dev/\n");
+
+        // Appends to git's own template content, keeping it.
+        fs::write(
+            root.join(".git/info/exclude"),
+            "# git ls-files --others\n*.swp",
+        )
+        .unwrap();
+        assert_eq!(ensure_atlas_ignored(root, Profile::Dev), Ok(R::Added));
+        assert_eq!(
+            read(root.join(".git/info/exclude")),
+            "# git ls-files --others\n*.swp\n.atlas-dev/\n"
+        );
+        assert_eq!(read(root.join(".gitignore")), "node_modules\n");
+    }
+
+    #[test]
+    fn the_dev_profile_without_a_gitignore_does_not_create_one() {
+        let dir = repo();
+        let root = dir.path();
+        assert_eq!(ensure_atlas_ignored(root, Profile::Dev), Ok(R::Created));
+        assert!(!root.join(".gitignore").exists());
+    }
+
+    /// Atlas's own repo already ignores `.atlas-dev/`: nothing more to do.
+    #[test]
+    fn the_dev_profile_accepts_a_gitignore_that_already_lists_it() {
+        let dir = repo();
+        let root = dir.path();
+        fs::write(root.join(".gitignore"), ".atlas/\n.atlas-dev/\n").unwrap();
+        assert_eq!(
+            ensure_atlas_ignored(root, Profile::Dev),
+            Ok(R::AlreadyPresent)
+        );
+        assert!(!root.join(".git/info").exists());
+    }
+
+    /// A linked worktree: `.git` is a file pointing at
+    /// `<main>/.git/worktrees/<name>`, whose `commondir` names the shared
+    /// `<main>/.git` — where git reads `info/exclude` from.
+    #[test]
+    fn the_dev_profile_follows_a_linked_worktree_to_the_common_dir() {
+        let main = repo();
+        let wt_git = main.path().join(".git/worktrees/feature");
+        fs::create_dir_all(&wt_git).unwrap();
+        fs::write(wt_git.join("commondir"), "../..\n").unwrap();
+        let wt = tempfile::tempdir().unwrap();
+        fs::write(
+            wt.path().join(".git"),
+            format!("gitdir: {}\n", wt_git.display()),
+        )
+        .unwrap();
+
+        assert_eq!(
+            ensure_atlas_ignored(wt.path(), Profile::Dev),
+            Ok(R::Created)
+        );
+        assert_eq!(read(main.path().join(".git/info/exclude")), ".atlas-dev/\n");
+        assert!(!wt_git.join("info").exists());
+        assert!(!wt.path().join(".gitignore").exists());
+        assert_eq!(
+            ensure_atlas_ignored(wt.path(), Profile::Dev),
+            Ok(R::AlreadyPresent)
+        );
+    }
+
+    /// A submodule: `.git` is a file with a relative `gitdir:` and no
+    /// `commondir`, so `info/exclude` lives in the pointed-at directory.
+    #[test]
+    fn the_dev_profile_follows_a_relative_gitdir() {
+        let parent = tempfile::tempdir().unwrap();
+        let module_git = parent.path().join(".git/modules/sub");
+        fs::create_dir_all(&module_git).unwrap();
+        let sub = parent.path().join("sub");
+        fs::create_dir(&sub).unwrap();
+        fs::write(sub.join(".git"), "gitdir: ../.git/modules/sub\n").unwrap();
+
+        assert_eq!(ensure_atlas_ignored(&sub, Profile::Dev), Ok(R::Created));
+        assert_eq!(read(module_git.join("info/exclude")), ".atlas-dev/\n");
+    }
+
+    /// A `.git` file pointing nowhere is an error, not a new directory.
+    #[test]
+    fn the_dev_profile_does_not_invent_a_git_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join(".git"), "gitdir: missing/dir\n").unwrap();
+        assert!(ensure_atlas_ignored(dir.path(), Profile::Dev).is_err());
+        assert!(!dir.path().join("missing").exists());
+    }
 }
 
 #[cfg(test)]

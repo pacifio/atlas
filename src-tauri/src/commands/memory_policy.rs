@@ -102,7 +102,7 @@ fn classify(text: &str) -> &'static str {
 
 fn cache_path(project_path: &str) -> PathBuf {
     Path::new(project_path)
-        .join(".atlas")
+        .join(atlas_profile::dir_name())
         .join("memory-index")
         .join("policy.json")
 }

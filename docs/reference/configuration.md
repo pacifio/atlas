@@ -89,8 +89,10 @@ schemaVersion = 1
 
 [settings]
 
-# Add `.atlas/` to each opened git project's .gitignore, creating the
-# file if needed. No-op on non-git projects. (default: true)
+# Keep Atlas's directory in each opened git project out of version
+# control: `.atlas/` goes into the project's .gitignore (created if
+# needed); a dev build's `.atlas-dev/` goes into .git/info/exclude.
+# No-op on non-git projects. (default: true)
 autoAddAtlasGitignore = true
 
 # Interface zoom, where 1.0 is 100%. Also driven by Cmd +/-/0.

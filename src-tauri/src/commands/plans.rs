@@ -40,7 +40,9 @@ pub struct PlansFile {
 }
 
 fn plans_path(project_path: &str) -> std::path::PathBuf {
-    Path::new(project_path).join(".atlas").join("plans.json")
+    Path::new(project_path)
+        .join(atlas_profile::dir_name())
+        .join("plans.json")
 }
 
 fn read_plans(project_path: &str) -> PlansFile {
@@ -52,7 +54,7 @@ fn read_plans(project_path: &str) -> PlansFile {
 }
 
 fn write_plans(project_path: &str, file: &PlansFile) -> Result<(), String> {
-    let dir = Path::new(project_path).join(".atlas");
+    let dir = Path::new(project_path).join(atlas_profile::dir_name());
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let final_path = dir.join("plans.json");
     let tmp_path = dir.join("plans.json.tmp");

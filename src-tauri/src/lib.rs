@@ -33,6 +33,19 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Whose data this process owns, fixed before ANYTHING resolves a path —
+    // the log file below is the first thing that does. The profile is read
+    // off the identifier this binary was built with: `dev:app` builds with
+    // `tauri.dev.conf.json`'s `dev.atlas.ide.dev`, which moves the app config
+    // dir by itself and, through `atlas-profile`, every `.atlas` directory and
+    // `~/.config/atlas` with it. A release build's identifier is
+    // `dev.atlas.ide`, so it is the default profile and nothing here can make
+    // it otherwise. See `crates/atlas-profile`.
+    let context = tauri::generate_context!();
+    atlas_profile::init(atlas_profile::Profile::from_identifier(
+        &context.config().identifier,
+    ));
+
     // Pick the rustls crypto provider, once, before anything can open a TLS
     // connection.
     //
@@ -215,7 +228,10 @@ pub fn run() {
 
             // Bundled `atlas-self-configure` skill (issue #64): install/
             // upgrade it into the canonical global skills store so it's
-            // discoverable the same way any other managed skill is.
+            // discoverable the same way any other managed skill is. The dev
+            // profile seeds its own `atlas-dev-self-configure` (pointing at
+            // its own config) beside it rather than over it: that store
+            // (`~/.agents/skills`) is shared with the released app.
             commands::skills::ensure_bundled_skills();
 
             // Opt-in product telemetry. Inert unless the user has enabled it AND
@@ -335,8 +351,15 @@ pub fn run() {
             app.manage(Arc::new(notifier::Notifier::new(app.handle())));
 
             commands::updater::init_on_startup(app.handle());
-            commands::updater::check_in_background(app.handle());
-            commands::updater::spawn_periodic(app.handle());
+            // No automatic update checks for the dev profile: an update it
+            // staged would be the released installer, and applying it on quit
+            // would upgrade the user's installed Atlas from inside a source
+            // build. The manual verbs (`update_check_now`, `update_apply`)
+            // refuse under the dev profile for the same reason.
+            if !atlas_profile::is_dev() {
+                commands::updater::check_in_background(app.handle());
+                commands::updater::spawn_periodic(app.handle());
+            }
 
             // Background memory indexer (Step 4): a single owned Tokio task drains
             // a bounded queue and indexes each open project's corpus into its
@@ -673,6 +696,7 @@ pub fn run() {
             commands::log::clear_project_log,
             commands::app_state::bootstrap_app_state,
             commands::app_state::save_app_state,
+            commands::app_state::app_profile,
             commands::atlas_config::get_atlas_config_info,
             commands::atlas_config::update_atlas_settings,
             commands::atlas_config::reset_atlas_config,
@@ -833,7 +857,7 @@ pub fn run() {
             commands::skills::pack_projections,
             commands::skills::pack_components_list,
         ])
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building Atlas")
         .run(|app_handle, event| {
             // Apply-on-quit: if the user chose "Later" for a staged update, swap

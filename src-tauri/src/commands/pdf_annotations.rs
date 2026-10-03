@@ -25,7 +25,7 @@ pub struct PdfAnnotationsFile {
 
 fn annotations_path(project_path: &str) -> std::path::PathBuf {
     Path::new(project_path)
-        .join(".atlas")
+        .join(atlas_profile::dir_name())
         .join("pdf-annotations.json")
 }
 
@@ -37,7 +37,7 @@ fn read_all(project_path: &str) -> PdfAnnotationsFile {
 }
 
 fn write_all(project_path: &str, file: &PdfAnnotationsFile) -> Result<(), String> {
-    let dir = Path::new(project_path).join(".atlas");
+    let dir = Path::new(project_path).join(atlas_profile::dir_name());
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let final_path = dir.join("pdf-annotations.json");
     let tmp_path = dir.join("pdf-annotations.json.tmp");

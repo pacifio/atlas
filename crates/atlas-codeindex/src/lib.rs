@@ -216,9 +216,7 @@ pub fn aliases(rel: &str, symbols: &[CodebaseSymbol]) -> Vec<String> {
 // ── Persistence ──────────────────────────────────────────────────────────────
 
 pub fn index_dir(project_path: &str) -> PathBuf {
-    Path::new(project_path)
-        .join(".atlas")
-        .join("codebase-index")
+    atlas_profile::dir_in(project_path).join("codebase-index")
 }
 
 pub fn docs_path(project_path: &str) -> PathBuf {

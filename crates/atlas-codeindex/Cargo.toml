@@ -8,6 +8,8 @@ description = "Deterministic codebase scanner for Atlas: turns live source into 
 name = "atlas_codeindex"
 
 [dependencies]
+# `.atlas` vs `.atlas-dev`: whose data this process owns (see that crate).
+atlas-profile = { path = "../atlas-profile" }
 # Tree-sitter code intelligence (imports + symbols for Rust/TS/JS/Python/Go).
 # Atlas owns this outright (see src/code_intel.rs) — these are the upstream
 # grammars, not an SDK wrapper around them.

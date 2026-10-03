@@ -185,7 +185,10 @@ pub fn evaluate(store: &Store, workspace_id: &str, host: HostSignals) -> Result<
         issues.push(HealthIssue {
             state: HealthState::Stopped,
             reason: format!("The session store cannot be written to: {err}"),
-            next_step: "Check free disk space and the permissions on the .atlas directory.".into(),
+            next_step: format!(
+                "Check free disk space and the permissions on the {} directory.",
+                atlas_profile::dir_name()
+            ),
         });
     }
 

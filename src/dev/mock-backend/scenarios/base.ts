@@ -8,6 +8,7 @@ import type { UpdaterSnapshot } from "@/features/updater/lib/updater-api";
 import type { FileEntry } from "@/features/explorer/stores/explorer-store";
 import type { Theme, ThemeCatalogSummary } from "@/features/theme/lib/theme-api";
 import type { MockHandlers } from "../types";
+import { DEFAULT_APP_PROFILE, type AppProfile } from "@/lib/app-profile";
 import builtinThemesJson from "../fixtures/builtin-themes.json";
 import { agentHandlers } from "../fake-agent";
 import { artifactsHandlers } from "../fixtures/artifacts";
@@ -101,6 +102,7 @@ export const baseHandlers: MockHandlers = {
 
   // ── boot ────────────────────────────────────────────────────────────────
   bootstrap_app_state: () => appState(),
+  app_profile: (): AppProfile => DEFAULT_APP_PROFILE,
   cli_take_initial_project_path: nothing,
   set_window_title: nothing,
   telemetry_config: () => ({

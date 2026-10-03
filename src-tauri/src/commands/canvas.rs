@@ -7,7 +7,9 @@ const DEFAULT_EMPTY: &str =
 #[tauri::command]
 pub async fn load_canvas(project_path: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || -> Result<String, String> {
-        let path = Path::new(&project_path).join(".atlas").join("canvas.json");
+        let path = Path::new(&project_path)
+            .join(atlas_profile::dir_name())
+            .join("canvas.json");
         if !path.exists() {
             return Ok(DEFAULT_EMPTY.to_string());
         }
@@ -20,7 +22,7 @@ pub async fn load_canvas(project_path: String) -> Result<String, String> {
 #[tauri::command]
 pub async fn save_canvas(project_path: String, payload: String) -> Result<(), String> {
     tokio::task::spawn_blocking(move || -> Result<(), String> {
-        let dir = Path::new(&project_path).join(".atlas");
+        let dir = Path::new(&project_path).join(atlas_profile::dir_name());
         fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let final_path = dir.join("canvas.json");
         let tmp_path = dir.join("canvas.json.tmp");
@@ -53,7 +55,9 @@ pub async fn canvas_media_upload(project_path: String, src_path: String) -> Resu
             .map(|d| d.as_nanos())
             .unwrap_or(0);
         let rel = format!("media_{nanos}.{ext}");
-        let dir = Path::new(&project_path).join(".atlas").join("canvas-media");
+        let dir = Path::new(&project_path)
+            .join(atlas_profile::dir_name())
+            .join("canvas-media");
         fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         fs::copy(src, dir.join(&rel)).map_err(|e| e.to_string())?;
         Ok(rel)
@@ -81,7 +85,7 @@ pub async fn canvas_media_data_url(project_path: String, src: String) -> Result<
     }
     tokio::task::spawn_blocking(move || -> Result<String, String> {
         let abs = Path::new(&project_path)
-            .join(".atlas")
+            .join(atlas_profile::dir_name())
             .join("canvas-media")
             .join(&src);
         // A data URL is 4/3 the file, crosses IPC whole, and lives in the JS

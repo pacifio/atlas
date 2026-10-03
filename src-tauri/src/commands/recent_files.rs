@@ -73,7 +73,9 @@ fn now_ms() -> i64 {
 }
 
 fn store_path(project_root: &Path) -> PathBuf {
-    project_root.join(".atlas").join("recent-files.json")
+    project_root
+        .join(atlas_profile::dir_name())
+        .join("recent-files.json")
 }
 
 fn load_from_disk(project_root: &Path) -> Vec<RecentFile> {

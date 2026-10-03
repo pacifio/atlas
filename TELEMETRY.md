@@ -54,6 +54,16 @@ to reset your analytics identity.**
 change — so a single install appeared in PostHog as a crowd of one-launch strangers.
 An install upgrading from 0.2.3 keeps the id it already had.)
 
+**A dev-profile build is a separate install.** `bun run dev:app` runs as "Atlas Dev",
+with its own `<app_config_dir>` and its own `~/.config/atlas-dev/config.toml` (see
+[CONTRIBUTING.md](CONTRIBUTING.md)). When a PostHog key resolves for it (from the
+environment or a `.env` in your checkout; the installed app's `telemetry.json` is in
+the other app dir), it sends telemetry like any other build, under a device id of its
+own, so PostHog sees it as a second device beside your installed Atlas. Its "Share
+usage data" toggle is its own too, and starts at the default rather than at what you
+chose in the installed app. Without a key it is inert, like any source build, and it
+never runs the update check.
+
 **Signed in**, Atlas sends PostHog an `$identify` that switches the identity to your
 Atlas account id and carries `$anon_distinct_id` — the device id. PostHog **merges the
 device person into the account person**, which means events that device sent *before*

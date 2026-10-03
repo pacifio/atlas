@@ -131,7 +131,7 @@ impl MemoryEngine {
     /// manifest if present under `<project_root>/.atlas/memory/`, otherwise
     /// starts empty (the dir is created lazily on first [`persist`](Self::persist)).
     pub fn open(project_root: PathBuf) -> Self {
-        let memory_dir = project_root.join(".atlas").join("memory");
+        let memory_dir = atlas_profile::dir_in(&project_root).join("memory");
         let manifest_path = memory_dir.join("manifest.json");
         let hnsw_path = memory_dir.join("hnsw.usearch");
 

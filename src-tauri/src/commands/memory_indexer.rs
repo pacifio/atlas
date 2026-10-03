@@ -295,7 +295,9 @@ impl MemoryRegistry {
                 }
 
                 // The persisted codebase index, when it exists.
-                let codebase_index = Path::new(cwd).join(".atlas").join("codebase-index");
+                let codebase_index = Path::new(cwd)
+                    .join(atlas_profile::dir_name())
+                    .join("codebase-index");
                 if codebase_index.is_dir()
                     && w.watch(&codebase_index, notify::RecursiveMode::Recursive)
                         .is_ok()

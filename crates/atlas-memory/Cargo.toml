@@ -8,6 +8,8 @@ description = "Atlas's on-device RAG/memory engine: MiniLM → usearch HNSW behi
 name = "atlas_memory"
 
 [dependencies]
+# `.atlas` vs `.atlas-dev`: whose data this process owns (see that crate).
+atlas-profile = { path = "../atlas-profile" }
 # The memdir date headers (session rendering, legacy memdir import).
 chrono = { version = "0.4", features = ["serde"] }
 # `embedding::EmbeddingError`.

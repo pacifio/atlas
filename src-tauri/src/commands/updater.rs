@@ -70,6 +70,7 @@ pub struct UpdaterSnapshot {
 /// explicit user action). Triggers the background download when newer.
 #[tauri::command]
 pub async fn update_check_now(app: AppHandle) -> Result<UpdateStatus, String> {
+    refuse_under(atlas_profile::current())?;
     imp::update_check_now(app).await
 }
 
@@ -88,5 +89,46 @@ pub async fn update_ignore(version: String, app: AppHandle) -> Result<(), String
 /// "Restart now": swap the staged `.app` over the running install and relaunch.
 #[tauri::command]
 pub async fn update_apply(app: AppHandle) -> Result<(), String> {
+    refuse_under(atlas_profile::current())?;
     imp::update_apply(app).await
+}
+
+/// What the dev profile's update verbs answer instead of running.
+const DEV_PROFILE_REFUSAL: &str = "Updates are off in Atlas Dev: a source build \
+     (`bun run dev:app`) never downloads or installs a release, because the release \
+     would replace your installed Atlas. Update the installed app from itself.";
+
+/// The guard on the two verbs that fetch or install a release. A dev-profile
+/// build (`atlas-profile`) must do neither, on request or not: the release it
+/// would fetch is the *installed* Atlas's next version, and on Windows applying
+/// it runs that MSI over the installed Atlas — exactly what the profile exists
+/// to prevent. `lib.rs` already skips the background and periodic checks; this
+/// covers "Check for updates" and "Restart to update". (macOS is safe either
+/// way — `updater_macos.rs` refuses to swap outside a `.app` — but one rule for
+/// every platform is easier to trust than a per-platform accident.)
+fn refuse_under(profile: atlas_profile::Profile) -> Result<(), String> {
+    if profile.is_dev() {
+        Err(DEV_PROFILE_REFUSAL.to_string())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod dev_profile_tests {
+    use super::{refuse_under, DEV_PROFILE_REFUSAL};
+    use atlas_profile::Profile;
+
+    #[test]
+    fn the_dev_profile_refuses_to_check_or_apply() {
+        assert_eq!(
+            refuse_under(Profile::Dev),
+            Err(DEV_PROFILE_REFUSAL.to_string())
+        );
+    }
+
+    #[test]
+    fn the_default_profile_is_untouched() {
+        assert_eq!(refuse_under(Profile::Default), Ok(()));
+    }
 }

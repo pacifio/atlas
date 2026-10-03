@@ -20,7 +20,7 @@ pub struct Pos {
 
 fn layout_path(project_path: &str) -> std::path::PathBuf {
     Path::new(project_path)
-        .join(".atlas")
+        .join(atlas_profile::dir_name())
         .join("knowledge-graph-layout.json")
 }
 
@@ -44,7 +44,7 @@ pub async fn knowledge_graph_layout_save(
     layout: GraphLayout,
 ) -> Result<(), String> {
     tokio::task::spawn_blocking(move || -> Result<(), String> {
-        let dir = Path::new(&project_path).join(".atlas");
+        let dir = Path::new(&project_path).join(atlas_profile::dir_name());
         fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let final_path = dir.join("knowledge-graph-layout.json");
         let tmp = dir.join("knowledge-graph-layout.json.tmp");

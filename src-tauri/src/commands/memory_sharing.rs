@@ -63,7 +63,7 @@ struct SharingFile {
 // ── Path helpers ─────────────────────────────────────────────────────────────
 
 fn atlas_dir(project_path: &str) -> PathBuf {
-    Path::new(project_path).join(".atlas")
+    Path::new(project_path).join(atlas_profile::dir_name())
 }
 
 fn sharing_path(project_path: &str) -> PathBuf {

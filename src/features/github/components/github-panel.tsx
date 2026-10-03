@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { GithubIcon } from "@/components/github-icon";
 import { cn } from "@/lib/utils";
+import { useAppProfile } from "@/lib/app-profile";
 import { HintGroup, HintItem } from "@/ui/hint-group";
 import { logEvent } from "@/features/log/lib/log";
 import { toast } from "sonner";
@@ -391,6 +392,8 @@ export function GithubPanel() {
   const [cloned, setCloned] = useState<Set<string>>(new Set());
   const currentProject = useAppStore.use.currentProject();
   const projectPath = currentProject?.path ?? null;
+  // `.atlas`, or `.atlas-dev` for a dev-profile build — where Rust clones to.
+  const atlasDir = useAppProfile().dirName;
 
   // ── What is already on disk ───────────────────────────────────────────
   const [repos, setRepos] = useState<ClonedRepo[]>([]);
@@ -616,7 +619,7 @@ export function GithubPanel() {
                               ? "Cloned"
                               : isCloning
                                 ? "Cloning..."
-                                : "Clone to .atlas/repos/"
+                                : `Clone to ${atlasDir}/repos/`
                           }
                         >
                           <button

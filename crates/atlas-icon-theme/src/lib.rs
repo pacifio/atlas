@@ -138,7 +138,8 @@ pub fn user_icon_theme_dir() -> Option<PathBuf> {
     config_root().map(|dir| dir.join("icon-themes"))
 }
 
-/// `~/.config/atlas/` — the same root `src-tauri/src/state/atlas_config.rs`
+/// `~/.config/atlas/` (`atlas-dev/` under the dev profile, see
+/// `atlas-profile`) — the same root `src-tauri/src/state/atlas_config.rs`
 /// resolves for `config.toml`, **not** `dirs::config_dir()` (which on macOS is
 /// `~/Library/Application Support`). `atlas-icon-theme` sits below `src-tauri`
 /// in the dependency graph — the app crate depends on this one, not the other
@@ -165,10 +166,10 @@ fn config_root() -> Option<PathBuf> {
 fn config_root_from(xdg: Option<&Path>, home: Option<&Path>) -> Option<PathBuf> {
     if let Some(xdg) = xdg {
         if xdg.is_absolute() {
-            return Some(xdg.join("atlas"));
+            return Some(xdg.join(atlas_profile::config_dir_name()));
         }
     }
-    home.map(|home| home.join(".config").join("atlas"))
+    home.map(|home| home.join(".config").join(atlas_profile::config_dir_name()))
 }
 
 fn minimal_summary() -> IconThemeSummary {

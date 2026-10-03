@@ -53,7 +53,9 @@ fn md_to_html(md: &str) -> String {
 }
 
 fn kb_dir(project_path: &str) -> PathBuf {
-    Path::new(project_path).join(".atlas").join("knowledge")
+    Path::new(project_path)
+        .join(atlas_profile::dir_name())
+        .join("knowledge")
 }
 
 fn note_path(project_path: &str, entry_id: &str) -> PathBuf {

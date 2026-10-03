@@ -15,6 +15,10 @@
     "crate": "atlas-process"
   },
   {
+    "crate": "atlas-profile",
+    "clippy": true
+  },
+  {
     "crate": "atlas-agent-servers",
     "clippy": true
   },

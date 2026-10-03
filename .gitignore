@@ -28,6 +28,8 @@ Thumbs.db
 
 .claude/
 .atlas/
+# The dev profile's `.atlas/` (`bun run dev:app`, see crates/atlas-profile).
+.atlas-dev/
 .agents/
 skills-lock.json
 

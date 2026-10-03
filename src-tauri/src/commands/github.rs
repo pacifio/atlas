@@ -39,7 +39,7 @@ pub struct RepoMeta {
 
 fn meta_path(project_path: &str) -> std::path::PathBuf {
     Path::new(project_path)
-        .join(".atlas")
+        .join(atlas_profile::dir_name())
         .join("repo-meta.json")
 }
 
@@ -129,7 +129,7 @@ fn cloned_repo_dir(project_path: &str, repo_name: &str) -> Result<std::path::Pat
         return Err("invalid repository name".to_string());
     }
     let dir = Path::new(project_path)
-        .join(".atlas")
+        .join(atlas_profile::dir_name())
         .join("repos")
         .join(repo_name);
     if !dir.join(".git").exists() {
@@ -328,7 +328,9 @@ pub async fn clone_github_repo(
         return Err("invalid repository name".to_string());
     }
 
-    let repos_dir = Path::new(&project_path).join(".atlas").join("repos");
+    let repos_dir = Path::new(&project_path)
+        .join(atlas_profile::dir_name())
+        .join("repos");
     fs::create_dir_all(&repos_dir).map_err(|e| e.to_string())?;
 
     let dest = repos_dir.join(&repo_name);
@@ -370,7 +372,9 @@ pub async fn clone_github_repo(
 #[tauri::command]
 pub async fn list_cloned_repos(project_path: String) -> Result<Vec<ClonedRepo>, String> {
     tokio::task::spawn_blocking(move || {
-        let repos_dir = Path::new(&project_path).join(".atlas").join("repos");
+        let repos_dir = Path::new(&project_path)
+            .join(atlas_profile::dir_name())
+            .join("repos");
         if !repos_dir.exists() {
             return Ok(vec![]);
         }
@@ -420,7 +424,7 @@ pub async fn read_repo_readme(project_path: String, repo_name: String) -> Result
     }
     tokio::task::spawn_blocking(move || {
         let repo_dir = Path::new(&project_path)
-            .join(".atlas")
+            .join(atlas_profile::dir_name())
             .join("repos")
             .join(&repo_name);
         for name in &[
@@ -451,7 +455,7 @@ pub async fn delete_cloned_repo(project_path: String, repo_name: String) -> Resu
     }
     tokio::task::spawn_blocking(move || {
         let repo_dir = Path::new(&project_path)
-            .join(".atlas")
+            .join(atlas_profile::dir_name())
             .join("repos")
             .join(&repo_name);
         if repo_dir.exists() {

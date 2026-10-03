@@ -49,8 +49,11 @@ pub const CONFIG_FILE_NAME: &str = "config.toml";
 
 /// Directory under `~/.config` (or `$XDG_CONFIG_HOME`) holding
 /// [`CONFIG_FILE_NAME`]. Named for the product, not the bundle id: a path a
-/// user types should read `atlas`, not `dev.atlas.ide`.
-pub const CONFIG_DIR_NAME: &str = "atlas";
+/// user types should read `atlas`, not `dev.atlas.ide`. `atlas-dev` under the
+/// dev profile, so a source build never edits the released app's settings.
+pub fn config_dir_name() -> &'static str {
+    atlas_profile::config_dir_name()
+}
 
 /// How many times [`ConfigManager::apply_patch`] rebuilds its patch when an
 /// external write lands inside the merge-then-swap window. Three is enough to
@@ -258,10 +261,12 @@ impl Default for AgentSwitchBehavior {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
-    /// On project open, ensure `.atlas/` is listed in the project's
-    /// `.gitignore` (creating the file if needed). No-op on non-git
-    /// projects. Default ON because Atlas writes caches / state into
-    /// `.atlas/` that don't belong in version control.
+    /// On project open, keep Atlas's directory out of the project's version
+    /// control: `.atlas/` is listed in the project's `.gitignore` (creating
+    /// the file if needed), while the dev profile lists its `.atlas-dev/` in
+    /// `.git/info/exclude` instead (see `commands::fs::ensure_atlas_gitignore`).
+    /// No-op on non-git projects. Default ON because Atlas writes caches /
+    /// state there that don't belong in version control.
     #[serde(default = "default_true")]
     pub auto_add_atlas_gitignore: bool,
     /// Record Atlas-internal events (sign-in, agent start/finish,
@@ -551,8 +556,10 @@ const SCHEMA_VERSION_DOC: &str = "
 const SETTINGS_DOCS: &[(&str, &str)] = &[
     (
         "autoAddAtlasGitignore",
-        "# Add `.atlas/` to each opened git project's .gitignore, creating the\n\
-         # file if needed. No-op on non-git projects. (default: true)",
+        "# Keep Atlas's directory in each opened git project out of version\n\
+         # control: `.atlas/` goes into the project's .gitignore (created if\n\
+         # needed); a dev build's `.atlas-dev/` goes into .git/info/exclude.\n\
+         # No-op on non-git projects. (default: true)",
     ),
     (
         "enableAtlasLogs",
@@ -1991,7 +1998,8 @@ fn write_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
 }
 
 /// `~/.config/atlas/` — deliberately NOT Tauri's `app_config_dir()`, which on
-/// macOS is `~/Library/Application Support/dev.atlas.ide/`.
+/// macOS is `~/Library/Application Support/dev.atlas.ide/`. (`~/.config/
+/// atlas-dev/` under the dev profile — see `atlas-profile`.)
 ///
 /// `config.toml` is meant to be opened, read and hand-edited, by a person or
 /// by an agent; a path they can type is part of that, and a bundle id buried
@@ -2032,10 +2040,10 @@ pub(crate) fn config_root() -> Option<PathBuf> {
 fn config_root_from(xdg: Option<&Path>, home: Option<&Path>) -> Option<PathBuf> {
     if let Some(xdg) = xdg {
         if xdg.is_absolute() {
-            return Some(xdg.join(CONFIG_DIR_NAME));
+            return Some(xdg.join(config_dir_name()));
         }
     }
-    home.map(|home| home.join(".config").join(CONFIG_DIR_NAME))
+    home.map(|home| home.join(".config").join(config_dir_name()))
 }
 
 /// Thread-safe handle registered as Tauri managed state, mirroring

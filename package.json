@@ -10,7 +10,7 @@
     "build:vite": "vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "dev:app": "node scripts/with-posthog-env.mjs tauri dev",
+    "dev:app": "node scripts/with-posthog-env.mjs tauri dev --config src-tauri/tauri.dev.conf.json",
     "build:app": "node scripts/with-posthog-env.mjs tauri build --target aarch64-apple-darwin --bundles app",
     "build:app:dmg": "bash scripts/build-dmg.sh arm",
     "build:app:dmg:arm": "bash scripts/build-dmg.sh arm",

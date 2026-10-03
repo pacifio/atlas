@@ -45,10 +45,11 @@
 //! `shared_memory.rs` (atomic tmp+rename writes), and `agent_memory.rs`
 //! (minimal hand-rolled YAML frontmatter — no new YAML crate).
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use tauri::{AppHandle, Manager};
 
@@ -332,92 +333,105 @@ struct ToolDef {
     homes: &'static [ComponentHome],
 }
 
+/// `.atlas/agent-skills`, relative to a root — `.atlas-dev/agent-skills` under
+/// the dev profile, so a source build's skill toggles never project into the
+/// released app's directory. Built once: the registry below holds `&'static`
+/// paths.
+fn atlas_agent_skills_dir() -> &'static str {
+    static DIR: LazyLock<String> =
+        LazyLock::new(|| format!("{}/agent-skills", atlas_profile::dir_name()));
+    &DIR
+}
+
 // v1 in-scope tools: Claude Code + Codex. The registry is trivially extensible —
-// a future ACP agent is one more ToolDef row.
-const TOOL_REGISTRY: &[ToolDef] = &[
-    ToolDef {
-        id: "claude-code",
-        display_name: "Claude Code",
-        global_skills_dir: ".claude/skills",
-        project_skills_dir: ".claude/skills",
-        config_dir: ".claude",
-        supports_symlink: true,
-        delivery: "native-dir",
-        env_override: Some("CLAUDE_CONFIG_DIR"),
-        // Claude Code is the full-fidelity target: dir homes for agents/commands/
-        // rules, and a settings.json merge for hooks. Same paths at both scopes.
-        homes: &[
-            ComponentHome {
-                kind: ComponentKind::Agent,
-                scope: HomeScope::Both,
-                rel: ".claude/agents",
-                style: HomeStyle::Dir,
-            },
-            ComponentHome {
-                kind: ComponentKind::Command,
-                scope: HomeScope::Both,
-                rel: ".claude/commands",
-                style: HomeStyle::Dir,
-            },
-            ComponentHome {
-                kind: ComponentKind::Rule,
-                scope: HomeScope::Both,
-                rel: ".claude/rules",
-                style: HomeStyle::Dir,
-            },
-            ComponentHome {
-                kind: ComponentKind::Hook,
-                scope: HomeScope::Both,
-                rel: ".claude/settings.json",
-                style: HomeStyle::SettingsMerge,
-            },
-        ],
-    },
-    ToolDef {
-        id: "codex",
-        // Codex: ~/.codex/skills globally, <proj>/.agents/skills at project scope.
-        display_name: "Codex",
-        global_skills_dir: ".codex/skills",
-        project_skills_dir: ".agents/skills",
-        config_dir: ".codex",
-        supports_symlink: true,
-        delivery: "native-dir",
-        env_override: Some("CODEX_HOME"),
-        // Codex supports a subset: prompt-style commands (global only) and rules
-        // appended to AGENTS.md. No agents/hooks. Phase 3 refines the semantics.
-        homes: &[
-            ComponentHome {
-                kind: ComponentKind::Command,
-                scope: HomeScope::Global,
-                rel: ".codex/prompts",
-                style: HomeStyle::Dir,
-            },
-            ComponentHome {
-                kind: ComponentKind::Rule,
-                scope: HomeScope::Both,
-                rel: "AGENTS.md",
-                style: HomeStyle::AppendFile,
-            },
-        ],
-    },
-    ToolDef {
-        id: "atlas",
-        display_name: "Atlas",
-        // The native in-process "Atlas" agent. Enabled skills are
-        // symlinked into a DEDICATED dir that only the in-process `AtlasSkillTool`
-        // reads — kept separate from `.agents/skills` (the canonical store) so this
-        // toggle is the exclusive gate (no `~/.claude`/bundled-skill leakage). Same
-        // path at both scopes (`~/.atlas/agent-skills`, `<root>/.atlas/agent-skills`).
-        global_skills_dir: ".atlas/agent-skills",
-        project_skills_dir: ".atlas/agent-skills",
-        config_dir: ".atlas",
-        supports_symlink: true,
-        delivery: "native-dir",
-        env_override: None,
-        // The native agent only consumes skills — no agent/command/rule/hook homes.
-        homes: &[],
-    },
-];
+// a future ACP agent is one more ToolDef row. A `LazyLock` rather than a
+// `const` only because the Atlas row's paths come from the profile.
+static TOOL_REGISTRY: LazyLock<[ToolDef; 3]> = LazyLock::new(|| {
+    [
+        ToolDef {
+            id: "claude-code",
+            display_name: "Claude Code",
+            global_skills_dir: ".claude/skills",
+            project_skills_dir: ".claude/skills",
+            config_dir: ".claude",
+            supports_symlink: true,
+            delivery: "native-dir",
+            env_override: Some("CLAUDE_CONFIG_DIR"),
+            // Claude Code is the full-fidelity target: dir homes for agents/commands/
+            // rules, and a settings.json merge for hooks. Same paths at both scopes.
+            homes: &[
+                ComponentHome {
+                    kind: ComponentKind::Agent,
+                    scope: HomeScope::Both,
+                    rel: ".claude/agents",
+                    style: HomeStyle::Dir,
+                },
+                ComponentHome {
+                    kind: ComponentKind::Command,
+                    scope: HomeScope::Both,
+                    rel: ".claude/commands",
+                    style: HomeStyle::Dir,
+                },
+                ComponentHome {
+                    kind: ComponentKind::Rule,
+                    scope: HomeScope::Both,
+                    rel: ".claude/rules",
+                    style: HomeStyle::Dir,
+                },
+                ComponentHome {
+                    kind: ComponentKind::Hook,
+                    scope: HomeScope::Both,
+                    rel: ".claude/settings.json",
+                    style: HomeStyle::SettingsMerge,
+                },
+            ],
+        },
+        ToolDef {
+            id: "codex",
+            // Codex: ~/.codex/skills globally, <proj>/.agents/skills at project scope.
+            display_name: "Codex",
+            global_skills_dir: ".codex/skills",
+            project_skills_dir: ".agents/skills",
+            config_dir: ".codex",
+            supports_symlink: true,
+            delivery: "native-dir",
+            env_override: Some("CODEX_HOME"),
+            // Codex supports a subset: prompt-style commands (global only) and rules
+            // appended to AGENTS.md. No agents/hooks. Phase 3 refines the semantics.
+            homes: &[
+                ComponentHome {
+                    kind: ComponentKind::Command,
+                    scope: HomeScope::Global,
+                    rel: ".codex/prompts",
+                    style: HomeStyle::Dir,
+                },
+                ComponentHome {
+                    kind: ComponentKind::Rule,
+                    scope: HomeScope::Both,
+                    rel: "AGENTS.md",
+                    style: HomeStyle::AppendFile,
+                },
+            ],
+        },
+        ToolDef {
+            id: "atlas",
+            display_name: "Atlas",
+            // The native in-process "Atlas" agent. Enabled skills are
+            // symlinked into a DEDICATED dir that only the in-process `AtlasSkillTool`
+            // reads — kept separate from `.agents/skills` (the canonical store) so this
+            // toggle is the exclusive gate (no `~/.claude`/bundled-skill leakage). Same
+            // path at both scopes (`~/.atlas/agent-skills`, `<root>/.atlas/agent-skills`).
+            global_skills_dir: atlas_agent_skills_dir(),
+            project_skills_dir: atlas_agent_skills_dir(),
+            config_dir: atlas_profile::dir_name(),
+            supports_symlink: true,
+            delivery: "native-dir",
+            env_override: None,
+            // The native agent only consumes skills — no agent/command/rule/hook homes.
+            homes: &[],
+        },
+    ]
+});
 
 fn tool_def(id: &str) -> Option<&'static ToolDef> {
     TOOL_REGISTRY.iter().find(|t| t.id == id)
@@ -499,7 +513,7 @@ fn skills_base(root: &Path) -> PathBuf {
 /// [`skills_base`]; only consulted by [`migrate_legacy_skills`] to move any
 /// leftover content from an Atlas install that predates the store convergence.
 fn legacy_skills_base(root: &Path) -> PathBuf {
-    root.join(".atlas").join("skills")
+    root.join(atlas_profile::dir_name()).join("skills")
 }
 
 /// One-time migration of anything still sitting in the pre-convergence
@@ -580,6 +594,69 @@ const ATLAS_SELF_CONFIGURE_SKILL_MD: &str =
 /// this generalized into a table; not done speculatively for a list of one.
 const BUNDLED_SKILL_NAME: &str = "atlas-self-configure";
 
+/// The same skill as the dev profile (`bun run dev:app`) seeds it: under a
+/// name of its own, pointing at the dev profile's config. See
+/// [`bundled_skill`].
+const DEV_BUNDLED_SKILL_NAME: &str = "atlas-dev-self-configure";
+
+/// The bundled skill as `profile` seeds it: its directory name and `SKILL.md`.
+///
+/// The default profile's is [`ATLAS_SELF_CONFIGURE_SKILL_MD`] byte for byte.
+///
+/// The dev profile seeds the same text, so a change to the skill can be tried
+/// under `dev:app`, with two differences. Its paths are the dev profile's
+/// (`~/.config/atlas-dev/config.toml`, `.atlas-dev/`), because an agent that
+/// followed the released text from inside Atlas Dev would edit the installed
+/// Atlas's settings. And it has its own name: the canonical store
+/// (`~/.agents/skills`) is shared with the installed Atlas and other tools,
+/// so under the same name each build would overwrite the other's copy on
+/// every launch (each sees its own hash sidecar and calls the file
+/// untouched). Under its own name the two copies sit side by side, each with
+/// its own sidecar, and the installed Atlas's copy is never written.
+fn bundled_skill(profile: atlas_profile::Profile) -> (&'static str, Cow<'static, str>) {
+    use atlas_profile::Profile;
+    if !profile.is_dev() {
+        return (
+            BUNDLED_SKILL_NAME,
+            Cow::Borrowed(ATLAS_SELF_CONFIGURE_SKILL_MD),
+        );
+    }
+    let config_file = crate::state::atlas_config::CONFIG_FILE_NAME;
+    let config = |p: Profile| format!("/{}/{config_file}", p.config_dir_name());
+    let project_dir = |p: Profile| format!("`{}/`", p.dir_name());
+    let installed_config = format!("~/.config{}", config(Profile::Default));
+
+    let mut out = String::with_capacity(ATLAS_SELF_CONFIGURE_SKILL_MD.len() + 512);
+    let mut noted = false;
+    for line in ATLAS_SELF_CONFIGURE_SKILL_MD.split_inclusive('\n') {
+        let eol = &line[line.trim_end_matches(['\r', '\n']).len()..];
+        if line.starts_with("name: ") {
+            out.push_str(&format!("name: {DEV_BUNDLED_SKILL_NAME}{eol}"));
+        } else if line.starts_with("description: ") {
+            out.push_str(&format!(
+                "description: Inspect and safely update the preferences of Atlas Dev (a source \
+                 build of Atlas, run with `bun run dev:app`) through its own config.toml.{eol}"
+            ));
+        } else {
+            out.push_str(
+                &line
+                    .replace(&config(Profile::Default), &config(Profile::Dev))
+                    .replace(&project_dir(Profile::Default), &project_dir(Profile::Dev)),
+            );
+            if !noted && line.starts_with("# ") {
+                noted = true;
+                out.push_str(&format!(
+                    "{eol}> This copy is for **Atlas Dev**, a source build of Atlas (`bun run \
+                     dev:app`) that keeps its own data beside an installed Atlas. It edits Atlas \
+                     Dev's file, named below. The installed Atlas's `{installed_config}` is not \
+                     Atlas Dev's: leave it alone.{eol}"
+                ));
+            }
+        }
+    }
+    (DEV_BUNDLED_SKILL_NAME, Cow::Owned(out))
+}
+
 /// Sidecar file recording the hash of the bundled content Atlas itself last
 /// wrote, so a later upgrade can tell "the user never touched this" (safe to
 /// overwrite with the new bundled version) apart from "the user edited this"
@@ -609,22 +686,28 @@ fn sha256_hex(content: &str) -> String {
 ///   baseline" behind their back.
 ///
 /// Global-only, matching the design record: no per-project duplicate.
+///
+/// The dev profile seeds its own copy, `atlas-dev-self-configure`, beside
+/// the installed Atlas's, and never writes the installed Atlas's: see
+/// [`bundled_skill`].
 pub fn ensure_bundled_skills() {
     let Some(home) = home_dir() else {
         return;
     };
-    ensure_bundled_skills_at(&home);
+    ensure_bundled_skills_at(&home, atlas_profile::current());
 }
 
 /// The root-parameterized core of `ensure_bundled_skills`, split out so tests
 /// can point it at a temp dir instead of the real `$HOME` — mirrors every
 /// other function in this file (`root_for`, `skills_base`, `project`, ...)
-/// taking `root: &Path` rather than resolving it internally.
-fn ensure_bundled_skills_at(root: &Path) {
-    let dir = skills_base(root).join(BUNDLED_SKILL_NAME);
+/// taking `root: &Path` rather than resolving it internally. The profile is a
+/// parameter for the same reason.
+fn ensure_bundled_skills_at(root: &Path, profile: atlas_profile::Profile) {
+    let (name, content) = bundled_skill(profile);
+    let dir = skills_base(root).join(name);
     let skill_md = dir.join("SKILL.md");
     let hash_file = dir.join(BUNDLED_HASH_FILE);
-    let bundled_hash = sha256_hex(ATLAS_SELF_CONFIGURE_SKILL_MD);
+    let bundled_hash = sha256_hex(&content);
 
     if skill_md.exists() {
         let recorded_hash = fs::read_to_string(&hash_file).ok();
@@ -643,7 +726,7 @@ fn ensure_bundled_skills_at(root: &Path) {
     if fs::create_dir_all(&dir).is_err() {
         return;
     }
-    if fs::write(&skill_md, ATLAS_SELF_CONFIGURE_SKILL_MD).is_ok() {
+    if fs::write(&skill_md, content.as_bytes()).is_ok() {
         let _ = fs::write(&hash_file, &bundled_hash);
     }
 }
@@ -1226,7 +1309,7 @@ fn list_skills(root: &Path, scope: &str) -> Result<Vec<SkillMeta>, String> {
     // above (the `by_name.contains_key` check below skips them). Container dirs
     // without a top-level `SKILL.md` (e.g. `~/.claude/skills/ecc/`) are skipped —
     // no recursion (v1).
-    for def in TOOL_REGISTRY {
+    for def in TOOL_REGISTRY.iter() {
         let dir = tool_skills_dir(def, scope, root);
         let Ok(entries) = fs::read_dir(&dir) else {
             continue;
@@ -1413,7 +1496,7 @@ fn adopt_skill(root: &Path, scope: &str, name: &str) -> Result<SkillMeta, String
     //    otherwise the first registry tool dir that holds a real skill dir.
     if !canonical_md.is_file() {
         let mut source: Option<PathBuf> = None;
-        for def in TOOL_REGISTRY {
+        for def in TOOL_REGISTRY.iter() {
             let link = tool_link_path(root, def, scope, &safe);
             // Only adopt from a real directory with its own SKILL.md (an
             // external skill). A symlink would already point at canonical.
@@ -1437,7 +1520,7 @@ fn adopt_skill(root: &Path, scope: &str, name: &str) -> Result<SkillMeta, String
     //    original external dir, if present, hashes equal to the just-copied
     //    canonical, so the non-destructive guard lets `project` replace it.
     let mut enabled_agents = Vec::new();
-    for def in TOOL_REGISTRY {
+    for def in TOOL_REGISTRY.iter() {
         if !tool_detected(root, def) || def.delivery == "inject-only" {
             continue;
         }
@@ -1486,7 +1569,7 @@ fn delete_skill(root: &Path, scope: &str, name: &str) -> Result<(), String> {
     let safe = sanitize_name(name)?;
     let dir = canonical_skill_dir(&skills_base(root), &safe)?;
     // Remove every registry tool's projection first, then the canonical dir.
-    for def in TOOL_REGISTRY {
+    for def in TOOL_REGISTRY.iter() {
         remove_symlink(root, def, scope, &safe)?;
     }
     let mut ledger = read_ledger(root);
@@ -1676,7 +1759,7 @@ fn reconcile(root: &Path, scope: &str, home: &Path) -> Result<ReconcileView, Str
     // Follows symlinks (ADR 0003) same as `list_skills`'s external scan.
     let mut external: BTreeMap<String, BTreeMap<String, (String, String, String)>> =
         BTreeMap::new();
-    for def in TOOL_REGISTRY {
+    for def in TOOL_REGISTRY.iter() {
         let dir = tool_skills_dir(def, scope, root);
         let Ok(entries) = fs::read_dir(&dir) else {
             continue;
@@ -1745,7 +1828,7 @@ fn reconcile(root: &Path, scope: &str, home: &Path) -> Result<ReconcileView, Str
         let canon_hash = canonical_hash.get(name).cloned();
 
         let mut cells: Vec<ProjectionCell> = Vec::new();
-        for def in TOOL_REGISTRY {
+        for def in TOOL_REGISTRY.iter() {
             let detected = tool_detected(root, def);
             let link = tool_link_path(root, def, scope, name);
             let entry_meta = link.symlink_metadata().ok();
@@ -1895,7 +1978,7 @@ fn promote(project_root: &Path, home: &Path, name: &str) -> Result<SkillMeta, St
     copy_dir_all(&src, &dst)?;
 
     let mut enabled_agents = Vec::new();
-    for def in TOOL_REGISTRY {
+    for def in TOOL_REGISTRY.iter() {
         if !tool_detected(home, def) || def.delivery == "inject-only" {
             continue;
         }
@@ -2527,7 +2610,7 @@ impl Default for PackLock {
 }
 
 fn packs_base(root: &Path) -> PathBuf {
-    root.join(".atlas").join("packs")
+    root.join(atlas_profile::dir_name()).join("packs")
 }
 
 fn pack_lock_path(root: &Path) -> PathBuf {
@@ -2909,7 +2992,7 @@ fn install_skill_from_dir(
     // in another tab. Same fan-out `adopt_skill`/`promote` use; the per-agent
     // toggles remain for changing your mind later.
     let mut enabled_agents = Vec::new();
-    for def in TOOL_REGISTRY {
+    for def in TOOL_REGISTRY.iter() {
         if !tool_detected(root, def) || def.delivery == "inject-only" {
             continue;
         }
@@ -5440,7 +5523,7 @@ mod tests {
     #[test]
     fn bundled_skill_is_installed_fresh_into_the_canonical_store() {
         let root = tmp_root_isolated();
-        ensure_bundled_skills_at(&root);
+        ensure_bundled_skills_at(&root, atlas_profile::Profile::Default);
 
         let dir = skills_base(&root).join(BUNDLED_SKILL_NAME);
         let installed = fs::read_to_string(dir.join("SKILL.md")).unwrap();
@@ -5459,7 +5542,7 @@ mod tests {
     #[test]
     fn bundled_skill_appears_as_a_managed_global_skill() {
         let root = tmp_root_isolated();
-        ensure_bundled_skills_at(&root);
+        ensure_bundled_skills_at(&root, atlas_profile::Profile::Default);
 
         let skills = list_skills(&root, "global").expect("list_skills succeeds");
         let entry = skills
@@ -5479,7 +5562,7 @@ mod tests {
     #[test]
     fn bundled_skill_projects_into_a_supported_tool() {
         let root = tmp_root_isolated();
-        ensure_bundled_skills_at(&root);
+        ensure_bundled_skills_at(&root, atlas_profile::Profile::Default);
 
         for tool in ["claude-code", "codex"] {
             let def = tool_def(tool).expect("tool is in the registry");
@@ -5509,12 +5592,12 @@ mod tests {
     #[test]
     fn reinstalling_is_idempotent_when_nothing_touched_it() {
         let root = tmp_root_isolated();
-        ensure_bundled_skills_at(&root);
+        ensure_bundled_skills_at(&root, atlas_profile::Profile::Default);
         let dir = skills_base(&root).join(BUNDLED_SKILL_NAME);
         let first_pass = fs::read_to_string(dir.join("SKILL.md")).unwrap();
 
         // Simulates the next app launch on the same (unmodified) install.
-        ensure_bundled_skills_at(&root);
+        ensure_bundled_skills_at(&root, atlas_profile::Profile::Default);
         let second_pass = fs::read_to_string(dir.join("SKILL.md")).unwrap();
 
         assert_eq!(first_pass, second_pass);
@@ -5524,7 +5607,7 @@ mod tests {
     #[test]
     fn a_user_edited_skill_is_never_silently_overwritten() {
         let root = tmp_root_isolated();
-        ensure_bundled_skills_at(&root);
+        ensure_bundled_skills_at(&root, atlas_profile::Profile::Default);
         let dir = skills_base(&root).join(BUNDLED_SKILL_NAME);
         let skill_md = dir.join("SKILL.md");
 
@@ -5532,7 +5615,7 @@ mod tests {
         // edits the canonical copy — its hash no longer matches the sidecar.
         fs::write(&skill_md, "user-modified content").unwrap();
 
-        ensure_bundled_skills_at(&root);
+        ensure_bundled_skills_at(&root, atlas_profile::Profile::Default);
 
         assert_eq!(
             fs::read_to_string(&skill_md).unwrap(),
@@ -5552,13 +5635,90 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("SKILL.md"), "hand-authored, no sidecar").unwrap();
 
-        ensure_bundled_skills_at(&root);
+        ensure_bundled_skills_at(&root, atlas_profile::Profile::Default);
 
         assert_eq!(
             fs::read_to_string(dir.join("SKILL.md")).unwrap(),
             "hand-authored, no sidecar"
         );
         assert!(!dir.join(BUNDLED_HASH_FILE).exists());
+        fs::remove_dir_all(&root).ok();
+    }
+
+    // ── the bundled skill under the dev profile ─────────────────────────
+
+    #[test]
+    fn the_default_profile_seeds_the_shipped_text_byte_for_byte() {
+        let (name, content) = bundled_skill(atlas_profile::Profile::Default);
+        assert_eq!(name, BUNDLED_SKILL_NAME);
+        assert_eq!(content, ATLAS_SELF_CONFIGURE_SKILL_MD);
+    }
+
+    /// Atlas Dev's copy points an agent at Atlas Dev's config, never at the
+    /// installed Atlas's, and is otherwise the shipped text, so a change to
+    /// the skill can be tried under `dev:app`.
+    #[test]
+    fn the_dev_profile_skill_points_at_the_dev_config() {
+        let (name, dev) = bundled_skill(atlas_profile::Profile::Dev);
+        assert_eq!(name, DEV_BUNDLED_SKILL_NAME);
+        assert_ne!(name, BUNDLED_SKILL_NAME);
+        assert!(dev.contains("name: atlas-dev-self-configure\n"));
+        assert!(dev.contains("~/.config/atlas-dev/config.toml"));
+        assert!(dev.contains("$XDG_CONFIG_HOME/atlas-dev/config.toml"));
+        assert!(dev.contains("per-project `.atlas-dev/` state"));
+        // The installed Atlas's path survives only in the note that says to
+        // leave it alone.
+        let outside_note: String = dev
+            .lines()
+            .filter(|l| !l.starts_with("> This copy is for **Atlas Dev**"))
+            .collect();
+        assert!(!outside_note.contains("/atlas/config.toml"), "{dev}");
+        assert!(!outside_note.contains("`.atlas/`"), "{dev}");
+        // Everything else is the shipped skill: the same body, line for line,
+        // once the dev paths are mapped back.
+        let mapped_back = outside_note
+            .replace("/atlas-dev/config.toml", "/atlas/config.toml")
+            .replace("`.atlas-dev/`", "`.atlas/`");
+        let shipped: String = ATLAS_SELF_CONFIGURE_SKILL_MD.lines().collect();
+        let strip_frontmatter = |s: &str| s.split("---").nth(2).unwrap_or_default().to_string();
+        assert_eq!(strip_frontmatter(&mapped_back), strip_frontmatter(&shipped));
+    }
+
+    /// The two copies live side by side in the shared store, and seeding one
+    /// never writes the other.
+    #[test]
+    fn the_dev_profile_never_writes_the_installed_atlas_copy() {
+        use atlas_profile::Profile;
+        let root = tmp_root_isolated();
+        let installed = skills_base(&root).join(BUNDLED_SKILL_NAME);
+        let dev = skills_base(&root).join(DEV_BUNDLED_SKILL_NAME);
+
+        ensure_bundled_skills_at(&root, Profile::Dev);
+        assert!(!installed.exists(), "seeded the installed Atlas's skill");
+        let (_, dev_md) = bundled_skill(Profile::Dev);
+        assert_eq!(fs::read_to_string(dev.join("SKILL.md")).unwrap(), dev_md);
+        assert_eq!(
+            fs::read_to_string(dev.join(BUNDLED_HASH_FILE)).unwrap(),
+            sha256_hex(&dev_md)
+        );
+
+        ensure_bundled_skills_at(&root, Profile::Default);
+        let installed_md = fs::read_to_string(installed.join("SKILL.md")).unwrap();
+        assert_eq!(installed_md, ATLAS_SELF_CONFIGURE_SKILL_MD);
+
+        // Launches alternate; neither copy moves.
+        ensure_bundled_skills_at(&root, Profile::Dev);
+        ensure_bundled_skills_at(&root, Profile::Default);
+        assert_eq!(
+            fs::read_to_string(installed.join("SKILL.md")).unwrap(),
+            ATLAS_SELF_CONFIGURE_SKILL_MD
+        );
+        assert_eq!(fs::read_to_string(dev.join("SKILL.md")).unwrap(), dev_md);
+
+        let listed = list_skills(&root, "global").unwrap();
+        for name in [BUNDLED_SKILL_NAME, DEV_BUNDLED_SKILL_NAME] {
+            assert!(listed.iter().any(|s| s.name == name && s.managed), "{name}");
+        }
         fs::remove_dir_all(&root).ok();
     }
 }

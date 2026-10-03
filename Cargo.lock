@@ -699,6 +699,7 @@ dependencies = [
  "atlas-memory",
  "atlas-native-agent",
  "atlas-process",
+ "atlas-profile",
  "atlas-terminal",
  "atlas-theme",
  "atlas-thread-metadata",
@@ -902,6 +903,7 @@ name = "atlas-checkpoint"
 version = "0.1.0"
 dependencies = [
  "atlas-process",
+ "atlas-profile",
  "atlas-redact",
  "chrono",
  "reqwest 0.12.28",
@@ -919,6 +921,7 @@ name = "atlas-codeindex"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "atlas-profile",
  "ignore",
  "serde",
  "serde_json",
@@ -3270,6 +3273,7 @@ dependencies = [
 name = "atlas-icon-theme"
 version = "0.1.0"
 dependencies = [
+ "atlas-profile",
  "dirs",
  "serde",
  "serde_json",
@@ -3285,6 +3289,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "atlas-embed",
+ "atlas-profile",
  "atlas-redact",
  "chrono",
  "rusqlite",
@@ -3353,6 +3358,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "atlas-profile"
+version = "0.1.0"
+
+[[package]]
 name = "atlas-redact"
 version = "0.1.0"
 dependencies = [
@@ -3377,6 +3386,7 @@ dependencies = [
 name = "atlas-theme"
 version = "0.1.0"
 dependencies = [
+ "atlas-profile",
  "dirs",
  "notify",
  "schemars 0.8.22",

@@ -362,9 +362,10 @@ pub fn open_scope(root: &Path) -> Result<Arc<RecordStore>> {
     Ok(store)
 }
 
-/// `<root>/.atlas/memory` — the directory holding the database and markers.
+/// `<root>/.atlas/memory` — the directory holding the database and markers
+/// (`.atlas-dev` under the dev profile, see `atlas-profile`).
 pub fn memory_dir(root: &Path) -> PathBuf {
-    root.join(".atlas").join("memory")
+    atlas_profile::dir_in(root).join("memory")
 }
 
 // ── Store ────────────────────────────────────────────────────────────────────
