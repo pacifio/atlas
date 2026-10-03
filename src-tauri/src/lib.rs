@@ -1,6 +1,7 @@
 mod app_icon;
 mod auth;
 mod commands;
+mod keep_awake;
 mod logging;
 #[cfg(target_os = "macos")]
 mod menu;
@@ -200,6 +201,10 @@ pub fn run() {
             app_icon::apply(app.handle(), &migration.manager.effective().app_icon);
             let atlas_config: state::AtlasConfigHandle = Arc::new(Mutex::new(migration.manager));
             app.manage(atlas_config.clone());
+            let keep_awake = Arc::new(keep_awake::KeepAwakeManager::new(
+                atlas_config.lock().effective().keep_awake_while_running,
+            ));
+            app.manage(keep_awake);
             commands::atlas_config::start_watcher(app.handle(), atlas_config);
             commands::themes::start_watcher(app.handle());
             commands::git_autofetch::start(app.handle());

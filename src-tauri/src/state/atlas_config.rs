@@ -338,6 +338,10 @@ pub struct AppSettings {
     /// Default ON. See `crate::commands::git_autofetch`.
     #[serde(default = "default_true")]
     pub git_auto_fetch: bool,
+    /// Keep the computer awake while an Atlas agent is actively running.
+    /// Default OFF. See `crate::keep_awake`.
+    #[serde(default)]
+    pub keep_awake_while_running: bool,
     /// Auto-update master switch. See `crate::commands::updater`.
     #[serde(default = "default_true")]
     pub auto_update: bool,
@@ -483,6 +487,7 @@ impl Default for AppSettings {
             agent_switch_behavior: AgentSwitchBehavior::default(),
             git_blame_inline: true,
             git_auto_fetch: true,
+            keep_awake_while_running: false,
             auto_update: true,
             curated_plugin_sync: false,
             updater_ignored_version: None,
@@ -638,6 +643,11 @@ const SETTINGS_DOCS: &[(&str, &str)] = &[
         "# Quietly `git fetch` the open project when it opens, when Atlas\n\
          # regains focus, and every few minutes, so the Pull badge shows what\n\
          # the remote has. Never pulls or touches your files. (default: true)",
+    ),
+    (
+        "keepAwakeWhileRunning",
+        "# Keep the computer awake while an Atlas agent is actively running.\n\
+         # Prevents idle system sleep; display can still turn off. (default: false)",
     ),
     (
         "autoUpdate",
@@ -1059,6 +1069,7 @@ pub struct SettingsPatch {
     pub agent_switch_behavior: Option<AgentSwitchBehavior>,
     pub git_blame_inline: Option<bool>,
     pub git_auto_fetch: Option<bool>,
+    pub keep_awake_while_running: Option<bool>,
     pub auto_update: Option<bool>,
     pub curated_plugin_sync: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_double_option")]
@@ -1137,6 +1148,9 @@ impl SettingsPatch {
         }
         if let Some(v) = self.git_auto_fetch {
             settings.git_auto_fetch = v;
+        }
+        if let Some(v) = self.keep_awake_while_running {
+            settings.keep_awake_while_running = v;
         }
         if let Some(v) = self.auto_update {
             settings.auto_update = v;
@@ -1243,6 +1257,7 @@ impl SettingsPatch {
         set_bool!(link_telemetry_to_account, "linkTelemetryToAccount");
         set_bool!(git_blame_inline, "gitBlameInline");
         set_bool!(git_auto_fetch, "gitAutoFetch");
+        set_bool!(keep_awake_while_running, "keepAwakeWhileRunning");
         set_bool!(auto_update, "autoUpdate");
         set_bool!(curated_plugin_sync, "curatedPluginSync");
         set_bool!(enter_to_send, "enterToSend");
@@ -1372,6 +1387,7 @@ pub fn settings_from_legacy_json(raw: Option<&serde_json::Value>) -> AppSettings
     take_bool!(link_telemetry_to_account, "linkTelemetryToAccount");
     take_bool!(git_blame_inline, "gitBlameInline");
     take_bool!(git_auto_fetch, "gitAutoFetch");
+    take_bool!(keep_awake_while_running, "keepAwakeWhileRunning");
     take_bool!(auto_update, "autoUpdate");
     take_bool!(curated_plugin_sync, "curatedPluginSync");
     take_bool!(enter_to_send, "enterToSend");
@@ -2683,6 +2699,7 @@ someFutureKey = \"left alone\"
             agent_switch_behavior: Some(AgentSwitchBehavior::Handoff),
             git_blame_inline: Some(!defaults.git_blame_inline),
             git_auto_fetch: Some(!defaults.git_auto_fetch),
+            keep_awake_while_running: Some(!defaults.keep_awake_while_running),
             auto_update: Some(!defaults.auto_update),
             curated_plugin_sync: Some(!defaults.curated_plugin_sync),
             updater_ignored_version: Some(Some("9.9.9".to_string())),

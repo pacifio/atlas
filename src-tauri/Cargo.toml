@@ -252,6 +252,8 @@ windows = { version = "0.61", features = [
 zbus = "5"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# CoreFoundation types for IOKit power assertions (keep-awake while agent runs).
+core-foundation = "0.10"
 # Native NSWindow access for the titlebar double-click "zoom" (AppKit
 # performZoom:), which Tauri's cross-platform maximize API doesn't cover.
 # Already in the tree transitively; pinned here for the direct msg_send.

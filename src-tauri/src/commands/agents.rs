@@ -81,6 +81,7 @@ impl TauriDeltaSink {
             // Broadcast first so the UI updates before any heavier work.
             .with(Arc::new(BroadcastMiddleware { app: app.clone() }))
             .with(Arc::new(AnalyticsMiddleware { app: app.clone() }))
+            .with(Arc::new(KeepAwakeMiddleware { app: app.clone() }))
             // Session capture lives here rather than on the event bus because
             // the bus drops events for a lagging subscriber, and a dropped event
             // is a turn missing from the permanent record. This stage only
@@ -113,6 +114,38 @@ impl OutboundMiddleware<SessionDeltaEnvelope> for BroadcastMiddleware {
     fn on_event(&self, envelope: &SessionDeltaEnvelope) {
         if let Err(e) = self.app.emit("atlas:agents", envelope) {
             tracing::error!(target: "atlas_agents::emit", "failed to emit atlas:agents event: {e}");
+        }
+    }
+}
+
+/// Manages OS power assertions to prevent idle system sleep while agents are running.
+struct KeepAwakeMiddleware {
+    app: AppHandle,
+}
+
+impl OutboundMiddleware<SessionDeltaEnvelope> for KeepAwakeMiddleware {
+    fn on_event(&self, envelope: &SessionDeltaEnvelope) {
+        let Some(manager) = self
+            .app
+            .try_state::<Arc<crate::keep_awake::KeepAwakeManager>>()
+        else {
+            return;
+        };
+        match &envelope.delta {
+            SessionDelta::Status { status, .. } => {
+                if *status == SessionStatus::Running {
+                    manager.mark_running(&envelope.session_id);
+                } else {
+                    manager.mark_not_running(&envelope.session_id);
+                }
+            }
+            SessionDelta::TurnFinished { .. } | SessionDelta::TurnFailed { .. } => {
+                manager.mark_not_running(&envelope.session_id);
+            }
+            SessionDelta::AgentDisconnected { .. } => {
+                manager.forget_session(&envelope.session_id);
+            }
+            _ => {}
         }
     }
 }
@@ -1710,6 +1743,9 @@ pub async fn agents_drop_session(
     let _ = agent_id;
     // Release the per-turn accumulator with the session, so a tab closed
     // mid-turn doesn't hold one for the life of the process.
+    if let Some(keep_awake) = app.try_state::<Arc<crate::keep_awake::KeepAwakeManager>>() {
+        keep_awake.forget_session(&session_id);
+    }
     app.state::<Arc<AnalyticsState>>()
         .forget_session(&session_id);
     let host = app.state::<Arc<AgentHost>>().inner().clone();

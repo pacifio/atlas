@@ -387,6 +387,22 @@ function GeneralSettings() {
           onChange={(next) => updateSettings({ enterToSend: next })}
         />
       </SettingRow>
+      <SettingRow
+        label="Keep awake while an agent is working"
+        description={
+          isMac
+            ? "Keeps your Mac from sleeping while an agent is working. The display can still turn off."
+            : isWindows
+              ? "Keep-awake is currently not supported on Windows."
+              : "Keeps your computer from sleeping while an agent is working. The display can still turn off."
+        }
+      >
+        <Toggle
+          checked={!isWindows && settings.keepAwakeWhileRunning}
+          disabled={isWindows}
+          onChange={(next) => updateSettings({ keepAwakeWhileRunning: next })}
+        />
+      </SettingRow>
       <NotificationsSettings />
 
       <SectionTitle title="Behaviour" subtitle="Files, logs and the editor" />

@@ -75,6 +75,9 @@ export interface AppSettings {
   /** Auto-update master switch. ON (default) → every startup checks PostHog
    *  remote config and prompts when a newer signed DMG is available. */
   autoUpdate: boolean;
+  /** Keep the computer awake while an Atlas agent is actively running.
+   *  Default OFF. Prevents idle system sleep; display can still turn off. */
+  keepAwakeWhileRunning: boolean;
   /** Let the Atlas Agent's engine sync OpenAI's curated plugin catalogue
    *  (github.com/openai/plugins) when it starts. OFF by default — it is a
    *  network fetch at every launch. Applies the next time the agent starts. */
@@ -166,6 +169,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   agentSwitchBehavior: "reset",
   gitBlameInline: true,
   gitAutoFetch: true,
+  keepAwakeWhileRunning: false,
   autoUpdate: true,
   curatedPluginSync: false,
   updaterIgnoredVersion: null,

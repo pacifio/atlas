@@ -706,6 +706,7 @@ dependencies = [
  "base64 0.21.7",
  "block2",
  "chrono",
+ "core-foundation 0.10.1",
  "dashmap",
  "dirs",
  "dotenvy",
