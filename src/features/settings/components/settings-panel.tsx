@@ -504,6 +504,15 @@ function GeneralSettings() {
         </select>
       </SettingRow>
       <SettingRow
+        label="Mirror CLAUDE.md and .claude/rules into AGENTS.md"
+        description="For agents that read AGENTS.md. When on, Atlas keeps a marked block in the active project's AGENTS.md with CLAUDE.md and every .claude/rules file, rewritten as they change, and creates AGENTS.md if there is none. Your own text outside the block is never changed. Turning it off removes the block. Hooks and permission lists are not instructions and are not copied."
+      >
+        <Toggle
+          checked={settings.instructionSync}
+          onChange={(next) => updateSettings({ instructionSync: next })}
+        />
+      </SettingRow>
+      <SettingRow
         label="Let Atlas Agent navigate the app"
         description="Atlas Agent can open files at a line, switch tabs and panels, fill in a chat message and type a command into a terminal for you to run. It never switches projects, sends a message for you or presses Enter. Each action shows in the chat and the Logs panel."
       >

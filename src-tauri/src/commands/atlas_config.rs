@@ -152,6 +152,13 @@ pub fn notify_settings_changed(app: &AppHandle, settings: &AppSettings, generati
     // 5. re-apply the app icon, so an external edit of `appIcon` takes
     //    effect live like the Settings picker does. A no-op unless it changed.
     crate::app_icon::apply(app, &settings.app_icon);
+    // 6. follow `instructionSync`: switched on, sync and watch each window's
+    //    active project; switched off, stop watching and take the mirrored
+    //    block back out. A no-op unless it changed.
+    if let Some(state) = app.try_state::<crate::commands::instruction_sync::InstructionSyncState>()
+    {
+        state.apply_setting(app, settings.instruction_sync);
+    }
 }
 
 /// The gate for the vendored engine's curated-plugin sync

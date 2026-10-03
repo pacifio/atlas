@@ -348,6 +348,13 @@ pub struct AppSettings {
     /// see `commands::atlas_config::apply_curated_plugin_sync_gate`.
     #[serde(default)]
     pub curated_plugin_sync: bool,
+    /// Mirror the active project's convention files (`CLAUDE.md`,
+    /// `.claude/rules/`) into a marked block of its `AGENTS.md`, kept current
+    /// as they change, for any agent that reads `AGENTS.md`. Off by default:
+    /// it writes into the user's repository. Switching it off takes the block
+    /// back out. See `commands::instruction_sync`.
+    #[serde(default)]
+    pub instruction_sync: bool,
     /// A version the user chose to "Ignore" in the update prompt. `None` =
     /// nothing ignored. Absent from the TOML file rather than written as a
     /// sentinel empty string — TOML has no native null, and an absent key is
@@ -485,6 +492,7 @@ impl Default for AppSettings {
             git_auto_fetch: true,
             auto_update: true,
             curated_plugin_sync: false,
+            instruction_sync: false,
             updater_ignored_version: None,
             enter_to_send: true,
             agent_ui_navigation: true,
@@ -649,6 +657,13 @@ const SETTINGS_DOCS: &[(&str, &str)] = &[
         "# Let the Atlas Agent's engine fetch OpenAI's curated plugin catalogue\n\
          # (github.com/openai/plugins) when it starts — a network request at\n\
          # every launch. Applies the next time the agent starts. (default: false)",
+    ),
+    (
+        "instructionSync",
+        "# Mirror CLAUDE.md and .claude/rules/ into a marked block of the active\n\
+         # project's AGENTS.md, kept current as they change, for any agent that\n\
+         # reads AGENTS.md. Writes into the repository; text outside the block\n\
+         # is never changed. Off: the block is taken back out. (default: false)",
     ),
     (
         "updaterIgnoredVersion",
@@ -1061,6 +1076,7 @@ pub struct SettingsPatch {
     pub git_auto_fetch: Option<bool>,
     pub auto_update: Option<bool>,
     pub curated_plugin_sync: Option<bool>,
+    pub instruction_sync: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_double_option")]
     pub updater_ignored_version: Option<Option<String>>,
     pub enter_to_send: Option<bool>,
@@ -1143,6 +1159,9 @@ impl SettingsPatch {
         }
         if let Some(v) = self.curated_plugin_sync {
             settings.curated_plugin_sync = v;
+        }
+        if let Some(v) = self.instruction_sync {
+            settings.instruction_sync = v;
         }
         if let Some(v) = &self.updater_ignored_version {
             settings.updater_ignored_version = v.clone();
@@ -1245,6 +1264,7 @@ impl SettingsPatch {
         set_bool!(git_auto_fetch, "gitAutoFetch");
         set_bool!(auto_update, "autoUpdate");
         set_bool!(curated_plugin_sync, "curatedPluginSync");
+        set_bool!(instruction_sync, "instructionSync");
         set_bool!(enter_to_send, "enterToSend");
         set_bool!(agent_ui_navigation, "agentUiNavigation");
         set_bool!(agent_org_access, "agentOrgAccess");
@@ -2685,6 +2705,7 @@ someFutureKey = \"left alone\"
             git_auto_fetch: Some(!defaults.git_auto_fetch),
             auto_update: Some(!defaults.auto_update),
             curated_plugin_sync: Some(!defaults.curated_plugin_sync),
+            instruction_sync: Some(!defaults.instruction_sync),
             updater_ignored_version: Some(Some("9.9.9".to_string())),
             enter_to_send: Some(!defaults.enter_to_send),
             agent_ui_navigation: Some(!defaults.agent_ui_navigation),

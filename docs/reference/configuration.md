@@ -239,6 +239,7 @@ wrote; `toml_edit` just preserves whatever comments are already there.
 | `gitAutoFetch` | boolean | `true` | — |
 | `autoUpdate` | boolean | `true` | — |
 | `curatedPluginSync` | boolean | `false` | — |
+| `instructionSync` | boolean | `false` | — . See [Mirrored instructions](#mirrored-instructions-instructionsync) |
 | `updaterIgnoredVersion` | string, or absent | absent | — |
 | `enterToSend` | boolean | `true` | — |
 | `agentUiNavigation` | boolean | `true` | — |
@@ -276,6 +277,44 @@ the old editor selection was not the matching editor half of the old interface
 theme, its `editor.*`, `syntax.*`, and `diff.*` values become `themeOverrides`
 so the user keeps that deliberate combination. There is no separate editor
 theme after this migration.
+
+### Mirrored instructions (`instructionSync`)
+
+Some agents read a project's instructions from `CLAUDE.md` and
+`.claude/rules/*.md`; others read only `AGENTS.md`. With `instructionSync` on,
+Atlas keeps one marked block in the active project's `AGENTS.md` holding
+`CLAUDE.md` followed by each rule file, for any agent that reads `AGENTS.md`,
+and rewrites it whenever those files change. The sources stay the place to edit
+a rule. The block sits between these two lines, each on a line of its own:
+
+```
+<!-- atlas:mirrored-instructions START -->
+<!-- atlas:mirrored-instructions END -->
+```
+
+- **Which projects.** Switching it on syncs and watches the project open in
+  each window, and no other. A project you switch to later is synced when it
+  becomes active. An `AGENTS.md` is created only when there is something to
+  mirror.
+- **Switching it off** stops the watching and takes the block back out of the
+  projects Atlas was keeping in sync, under the same checks as a sync below.
+  An `AGENTS.md` that held nothing but the block is deleted. A project that is
+  not open keeps its block until you remove it by hand.
+- **Your text is never changed.** Every byte outside the block, line endings
+  included, stays as it was. The block takes the line ending of the line just
+  before it. Atlas leaves `AGENTS.md` alone, and logs why, when the markers
+  are not exactly one START line followed by one END line (an edited,
+  indented, duplicated or deleted marker), when `CLAUDE.md` or a rule has a
+  marker on a line of its own, when `AGENTS.md` or `CLAUDE.md` is a link or
+  the two are the same file, when `CLAUDE.md` only imports `@AGENTS.md`, when
+  `AGENTS.md` is read-only, and when `AGENTS.md` changes while it is being
+  written (that write is retried from the new text).
+- **Pack rules.** A rule a pack projected into `.claude/rules/` is left out
+  when `AGENTS.md` already carries it as that pack's own
+  `<!-- atlas-pack:{pack}:{rule} START -->` block.
+- A rule's `paths:` frontmatter becomes an "applies when working on" line, since
+  `AGENTS.md` has no path scoping. Hooks and permission lists
+  (`.claude/settings.json`) are not instructions and are not mirrored.
 
 ## Schema versioning
 

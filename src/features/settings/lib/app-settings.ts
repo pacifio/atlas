@@ -79,6 +79,12 @@ export interface AppSettings {
    *  (github.com/openai/plugins) when it starts. OFF by default — it is a
    *  network fetch at every launch. Applies the next time the agent starts. */
   curatedPluginSync: boolean;
+  /** Mirror the active project's convention files (`CLAUDE.md`,
+   *  `.claude/rules/`) into a marked block of its `AGENTS.md`, kept current as
+   *  they change, for any agent that reads `AGENTS.md`
+   *  (`commands::instruction_sync`). OFF by default — it writes into the
+   *  repository. Switching it off takes the block back out. */
+  instructionSync: boolean;
   /** A version the user chose to "Ignore" in the update prompt; the startup
    *  check won't re-prompt for exactly this version. */
   updaterIgnoredVersion: string | null;
@@ -168,6 +174,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   gitAutoFetch: true,
   autoUpdate: true,
   curatedPluginSync: false,
+  instructionSync: false,
   updaterIgnoredVersion: null,
   enterToSend: true,
   agentUiNavigation: true,

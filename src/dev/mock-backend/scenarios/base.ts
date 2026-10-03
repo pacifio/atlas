@@ -171,6 +171,9 @@ export const baseHandlers: MockHandlers = {
   // ── fire-and-forget housekeeping ────────────────────────────────────────
   comms_ready: nothing,
   fileindex_close_project: nothing,
+  // Mirrored instructions: Rust writes AGENTS.md; nothing to fake in a browser.
+  instruction_sync_start: nothing,
+  instruction_sync_stop: nothing,
   recent_files_close_project: nothing,
   mention_cache_clear: nothing,
   mention_cache_set_knowledge: nothing,

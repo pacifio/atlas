@@ -1,0 +1,21 @@
+[package]
+name = "atlas-instruction-sync"
+version = "0.1.0"
+edition = "2021"
+description = "Mirrors a project's convention files (CLAUDE.md and .claude/rules/) into a marked block of its AGENTS.md, for any agent that reads AGENTS.md, without ever changing the text around the block. Plain file I/O, no async, no Tauri."
+
+[lib]
+name = "atlas_instruction_sync"
+
+[dependencies]
+# Reads the pack-projection ledger, so a rule a pack already put in AGENTS.md
+# as its own block is not mirrored a second time.
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"
+
+# The workspace lint table is only real for members that opt in —
+# without this stanza it is dead configuration (#60).
+[lints]
+workspace = true

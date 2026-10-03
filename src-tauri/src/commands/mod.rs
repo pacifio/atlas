@@ -34,6 +34,7 @@ pub mod git_watcher;
 pub mod gitdiff;
 pub mod github;
 pub mod icon_themes;
+pub mod instruction_sync;
 pub mod keybindings;
 pub mod knowledge;
 pub mod knowledge_export;

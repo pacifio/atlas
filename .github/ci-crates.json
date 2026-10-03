@@ -63,6 +63,10 @@
     "clippy": true
   },
   {
+    "crate": "atlas-instruction-sync",
+    "clippy": true
+  },
+  {
     "crate": "atlas-kb-server",
     "release-build": true
   },

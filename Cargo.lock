@@ -696,6 +696,7 @@ dependencies = [
  "atlas-git",
  "atlas-gitdiff",
  "atlas-icon-theme",
+ "atlas-instruction-sync",
  "atlas-memory",
  "atlas-native-agent",
  "atlas-process",
@@ -3276,6 +3277,14 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "zip 8.6.0",
+]
+
+[[package]]
+name = "atlas-instruction-sync"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

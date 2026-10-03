@@ -39,6 +39,7 @@ import {
   markFileIndexClosed,
 } from "@/features/file-picker/lib/file-picker-api";
 import { activeProjectId } from "@/features/projects/lib/active-project";
+import { instructionSync } from "@/features/projects/lib/instruction-sync-api";
 import { useProjectStore } from "@/features/projects/stores/project-store";
 import { pickAndAddProject } from "@/features/projects/lib/pick-project";
 import { flushAll } from "@/features/projects/lib/flush-registry";
@@ -1281,6 +1282,12 @@ export function App() {
       projectPath: currentProject.path,
       workspaceId: projectId,
     }).catch((e) => console.warn("git watch start failed:", e));
+    // Mirrored instructions: tells Rust which project this window works in.
+    // With `instructionSync` on it syncs and watches it; off, Rust only
+    // remembers it as the project to act on when the setting is switched on.
+    void instructionSync
+      .start(currentProject.path, projectId)
+      .catch((e) => console.warn("instruction sync start failed:", e));
     // Background fetch follows the project this window shows, so its Pull
     // badge reflects the remote (Rust `git_autofetch`).
     void useGitStore

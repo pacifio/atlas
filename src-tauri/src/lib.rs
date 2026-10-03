@@ -364,6 +364,7 @@ pub fn run() {
         .manage(commands::modelchat::ModelChatState::new())
         .manage(FileIndexState::new())
         .manage(GitWatcherState::new())
+        .manage(commands::instruction_sync::InstructionSyncState::new())
         .manage(commands::git_autofetch::GitAutoFetchState::new())
         .manage(RecentFilesState::new())
         .manage(MentionCacheState::new())
@@ -573,6 +574,8 @@ pub fn run() {
             commands::git_ops::git_squash_last,
             commands::git_watcher::git_watch_start,
             commands::git_watcher::git_watch_stop,
+            commands::instruction_sync::instruction_sync_start,
+            commands::instruction_sync::instruction_sync_stop,
             commands::capture::capture_detect,
             commands::capture::capture_binding,
             commands::capture::capture_enable,

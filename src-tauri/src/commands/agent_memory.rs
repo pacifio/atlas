@@ -619,9 +619,15 @@ pub(crate) fn claude_memory_dir(project_path: &str) -> std::path::PathBuf {
 /// copies back on the next turn. The reader is where the loop is cut: the files
 /// themselves belong to another program and are left exactly as they are.
 ///
+/// The instruction-sync block (`atlas_instruction_sync::BLOCK_START`) comes out
+/// too: it is a copy of `CLAUDE.md` and `.claude/rules/` written into
+/// `AGENTS.md`, and the corpus already holds `CLAUDE.md` itself, so keeping
+/// it would index and retrieve the same rules twice.
+///
 /// `None` for a file that does not exist, same as the plain read it replaces.
 pub(crate) fn read_without_injected_context(path: &Path) -> Option<String> {
     let raw = std::fs::read_to_string(path).ok()?;
+    let raw = atlas_instruction_sync::remove_block(&raw);
     Some(atlas_agent_transcript::strip_injected_context(&raw))
 }
 

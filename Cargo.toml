@@ -39,6 +39,7 @@ members = [
   "crates/atlas-git",
   "crates/atlas-gitdiff",
   "crates/atlas-icon-theme",
+  "crates/atlas-instruction-sync",
   "crates/atlas-memory",
   "crates/atlas-native-agent",
   "crates/atlas-process",
@@ -792,6 +793,8 @@ opt-level = 1
 [profile.dev.package.atlas-gitdiff]
 opt-level = 1
 [profile.dev.package.atlas-icon-theme]
+opt-level = 1
+[profile.dev.package.atlas-instruction-sync]
 opt-level = 1
 [profile.dev.package.atlas-memory]
 opt-level = 1
