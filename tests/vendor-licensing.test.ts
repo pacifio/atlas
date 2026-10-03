@@ -287,43 +287,50 @@ describe("§4(b) — modified files say they were modified", () => {
     expect(modifiedVendoredFiles().length).toBeGreaterThan(5);
   });
 
-  it("puts a change notice in every modified vendored file", () => {
-    const modified = modifiedVendoredFiles().filter(
-      (rel) => rel !== "vendor/atlas-engine/LICENSE" && rel !== "vendor/atlas-engine/NOTICE",
-    );
-    // Generated fixtures (the schema exports a test regenerates and compares
-    // byte-for-byte) cannot carry a header either: the generator would drop
-    // it, or the comparison would fail. They are listed in ATLAS-CHANGES.md
-    // under their directory, which is the tree-level notice for them.
-    const changes = read(path.join(VENDOR, "ATLAS-CHANGES.md"));
-    const listed = (rel: string) => {
-      const inside = rel.slice("vendor/atlas-engine/".length);
-      const dirs = changes
-        .split("\n")
-        .map((l) => l.trim().replace(/^[-*]\s*`?|`$/g, ""))
-        .filter((l) => l.endsWith("/"));
-      return changes.includes(inside) || dirs.some((d) => inside.startsWith(d));
-    };
-    const missing = modified.filter(
-      (rel) =>
-        COMMENTABLE.has(path.extname(rel)) &&
-        !listed(rel) &&
-        !read(path.join(REPO_ROOT, rel)).includes(CHANGE_NOTICE),
-    );
-    expect(
-      missing,
-      `these vendored files were changed without an Apache-2.0 §4(b) notice. ` +
-        `Add the one-line "${CHANGE_NOTICE}" header — see CONTEXT.md, ` +
-        `"Vendored engine licensing":\n${missing.slice(0, 80).join("\n")}`,
-    ).toEqual([]);
+  // Hashing the entire vendored tree and reading every modified file can exceed
+  // vitest's 5s default timeout under heavy I/O load (such as pre-commit hooks
+  // running alongside cargo builds), causing intermittent failures (#334).
+  it(
+    "puts a change notice in every modified vendored file",
+    () => {
+      const modified = modifiedVendoredFiles().filter(
+        (rel) => rel !== "vendor/atlas-engine/LICENSE" && rel !== "vendor/atlas-engine/NOTICE",
+      );
+      // Generated fixtures (the schema exports a test regenerates and compares
+      // byte-for-byte) cannot carry a header either: the generator would drop
+      // it, or the comparison would fail. They are listed in ATLAS-CHANGES.md
+      // under their directory, which is the tree-level notice for them.
+      const changes = read(path.join(VENDOR, "ATLAS-CHANGES.md"));
+      const listed = (rel: string) => {
+        const inside = rel.slice("vendor/atlas-engine/".length);
+        const dirs = changes
+          .split("\n")
+          .map((l) => l.trim().replace(/^[-*]\s*`?|`$/g, ""))
+          .filter((l) => l.endsWith("/"));
+        return changes.includes(inside) || dirs.some((d) => inside.startsWith(d));
+      };
+      const missing = modified.filter(
+        (rel) =>
+          COMMENTABLE.has(path.extname(rel)) &&
+          !listed(rel) &&
+          !read(path.join(REPO_ROOT, rel)).includes(CHANGE_NOTICE),
+      );
+      expect(
+        missing,
+        `these vendored files were changed without an Apache-2.0 §4(b) notice. ` +
+          `Add the one-line "${CHANGE_NOTICE}" header — see CONTEXT.md, ` +
+          `"Vendored engine licensing":\n${missing.slice(0, 80).join("\n")}`,
+      ).toEqual([]);
 
-    // Files with no comment syntax carry their notice at tree level instead.
-    const unlisted = modified.filter((rel) => !COMMENTABLE.has(path.extname(rel)) && !listed(rel));
-    expect(
-      unlisted,
-      `modified files that cannot carry a comment must be listed in ATLAS-CHANGES.md:\n${unlisted.join("\n")}`,
-    ).toEqual([]);
-  });
+      // Files with no comment syntax carry their notice at tree level instead.
+      const unlisted = modified.filter((rel) => !COMMENTABLE.has(path.extname(rel)) && !listed(rel));
+      expect(
+        unlisted,
+        `modified files that cannot carry a comment must be listed in ATLAS-CHANGES.md:\n${unlisted.join("\n")}`,
+      ).toEqual([]);
+    },
+    30_000,
+  );
 });
 
 describe("§4(c) and the rename sweep — the rules are written down", () => {
