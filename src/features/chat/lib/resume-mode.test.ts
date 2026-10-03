@@ -15,8 +15,9 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 
 import type { SessionKey, SessionModeInfo, SessionSnapshot } from "@/types/agents";
+import { NATIVE_AGENT_ID } from "@/types/agent";
 import { useChatStore } from "../stores/chat-store";
-import { saveLastModePref } from "./last-mode-pref";
+import { loadLastModePref, saveLastModePref } from "./last-mode-pref";
 import { applyModeOnResume, resolveEffectiveMode } from "./resume-mode";
 
 const TAB = "tab-1";
@@ -139,5 +140,202 @@ describe("applyModeOnResume: an agent that advertises no modes", () => {
     // Nothing was advertised, so there was nothing to validate against and
     // nothing to seed from. The stored pick still stands.
     expect(useChatStore.getState().sessions[TAB]?.acpCurrentMode).toBe(before);
+  });
+});
+
+// Issue 317. After a restart every chat tab starts on the native agent, so
+// resuming a Codex thread RELABELS the tab (`setSessionAgentType`) before the
+// load. The relabel dropped the explicit flag and never restored the saved
+// pick, so `applyModeOnResume` saw "no pick" and adopted whatever Codex
+// reported on `session/load` — a more permissive mode than the user chose,
+// while the saved preference still said the restrictive one.
+describe("applyModeOnResume: issue 317, resume after a restart", () => {
+  const CODEX_MODES: SessionModeInfo[] = [
+    { id: "read-only", name: "Ask for approval", description: "Ask before acting" },
+    { id: "auto", name: "Approve for me", description: "Act without asking" },
+  ] as SessionModeInfo[];
+  const codexSnapshot = (over: Partial<SessionSnapshot> = {}) =>
+    snapshot({ current_mode: "auto", available_modes: CODEX_MODES, ...over });
+
+  /** The tab a fresh launch gives you, then the relabel the resume does. */
+  function restartedTabResuming(agentType: "codex" | "claude-code") {
+    useChatStore.getState().actions.createSession(TAB, NATIVE_AGENT_ID);
+    useChatStore.getState().actions.setSessionAgentType(TAB, agentType);
+  }
+
+  it("keeps the saved pick when the tab was on another agent before the resume", async () => {
+    saveLastModePref("codex", "read-only");
+    restartedTabResuming("codex");
+
+    // The picker is right before the load even lands.
+    expect(useChatStore.getState().sessions[TAB]?.acpCurrentMode).toBe("read-only");
+    expect(useChatStore.getState().sessions[TAB]?.acpModeExplicit).toBe(true);
+
+    await applyModeOnResume(TAB, KEY, codexSnapshot());
+
+    expect(setModeCalls()).toHaveLength(1);
+    expect(setModeCalls()[0]?.[1]).toMatchObject({ modeId: "read-only" });
+    expect(useChatStore.getState().sessions[TAB]?.acpCurrentMode).toBe("read-only");
+    expect(useChatStore.getState().sessions[TAB]?.unrestoredMode).toBeUndefined();
+  });
+
+  it("restores Claude's saved pick on the same relabel", async () => {
+    saveLastModePref("claude-code", "plan");
+    restartedTabResuming("claude-code");
+
+    await applyModeOnResume(
+      TAB,
+      KEY,
+      snapshot({
+        plugin_id: "claude-code",
+        current_mode: "bypassPermissions",
+        available_modes: [
+          { id: "plan", name: "Plan" },
+          { id: "bypassPermissions", name: "Bypass" },
+        ] as SessionModeInfo[],
+      }),
+    );
+
+    expect(setModeCalls()[0]?.[1]).toMatchObject({ modeId: "plan" });
+    expect(useChatStore.getState().sessions[TAB]?.claudePermissionMode).toBe("plan");
+  });
+
+  it("restores the saved pick even when the tab carries none", async () => {
+    // Belt and braces for any path that reaches here without the store
+    // having restored the pick: the saved preference is the user's word.
+    useChatStore.getState().actions.createSession(TAB, "codex");
+    saveLastModePref("codex", "read-only");
+
+    await applyModeOnResume(TAB, KEY, codexSnapshot());
+
+    expect(setModeCalls()[0]?.[1]).toMatchObject({ modeId: "read-only" });
+    expect(useChatStore.getState().sessions[TAB]?.acpCurrentMode).toBe("read-only");
+  });
+
+  it("says so when the agent refuses the pick, and never adopts its mode as the pick", async () => {
+    saveLastModePref("codex", "read-only");
+    restartedTabResuming("codex");
+    invoke.mockImplementation(async (...args: unknown[]) => {
+      if (args[0] === "agents_set_mode") throw new Error("busy");
+      return undefined;
+    });
+
+    await applyModeOnResume(TAB, KEY, codexSnapshot());
+
+    // The picker shows what the agent really has, the composer says the pick
+    // was not restored, and the saved pick is kept for the next try.
+    expect(useChatStore.getState().sessions[TAB]?.acpCurrentMode).toBe("auto");
+    expect(useChatStore.getState().sessions[TAB]?.unrestoredMode).toBe("Ask for approval");
+    expect(loadLastModePref("codex")).toBe("read-only");
+    // What the picker was left showing is the agent's mode, not a pick.
+    expect(useChatStore.getState().sessions[TAB]?.acpModeExplicit).toBe(false);
+
+    // The next resume in the same tab tries the user's pick again, instead of
+    // treating the agent's mode it was left showing as something they chose.
+    invoke.mockClear();
+    invoke.mockImplementation(async () => undefined);
+    await applyModeOnResume(TAB, KEY, codexSnapshot());
+
+    expect(setModeCalls()).toHaveLength(1);
+    expect(setModeCalls()[0]?.[1]).toMatchObject({ modeId: "read-only" });
+    expect(useChatStore.getState().sessions[TAB]?.acpCurrentMode).toBe("read-only");
+    // And the bar goes once the pick is back.
+    expect(useChatStore.getState().sessions[TAB]?.unrestoredMode).toBeUndefined();
+  });
+
+  it("says so once, and forgets the saved pick, when the agent no longer offers it", async () => {
+    saveLastModePref("codex", "read-only");
+    restartedTabResuming("codex");
+    // An agent update renamed its modes: "read-only" is gone.
+    const renamed = codexSnapshot({
+      available_modes: CODEX_MODES.filter((m) => m.id !== "read-only"),
+    });
+
+    await applyModeOnResume(TAB, KEY, renamed);
+
+    expect(setModeCalls()).toHaveLength(0);
+    expect(useChatStore.getState().sessions[TAB]?.acpCurrentMode).toBe("auto");
+    expect(useChatStore.getState().sessions[TAB]?.unrestoredMode).toBe("read-only");
+    expect(loadLastModePref("codex")).toBeNull();
+
+    // The next resume has nothing stale left to restore, so nothing to warn
+    // about: it defers to the agent, as a session with no pick always has.
+    useChatStore.getState().actions.setUnrestoredMode(TAB, undefined);
+    await applyModeOnResume(TAB, KEY, renamed);
+
+    expect(setModeCalls()).toHaveLength(0);
+    expect(useChatStore.getState().sessions[TAB]?.unrestoredMode).toBeUndefined();
+  });
+
+  it("keeps saying so, every resume, while the agent refuses a pick it offers", async () => {
+    saveLastModePref("codex", "read-only");
+    restartedTabResuming("codex");
+    invoke.mockImplementation(async (...args: unknown[]) => {
+      if (args[0] === "agents_set_mode") throw new Error("busy");
+      return undefined;
+    });
+
+    await applyModeOnResume(TAB, KEY, codexSnapshot());
+    useChatStore.getState().actions.setUnrestoredMode(TAB, undefined);
+    await applyModeOnResume(TAB, KEY, codexSnapshot());
+
+    expect(setModeCalls()).toHaveLength(2);
+    expect(useChatStore.getState().sessions[TAB]?.unrestoredMode).toBe("Ask for approval");
+    expect(loadLastModePref("codex")).toBe("read-only");
+  });
+
+  it("keeps the composer bar until the user picks a mode", async () => {
+    saveLastModePref("codex", "read-only");
+    restartedTabResuming("codex");
+    invoke.mockImplementation(async (...args: unknown[]) => {
+      if (args[0] === "agents_set_mode") throw new Error("busy");
+      return undefined;
+    });
+    await applyModeOnResume(TAB, KEY, codexSnapshot());
+    expect(useChatStore.getState().sessions[TAB]?.unrestoredMode).toBe("Ask for approval");
+
+    // Nothing but a pick clears it. Picking the mode the chat is already in
+    // counts: it is a choice now, not the agent's default.
+    useChatStore.getState().actions.setAcpMode(TAB, "auto");
+    expect(useChatStore.getState().sessions[TAB]?.unrestoredMode).toBeUndefined();
+  });
+});
+
+// The saved pick is per agent TYPE, so it holds whichever tab picked last.
+// Preferring it over a tab's own pick let one tab silently override another's
+// when an agent restart rebinds the tabs (`respawnAndRebind` in chat-panel).
+describe("applyModeOnResume: two tabs on the same agent", () => {
+  const CODEX_MODES: SessionModeInfo[] = [
+    { id: "read-only", name: "Read Only" },
+    { id: "full-access", name: "Full Access" },
+  ] as SessionModeInfo[];
+
+  it("resumes each tab in its own pick, not the one another tab saved last", async () => {
+    const { createSession, setAcpModes, setAcpMode } = useChatStore.getState().actions;
+    for (const tab of ["tab-a", "tab-b"]) {
+      createSession(tab, "codex");
+      setAcpModes(tab, "read-only", CODEX_MODES, "codex");
+    }
+    setAcpMode("tab-a", "read-only");
+    setAcpMode("tab-b", "full-access");
+    expect(loadLastModePref("codex")).toBe("full-access");
+    invoke.mockClear();
+
+    // Codex restarts; the rebind resumes tab A, which the agent reports in
+    // its own default.
+    const snap = snapshot({ current_mode: "full-access", available_modes: CODEX_MODES });
+    await applyModeOnResume("tab-a", KEY, snap);
+
+    expect(setModeCalls()).toHaveLength(1);
+    expect(setModeCalls()[0]?.[1]).toMatchObject({ modeId: "read-only" });
+    expect(useChatStore.getState().sessions["tab-a"]?.acpCurrentMode).toBe("read-only");
+    expect(useChatStore.getState().sessions["tab-a"]?.unrestoredMode).toBeUndefined();
+
+    // And tab B, resumed after it, keeps ITS pick.
+    invoke.mockClear();
+    await applyModeOnResume("tab-b", KEY, { ...snap, current_mode: "read-only" });
+
+    expect(setModeCalls()[0]?.[1]).toMatchObject({ modeId: "full-access" });
+    expect(useChatStore.getState().sessions["tab-b"]?.acpCurrentMode).toBe("full-access");
   });
 });

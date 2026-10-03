@@ -257,6 +257,15 @@ export interface ChatSession {
   acpCurrentMode?: string;
   /** True only after the user explicitly changes an ACP mode in this tab. */
   acpModeExplicit?: boolean;
+  /**
+   * The display name of the mode a resume could not put this session in (see
+   * `resume-mode.ts`): the agent refused it, or no longer offers it, so the
+   * session runs in the agent's own mode instead. `ModeRestoreBar` shows it in
+   * the composer until the user picks a mode. A toast was not enough: it went
+   * away by itself, and anyone who had looked away then sent under a mode
+   * they never chose.
+   */
+  unrestoredMode?: string;
   /** Modes the agent advertised for this session — drives the composer's mode
    *  picker for non-Claude agents (e.g. Codex). Seeded from the snapshot. */
   acpAvailableModes?: SessionModeInfo[];

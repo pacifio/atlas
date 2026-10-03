@@ -79,6 +79,7 @@ import { FeaturedAgentOffers } from "./featured-agent-offers";
 import { RetryPill } from "./retry-pill";
 import { AiGrantBar } from "./ai-grant-bar";
 import { RemovedAgentBar } from "./removed-agent-bar";
+import { ModeRestoreBar, OPEN_MODE_PICKER_EVENT } from "./mode-restore-bar";
 import { useAiGrantProbe, useNoAiGrant } from "../stores/ai-grant-store";
 import {
   QUALITY_LADDER,
@@ -451,6 +452,19 @@ function ComposerGroupsMenu({
       window.removeEventListener("atlas:composer-menu-open", onOther);
     };
   }, [openGroup]);
+
+  // "Choose mode" on the mode-restore bar opens the mode group from outside.
+  useEffect(() => {
+    const onOpen = (e: Event) => {
+      if ((e as CustomEvent<{ tabId?: string }>).detail?.tabId !== tabId) return;
+      setQ("");
+      setOpenGroup("mode");
+      // Mutual exclusion with the + menu — see atlas:composer-menu-open.
+      window.dispatchEvent(new CustomEvent("atlas:composer-menu-open", { detail: "groups" }));
+    };
+    window.addEventListener(OPEN_MODE_PICKER_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_MODE_PICKER_EVENT, onOpen);
+  }, [tabId]);
 
   const isNative = agentType === "atlas-agent";
   const refreshingModels = useNativeModelsStore.use.refreshing();
@@ -1951,6 +1965,10 @@ export function MessageInput({
         {/* The tab's agent was uninstalled — same strip, same reason: the
             input below cannot send until the chat is switched. */}
         <RemovedAgentBar tabId={tabId} />
+
+        {/* A resume could not restore the user's mode — same strip: the next
+            prompt would run under the agent's mode, so say so until they pick. */}
+        <ModeRestoreBar tabId={tabId} />
 
         {/* Live plan docked on top of the input bar (JetBrains-Air style). */}
 
