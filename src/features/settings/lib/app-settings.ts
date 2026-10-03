@@ -66,6 +66,10 @@ export interface AppSettings {
    *  "new-tab" keeps it and opens the new agent in a new tab, "handoff"
    *  switches in place and attaches it to the next message. */
   agentSwitchBehavior: "new-tab" | "handoff" | "reset";
+  /** Before switching agents on a chat with a conversation, send the agent
+   *  being left `/remember` (when it advertises it) and wait for it
+   *  (`switch-agent.ts`). OFF by default — it costs a turn. */
+  rememberBeforeSwitch: boolean;
   /** Inline Git blame in the code editor — dim author/age/summary annotation
    *  trailing the active line. Off = the CodeMirror extension isn't loaded. */
   gitBlameInline: boolean;
@@ -164,6 +168,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   appIcon: DEFAULT_APP_ICON,
   adaptiveSuggestions: "agent",
   agentSwitchBehavior: "reset",
+  rememberBeforeSwitch: false,
   gitBlameInline: true,
   gitAutoFetch: true,
   autoUpdate: true,

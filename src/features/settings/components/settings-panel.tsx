@@ -504,6 +504,15 @@ function GeneralSettings() {
         </select>
       </SettingRow>
       <SettingRow
+        label="Save to memory before switching agents"
+        description="Before you switch agents in a chat that has a conversation, the agent you are leaving is sent /remember, so it saves its decisions and findings to shared memory, and the switch waits for it. Only for agents that offer /remember. Costs one turn per switch; you can switch right away from the notice."
+      >
+        <Toggle
+          checked={settings.rememberBeforeSwitch}
+          onChange={(next) => updateSettings({ rememberBeforeSwitch: next })}
+        />
+      </SettingRow>
+      <SettingRow
         label="Let Atlas Agent navigate the app"
         description="Atlas Agent can open files at a line, switch tabs and panels, fill in a chat message and type a command into a terminal for you to run. It never switches projects, sends a message for you or presses Enter. Each action shows in the chat and the Logs panel."
       >

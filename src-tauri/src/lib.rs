@@ -213,9 +213,9 @@ pub fn run() {
             let app_state: AppStateHandle = Arc::new(Mutex::new(loaded));
             app.manage(app_state);
 
-            // Bundled `atlas-self-configure` skill (issue #64): install/
-            // upgrade it into the canonical global skills store so it's
-            // discoverable the same way any other managed skill is.
+            // Bundled skills (`atlas-self-configure`, issue #64; `remember`):
+            // install/upgrade them into the canonical global skills store so
+            // they're discoverable the same way any other managed skill is.
             commands::skills::ensure_bundled_skills();
 
             // Opt-in product telemetry. Inert unless the user has enabled it AND

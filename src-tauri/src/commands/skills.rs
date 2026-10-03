@@ -570,15 +570,33 @@ fn migrate_legacy_skills(root: &Path) {
 
 // ── Bundled skills (issue #64) ──────────────────────────────────────────────
 
-/// Content of the Atlas-owned `atlas-self-configure` skill, compiled into the
-/// binary so installing/upgrading it needs no separate resource-bundling
-/// config — it's just a string embedded at build time.
-const ATLAS_SELF_CONFIGURE_SKILL_MD: &str =
-    include_str!("../../resources/skills/atlas-self-configure/SKILL.md");
+/// A skill Atlas ships inside its own binary and seeds into the canonical
+/// **global** store on launch. The content is compiled in with `include_str!`,
+/// so installing/upgrading it needs no separate resource-bundling config.
+struct BundledSkill {
+    /// Directory name under `~/.agents/skills`; also the `name` in the
+    /// skill's frontmatter, which is what an agent advertises it as.
+    name: &'static str,
+    /// The whole `SKILL.md`, embedded at build time.
+    skill_md: &'static str,
+}
 
-/// Name of the one bundled skill Atlas ships today. A second one would want
-/// this generalized into a table; not done speculatively for a list of one.
-const BUNDLED_SKILL_NAME: &str = "atlas-self-configure";
+/// Inspect and safely update Atlas's `config.toml` (issue #64).
+const ATLAS_SELF_CONFIGURE: BundledSkill = BundledSkill {
+    name: "atlas-self-configure",
+    skill_md: include_str!("../../resources/skills/atlas-self-configure/SKILL.md"),
+};
+
+/// `/remember`: save what the conversation established to Atlas's shared
+/// memory through the `atlas_memory` tools. Also what save-before-switch
+/// sends (`switch-agent.ts`), when the agent advertises it.
+const REMEMBER: BundledSkill = BundledSkill {
+    name: "remember",
+    skill_md: include_str!("../../resources/skills/remember/SKILL.md"),
+};
+
+/// Every skill Atlas ships. All of them go through the same seeding code.
+const BUNDLED_SKILLS: &[BundledSkill] = &[ATLAS_SELF_CONFIGURE, REMEMBER];
 
 /// Sidecar file recording the hash of the bundled content Atlas itself last
 /// wrote, so a later upgrade can tell "the user never touched this" (safe to
@@ -592,9 +610,9 @@ fn sha256_hex(content: &str) -> String {
     digest.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Install or upgrade the bundled `atlas-self-configure` skill into the
-/// canonical **global** store (`~/.agents/skills/atlas-self-configure`), so
-/// it's discoverable through the exact same `list_skills`/`skills_project`
+/// Install or upgrade every bundled skill ([`BUNDLED_SKILLS`]) into the
+/// canonical **global** store (`~/.agents/skills/<name>`), so each is
+/// discoverable through the exact same `list_skills`/`skills_project`
 /// machinery as any other managed skill — no second delivery path.
 ///
 /// Idempotent and safe to call on every launch:
@@ -608,7 +626,9 @@ fn sha256_hex(content: &str) -> String {
 ///   detecting the drift rather than adopting the user's edit as "new
 ///   baseline" behind their back.
 ///
-/// Global-only, matching the design record: no per-project duplicate.
+/// Global-only, matching the design record: no per-project duplicate. Seeding
+/// writes the canonical copy only; whether an agent sees a skill is up to its
+/// projections, as for any other skill.
 pub fn ensure_bundled_skills() {
     let Some(home) = home_dir() else {
         return;
@@ -621,10 +641,17 @@ pub fn ensure_bundled_skills() {
 /// other function in this file (`root_for`, `skills_base`, `project`, ...)
 /// taking `root: &Path` rather than resolving it internally.
 fn ensure_bundled_skills_at(root: &Path) {
-    let dir = skills_base(root).join(BUNDLED_SKILL_NAME);
+    for skill in BUNDLED_SKILLS {
+        ensure_bundled_skill_at(root, skill);
+    }
+}
+
+/// Seed one bundled skill under `root` (see [`ensure_bundled_skills`]).
+fn ensure_bundled_skill_at(root: &Path, skill: &BundledSkill) {
+    let dir = skills_base(root).join(skill.name);
     let skill_md = dir.join("SKILL.md");
     let hash_file = dir.join(BUNDLED_HASH_FILE);
-    let bundled_hash = sha256_hex(ATLAS_SELF_CONFIGURE_SKILL_MD);
+    let bundled_hash = sha256_hex(skill.skill_md);
 
     if skill_md.exists() {
         let recorded_hash = fs::read_to_string(&hash_file).ok();
@@ -643,7 +670,7 @@ fn ensure_bundled_skills_at(root: &Path) {
     if fs::create_dir_all(&dir).is_err() {
         return;
     }
-    if fs::write(&skill_md, ATLAS_SELF_CONFIGURE_SKILL_MD).is_ok() {
+    if fs::write(&skill_md, skill.skill_md).is_ok() {
         let _ = fs::write(&hash_file, &bundled_hash);
     }
 }
@@ -5438,22 +5465,60 @@ mod tests {
     // ── ensure_bundled_skills_at (issue #64) ────────────────────────────
 
     #[test]
-    fn bundled_skill_is_installed_fresh_into_the_canonical_store() {
+    fn every_bundled_skill_is_installed_fresh_into_the_canonical_store() {
         let root = tmp_root_isolated();
         ensure_bundled_skills_at(&root);
 
-        let dir = skills_base(&root).join(BUNDLED_SKILL_NAME);
-        let installed = fs::read_to_string(dir.join("SKILL.md")).unwrap();
-        assert_eq!(installed, ATLAS_SELF_CONFIGURE_SKILL_MD);
-        assert!(installed.contains("name: atlas-self-configure"));
+        for skill in BUNDLED_SKILLS {
+            let dir = skills_base(&root).join(skill.name);
+            let installed = fs::read_to_string(dir.join("SKILL.md")).unwrap();
+            assert_eq!(installed, skill.skill_md);
 
-        let recorded_hash = fs::read_to_string(dir.join(BUNDLED_HASH_FILE)).unwrap();
-        assert_eq!(
-            recorded_hash.trim(),
-            sha256_hex(ATLAS_SELF_CONFIGURE_SKILL_MD)
-        );
+            let recorded_hash = fs::read_to_string(dir.join(BUNDLED_HASH_FILE)).unwrap();
+            assert_eq!(recorded_hash.trim(), sha256_hex(skill.skill_md));
+        }
+        let self_configure =
+            fs::read_to_string(skills_base(&root).join("atlas-self-configure/SKILL.md")).unwrap();
+        assert!(self_configure.contains("name: atlas-self-configure"));
 
         fs::remove_dir_all(&root).ok();
+    }
+
+    /// An agent advertises a skill by its frontmatter `name`, and the store
+    /// keys it by directory: the two must agree, or the picker row and the
+    /// seeded directory name different things. The name must also survive
+    /// [`sanitize_name`] unchanged, since every other store path goes
+    /// through it.
+    #[test]
+    fn every_bundled_skill_names_itself_by_its_directory() {
+        let mut seen = std::collections::HashSet::new();
+        for skill in BUNDLED_SKILLS {
+            assert!(seen.insert(skill.name), "{} is bundled twice", skill.name);
+            assert_eq!(sanitize_name(skill.name).as_deref(), Ok(skill.name));
+            let (fm, body) = parse_frontmatter(skill.skill_md);
+            assert_eq!(fm.name.as_deref(), Some(skill.name));
+            assert!(
+                fm.description.is_some_and(|d| !d.trim().is_empty()),
+                "{} has no description",
+                skill.name
+            );
+            assert!(!body.trim().is_empty(), "{} has no body", skill.name);
+        }
+    }
+
+    /// The `remember` skill is what save-before-switch relies on: it has to
+    /// name the memory tools as `atlas_memory` serves them, keep the exit for
+    /// an agent without them, and say its own instructions are not memory.
+    #[test]
+    fn the_remember_skill_names_the_memory_tools_and_its_exits() {
+        let md = REMEMBER.skill_md;
+        assert!(md.contains("`memory_remember` tool from the `atlas_memory` MCP server"));
+        assert!(md.contains("`memory_search`"));
+        for kind in ["decision", "fact", "failure", "architecture"] {
+            assert!(md.contains(&format!("- `{kind}`:")), "missing kind {kind}");
+        }
+        assert!(md.contains("aren't available to you, say so and stop"));
+        assert!(md.contains("they are not something the user decided, so don't record them"));
     }
 
     #[test]
@@ -5462,12 +5527,14 @@ mod tests {
         ensure_bundled_skills_at(&root);
 
         let skills = list_skills(&root, "global").expect("list_skills succeeds");
-        let entry = skills
-            .iter()
-            .find(|s| s.name == BUNDLED_SKILL_NAME)
-            .expect("bundled skill is discoverable");
-        assert!(entry.managed);
-        assert_eq!(entry.scope, "global");
+        for bundled in BUNDLED_SKILLS {
+            let entry = skills
+                .iter()
+                .find(|s| s.name == bundled.name)
+                .unwrap_or_else(|| panic!("{} is discoverable", bundled.name));
+            assert!(entry.managed);
+            assert_eq!(entry.scope, "global");
+        }
 
         fs::remove_dir_all(&root).ok();
     }
@@ -5481,26 +5548,31 @@ mod tests {
         let root = tmp_root_isolated();
         ensure_bundled_skills_at(&root);
 
-        for tool in ["claude-code", "codex"] {
-            let def = tool_def(tool).expect("tool is in the registry");
-            project(&root, def, "global", BUNDLED_SKILL_NAME, false)
-                .unwrap_or_else(|e| panic!("projecting into {tool} failed: {e}"));
+        for skill in BUNDLED_SKILLS {
+            for tool in ["claude-code", "codex"] {
+                let def = tool_def(tool).expect("tool is in the registry");
+                project(&root, def, "global", skill.name, false).unwrap_or_else(|e| {
+                    panic!("projecting {} into {tool} failed: {e}", skill.name)
+                });
 
-            let link = tool_link_path(&root, def, "global", BUNDLED_SKILL_NAME);
-            let projected = fs::read_to_string(link.join("SKILL.md"))
-                .unwrap_or_else(|e| panic!("{tool} projection has no readable SKILL.md: {e}"));
-            assert_eq!(projected, ATLAS_SELF_CONFIGURE_SKILL_MD);
+                let link = tool_link_path(&root, def, "global", skill.name);
+                let projected = fs::read_to_string(link.join("SKILL.md")).unwrap_or_else(|e| {
+                    panic!("{tool} projection of {} has no SKILL.md: {e}", skill.name)
+                });
+                assert_eq!(projected, skill.skill_md);
 
-            // And the ledger knows about it, which is what `reconcile` reads to
-            // report the skill as projected rather than as external drift.
-            let ledger = read_ledger(&root);
-            assert!(
-                ledger
-                    .projections
-                    .get(BUNDLED_SKILL_NAME)
-                    .is_some_and(|per_tool| per_tool.contains_key(def.id)),
-                "{tool} projection was not recorded in the ledger"
-            );
+                // And the ledger knows about it, which is what `reconcile` reads
+                // to report the skill as projected rather than as external drift.
+                let ledger = read_ledger(&root);
+                assert!(
+                    ledger
+                        .projections
+                        .get(skill.name)
+                        .is_some_and(|per_tool| per_tool.contains_key(def.id)),
+                    "{tool} projection of {} was not recorded in the ledger",
+                    skill.name
+                );
+            }
         }
 
         fs::remove_dir_all(&root).ok();
@@ -5510,7 +5582,7 @@ mod tests {
     fn reinstalling_is_idempotent_when_nothing_touched_it() {
         let root = tmp_root_isolated();
         ensure_bundled_skills_at(&root);
-        let dir = skills_base(&root).join(BUNDLED_SKILL_NAME);
+        let dir = skills_base(&root).join(ATLAS_SELF_CONFIGURE.name);
         let first_pass = fs::read_to_string(dir.join("SKILL.md")).unwrap();
 
         // Simulates the next app launch on the same (unmodified) install.
@@ -5521,23 +5593,56 @@ mod tests {
         fs::remove_dir_all(&root).ok();
     }
 
+    /// The upgrade half of the contract: a copy Atlas wrote and nobody
+    /// touched is replaced by what the new build ships.
+    #[test]
+    fn an_untouched_skill_is_upgraded_to_the_new_bundled_content() {
+        let root = tmp_root_isolated();
+        let old = BundledSkill {
+            name: REMEMBER.name,
+            skill_md: "---\nname: remember\ndescription: old\n---\n\nold body\n",
+        };
+        ensure_bundled_skill_at(&root, &old);
+        let dir = skills_base(&root).join(REMEMBER.name);
+        assert_eq!(
+            fs::read_to_string(dir.join("SKILL.md")).unwrap(),
+            old.skill_md
+        );
+
+        ensure_bundled_skill_at(&root, &REMEMBER);
+
+        assert_eq!(
+            fs::read_to_string(dir.join("SKILL.md")).unwrap(),
+            REMEMBER.skill_md
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join(BUNDLED_HASH_FILE)).unwrap(),
+            sha256_hex(REMEMBER.skill_md)
+        );
+        fs::remove_dir_all(&root).ok();
+    }
+
     #[test]
     fn a_user_edited_skill_is_never_silently_overwritten() {
         let root = tmp_root_isolated();
         ensure_bundled_skills_at(&root);
-        let dir = skills_base(&root).join(BUNDLED_SKILL_NAME);
-        let skill_md = dir.join("SKILL.md");
 
         // The user (or an agent, via the ordinary skills-edit surface) hand-
         // edits the canonical copy — its hash no longer matches the sidecar.
-        fs::write(&skill_md, "user-modified content").unwrap();
+        for skill in BUNDLED_SKILLS {
+            let skill_md = skills_base(&root).join(skill.name).join("SKILL.md");
+            fs::write(&skill_md, "user-modified content").unwrap();
+        }
 
         ensure_bundled_skills_at(&root);
 
-        assert_eq!(
-            fs::read_to_string(&skill_md).unwrap(),
-            "user-modified content"
-        );
+        for skill in BUNDLED_SKILLS {
+            let skill_md = skills_base(&root).join(skill.name).join("SKILL.md");
+            assert_eq!(
+                fs::read_to_string(&skill_md).unwrap(),
+                "user-modified content"
+            );
+        }
         fs::remove_dir_all(&root).ok();
     }
 
@@ -5546,19 +5651,24 @@ mod tests {
         // Covers a pre-#64 install (or any external drop-in) that has a
         // SKILL.md at this exact canonical path but no `.bundled-hash` —
         // absence of the sidecar must fail closed (never overwrite), not
-        // open.
+        // open. For `remember`, that is also a user's own skill of that name.
         let root = tmp_root_isolated();
-        let dir = skills_base(&root).join(BUNDLED_SKILL_NAME);
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("SKILL.md"), "hand-authored, no sidecar").unwrap();
+        for skill in BUNDLED_SKILLS {
+            let dir = skills_base(&root).join(skill.name);
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("SKILL.md"), "hand-authored, no sidecar").unwrap();
+        }
 
         ensure_bundled_skills_at(&root);
 
-        assert_eq!(
-            fs::read_to_string(dir.join("SKILL.md")).unwrap(),
-            "hand-authored, no sidecar"
-        );
-        assert!(!dir.join(BUNDLED_HASH_FILE).exists());
+        for skill in BUNDLED_SKILLS {
+            let dir = skills_base(&root).join(skill.name);
+            assert_eq!(
+                fs::read_to_string(dir.join("SKILL.md")).unwrap(),
+                "hand-authored, no sidecar"
+            );
+            assert!(!dir.join(BUNDLED_HASH_FILE).exists());
+        }
         fs::remove_dir_all(&root).ok();
     }
 }

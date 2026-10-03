@@ -13,7 +13,7 @@ import { stripInjectedContext } from "../lib/atlas-context";
 import { agents, ensureAgent, resetAgent } from "../lib/agents-api";
 import { isDeadlineError, withDeadline } from "../lib/with-deadline";
 import { drainEdge } from "../lib/drain-gate";
-import { cycleChatAgent } from "../lib/switch-agent";
+import { CHAT_STOP_EVENT, cycleChatAgent } from "../lib/switch-agent";
 import { loadCachedAcpModes } from "../lib/acp-modes-cache";
 import { configOptionPushes, loadConfigOptionPrefs } from "../lib/config-option-prefs";
 import type { ImageAttachment, SessionKey } from "@/types/agents";
@@ -1089,6 +1089,18 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
     };
     window.addEventListener("atlas:chat-send", handler);
     return () => window.removeEventListener("atlas:chat-send", handler);
+  }, [tabId]);
+
+  // Stop this tab's turn from outside the composer — an agent switch that
+  // waited on `/remember` and now switches in place (`switch-agent.ts`). Only
+  // ever addressed to one tab.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      if ((e as CustomEvent<{ tabId?: string }>).detail?.tabId !== tabId) return;
+      handleStopRef.current?.();
+    };
+    window.addEventListener(CHAT_STOP_EVENT, handler);
+    return () => window.removeEventListener(CHAT_STOP_EVENT, handler);
   }, [tabId]);
 
   // No session yet. Normally a single frame (the effect above creates it on

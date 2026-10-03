@@ -239,6 +239,7 @@ wrote; `toml_edit` just preserves whatever comments are already there.
 | `gitAutoFetch` | boolean | `true` | — |
 | `autoUpdate` | boolean | `true` | — |
 | `curatedPluginSync` | boolean | `false` | — |
+| `rememberBeforeSwitch` | boolean | `false` | — . Acts only on a chat with a conversation whose agent advertises `/remember` (the bundled `remember` skill); waits at most 3 minutes, and the user can switch at once |
 | `updaterIgnoredVersion` | string, or absent | absent | — |
 | `enterToSend` | boolean | `true` | — |
 | `agentUiNavigation` | boolean | `true` | — |
