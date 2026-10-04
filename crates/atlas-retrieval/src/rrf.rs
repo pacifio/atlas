@@ -15,8 +15,11 @@ pub struct Fused<Id> {
     pub legs: Vec<(&'static str, usize)>,
 }
 
+/// A running score and the `(leg, rank)` pairs behind it.
+type Entry = (f64, Vec<(&'static str, usize)>);
+
 pub struct Fusion<Id: Eq + Hash + Clone + Ord> {
-    scores: HashMap<Id, (f64, Vec<(&'static str, usize)>)>,
+    scores: HashMap<Id, Entry>,
 }
 
 impl<Id: Eq + Hash + Clone + Ord> Default for Fusion<Id> {
