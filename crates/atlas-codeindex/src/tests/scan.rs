@@ -11,7 +11,8 @@ use super::Project;
 
 fn walk(p: &Project) -> (Vec<Candidate>, Vec<(String, SkipReason)>) {
     let rules = Arc::new(Rules::load(p.root()));
-    discover(p.root(), p.root(), &rules, &CancelToken::new())
+    let (cands, skipped, _) = discover(p.root(), p.root(), &rules, &CancelToken::new());
+    (cands, skipped)
 }
 
 fn rels(cands: &[Candidate]) -> Vec<&str> {
