@@ -1,0 +1,21 @@
+{"q":"stop the app from writing files to arbitrary locations the frontend asks for","gold":["src-tauri/src/commands/save_guard.rs"]}
+{"q":"help the user finish an interrupted merge that has files with both sides' changes","gold":["src-tauri/src/commands/git_conflicts.rs"]}
+{"q":"keep remote branch information current without the user clicking anything","gold":["src-tauri/src/commands/git_autofetch.rs"]}
+{"q":"download a new app release in several parallel pieces","gold":["src-tauri/src/commands/updater_download.rs"]}
+{"q":"how much each LLM costs per token and where that list comes from","gold":["src-tauri/src/commands/models_pricing.rs"]}
+{"q":"remember which documents were opened lately in this project","gold":["src-tauri/src/commands/recent_files.rs"]}
+{"q":"write environment variables for API keys into the user's zshrc or bash startup file","gold":["src-tauri/src/commands/shell_profile.rs"]}
+{"q":"convert a color scheme from another editor into our format","gold":["src-tauri/src/commands/theme_import.rs","crates/atlas-theme/src/import/vscode.rs","crates/atlas-theme/src/import/mod.rs"]}
+{"q":"save highlights and drawings made on PDF pages","gold":["src-tauri/src/commands/pdf_annotations.rs"]}
+{"q":"remember where nodes were placed in the notes graph after a restart","gold":["src-tauri/src/commands/knowledge_graph_layout.rs"]}
+{"q":"inline the contents of referenced files into the message sent to the agent","gold":["src-tauri/src/commands/compose_prompt.rs"]}
+{"q":"derive the user's preferences from memory files without calling a language model","gold":["src-tauri/src/commands/memory_policy.rs"]}
+{"q":"paste a file copied in Finder into the chat box","gold":["src-tauri/src/commands/clipboard.rs"]}
+{"q":"gather everything the source control panel needs in a single call","gold":["src-tauri/src/commands/git_snapshot.rs"]}
+{"q":"aggregate spending and token counts across all projects for the console","gold":["src-tauri/src/commands/usage_dashboard.rs"]}
+{"q":"turn live agent activity into entries in the log every agent shares","gold":["src-tauri/src/commands/memory_delta.rs"]}
+{"q":"find which notes link to this note","gold":["src-tauri/src/commands/knowledge_links.rs"]}
+{"q":"side by side comparison of two file versions with highlighting of changed words","gold":["crates/atlas-gitdiff/src/lib.rs","crates/atlas-gitdiff/src/engine.rs","crates/atlas-gitdiff/src/parse.rs"]}
+{"q":"prevent a black console window from flashing on Windows when launching child programs","gold":["crates/atlas-process/src/lib.rs"]}
+{"q":"session sidebar history that does not depend on each agent CLI's private storage","gold":["crates/atlas-thread-metadata/src/lib.rs","crates/atlas-thread-metadata/src/store.rs","crates/atlas-thread-metadata/src/db.rs","crates/atlas-thread-metadata/src/recorder.rs"]}
+{"q":"broadcast events to many listeners with a chain of interceptors","gold":["crates/atlas-bus/src/lib.rs","crates/atlas-bus/src/bus.rs","crates/atlas-bus/src/middleware.rs"]}

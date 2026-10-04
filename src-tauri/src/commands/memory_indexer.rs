@@ -205,9 +205,9 @@ impl MemoryRegistry {
     }
 
     /// Queue one `IndexCorpus` pass for `cwd`, the pass that embeds the whole
-    /// corpus including the codebase docs. If the project's engine is not open
-    /// yet, opening it queues its own cold pass, so this never queues two.
-    /// Non-blocking, like [`enqueue_index`](Self::enqueue_index).
+    /// corpus. If the project's engine is not open yet, opening it queues its
+    /// own cold pass, so this never queues two. Non-blocking, like
+    /// [`enqueue_index`](Self::enqueue_index).
     pub fn request_reindex(&self, cwd: &str) {
         if self.open_engine(cwd).is_some() {
             self.enqueue_index(cwd);
@@ -250,9 +250,6 @@ impl MemoryRegistry {
     /// cwd watch never saw at all. `collect_corpus` reads exactly:
     ///  - `~/.claude/projects/<encoded>/memory/*.md` → watched recursively,
     ///  - `<cwd>/CLAUDE.md` + `<cwd>/AGENTS.md` → cwd watched NON-recursively,
-    ///  - the code index's file docs (`<cwd>/.atlas/code-index/index.db`) →
-    ///    not watched: its WAL changes on every write. A codebase build calls
-    ///    `request_reindex`, and every finished turn nudges an index pass,
     ///  - Codex sqlite under `~/.codex` → not watchable meaningfully (WAL
     ///    churn); its content rides the debounced reindexes above.
     fn start_watcher(&self, cwd: &str) {
@@ -818,10 +815,9 @@ mod tests {
         assert!(job_rx.try_recv().is_err());
     }
 
-    /// A codebase build asks for exactly one corpus pass (the pass that reads
-    /// the code index's file docs through `collect_corpus` and embeds them). A
-    /// never-opened project gets the cold pass its open queues; an open one
-    /// gets the nudge. Neither ever blocks.
+    /// `request_reindex` asks for exactly one corpus pass. A never-opened
+    /// project gets the cold pass its open queues; an open one gets the
+    /// nudge. Neither ever blocks.
     #[test]
     fn request_reindex_queues_exactly_one_index_corpus() {
         let (job_tx, mut job_rx) = mpsc::channel::<Job>(16);

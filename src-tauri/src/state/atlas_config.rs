@@ -297,6 +297,11 @@ pub struct AppSettings {
     /// consumer via the shared provider. See `crate::commands::models`.
     #[serde(default = "default_embedding_model")]
     pub embedding_model_id: String,
+    /// On-device embedding model for semantic code search (the code index's
+    /// vectors), by catalog id. Separate from `embedding_model_id`: memory
+    /// never resolves to a code model. See `crate::commands::models`.
+    #[serde(default = "default_code_embedding_model")]
+    pub code_embedding_model_id: String,
     /// One theme covers Atlas chrome, editor, terminal, diffs and syntax.
     #[serde(default = "default_theme")]
     pub theme: String,
@@ -460,6 +465,10 @@ pub fn default_embedding_model() -> String {
     "all-MiniLM-L6-v2".to_string()
 }
 
+pub fn default_code_embedding_model() -> String {
+    "granite-embedding-small-r2".to_string()
+}
+
 pub fn default_ui_scale() -> f32 {
     1.0
 }
@@ -478,6 +487,7 @@ impl Default for AppSettings {
             share_telemetry: true,
             link_telemetry_to_account: true,
             embedding_model_id: default_embedding_model(),
+            code_embedding_model_id: default_code_embedding_model(),
             theme: default_theme(),
             theme_mode: ThemeMode::default(),
             theme_overrides: ThemeOverride::default(),
@@ -593,6 +603,12 @@ const SETTINGS_DOCS: &[(&str, &str)] = &[
         "# On-device embedding model, named by its directory. Normally managed\n\
          # for you by the Local Model Manager. Must not be empty.\n\
          # (default: \"all-MiniLM-L6-v2\")",
+    ),
+    (
+        "codeEmbeddingModelId",
+        "# On-device embedding model for semantic code search, named by its\n\
+         # directory. Normally managed for you by the Local Model Manager.\n\
+         # Must not be empty. (default: \"granite-embedding-small-r2\")",
     ),
     (
         "theme",
@@ -845,6 +861,12 @@ pub fn validate(settings: &AppSettings) -> Result<(), ValidationIssue> {
             message: "must not be empty".to_string(),
         });
     }
+    if settings.code_embedding_model_id.trim().is_empty() {
+        return Err(ValidationIssue {
+            key: "codeEmbeddingModelId",
+            message: "must not be empty".to_string(),
+        });
+    }
     if settings.theme.trim().is_empty() {
         return Err(ValidationIssue {
             key: "theme",
@@ -1065,6 +1087,7 @@ pub struct SettingsPatch {
     pub share_telemetry: Option<bool>,
     pub link_telemetry_to_account: Option<bool>,
     pub embedding_model_id: Option<String>,
+    pub code_embedding_model_id: Option<String>,
     pub theme: Option<String>,
     pub theme_mode: Option<ThemeMode>,
     pub theme_overrides: Option<ThemeOverride>,
@@ -1126,6 +1149,9 @@ impl SettingsPatch {
         }
         if let Some(v) = &self.embedding_model_id {
             settings.embedding_model_id = v.clone();
+        }
+        if let Some(v) = &self.code_embedding_model_id {
+            settings.code_embedding_model_id = v.clone();
         }
         if let Some(v) = &self.theme {
             settings.theme = v.clone();
@@ -1304,6 +1330,9 @@ impl SettingsPatch {
         }
         if let Some(v) = &self.embedding_model_id {
             table["embeddingModelId"] = toml_edit::value(v.as_str());
+        }
+        if let Some(v) = &self.code_embedding_model_id {
+            table["codeEmbeddingModelId"] = toml_edit::value(v.as_str());
         }
         if let Some(v) = &self.theme {
             table["theme"] = toml_edit::value(v.as_str());
@@ -2708,6 +2737,7 @@ someFutureKey = \"left alone\"
             share_telemetry: Some(!defaults.share_telemetry),
             link_telemetry_to_account: Some(!defaults.link_telemetry_to_account),
             embedding_model_id: Some("another-model".to_string()),
+            code_embedding_model_id: Some("another-code-model".to_string()),
             theme: Some("dracula".to_string()),
             theme_mode: Some(ThemeMode::Light),
             theme_overrides: Some(ThemeOverride {

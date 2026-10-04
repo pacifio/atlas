@@ -293,6 +293,12 @@ pub fn run() {
                     ),
                 )));
                 app.manage(code_index);
+                // Load the selected code embedding model in the background;
+                // until it is ready, semantic search is keyword + symbol.
+                let embed_app = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    commands::code_index::embed::refresh(&embed_app).await;
+                });
             }
 
             commands::agents::install_manager(app.handle());

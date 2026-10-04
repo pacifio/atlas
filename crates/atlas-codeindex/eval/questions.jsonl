@@ -1,0 +1,30 @@
+{"q":"where is the loopback MCP tool server listener bound and started","gold":["src-tauri/src/commands/memory_server/host.rs"]}
+{"q":"how are per-session bearer tokens minted and checked","gold":["src-tauri/src/commands/memory_server/tokens.rs"]}
+{"q":"embedding model falls back from GPU to CPU when Metal kernels fail","gold":["crates/atlas-embed/src/lib.rs"]}
+{"q":"fuzzy scoring of file paths for the quick open picker","gold":["src-tauri/src/commands/fileindex.rs"]}
+{"q":"decide whether the window control tool server is offered to a session","gold":["src-tauri/src/commands/ui_server/offers.rs"]}
+{"q":"persistent HNSW vector index save and load","gold":["crates/atlas-memory/src/store.rs"]}
+{"q":"emit an event when git HEAD or refs change","gold":["src-tauri/src/commands/git_watcher.rs"]}
+{"q":"look up a user's own API key for a model provider","gold":["src-tauri/src/commands/byok.rs"]}
+{"q":"the chat composer pill that shows codebase index status","gold":["src/features/chat/components/message-input.tsx"]}
+{"q":"cosine floor and dedup when retrieving memory documents","gold":["crates/atlas-memory/src/retrieve.rs"]}
+{"q":"project host MCP servers into the native agent thread config","gold":["crates/atlas-native-agent/src/engine/mcp.rs"]}
+{"q":"search shared memory entries by vector and term coverage","gold":["crates/atlas-memory/src/record.rs"]}
+{"q":"export the knowledge base as a static site","gold":["src-tauri/src/commands/knowledge_export.rs"]}
+{"q":"catalog of downloadable embedding models","gold":["src-tauri/src/commands/models.rs"]}
+{"q":"redact secrets before transcripts are stored","gold":["crates/atlas-redact/src/lib.rs"]}
+{"q":"classify tool calls into categories for checkpoints","gold":["crates/atlas-checkpoint/src/tools.rs"]}
+{"q":"tool usage statistics by category","gold":["src-tauri/src/commands/tool_stats.rs"]}
+{"q":"parse git status porcelain v2 output","gold":["crates/atlas-git/src/status.rs"]}
+{"q":"one search across files folders symbols and branches for at-mentions","gold":["src-tauri/src/commands/mention_search.rs"]}
+{"q":"read Codex threads from its sqlite store into the memory corpus","gold":["src-tauri/src/commands/agent_memory.rs"]}
+{"q":"one-shot completion with the user's provider to summarize","gold":["src-tauri/src/commands/memory_summarize.rs"]}
+{"q":"build similarity edges between memory documents for the graph view","gold":["src-tauri/src/commands/memory_graph.rs"]}
+{"q":"background job queue that indexes the memory corpus","gold":["src-tauri/src/commands/memory_indexer.rs"]}
+{"q":"only offer the memory server when the agent supports HTTP MCP and sharing is on","gold":["src-tauri/src/commands/memory_server/offers.rs"]}
+{"q":"send a UI action to the window and wait for its reply with a timeout","gold":["src-tauri/src/commands/ui_server/bridge.rs"]}
+{"q":"app configuration defaults and per-project overrides","gold":["src-tauri/src/state/atlas_config.rs"]}
+{"q":"map memory document ids to vector keys with content hashes","gold":["crates/atlas-memory/src/manifest.rs"]}
+{"q":"shared memory sqlite store per git scope","gold":["src-tauri/src/commands/shared_memory.rs"]}
+{"q":"spawn a pseudo terminal for a shell","gold":["crates/atlas-terminal/src/lib.rs"]}
+{"q":"time out memory retrieval so a tool call never blocks","gold":["src-tauri/src/commands/memory_retrieve.rs"]}

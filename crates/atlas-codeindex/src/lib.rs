@@ -15,6 +15,7 @@
 //!
 //! Pure: no Tauri. The app owns the registry, worker thread and watchers.
 
+mod chunk;
 mod diff;
 mod docs;
 mod error;
@@ -33,14 +34,18 @@ mod resolve;
 mod rust_crates;
 mod scan;
 mod schema_v2;
+mod schema_v3;
+mod semantic;
 mod skip;
 mod store;
 mod universe;
 mod update;
+mod vectors;
 
 #[cfg(test)]
 mod tests;
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
@@ -54,9 +59,11 @@ pub use graph::{ImpactReport, RelatedHit, RelatedQuery, Relation, MAX_ROWS};
 pub use lang::Lang;
 pub use query::{SymbolHit, SymbolQuery, SymbolSource};
 pub use repomap::RepoMapFocus;
+pub use semantic::{ChunkHit, SemanticQuery};
 pub use skip::{SkipReason, MAX_FILE_BYTES};
 pub use store::{split_name, EXTRACTOR_VERSION, SCHEMA_VERSION};
 pub use update::{BuildProgress, BuildStats, IndexStatus, UpdateStats};
+pub use vectors::{Embedder, VectorStats};
 
 use skip::{IgnoreChain, Rules};
 
@@ -77,6 +84,8 @@ pub(crate) struct Inner {
     rules: RwLock<Arc<Rules>>,
     ignore: RwLock<Arc<IgnoreChain>>,
     generation: AtomicU64,
+    /// One open vector file per embedding model id (Phase 4).
+    vectors: Mutex<HashMap<String, Arc<RwLock<atlas_retrieval::vectors::VectorFile>>>>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -119,6 +128,7 @@ impl CodeIndex {
                 writer: Mutex::new(writer),
                 readers: Mutex::new(Vec::new()),
                 generation: AtomicU64::new(1),
+                vectors: Mutex::new(HashMap::new()),
             }),
         })
     }

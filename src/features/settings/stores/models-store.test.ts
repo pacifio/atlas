@@ -80,3 +80,24 @@ describe("model download completion", () => {
     expect(mocks.error).not.toHaveBeenCalled();
   });
 });
+
+describe("model kinds", () => {
+  it("keeps one selected model per kind: memory's and code search's", async () => {
+    const codeModel: ModelStatus = {
+      ...embeddingModel,
+      id: "granite-embedding-small-r2",
+      kind: "code_embedding",
+      name: "Granite Embedding Small R2",
+      repo: "ibm-granite/granite-embedding-small-english-r2",
+      selected: true,
+    };
+    mocks.list.mockResolvedValueOnce([{ ...embeddingModel, selected: true }, codeModel]);
+    await useModelsStore.getState().actions.refresh();
+
+    const list = useModelsStore.getState().list;
+    expect(list.map((m) => [m.kind, m.selected])).toEqual([
+      ["embedding", true],
+      ["code_embedding", true],
+    ]);
+  });
+});

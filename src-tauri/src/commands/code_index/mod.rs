@@ -8,11 +8,15 @@
 //! - [`symbols`]: `find_symbol`, `outline`, `read_symbol` on `atlas_code`,
 //!   and the locator that names grep hits by their enclosing symbol.
 //! - [`graph_tools`]: `related`, `impact_of_diff`, `repo_map`.
+//! - [`semantic_tools`]: `semantic_search` and the pulled `task_context`
+//!   seed (ADR-0016); [`embed`] loads the code embedding model.
 //! - The `codebase_index_status` / `codebase_index_build` commands the
 //!   composer's index pill and the turn-end refresh call.
 
+pub mod embed;
 mod graph_tools;
 mod registry;
+mod semantic_tools;
 mod symbols;
 mod watch;
 
@@ -31,30 +35,35 @@ pub use watch::feed_from;
 pub fn index_tool_specs() -> Vec<(&'static str, &'static str, serde_json::Value)> {
     let mut specs = symbols::symbol_tool_specs();
     specs.extend(graph_tools::graph_tool_specs());
+    specs.extend(semantic_tools::semantic_tool_specs());
     specs
 }
 
 /// Whether `name` is one of [`index_tool_specs`]'s tools.
 pub fn is_index_tool(name: &str) -> bool {
-    symbols::SYMBOL_TOOLS.contains(&name) || graph_tools::GRAPH_TOOLS.contains(&name)
+    symbols::SYMBOL_TOOLS.contains(&name)
+        || graph_tools::GRAPH_TOOLS.contains(&name)
+        || semantic_tools::SEMANTIC_TOOLS.contains(&name)
 }
 
 /// Run one code index tool for a session. Blocking (SQLite, file reads,
 /// `git diff`). `Err` is the text of a tool error.
 pub fn call_index_tool(
     scope: &Scope,
+    registry: &CodeIndexRegistry,
     name: &str,
     args: &serde_json::Value,
 ) -> Result<String, String> {
     if graph_tools::GRAPH_TOOLS.contains(&name) {
         graph_tools::call(scope, name, args)
+    } else if semantic_tools::SEMANTIC_TOOLS.contains(&name) {
+        semantic_tools::call(scope, registry, name, args)
     } else {
         symbols::call(scope, name, args)
     }
 }
 
 use super::byok::byok_get;
-use super::memory_indexer::MemoryRegistry;
 
 /// Caps on how many files get an LLM summary per build (structural is uncapped).
 const PROVIDER_SUMMARY_CAP: usize = 150;
@@ -123,11 +132,9 @@ pub async fn codebase_index_build(
     project_path: String,
     opts: BuildOpts,
     registry: State<'_, Arc<CodeIndexRegistry>>,
-    memory: State<'_, Arc<MemoryRegistry>>,
 ) -> Result<CodebaseIndexStatus, String> {
     let registry = registry.inner().clone();
-    let path = project_path.clone();
-    let project = tokio::task::spawn_blocking(move || open(&registry, &path))
+    let project = tokio::task::spawn_blocking(move || open(&registry, &project_path))
         .await
         .map_err(|e| e.to_string())??;
     let _ = app.emit(
@@ -146,8 +153,6 @@ pub async fn codebase_index_build(
     if opts.backend == "provider" {
         provider_summaries(&app, &opts, &project).await;
     }
-    // Code docs reach the memory corpus through the next IndexCorpus pass.
-    memory.request_reindex(project_path.trim_end_matches('/'));
     let status = {
         let project = project.clone();
         tokio::task::spawn_blocking(move || project.index.status())

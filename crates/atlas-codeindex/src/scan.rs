@@ -187,6 +187,10 @@ pub(crate) fn process(c: &Candidate, known: Option<&[u8]>) -> Outcome {
         symbols: ex.symbols,
         imports: ex.imports,
         graph: ex.graph,
+        chunks: ex.chunks,
+        // The bytes extraction read: chunk bodies are cut from this text, so
+        // an edit landing in between can never mismatch a chunk's hash.
+        text: String::from_utf8_lossy(&bytes).into_owned(),
     }))
 }
 

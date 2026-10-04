@@ -37,7 +37,10 @@ Code search over your session's directory, in-process. grep finds text in files 
 literal=true); find_files finds paths by glob or fuzzy name. Both read the working tree as it is \
 now, including your own edits, respect .gitignore, and skip binary and secret files (.env, keys). \
 Prefer them to rg, grep or find in a shell: they are faster, need no approval, and page their \
-output, so follow next_offset instead of re-running a broader search. Paths are relative to your cwd.";
+output, so follow next_offset instead of re-running a broader search. Paths are relative to your cwd. \
+Searching: grep for exact identifiers and strings; find_symbol for definitions by name; \
+semantic_search for behaviour described in words; related/impact_of_diff before edits; \
+task_context once at the start of an unfamiliar task.";
 
 /// How long one call may search before it answers with what it has.
 pub(crate) const DEADLINE: Duration = Duration::from_secs(15);
@@ -359,7 +362,7 @@ impl CodeTools {
                 // and hops); the token is not needed.
                 Box::new(move |_: &CancelToken| {
                     let scope = crate::commands::code_index::Scope::resolve(&registry, &root)?;
-                    crate::commands::code_index::call_index_tool(&scope, &name, &args)
+                    crate::commands::code_index::call_index_tool(&scope, &registry, &name, &args)
                 })
             }
             _ => return tool_error(format!("unknown tool `{name}`")),

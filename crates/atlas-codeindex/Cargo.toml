@@ -10,6 +10,9 @@ name = "atlas_codeindex"
 [dependencies]
 # Compact output, cancel tokens and the grep-annotation seam the index fills.
 atlas-search = { path = "../atlas-search" }
+# The retrieval core shared with memory: cache keys, f16 codec, vkeys, the
+# per-model vector file and RRF fusion (Phase 4).
+atlas-retrieval = { path = "../atlas-retrieval" }
 # Tree-sitter extraction (Rust, TS/TSX/JS, Python, Go). One core in the graph
 # (root Cargo.toml), grammars bound through `tree-sitter-language`.
 tree-sitter = { workspace = true }
@@ -19,6 +22,8 @@ tree-sitter-python = "0.23"
 tree-sitter-go = "0.23"
 # gitignore-respecting discovery (same crate the file index uses).
 ignore = { workspace = true }
+# semantic_search's `path_glob` filter.
+globset = { workspace = true }
 # Parallel extraction with a thread-local parser.
 rayon = { workspace = true }
 # Content fingerprints behind the stat gate.
@@ -40,6 +45,9 @@ toml = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+# examples/eval_retrieval.rs loads a real embedding model; the library itself
+# stays free of candle.
+atlas-embed = { path = "../atlas-embed" }
 # examples/eval_edges.rs: compare call edges with rust-analyzer's SCIP index.
 # `scip` 0.10 pins `protobuf = "=3.7.2"`; the direct dependency is only for
 # its `Message` trait and resolves to the same version.

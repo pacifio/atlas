@@ -49,6 +49,8 @@ pub(crate) struct Extracted {
     pub timed_out: bool,
     /// References, rich imports and `mod` declarations from the same tree (Phase 3).
     pub graph: crate::graph_extract::GraphExtract,
+    /// cAST chunks for hybrid search (Phase 4).
+    pub chunks: Vec<crate::chunk::ChunkRec>,
 }
 
 thread_local! {
@@ -72,6 +74,7 @@ pub(crate) fn extract(lang: Lang, rel: &str, src: &[u8], deadline: Instant) -> E
     walker.walk(&tree);
     walker.out.partial = tree.root_node().has_error();
     walker.out.graph = crate::graph_extract::extract_graph(lang.label(), tree.root_node(), src);
+    walker.out.chunks = crate::chunk::chunk_file(tree.root_node(), src, rel, &walker.out.symbols);
     walker.out
 }
 

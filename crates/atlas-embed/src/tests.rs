@@ -231,7 +231,17 @@ fn a_loaded_model_embeds_to_unit_vectors_of_its_hidden_size() {
         .embed(&["hello".to_string(), "atlas world".to_string()])
         .unwrap();
     assert_eq!(batch.len(), 2);
-    assert_eq!(batch[0], embedder.embed_one("hello").unwrap());
+    // One padded batch: the shorter text's padding is masked out, so it
+    // matches its own forward up to float summation order.
+    let single = embedder.embed_one("hello").unwrap();
+    assert!(
+        batch[0]
+            .iter()
+            .zip(&single)
+            .all(|(a, b)| (a - b).abs() < 1e-5),
+        "{:?} vs {single:?}",
+        batch[0]
+    );
 }
 
 #[test]
@@ -251,7 +261,7 @@ fn text_that_tokenizes_to_nothing_embeds_to_the_zero_vector() {
 fn text_longer_than_the_position_table_is_truncated_not_rejected() {
     let model = tiny_model();
     let embedder = Embedder::load(model.path()).unwrap();
-    let long = "hello ".repeat(MAX_TOKENS * 2);
+    let long = "hello ".repeat(ModelSpec::default().max_tokens * 2);
     let v = embedder.embed_one(&long).unwrap();
     assert!(close(norm(&v), 1.0));
 }
@@ -426,4 +436,35 @@ fn a_model_forced_onto_the_cpu_never_takes_the_gpu_fallback() {
     assert!(embedder.embed_one("hello").is_ok());
     assert_eq!(embedder.backend(), "cpu");
     assert_eq!(marker(model.path()), None);
+}
+
+// ── Batched multi-architecture embedder (Phase 4) ───────────────────────────
+
+/// Needs a downloaded model: ATLAS_TEST_MODEL_DIR=/path/to/all-MiniLM-L6-v2 (or granite-embedding-small-r2, coderankembed).
+#[test]
+#[ignore = "needs ATLAS_TEST_MODEL_DIR"]
+fn batched_equals_single_when_model_available() {
+    let dir = std::path::PathBuf::from(std::env::var("ATLAS_TEST_MODEL_DIR").unwrap());
+    let e = Embedder::load(&dir).unwrap();
+    let texts = [
+        "fn a() {}",
+        "a much longer text that needs padding against the short one in the same batch",
+    ];
+    let batch = e.embed_documents(&texts).unwrap();
+    for (t, b) in texts.iter().zip(&batch) {
+        let one = e.embed_documents(&[t]).unwrap().remove(0);
+        let cos: f32 = one.iter().zip(b).map(|(x, y)| x * y).sum();
+        assert!(cos > 0.9999, "{t}: {cos}");
+    }
+    let q = e.embed_query("parse a config file").unwrap();
+    assert_eq!(q.len(), e.dim());
+}
+
+#[test]
+fn unknown_model_type_is_a_clear_error() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("config.json"), r#"{"model_type":"llama"}"#).unwrap();
+    std::fs::write(dir.path().join("tokenizer.json"), "{}").unwrap();
+    let err = Embedder::load(dir.path()).err().unwrap().to_string();
+    assert!(err.contains("llama") || err.contains("tokenizer"), "{err}");
 }

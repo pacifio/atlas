@@ -919,11 +919,14 @@ dependencies = [
 name = "atlas-codeindex"
 version = "0.2.0"
 dependencies = [
+ "atlas-embed",
  "atlas-git",
  "atlas-process",
+ "atlas-retrieval",
  "atlas-search",
  "blake3",
  "dunce",
+ "globset",
  "ignore",
  "protobuf",
  "rayon",
@@ -967,7 +970,9 @@ dependencies = [
  "candle-core",
  "candle-nn",
  "candle-transformers",
+ "serde",
  "serde_json",
+ "tempfile",
  "tokenizers",
 ]
 

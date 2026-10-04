@@ -1,7 +1,8 @@
 //! The SQLite file: location, pragmas, the schema and the row writers.
 //!
 //! The schema version lives in `PRAGMA user_version`. A known older version
-//! is upgraded in place (v1 → v2 adds the graph, keeping Tier-2 summaries);
+//! is upgraded in place (v1 → v2 adds the graph, v2 → v3 the chunks, the
+//! embedding cache and vector membership; Tier-2 summaries are kept);
 //! anything else is deleted and rebuilt: the index is a cache of the source
 //! tree, so a rebuild loses nothing but time.
 
@@ -13,7 +14,7 @@ use rusqlite::{params, Connection, OpenFlags, OptionalExtension, Transaction};
 use crate::extract::{ImportRec, SymbolRec};
 use crate::IndexError;
 
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
 /// Bump when extraction output changes; a mismatch forces a full build.
 pub const EXTRACTOR_VERSION: &str = "2.0";
 
@@ -69,9 +70,8 @@ pub(crate) fn open_writer(root: &Path) -> Result<Connection, IndexError> {
     // A fresh file (version 0, no tables), the current schema or a known
     // older one (upgraded below) is kept; anything else is another version's
     // cache and is deleted.
-    let current = version == SCHEMA_VERSION
-        || version == 1
-        || (version == 0 && !table_exists(&conn, "files")?);
+    let current =
+        (1..=SCHEMA_VERSION).contains(&version) || (version == 0 && !table_exists(&conn, "files")?);
     let conn = if current {
         conn
     } else {
@@ -93,11 +93,16 @@ pub(crate) fn open_writer(root: &Path) -> Result<Connection, IndexError> {
         conn.execute_batch(SCHEMA_V1)?;
         conn.pragma_update(None, "user_version", 1)?;
         crate::schema_v2::upgrade_to_v2(&conn, 0)?;
+        crate::schema_v3::upgrade_to_v3(&conn, 0)?;
         set_meta(&conn, "schema", &SCHEMA_VERSION.to_string())?;
-    } else if version == 1 {
-        // A Phase 2 index: add the graph tables in place; every file
-        // re-extracts on the next reconcile, and Tier-2 summaries are kept.
-        crate::schema_v2::upgrade_to_v2(&conn, 1)?;
+    } else if version < SCHEMA_VERSION {
+        // An older index: add the newer tables in place. Every file
+        // re-extracts on the next reconcile (graph refs and chunks need the
+        // tree), and Tier-2 summaries are kept.
+        if version == 1 {
+            crate::schema_v2::upgrade_to_v2(&conn, 1)?;
+        }
+        crate::schema_v3::upgrade_to_v3(&conn, 2)?;
         set_meta(&conn, "schema", &SCHEMA_VERSION.to_string())?;
     }
     Ok(conn)
@@ -150,6 +155,10 @@ pub(crate) struct FileRecord {
     pub imports: Vec<ImportRec>,
     /// The graph half of the extraction, written by `GraphBatch` hooks.
     pub graph: crate::graph_extract::GraphExtract,
+    /// cAST chunks; their bodies are cut from `text`.
+    pub chunks: Vec<crate::chunk::ChunkRec>,
+    /// The source as read for extraction.
+    pub text: String,
 }
 
 /// The stored identity of one file, for the stat → hash gate.
@@ -331,6 +340,39 @@ pub(crate) fn upsert_file(
             ])?;
         }
     }
+    let mut ins_chunk = tx.prepare_cached(
+        "INSERT INTO chunks(file_id, symbol_id, start_line, end_line, content_hash, vkey, header) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+    )?;
+    let mut ins_chunk_fts =
+        tx.prepare_cached("INSERT INTO chunks_fts(rowid, header, body) VALUES (?1, ?2, ?3)")?;
+    // The source as read for extraction: no second read, no race with an
+    // edit in between.
+    let lines: Vec<&str> = rec.text.lines().collect();
+    for c in &rec.chunks {
+        let symbol_id = c.symbol.and_then(|i| ids.get(i).copied());
+        let vkey = atlas_retrieval::codec::vkey(&c.content_hash);
+        ins_chunk.execute(params![
+            file_id,
+            symbol_id,
+            c.start_line,
+            c.end_line,
+            &c.content_hash[..],
+            vkey,
+            c.header
+        ])?;
+        let id = tx.last_insert_rowid();
+        let from = (c.start_line as usize).saturating_sub(1).min(lines.len());
+        let to = (c.end_line as usize).min(lines.len()).max(from);
+        let body = lines[from..to].join("\n");
+        // camelCase / snake_case parts are indexed beside the raw text, so
+        // `config` finds `parse_config_file` and `loadConfig`.
+        let words = split_words(&body).join(" ");
+        ins_chunk_fts.execute(params![
+            id,
+            format!("{} {}", c.header, split_words(&c.header).join(" ")),
+            format!("{body}\n{words}")
+        ])?;
+    }
     let mut imp = tx.prepare_cached(
         "INSERT INTO imports(file_id, local_name, module_path, line) VALUES (?1,?2,?3,?4)",
     )?;
@@ -357,6 +399,11 @@ pub(crate) fn touch_file(
 
 fn delete_file_contents(tx: &Transaction, file_id: i64) -> rusqlite::Result<()> {
     tx.execute(
+        "DELETE FROM chunks_fts WHERE rowid IN (SELECT id FROM chunks WHERE file_id=?1)",
+        [file_id],
+    )?;
+    tx.execute("DELETE FROM chunks WHERE file_id=?1", [file_id])?;
+    tx.execute(
         "DELETE FROM symbols_fts WHERE rowid IN (SELECT id FROM symbols WHERE file_id=?1)",
         [file_id],
     )?;
@@ -375,6 +422,7 @@ pub(crate) fn delete_file(tx: &Transaction, file_id: i64) -> rusqlite::Result<()
 pub(crate) fn clear_all(tx: &Transaction) -> rusqlite::Result<()> {
     tx.execute_batch(
         "INSERT INTO symbols_fts(symbols_fts) VALUES('delete-all');
+         INSERT INTO chunks_fts(chunks_fts) VALUES('delete-all'); DELETE FROM chunks;
          DELETE FROM file_summaries; DELETE FROM imports; DELETE FROM symbols; DELETE FROM files;",
     )
 }

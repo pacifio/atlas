@@ -7,12 +7,16 @@
 //! [`MAX_PENDING_PATHS`] paths (a branch switch, `npm install` leaking past
 //! the filters) collapse into one reconcile. Tauri-free so it is testable;
 //! `mod.rs` wires it to the app.
+//!
+//! Embedding (Phase 4) is the lowest priority: a `Vectors` job runs only when
+//! no index job is queued, any new index job cancels a running one between
+//! batches, and a cancelled sync re-queues itself behind that job.
 
 use std::collections::{BTreeSet, HashMap};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, RwLock};
 
 use atlas_codeindex::CodeIndex;
 use atlas_search::CancelToken;
@@ -26,6 +30,8 @@ pub enum Job {
     FullBuild,
     Paths(Vec<PathBuf>),
     Reconcile,
+    /// Embed chunks that have no vector for the current code model.
+    Vectors,
 }
 
 impl Job {
@@ -34,9 +40,13 @@ impl Job {
             Self::FullBuild => "full_build",
             Self::Paths(_) => "paths",
             Self::Reconcile => "reconcile",
+            Self::Vectors => "vectors",
         }
     }
 }
+
+/// The code embedding model the app loaded, if any; shared by every worker.
+type EmbedderSlot = Arc<RwLock<Option<Arc<dyn atlas_codeindex::Embedder>>>>;
 
 /// Told about every finished job: the project path as first opened, the job,
 /// and whether rows changed (or the error).
@@ -49,6 +59,8 @@ struct Pending {
     full: bool,
     reconcile: bool,
     paths: BTreeSet<PathBuf>,
+    /// A vector sync is wanted once the index jobs are done.
+    vectors: bool,
     waiters: Vec<Waiter>,
 }
 
@@ -72,27 +84,41 @@ impl Pending {
                 }
             }
             Job::Reconcile | Job::Paths(_) => {}
+            Job::Vectors => self.vectors = true,
         }
+    }
+
+    /// Index work (or someone waiting on it) is queued.
+    fn has_index_work(&self) -> bool {
+        self.full || self.reconcile || !self.paths.is_empty() || !self.waiters.is_empty()
     }
 
     fn is_empty(&self) -> bool {
-        !self.full && !self.reconcile && self.paths.is_empty() && self.waiters.is_empty()
+        !self.has_index_work() && !self.vectors
     }
 
-    /// The one job that covers everything queued, with everyone waiting on it.
+    /// The one index job that covers everything queued, with everyone waiting
+    /// on it; a queued vector sync stays queued behind it. Only when no index
+    /// work is left does the vector sync come out.
     fn take(&mut self) -> Option<(Job, Vec<Waiter>)> {
-        if self.is_empty() {
-            return None;
+        if self.has_index_work() {
+            let vectors = self.vectors;
+            let taken = std::mem::take(self);
+            self.vectors = vectors;
+            let job = if taken.full {
+                Job::FullBuild
+            } else if taken.reconcile {
+                Job::Reconcile
+            } else {
+                Job::Paths(taken.paths.into_iter().collect())
+            };
+            return Some((job, taken.waiters));
         }
-        let taken = std::mem::take(self);
-        let job = if taken.full {
-            Job::FullBuild
-        } else if taken.reconcile {
-            Job::Reconcile
-        } else {
-            Job::Paths(taken.paths.into_iter().collect())
-        };
-        Some((job, taken.waiters))
+        if self.vectors {
+            self.vectors = false;
+            return Some((Job::Vectors, Vec::new()));
+        }
+        None
     }
 }
 
@@ -100,6 +126,8 @@ struct Queue {
     pending: Mutex<Pending>,
     wake: Condvar,
     closed: AtomicBool,
+    /// The running vector sync's token: a new index job cancels it.
+    running_vectors: Mutex<Option<CancelToken>>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -123,20 +151,35 @@ impl ProjectIndex {
     }
 
     pub fn enqueue(&self, job: Job) {
+        let yields = job != Job::Vectors;
         lock(&self.queue.pending).push(job);
+        if yields {
+            self.cancel_vectors();
+        }
         self.queue.wake.notify_one();
     }
 
     /// Queue `job`; the receiver resolves when a run covering it finishes.
     pub fn enqueue_and_wait(&self, job: Job) -> oneshot::Receiver<Result<(), String>> {
         let (tx, rx) = oneshot::channel();
+        let yields = job != Job::Vectors;
         {
             let mut p = lock(&self.queue.pending);
             p.push(job);
             p.waiters.push(tx);
         }
+        if yields {
+            self.cancel_vectors();
+        }
         self.queue.wake.notify_one();
         rx
+    }
+
+    /// Edits come first: stop a running vector sync after its current batch.
+    fn cancel_vectors(&self) {
+        if let Some(t) = lock(&self.queue.running_vectors).as_ref() {
+            t.cancel();
+        }
     }
 }
 
@@ -151,6 +194,7 @@ impl Drop for ProjectIndex {
 pub struct CodeIndexRegistry {
     projects: Mutex<HashMap<PathBuf, Arc<ProjectIndex>>>,
     observer: Option<JobObserver>,
+    embedder: EmbedderSlot,
 }
 
 fn key(root: &Path) -> PathBuf {
@@ -162,7 +206,33 @@ impl CodeIndexRegistry {
         Self {
             projects: Mutex::new(HashMap::new()),
             observer,
+            embedder: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Swap the code embedding model (`None`: keyword + symbol search only).
+    /// Every open project then syncs its vectors for the new model, from the
+    /// embedding cache where it can.
+    pub fn set_embedder(&self, embedder: Option<Arc<dyn atlas_codeindex::Embedder>>) {
+        let has = embedder.is_some();
+        *self
+            .embedder
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = embedder;
+        if has {
+            let projects: Vec<Arc<ProjectIndex>> = lock(&self.projects).values().cloned().collect();
+            for p in projects {
+                p.enqueue(Job::Vectors);
+            }
+        }
+    }
+
+    /// The code embedding model in use, if one is loaded.
+    pub fn embedder(&self) -> Option<Arc<dyn atlas_codeindex::Embedder>> {
+        self.embedder
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// The project at `root`, if open. Never opens (cheap; callable from
@@ -202,10 +272,11 @@ impl CodeIndexRegistry {
                 pending: Mutex::new(Pending::default()),
                 wake: Condvar::new(),
                 closed: AtomicBool::new(false),
+                running_vectors: Mutex::new(None),
             }),
             busy: Arc::new(AtomicBool::new(false)),
         });
-        spawn_worker(&project, self.observer.clone())?;
+        spawn_worker(&project, self.observer.clone(), self.embedder.clone())?;
         project.enqueue(first);
         projects.insert(k, project.clone());
         Ok(project)
@@ -243,7 +314,11 @@ impl CodeIndexRegistry {
     }
 }
 
-fn spawn_worker(project: &Arc<ProjectIndex>, observer: Option<JobObserver>) -> Result<(), String> {
+fn spawn_worker(
+    project: &Arc<ProjectIndex>,
+    observer: Option<JobObserver>,
+    embedder: EmbedderSlot,
+) -> Result<(), String> {
     let index = project.index.clone();
     let queue = project.queue.clone();
     let busy = project.busy.clone();
@@ -253,8 +328,19 @@ fn spawn_worker(project: &Arc<ProjectIndex>, observer: Option<JobObserver>) -> R
         .spawn(move || {
             while let Some((job, waiters)) = next_job(&queue, &busy) {
                 let label = job.label();
-                let result = catch_unwind(AssertUnwindSafe(|| run(&index, job)))
-                    .unwrap_or_else(|_| Err("code index worker panicked".to_string()));
+                let index_job = job != Job::Vectors;
+                let result =
+                    catch_unwind(AssertUnwindSafe(|| run(&index, job, &queue, &embedder)))
+                        .unwrap_or_else(|_| Err("code index worker panicked".to_string()));
+                // Rows changed and a code model is loaded: embed what is new
+                // once the queue has no index work left.
+                let has_embedder = embedder
+                    .read()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .is_some();
+                if index_job && has_embedder && matches!(result, Ok(true)) {
+                    lock(&queue.pending).push(Job::Vectors);
+                }
                 busy.store(false, Ordering::SeqCst);
                 if let Err(e) = &result {
                     tracing::warn!(target: "atlas::code_index", "{label} failed for {opened_as}: {e}");
@@ -289,13 +375,42 @@ fn next_job(queue: &Queue, busy: &AtomicBool) -> Option<(Job, Vec<Waiter>)> {
     }
 }
 
-/// `Ok(true)` when rows changed.
-fn run(index: &CodeIndex, job: Job) -> Result<bool, String> {
+/// `Ok(true)` when rows (or vectors) changed.
+fn run(
+    index: &CodeIndex,
+    job: Job,
+    queue: &Queue,
+    embedder: &EmbedderSlot,
+) -> Result<bool, String> {
     let cancel = CancelToken::new();
     match job {
         Job::FullBuild => index.full_build(&cancel, &|_| {}).map(|_| true),
         Job::Reconcile => index.reconcile(&cancel).map(|s| s.changed()),
         Job::Paths(paths) => index.update_paths(&paths).map(|s| s.changed()),
+        Job::Vectors => {
+            let Some(e) = embedder
+                .read()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone()
+            else {
+                return Ok(false);
+            };
+            *lock(&queue.running_vectors) = Some(cancel.clone());
+            // An index job queued between `take` and the line above found no
+            // token to cancel: honour it now.
+            if lock(&queue.pending).has_index_work() {
+                cancel.cancel();
+            }
+            let r = index
+                .sync_vectors(e.as_ref(), &cancel)
+                .map(|s| s.added + s.removed > 0);
+            *lock(&queue.running_vectors) = None;
+            if cancel.is_cancelled() {
+                // Resume after the edit that interrupted it.
+                lock(&queue.pending).push(Job::Vectors);
+            }
+            r
+        }
     }
     .map_err(|e| e.to_string())
 }
@@ -431,5 +546,82 @@ mod tests {
             .unwrap()
             .unwrap();
         wait_for(|| seen.load(Ordering::SeqCst) >= 2);
+    }
+
+    struct Slow;
+    impl atlas_codeindex::Embedder for Slow {
+        fn model_id(&self) -> &str {
+            "slow"
+        }
+        fn dims(&self) -> usize {
+            4
+        }
+        fn embed_documents(&self, t: &[&str]) -> Result<Vec<Vec<f32>>, String> {
+            std::thread::sleep(Duration::from_millis(500));
+            Ok(t.iter().map(|_| vec![0.5; 4]).collect())
+        }
+        fn embed_query(&self, _: &str) -> Result<Vec<f32>, String> {
+            Ok(vec![0.5; 4])
+        }
+    }
+
+    #[test]
+    fn vectors_follow_index_changes_when_an_embedder_is_set() {
+        let dir = project();
+        let reg = CodeIndexRegistry::new(None);
+        reg.set_embedder(Some(Arc::new(Slow)));
+        let p = reg.ensure_open(dir.path()).unwrap();
+        p.enqueue_and_wait(Job::Reconcile)
+            .blocking_recv()
+            .unwrap()
+            .unwrap();
+        wait_for(|| {
+            dir.path()
+                .join(".atlas/code-index/chunks.slow.usearch")
+                .is_file()
+        });
+    }
+
+    #[test]
+    fn a_new_job_cancels_vector_sync() {
+        let dir = project();
+        // 400 chunks = 13 batches of 500 ms: about 6.5 s of embedding, so an edit
+        // only returns quickly if the running sync is really cancelled.
+        for i in 0..400 {
+            std::fs::write(
+                dir.path().join(format!("src/f{i}.rs")),
+                format!("pub fn f{i}() {{}}\n"),
+            )
+            .unwrap();
+        }
+        let reg = CodeIndexRegistry::new(None);
+        reg.set_embedder(Some(Arc::new(Slow)));
+        let p = reg.ensure_open(dir.path()).unwrap();
+        p.enqueue_and_wait(Job::Reconcile)
+            .blocking_recv()
+            .unwrap()
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(300)); // the vector job has started
+        let t = Instant::now();
+        p.enqueue_and_wait(Job::Paths(vec![dir.path().join("src/a.rs")]))
+            .blocking_recv()
+            .unwrap()
+            .unwrap();
+        // At most the batch in flight (500 ms) plus the edit itself.
+        assert!(
+            t.elapsed() < Duration::from_millis(1500),
+            "edit waited {:?} behind embedding",
+            t.elapsed()
+        );
+    }
+
+    #[test]
+    fn a_queued_vector_sync_waits_behind_index_work_and_survives_it() {
+        let mut p = Pending::default();
+        p.push(Job::Vectors);
+        p.push(Job::Paths(vec!["a".into()]));
+        assert_eq!(p.take().map(|(j, _)| j), Some(Job::Paths(vec!["a".into()])));
+        assert_eq!(p.take().map(|(j, _)| j), Some(Job::Vectors));
+        assert!(p.take().is_none());
     }
 }

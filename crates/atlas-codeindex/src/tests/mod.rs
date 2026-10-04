@@ -3,6 +3,7 @@
 //! line per extracted symbol/import), `dump` and `symbol_set` (index rows).
 
 mod build;
+mod chunk;
 mod docs;
 mod e2e;
 mod extract_golden;
@@ -11,7 +12,11 @@ mod incremental;
 mod query;
 mod repomap;
 mod scan;
+mod semantic;
 mod skip;
+mod vectors;
+
+pub(crate) use vectors::FakeEmbedder;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};

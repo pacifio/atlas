@@ -23,13 +23,14 @@ use crate::commands::memory_indexer::MemoryRegistry;
 /// source repo differs.
 pub const EMBED_FILES: [&str; 3] = ["config.json", "tokenizer.json", "model.safetensors"];
 
-/// Retained as a single-variant enum: it is part of the wire shape the frontend
-/// filters on, and keeping it leaves room for a second on-device model class
-/// without another migration.
+/// Part of the wire shape the frontend filters on. Each kind has its own
+/// selected model: `Embedding` is memory's (`embedding_model_id`),
+/// `CodeEmbedding` is code search's (`code_embedding_model_id`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum ModelKind {
     Embedding,
+    CodeEmbedding,
 }
 
 /// One file to fetch from `https://huggingface.co/{repo}/resolve/{revision}/{file}`
@@ -169,6 +170,40 @@ pub fn builtin_catalog() -> Vec<ModelEntry> {
             220,
             "General Text Embeddings, base (768-d, rebuilds the index).",
         ),
+        // ── Code search (the code index's vectors; never used for memory) ──
+        ModelEntry {
+            kind: ModelKind::CodeEmbedding,
+            ..embed_repo(
+                "granite-embedding-small-r2",
+                "Granite Embedding Small R2",
+                "ibm-granite/granite-embedding-small-english-r2",
+                384,
+                95,
+                "Small, fast code search embeddings (47M, Apache-2.0). Default for semantic code search.",
+            )
+        },
+        ModelEntry {
+            kind: ModelKind::CodeEmbedding,
+            ..embed_repo(
+                "coderankembed",
+                "CodeRankEmbed",
+                "nomic-ai/CodeRankEmbed",
+                768,
+                522,
+                "Code-specific embeddings (137M, MIT). A little more accurate; about 3x the memory.",
+            )
+        },
+        ModelEntry {
+            kind: ModelKind::CodeEmbedding,
+            ..embed_repo(
+                "qwen3-embedding-0.6b",
+                "Qwen3-Embedding 0.6B",
+                "Qwen/Qwen3-Embedding-0.6B",
+                1024,
+                1137,
+                "Higher-quality code and text embeddings (0.6B, Apache-2.0). Slower on CPU.",
+            )
+        },
     ]
 }
 
@@ -196,8 +231,30 @@ pub fn model_dir_for(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+/// The memory model to use. A code-only model is never used for memory,
+/// even when a hand-edited settings file names one.
+fn memory_model_id(configured: String) -> String {
+    match find_entry(&configured) {
+        Some(e) if e.kind != ModelKind::Embedding => {
+            crate::state::atlas_config::default_embedding_model()
+        }
+        _ => configured,
+    }
+}
+
 pub fn selected_embedding_id(app: &AppHandle) -> String {
-    crate::state::atlas_config::read(app).embedding_model_id
+    memory_model_id(crate::state::atlas_config::read(app).embedding_model_id)
+}
+
+/// The spec written next to a code model's weights, so `atlas-embed` drives it
+/// with the right pooling, prefixes and limits.
+fn code_model_spec(id: &str) -> Option<atlas_embed::ModelSpec> {
+    match id {
+        "granite-embedding-small-r2" => Some(atlas_embed::ModelSpec::granite_embedding_small()),
+        "coderankembed" => Some(atlas_embed::ModelSpec::code_rank_embed()),
+        "qwen3-embedding-0.6b" => Some(atlas_embed::ModelSpec::qwen3_embedding()),
+        _ => None,
+    }
 }
 
 /// Whether every file for `id` exists on disk. Uses the catalog's file list; for an
@@ -336,13 +393,15 @@ pub struct ModelStatus {
 /// The curated catalog with downloaded/selected flags for the current machine.
 #[tauri::command]
 pub async fn models_list(app: AppHandle) -> Result<Vec<ModelStatus>, String> {
-    let sel_embed = selected_embedding_id(&app);
+    let settings = crate::state::atlas_config::read(&app);
+    let sel_embed = memory_model_id(settings.embedding_model_id.clone());
     Ok(builtin_catalog()
         .into_iter()
         .map(|entry| {
             let downloaded = is_downloaded(&app, &entry.id);
             let selected = match entry.kind {
                 ModelKind::Embedding => entry.id == sel_embed,
+                ModelKind::CodeEmbedding => entry.id == settings.code_embedding_model_id,
             };
             ModelStatus {
                 entry,
@@ -359,6 +418,14 @@ pub async fn models_list(app: AppHandle) -> Result<Vec<ModelStatus>, String> {
 pub async fn model_download(app: AppHandle, id: String) -> Result<(), String> {
     let entry = find_entry(&id).ok_or_else(|| format!("unknown model '{id}'"))?;
     let dir = model_dir_for(&app, &id)?;
+    // A code model's spec goes next to its weights before the download starts
+    // (it is not one of `EMBED_FILES`, so it never makes a model count as
+    // downloaded on its own).
+    if let Some(spec) = code_model_spec(&id) {
+        spec.write(&dir)
+            .map_err(|e| format!("write model spec: {e}"))?;
+    }
+    let is_code_model = entry.kind == ModelKind::CodeEmbedding;
     tokio::spawn(async move {
         let result = download_files(
             &app,
@@ -368,6 +435,10 @@ pub async fn model_download(app: AppHandle, id: String) -> Result<(), String> {
             "atlas:model-download:progress",
         )
         .await;
+        if result.is_ok() && is_code_model {
+            // Loads it when it is the selected code model.
+            crate::commands::code_index::embed::refresh(&app).await;
+        }
         let _ = app.emit(
             "atlas:model-download:done",
             DownloadDone {
@@ -385,7 +456,9 @@ pub async fn model_download(app: AppHandle, id: String) -> Result<(), String> {
 /// (the frontend guards too).
 #[tauri::command]
 pub async fn model_remove(app: AppHandle, id: String) -> Result<(), String> {
-    if id == selected_embedding_id(&app) {
+    if id == selected_embedding_id(&app)
+        || id == crate::state::atlas_config::read(&app).code_embedding_model_id
+    {
         return Err("Can't remove the model that's currently selected.".into());
     }
     let dir = model_dir_for(&app, &id)?;
@@ -441,13 +514,92 @@ pub async fn model_select(
                 needs_reindex = true;
             }
         }
+        ModelKind::CodeEmbedding => {
+            if crate::state::atlas_config::read(&app).code_embedding_model_id != id {
+                let patch = crate::state::SettingsPatch {
+                    code_embedding_model_id: Some(id.clone()),
+                    ..Default::default()
+                };
+                let app_for_write = app.clone();
+                let snapshot = tokio::task::spawn_blocking(move || {
+                    crate::state::atlas_config::update(&app_for_write, patch)
+                })
+                .await
+                .map_err(|e| e.to_string())?
+                .map_err(|e| format!("save settings: {e}"))?;
+                crate::commands::atlas_config::notify_settings_changed(
+                    &app,
+                    &snapshot.settings,
+                    snapshot.generation,
+                );
+            }
+        }
     }
 
     // Drop cached models so the next call loads the newly selected one.
     match entry.kind {
         ModelKind::Embedding => registry.invalidate_provider().await,
+        // Swaps the code index's embedder; vectors re-sync per model file,
+        // from the embedding cache where they can. No memory re-index.
+        ModelKind::CodeEmbedding => crate::commands::code_index::embed::refresh(&app).await,
     }
 
     let _ = app.emit("atlas:models-changed", ());
     Ok(SelectResult { needs_reindex })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn code_models_are_their_own_kind() {
+        for id in [
+            "granite-embedding-small-r2",
+            "coderankembed",
+            "qwen3-embedding-0.6b",
+        ] {
+            assert_eq!(
+                find_entry(id).unwrap().kind,
+                ModelKind::CodeEmbedding,
+                "{id}"
+            );
+            assert!(code_model_spec(id).is_some(), "{id} ships a spec");
+        }
+        let memory_default = crate::state::atlas_config::default_embedding_model();
+        assert_eq!(
+            find_entry(&memory_default).unwrap().kind,
+            ModelKind::Embedding
+        );
+        assert_eq!(
+            find_entry(&crate::state::atlas_config::default_code_embedding_model())
+                .unwrap()
+                .kind,
+            ModelKind::CodeEmbedding
+        );
+    }
+
+    #[test]
+    fn memory_never_resolves_to_a_code_model() {
+        let fallback = crate::state::atlas_config::default_embedding_model();
+        assert_eq!(memory_model_id("coderankembed".into()), fallback);
+        assert_eq!(
+            memory_model_id("bge-small-en-v1.5".into()),
+            "bge-small-en-v1.5"
+        );
+        // An id the catalog doesn't know (a manual model dir) is the user's choice; keep it.
+        assert_eq!(memory_model_id("my-local-model".into()), "my-local-model");
+    }
+
+    #[test]
+    fn the_wire_name_is_snake_case() {
+        assert_eq!(
+            serde_json::to_string(&ModelKind::CodeEmbedding).unwrap(),
+            "\"code_embedding\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ModelKind::Embedding).unwrap(),
+            "\"embedding\""
+        );
+    }
 }

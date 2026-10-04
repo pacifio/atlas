@@ -235,6 +235,7 @@ wrote; `toml_edit` just preserves whatever comments are already there.
 | `shareTelemetry` | boolean | `true` | — |
 | `linkTelemetryToAccount` | boolean | `true` | — |
 | `embeddingModelId` | string | `"all-MiniLM-L6-v2"` | non-empty |
+| `codeEmbeddingModelId` | string | `"granite-embedding-small-r2"` | non-empty; a code model for semantic code search (memory keeps `embeddingModelId`) |
 | `theme` | string | `"atlas"` | known theme id; an unknown id is logged and falls back to `"atlas"` |
 | `themeMode` | `"system"` \| `"dark"` \| `"light"` | `"system"` | exactly one of these values; a missing requested variant falls back to the theme's other variant. Light is persisted but hidden in Settings until light-mode QA completes. |
 | `themeOverrides` | table | absent | optional `base`, `palette`, and `keys` patch applied after the active theme variant |
