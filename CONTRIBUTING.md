@@ -222,8 +222,9 @@ and `dist/` are left alone.
   On Linux, Docker needs AppArmor and seccomp relaxed for the sandbox, which
   `ci:local` does per container.
 
-Volumes are named `atlas-ci-<hash>-*`, one set per checkout; `docker volume rm`
-them to start cold.
+Volumes are named `atlas-ci-<hash>-*`. The build cache (`-cache`) is one per
+clone, shared by its worktrees, so a new worktree starts warm; `-node-modules`
+and `-dist` are per checkout. `docker volume rm` them to start cold.
 
 A pre-push hook runs the full `bun run test`; pre-commit runs only `tests/`.
 

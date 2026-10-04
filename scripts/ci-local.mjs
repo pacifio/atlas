@@ -42,8 +42,10 @@
  * scripts/ci-linux/Dockerfile. It is the only local way to exercise Linux-only
  * code, the engine's bubblewrap sandbox above all, from a Mac or Windows.
  * Opt-in because the first run is a cold build: the container's target dir
- * cannot share the host's. It lives in per-checkout volumes, and so do the
- * cargo registry and a Linux `node_modules`, so later runs are incremental.
+ * cannot share the host's. It lives in a volume with the cargo registry, so
+ * later runs are incremental, and every worktree of a clone shares that one
+ * volume, so a new worktree starts warm. A Linux `node_modules` and `dist/`
+ * are kept per checkout.
  *
  *   - Any Docker-compatible runtime: `docker` by default, ATLAS_CI_DOCKER to
  *     name another (`podman`). OrbStack, Docker Desktop and Colima all serve
@@ -314,12 +316,19 @@ function containerContext() {
   if (root === REPO_ROOT && !gitCommon.startsWith(REPO_ROOT + path.sep)) {
     mounts.push(`${gitCommon}:${gitCommon}`);
   }
-  // Per checkout: the target dir, cargo registry and Bun cache; a Linux
-  // node_modules (the host's holds this OS's binaries); and dist/, so a Linux
+  // Per clone, shared by all its worktrees: the target dir, cargo registry and
+  // Bun cache. Keyed by the main checkout's path, so for the main checkout the
+  // name is what it always was and its warm volume is kept. A new worktree
+  // starts from it instead of a cold build; two runs at once take turns on
+  // cargo's build lock.
+  // Per checkout: a Linux node_modules (the host's holds this OS's binaries,
+  // and worktrees can differ in their lockfile); and dist/, so a Linux
   // `bun run build` doesn't rewrite the host's.
-  const vol = `atlas-ci-${createHash("sha256").update(REPO_ROOT).digest("hex").slice(0, 8)}`;
+  const volFor = (p) => `atlas-ci-${createHash("sha256").update(p).digest("hex").slice(0, 8)}`;
+  const mainCheckout = path.basename(gitCommon) === ".git" ? path.dirname(gitCommon) : gitCommon;
+  const vol = volFor(REPO_ROOT);
   mounts.push(
-    `${vol}-cache:/cache`,
+    `${volFor(mainCheckout)}-cache:/cache`,
     `${vol}-node-modules:${root}/node_modules`,
     `${vol}-dist:${root}/dist`,
   );
