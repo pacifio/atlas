@@ -43,6 +43,8 @@ pub(super) enum ApiKind {
 /// module) for the one-shot handoff summarizer.
 pub(super) fn provider_endpoint(provider: &str) -> Option<(ApiKind, &'static str)> {
     Some(match provider {
+        "minimax" => (ApiKind::OpenAi, "https://api.minimax.io/v1"),
+        "minimax-cn" => (ApiKind::OpenAi, "https://api.minimaxi.com/v1"),
         "openai" => (ApiKind::OpenAi, "https://api.openai.com/v1"),
         "anthropic" => (ApiKind::Anthropic, ""),
         "google" => (ApiKind::Google, ""),
@@ -379,6 +381,7 @@ pub struct ModelInfo {
 
 fn fallback_models(provider: &str) -> Vec<&'static str> {
     match provider {
+        "minimax" | "minimax-cn" => vec!["MiniMax-M3", "MiniMax-M2.7"],
         "perplexity" => vec![
             "sonar",
             "sonar-pro",
@@ -498,6 +501,23 @@ async fn fetch_anthropic_models(base: &str, key: &str) -> Result<Vec<String>, St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_minimax_regions() {
+        for (provider, endpoint) in [
+            ("minimax", "https://api.minimax.io/v1"),
+            ("minimax-cn", "https://api.minimaxi.com/v1"),
+        ] {
+            assert_eq!(
+                provider_endpoint(provider),
+                Some((ApiKind::OpenAi, endpoint))
+            );
+            assert_eq!(
+                fallback_models(provider),
+                vec!["MiniMax-M3", "MiniMax-M2.7"]
+            );
+        }
+    }
 
     #[test]
     fn test_orcarouter_endpoint() {
