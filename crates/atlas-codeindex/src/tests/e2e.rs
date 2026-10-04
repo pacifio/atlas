@@ -302,19 +302,22 @@ fn config_change_forces_full_resolve() {
     assert!(last_stats(&idx).full);
 }
 
+/// A Phase 2 (v1) index upgrades in place to the current schema: the graph
+/// tables (v2) and the chunk tables (v3) appear, Tier-2 summaries survive,
+/// and every file is marked for re-extraction.
 #[test]
-fn migration_v1_to_v2_keeps_summaries_and_forces_reextract() {
+fn migration_from_v1_keeps_summaries_and_forces_reextract() {
     let dir = tempfile::tempdir().unwrap();
     create_v1_only(dir.path());
     let idx = crate::CodeIndex::open(dir.path()).unwrap();
     idx.with_reader(|c| {
         let uv: i64 = c.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        assert_eq!(uv, 2);
+        assert_eq!(uv, crate::SCHEMA_VERSION);
         let mtime: i64 = c.query_row("SELECT mtime_ns FROM files", [], |r| r.get(0))?;
         assert_eq!(mtime, -1);
         let kept: String = c.query_row("SELECT summary FROM file_summaries", [], |r| r.get(0))?;
         assert_eq!(kept, "kept");
-        for t in ["refs", "edges", "rust_mods"] {
+        for t in ["refs", "edges", "rust_mods", "chunks", "embed_cache", "chunk_vectors"] {
             let n: i64 = c.query_row("SELECT COUNT(*) FROM sqlite_master WHERE name = ?1", [t], |r| r.get(0))?;
             assert_eq!(n, 1, "{t}");
         }
