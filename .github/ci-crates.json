@@ -1,26 +1,31 @@
 [
   {
     "crate": "atlas-acp-thread",
-    "clippy": true
+    "clippy": true,
+    "cross": true
   },
   {
     "crate": "atlas-agent-delta",
-    "clippy": true
+    "clippy": true,
+    "cross": true
   },
   {
     "crate": "atlas-agent-manager",
     "clippy": true
   },
   {
-    "crate": "atlas-process"
+    "crate": "atlas-process",
+    "cross": true
   },
   {
     "crate": "atlas-agent-servers",
-    "clippy": true
+    "clippy": true,
+    "cross": true
   },
   {
     "crate": "atlas-agent-transcript",
-    "clippy": true
+    "clippy": true,
+    "cross": true
   },
   {
     "crate": "atlas-agent-store",
@@ -28,14 +33,16 @@
   },
   {
     "crate": "atlas-agent-wire",
-    "clippy": true
+    "clippy": true,
+    "cross": true
   },
   {
     "crate": "atlas-artifacts",
     "clippy": true
   },
   {
-    "crate": "atlas-bus"
+    "crate": "atlas-bus",
+    "cross": true
   },
   {
     "crate": "atlas-checkpoint",
@@ -53,10 +60,12 @@
   },
   {
     "crate": "atlas-git",
-    "clippy": true
+    "clippy": true,
+    "cross": true
   },
   {
-    "crate": "atlas-gitdiff"
+    "crate": "atlas-gitdiff",
+    "cross": true
   },
   {
     "crate": "atlas-icon-theme",
@@ -64,7 +73,8 @@
   },
   {
     "crate": "atlas-instruction-sync",
-    "clippy": true
+    "clippy": true,
+    "cross": true
   },
   {
     "crate": "atlas-kb-server",
@@ -81,14 +91,17 @@
   },
   {
     "crate": "atlas-redact",
-    "clippy": true
+    "clippy": true,
+    "cross": true
   },
   {
-    "crate": "atlas-terminal"
+    "crate": "atlas-terminal",
+    "cross": true
   },
   {
     "crate": "atlas-theme",
-    "clippy": true
+    "clippy": true,
+    "cross": true
   },
   {
     "crate": "atlas-thread-metadata",

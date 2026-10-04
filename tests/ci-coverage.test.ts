@@ -27,6 +27,13 @@ import { readCrateMatrix } from "../scripts/ci-affected.mjs";
  * lookup a miss without an error) and the cache budget (an entry saved from a
  * ref nothing restores from only evicts entries that something does). The
  * last describe holds release-linux.yml to the same sccache wiring.
+ *
+ * Between them sit the cross-OS checks: the Windows clippy step for crates
+ * flagged `cross`, and the `--target`s it and `ci:local` name, each of which
+ * must be in rust-toolchain.toml's `targets` or it fails on "can't find crate
+ * for `core`" on a machine that installed the toolchain without it. And the
+ * `ci-ok` gate must wait on every job: one missing from its `needs` can go
+ * red while the required check stays green.
  */
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -127,12 +134,15 @@ describe("CI's Rust jobs", () => {
 
   it("finds the jobs", () => {
     expect([...jobs.keys()]).toEqual(
-      expect.arrayContaining(["frontend", "app", "app-linux", "crates"]),
+      expect.arrayContaining(["frontend", "app", "app-linux", "app-windows", "crates"]),
     );
   });
 
   it("runs exactly one clippy pass per matrix crate", () => {
-    const clippy = stepsOf(jobs.get("crates")!).filter((s) => s.run?.includes("cargo clippy"));
+    // For the host OS; the cross-OS pass below is a different target.
+    const clippy = stepsOf(jobs.get("crates")!).filter(
+      (s) => s.run?.includes("cargo clippy") && !s.run.includes("--target"),
+    );
     // Two steps with complementary conditions: `-D warnings` for the crates
     // flagged `clippy: true`, the plain workspace-lint-table pass for the
     // rest. An unconditional clippy step means flagged crates get two passes
@@ -140,6 +150,37 @@ describe("CI's Rust jobs", () => {
     expect(clippy.map((s) => s.if)).toEqual(["matrix.clippy", "${{ !matrix.clippy }}"]);
     expect(clippy[0].run).toContain("-- -D warnings");
     expect(clippy[1].run).not.toContain("-D warnings");
+  });
+
+  it("clippies the crates flagged `cross` for Windows, once", () => {
+    const cross = stepsOf(jobs.get("crates")!).filter((s) => s.run?.includes("--target"));
+    expect(cross.map((s) => s.if)).toEqual(["matrix.cross"]);
+    expect(cross[0].run).toContain("cargo clippy");
+    expect(cross[0].run).toContain("--target aarch64-pc-windows-msvc");
+    // The flag means "no C in the tree", which only the probe that set it
+    // could establish; this guards the flag's existence, not its accuracy.
+    expect(readCrateMatrix(REPO_ROOT).some((c) => c.cross)).toBe(true);
+  });
+
+  it("declares in rust-toolchain.toml every target CI and ci:local compile for", () => {
+    const toolchain = readFileSync(path.join(REPO_ROOT, "rust-toolchain.toml"), "utf8");
+    const declared = [
+      ...(/^targets\s*=\s*\[([^\]]*)\]/m.exec(toolchain)?.[1] ?? "").matchAll(/"([^"]+)"/g),
+    ].map((m) => m[1]);
+    const ciLocal = readFileSync(path.join(REPO_ROOT, "scripts", "ci-local.mjs"), "utf8");
+    const used = new Set(
+      [
+        ...src.matchAll(/--target ([a-z0-9_-]+)/g),
+        ...ciLocal.matchAll(/"(aarch64-unknown-linux-gnu)"/g),
+      ].map((m) => m[1]),
+    );
+    expect(used.size).toBeGreaterThan(1);
+    expect([...used].filter((t) => !declared.includes(t))).toEqual([]);
+  });
+
+  it("makes the required `ci-ok` check wait on every other job", () => {
+    const needs = /^ {4}needs: \[([^\]]*)\]/m.exec(jobs.get("ci-ok")!)?.[1].split(/,\s*/) ?? [];
+    expect(needs.sort()).toEqual([...jobs.keys()].filter((j) => j !== "ci-ok").sort());
   });
 
   it("installs sccache in every job that routes rustc through it, before any cargo runs", () => {
@@ -188,7 +229,9 @@ describe("CI's Rust jobs", () => {
     // branch: no pull request restores it, yet it evicts what they do.
     const header = src.slice(0, src.search(/^jobs:\s*$/m));
     expect(header).not.toMatch(/^\s*SCCACHE_GHA_RW_MODE:/m);
-    expect(jobs.get("changes")).toMatch(/^ {6}cache-write: \$\{\{ steps\.cache\.outputs\.write \}\}$/m);
+    expect(jobs.get("changes")).toMatch(
+      /^ {6}cache-write: \$\{\{ steps\.cache\.outputs\.write \}\}$/m,
+    );
     const rustJobs = [...jobs].filter(([, block]) => /Swatinem\/rust-cache@/.test(block));
     expect(rustJobs.length).toBeGreaterThanOrEqual(4);
     for (const [id, block] of rustJobs) {
@@ -222,9 +265,7 @@ describe("release-linux's Rust build", () => {
     const steps = stepsOf(jobs[0][1]);
     const sccache = steps.findIndex((s) => s.uses?.startsWith("mozilla-actions/sccache-action@"));
     const firstCargo = steps.findIndex(
-      (s) =>
-        s.uses?.startsWith("Swatinem/rust-cache@") ||
-        /\bcargo |build:app/.test(s.run ?? ""),
+      (s) => s.uses?.startsWith("Swatinem/rust-cache@") || /\bcargo |build:app/.test(s.run ?? ""),
     );
     expect(sccache).toBeGreaterThanOrEqual(0);
     expect(firstCargo).toBeGreaterThan(sccache);

@@ -10,6 +10,7 @@ export interface CrateEntry {
   clippy?: boolean;
   sandbox?: boolean;
   "release-build"?: boolean;
+  cross?: boolean;
 }
 
 export interface Package {

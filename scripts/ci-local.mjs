@@ -8,7 +8,8 @@
  *   bun run ci:local --all               every job
  *   bun run ci:local frontend atlas-git  just these jobs (names as CI shows them)
  *   bun run ci:local --list              the jobs, without running anything
- *   bun run ci:local --linux             CI's Linux jobs in a Linux container
+ *   bun run ci:local --linux             every one of CI's Linux jobs in a Linux container
+ *   bun run ci:local --native            no container, even for the jobs that need Linux
  *   bun run ci:local --shell             a shell in that container
  *
  * The jobs and their commands are read out of `.github/workflows/ci.yml` at
@@ -33,19 +34,42 @@
  *     `CARGO_PROFILE_DEV_DEBUG` are cache tuning for throwaway runners;
  *     applying them here would rebuild your whole target/ under a second
  *     profile and lose incremental builds.
- *   - the OS, unless asked. Every job runs on this machine by default. A job
- *     CI runs on macOS (the app) is skipped on any other OS, and so is the
- *     app's Linux compile check (OS_BOUND) except on Linux; under `--linux`
- *     it runs in the container.
+ *   - the OS, mostly. Jobs run on this machine, with three exceptions:
+ *       - The jobs that need Linux itself (`needsLinux`) go to the Linux
+ *         container below, when a Docker-compatible runtime is up.
+ *       - A job CI runs on macOS (the app) is skipped on any other OS.
+ *       - The app's Linux and Windows compile checks (OS_BOUND) run only on
+ *         their own OS; on a Mac the Linux one goes to the container.
  *
- * `--linux` runs the jobs CI runs on Ubuntu in a container instead, built from
- * scripts/ci-linux/Dockerfile. It is the only local way to exercise Linux-only
- * code, the engine's bubblewrap sandbox above all, from a Mac or Windows.
- * Opt-in because the first run is a cold build: the container's target dir
- * cannot share the host's. It lives in a volume with the cargo registry, so
+ * Which Linux bugs a Mac can catch. Over five weeks of CI history (360 failed
+ * Linux-runner jobs, Aug 28 - Oct 4 2026), almost every failure would have
+ * failed on a Mac too: clippy, a stale lockfile, races. Two kinds were Linux's
+ * own, and each gets its own remedy here:
+ *
+ *   - Code that only compiles for Linux: a `cfg(target_os = "linux")` arm
+ *     that breaks or trips a lint. A Mac never compiles it, but it can
+ *     type-check it, and for that it needs no Linux. For crates flagged `cross`
+ *     in .github/ci-crates.json (their dependency tree builds no C), a Linux
+ *     job run on a Mac gets each of its clippy steps again with `--target`
+ *     for CI's Linux triple. Nothing links, so no Linux linker or sysroot is
+ *     needed; the standard library comes from rust-toolchain.toml's `targets`.
+ *   - Code that only *runs* correctly on Linux: the engine's sandbox, which
+ *     is bubblewrap, landlock and seccomp there and seatbelt on a Mac. The
+ *     macOS sandbox lets through what landlock denies, so its tests passed
+ *     here and failed in CI. No Mac-side check can stand in for a Linux
+ *     kernel, so these jobs (`needsLinux`) run in the container, and only when
+ *     the plan includes them: a change that does not reach the engine never
+ *     starts it. The app's Linux compile check is in the same set, because
+ *     src-tauri's GTK and WebKit headers exist only in a Linux userland.
+ *
+ * The container is built from scripts/ci-linux/Dockerfile. Its target dir
+ * cannot share the host's, so it lives in a volume with the cargo registry;
  * later runs are incremental, and every worktree of a clone shares that one
  * volume, so a new worktree starts warm. A Linux `node_modules` and `dist/`
- * are kept per checkout.
+ * are kept per checkout. With no runtime running, the jobs that need Linux
+ * run here instead (the app's Linux check is skipped) and the summary says
+ * what that left untested. `--native` asks for that outright; `--linux` runs
+ * every Linux job in the container, the full replica of CI's runners.
  *
  *   - Any Docker-compatible runtime: `docker` by default, ATLAS_CI_DOCKER to
  *     name another (`podman`). OrbStack, Docker Desktop and Colima all serve
@@ -67,7 +91,8 @@
  *     the job ends (or the run is interrupted). Steps of one job share its
  *     filesystem, `/tmp` and leftover processes included, exactly as they
  *     share a runner in CI; nothing outside the volumes reaches the next job.
- *   - Two lanes. The jobs left on this machine (the macOS app) run alongside
+ *   - Two lanes. The jobs left on this machine (the macOS app, and by default
+ *     every crate but the sandbox one) run alongside
  *     the container's, which still run one after another. The two never share
  *     a target dir, so neither waits on the other's cargo lock and nothing is
  *     built twice; they only share cores, and each leaves some idle (linking,
@@ -98,9 +123,21 @@ if (typeof Bun === "undefined") {
 /** Jobs that plan or gate other jobs rather than check anything. */
 const NOT_CHECKS = new Set(["changes", "ci-ok"]);
 /** Jobs that compile for their runner's OS. Anywhere else they would repeat
- *  the macOS `app` job's check under the wrong `cfg`, so they run only there. */
-const OS_BOUND = new Set(["app-linux"]);
+ *  the macOS `app` job's check under the wrong `cfg`, so they run only there
+ *  (or, for Linux, in the container). */
+const OS_BOUND = new Set(["app-linux", "app-windows"]);
 const HOST_OS = { darwin: "macos", win32: "windows" }[process.platform] ?? process.platform;
+
+/** Linux jobs no other OS can stand in for (see the docblock): the crates
+ *  whose suites run the engine's sandbox, and the app's Linux compile. */
+function needsLinux(job) {
+  return Boolean(job.flags.sandbox) || job.id === "app-linux";
+}
+
+/** The Rust target triple CI's runner for this job builds for. */
+function linuxTriple(job) {
+  return job.arch === "arm64" ? "aarch64-unknown-linux-gnu" : "x86_64-unknown-linux-gnu";
+}
 /** A step matching this changes the machine it runs on; see the docblock. */
 const MUTATES_MACHINE = /\bsudo\b|git config --global/;
 
@@ -144,11 +181,14 @@ function ciJobs() {
         ? "linux"
         : runsOn.startsWith("macos")
           ? "macos"
-          : runsOn;
+          : runsOn.startsWith("windows")
+            ? "windows"
+            : runsOn;
       jobs.push({
         id,
         name: entry ? entry.crate : (job.name ?? id),
         crate: entry?.crate,
+        flags: entry ?? {},
         os,
         arch: /-arm\b/.test(runsOn) ? "arm64" : "x64",
         steps,
@@ -181,7 +221,9 @@ function plannedNames(argv) {
     dialect: dialectPackages(ciYmlText),
   });
   const names = new Set(["frontend", ...p.crates.map((c) => c.crate)]);
-  if (p.app) names.add(ciYml.jobs.app.name).add(ciYml.jobs["app-linux"].name);
+  if (p.app) {
+    for (const id of ["app", "app-linux", "app-windows"]) names.add(ciYml.jobs[id].name);
+  }
   if (p.engineDialect) names.add(ciYml.jobs["engine-dialect"].name);
   return { names, why: `${p.reason} since ${base.slice(0, 12)}` };
 }
@@ -234,13 +276,26 @@ function docker(args) {
   return spawnSync(DOCKER, args, { encoding: "utf8" });
 }
 
+/** rust-toolchain.toml's channel and extra targets. */
+function rustToolchain() {
+  const text = readFileSync(path.join(REPO_ROOT, "rust-toolchain.toml"), "utf8");
+  const targets = /^targets\s*=\s*\[([^\]]*)\]/m.exec(text)?.[1] ?? "";
+  return {
+    channel: /^channel\s*=\s*"([^"]+)"/m.exec(text)?.[1],
+    targets: [...targets.matchAll(/"([^"]+)"/g)].map((m) => m[1]),
+  };
+}
+
 /** The image for the current pins, built on first use. Returns its tag. */
 function ensureImage() {
-  const rust = /^channel\s*=\s*"([^"]+)"/m.exec(
-    readFileSync(path.join(REPO_ROOT, "rust-toolchain.toml"), "utf8"),
-  )?.[1];
+  const { channel: rust, targets } = rustToolchain();
   const { bun, node } = misePins();
-  const args = { RUST_VERSION: rust, BUN_VERSION: bun, NODE_VERSION: node };
+  const args = {
+    RUST_VERSION: rust,
+    RUST_TARGETS: targets.join(" "),
+    BUN_VERSION: bun,
+    NODE_VERSION: node,
+  };
   const hash = createHash("sha256");
   for (const f of ["Dockerfile", "entrypoint.sh"])
     hash.update(readFileSync(path.join(IMAGE_DIR, f)));
@@ -260,6 +315,10 @@ function ensureImage() {
       "--label",
       "atlas.ci-linux=1",
       ...Object.entries(args).flatMap(([k, v]) => ["--build-arg", `${k}=${v}`]),
+      // Left out of the tag on purpose; see the Dockerfile.
+      ...(process.env.ATLAS_CI_APT_MIRROR
+        ? ["--build-arg", `APT_MIRROR=${process.env.ATLAS_CI_APT_MIRROR}`]
+        : []),
       IMAGE_DIR,
     ],
     { stdio: "inherit" },
@@ -286,17 +345,23 @@ function ensureImage() {
   return tag;
 }
 
-/** Everything a `docker run` for this checkout needs; exits if no runtime. */
-function containerContext() {
+/** `docker info`, parsed, or null when no runtime answers. */
+function runtimeInfo() {
   const r = docker(["info", "--format", "{{json .}}"]);
-  if (r.error || r.status !== 0) {
+  if (r.error || r.status !== 0) return { error: (r.stderr || r.error?.message || "").trim() };
+  return { info: JSON.parse(r.stdout) };
+}
+
+/** Everything a `docker run` for this checkout needs; exits if no runtime. */
+function containerContext(probe = runtimeInfo()) {
+  if (!probe.info) {
     console.error(
-      `ci-local: --linux needs a running Docker-compatible runtime (\`${DOCKER}\`; ATLAS_CI_DOCKER names another).\n${(r.stderr || r.error?.message || "").trim()}`,
+      `ci-local: the Linux container needs a running Docker-compatible runtime (\`${DOCKER}\`; ATLAS_CI_DOCKER names another).\n${probe.error}`,
     );
     process.exit(2);
   }
   // `docker info` and `podman info` answer in different shapes.
-  const info = JSON.parse(r.stdout);
+  const info = probe.info;
   const podman = Boolean(info.host);
   const arch = /^(aarch64|arm64)$/.test(info.Architecture ?? info.host?.arch) ? "arm64" : "x64";
   const rootless =
@@ -424,15 +489,47 @@ function run(cmd, args, opts) {
   });
 }
 
-/** Where a job runs: in the container, on this machine, or not at all. */
-function placement(job, linux) {
-  if (job.os === "linux" && linux) return "container";
+/**
+ * Where a job runs: in the container, on this machine, or not at all. `mode`
+ * is "all" (`--linux`), "native" (`--native`) or "auto"; `runtime` says
+ * whether a container runtime answered.
+ */
+function placement(job, mode, runtime) {
+  if (job.os === "linux" && HOST_OS !== "linux" && runtime) {
+    if (mode === "all" || (mode === "auto" && needsLinux(job))) return "container";
+  }
+  if (job.os === "linux" && HOST_OS === "linux" && mode === "all") return "container";
   if ((job.os === "macos" || OS_BOUND.has(job.id)) && job.os !== HOST_OS) return "skip";
   return "native";
 }
 
+/**
+ * A Linux job run on another OS: after each clippy step, the same step for
+ * CI's Linux target, for crates whose tree allows it (see the docblock).
+ */
+function withLinuxTargetClippy(job) {
+  if (job.where !== "native" || job.os !== "linux" || HOST_OS === "linux") return;
+  if (!job.flags.cross) return;
+  job.steps = job.steps.flatMap((step) => {
+    if (!/^cargo clippy\b/.test(step.run) || /--target\b/.test(step.run)) return [step];
+    const triple = linuxTriple(job);
+    return [
+      step,
+      {
+        name: `${step.name}, for ${triple}`,
+        run: step.run.replace(/^cargo clippy/, `cargo clippy --target ${triple}`),
+        cwd: step.cwd,
+      },
+    ];
+  });
+}
+
 async function main(argv) {
-  const linux = argv.includes("--linux");
+  const mode = argv.includes("--linux") ? "all" : argv.includes("--native") ? "native" : "auto";
+  if (argv.includes("--linux") && argv.includes("--native")) {
+    console.error("ci-local: --linux and --native contradict each other");
+    process.exit(2);
+  }
   if (argv.includes("--shell")) {
     const ctx = containerContext();
     process.exit(spawnSync(DOCKER, shellArgs(ctx), { stdio: "inherit" }).status ?? 1);
@@ -460,7 +557,17 @@ async function main(argv) {
   const rank = { frontend: 0, crates: 1, "engine-dialect": 2, "app-linux": 3, app: 4 };
   jobs.sort((a, b) => (rank[a.id] ?? 1) - (rank[b.id] ?? 1));
 
-  for (const j of jobs) j.where = placement(j, linux);
+  // Ask for a runtime only when a job would use one, so a plan with nothing
+  // that needs Linux never touches Docker.
+  const wantsContainer = jobs.some(
+    (j) => placement(j, mode, true) === "container" && placement(j, mode, false) !== "container",
+  );
+  const probe = wantsContainer && mode !== "native" ? runtimeInfo() : null;
+  if (mode === "all" && wantsContainer && !probe?.info) containerContext(probe); // exits
+  for (const j of jobs) {
+    j.where = placement(j, mode, Boolean(probe?.info));
+    withLinuxTargetClippy(j);
+  }
 
   if (argv.includes("--list")) {
     for (const j of jobs) {
@@ -479,7 +586,9 @@ async function main(argv) {
   }
 
   const native = jobs.some((j) => j.where === "native");
-  const ctx = jobs.some((j) => j.where === "container") ? containerContext() : null;
+  const ctx = jobs.some((j) => j.where === "container")
+    ? containerContext(probe ?? runtimeInfo())
+    : null;
   if (native) checkVersions();
   if (ctx) {
     const ciArch = jobs.find((j) => j.where === "container").arch;
@@ -528,12 +637,17 @@ async function main(argv) {
     );
   }
   const failures = results.filter((r) => r.failed).length;
-  if (
-    process.platform !== "linux" &&
-    jobs.some((j) => j.where === "native" && j.os === "linux" && j.id !== "frontend")
-  ) {
+  const untested = jobs.filter(
+    (j) => HOST_OS !== "linux" && needsLinux(j) && j.where !== "container",
+  );
+  if (untested.length) {
+    const why =
+      mode === "native"
+        ? "--native was passed"
+        : `no container runtime answered (${probe?.error || "not running"})`;
     console.log(
-      "\n  Rust jobs ran on this OS; CI runs them on Linux, so Linux-only paths (the engine sandbox) were not exercised. `--linux` runs them in a Linux container.",
+      `\n  Not run on Linux, because ${why}: ${untested.map((j) => j.name).join(", ")}. ` +
+        "Their Linux-only behaviour (the engine's sandbox, the app's GTK build) is untested until CI runs them.",
     );
   }
   process.exit(failures ? 1 : 0);
