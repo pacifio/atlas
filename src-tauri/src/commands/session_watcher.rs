@@ -17,25 +17,39 @@
 //!   [`RETRY_AFTER`], so a session no installed agent will list cannot cause a
 //!   sync on every write.
 //!
+//! Liveness (ATL-424): the sidebar's "running in a terminal" dot is a pure
+//! function of the file times kept here and the clock, so it also has to be
+//! re-announced when the clock alone moves it. While any session is live one
+//! ticker re-checks every [`TICK`] and emits `atlas:threads-changed` whenever
+//! the live set changes; with nothing live there is no ticker.
+//!
 //! There is no `#[tauri::command]` here: `threads_sync_project` arms it.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
 use agent_client_protocol::schema::v1 as acp;
-use atlas_agent_transcript::discovery::{claude_sessions_dir, scan_sessions};
+use atlas_agent_transcript::discovery::{claude_sessions_dir, is_live, scan_sessions};
 use chrono::{DateTime, Utc};
 use notify::RecursiveMode;
 use notify_debouncer_full::new_debouncer;
 use parking_lot::Mutex;
+use tauri::{AppHandle, Emitter};
 
 use super::agent_host::AgentHost;
+use super::agents::THREADS_CHANGED_EVENT;
 
 /// A terminal session writes its transcript in bursts; this folds a burst into
 /// one rescan while still landing a new session well inside the ~5s target.
 const DEBOUNCE: Duration = Duration::from_millis(1500);
+
+/// How often liveness is re-checked while any session is live. Against the
+/// 90s window this clears a dot within about two minutes of the terminal going
+/// quiet.
+const TICK: Duration = Duration::from_secs(30);
 
 /// How long an unknown session id counts as already tried.
 const RETRY_AFTER: Duration = Duration::from_secs(60);
@@ -47,6 +61,11 @@ type Debouncer = notify_debouncer_full::Debouncer<
 
 pub struct SessionWatcher {
     host: Arc<AgentHost>,
+    app: AppHandle,
+    /// The live set as last announced to the webview.
+    announced_live: Mutex<HashSet<String>>,
+    /// A liveness ticker is running. At most one.
+    ticking: AtomicBool,
     /// The project the watcher is armed for. Set before the (blocking) watch
     /// is installed so a second `arm` for the same cwd is a no-op, and checked
     /// by every callback so one from a replaced watcher does nothing.
@@ -58,9 +77,12 @@ pub struct SessionWatcher {
 }
 
 impl SessionWatcher {
-    pub fn new(host: Arc<AgentHost>) -> Arc<Self> {
+    pub fn new(host: Arc<AgentHost>, app: AppHandle) -> Arc<Self> {
         Arc::new(Self {
             host,
+            app,
+            announced_live: Mutex::new(HashSet::new()),
+            ticking: AtomicBool::new(false),
             cwd: Mutex::new(None),
             debouncer: Mutex::new(None),
             modified: Mutex::new(HashMap::new()),
@@ -79,6 +101,7 @@ impl SessionWatcher {
             *armed = Some(cwd.to_owned());
         }
         self.modified.lock().clear();
+        self.reconcile_liveness();
         let this = self.clone();
         let cwd = cwd.to_owned();
         // Creating a watcher does an initial scan on macOS, and the seeding
@@ -86,9 +109,8 @@ impl SessionWatcher {
         tauri::async_runtime::spawn_blocking(move || this.install(&cwd, true));
     }
 
-    /// Last-seen modified time per session id for the armed project. ATL-424
-    /// reads this for liveness; until it lands there is no caller.
-    #[allow(dead_code)]
+    /// Last-seen modified time per session id for the armed project; the
+    /// history commands read it to decide which rows are live elsewhere.
     pub fn last_modified(&self) -> HashMap<String, DateTime<Utc>> {
         self.modified.lock().clone()
     }
@@ -127,6 +149,7 @@ impl SessionWatcher {
                 .collect();
             if self.is_current(cwd) {
                 *self.modified.lock() = seen;
+                self.reconcile_liveness();
             }
         }
 
@@ -173,8 +196,78 @@ impl SessionWatcher {
         }
     }
 
+    fn live_ids(&self) -> HashSet<String> {
+        let now = Utc::now();
+        self.modified
+            .lock()
+            .iter()
+            .filter(|(_, at)| is_live(**at, now))
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
+
+    /// Announce a change in the live set, and keep exactly one ticker running
+    /// while anything is live. Called after every change to `modified` and by
+    /// the ticker itself.
+    fn reconcile_liveness(self: &Arc<Self>) {
+        if !self.announce_live().is_empty() {
+            self.ensure_ticker();
+        }
+    }
+
+    fn ensure_ticker(self: &Arc<Self>) {
+        if self
+            .ticking
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return;
+        }
+        let weak = Arc::downgrade(self);
+        tauri::async_runtime::spawn(async move {
+            loop {
+                tokio::time::sleep(TICK).await;
+                let Some(this) = weak.upgrade() else {
+                    return;
+                };
+                if this.announce_live().is_empty() {
+                    this.ticking.store(false, Ordering::Release);
+                    // A batch may have made something live between the check
+                    // and the store; it saw `ticking` set and started nothing.
+                    if this.live_ids().is_empty()
+                        || this
+                            .ticking
+                            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                            .is_err()
+                    {
+                        return;
+                    }
+                }
+            }
+        });
+    }
+
+    /// Emit if the live set differs from the last announcement; answers the
+    /// current live set.
+    fn announce_live(&self) -> HashSet<String> {
+        let live = self.live_ids();
+        let changed = {
+            let mut announced = self.announced_live.lock();
+            if *announced == live {
+                false
+            } else {
+                *announced = live.clone();
+                true
+            }
+        };
+        if changed {
+            let _ = self.app.emit(THREADS_CHANGED_EVENT, ());
+        }
+        live
+    }
+
     /// Rescan, refresh the last-seen map, and act on what moved.
-    fn handle_batch(&self, cwd: &str, dir: &Path) {
+    fn handle_batch(self: &Arc<Self>, cwd: &str, dir: &Path) {
         let sessions = scan_sessions(dir);
         let previous = {
             if !self.is_current(cwd) {
@@ -186,6 +279,9 @@ impl SessionWatcher {
                 .collect();
             std::mem::replace(&mut *self.modified.lock(), fresh)
         };
+        // Before the history lookups below, which can bail out: a session
+        // turning live must be announced whether or not the store knows it.
+        self.reconcile_liveness();
         let Some(history) = self.host.history() else {
             return;
         };

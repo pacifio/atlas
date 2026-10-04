@@ -28,6 +28,7 @@ import { useActiveOrgProjects } from "@/features/projects/lib/org-scope";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useChatStore } from "../stores/chat-store";
+import { useLiveElsewhereStore } from "../stores/live-elsewhere-store";
 import { bumpLoadToken, isLoadStale } from "../lib/load-tokens";
 import {
   archiveThread,
@@ -69,6 +70,7 @@ function itemFromThread(thread: ThreadRow, projectName: string, isCurrent: boole
     elsewhere: !isCurrent,
     // The thread's own directory — where it resumes.
     cwd: thread.folderPaths[0] ?? "",
+    liveElsewhere: thread.liveElsewhere,
   };
 }
 
@@ -96,6 +98,8 @@ interface SidebarItem {
   /** The thread's own working directory — where it resumes, which is not
    *  necessarily the project that happens to be open. */
   cwd: string;
+  /** Another process is still writing this session (a terminal). */
+  liveElsewhere: boolean;
 }
 
 interface SessionSidebarProps {
@@ -336,6 +340,15 @@ export const SessionSidebar = memo(function SessionSidebar({
       ),
     [projects],
   );
+
+  // Hand the composer which sessions a terminal is still writing, so it can
+  // hold a send behind "Send anyway". The backend decides liveness; this only
+  // forwards it.
+  useEffect(() => {
+    useLiveElsewhereStore
+      .getState()
+      .actions.setLive(items.filter((i) => i.liveElsewhere && i.id).map((i) => i.id));
+  }, [items]);
 
   // Self-heal the project panel's persisted "Chats" list for THIS project.
   // That list (`atlas-recent-chats`) is recorded on agent activity and never
@@ -771,6 +784,15 @@ export const SessionSidebar = memo(function SessionSidebar({
                   <span className="text-xs leading-snug line-clamp-2 flex-1">{item.title}</span>
                 </div>
                 <div className="pl-[18px] flex items-center gap-1.5">
+                  {item.liveElsewhere && (
+                    <span
+                      role="img"
+                      aria-label="Running in a terminal"
+                      title="Running in a terminal"
+                      data-testid="live-elsewhere-dot"
+                      className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--atlas-status-success-foreground)]"
+                    />
+                  )}
                   <span className="text-3xs text-[var(--muted-foreground)]">
                     {timeAgo(item.lastUpdated, { suffix: true })}
                   </span>

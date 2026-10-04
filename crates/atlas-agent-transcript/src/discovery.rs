@@ -68,9 +68,34 @@ pub fn scan_sessions(dir: &Path) -> Vec<DiscoveredSession> {
         .collect()
 }
 
+/// How recently a transcript must have been written for its session to count
+/// as running in another process (ADR-0001 amendment, Rule 7).
+pub const LIVE_WINDOW: std::time::Duration = std::time::Duration::from_secs(90);
+
+/// Whether a session last written at `modified` is live at `now`. A modified
+/// time in the future (clock skew) counts as live.
+pub fn is_live(modified: DateTime<Utc>, now: DateTime<Utc>) -> bool {
+    match (now - modified).to_std() {
+        Ok(age) => age < LIVE_WINDOW,
+        // Negative age: the file is from the future.
+        Err(_) => true,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn liveness_window() {
+        let now = Utc::now();
+        let ago = |s: i64| now - chrono::Duration::seconds(s);
+        assert!(is_live(ago(0), now));
+        assert!(is_live(ago(89), now));
+        assert!(!is_live(ago(90), now));
+        assert!(!is_live(ago(3600), now));
+        assert!(is_live(now + chrono::Duration::seconds(30), now));
+    }
 
     struct TempDir(PathBuf);
 

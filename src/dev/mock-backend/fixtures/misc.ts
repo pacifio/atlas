@@ -61,6 +61,9 @@ const THREADS: ThreadRow[] = [
     archived: false,
     projectName: MOCK_PROJECT.name,
     folderPaths: [MOCK_PROJECT.path],
+    // Another process is writing this one: the live dot, and the composer's
+    // "Send anyway" hold when it is opened.
+    liveElsewhere: true,
   },
   {
     threadId: "th-02",
@@ -73,6 +76,7 @@ const THREADS: ThreadRow[] = [
     archived: false,
     projectName: MOCK_PROJECT.name,
     folderPaths: [MOCK_PROJECT.path],
+    liveElsewhere: false,
   },
   {
     threadId: "th-03",
@@ -85,6 +89,7 @@ const THREADS: ThreadRow[] = [
     archived: false,
     projectName: MOCK_PROJECT.name,
     folderPaths: [MOCK_PROJECT.path, abs("src/styles")],
+    liveElsewhere: false,
   },
   {
     threadId: "th-04",
@@ -96,6 +101,7 @@ const THREADS: ThreadRow[] = [
     archived: false,
     projectName: OTHER_PROJECTS[0].name,
     folderPaths: [OTHER_PROJECTS[0].path],
+    liveElsewhere: false,
   },
   {
     threadId: "th-05",
@@ -108,6 +114,7 @@ const THREADS: ThreadRow[] = [
     archived: true,
     projectName: MOCK_PROJECT.name,
     folderPaths: [MOCK_PROJECT.path],
+    liveElsewhere: false,
   },
 ];
 

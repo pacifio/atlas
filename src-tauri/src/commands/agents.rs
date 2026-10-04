@@ -711,7 +711,10 @@ pub fn install_manager(app: &AppHandle) {
         AgentHost::new(sink, config_dir, store.clone(), registry.clone())
     };
     app.manage(host.clone());
-    app.manage(super::session_watcher::SessionWatcher::new(host.clone()));
+    app.manage(super::session_watcher::SessionWatcher::new(
+        host.clone(),
+        app.clone(),
+    ));
 
     // Shared memory: every write is announced to the webview (the Shared tab
     // re-pulls on it), session start/end are recorded in the scope's sessions
@@ -1488,8 +1491,10 @@ pub async fn threads_delete(
 pub fn threads_projects(
     cwd: Option<String>,
     host: State<'_, Arc<AgentHost>>,
+    watcher: State<'_, Arc<super::session_watcher::SessionWatcher>>,
 ) -> Result<Vec<super::agent_host::ThreadProjectWire>, CmdError> {
-    host.thread_projects(cwd.as_deref()).map_err(CmdError::from)
+    host.thread_projects(cwd.as_deref(), &watcher.last_modified())
+        .map_err(CmdError::from)
 }
 
 /// Every thread, archived or not, newest-started first — the history view.
@@ -1497,8 +1502,10 @@ pub fn threads_projects(
 pub fn threads_history(
     archived_only: bool,
     host: State<'_, Arc<AgentHost>>,
+    watcher: State<'_, Arc<super::session_watcher::SessionWatcher>>,
 ) -> Result<Vec<super::agent_host::ThreadRow>, CmdError> {
-    host.thread_history(archived_only).map_err(CmdError::from)
+    host.thread_history(archived_only, &watcher.last_modified())
+        .map_err(CmdError::from)
 }
 
 /// Take a thread out of the active list, keeping it in history.

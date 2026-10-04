@@ -1917,8 +1917,13 @@ impl AgentHost {
     /// this side has it. The UI comparing its own raw path string silently
     /// matched nothing whenever the two spellings differed (symlink,
     /// `/private` prefix, trailing slash).
-    pub fn thread_projects(&self, cwd: Option<&str>) -> Result<Vec<ThreadProjectWire>> {
+    pub fn thread_projects(
+        &self,
+        cwd: Option<&str>,
+        modified: &HashMap<String, DateTime<Utc>>,
+    ) -> Result<Vec<ThreadProjectWire>> {
         let projects = self.history_or_err()?.store().projects();
+        let live = self.live_context(modified);
 
         // Basenames collide: two checkouts both called `web` are one label. Any
         // name shared by more than one project gets qualified with its parent
@@ -1962,14 +1967,23 @@ impl AgentHost {
                     // Everything that survives the filter is the open project,
                     // except when nothing was scoped to in the first place.
                     is_current: here.is_some(),
-                    threads: project.threads.iter().map(thread_row).collect(),
+                    threads: project
+                        .threads
+                        .iter()
+                        .map(|t| thread_row(t, &live))
+                        .collect(),
                 }
             })
             .collect())
     }
 
     /// Every thread, archived or not, newest-started first — the history view.
-    pub fn thread_history(&self, archived_only: bool) -> Result<Vec<ThreadRow>> {
+    pub fn thread_history(
+        &self,
+        archived_only: bool,
+        modified: &HashMap<String, DateTime<Utc>>,
+    ) -> Result<Vec<ThreadRow>> {
+        let live = self.live_context(modified);
         let filter = if archived_only {
             ThreadFilter::ArchivedOnly
         } else {
@@ -1980,8 +1994,20 @@ impl AgentHost {
             .store()
             .history(filter)
             .iter()
-            .map(thread_row)
+            .map(|t| thread_row(t, &live))
             .collect())
+    }
+
+    /// Snapshot what `thread_row` needs to decide `live_elsewhere`: the
+    /// watcher's file times, the sessions Atlas hosts right now, and the clock.
+    /// The watcher is passed in rather than held, since it already holds the
+    /// host.
+    fn live_context<'a>(&self, modified: &'a HashMap<String, DateTime<Utc>>) -> LiveContext<'a> {
+        LiveContext {
+            modified,
+            hosted: lock(&self.sessions).keys().cloned().collect(),
+            now: Utc::now(),
+        }
     }
 
     /// Take a thread out of the active list, keeping it in history.
@@ -2440,6 +2466,21 @@ pub struct ThreadRow {
     /// outside its project's group.
     pub project_name: String,
     pub folder_paths: Vec<String>,
+    /// Another process (typically `claude` in a terminal) wrote this session
+    /// within the liveness window and Atlas is not hosting it (Rule 7).
+    pub live_elsewhere: bool,
+}
+
+/// What `thread_row` needs to decide [`ThreadRow::live_elsewhere`].
+struct LiveContext<'a> {
+    modified: &'a HashMap<String, DateTime<Utc>>,
+    hosted: std::collections::HashSet<String>,
+    now: DateTime<Utc>,
+}
+
+/// The pure liveness rule: recently written and not hosted by Atlas.
+fn live_elsewhere(modified: Option<DateTime<Utc>>, hosted: bool, now: DateTime<Utc>) -> bool {
+    !hosted && modified.is_some_and(|at| atlas_agent_transcript::discovery::is_live(at, now))
 }
 
 /// One project's threads, as the sidebar groups them.
@@ -2454,13 +2495,21 @@ pub struct ThreadProjectWire {
     pub threads: Vec<ThreadRow>,
 }
 
-fn thread_row(thread: &ThreadMetadata) -> ThreadRow {
+fn thread_row(thread: &ThreadMetadata, live: &LiveContext<'_>) -> ThreadRow {
+    let session_id = thread
+        .session_id
+        .as_ref()
+        .map(std::string::ToString::to_string);
+    let live_elsewhere = session_id.as_deref().is_some_and(|id| {
+        live_elsewhere(
+            live.modified.get(id).copied(),
+            live.hosted.contains(id),
+            live.now,
+        )
+    });
     ThreadRow {
         thread_id: thread.thread_id.to_key_string(),
-        session_id: thread
-            .session_id
-            .as_ref()
-            .map(std::string::ToString::to_string),
+        session_id,
         agent_id: thread.agent_id.to_string(),
         title: display_title(thread),
         updated_at: thread.updated_at.to_rfc3339(),
@@ -2468,6 +2517,7 @@ fn thread_row(thread: &ThreadMetadata) -> ThreadRow {
         archived: thread.archived,
         project_name: project_name(thread.main_worktree_paths()),
         folder_paths: paths_of(thread.folder_paths()),
+        live_elsewhere,
     }
 }
 
@@ -3819,6 +3869,27 @@ mod tests {
     /// Rows recorded before the fix kept only the marker line. They read as
     /// the default title rather than as scaffolding, and a clean title is left
     /// alone.
+    fn no_live() -> LiveContext<'static> {
+        static EMPTY: std::sync::LazyLock<HashMap<String, DateTime<Utc>>> =
+            std::sync::LazyLock::new(HashMap::new);
+        LiveContext {
+            modified: &EMPTY,
+            hosted: Default::default(),
+            now: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn live_elsewhere_excludes_hosted_and_stale_sessions() {
+        let now = Utc::now();
+        let recent = Some(now - chrono::Duration::seconds(5));
+        let old = Some(now - chrono::Duration::seconds(600));
+        assert!(live_elsewhere(recent, false, now));
+        assert!(!live_elsewhere(recent, true, now));
+        assert!(!live_elsewhere(old, false, now));
+        assert!(!live_elsewhere(None, false, now));
+    }
+
     #[test]
     fn a_row_named_after_injected_memory_reads_as_the_default_title() {
         let mut row = ThreadMetadata::new(
@@ -3829,12 +3900,15 @@ mod tests {
 
         row.title = Some("--- SHARED MEMORY ---".into());
         assert_eq!(
-            thread_row(&row).title,
+            thread_row(&row, &no_live()).title,
             atlas_thread_metadata::DEFAULT_THREAD_TITLE
         );
 
         row.title = Some("Origin dropdown cleanup".into());
-        assert_eq!(thread_row(&row).title, "Origin dropdown cleanup");
+        assert_eq!(
+            thread_row(&row, &no_live()).title,
+            "Origin dropdown cleanup"
+        );
     }
 }
 

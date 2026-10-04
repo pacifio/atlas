@@ -44,6 +44,9 @@ export interface ThreadRow {
   archived: boolean;
   projectName: string;
   folderPaths: string[];
+  /** Another process (typically `claude` in a terminal) wrote this session
+   *  within the last ~90s and Atlas is not hosting it. Decided in Rust. */
+  liveElsewhere: boolean;
 }
 
 /** One project's threads, as the sidebar groups them. */
