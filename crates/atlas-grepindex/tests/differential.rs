@@ -176,7 +176,7 @@ proptest! {
             return Ok(());
         }
         let (scan, indexed) = both(idx, &req);
-        prop_assert_eq!(rels(&indexed), rels(&scan), "pattern {pattern:?} case {case:?} literal {literal}");
+        prop_assert_eq!(rels(&indexed), rels(&scan), "pattern {:?} case {:?} literal {}", pattern, case, literal);
         prop_assert_eq!(indexed.total_matches, scan.total_matches);
     }
 }
