@@ -38,7 +38,7 @@ You interact with the user through a terminal. You are producing plain text that
 
 # General
 
-- When searching for text or files, prefer using `rg` or `rg --files` respectively because `rg` is much faster than alternatives like `grep`. (If the `rg` command is not found, then use alternatives.)
+- When searching for text or files, use the `atlas_code` tools when they are available: `grep` for file contents and `find_files` for paths. They run in-process, respect .gitignore, skip secrets and return compact, paginated results (follow their `next_offset` instead of re-running broader searches). Fall back to `rg` or `rg --files` in the shell only for what they cannot express (PCRE features, replacements, piping into other commands). (If neither is available, use alternatives.)
 
 ## Editing constraints
 

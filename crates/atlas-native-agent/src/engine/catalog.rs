@@ -311,6 +311,36 @@ mod tests {
         );
     }
 
+    /// ADR-0015: every bundled prompt sends code search to the `atlas_code`
+    /// tools first and keeps shell `rg` as the fallback, and the two copies of
+    /// the base prompt (the gateway rows' and the protocol default) agree.
+    #[test]
+    fn every_prompt_sends_code_search_to_the_atlas_code_tools_first() {
+        let base = atlas_engine_models_manager::model_info::BASE_INSTRUCTIONS.as_str();
+        for needle in ["`atlas_code`", "`grep`", "`find_files`", "`rg`"] {
+            assert!(base.contains(needle), "base prompt lacks {needle}");
+        }
+        assert_eq!(
+            base,
+            atlas_engine_protocol::models::BASE_INSTRUCTIONS_DEFAULT.as_str(),
+            "models-manager/prompt.md and protocol's default.md drifted apart"
+        );
+        let bundled = atlas_engine_models_manager::bundled_models_response()
+            .expect("the bundled catalogue parses");
+        for model in &bundled.models {
+            let template = model
+                .model_messages
+                .as_ref()
+                .and_then(|m| m.instructions_template.as_deref())
+                .unwrap_or_default();
+            assert!(
+                template.contains("`atlas_code`") && template.contains("`rg`"),
+                "{}: search guidance not reworded",
+                model.slug
+            );
+        }
+    }
+
     #[test]
     fn apply_patch_survives_the_crossing() {
         // The dialect flattens freeform tools and turns the reply back, so this

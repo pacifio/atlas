@@ -138,6 +138,30 @@ mod tests {
         );
     }
 
+    /// ADR-0015: the code tools must stay callable on `code_mode_only`
+    /// models, which reach MCP tools only from inside `exec`. The engine
+    /// nests a tool there when its exposure keeps `code_mode`
+    /// (`ToolExposure::is_available_in_code_mode`); omitting only `deferred`
+    /// leaves it `Direct`, which code mode accepts. Omitting `code_mode` or
+    /// `direct` here would strand the tools on those models.
+    #[test]
+    fn the_code_tools_stay_reachable_from_code_mode() {
+        let server = acp::McpServer::Http(acp::McpServerHttp::new(
+            "atlas_code",
+            "http://127.0.0.1:9/code",
+        ));
+        let config = thread_config(&[server], &AskFirst::none()).expect("one entry");
+        assert_eq!(
+            config["mcp_servers.atlas_code.omit_tools_from"],
+            json!(["deferred"]),
+        );
+        assert_eq!(
+            config["mcp_servers.atlas_code.default_tools_approval_mode"],
+            json!("approve"),
+            "read-only code search never asks"
+        );
+    }
+
     /// The projection is only half the story: these are DOTTED keys, merged
     /// into a TOML tree and then deserialized into the engine's own config.
     /// An unknown or wrongly-shaped key on that path is dropped rather than

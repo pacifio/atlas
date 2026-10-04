@@ -1,0 +1,32 @@
+[package]
+name = "atlas-search"
+version = "0.1.0"
+edition = "2021"
+description = "In-process code search for Atlas: ripgrep-engine grep and glob/fuzzy file finding over a session root, with one compact, budgeted output format for agent tools."
+
+[lib]
+name = "atlas_search"
+
+[dependencies]
+# `canonicalize` without Windows' `\\?\` verbatim prefix, so root checks and
+# relative paths agree with what the walker yields.
+dunce = { workspace = true }
+# The ripgrep engine, in-process (spec 05 §2). Same author and family as
+# `ignore`; nothing here maps a file into memory (`MmapChoice::never()`).
+grep-matcher = { workspace = true }
+grep-regex = { workspace = true }
+grep-searcher = { workspace = true }
+# gitignore-aware parallel walk, override globs and ripgrep's file types.
+ignore = { workspace = true }
+# find_files glob mode and the secret-file deny list.
+globset = { workspace = true }
+# find_files fuzzy mode (fzf scoring with path bonuses).
+nucleo-matcher = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+# The workspace lint table is only real for members that opt in —
+# without this stanza it is dead configuration (#60).
+[lints]
+workspace = true

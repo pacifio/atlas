@@ -67,8 +67,13 @@ const PATH_KEYS: [&str; 6] = [
 pub fn classify_kind(kind: Option<&str>, tool_name: &str) -> &'static str {
     if let Some(k) = kind {
         let k = k.trim().to_ascii_lowercase();
-        if let Some(found) = KINDS.iter().find(|c| **c == k) {
-            return found;
+        // `other` is the agent saying it has no category, so the name still
+        // gets its say: the native seam sends every MCP call as `other`
+        // (`atlas_code.grep` is a search).
+        if k != "other" {
+            if let Some(found) = KINDS.iter().find(|c| **c == k) {
+                return found;
+            }
         }
     }
     let n = tool_name.to_ascii_lowercase();
@@ -76,7 +81,11 @@ pub fn classify_kind(kind: Option<&str>, tool_name: &str) -> &'static str {
         "edit"
     } else if n.contains("read") || n.contains("cat") {
         "read"
-    } else if n.contains("glob") || n.contains("grep") || n.contains("search") || n.contains("list")
+    } else if n.contains("glob")
+        || n.contains("grep")
+        || n.contains("search")
+        || n.contains("list")
+        || n.contains("find_files")
     {
         "search"
     } else if n.contains("bash") || n.contains("shell") || n.contains("exec") {
@@ -264,6 +273,22 @@ mod tests {
         assert_eq!(classify_kind(None, "Grep"), "search");
         assert_eq!(classify_kind(None, "WebFetch"), "fetch");
         assert_eq!(classify_kind(None, "SomethingElse"), "other");
+    }
+
+    /// ADR-0015: the native seam sends every MCP call with kind `other`, so
+    /// `other` defers to the name, and the code tools count as searches.
+    #[test]
+    fn an_mcp_call_filed_under_other_is_classified_by_its_name() {
+        assert_eq!(classify_kind(Some("other"), "atlas_code.grep"), "search");
+        assert_eq!(
+            classify_kind(Some("other"), "atlas_code.find_files"),
+            "search"
+        );
+        assert_eq!(
+            classify_kind(Some("other"), "mcp__atlas_code__find_files"),
+            "search"
+        );
+        assert_eq!(classify_kind(Some("other"), "atlas_ui.ui_open"), "other");
     }
 
     /// Parity with `countEditLines` in `tool-files.ts` — the three argument

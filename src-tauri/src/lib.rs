@@ -632,7 +632,7 @@ pub fn run() {
             commands::gitdiff::diff_structured_text,
             commands::gitdiff::git_commit_changed_files,
             commands::gitdiff::git_diff_line_status,
-            commands::search::search_in_files,
+            commands::code_server::code_grep,
             commands::project_session::save_project_session,
             commands::project_session::load_project_session,
             commands::knowledge::list_knowledge,

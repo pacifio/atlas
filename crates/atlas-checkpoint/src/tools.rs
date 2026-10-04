@@ -132,9 +132,11 @@ pub fn canonical_name(
     }
 
     // `wire_name` is the runtime's first-sighting value, which for the native
-    // agent is the tool's real name.
+    // agent is the tool's real name. An MCP call is named by its tool, not its
+    // server: `atlas_code.grep` and `mcp__atlas_code__grep` are both a grep.
     for candidate in [wire_name, title].into_iter().flatten() {
-        if let Some(name) = match_known(leading_token(candidate)) {
+        let token = leading_token(candidate);
+        if let Some(name) = match_known(token).or_else(|| mcp_tool(token).and_then(match_known)) {
             return name;
         }
     }
@@ -152,6 +154,21 @@ fn leading_token(title: &str) -> &str {
         .unwrap_or("")
 }
 
+/// The tool half of an MCP call's name, as the two agent families spell it:
+/// the native seam titles a call `<server>.<tool>` (`engine::sink`), ACP
+/// agents `mcp__<server>__<tool>`. `None` for anything else, and for a token
+/// with a `/` in it, so a file path is never read as a call.
+fn mcp_tool(token: &str) -> Option<&str> {
+    if let Some(rest) = token.strip_prefix("mcp__") {
+        return rest.split_once("__").map(|(_, tool)| tool);
+    }
+    if token.contains('/') {
+        return None;
+    }
+    let (_, tool) = token.split_once('.')?;
+    (!tool.is_empty() && !tool.contains('.')).then_some(tool)
+}
+
 /// Case-insensitive match against the canonical set, plus the aliases the three
 /// agents actually use.
 fn match_known(raw: &str) -> Option<ToolName> {
@@ -163,7 +180,7 @@ fn match_known(raw: &str) -> Option<ToolName> {
         "bash" | "shell" | "exec" | "execute" | "run" | "powershell" | "terminal" => {
             Some(ToolName::Bash)
         }
-        "grep" | "glob" | "search" | "find" | "list" | "ls" | "codebase_search" => {
+        "grep" | "glob" | "search" | "find" | "find_files" | "list" | "ls" | "codebase_search" => {
             Some(ToolName::Search)
         }
         "fetch" | "webfetch" | "websearch" | "web" | "browse" => Some(ToolName::Fetch),
@@ -415,6 +432,44 @@ mod tests {
 
     fn args(json: serde_json::Value) -> serde_json::Value {
         json
+    }
+
+    /// ADR-0015: the code tool server's calls are searches, whichever family
+    /// made them. The native seam titles an MCP call `<server>.<tool>` with
+    /// kind `other`; ACP agents title it `mcp__<server>__<tool>`.
+    #[test]
+    fn atlas_code_calls_are_searches_from_either_agent_family() {
+        for name in [
+            "atlas_code.grep",
+            "atlas_code.find_files",
+            "mcp__atlas_code__grep",
+            "mcp__atlas_code__find_files",
+        ] {
+            assert_eq!(
+                canonical_name(
+                    Some(name),
+                    Some(name),
+                    Some("other"),
+                    &args(serde_json::json!({ "pattern": "x" }))
+                ),
+                ToolName::Search,
+                "{name}"
+            );
+        }
+        // Another server's tool keeps its own answer, and a file name is
+        // never read as `<server>.<tool>`.
+        for (name, expected) in [
+            ("atlas_memory.memory_search", ToolName::Other),
+            ("atlas_ui.ui_open", ToolName::Other),
+            ("README.md", ToolName::Other),
+            ("src/grep.rs", ToolName::Other),
+        ] {
+            assert_eq!(
+                canonical_name(None, Some(name), None, &args(serde_json::json!({}))),
+                expected,
+                "{name}"
+            );
+        }
     }
 
     // ── Canonical name, per agent family ────────────────────────────────────

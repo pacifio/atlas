@@ -151,6 +151,9 @@ atlas-git = { path = "../crates/atlas-git" }
 # (from ATL-83 on) commit linkage. Tauri-free, so its whole surface is
 # testable against a real database and a real git repository.
 atlas-checkpoint = { path = "../crates/atlas-checkpoint" }
+# In-process code search (ripgrep engine): the `atlas_code` tool server and
+# the project search overlay (`commands::code_server`). Tauri-free.
+atlas-search = { path = "../crates/atlas-search" }
 dirs = "6"
 # `canonicalize` without Windows' `\\?\` verbatim prefix, which would otherwise
 # leak into workspace paths, capture ids and asset scopes. Already in the

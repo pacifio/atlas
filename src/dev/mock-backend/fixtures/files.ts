@@ -22,7 +22,7 @@ import type {
   FolderMatch,
 } from "@/features/file-picker/lib/file-picker-api";
 import type { RecentFile } from "@/features/chat/stores/recent-files-store";
-import type { SearchResult } from "@/components/search-overlay";
+import type { CodeGrepMatch, CodeGrepResult } from "@/components/code-search-api";
 import type { TypedHandlers, Unread } from "../types";
 import { abs, MOCK_PROJECT } from "../project";
 
@@ -911,44 +911,22 @@ function stemAndExt(name: string): { stem: string; ext: string | null } {
   return { stem: name.slice(0, dot), ext: name.slice(dot + 1) };
 }
 
-/** The extension allowlist `search.rs` walks, and the names it refuses to enter. */
-const SEARCHABLE_EXTS = new Set([
-  "rs",
-  "ts",
-  "tsx",
-  "js",
-  "jsx",
-  "py",
-  "go",
-  "rb",
-  "java",
-  "c",
-  "cpp",
-  "h",
-  "hpp",
-  "swift",
-  "kt",
-  "css",
-  "scss",
-  "html",
-  "json",
-  "toml",
-  "yaml",
-  "yml",
-  "md",
-  "sh",
-  "bash",
-  "zsh",
-  "sql",
-  "xml",
-  "svg",
-  "txt",
-  "cfg",
-  "ini",
-  "env",
-  "lock",
-]);
-const SEARCH_SKIPPED = new Set(["node_modules", "target", "dist", "build", "__pycache__"]);
+/**
+ * The secret files `code_grep` hides (`atlas_search::DEFAULT_DENY_GLOBS`):
+ * `.env` and `.env.*` but not `.env.example`, `*.pem`, `*.key`, `id_rsa*`,
+ * `id_ed25519*`.
+ */
+function isSecretFile(name: string): boolean {
+  if (name === ".env.example") return false;
+  return (
+    name === ".env" ||
+    name.startsWith(".env.") ||
+    name.endsWith(".pem") ||
+    name.endsWith(".key") ||
+    name.startsWith("id_rsa") ||
+    name.startsWith("id_ed25519")
+  );
+}
 
 /**
  * The "recently opened" queue Rust owns. Seeded, because the `@` picker's
@@ -1000,7 +978,7 @@ export interface FsResponses {
   fs_duplicate: string;
   fs_add_to_gitignore: Unread;
   fs_open_in_terminal: Unread;
-  search_in_files: SearchResult[];
+  code_grep: CodeGrepResult;
 }
 
 export const fsHandlers: TypedHandlers<FsResponses> = {
@@ -1207,40 +1185,39 @@ export const fsHandlers: TypedHandlers<FsResponses> = {
   // success — the menu item is deliberately the one that shows nothing.
   fs_open_in_terminal: (): null => null,
 
-  // Cmd+Shift+F. Kept here because it reads the same in-memory files, and
-  // because the overlay renders `results.length` straight from the result.
-  search_in_files: ({ path, query, maxResults }): SearchResult[] => {
+  // Cmd+Shift+F. Kept here because it reads the same in-memory files. The
+  // engine's visible rules: literal unless `regex`, case-insensitive unless
+  // `caseSensitive`, `wholeWord` on word boundaries, `.git` and secret files
+  // never read. Paths in order (the engine sorts newest-modified first; the
+  // fixture's mtimes are not what this screen is about).
+  code_grep: ({ path, query, regex, caseSensitive, wholeWord, maxResults }): CodeGrepResult => {
     const root = String(path);
-    if (!isDir(root)) throw new Error("Not a directory");
+    if (!isDir(root)) throw new Error(`io error: session root ${root} is not readable`);
     const max = Number(maxResults ?? 100);
-    const needle = String(query).toLowerCase();
-    const results: SearchResult[] = [];
+    const source = regex ? String(query) : String(query).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const needle = new RegExp(wholeWord ? `\\b(?:${source})\\b` : source, caseSensitive ? "" : "i");
+    const matches: CodeGrepMatch[] = [];
+    const matchedFiles = new Set<string>();
+    let totalMatches = 0;
     for (const rel of mockFilePaths().sort()) {
-      if (results.length >= max) break;
       const segments = rel.split("/");
-      // Rust refuses to enter (or read) anything hidden or vendored, so
-      // `.env.local` and `.gitignore` never appear in results.
-      if (segments.some((name) => name.startsWith(".") || SEARCH_SKIPPED.has(name))) continue;
-      const { ext } = stemAndExt(segments[segments.length - 1] ?? rel);
-      if (ext === null || !SEARCHABLE_EXTS.has(ext)) continue;
+      if (segments.includes(".git") || isSecretFile(segments[segments.length - 1] ?? rel)) continue;
       const text = files.get(abs(rel))?.text;
       if (text === undefined || text === null) continue;
-      // `str::lines()`, so a trailing newline does not invent a final line.
       const lines = text.endsWith("\n") ? text.slice(0, -1).split("\n") : text.split("\n");
       for (const [index, line] of lines.entries()) {
-        if (results.length >= max) break;
-        // Rust reports the FIRST hit on a line, not every one.
-        const at = line.toLowerCase().indexOf(needle);
-        if (at === -1) continue;
-        results.push({
-          file_path: rel,
-          line: index + 1,
-          content: line,
-          match_start: at,
-          match_end: at + needle.length,
-        });
+        if (!needle.test(line)) continue;
+        totalMatches += 1;
+        matchedFiles.add(rel);
+        if (matches.length < max) matches.push({ path: rel, line: index + 1, text: line });
       }
     }
-    return results;
+    return {
+      matches,
+      totalMatches,
+      totalFiles: matchedFiles.size,
+      truncated: totalMatches > matches.length,
+      partial: false,
+    };
   },
 };

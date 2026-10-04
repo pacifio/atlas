@@ -130,6 +130,13 @@ agentUiNavigation = true
 # call is refused. (default: true)
 agentOrgAccess = true
 
+# Let agents search this project's code through Atlas: grep for text
+# and find files by name, in-process, respecting .gitignore and never
+# reading secret files such as .env. Off: the code tools are withdrawn
+# and every call is refused; agents use their own shell instead.
+# (default: true)
+agentCodeTools = true
+
 # Notify when a command succeeds after running longer than
 # terminalNotifyMinDurationMs. (The master switch for all notifications
 # is notificationsEnabled.) (default: true)
@@ -243,6 +250,7 @@ wrote; `toml_edit` just preserves whatever comments are already there.
 | `enterToSend` | boolean | `true` | — |
 | `agentUiNavigation` | boolean | `true` | — |
 | `agentOrgAccess` | boolean | `true` | — |
+| `agentCodeTools` | boolean | `true` | — |
 | `terminalNotifications` | boolean | `true` | — |
 | `terminalNotifyMinDurationMs` | integer | `10000` | 0 ≤ n ≤ 3600000 |
 | `terminalNotifyOnFailure` | boolean | `true` | — |

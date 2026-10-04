@@ -15,6 +15,7 @@ use atlas_agent_servers::{AskFirst, SessionMcpOffer, SessionMcpRequest, SessionM
 
 use super::host::{MemoryServerHost, SharingGate};
 use super::MEMORY_SERVER_NAME;
+use crate::commands::code_server::{CodeOffer, CodeOfferDecision, CODE_PATH, CODE_SERVER_NAME};
 use crate::commands::org_server::{
     OrgOffer, OrgOfferDecision, EVERY_TIME_TOOLS, ORG_PATH, ORG_SERVER_NAME, OUTWARD_TOOLS,
 };
@@ -60,14 +61,17 @@ impl OfferDecision {
 /// ([`SessionMcpServers`], installed on every agent connection), and — with
 /// [`with_ui`](Self::with_ui) — the UI tool server beside it on the same
 /// token (ADR-0012), and — with [`with_org`](Self::with_org) — the
-/// organisation tool server as the third (ADR-0014). One offer decides all
-/// three because all three ride one token: the token table holds one token
-/// per session, so two offers minting two tokens would revoke each other.
+/// organisation tool server as the third (ADR-0014), and — with
+/// [`with_code`](Self::with_code) — the code tool server as the fourth
+/// (ADR-0015). One offer decides them all because they all ride one token:
+/// the token table holds one token per session, so two offers minting two
+/// tokens would revoke each other.
 pub struct MemorySessionOffers {
     host: Arc<MemoryServerHost>,
     gate: SharingGate,
     ui: Option<UiOffer>,
     org: Option<OrgOffer>,
+    code: Option<CodeOffer>,
 }
 
 impl MemorySessionOffers {
@@ -77,6 +81,7 @@ impl MemorySessionOffers {
             gate,
             ui: None,
             org: None,
+            code: None,
         }
     }
 
@@ -91,6 +96,13 @@ impl MemorySessionOffers {
     /// Workspace the session's Project is bound to.
     pub fn with_org(mut self, org: OrgOffer) -> Self {
         self.org = Some(org);
+        self
+    }
+
+    /// Also offer the code tool server, mounted on this host at `/code`
+    /// (ADR-0015). Its own setting decides, never the sharing gate.
+    pub fn with_code(mut self, code: CodeOffer) -> Self {
+        self.code = Some(code);
         self
     }
 }
@@ -177,6 +189,18 @@ impl SessionMcpServers for MemorySessionOffers {
             None => (None, None),
         };
 
+        let code_url = self.host.url_at(CODE_PATH);
+        let code = self.code.as_ref().map(|code| {
+            let decision = code.decide(request.http_mcp, code_url.is_some());
+            tracing::info!(
+                target: "atlas::code_server",
+                session = request.session_id.as_ref().map(ToString::to_string).unwrap_or_default(),
+                "{}",
+                decision.log_line(&agent, request.http_mcp),
+            );
+            decision
+        });
+
         let mut entries: Vec<(&str, String)> = Vec::new();
         if let (OfferDecision::Included, Some(url)) = (decision, url) {
             entries.push((MEMORY_SERVER_NAME, url));
@@ -190,6 +214,9 @@ impl SessionMcpServers for MemorySessionOffers {
         if let (Some(OrgOfferDecision::Included), Some(url)) = (org, org_url) {
             entries.push((ORG_SERVER_NAME, url));
             org_included = true;
+        }
+        if let (Some(CodeOfferDecision::Included), Some(url)) = (code, code_url) {
+            entries.push((CODE_SERVER_NAME, url));
         }
         if entries.is_empty() {
             return SessionMcpOffer::none();

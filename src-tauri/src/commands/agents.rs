@@ -766,6 +766,18 @@ pub fn install_manager(app: &AppHandle) {
         // lives in the frontend.
         .with_window(ui_bridge);
         let org_router = super::org_server::router(org_tools.clone());
+        // The code tool server (ADR-0015): grep and find_files over the
+        // session's directory, for every agent that speaks HTTP MCP. Its
+        // setting is read on every offer and every call, like the two
+        // above; the shared-memory toggle does not gate it.
+        let code_app = app.clone();
+        let code_tools: super::code_server::CodeToolsGate = Arc::new(move || {
+            code_app
+                .try_state::<crate::state::AtlasConfigHandle>()
+                .is_some_and(|config| config.lock().effective().agent_code_tools)
+        });
+        let code_router =
+            super::code_server::router(super::code_server::CodeTools::new(code_tools.clone()));
         // Every agent that can take the server is handed it on each session
         // request, with a token of its own. It is the only way memory reaches
         // an agent (ADR-0010): nothing is prepended to a prompt. A connection
@@ -781,7 +793,8 @@ pub fn install_manager(app: &AppHandle) {
                 .with_org(
                     super::org_server::OrgOffer::new(org_access, session_orgs)
                         .describing_with(org_tools),
-                ),
+                )
+                .with_code(super::code_server::CodeOffer::new(code_tools)),
         ));
         // `memory_search` also answers from the project's indexed documents.
         let index_app = app.clone();
@@ -827,7 +840,7 @@ pub fn install_manager(app: &AppHandle) {
                 bootstrap: Some(bootstrap),
                 evict: Some(evict),
             },
-            vec![ui_router, org_router],
+            vec![ui_router, org_router, code_router],
         );
     }
 

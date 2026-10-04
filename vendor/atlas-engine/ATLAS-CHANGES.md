@@ -29,6 +29,7 @@ sample skills it installs), modified by the rename; a comment in the file would 
 model on every turn, so their notice lives here:
 
 - `core/prompt_with_apply_patch_instructions.md`
+- `core/templates/agents/orchestrator.md`
 - `core/templates/model_instructions/gpt-5.2-codex_instructions_template.md`
 - `memories/write/templates/memories/consolidation.md`
 - `prompts/templates/realtime/backend_prompt.md`
@@ -64,3 +65,7 @@ Files with no comment syntax, modified by the rename:
 - `core/tests/suite/snapshots/all__suite__mcp_tool_exposure__deferred_tools_resume_without_duplicate_update.snap`
 - `models-manager/models.json`
 
+
+## Prompt changes
+
+- 2026-10: search guidance in all bundled prompts and model templates prefers Atlas's atlas_code grep/find_files tools, with shell rg as the fallback (ADR-0015).

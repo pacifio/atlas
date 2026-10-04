@@ -369,6 +369,12 @@ pub struct AppSettings {
     /// Default ON.
     #[serde(default = "default_true")]
     pub agent_org_access: bool,
+    /// Let agents search code through the code tool server (ADR-0015):
+    /// `grep` and `find_files` over the session's directory. Off: sessions
+    /// are not offered the server and every call in a running one is
+    /// refused. Default ON.
+    #[serde(default = "default_true")]
+    pub agent_code_tools: bool,
     /// "Command finished": a successful command longer than
     /// `terminal_notify_min_duration_ms` notifies. (Once the terminal master
     /// switch; `notifications_enabled` is the master now.)
@@ -489,6 +495,7 @@ impl Default for AppSettings {
             enter_to_send: true,
             agent_ui_navigation: true,
             agent_org_access: true,
+            agent_code_tools: true,
             terminal_notifications: true,
             terminal_notify_min_duration_ms: default_terminal_notify_min_duration_ms(),
             terminal_notify_on_failure: true,
@@ -677,6 +684,14 @@ const SETTINGS_DOCS: &[(&str, &str)] = &[
          # cloud-bound Project belongs to. Anything that reaches another person\n\
          # asks you first. Off: its organisation tools are withdrawn and every\n\
          # call is refused. (default: true)",
+    ),
+    (
+        "agentCodeTools",
+        "# Let agents search this project's code through Atlas: grep for text\n\
+         # and find files by name, in-process, respecting .gitignore and never\n\
+         # reading secret files such as .env. Off: the code tools are withdrawn\n\
+         # and every call is refused; agents use their own shell instead.\n\
+         # (default: true)",
     ),
     (
         "terminalNotifications",
@@ -1066,6 +1081,7 @@ pub struct SettingsPatch {
     pub enter_to_send: Option<bool>,
     pub agent_ui_navigation: Option<bool>,
     pub agent_org_access: Option<bool>,
+    pub agent_code_tools: Option<bool>,
     pub terminal_notifications: Option<bool>,
     pub terminal_notify_min_duration_ms: Option<u32>,
     pub terminal_notify_on_failure: Option<bool>,
@@ -1155,6 +1171,9 @@ impl SettingsPatch {
         }
         if let Some(v) = self.agent_org_access {
             settings.agent_org_access = v;
+        }
+        if let Some(v) = self.agent_code_tools {
+            settings.agent_code_tools = v;
         }
         if let Some(v) = self.terminal_notifications {
             settings.terminal_notifications = v;
@@ -1248,6 +1267,7 @@ impl SettingsPatch {
         set_bool!(enter_to_send, "enterToSend");
         set_bool!(agent_ui_navigation, "agentUiNavigation");
         set_bool!(agent_org_access, "agentOrgAccess");
+        set_bool!(agent_code_tools, "agentCodeTools");
         set_bool!(terminal_notifications, "terminalNotifications");
         set_bool!(terminal_notify_on_failure, "terminalNotifyOnFailure");
         set_bool!(terminal_notify_on_attention, "terminalNotifyOnAttention");
@@ -2305,6 +2325,27 @@ mod tests {
         assert!(!mgr.effective().agent_org_access);
     }
 
+    /// ADR-0015: on unless the user switched it off, and a file that predates
+    /// the key reads as on.
+    #[test]
+    fn agent_code_tools_is_on_by_default_and_read_from_the_file() {
+        assert!(AppSettings::default().agent_code_tools);
+        let (_dir, path) = tmp_config_path();
+        let mgr = ConfigManager::from_raw(
+            path,
+            "schemaVersion = 1\n\n[settings]\nenterToSend = false\n",
+        )
+        .unwrap();
+        assert!(mgr.effective().agent_code_tools);
+        let (_dir, path) = tmp_config_path();
+        let mgr = ConfigManager::from_raw(
+            path,
+            "schemaVersion = 1\n\n[settings]\nagentCodeTools = false\n",
+        )
+        .unwrap();
+        assert!(!mgr.effective().agent_code_tools);
+    }
+
     #[test]
     fn missing_keys_fall_back_to_defaults() {
         let (_dir, path) = tmp_config_path();
@@ -2689,6 +2730,7 @@ someFutureKey = \"left alone\"
             enter_to_send: Some(!defaults.enter_to_send),
             agent_ui_navigation: Some(!defaults.agent_ui_navigation),
             agent_org_access: Some(!defaults.agent_org_access),
+            agent_code_tools: Some(!defaults.agent_code_tools),
             terminal_notifications: Some(!defaults.terminal_notifications),
             terminal_notify_min_duration_ms: Some(defaults.terminal_notify_min_duration_ms + 1),
             terminal_notify_on_failure: Some(!defaults.terminal_notify_on_failure),
