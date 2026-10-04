@@ -7,6 +7,7 @@ fn rule(rel: &str, body: &str) -> Rule {
         rel_path: rel.to_string(),
         paths: Vec::new(),
         body: body.to_string(),
+        imported_by: None,
     }
 }
 
@@ -230,7 +231,7 @@ fn a_deleted_end_marker_leaves_agents_md_alone_on_every_sync() {
     let dir = project();
     let root = dir.path();
     fs::write(root.join("CLAUDE.md"), "rule v1\n").unwrap();
-    assert_eq!(sync(root).unwrap(), Outcome::Written);
+    assert_eq!(sync(root).unwrap(), Outcome::Created);
 
     let damaged = read(root, "AGENTS.md").replace(BLOCK_END, "") + "\nmy own paragraph\n";
     fs::write(root.join("AGENTS.md"), &damaged).unwrap();
@@ -239,7 +240,10 @@ fn a_deleted_end_marker_leaves_agents_md_alone_on_every_sync() {
         assert_eq!(sync(root).unwrap(), Outcome::Skipped(SkipReason::Markers));
         assert_eq!(read(root, "AGENTS.md"), damaged);
     }
-    assert_eq!(remove(root).unwrap(), Outcome::Skipped(SkipReason::Markers));
+    assert_eq!(
+        remove(root, false).unwrap(),
+        Outcome::Skipped(SkipReason::Markers)
+    );
     assert_eq!(read(root, "AGENTS.md"), damaged);
 }
 
@@ -286,7 +290,10 @@ fn a_symlinked_agents_md_is_not_replaced() {
         .file_type()
         .is_symlink());
     assert_eq!(read(root, "CLAUDE.md"), "rule\n");
-    assert_eq!(remove(root).unwrap(), Outcome::Skipped(SkipReason::Linked));
+    assert_eq!(
+        remove(root, false).unwrap(),
+        Outcome::Skipped(SkipReason::Linked)
+    );
 }
 
 #[test]
@@ -618,7 +625,7 @@ fn sync_creates_agents_md_and_then_leaves_it_alone() {
     fs::write(root.join(".claude/rules/sub/deep.md"), "deep rule\n").unwrap();
     fs::write(root.join(".claude/rules/notes.txt"), "not a rule").unwrap();
 
-    assert_eq!(sync(root).unwrap(), Outcome::Written);
+    assert_eq!(sync(root).unwrap(), Outcome::Created);
     let agents = read(root, "AGENTS.md");
     assert!(agents.contains("ask first"));
     assert!(agents.contains("## Mirrored from `.claude/rules/db.md`"));
@@ -667,9 +674,9 @@ fn remove_takes_the_block_out_and_restores_the_users_bytes() {
     fs::write(root.join("AGENTS.md"), user).unwrap();
     fs::write(root.join("CLAUDE.md"), "rule\n").unwrap();
     assert_eq!(sync(root).unwrap(), Outcome::Written);
-    assert_eq!(remove(root).unwrap(), Outcome::Removed);
+    assert_eq!(remove(root, false).unwrap(), Outcome::Removed);
     assert_eq!(read(root, "AGENTS.md"), user);
-    assert_eq!(remove(root).unwrap(), Outcome::NothingToMirror);
+    assert_eq!(remove(root, false).unwrap(), Outcome::NothingToMirror);
     assert_eq!(
         read(root, "AGENTS.md"),
         user,
@@ -678,14 +685,183 @@ fn remove_takes_the_block_out_and_restores_the_users_bytes() {
 }
 
 #[test]
-fn remove_deletes_an_agents_md_that_held_only_the_block() {
+fn remove_deletes_an_agents_md_only_when_atlas_created_it_and_it_is_empty() {
     let dir = project();
     let root = dir.path();
     fs::write(root.join("CLAUDE.md"), "rule\n").unwrap();
-    assert_eq!(sync(root).unwrap(), Outcome::Written);
-    assert_eq!(remove(root).unwrap(), Outcome::Removed);
+    assert_eq!(sync(root).unwrap(), Outcome::Created);
+    assert_eq!(remove(root, true).unwrap(), Outcome::Removed);
     assert!(!root.join("AGENTS.md").exists());
-    assert_eq!(remove(root).unwrap(), Outcome::NothingToMirror);
+    assert_eq!(remove(root, true).unwrap(), Outcome::NothingToMirror);
+}
+
+#[test]
+fn remove_keeps_an_emptied_agents_md_unless_told_atlas_created_it() {
+    let dir = project();
+    let root = dir.path();
+    // The user's own empty AGENTS.md: a sync writes into it, not creates it.
+    fs::write(root.join("AGENTS.md"), "").unwrap();
+    fs::write(root.join("CLAUDE.md"), "rule\n").unwrap();
+    assert_eq!(sync(root).unwrap(), Outcome::Written);
+    assert_eq!(remove(root, false).unwrap(), Outcome::Removed);
+    assert_eq!(read(root, "AGENTS.md"), "");
+}
+
+#[test]
+fn an_atlas_created_agents_md_the_user_wrote_into_is_kept() {
+    let dir = project();
+    let root = dir.path();
+    fs::write(root.join("CLAUDE.md"), "rule\n").unwrap();
+    assert_eq!(sync(root).unwrap(), Outcome::Created);
+    let with_block = read(root, "AGENTS.md");
+    fs::write(root.join("AGENTS.md"), format!("# Mine\n\n{with_block}")).unwrap();
+    assert_eq!(remove(root, true).unwrap(), Outcome::Removed);
+    assert_eq!(read(root, "AGENTS.md"), "# Mine\n");
+}
+
+#[test]
+fn a_sync_never_deletes_agents_md() {
+    let dir = project();
+    let root = dir.path();
+    fs::write(root.join("CLAUDE.md"), "rule\n").unwrap();
+    assert_eq!(sync(root).unwrap(), Outcome::Created);
+    fs::remove_file(root.join("CLAUDE.md")).unwrap();
+    assert_eq!(sync(root).unwrap(), Outcome::Removed);
+    assert_eq!(read(root, "AGENTS.md"), "");
+}
+
+// ── 8b. .claude/CLAUDE.md and imports ───────────────────────────────────────
+
+#[test]
+fn dot_claude_claude_md_is_mirrored_after_claude_md() {
+    let dir = project();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".claude/rules")).unwrap();
+    fs::write(root.join("CLAUDE.md"), "root rule\n").unwrap();
+    fs::write(root.join(".claude/CLAUDE.md"), "@AGENTS.md\ndot rule\n").unwrap();
+    fs::write(root.join(".claude/rules/a.md"), "a rule\n").unwrap();
+    sync(root).unwrap();
+    let agents = read(root, "AGENTS.md");
+    let at = |s: &str| agents.find(s).unwrap_or_else(|| panic!("{s} missing"));
+    assert!(at("root rule") < at("## Mirrored from `.claude/CLAUDE.md`"));
+    assert!(at("dot rule") < at("## Mirrored from `.claude/rules/a.md`"));
+    assert!(!agents.contains("@AGENTS.md"));
+}
+
+#[test]
+fn a_dot_claude_md_that_is_agents_md_is_left_alone() {
+    let dir = project();
+    let root = dir.path();
+    fs::create_dir_all(root.join(".claude")).unwrap();
+    fs::write(root.join("AGENTS.md"), "shared\n").unwrap();
+    if fs::hard_link(root.join("AGENTS.md"), root.join(".claude/CLAUDE.md")).is_err() {
+        return;
+    }
+    // The hard link itself already stops the write; either reason keeps it.
+    assert!(matches!(
+        sync(root).unwrap(),
+        Outcome::Skipped(SkipReason::Linked | SkipReason::SameFile)
+    ));
+    assert_eq!(read(root, "AGENTS.md"), "shared\n");
+}
+
+#[test]
+fn import_tokens_skip_code_and_mentions() {
+    let text = "See @docs/a.md and `@not/this.md`.\nmail me@example.com\n\
+                ```\n@fenced.md\n```\n~~~md\n@also/fenced.md\n~~~\n@b.md\n";
+    assert_eq!(import_tokens(text), vec!["docs/a.md", "b.md"]);
+}
+
+#[test]
+fn imports_are_mirrored_after_their_source_relative_to_it() {
+    let dir = project();
+    let root = dir.path();
+    fs::create_dir_all(root.join("docs/more")).unwrap();
+    fs::create_dir_all(root.join(".claude/rules")).unwrap();
+    fs::write(root.join("CLAUDE.md"), "Read @docs/style.md.\n").unwrap();
+    // Relative to the importing file, not the root.
+    fs::write(root.join("docs/style.md"), "style rule @more/deep.md\n").unwrap();
+    fs::write(root.join("docs/more/deep.md"), "deep rule\n").unwrap();
+    fs::write(
+        root.join(".claude/rules/r.md"),
+        "r rule @../../docs/style.md\n",
+    )
+    .unwrap();
+    sync(root).unwrap();
+    let agents = read(root, "AGENTS.md");
+    let at = |s: &str| agents.find(s).unwrap_or_else(|| panic!("{s} missing"));
+    assert!(
+        agents.contains("Read @docs/style.md."),
+        "the import line is kept"
+    );
+    assert!(at("## Mirrored from `docs/style.md` (imported by `CLAUDE.md`)") < at("style rule"));
+    assert!(
+        at("## Mirrored from `docs/more/deep.md` (imported by `docs/style.md`)")
+            < at("## Mirrored from `.claude/rules/r.md`")
+    );
+    assert_eq!(agents.matches("style rule").count(), 1, "each file once");
+
+    let canon = fs::canonicalize(root).unwrap();
+    assert_eq!(
+        imported_files(root),
+        vec![canon.join("docs/style.md"), canon.join("docs/more/deep.md")]
+    );
+}
+
+#[test]
+fn imports_stop_at_the_depth_limit_and_survive_cycles() {
+    let dir = project();
+    let root = dir.path();
+    fs::write(root.join("CLAUDE.md"), "@f1.md\n").unwrap();
+    for i in 1..=7 {
+        fs::write(
+            root.join(format!("f{i}.md")),
+            format!("file {i} @f{}.md\n", i + 1),
+        )
+        .unwrap();
+    }
+    fs::write(root.join("f8.md"), "file 8 @f1.md @CLAUDE.md\n").unwrap();
+    sync(root).unwrap();
+    let agents = read(root, "AGENTS.md");
+    for i in 1..=MAX_IMPORT_DEPTH {
+        assert!(agents.contains(&format!("file {i} ")), "hop {i}");
+    }
+    assert!(!agents.contains(&format!("file {} ", MAX_IMPORT_DEPTH + 1)));
+}
+
+#[test]
+fn files_outside_the_project_are_never_imported() {
+    let outer = project();
+    let root = outer.path().join("repo");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(outer.path().join("secret.md"), "personal note\n").unwrap();
+    fs::write(
+        root.join("CLAUDE.md"),
+        "@../secret.md @~/.claude/notes.md @AGENTS.md @./AGENTS.md\nrule\n",
+    )
+    .unwrap();
+    fs::write(root.join("AGENTS.md"), "mine\n").unwrap();
+    assert_eq!(sync(&root).unwrap(), Outcome::Written);
+    let agents = read(&root, "AGENTS.md");
+    assert!(!agents.contains("personal note"));
+    assert!(
+        agents.contains("@../secret.md"),
+        "the import line is kept as written"
+    );
+    assert_eq!(agents.matches("## Mirrored from").count(), 1);
+    assert!(imported_files(&root).is_empty());
+}
+
+#[test]
+fn an_imported_file_with_a_marker_is_not_mirrored() {
+    let dir = project();
+    let root = dir.path();
+    fs::write(root.join("CLAUDE.md"), "@doc.md\n").unwrap();
+    fs::write(root.join("doc.md"), format!("{BLOCK_START}\n")).unwrap();
+    assert_eq!(
+        sync(root).unwrap(),
+        Outcome::Skipped(SkipReason::SourceHasMarker)
+    );
 }
 
 // ── 9. pack rules ───────────────────────────────────────────────────────────
@@ -766,6 +942,7 @@ fn source_paths_are_the_ones_sync_reads() {
     let root = Path::new("/p");
     assert!(is_source_path(root, Path::new("/p/CLAUDE.md")));
     assert!(is_source_path(root, Path::new("/p/claude.md")));
+    assert!(is_source_path(root, Path::new("/p/.claude/CLAUDE.md")));
     assert!(is_source_path(root, Path::new("/p/.claude/rules/a.md")));
     assert!(is_source_path(root, Path::new("/p/.claude/rules/sub/B.MD")));
     assert!(is_source_path(

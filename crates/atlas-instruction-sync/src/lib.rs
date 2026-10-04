@@ -11,10 +11,18 @@
 //! # The shape
 //!
 //! One block in `AGENTS.md`, between [`BLOCK_START`] and [`BLOCK_END`], holds
-//! `CLAUDE.md` followed by each rule file, rewritten from those sources on
+//! `CLAUDE.md`, `.claude/CLAUDE.md` and each rule file, every one followed by
+//! the project files it imports (`@path`), rewritten from those sources on
 //! every sync, for any agent that reads `AGENTS.md`. Nothing here is keyed on
 //! an agent. The sources stay the single place a rule is edited; the block
 //! says so.
+//!
+//! An import is resolved the way Claude Code resolves it: relative to the
+//! importing file, never inside a code span or fence, at most
+//! [`MAX_IMPORT_DEPTH`] hops deep. A file outside the project (`~/…`, or a
+//! path that leaves the root) is never copied in, since `AGENTS.md` is
+//! usually committed and that file usually is not; its import line is kept
+//! as written. Each file appears once, at its first import.
 //!
 //! Four things are deliberately left out of the block:
 //! - an `@AGENTS.md` import line in `CLAUDE.md`, which inside `AGENTS.md`
@@ -42,7 +50,11 @@
 //! - a write lands through a uniquely named temp file carrying the original
 //!   permissions, renamed over the target only if the target still holds what
 //!   was read ([`SkipReason::ChangedDuringSync`]), and one sync per project
-//!   runs at a time.
+//!   runs at a time. The re-read and the rename are two calls, so a save that
+//!   lands in the instant between them is still replaced; no portable
+//!   primitive closes that gap;
+//! - `AGENTS.md` is never deleted, except by [`remove`] when the caller says
+//!   Atlas created it ([`Outcome::Created`]) and nothing else was added.
 //!
 //! Pure string functions do the splicing ([`render`], [`upsert_block`],
 //! [`remove_block`]); [`sync`] and [`remove`] are the only ones that touch the
@@ -70,14 +82,20 @@ pub const BLOCK_END: &str = "<!-- atlas:mirrored-instructions END -->";
 /// a marker is a near miss: an edited, re-spaced or re-indented marker.
 const MARKER_TAG: &str = "atlas:mirrored-instructions";
 
-const NOTICE: &str = "<!-- Mirrored by Atlas from CLAUDE.md and .claude/rules/ for agents that \
-read AGENTS.md. Edit those files; this block is rewritten whenever they change. -->";
+const NOTICE: &str = "<!-- Mirrored by Atlas from CLAUDE.md, .claude/ and the files they import, \
+for agents that read AGENTS.md. Edit those files; this block is rewritten whenever they change. -->";
 
 const AGENTS_MD: &str = "AGENTS.md";
 const CLAUDE_MD: &str = "CLAUDE.md";
+/// `CLAUDE.md` inside `.claude/`, which Claude Code also reads.
+const DOT_CLAUDE_MD: &str = ".claude/CLAUDE.md";
+
+/// How many hops of `@path` imports are followed, as in Claude Code.
+pub const MAX_IMPORT_DEPTH: usize = 5;
 const BOM: &str = "\u{feff}";
 
-/// One `.claude/rules` file, frontmatter parsed off.
+/// One mirrored file after `CLAUDE.md`: `.claude/CLAUDE.md`, a `.claude/rules`
+/// file (frontmatter parsed off), or a file one of those imports.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rule {
     /// Path relative to the project root, with `/` separators.
@@ -86,6 +104,9 @@ pub struct Rule {
     pub paths: Vec<String>,
     /// The file without its frontmatter.
     pub body: String,
+    /// For a file mirrored because a source imports it (`@path`): that
+    /// source's path, relative to the root.
+    pub imported_by: Option<String>,
 }
 
 /// Why a sync left `AGENTS.md` alone.
@@ -138,8 +159,11 @@ impl fmt::Display for SkipReason {
 /// What [`sync`] or [`remove`] did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
-    /// The block was written (created or replaced).
+    /// The block was written into an existing `AGENTS.md`.
     Written,
+    /// `AGENTS.md` did not exist and was created holding the block. A caller
+    /// that remembers this can let [`remove`] delete the file again.
+    Created,
     /// The block was removed (nothing left to mirror, or [`remove`]).
     Removed,
     /// `AGENTS.md` already said exactly this; nothing was written.
@@ -175,6 +199,7 @@ pub fn parse_rule(rel_path: &str, raw: &str) -> Rule {
         rel_path: rel_path.to_string(),
         paths,
         body: body.trim_matches('\n').to_string(),
+        imported_by: None,
     }
 }
 
@@ -215,12 +240,7 @@ fn unquote(s: &str) -> String {
 /// to mirror. Line endings are `\n`; [`upsert_block`] adapts them to the file.
 pub fn render(claude_md: Option<&str>, rules: &[Rule]) -> Option<String> {
     let claude_md = claude_md
-        .map(normalize)
-        .map(|s| {
-            let s = s.trim_start_matches(BOM);
-            let kept: Vec<&str> = s.split('\n').filter(|l| !is_agents_md_import(l)).collect();
-            kept.join("\n").trim_matches('\n').to_string()
-        })
+        .map(claude_md_body)
         .filter(|s| !s.trim().is_empty());
     let rules: Vec<&Rule> = rules.iter().filter(|r| !r.body.trim().is_empty()).collect();
     if claude_md.is_none() && rules.is_empty() {
@@ -234,7 +254,13 @@ pub fn render(claude_md: Option<&str>, rules: &[Rule]) -> Option<String> {
         out.push('\n');
     }
     for rule in rules {
-        out.push_str(&format!("\n## Mirrored from `{}`\n\n", rule.rel_path));
+        match &rule.imported_by {
+            Some(by) => out.push_str(&format!(
+                "\n## Mirrored from `{}` (imported by `{by}`)\n\n",
+                rule.rel_path
+            )),
+            None => out.push_str(&format!("\n## Mirrored from `{}`\n\n", rule.rel_path)),
+        }
         if !rule.paths.is_empty() {
             let globs: Vec<String> = rule.paths.iter().map(|p| format!("`{p}`")).collect();
             out.push_str(&format!(
@@ -246,6 +272,202 @@ pub fn render(claude_md: Option<&str>, rules: &[Rule]) -> Option<String> {
         out.push('\n');
     }
     Some(out)
+}
+
+/// A `CLAUDE.md` as mirrored: `\n` line endings, no BOM, and no
+/// `@AGENTS.md` import line, which inside `AGENTS.md` would point the file at
+/// itself.
+fn claude_md_body(text: &str) -> String {
+    let text = normalize(text);
+    let kept: Vec<&str> = text
+        .trim_start_matches(BOM)
+        .split('\n')
+        .filter(|l| !is_agents_md_import(l))
+        .collect();
+    kept.join("\n").trim_matches('\n').to_string()
+}
+
+// ── Imports ─────────────────────────────────────────────────────────────────
+
+/// The `@path` tokens in `text` that Claude Code would treat as imports: a
+/// whitespace-separated word starting with `@`, outside code spans and fenced
+/// code blocks.
+pub fn import_tokens(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut fence: Option<&str> = None;
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        let opener = ["```", "~~~"].into_iter().find(|f| trimmed.starts_with(f));
+        match (fence, opener) {
+            (None, Some(f)) => {
+                fence = Some(f);
+                continue;
+            }
+            (Some(open), Some(f)) if open == f => {
+                fence = None;
+                continue;
+            }
+            (Some(_), _) => continue,
+            (None, None) => {}
+        }
+        // Blank out inline code spans.
+        let mut plain = String::with_capacity(line.len());
+        let mut in_code = false;
+        for ch in line.chars() {
+            if ch == '`' {
+                in_code = !in_code;
+                plain.push(' ');
+            } else {
+                plain.push(if in_code { ' ' } else { ch });
+            }
+        }
+        for word in plain.split_whitespace() {
+            if let Some(path) = word.strip_prefix('@').filter(|p| !p.is_empty()) {
+                out.push(path.to_string());
+            }
+        }
+    }
+    out
+}
+
+/// The file `token` imports from a file in `from_dir`, canonical, when it is
+/// a file inside `root` (canonical). A token that names nothing is not an
+/// import (an `@mention`, say); one ending in punctuation is retried without
+/// it, for "see @docs/x.md.".
+fn resolve_import(root: &Path, from_dir: &Path, token: &str) -> Option<PathBuf> {
+    if token.starts_with('~') {
+        return None;
+    }
+    let candidates = [
+        token,
+        token.trim_end_matches(['.', ',', ';', ':', '!', '?', ')']),
+    ];
+    candidates.into_iter().find_map(|t| {
+        let path = from_dir.join(t);
+        let canon = fs::canonicalize(path).ok()?;
+        (canon.starts_with(root) && canon.is_file()).then_some(canon)
+    })
+}
+
+/// One mirrored source, before its imports are followed.
+struct Source {
+    rule: Rule,
+    /// Canonical path of the file, when it is on disk.
+    path: Option<PathBuf>,
+}
+
+/// `sources` in order, each followed by the files it imports, depth first,
+/// [`MAX_IMPORT_DEPTH`] hops at most. A file is mirrored once, at its first
+/// import, and never when it is itself a source or in `exclude` (`AGENTS.md`).
+fn with_imports(root: &Path, sources: Vec<Source>, exclude: &[PathBuf]) -> Vec<Rule> {
+    let Ok(root) = fs::canonicalize(root) else {
+        return sources.into_iter().map(|s| s.rule).collect();
+    };
+    let mut seen: Vec<PathBuf> = exclude.to_vec();
+    seen.extend(sources.iter().filter_map(|s| s.path.clone()));
+    let mut out = Vec::new();
+    for source in sources {
+        let from = source.path.clone();
+        let text = source.rule.body.clone();
+        let by = source.rule.rel_path.clone();
+        out.push(source.rule);
+        if let Some(from) = from {
+            follow_imports(&root, &from, &text, &by, 1, &mut seen, &mut out);
+        }
+    }
+    out
+}
+
+fn follow_imports(
+    root: &Path,
+    from: &Path,
+    text: &str,
+    by: &str,
+    depth: usize,
+    seen: &mut Vec<PathBuf>,
+    out: &mut Vec<Rule>,
+) {
+    if depth > MAX_IMPORT_DEPTH {
+        return;
+    }
+    let dir = from.parent().unwrap_or(root);
+    for token in import_tokens(text) {
+        let Some(path) = resolve_import(root, dir, &token) else {
+            continue;
+        };
+        if seen.contains(&path) {
+            continue;
+        }
+        seen.push(path.clone());
+        let (Some(rel), Ok(raw)) = (rel_path(root, &path), fs::read_to_string(&path)) else {
+            continue;
+        };
+        let body = normalize(&raw)
+            .trim_start_matches(BOM)
+            .trim_matches('\n')
+            .to_string();
+        out.push(Rule {
+            rel_path: rel.clone(),
+            paths: Vec::new(),
+            body: body.clone(),
+            imported_by: Some(by.to_string()),
+        });
+        follow_imports(root, &path, &body, &rel, depth + 1, seen, out);
+    }
+}
+
+/// Every file a sync of `root` would mirror because a source imports it,
+/// canonical. A watcher watches these too, so editing an imported file
+/// updates the block.
+pub fn imported_files(root: &Path) -> Vec<PathBuf> {
+    let Ok(canon) = fs::canonicalize(root) else {
+        return Vec::new();
+    };
+    collect_sources(root, &[])
+        .into_iter()
+        .filter(|r| r.imported_by.is_some())
+        .map(|r| canon.join(&r.rel_path))
+        .collect()
+}
+
+/// `CLAUDE.md`'s text, `.claude/CLAUDE.md` and the rules (minus `skip`), each
+/// followed by what it imports. `CLAUDE.md` comes back separately, since
+/// [`render`] heads the block with it.
+fn read_sources(root: &Path, skip: &[String]) -> io::Result<(Option<String>, Vec<Rule>)> {
+    let claude_md = match fs::read_to_string(root.join(CLAUDE_MD)) {
+        Ok(text) => Some(text),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+        Err(e) => return Err(e),
+    };
+    let mut rules = collect_sources(root, skip);
+    // `CLAUDE.md` is rendered from its own text; the list keeps only what it
+    // imports.
+    rules.retain(|r| r.rel_path != CLAUDE_MD || r.imported_by.is_some());
+    Ok((claude_md, rules))
+}
+
+fn collect_sources(root: &Path, skip: &[String]) -> Vec<Rule> {
+    let canonical = |rel: &str| fs::canonicalize(root.join(rel)).ok();
+    let mut sources = Vec::new();
+    for rel in [CLAUDE_MD, DOT_CLAUDE_MD] {
+        if let Ok(text) = fs::read_to_string(root.join(rel)) {
+            sources.push(Source {
+                rule: Rule {
+                    rel_path: rel.to_string(),
+                    paths: Vec::new(),
+                    body: claude_md_body(&text),
+                    imported_by: None,
+                },
+                path: canonical(rel),
+            });
+        }
+    }
+    for rule in read_rules(root, skip) {
+        let path = canonical(&rule.rel_path);
+        sources.push(Source { rule, path });
+    }
+    let exclude: Vec<PathBuf> = canonical(AGENTS_MD).into_iter().collect();
+    with_imports(root, sources, &exclude)
 }
 
 // ── Markers ─────────────────────────────────────────────────────────────────
@@ -652,8 +874,8 @@ fn is_symlink(path: &Path) -> bool {
 }
 
 /// Whether `a` and `b` name one existing file: the same canonical path (a
-/// symlink, or a differently spelled path), or on Unix the same inode (a hard
-/// link).
+/// symlink, or a differently spelled path), or the same file identity (a hard
+/// link): the inode on Unix, the volume and file index on Windows.
 pub fn same_file(a: &Path, b: &Path) -> bool {
     if let (Ok(ca), Ok(cb)) = (fs::canonicalize(a), fs::canonicalize(b)) {
         if ca == cb {
@@ -667,21 +889,69 @@ pub fn same_file(a: &Path, b: &Path) -> bool {
             return ma.dev() == mb.dev() && ma.ino() == mb.ino();
         }
     }
+    #[cfg(windows)]
+    {
+        if let (Some(ia), Some(ib)) = (windows::file_info(a), windows::file_info(b)) {
+            return ia.id == ib.id;
+        }
+    }
     false
 }
 
-/// Whether renaming over `path` would cut a hard link to it. Unix only: the
-/// link count is not on stable Rust for Windows.
+/// Whether renaming over `path` would cut a hard link to it.
 fn is_hard_linked(path: &Path) -> bool {
+    if !fs::symlink_metadata(path).is_ok_and(|m| m.is_file()) {
+        return false;
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        fs::symlink_metadata(path).is_ok_and(|m| m.is_file() && m.nlink() > 1)
+        fs::symlink_metadata(path).is_ok_and(|m| m.nlink() > 1)
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        let _ = path;
+        windows::file_info(path).is_some_and(|info| info.links > 1)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
         false
+    }
+}
+
+/// The link count and file identity are not on stable Rust for Windows
+/// (`windows_by_handle`), so they come from `GetFileInformationByHandle`.
+#[cfg(windows)]
+mod windows {
+    use std::fs::File;
+    use std::os::windows::io::AsRawHandle;
+    use std::path::Path;
+
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+    };
+
+    pub(super) struct FileInfo {
+        /// Volume serial number and 64-bit file index: one per file, shared by
+        /// its hard links.
+        pub id: (u32, u64),
+        pub links: u32,
+    }
+
+    pub(super) fn file_info(path: &Path) -> Option<FileInfo> {
+        let file = File::open(path).ok()?;
+        // SAFETY: an all-zero BY_HANDLE_FILE_INFORMATION is a valid value of
+        // a plain C struct; the call fills it in.
+        let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+        // SAFETY: the handle is open for the duration of the call (`file` is
+        // alive) and `info` is a valid, writable out-pointer.
+        let ok = unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, &mut info) };
+        (ok != 0).then(|| FileInfo {
+            id: (
+                info.dwVolumeSerialNumber,
+                (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
+            ),
+            links: info.nNumberOfLinks,
+        })
     }
 }
 
@@ -717,13 +987,14 @@ fn temp_path(path: &Path) -> PathBuf {
 }
 
 /// Replace `path` with `next`, but only if it still holds `original` (`None`:
-/// is still absent). An empty `next` deletes the file, which held only the
-/// block. `before_commit` runs between the temp write and the re-check; tests
-/// use it to stand in for an editor saving at the worst moment.
+/// is still absent). With `delete`, the file is deleted instead (it is empty
+/// and Atlas created it). `before_commit` runs between the temp write and the
+/// re-check; tests use it to stand in for an editor saving at the worst moment.
 fn commit(
     path: &Path,
     original: Option<&[u8]>,
     next: &str,
+    delete: bool,
     before_commit: &mut dyn FnMut(),
 ) -> io::Result<Option<SkipReason>> {
     let perms = match fs::metadata(path) {
@@ -734,7 +1005,7 @@ fn commit(
     };
     let still_as_read =
         || -> io::Result<bool> { Ok(read_opt(path)?.as_deref() == original && !is_symlink(path)) };
-    if next.is_empty() {
+    if delete {
         before_commit();
         if !still_as_read()? {
             return Ok(Some(SkipReason::ChangedDuringSync));
@@ -772,22 +1043,26 @@ fn commit(
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
     Mirror,
-    Remove,
+    /// Take the block out; `true`: delete the file if that leaves it empty.
+    Remove(bool),
 }
 
-/// Bring `<root>/AGENTS.md`'s managed block in line with `CLAUDE.md` and
-/// `.claude/rules/`. Writes only when the content changes, never creates an
-/// `AGENTS.md` just to hold nothing, and leaves the file alone (saying why)
-/// whenever it cannot keep every byte outside the block as it was.
+/// Bring `<root>/AGENTS.md`'s managed block in line with `CLAUDE.md`,
+/// `.claude/CLAUDE.md`, `.claude/rules/` and what they import. Writes only
+/// when the content changes, never creates an `AGENTS.md` just to hold
+/// nothing, never deletes one, and leaves the file alone (saying why) whenever
+/// it cannot keep every byte outside the block as it was.
 pub fn sync(root: &Path) -> io::Result<Outcome> {
     run(root, Mode::Mirror, &mut || {})
 }
 
 /// Take the managed block back out of `<root>/AGENTS.md` (the setting was
-/// switched off), under the same checks as [`sync`]. A file left empty, which
-/// held only the block, is deleted.
-pub fn remove(root: &Path) -> io::Result<Outcome> {
-    run(root, Mode::Remove, &mut || {})
+/// switched off), under the same checks as [`sync`]. The file is kept, even
+/// when that leaves it empty, unless `delete_if_emptied`: pass that only for a
+/// file a sync reported as [`Outcome::Created`], so an empty `AGENTS.md` the
+/// user made is never deleted.
+pub fn remove(root: &Path, delete_if_emptied: bool) -> io::Result<Outcome> {
+    run(root, Mode::Remove(delete_if_emptied), &mut || {})
 }
 
 fn run(root: &Path, mode: Mode, before_commit: &mut dyn FnMut()) -> io::Result<Outcome> {
@@ -810,7 +1085,7 @@ fn run(root: &Path, mode: Mode, before_commit: &mut dyn FnMut()) -> io::Result<O
     };
 
     let inner = match mode {
-        Mode::Remove => None,
+        Mode::Remove(_) => None,
         Mode::Mirror => {
             if is_symlink(&claude_path) {
                 return skipped(SkipReason::Linked);
@@ -818,14 +1093,13 @@ fn run(root: &Path, mode: Mode, before_commit: &mut dyn FnMut()) -> io::Result<O
             if existing.is_some() && same_file(&agents_path, &claude_path) {
                 return skipped(SkipReason::SameFile);
             }
-            let claude_md = match fs::read_to_string(&claude_path) {
-                Ok(text) => Some(text),
-                Err(e) if e.kind() == io::ErrorKind::NotFound => None,
-                Err(e) => return Err(e),
-            };
-            // A hard link reads the same through both names, and on Windows
-            // there is no stable way to ask; a byte-identical copy needs no
-            // mirror either.
+            if existing.is_some() && same_file(&agents_path, &root.join(DOT_CLAUDE_MD)) {
+                return skipped(SkipReason::SameFile);
+            }
+            let skip = pack_rules_in_agents_md(root, existing.unwrap_or(""));
+            let (claude_md, rules) = read_sources(root, &skip)?;
+            // A byte-identical copy needs no mirror either, and catches a hard
+            // link whose identity could not be read.
             if existing.is_some_and(|text| !text.trim().is_empty())
                 && existing == claude_md.as_deref()
             {
@@ -834,8 +1108,6 @@ fn run(root: &Path, mode: Mode, before_commit: &mut dyn FnMut()) -> io::Result<O
             if claude_md.as_deref().is_some_and(only_imports_agents_md) {
                 return skipped(SkipReason::ImportsAgentsMd);
             }
-            let skip = pack_rules_in_agents_md(root, existing.unwrap_or(""));
-            let rules = read_rules(root, &skip);
             if claude_md.as_deref().is_some_and(has_marker_line)
                 || rules.iter().any(|r| has_marker_line(&r.body))
             {
@@ -847,6 +1119,7 @@ fn run(root: &Path, mode: Mode, before_commit: &mut dyn FnMut()) -> io::Result<O
 
     let (next, outcome) = match (inner, existing) {
         (Some(inner), text) => match upsert_block(text.unwrap_or(""), &inner) {
+            Ok(next) if text.is_none() => (next, Outcome::Created),
             Ok(next) => (next, Outcome::Written),
             Err(reason) => return skipped(reason),
         },
@@ -860,7 +1133,14 @@ fn run(root: &Path, mode: Mode, before_commit: &mut dyn FnMut()) -> io::Result<O
     if existing == Some(next.as_str()) {
         return Ok(Outcome::Unchanged);
     }
-    match commit(&agents_path, original.as_deref(), &next, before_commit)? {
+    let delete = next.is_empty() && matches!(mode, Mode::Remove(true));
+    match commit(
+        &agents_path,
+        original.as_deref(),
+        &next,
+        delete,
+        before_commit,
+    )? {
         Some(reason) => skipped(reason),
         None => Ok(outcome),
     }
@@ -876,6 +1156,7 @@ pub fn is_source_path(root: &Path, path: &Path) -> bool {
     // Any case: on a case-insensitive disk `claude.md` is what `sync` reads
     // as `CLAUDE.md`, and the watcher reports the name as it is on disk.
     rel.eq_ignore_ascii_case(CLAUDE_MD)
+        || rel.eq_ignore_ascii_case(DOT_CLAUDE_MD)
         || rel == ".atlas/packs/.pack-projections.json"
         || (rel.starts_with(".claude/rules/") && rel.to_ascii_lowercase().ends_with(".md"))
 }

@@ -12,6 +12,11 @@ name = "atlas_instruction_sync"
 # as its own block is not mirrored a second time.
 serde_json = { workspace = true }
 
+# The link count and file identity on Windows (hard-link detection), which
+# stable std does not expose there. Already in the tree via the engine.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+
 [dev-dependencies]
 tempfile = { workspace = true }
 

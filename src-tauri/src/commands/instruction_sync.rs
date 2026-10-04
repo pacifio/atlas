@@ -1,5 +1,5 @@
-//! Mirrors a project's convention files (`CLAUDE.md`, `.claude/rules/`) into
-//! its `AGENTS.md`, for any agent that reads it, while the `instructionSync`
+//! Mirrors a project's convention files (`CLAUDE.md`, `.claude/CLAUDE.md`,
+//! `.claude/rules/`, and the project files they import) into its `AGENTS.md`, for any agent that reads it, while the `instructionSync`
 //! setting is on.
 //!
 //! The mirroring itself (what the managed block holds, how it is spliced into
@@ -15,14 +15,18 @@
 //!   `.claude/rules` recursively and `.atlas/packs` (the pack ledger)
 //!   non-recursively, never all of `.claude/`, which can hold whole checkouts
 //!   under `.claude/worktrees/`. A directory that appears later is armed when
-//!   its parent's watcher sees it, or on the next activation;
+//!   its parent's watcher sees it, or on the next activation. After each sync
+//!   it also watches the directory of every file a source imports (`@path`),
+//!   non-recursively, so editing an imported file updates the block;
 //! - when the setting is switched on: the active project of each window is
 //!   synced and watched, and no other open project is touched;
 //! - when the setting is switched off: every watcher stops, and the block is
 //!   taken back out of every project a sync ever wrote it into, open or not,
 //!   under the same checks as a sync. Those roots are kept in
 //!   `instruction-sync.json` in the app config directory, so a project closed
-//!   (or not reopened since a restart) is cleaned up too.
+//!   (or not reopened since a restart) is cleaned up too. The ledger also
+//!   records whether a sync created the `AGENTS.md`: only then is a file left
+//!   empty by the removal deleted, so an `AGENTS.md` the user made is kept.
 //!
 //! Every sync and removal runs under one gate that also holds the setting, so
 //! a sync that was already queued when the setting went off never writes the
@@ -35,6 +39,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use atlas_instruction_sync::{Outcome, SkipReason};
@@ -51,6 +56,11 @@ struct ProjectWatch {
     debouncer: Debouncer,
     /// The `watch_targets` directories currently watched.
     armed: HashSet<PathBuf>,
+    /// The files the sources import, as of the last sync, shared with the
+    /// watcher's callback so an edit to one counts as a source change.
+    imports: Arc<Mutex<HashSet<PathBuf>>>,
+    /// Directories watched only because an imported file is in one.
+    import_dirs: HashSet<PathBuf>,
 }
 
 impl ProjectWatch {
@@ -82,6 +92,36 @@ impl ProjectWatch {
                 ),
             }
         }
+    }
+
+    /// Follow the files the sources now import: watch each one's directory
+    /// (unless a target already covers it) and drop the directories no
+    /// longer needed.
+    fn set_imports(&mut self, files: Vec<PathBuf>) {
+        let rules = self.root.join(".claude").join("rules");
+        let dirs: HashSet<PathBuf> = files
+            .iter()
+            .filter_map(|f| f.parent().map(Path::to_path_buf))
+            .filter(|d| !self.armed.contains(d) && !d.starts_with(&rules))
+            .collect();
+        for gone in self.import_dirs.difference(&dirs) {
+            let _ = self.debouncer.unwatch(gone);
+        }
+        self.import_dirs.retain(|d| dirs.contains(d));
+        for dir in dirs {
+            if self.import_dirs.contains(&dir) {
+                continue;
+            }
+            match self.debouncer.watch(&dir, RecursiveMode::NonRecursive) {
+                Ok(()) => {
+                    self.import_dirs.insert(dir);
+                }
+                Err(e) => {
+                    tracing::warn!("instruction sync: failed to watch {}: {e}", dir.display())
+                }
+            }
+        }
+        *self.imports.lock() = files.into_iter().collect();
     }
 }
 
@@ -149,7 +189,7 @@ impl InstructionSyncState {
         } else {
             // `enabled` is already off, so no watcher is added after this drain.
             self.watchers.lock().clear();
-            let mut roots = read_ledger(app);
+            let mut roots: Vec<PathBuf> = read_ledger(app).into_iter().map(|e| e.root).collect();
             for project in self.active.lock().values() {
                 if !roots.contains(&project.root) {
                     roots.push(project.root.clone());
@@ -177,11 +217,17 @@ impl InstructionSyncState {
                 return None;
             }
             let result = atlas_instruction_sync::sync(root);
-            if let Ok(Outcome::Written | Outcome::Unchanged) = result {
-                update_ledger(app, root, true);
+            match result {
+                Ok(Outcome::Created) => update_ledger(app, root, Some(true)),
+                Ok(Outcome::Written | Outcome::Unchanged) => update_ledger(app, root, Some(false)),
+                _ => {}
             }
             Some(result)
         });
+        let imports = atlas_instruction_sync::imported_files(root);
+        if let Some(watch) = self.watchers.lock().values_mut().find(|w| w.root == root) {
+            watch.set_imports(imports);
+        }
     }
 
     /// Take the block back out of `root` while the setting is off, retrying
@@ -192,9 +238,10 @@ impl InstructionSyncState {
             if self.is_enabled() {
                 return None;
             }
-            let result = atlas_instruction_sync::remove(root);
+            let created = read_ledger(app).iter().any(|e| e.root == root && e.created);
+            let result = atlas_instruction_sync::remove(root, created);
             if let Ok(Outcome::Removed | Outcome::NothingToMirror) = result {
-                update_ledger(app, root, false);
+                update_ledger(app, root, None);
             }
             Some(result)
         });
@@ -235,12 +282,20 @@ impl InstructionSyncState {
                 return;
             }
         }
-        match new_watcher(app.clone(), key.to_string(), root.to_path_buf()) {
+        let imports = Arc::new(Mutex::new(HashSet::new()));
+        match new_watcher(
+            app.clone(),
+            key.to_string(),
+            root.to_path_buf(),
+            imports.clone(),
+        ) {
             Ok(debouncer) => {
                 let mut watch = ProjectWatch {
                     root: root.to_path_buf(),
                     debouncer,
                     armed: HashSet::new(),
+                    imports,
+                    import_dirs: HashSet::new(),
                 };
                 watch.arm(false);
                 watchers.insert(key.to_string(), watch);
@@ -264,7 +319,12 @@ impl InstructionSyncState {
     }
 }
 
-fn new_watcher(app: AppHandle, key: String, root: PathBuf) -> Result<Debouncer, String> {
+fn new_watcher(
+    app: AppHandle,
+    key: String,
+    root: PathBuf,
+    imports: Arc<Mutex<HashSet<PathBuf>>>,
+) -> Result<Debouncer, String> {
     // `NoCache`, as in `fileindex`: the platform cache `stat`s every event
     // path to correlate renames, which buys nothing here.
     new_debouncer_opt::<_, notify::RecommendedWatcher, NoCache>(
@@ -273,7 +333,9 @@ fn new_watcher(app: AppHandle, key: String, root: PathBuf) -> Result<Debouncer, 
         move |result: notify_debouncer_full::DebounceEventResult| match result {
             Ok(events) => {
                 let paths = || events.iter().flat_map(|e| e.paths.iter());
-                let touched = paths().any(|p| atlas_instruction_sync::is_source_path(&root, p));
+                let touched = paths().any(|p| {
+                    atlas_instruction_sync::is_source_path(&root, p) || imports.lock().contains(p)
+                });
                 let dirs = paths().any(|p| atlas_instruction_sync::is_watch_dir_path(&root, p));
                 if !(touched || dirs) {
                     return;
@@ -308,9 +370,19 @@ fn new_watcher(app: AppHandle, key: String, root: PathBuf) -> Result<Debouncer, 
 // ── Ledger ──────────────────────────────────────────────────────────────────
 //
 // The roots a sync has written the block into, so switching the setting off
-// reaches projects that are no longer open. Machine-managed state, so it sits
-// in the app config directory beside `device.json`, not in `~/.config/atlas`.
-// Read and written only under the gate.
+// reaches projects that are no longer open, and whether a sync created that
+// `AGENTS.md`. Machine-managed state, so it sits in the app config directory
+// beside `device.json`, not in `~/.config/atlas`. Read and written only under
+// the gate.
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct LedgerEntry {
+    root: PathBuf,
+    /// A sync created this `AGENTS.md`, so removing the block may delete it
+    /// when nothing else is left in it.
+    #[serde(default)]
+    created: bool,
+}
 
 fn ledger_path(app: &AppHandle) -> Option<PathBuf> {
     app.path()
@@ -319,28 +391,33 @@ fn ledger_path(app: &AppHandle) -> Option<PathBuf> {
         .map(|d| d.join("instruction-sync.json"))
 }
 
-fn read_ledger(app: &AppHandle) -> Vec<PathBuf> {
+fn read_ledger(app: &AppHandle) -> Vec<LedgerEntry> {
     ledger_path(app)
         .and_then(|p| std::fs::read_to_string(p).ok())
         .and_then(|raw| serde_json::from_str(&raw).ok())
         .unwrap_or_default()
 }
 
-/// Record (`synced`) or forget `root`. A failed write is logged and otherwise
-/// ignored: the ledger only widens what switching off cleans up.
-fn update_ledger(app: &AppHandle, root: &Path, synced: bool) {
+/// Record `root` (`Some(created)`: whether this sync created its
+/// `AGENTS.md`; once true it stays true) or forget it (`None`). A failed
+/// write is logged and otherwise ignored: the ledger only widens what
+/// switching off cleans up.
+fn update_ledger(app: &AppHandle, root: &Path, synced: Option<bool>) {
     let Some(path) = ledger_path(app) else {
         return;
     };
     let mut roots = read_ledger(app);
-    let present = roots.iter().any(|r| r == root);
-    if synced == present {
-        return;
-    }
-    if synced {
-        roots.push(root.to_path_buf());
-    } else {
-        roots.retain(|r| r != root);
+    let at = roots.iter().position(|e| e.root == root);
+    match (synced, at) {
+        (Some(created), Some(i)) if created && !roots[i].created => roots[i].created = true,
+        (Some(created), None) => roots.push(LedgerEntry {
+            root: root.to_path_buf(),
+            created,
+        }),
+        (None, Some(i)) => {
+            roots.remove(i);
+        }
+        _ => return,
     }
     let written = path
         .parent()
@@ -355,15 +432,20 @@ fn update_ledger(app: &AppHandle, root: &Path, synced: bool) {
 }
 
 /// A common default size past which an agent stops reading `AGENTS.md`
-/// (`project_doc_max_bytes` in the bundled engine). The block is at the end of the file, so it is
-/// what gets cut.
+/// (`project_doc_max_bytes` in the bundled engine). The block is at the end
+/// of the file, so it is what gets cut.
 const AGENTS_MD_READ_LIMIT: u64 = 32 * 1024;
 
 fn report(root: &Path, result: std::io::Result<Outcome>) {
     let file = root.join("AGENTS.md");
     match result {
-        Ok(Outcome::Written) => {
-            tracing::info!("instruction sync: updated {}", file.display());
+        Ok(outcome @ (Outcome::Written | Outcome::Created)) => {
+            let verb = if outcome == Outcome::Created {
+                "created"
+            } else {
+                "updated"
+            };
+            tracing::info!("instruction sync: {verb} {}", file.display());
             if let Ok(meta) = std::fs::metadata(&file) {
                 if meta.len() > AGENTS_MD_READ_LIMIT {
                     tracing::warn!(
