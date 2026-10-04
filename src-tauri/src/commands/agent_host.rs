@@ -2177,15 +2177,18 @@ impl AgentHost {
     ///
     /// One agent being slow, signed out or broken costs only its own rows: each
     /// is bounded by [`SYNC_AGENT_TIMEOUT`] and a failure is logged and skipped.
-    /// A project synced within [`SYNC_DEBOUNCE`] answers `0` without asking.
-    pub async fn sync_project(&self, cwd: &str) -> Result<usize> {
+    /// A project synced within [`SYNC_DEBOUNCE`] answers `0` without asking,
+    /// unless `force` (the session watcher saw an unknown transcript appear):
+    /// that skips the check but still records the time.
+    pub async fn sync_project(&self, cwd: &str, force: bool) -> Result<usize> {
         let history = self.history_or_err()?;
         {
             let mut last = lock(&self.last_project_sync);
             let now = std::time::Instant::now();
-            if last
-                .get(cwd)
-                .is_some_and(|at| now.duration_since(*at) < SYNC_DEBOUNCE)
+            if !force
+                && last
+                    .get(cwd)
+                    .is_some_and(|at| now.duration_since(*at) < SYNC_DEBOUNCE)
             {
                 return Ok(0);
             }

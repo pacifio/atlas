@@ -535,6 +535,35 @@ impl ThreadMetadataStore {
         });
     }
 
+    /// Bump `updated_at` for known sessions, only ever forward. One change
+    /// event if anything moved. Returns how many rows changed.
+    ///
+    /// Activity seen outside Atlas (a terminal session writing its transcript)
+    /// is the caller; sessions the store does not know are ignored, and a time
+    /// at or before the row's own never moves it back.
+    pub fn touch_sessions(&self, updates: &[(acp::SessionId, DateTime<Utc>)]) -> usize {
+        let mut changed = 0;
+        for (session_id, time) in updates {
+            let Some(thread) = self.thread_for_session(session_id) else {
+                continue;
+            };
+            let time = *time;
+            if self.update_silently(thread.thread_id, |thread| {
+                if time <= thread.updated_at {
+                    return false;
+                }
+                thread.updated_at = time;
+                true
+            }) {
+                changed += 1;
+            }
+        }
+        if changed > 0 {
+            self.notify(ThreadStoreEvent::Changed);
+        }
+        changed
+    }
+
     /// The project's worktrees changed. Archived threads are skipped: the
     /// worktree they reference may already be gone (`:812-841`).
     pub fn update_worktree_paths(&self, thread_ids: &[ThreadId], worktree_paths: WorktreePaths) {

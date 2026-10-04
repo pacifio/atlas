@@ -8,6 +8,12 @@
 //! every agent's transcript itself since the usage re-source, and anything
 //! older replays from the agent through `session/load`.
 //!
+//! One narrow read has come back since, under the ADR-0001 amendment
+//! ("discovery is not replay", ATL-423): [`discovery`] lists a project's
+//! `<uuid>.jsonl` files and their modification times so a session started in a
+//! terminal shows up in the sidebar. It never opens a transcript, and replay
+//! still goes through the agent.
+//!
 //! What is left is small and still shared widely:
 //!
 //! - [`TranscriptKind`] — whether an agent keeps a record Atlas can read, which
@@ -21,6 +27,8 @@
 //!   memory files.
 //!
 //! Nothing here names a protocol version, and nothing here should.
+
+pub mod discovery;
 
 use serde::{Deserialize, Serialize};
 

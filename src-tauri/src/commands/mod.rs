@@ -67,6 +67,7 @@ pub mod save_guard;
 pub mod search;
 pub mod session_chat;
 pub mod session_chat_sessions;
+pub mod session_watcher;
 pub mod shared_memory;
 pub mod shell_profile;
 pub mod skills;

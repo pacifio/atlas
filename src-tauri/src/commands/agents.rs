@@ -711,6 +711,7 @@ pub fn install_manager(app: &AppHandle) {
         AgentHost::new(sink, config_dir, store.clone(), registry.clone())
     };
     app.manage(host.clone());
+    app.manage(super::session_watcher::SessionWatcher::new(host.clone()));
 
     // Shared memory: every write is announced to the webview (the Shared tab
     // re-pulls on it), session start/end are recorded in the scope's sessions
@@ -1535,8 +1536,13 @@ pub async fn threads_import(
 pub async fn threads_sync_project(
     cwd: String,
     host: State<'_, Arc<AgentHost>>,
+    watcher: State<'_, Arc<super::session_watcher::SessionWatcher>>,
 ) -> Result<usize, CmdError> {
-    host.sync_project(&cwd).await.map_err(CmdError::from)
+    // Arm first: the watcher keeps the sidebar current between these calls.
+    if !cwd.is_empty() {
+        watcher.arm(&cwd);
+    }
+    host.sync_project(&cwd, false).await.map_err(CmdError::from)
 }
 
 fn parse_thread_id(raw: &str) -> Result<atlas_thread_metadata::ThreadId, CmdError> {
