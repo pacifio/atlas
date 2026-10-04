@@ -1529,6 +1529,16 @@ pub async fn threads_import(
         .map_err(CmdError::from)
 }
 
+/// Sync one project's recent agent sessions into the sidebar (ADR-0001
+/// amendment, ATL-422). Debounced in the host; answers how many rows landed.
+#[tauri::command]
+pub async fn threads_sync_project(
+    cwd: String,
+    host: State<'_, Arc<AgentHost>>,
+) -> Result<usize, CmdError> {
+    host.sync_project(&cwd).await.map_err(CmdError::from)
+}
+
 fn parse_thread_id(raw: &str) -> Result<atlas_thread_metadata::ThreadId, CmdError> {
     raw.parse()
         .map_err(|_| CmdError::new(format!("not a thread id: {raw}"), ErrorClass::Fatal))

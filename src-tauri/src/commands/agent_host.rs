@@ -262,6 +262,23 @@ fn elicitation_response(
 /// launch rather than marked done.
 const BACKFILL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
+/// How long the project sync waits on one agent, connect included. Far shorter
+/// than [`BACKFILL_TIMEOUT`]: this runs every time the sidebar opens or the
+/// window regains focus, so a wedged agent must cost the user seconds, not
+/// minutes. It is simply tried again on the next trigger.
+const SYNC_AGENT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// A project synced less than this long ago is not synced again.
+///
+/// The sidebar fires a sync on mount, on a cwd change and on every window
+/// focus; this is what makes that cheap. Short enough that a session started in
+/// a terminal is picked up by the next alt-tab back.
+const SYNC_DEBOUNCE: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// How recent an agent-listed session must be to land in the sidebar rather
+/// than History.
+const SYNC_UNARCHIVE_DAYS: i64 = 7;
+
 /// Told when a session starts and when it ends — shared memory's sessions
 /// table (`shared_memory::SharedMemoryStore`).
 ///
@@ -335,6 +352,10 @@ pub struct AgentHost {
     /// Nothing surfaces this in the UI yet; the sidebar re-point (#21) is where
     /// an empty history gets a reason attached to it.
     history: Option<ThreadRecorder>,
+    /// When each project directory was last synced, for the debounce in
+    /// [`AgentHost::sync_project`]. In memory only: a restart syncing once more
+    /// is the right behaviour.
+    last_project_sync: Mutex<HashMap<String, std::time::Instant>>,
     /// Request-scoped elicitations, announced by every connection.
     ///
     /// These belong to no session — they are the ones raised during sign-in,
@@ -459,6 +480,7 @@ impl AgentHost {
             sessions: Mutex::new(HashMap::new()),
             detected: Mutex::new(Vec::new()),
             history,
+            last_project_sync: Mutex::new(HashMap::new()),
             request_elicitations: RequestElicitations {
                 stream: Mutex::new(Some(elicitation_rx)),
                 answered_by: Mutex::new(HashMap::new()),
@@ -1983,11 +2005,16 @@ impl AgentHost {
         let mut out = Vec::new();
         for plugin_id in self.store.external_agents() {
             let plugin_id = plugin_id.to_string();
-            let status = match self.list_sessions_of(&plugin_id).await {
+            let status = match self.list_sessions_of(&plugin_id, None).await {
                 Ok(None) => ImportStatus::Unsupported,
                 Ok(Some(sessions)) => ImportStatus::Ready {
-                    importable: importable_threads(sessions, &plugin_id.as_str().into(), &known)
-                        .len(),
+                    importable: importable_threads(
+                        sessions,
+                        &plugin_id.as_str().into(),
+                        &known,
+                        None,
+                    )
+                    .len(),
                 },
                 Err(e) => ImportStatus::Error { message: e.message },
             };
@@ -2083,7 +2110,7 @@ impl AgentHost {
     /// cannot drift apart on what "importable" means.
     async fn import_from(&self, plugin_id: &str) -> Result<usize> {
         let history = self.history_or_err()?;
-        let Some(sessions) = self.list_sessions_of(plugin_id).await? else {
+        let Some(sessions) = self.list_sessions_of(plugin_id, None).await? else {
             return Ok(0);
         };
         // Read what is known *now*, not when the modal was opened: two imports
@@ -2093,6 +2120,7 @@ impl AgentHost {
             sessions,
             &plugin_id.into(),
             &history.store().known_session_ids(),
+            None,
         );
         let imported = rows.len();
         history.store().save_all(rows);
@@ -2102,9 +2130,18 @@ impl AgentHost {
     /// Every session an agent will list, or `None` when it has no listable
     /// history — which is to say, when it did not advertise
     /// `sessionCapabilities.list`.
+    ///
+    /// `cwd` narrows the listing to one directory, honoured by the agent. The
+    /// import flows pass `None` — Zed scopes its import to a workspace because
+    /// its connections are per-project; Atlas has one connection per agent and
+    /// an app-level store whose rows carry their own paths, so "everything this
+    /// agent knows" is both simpler and more useful there. The project sync
+    /// passes the open project, because it runs often and wants the cheap
+    /// answer.
     async fn list_sessions_of(
         &self,
         plugin_id: &str,
+        cwd: Option<PathBuf>,
     ) -> Result<Option<Vec<atlas_acp_thread::AgentSessionInfo>>> {
         let agent = self.agent_for(plugin_id)?;
         let connection = self
@@ -2115,14 +2152,98 @@ impl AgentHost {
         let Some(list) = connection.session_list() else {
             return Ok(None);
         };
-        // No cwd filter. Zed scopes its import to a workspace because its
-        // connections are per-project; Atlas has one connection per agent and
-        // an app-level store whose rows carry their own paths, so "everything
-        // this agent knows" is both simpler and more useful.
-        collect_all_sessions(list.as_ref(), None)
+        collect_all_sessions(list.as_ref(), cwd)
             .await
             .map(Some)
             .map_err(HostError::from)
+    }
+
+    /// Bring the recent sessions an agent holds for one project into the
+    /// sidebar, so one started outside Atlas (a Claude Code run in a terminal)
+    /// is there when the sidebar opens. Answers how many rows were added.
+    ///
+    /// ADR-0001 amendment (2026-10-05, ATL-421/ATL-422): the history store is
+    /// still the only thing the sidebar reads and Atlas still never scrapes an
+    /// agent's storage, but "imported once, at boot" no longer holds. The agent
+    /// is asked over ACP `session/list`, filtered to `cwd`, whenever the
+    /// sidebar is shown for that project. Rows whose `updated_at` is within the
+    /// last week land unarchived; older ones land in History, as an import does.
+    ///
+    /// Only agents that already have a row in the store are asked. The sync is
+    /// automatic, and an automatic action must not be the reason an installed
+    /// agent the user has never used gets spawned (ADR-0002); a row is the
+    /// evidence the user has used it. Which agents those are is read from the
+    /// rows' `agent_id`, never from a list of names.
+    ///
+    /// One agent being slow, signed out or broken costs only its own rows: each
+    /// is bounded by [`SYNC_AGENT_TIMEOUT`] and a failure is logged and skipped.
+    /// A project synced within [`SYNC_DEBOUNCE`] answers `0` without asking.
+    pub async fn sync_project(&self, cwd: &str) -> Result<usize> {
+        let history = self.history_or_err()?;
+        {
+            let mut last = lock(&self.last_project_sync);
+            let now = std::time::Instant::now();
+            if last
+                .get(cwd)
+                .is_some_and(|at| now.duration_since(*at) < SYNC_DEBOUNCE)
+            {
+                return Ok(0);
+            }
+            last.insert(cwd.to_owned(), now);
+        }
+
+        let used: std::collections::HashSet<String> = history
+            .store()
+            .threads()
+            .into_iter()
+            .map(|thread| thread.agent_id.as_str().to_owned())
+            .collect();
+        let cutoff = Utc::now() - chrono::Duration::days(SYNC_UNARCHIVE_DAYS);
+
+        let mut added = 0;
+        for plugin_id in self.store.external_agents() {
+            let plugin_id = plugin_id.to_string();
+            if !used.contains(&plugin_id) {
+                continue;
+            }
+            if self.connect_has_failed(&plugin_id) {
+                tracing::warn!(%plugin_id, "project sync skipped: the agent's connect failed");
+                continue;
+            }
+            let listed = tokio::time::timeout(
+                SYNC_AGENT_TIMEOUT,
+                self.list_sessions_of(&plugin_id, Some(PathBuf::from(cwd))),
+            )
+            .await;
+            let sessions = match listed {
+                Ok(Ok(Some(sessions))) => sessions,
+                Ok(Ok(None)) => continue,
+                Ok(Err(e)) => {
+                    tracing::warn!(error = %e.message, %plugin_id, "project sync found nothing");
+                    continue;
+                }
+                Err(_elapsed) => {
+                    tracing::warn!(
+                        %plugin_id,
+                        timeout_secs = SYNC_AGENT_TIMEOUT.as_secs(),
+                        "project sync timed out"
+                    );
+                    continue;
+                }
+            };
+            // Read what is known *now*, after the (slow) listing, not before
+            // the loop: a thread started in Atlas, or a concurrent import,
+            // while this agent was answering must not get a second row.
+            let rows = importable_threads(
+                sessions,
+                &plugin_id.as_str().into(),
+                &history.store().known_session_ids(),
+                Some(cutoff),
+            );
+            added += rows.len();
+            history.store().save_all(rows);
+        }
+        Ok(added)
     }
 
     fn history_or_err(&self) -> Result<&ThreadRecorder> {

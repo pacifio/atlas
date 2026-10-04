@@ -33,6 +33,7 @@ import {
   archiveThread,
   deleteThread,
   onThreadsChanged,
+  syncProjectThreads,
   threadProjects,
   type ThreadRow,
 } from "../lib/history-api";
@@ -309,6 +310,20 @@ export const SessionSidebar = memo(function SessionSidebar({
       window.removeEventListener("focus", invalidate);
     };
   }, [queryClient]);
+
+  // Pick up sessions started outside Atlas (a terminal) for the open project:
+  // on mount, when the project changes, and when the window regains focus. The
+  // backend debounces per cwd, so this stays cheap; the threads-changed
+  // listener above refreshes the list when rows land (ADR-0001 amendment).
+  useEffect(() => {
+    if (!cwd) return;
+    const sync = () => {
+      void syncProjectThreads(cwd).catch(() => {});
+    };
+    sync();
+    window.addEventListener("focus", sync);
+    return () => window.removeEventListener("focus", sync);
+  }, [cwd]);
 
   // The open project's threads, newest first. `threads_projects` is scoped to
   // `cwd`, so this is normally a single group and needs no ordering of its own
