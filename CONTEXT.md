@@ -13,6 +13,7 @@ Glossary of domain terms as this project uses them. Decisions with lasting conse
 - **Import** — user-initiated pull of an agent's sessions into the store via ACP `session/list`; metadata only; capability-gated; deduped by session id.
 - **Backfill** — the one-time automatic import pass per installed agent on first launch after the history model shipped.
 - **Resume** — turning a history row into a live session through the protocol: `session/load` (replays transcript) or `session/resume` (no replay, user notified), selected by advertised capability.
+- **Live elsewhere** — a session whose transcript another process wrote in the last ~90s, and which Atlas is not itself hosting. Atlas must not silently fork it: sending from Atlas is held behind an explicit confirmation. See ADR-0001 amendment.
 - **Capability gating** — every per-agent behavior is decided by the capabilities the agent advertised at `initialize`; agent-identity checks are forbidden. ("No ACP agent gets special treatment.")
 - **Atlas-recorded usage** — the token totals Atlas's capture recorder wrote for a session (`atlas-checkpoint`), priced from the models.dev map Atlas caches. The only source for the usage widget and the Usage tab; covers sessions run through Atlas and no others.
 - **Turn / message** — a *turn* is one prompt and the answer to it; a *message* is one user or assistant row within it. Usage surfaces count messages, because that is what Atlas records per session.
