@@ -6,6 +6,7 @@ mod common;
 use std::sync::{Arc, OnceLock};
 
 use atlas_grepindex::GrepIndex;
+use atlas_search::{grep, CancelToken};
 use common::{both, rels, request, Repo};
 use proptest::prelude::*;
 
@@ -170,8 +171,12 @@ proptest! {
         let (repo, idx) = fixture();
         let mut req = request(&repo.root, &pattern, case);
         req.literal = literal;
+        if grep(&req, &CancelToken::new()).is_err() {
+            // grep refuses some generated patterns (a newline outside multiline mode).
+            return Ok(());
+        }
         let (scan, indexed) = both(idx, &req);
-        prop_assert_eq!(rels(&indexed), rels(&scan), "pattern {:?} case {:?} literal {}", pattern, case, literal);
+        prop_assert_eq!(rels(&indexed), rels(&scan), "pattern {pattern:?} case {case:?} literal {literal}");
         prop_assert_eq!(indexed.total_matches, scan.total_matches);
     }
 }

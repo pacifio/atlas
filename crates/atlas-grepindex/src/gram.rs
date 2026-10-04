@@ -227,7 +227,7 @@ mod tests {
             let q = &doc[a..(a + len).min(doc.len())];
             let all = all_grams(&doc);
             for g in cover(q) {
-                prop_assert!(all.contains(g), "cover gram {:?} of {:?} missing", g, q);
+                prop_assert!(all.contains(g), "cover gram {g:?} of {q:?} missing");
             }
         }
 
