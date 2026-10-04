@@ -3361,6 +3361,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "atlas-retrieval"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "half",
+ "tempfile",
+ "thiserror 2.0.18",
+ "usearch",
+]
+
+[[package]]
 name = "atlas-terminal"
 version = "0.1.0"
 dependencies = [

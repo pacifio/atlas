@@ -80,6 +80,10 @@
     "clippy": true
   },
   {
+    "crate": "atlas-retrieval",
+    "clippy": true
+  },
+  {
     "crate": "atlas-terminal"
   },
   {

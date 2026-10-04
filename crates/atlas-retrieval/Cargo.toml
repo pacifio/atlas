@@ -1,0 +1,17 @@
+[package]
+name = "atlas-retrieval"
+version = "0.1.0"
+edition = "2021"
+description = "The retrieval core memory and the code index share: content-keyed embedding cache codec, per-model usearch vector files that heal, RRF fusion, the Embedder trait."
+
+[dependencies]
+usearch = "2.25.3"
+half = { workspace = true }
+blake3 = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true
