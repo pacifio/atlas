@@ -146,7 +146,7 @@ impl GraphBatch {
                     r.get::<_, i64>(5)?,
                 ))
             })?
-            .filter_map(|row| row.ok())
+            .filter_map(Result::ok)
             .filter_map(|(ref_id, src, kind, confidence, strategy, dst)| {
                 keys.get(&dst).map(|key| Inbound {
                     ref_id,

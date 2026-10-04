@@ -910,8 +910,10 @@ impl<'a> Walker<'a> {
                         }
                         "named_imports" => {
                             let mut c3 = p.walk();
-                            let specs: Vec<Node> = p.named_children(&mut c3).collect();
-                            for s in specs.into_iter().filter(|s| s.kind() == "import_specifier") {
+                            for s in p
+                                .named_children(&mut c3)
+                                .filter(|s| s.kind() == "import_specifier")
+                            {
                                 let Some(name) = s
                                     .child_by_field_name("name")
                                     .map(|x| string_value(x, self.src))
@@ -950,8 +952,10 @@ impl<'a> Walker<'a> {
                     match k.kind() {
                         "export_clause" => {
                             let mut c2 = k.walk();
-                            let specs: Vec<Node> = k.named_children(&mut c2).collect();
-                            for s in specs.into_iter().filter(|s| s.kind() == "export_specifier") {
+                            for s in k
+                                .named_children(&mut c2)
+                                .filter(|s| s.kind() == "export_specifier")
+                            {
                                 let Some(name) = s
                                     .child_by_field_name("name")
                                     .map(|x| string_value(x, self.src))

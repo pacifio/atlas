@@ -14,6 +14,11 @@ fn q(target: &str, relation: Relation, hops: u8) -> RelatedQuery {
 
 fn graph_project() -> (Project, CodeIndex) {
     let p = Project::new();
+    // A crate root, so `use crate::a::…` resolves to src/a.rs.
+    p.write(
+        "Cargo.toml",
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    );
     p.write("src/lib.rs", "pub mod a;\npub mod b;\n");
     p.write("src/a.rs", "pub fn leaf() {}\npub fn mid() { leaf(); }\n");
     p.write("src/b.rs", "use crate::a::{mid, leaf};\npub fn top() { mid(); }\npub fn other() { leaf(); }\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn t() { super::top(); }\n}\n");

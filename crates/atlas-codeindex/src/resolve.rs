@@ -465,7 +465,10 @@ impl<'u> Resolver<'u> {
         for k in (1..=segs.len()).rev() {
             let key = segs[..k].join(".");
             if let Some(b) = list.iter().find(|b| !b.glob && b.local == key) {
-                return Some((b.clone(), segs[k..].iter().map(|s| s.to_string()).collect()));
+                return Some((
+                    b.clone(),
+                    segs[k..].iter().map(ToString::to_string).collect(),
+                ));
             }
         }
         None

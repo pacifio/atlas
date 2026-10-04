@@ -296,7 +296,7 @@ pub(crate) fn rust_abs(
     } else {
         module.split("::").collect()
     };
-    let owned = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let owned = |v: &[&str]| v.iter().map(ToString::to_string).collect::<Vec<_>>();
     match first {
         "crate" => {
             let mut v = owned(mods.get(..1)?);
@@ -527,7 +527,7 @@ impl TsEnv {
                     .then(|| (pre.len(), &spec[pre.len()..spec.len() - suf.len()], subs)),
                 })
                 .collect();
-            matches.sort_by(|a, b| b.0.cmp(&a.0));
+            matches.sort_by_key(|a| std::cmp::Reverse(a.0));
             for (_, captured, subs) in matches {
                 for sub in subs {
                     let target = sub.replacen('*', captured, 1);
