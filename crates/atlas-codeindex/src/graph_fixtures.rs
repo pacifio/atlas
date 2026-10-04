@@ -174,11 +174,9 @@ pub(crate) fn import_target(idx: &crate::CodeIndex, rel: &str, local: &str) -> O
 
 pub(crate) fn module_of(idx: &crate::CodeIndex, rel: &str) -> String {
     idx.with_reader(|c| {
-        Ok(
-            c.query_row("SELECT module FROM files WHERE rel = ?1", [rel], |r| {
-                r.get(0)
-            })?,
-        )
+        c.query_row("SELECT module FROM files WHERE rel = ?1", [rel], |r| {
+            r.get(0)
+        })
     })
     .expect("module")
 }
