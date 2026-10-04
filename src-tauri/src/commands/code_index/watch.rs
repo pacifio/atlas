@@ -56,6 +56,22 @@ pub fn feed_from(events: &[DebouncedEvent]) -> Feed {
 impl CodeIndexRegistry {
     /// Route one batch for the project at `root` (no-op unless it is open).
     pub fn apply_feed(&self, root: &Path, feed: Feed) {
+        if let Some(g) = self.get(root).and_then(|p| p.grep.clone()) {
+            if feed.rescan {
+                // Lost events: stop vouching for files until a resync has
+                // re-read their stamps. Correct (every file searched) meanwhile.
+                g.mark_untrusted();
+                super::registry::spawn_grep(g, |g| {
+                    if let Err(e) = g.resync() {
+                        tracing::warn!(target: "atlas::code_index", "grep index resync: {e}");
+                    }
+                });
+            } else if g.status().ready {
+                // Only a built index takes overlay docs (reading each changed
+                // file); below the size threshold there is nothing to feed.
+                g.note_paths(&feed.paths);
+            }
+        }
         if feed.rescan {
             self.note_rescan(root);
         } else if !feed.paths.is_empty() {

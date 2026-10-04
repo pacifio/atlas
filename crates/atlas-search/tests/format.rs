@@ -188,3 +188,15 @@ fn find_text_pages_like_every_other_tool() {
         "find_files \"*.rs\": 3 paths, newest first\npaths: 2  (cols: path)\n  b.rs\n  a.rs\ntotal: 3\nnext_offset: 2\ntruncation: page_limit\n"
     );
 }
+
+#[test]
+fn index_skips_are_reported() {
+    let res = atlas_search::GrepResult {
+        searched_files: 3,
+        skipped_by_index: 40,
+        ..Default::default()
+    };
+    let req = GrepRequest::new("/tmp", "x");
+    let out = grep_text(&res, &req, None, DEFAULT_BUDGET_BYTES);
+    assert!(out.contains("40") && out.contains("index"), "{out}");
+}

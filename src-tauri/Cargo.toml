@@ -136,6 +136,8 @@ atlas-memory = { path = "../crates/atlas-memory" }
 # The per-project code index (tree-sitter → SQLite + FTS5), updated per file
 # from the watchers. Drives `commands::code_index` and the atlas_code symbol tools.
 atlas-codeindex = { path = "../crates/atlas-codeindex" }
+# The sparse n-gram grep prefilter for large git projects (Phase 5).
+atlas-grepindex = { path = "../crates/atlas-grepindex" }
 # Structured side-by-side git diff engine (vendors delta's word-diff). Drives
 # `commands::gitdiff` (diff viewer + editor gutter).
 atlas-gitdiff = { path = "../crates/atlas-gitdiff" }

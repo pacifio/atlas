@@ -1,0 +1,27 @@
+[package]
+name = "atlas-grepindex"
+version = "0.1.0"
+edition = "2021"
+description = "Sparse n-gram prefilter for atlas-search grep: a base index of the git HEAD tree plus a working-tree overlay."
+
+[lib]
+name = "atlas_grepindex"
+
+[dependencies]
+atlas-search = { path = "../atlas-search" }
+atlas-git = { path = "../atlas-git" }
+gix = { workspace = true }
+rayon = { workspace = true }
+regex-syntax = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+regex = { workspace = true }
+ignore = { workspace = true }
+proptest = { workspace = true }
+sparse-ngrams = "=0.4.0"
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

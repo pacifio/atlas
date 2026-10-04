@@ -327,10 +327,18 @@ impl CodeTools {
                     .index
                     .as_ref()
                     .and_then(|r| crate::commands::code_index::grep_locator(r, &root));
-                let req = match args.into_request(root) {
+                let mut req = match args.into_request(root) {
                     Ok(req) => req,
                     Err(e) => return tool_error(e),
                 };
+                // The grep prefilter of a large git project (Phase 5), when it
+                // is built and trusted; it only ever skips files that cannot match.
+                req.candidates = self
+                    .index
+                    .as_ref()
+                    .and_then(|r| r.root_for(&req.root))
+                    .and_then(|p| p.grep_index())
+                    .map(|g| g as Arc<dyn atlas_search::CandidateSource>);
                 Box::new(move |cancel: &CancelToken| {
                     atlas_search::grep(&req, cancel)
                         .map(|res| grep_text(&res, &req, locator.as_deref(), budget))

@@ -435,43 +435,85 @@ fn the_decision_says_whether_the_code_server_is_included_and_why_not() {
 
 // ── The project search overlay ───────────────────────────────────────────────
 
+/// The overlay's defaults: literal, case-insensitive, any substring, 100 lines.
+fn overlay_defaults() -> OverlaySearch {
+    OverlaySearch {
+        max_results: 100,
+        ..OverlaySearch::default()
+    }
+}
+
+async fn overlay(
+    root: &str,
+    query: &str,
+    options: OverlaySearch,
+) -> Result<CodeGrepResult, String> {
+    grep_overlay(root.to_string(), query.to_string(), options, None).await
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn code_grep_is_literal_and_case_insensitive_unless_asked() {
     let dir = project(&[("a.ts", "const Foo = foo(1);\nfoo.bar\n")]);
     let root = dir.path().to_string_lossy().into_owned();
     let lines = |res: &CodeGrepResult| res.matches.iter().map(|m| m.line).collect::<Vec<_>>();
 
-    let literal = code_grep(root.clone(), "foo(".into(), None, None, None, None)
-        .await
-        .unwrap();
+    let literal = overlay(&root, "foo(", overlay_defaults()).await.unwrap();
     assert_eq!(lines(&literal), [1], "a regex metacharacter is just text");
-    let cased = code_grep(root.clone(), "Foo".into(), None, Some(true), None, None)
-        .await
-        .unwrap();
+    let cased = overlay(
+        &root,
+        "Foo",
+        OverlaySearch {
+            case_sensitive: true,
+            ..overlay_defaults()
+        },
+    )
+    .await
+    .unwrap();
     assert_eq!(cased.total_matches, 1);
-    let regex = code_grep(
-        root.clone(),
-        r"foo\.\w+".into(),
-        Some(true),
-        None,
-        None,
-        None,
+    let regex = overlay(
+        &root,
+        r"foo\.\w+",
+        OverlaySearch {
+            regex: true,
+            ..overlay_defaults()
+        },
     )
     .await
     .unwrap();
     assert_eq!(lines(&regex), [2]);
-    let word = code_grep(root.clone(), "fo".into(), None, None, Some(true), None)
-        .await
-        .unwrap();
+    let word = overlay(
+        &root,
+        "fo",
+        OverlaySearch {
+            whole_word: true,
+            ..overlay_defaults()
+        },
+    )
+    .await
+    .unwrap();
     assert_eq!(word.total_matches, 0, "whole word: `fo` is inside `foo`");
-    let err = code_grep(root.clone(), "(".into(), Some(true), None, None, None)
-        .await
-        .unwrap_err();
+    let err = overlay(
+        &root,
+        "(",
+        OverlaySearch {
+            regex: true,
+            ..overlay_defaults()
+        },
+    )
+    .await
+    .unwrap_err();
     assert!(err.contains("regex error"), "{err}");
 
-    let capped = code_grep(root, "o".into(), None, None, None, Some(1))
-        .await
-        .unwrap();
+    let capped = overlay(
+        &root,
+        "o",
+        OverlaySearch {
+            max_results: 1,
+            ..overlay_defaults()
+        },
+    )
+    .await
+    .unwrap();
     assert_eq!(
         serde_json::to_value(&capped).unwrap(),
         json!({

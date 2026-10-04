@@ -79,16 +79,48 @@ pub async fn code_grep(
     case_sensitive: Option<bool>,
     whole_word: Option<bool>,
     max_results: Option<usize>,
+    registry: tauri::State<'_, Arc<crate::commands::code_index::CodeIndexRegistry>>,
 ) -> Result<CodeGrepResult, String> {
-    let max = max_results.unwrap_or(100).clamp(1, 500);
-    let req = atlas_search::GrepRequest {
+    let options = OverlaySearch {
+        regex: regex.unwrap_or(false),
+        case_sensitive: case_sensitive.unwrap_or(false),
+        whole_word: whole_word.unwrap_or(false),
+        max_results: max_results.unwrap_or(100),
+    };
+    grep_overlay(path, query, options, Some(registry.inner().as_ref())).await
+}
+
+/// The overlay's toggles, defaults applied.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct OverlaySearch {
+    pub regex: bool,
+    pub case_sensitive: bool,
+    pub whole_word: bool,
+    pub max_results: usize,
+}
+
+/// [`code_grep`] without the Tauri state: `registry` supplies the grep
+/// prefilter of a large git project, when one is built.
+pub(crate) async fn grep_overlay(
+    path: String,
+    query: String,
+    options: OverlaySearch,
+    registry: Option<&crate::commands::code_index::CodeIndexRegistry>,
+) -> Result<CodeGrepResult, String> {
+    let max = options.max_results.clamp(1, 500);
+    let mut req = atlas_search::GrepRequest {
         mode: atlas_search::OutputMode::Content,
-        literal: !regex.unwrap_or(false),
-        case_insensitive: Some(!case_sensitive.unwrap_or(false)),
-        word: whole_word.unwrap_or(false),
+        literal: !options.regex,
+        case_insensitive: Some(!options.case_sensitive),
+        word: options.whole_word,
         limit: Some(max),
         ..atlas_search::GrepRequest::new(path, query)
     };
+    // Same prefilter the agents' grep uses.
+    req.candidates = registry
+        .and_then(|r| r.root_for(&req.root))
+        .and_then(|p| p.grep_index())
+        .map(|g| g as Arc<dyn atlas_search::CandidateSource>);
     let cancel = atlas_search::CancelToken::new().with_deadline(Instant::now() + tools::DEADLINE);
     // Off the async runtime: the walk reads every candidate file.
     let res = tokio::task::spawn_blocking(move || atlas_search::grep(&req, &cancel))

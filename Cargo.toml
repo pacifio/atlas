@@ -38,6 +38,7 @@ members = [
   "crates/atlas-embed",
   "crates/atlas-git",
   "crates/atlas-gitdiff",
+  "crates/atlas-grepindex",
   "crates/atlas-icon-theme",
   "crates/atlas-memory",
   "crates/atlas-native-agent",
@@ -453,6 +454,7 @@ pathdiff = "0.2"
 portable-pty = "0.9.0"
 predicates = "3"
 pretty_assertions = "1.4.1"
+proptest = "1.11"
 pulldown-cmark = { version = "0.10", default-features = false }
 quick-xml = "0.41.0"
 rand = "0.9"
@@ -468,6 +470,7 @@ rcgen = { version = "0.14.7", default-features = false, features = [
     "pem",
 ] }
 regex = "1.12.3"
+regex-syntax = "0.8"
 regex-lite = "0.1.8"
 # `default-features = false`: reqwest's default set is `default-tls` + the
 # three below. `default-tls` is native-tls (Security.framework on macOS), which
@@ -800,6 +803,8 @@ opt-level = 1
 [profile.dev.package.atlas-git]
 opt-level = 1
 [profile.dev.package.atlas-gitdiff]
+opt-level = 1
+[profile.dev.package.atlas-grepindex]
 opt-level = 1
 [profile.dev.package.atlas-icon-theme]
 opt-level = 1

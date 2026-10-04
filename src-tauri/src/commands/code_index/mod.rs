@@ -15,6 +15,7 @@
 
 pub mod embed;
 mod graph_tools;
+pub mod grep_index;
 mod registry;
 mod semantic_tools;
 mod symbols;

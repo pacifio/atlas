@@ -59,6 +59,10 @@
     "crate": "atlas-gitdiff"
   },
   {
+    "crate": "atlas-grepindex",
+    "clippy": true
+  },
+  {
     "crate": "atlas-icon-theme",
     "clippy": true
   },

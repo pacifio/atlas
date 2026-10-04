@@ -18,12 +18,14 @@ pub mod compact;
 pub mod format;
 
 mod cancel;
+mod candidates;
 mod error;
 mod find;
 mod grep;
 mod walk;
 
 pub use cancel::CancelToken;
+pub use candidates::{CandidateFilter, CandidateSource, FileStamp};
 pub use error::SearchError;
 pub use find::{find_files, FindMode, FindRequest, FindResult};
 pub use grep::{grep, FileHit, GrepRequest, GrepResult, LineHit, OutputMode};

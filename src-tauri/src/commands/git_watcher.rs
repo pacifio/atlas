@@ -221,11 +221,12 @@ pub async fn git_watch_start(
 
                         // HEAD / index / ref moved: reconcile the code index
                         // (a checkout rewrites files faster than per-file
-                        // events report them).
+                        // events report them) and move the grep prefilter to
+                        // the new HEAD.
                         if let Some(code_index) = app_for_cb
                             .try_state::<Arc<crate::commands::code_index::CodeIndexRegistry>>()
                         {
-                            code_index.note_rescan(&root_for_cb);
+                            code_index.note_git_change(&root_for_cb);
                         }
 
                         let _ = app_for_cb.emit(

@@ -140,11 +140,23 @@ pub struct ProjectIndex {
     /// The path the project was first opened with (the frontend's spelling),
     /// for callers keyed by it, such as the memory registry.
     pub opened_as: String,
+    /// The grep prefilter (Phase 5), at a git work-tree root only. Fed by
+    /// the watchers; built in the background; never needed for correctness.
+    pub(super) grep: Option<Arc<atlas_grepindex::GrepIndex>>,
     queue: Arc<Queue>,
     busy: Arc<AtomicBool>,
 }
 
 impl ProjectIndex {
+    /// The grep prefilter, only while it is built and trusted (so grep can
+    /// skip files); `None` means grep scans every walked file.
+    pub fn grep_index(&self) -> Option<Arc<atlas_grepindex::GrepIndex>> {
+        self.grep.clone().filter(|g| {
+            let st = g.status();
+            st.ready && st.trusted
+        })
+    }
+
     /// A job is running or queued.
     pub fn is_busy(&self) -> bool {
         self.busy.load(Ordering::SeqCst) || !lock(&self.queue.pending).is_empty()
@@ -268,6 +280,7 @@ impl CodeIndexRegistry {
         let project = Arc::new(ProjectIndex {
             index,
             opened_as: root.to_string_lossy().into_owned(),
+            grep: super::grep_index::open_for(&k),
             queue: Arc::new(Queue {
                 pending: Mutex::new(Pending::default()),
                 wake: Condvar::new(),
@@ -277,6 +290,22 @@ impl CodeIndexRegistry {
             busy: Arc::new(AtomicBool::new(false)),
         });
         spawn_worker(&project, self.observer.clone(), self.embedder.clone())?;
+        if let Some(g) = project.grep.clone() {
+            // Built off the worker: a large build must not delay symbol
+            // updates. It waits for the first index job's file reads to pass.
+            let queue = project.queue.clone();
+            let busy = project.busy.clone();
+            spawn_grep(g, move |g| {
+                while !queue.closed.load(Ordering::SeqCst)
+                    && (busy.load(Ordering::SeqCst) || lock(&queue.pending).has_index_work())
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                }
+                if !queue.closed.load(Ordering::SeqCst) {
+                    build_grep(g);
+                }
+            });
+        }
         project.enqueue(first);
         projects.insert(k, project.clone());
         Ok(project)
@@ -308,9 +337,59 @@ impl CodeIndexRegistry {
         }
     }
 
+    /// HEAD, the git index or a ref moved: reconcile the code index, and bring
+    /// the grep prefilter to the new HEAD (overlaying the changed paths, or
+    /// rebuilding in the background when too many changed).
+    pub fn note_git_change(&self, root: &Path) {
+        let Some(project) = self.get(root) else {
+            return;
+        };
+        project.enqueue(Job::Reconcile);
+        if let Some(g) = project.grep.clone() {
+            spawn_grep(g, |g| match g.refresh_head() {
+                Ok(atlas_grepindex::HeadAction::RebuildNeeded) => build_grep(g),
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::warn!(target: "atlas::code_index", "grep index head refresh: {e}");
+                }
+            });
+        }
+    }
+
     /// Drop a project; its worker exits after the current job.
     pub fn close(&self, root: &Path) {
         lock(&self.projects).remove(&key(root));
+    }
+}
+
+/// Run `job` on a thread of its own: grep index work (a build takes seconds
+/// on a large repository) must never hold up the code index worker or a
+/// watcher callback.
+pub(super) fn spawn_grep(
+    g: Arc<atlas_grepindex::GrepIndex>,
+    job: impl FnOnce(&atlas_grepindex::GrepIndex) + Send + 'static,
+) {
+    let spawned = std::thread::Builder::new()
+        .name("atlas-grep-index".into())
+        .spawn(move || job(&g));
+    if let Err(e) = spawned {
+        tracing::warn!(target: "atlas::code_index", "start grep index thread: {e}");
+    }
+}
+
+/// Load or build the grep prefilter for HEAD (serialized inside the index).
+fn build_grep(g: &atlas_grepindex::GrepIndex) {
+    match g.ensure_built(&CancelToken::new()) {
+        Ok(outcome) => tracing::info!(
+            target: "atlas::code_index",
+            "grep index for {}: {outcome:?}",
+            g.root().display()
+        ),
+        Err(e) => tracing::warn!(
+            target: "atlas::code_index",
+            "grep index for {}: {e}",
+            g.root().display()
+        ),
     }
 }
 

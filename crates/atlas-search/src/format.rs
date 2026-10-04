@@ -157,6 +157,12 @@ fn notes(res: &GrepResult) -> String {
             res.skipped_large
         ));
     }
+    if res.skipped_by_index > 0 {
+        out.push_str(&format!(
+            "index: {} files ruled out unread by the grep index\n",
+            res.skipped_by_index
+        ));
+    }
     out
 }
 
@@ -172,8 +178,13 @@ fn no_matches(res: &GrepResult, req: &GrepRequest) -> String {
     } else {
         "; gitignored files excluded — set include_ignored=true to include"
     };
+    let by_index = if res.skipped_by_index > 0 {
+        format!(", {} ruled out by the index", res.skipped_by_index)
+    } else {
+        String::new()
+    };
     format!(
-        "No matches for {} in {} (searched {} files{ignored}).\n",
+        "No matches for {} in {} (searched {} files{by_index}{ignored}).\n",
         shown_pattern(req),
         where_(req.path.as_deref()),
         res.searched_files

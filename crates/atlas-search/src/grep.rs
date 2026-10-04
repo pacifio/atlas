@@ -62,6 +62,8 @@ pub struct GrepRequest {
     pub include_ignored: bool,
     /// Secrets; applied unless the path targets the file explicitly.
     pub deny_globs: Vec<String>,
+    /// A prefilter (Phase 5 `atlas-grepindex`); `None` searches every walked file.
+    pub candidates: Option<std::sync::Arc<dyn crate::CandidateSource>>,
 }
 
 impl GrepRequest {
@@ -84,6 +86,7 @@ impl GrepRequest {
             offset: 0,
             include_ignored: false,
             deny_globs: DEFAULT_DENY_GLOBS.iter().map(ToString::to_string).collect(),
+            candidates: None,
         }
     }
 
@@ -130,6 +133,8 @@ pub struct GrepResult {
     pub partial: bool,
     /// The walk stopped at [`HARD_MATCH_CAP`]; totals are lower bounds.
     pub match_cap_hit: bool,
+    /// Walked files the index proved cannot match, never read.
+    pub skipped_by_index: usize,
 }
 
 /// Search file contents under `req.root`. Never panics on file content;
@@ -139,6 +144,12 @@ pub fn grep(req: &GrepRequest, cancel: &CancelToken) -> Result<GrepResult, Searc
     let matcher = build_matcher(req)?;
     let (root, start) = walk::resolve(&req.root, req.path.as_deref())?;
     let deny = DenyList::new(&req.deny_globs)?;
+    // Asked once per request; `None` (no index, untrusted, a pattern with no
+    // usable literal) searches every walked file.
+    let filter = req
+        .candidates
+        .as_ref()
+        .and_then(|s| s.candidates(req, cancel));
     let shared = Shared {
         req,
         root: &root,
@@ -153,6 +164,8 @@ pub fn grep(req: &GrepRequest, cancel: &CancelToken) -> Result<GrepResult, Searc
         skipped_large: AtomicUsize::new(0),
         stopped: AtomicBool::new(false),
         cap_hit: AtomicBool::new(false),
+        filter,
+        skipped_by_index: AtomicUsize::new(0),
     };
 
     if start.is_file() {
@@ -204,6 +217,7 @@ pub fn grep(req: &GrepRequest, cancel: &CancelToken) -> Result<GrepResult, Searc
         skipped_large: shared.skipped_large.into_inner(),
         partial: shared.stopped.into_inner(),
         match_cap_hit: shared.cap_hit.into_inner(),
+        skipped_by_index: shared.skipped_by_index.into_inner(),
     })
 }
 
@@ -284,6 +298,9 @@ struct Shared<'a> {
     skipped_large: AtomicUsize,
     stopped: AtomicBool,
     cap_hit: AtomicBool,
+    /// The index's answer for this request, when it has one.
+    filter: Option<std::sync::Arc<dyn crate::CandidateFilter>>,
+    skipped_by_index: AtomicUsize,
 }
 
 impl Shared<'_> {
@@ -308,6 +325,15 @@ impl Shared<'_> {
         if meta.len() > MAX_FILE_BYTES {
             self.skipped_large.fetch_add(1, Relaxed);
             return;
+        }
+        // Never for an explicitly named file: that is searched as ripgrep would.
+        if !explicit {
+            if let Some(filter) = &self.filter {
+                if !filter.must_search(&rel, &|| crate::FileStamp::from_metadata(meta)) {
+                    self.skipped_by_index.fetch_add(1, Relaxed);
+                    return;
+                }
+            }
         }
         self.searched.fetch_add(1, Relaxed);
         let mut sink = HitSink {
