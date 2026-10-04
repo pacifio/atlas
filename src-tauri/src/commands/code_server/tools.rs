@@ -1,6 +1,6 @@
-//! The MCP surface of the code tool server: two read-only tools, their
-//! instructions, and the handler that runs each call on a blocking thread
-//! under a deadline. Schemas are flat with short descriptions, because every
+//! The MCP surface of the code tool server: `grep` and `find_files` (for the
+//! native agent only), the code index's tools, their instructions, and the
+//! handler that runs each call on a blocking thread under a deadline. Schemas are flat with short descriptions, because every
 //! native turn carries them in its fixed prefix.
 
 use std::borrow::Cow;
@@ -32,15 +32,17 @@ use crate::commands::memory_server::{Grant, TOOLS_LIST_TTL_MS};
 /// What the server tells the agent about itself. The engine shows it as the
 /// description of the `atlas_code` tool namespace; Claude Code as "MCP Server
 /// Instructions".
+/// One text for every session, so it also reads right for an agent that is
+/// listed no `grep` or `find_files` ([`offers_search`]).
 pub const INSTRUCTIONS: &str = "\
-Code search over your session's directory, in-process. grep finds text in files (Rust regex, or \
-literal=true); find_files finds paths by glob or fuzzy name. Both read the working tree as it is \
-now, including your own edits, respect .gitignore, and skip binary and secret files (.env, keys). \
-Prefer them to rg, grep or find in a shell: they are faster, need no approval, and page their \
-output, so follow next_offset instead of re-running a broader search. Paths are relative to your cwd. \
-Searching: grep for exact identifiers and strings; find_symbol for definitions by name; \
-semantic_search for behaviour described in words; related/impact_of_diff before edits; \
-task_context once at the start of an unfamiliar task.";
+Code search over your session's directory, in-process. When listed, grep finds text in files \
+(Rust regex, or literal=true) and find_files finds paths by glob or fuzzy name: both read the \
+working tree as it is now, including your own edits, respect .gitignore, and skip binary and \
+secret files (.env, keys). Prefer them to rg, grep or find in a shell: they are faster, need no \
+approval, and page their output, so follow next_offset instead of re-running a broader search. \
+Paths are relative to your cwd. Searching: grep for exact identifiers and strings; find_symbol \
+for definitions by name; semantic_search for behaviour described in words; related/impact_of_diff \
+before edits; task_context once at the start of an unfamiliar task.";
 
 /// How long one call may search before it answers with what it has.
 pub(crate) const DEADLINE: Duration = Duration::from_secs(15);
@@ -68,7 +70,14 @@ fn tool(name: &'static str, description: &'static str, input: Value) -> Tool {
     .with_annotations(ToolAnnotations::new().read_only(true))
 }
 
-/// The tools: `grep` first, as the one an agent reaches for most.
+/// Whether `agent` is listed `grep` and `find_files`. Only the native agent
+/// is: every ACP agent ships a grep and a file finder of its own (Claude Code
+/// bundles ripgrep), and a second pair only spends its context (ADR-0015).
+pub(super) fn offers_search(agent: &str) -> bool {
+    agent == atlas_native_agent::ATLAS_AGENT_ID
+}
+
+/// The search tools: `grep` first, as the one an agent reaches for most.
 pub(super) fn tools() -> Vec<Tool> {
     vec![
         tool(
@@ -124,9 +133,11 @@ pub(super) fn tool_names() -> Vec<String> {
 }
 
 /// The `tools/list` answer, cached as the memory and UI servers' are.
-/// `with_index`: the code index is attached, so its tools are listed too.
-pub(super) fn tools_list(with_index: bool) -> ListToolsResult {
-    let mut all = tools();
+/// `search`: the session's agent is listed `grep` and `find_files`
+/// ([`offers_search`]). `with_index`: the code index is attached, so its
+/// tools are listed too.
+pub(super) fn tools_list(search: bool, with_index: bool) -> ListToolsResult {
+    let mut all = if search { tools() } else { Vec::new() };
     if with_index {
         for (name, description, input) in crate::commands::code_index::index_tool_specs() {
             all.push(tool(name, description, input));
@@ -313,6 +324,11 @@ impl CodeTools {
         }
         let name = request.name.to_string();
         let args = Value::Object(request.arguments.unwrap_or_default());
+        if matches!(name.as_str(), "grep" | "find_files") && !offers_search(&grant.agent) {
+            return tool_error(format!(
+                "`{name}` is not offered to this agent: search with your own tools."
+            ));
+        }
         let root = PathBuf::from(&grant.cwd);
         let job: Job = match name.as_str() {
             "grep" => {
@@ -392,9 +408,14 @@ impl ServerHandler for CodeTools {
     async fn list_tools(
         &self,
         _request: Option<PaginatedRequestParams>,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
-        Ok(tools_list(self.index.is_some()))
+        let search = context
+            .extensions
+            .get::<axum::http::request::Parts>()
+            .and_then(|parts| parts.extensions.get::<Grant>())
+            .is_some_and(|grant| offers_search(&grant.agent));
+        Ok(tools_list(search, self.index.is_some()))
     }
 
     async fn call_tool(

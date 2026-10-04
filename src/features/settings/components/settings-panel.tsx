@@ -523,7 +523,7 @@ function GeneralSettings() {
       </SettingRow>
       <SettingRow
         label="Let agents search code with Atlas"
-        description="Agents get Atlas's own grep and find-files tools for this project: fast, in-process, respecting .gitignore and never reading secret files such as .env. Off: they search with their own shell tools instead."
+        description="Agents get Atlas's code index for this project: symbols, callers and callees, and search by meaning. Atlas Agent also gets Atlas's own grep and find-files; other agents bring their own. All in-process, respecting .gitignore and never reading secret files such as .env. Off: they search with their own tools instead."
       >
         <Toggle
           checked={settings.agentCodeTools}

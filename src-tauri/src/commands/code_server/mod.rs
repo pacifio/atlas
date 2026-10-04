@@ -8,9 +8,12 @@
 //!   user's "Let agents search code with Atlas" setting is on. Not gated by
 //!   the shared-memory toggle — code search holds no memory — and never
 //!   decided by which agent it is.
-//! - **Two read-only tools** ([`tools`]): `grep` and `find_files`, the
-//!   `atlas_search` engine over the session's launch directory
-//!   (`Grant::cwd`). Nothing outside it is read.
+//! - **Ten read-only tools** ([`tools`]) over the session's launch directory
+//!   (`Grant::cwd`); nothing outside it is read. `grep` and `find_files` run
+//!   the `atlas_search` engine and are listed to the native agent only, since
+//!   every ACP agent ships its own. The code index's eight (`find_symbol`,
+//!   `outline`, `read_symbol`, `related`, `impact_of_diff`, `repo_map`,
+//!   `semantic_search`, `task_context`) are listed to every session.
 //! - **Bounded**: each call runs on a blocking thread with a 15 s deadline
 //!   and stops when the call is cancelled or its future is dropped.
 //! - **The project search overlay runs on the same engine** ([`code_grep`]).
