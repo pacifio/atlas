@@ -193,17 +193,6 @@ pub fn builtin_catalog() -> Vec<ModelEntry> {
                 "Code-specific embeddings (137M, MIT). A little more accurate; about 3x the memory.",
             )
         },
-        ModelEntry {
-            kind: ModelKind::CodeEmbedding,
-            ..embed_repo(
-                "qwen3-embedding-0.6b",
-                "Qwen3-Embedding 0.6B",
-                "Qwen/Qwen3-Embedding-0.6B",
-                1024,
-                1137,
-                "Higher-quality code and text embeddings (0.6B, Apache-2.0). Slower on CPU.",
-            )
-        },
     ]
 }
 
@@ -252,7 +241,6 @@ fn code_model_spec(id: &str) -> Option<atlas_embed::ModelSpec> {
     match id {
         "granite-embedding-small-r2" => Some(atlas_embed::ModelSpec::granite_embedding_small()),
         "coderankembed" => Some(atlas_embed::ModelSpec::code_rank_embed()),
-        "qwen3-embedding-0.6b" => Some(atlas_embed::ModelSpec::qwen3_embedding()),
         _ => None,
     }
 }
@@ -554,11 +542,7 @@ mod tests {
 
     #[test]
     fn code_models_are_their_own_kind() {
-        for id in [
-            "granite-embedding-small-r2",
-            "coderankembed",
-            "qwen3-embedding-0.6b",
-        ] {
+        for id in ["granite-embedding-small-r2", "coderankembed"] {
             assert_eq!(
                 find_entry(id).unwrap().kind,
                 ModelKind::CodeEmbedding,

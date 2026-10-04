@@ -22,8 +22,7 @@ candle-core = "0.11.0"
 candle-nn = "0.11.0"
 candle-transformers = "0.11.0"
 serde_json = "1.0.150"
-# `ModelSpec` (atlas-embed.json next to the weights) and the vendored Qwen3
-# config.
+# `ModelSpec` (atlas-embed.json next to the weights).
 serde = { version = "1", features = ["derive"] }
 # `esaxx_fast` (on by default) pulls in `esaxx-rs`'s C++ suffix-array backend,
 # whose build.rs hardcodes a static CRT (`.static_crt(true)`) on every

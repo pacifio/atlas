@@ -5,15 +5,14 @@
 //! The embedder loads a sentence-embedding model from a local directory —
 //! `config.json`, `tokenizer.json`, `model.safetensors`, and optionally an
 //! `atlas-embed.json` [`ModelSpec`] — and produces L2-normalized sentence
-//! vectors, so cosine similarity is just a dot product. Four architectures,
+//! vectors, so cosine similarity is just a dot product. Three architectures,
 //! chosen by `config.json`'s `model_type`: BERT (`all-MiniLM-L6-v2`, memory's
-//! model), ModernBERT (Granite Embedding Small R2, the default code model),
-//! NomicBERT (CodeRankEmbed) and Qwen3 (Qwen3-Embedding). Texts run as real
-//! padded, attention-masked batches; the spec picks the pooling (mean, CLS or
-//! last token), the query/document prefixes and the token limit.
+//! model), ModernBERT (Granite Embedding Small R2, the default code model) and
+//! NomicBERT (CodeRankEmbed). Texts run as real padded, attention-masked
+//! batches; the spec picks the pooling (mean or CLS), the query/document
+//! prefixes and the token limit.
 
 mod pool;
-mod qwen3;
 mod spec;
 
 pub use spec::{ModelSpec, Pooling, SPEC_FILE};
@@ -56,9 +55,6 @@ enum Net {
     Modern(ModernBert),
     /// CodeRankEmbed.
     Nomic(NomicBertModel),
-    /// Qwen3-Embedding: forward appends to a KV cache, so it is reset around
-    /// every text, behind a lock.
-    Qwen3(std::sync::Mutex<qwen3::Model>),
 }
 
 /// The mutable half of the embedder: swapped wholesale when a GPU backend
@@ -290,17 +286,8 @@ impl Embedder {
                     serde_json::from_value(config.clone()).context("parse NomicBERT config")?;
                 Net::Nomic(NomicBertModel::load(vb, &c).context("load NomicBERT weights")?)
             }
-            "qwen3" => {
-                let c: qwen3::Config =
-                    serde_json::from_value(config.clone()).context("parse Qwen3 config")?;
-                // Embedding checkpoints store `layers.*`; candle reads `model.layers.*`.
-                let vb = vb.rename_f(|n: &str| n.strip_prefix("model.").unwrap_or(n).to_string());
-                Net::Qwen3(std::sync::Mutex::new(
-                    qwen3::Model::new(&c, vb).context("load Qwen3 weights")?,
-                ))
-            }
             other => anyhow::bail!(
-                "unsupported embedding model_type `{other}` (bert, modernbert, nomic_bert, qwen3)"
+                "unsupported embedding model_type `{other}` (bert, modernbert, nomic_bert)"
             ),
         };
         Ok(EmbedderCore {
@@ -319,7 +306,7 @@ impl Embedder {
         &self.spec
     }
 
-    /// `config.json`'s `model_type` (`bert`, `modernbert`, `nomic_bert`, `qwen3`).
+    /// `config.json`'s `model_type` (`bert`, `modernbert`, `nomic_bert`).
     pub fn model_type(&self) -> &str {
         &self.model_type
     }
@@ -460,34 +447,6 @@ fn forward_raw(
     if texts.is_empty() {
         return Ok(Vec::new());
     }
-    if let Net::Qwen3(m) = net {
-        // One text at a time: candle's Qwen3 takes no padding mask, and
-        // last-token pooling reads the appended <|endoftext|>.
-        let mut out = Vec::with_capacity(texts.len());
-        for t in texts {
-            let enc = tokenizer
-                .encode(*t, true)
-                .map_err(|e| anyhow!("tokenize: {e}"))?;
-            if enc.get_ids().is_empty() {
-                out.push(vec![0.0; dim]);
-                continue;
-            }
-            let ids = Tensor::new(enc.get_ids(), device)?.unsqueeze(0)?;
-            let mut m = m.lock().map_err(|_| anyhow!("qwen3 lock poisoned"))?;
-            m.clear_kv_cache();
-            let h = m.forward(&ids, 0);
-            m.clear_kv_cache();
-            let h = h?;
-            let mask = Tensor::ones_like(&ids)?;
-            let v = pool::l2_normalize(&pool::pool(&h, &mask, spec.pooling)?)?;
-            out.push(
-                v.squeeze(0)?
-                    .to_dtype(candle_core::DType::F32)?
-                    .to_vec1::<f32>()?,
-            );
-        }
-        return Ok(out);
-    }
     let encs = tokenizer
         .encode_batch(texts.to_vec(), true)
         .map_err(|e| anyhow!("tokenize: {e}"))?;
@@ -509,7 +468,6 @@ fn forward_raw(
         Net::Bert(m) => m.forward(&ids, &ids.zeros_like()?, Some(&mask))?,
         Net::Modern(m) => m.forward(&ids, &mask)?,
         Net::Nomic(m) => m.forward(&ids, None, Some(&mask))?,
-        Net::Qwen3(_) => unreachable!("handled above"),
     };
     let pooled = pool::l2_normalize(&pool::pool(&hidden, &mask, spec.pooling)?)?;
     Ok(pooled.to_dtype(candle_core::DType::F32)?.to_vec2::<f32>()?)

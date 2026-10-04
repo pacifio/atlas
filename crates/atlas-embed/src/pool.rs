@@ -1,8 +1,7 @@
 //! Sentence pooling over a padded batch. `mask` is (batch, seq) with 1 for
-//! real tokens; padding is on the right, so the last real token of row i is
-//! at `sum(mask[i]) - 1`.
+//! real tokens.
 
-use candle_core::{DType, IndexOp, Result, Tensor, D};
+use candle_core::{IndexOp, Result, Tensor, D};
 
 use crate::spec::Pooling;
 
@@ -14,15 +13,6 @@ pub fn pool(hidden: &Tensor, mask: &Tensor, pooling: Pooling) -> Result<Tensor> 
             let summed = hidden.broadcast_mul(&m)?.sum(1)?;
             let counts = m.sum(1)?.clamp(1e-9, f64::MAX)?;
             summed.broadcast_div(&counts)
-        }
-        Pooling::LastToken => {
-            let lens: Vec<u32> = mask.to_dtype(DType::U32)?.sum(1)?.to_vec1()?;
-            let rows = lens
-                .iter()
-                .enumerate()
-                .map(|(i, &n)| hidden.i((i, n.saturating_sub(1) as usize, ..)))
-                .collect::<Result<Vec<_>>>()?;
-            Tensor::stack(&rows, 0)
         }
     }
 }
@@ -69,15 +59,6 @@ mod tests {
             .to_vec2::<f32>()
             .unwrap();
         assert_eq!(cls, vec![vec![1.0, 0.0], vec![0.0, 2.0]]);
-        let last = pool(&hidden(), &mask(), Pooling::LastToken)
-            .unwrap()
-            .to_vec2::<f32>()
-            .unwrap();
-        assert_eq!(
-            last,
-            vec![vec![3.0, 0.0], vec![0.0, 6.0]],
-            "last REAL token, right padding"
-        );
     }
 
     #[test]

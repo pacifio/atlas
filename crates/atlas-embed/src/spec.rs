@@ -15,7 +15,6 @@ pub enum Pooling {
     #[default]
     Mean,
     Cls,
-    LastToken,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -76,17 +75,6 @@ impl ModelSpec {
             batch_size: 8,
         }
     }
-
-    /// Qwen/Qwen3-Embedding-0.6B: last-token pooling, instruction-formatted queries.
-    pub fn qwen3_embedding() -> Self {
-        Self {
-            pooling: Pooling::LastToken,
-            query_prefix: "Instruct: Given a code search query, retrieve the code snippets that answer it\nQuery:".into(),
-            document_prefix: String::new(),
-            max_tokens: 1024,
-            batch_size: 1,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -111,10 +99,6 @@ mod tests {
             back.query_prefix,
             "Represent this query for searching relevant code: "
         );
-        assert_eq!(ModelSpec::qwen3_embedding().pooling, Pooling::LastToken);
-        assert!(ModelSpec::qwen3_embedding()
-            .query_prefix
-            .starts_with("Instruct: "));
         let granite = ModelSpec::granite_embedding_small();
         assert_eq!(granite.pooling, Pooling::Cls);
         assert!(granite.query_prefix.is_empty() && granite.document_prefix.is_empty());
