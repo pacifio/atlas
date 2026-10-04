@@ -36,6 +36,9 @@ export function SearchOverlay({
   const [hasSearched, setHasSearched] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Bumped by every search (and by closing): a response from an older one is
+  // dropped, so a slow search never overwrites a newer one's results.
+  const searchSeq = useRef(0);
   const rootPath = useExplorerStore.use.rootPath();
   const session = useSessionStore.use.session();
   const { addSearchHistory, removeSearchHistory, clearSearchHistory, saveSession } =
@@ -44,6 +47,8 @@ export function SearchOverlay({
 
   useEffect(() => {
     if (!open) {
+      searchSeq.current += 1;
+      setSearching(false);
       setQuery("");
       setResults([]);
       setError(null);
@@ -55,10 +60,12 @@ export function SearchOverlay({
 
   const performSearch = async (searchQuery: string, opts: CodeSearchOptions = options) => {
     if (!searchQuery.trim() || !rootPath) return;
+    const seq = ++searchSeq.current;
     setSearching(true);
     setHasSearched(true);
     try {
       const res = await codeGrep(rootPath, searchQuery.trim(), opts);
+      if (seq !== searchSeq.current) return;
       setResults(res.matches);
       setTruncated(res.truncated);
       setError(null);
@@ -66,6 +73,7 @@ export function SearchOverlay({
       addSearchHistory(searchQuery.trim());
       if (currentProject) saveSession(currentProject.path);
     } catch (e) {
+      if (seq !== searchSeq.current) return;
       setResults([]);
       setTruncated(false);
       setError(String(e));
