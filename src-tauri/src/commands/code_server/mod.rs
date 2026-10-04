@@ -10,10 +10,9 @@
 //!   decided by which agent it is.
 //! - **Ten read-only tools** ([`tools`]) over the session's launch directory
 //!   (`Grant::cwd`); nothing outside it is read. `grep` and `find_files` run
-//!   the `atlas_search` engine and are listed to the native agent only, since
-//!   every ACP agent ships its own. The code index's eight (`find_symbol`,
-//!   `outline`, `read_symbol`, `related`, `impact_of_diff`, `repo_map`,
-//!   `semantic_search`, `task_context`) are listed to every session.
+//!   the `atlas_search` engine; the code index adds `find_symbol`, `outline`,
+//!   `read_symbol`, `related`, `impact_of_diff`, `repo_map`,
+//!   `semantic_search` and `task_context`.
 //! - **Bounded**: each call runs on a blocking thread with a 15 s deadline
 //!   and stops when the call is cancelled or its future is dropped.
 //! - **The project search overlay runs on the same engine** ([`code_grep`]).

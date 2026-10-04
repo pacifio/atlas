@@ -69,21 +69,14 @@ async fn running_host_with(tools: CodeTools) -> Arc<MemoryServerHost> {
     host
 }
 
-/// A native agent's client on `/code` for a session launched in `dir`.
+/// A client on `/code` for a session launched in `dir`.
 async fn client_in(
     host: &MemoryServerHost,
     dir: &std::path::Path,
 ) -> RunningService<RoleClient, ()> {
-    client_as(host, dir, atlas_native_agent::ATLAS_AGENT_ID).await
-}
-
-/// [`client_in`] for the session of `agent`.
-async fn client_as(
-    host: &MemoryServerHost,
-    dir: &std::path::Path,
-    agent: &str,
-) -> RunningService<RoleClient, ()> {
-    let token = host.tokens().mint("s1", agent, &dir.to_string_lossy());
+    let token = host
+        .tokens()
+        .mint("s1", "claude-code", &dir.to_string_lossy());
     let url = host.url_at(CODE_PATH).expect("the server is running");
     let transport = StreamableHttpClientTransport::from_config(
         StreamableHttpClientTransportConfig::with_uri(url).auth_header(token),
@@ -571,47 +564,4 @@ async fn symbol_tools_answer_from_the_code_index_and_grep_names_the_symbol() {
         "grep group names its symbol: {grep}"
     );
     client.cancel().await.ok();
-}
-
-/// An ACP agent ships its own grep and file finder: it is listed only the
-/// code index's tools, and a call to `grep` is refused.
-#[tokio::test(flavor = "multi_thread")]
-async fn an_acp_agent_is_listed_the_index_tools_but_not_grep_or_find_files() {
-    let dir = project(&[("src/lib.rs", "pub fn needle() {}\n")]);
-    let registry = Arc::new(crate::commands::code_index::CodeIndexRegistry::new(None));
-    let tools = CodeTools::new(enabled(true)).with_index(registry);
-    let host = running_host_with(tools).await;
-
-    let acp = client_as(&host, dir.path(), "claude-code").await;
-    let listed: Vec<String> = acp
-        .list_all_tools()
-        .await
-        .unwrap()
-        .iter()
-        .map(|t| t.name.to_string())
-        .collect();
-    let index: Vec<String> = crate::commands::code_index::index_tool_specs()
-        .into_iter()
-        .map(|(name, _, _)| name.to_string())
-        .collect();
-    assert_eq!(listed, index);
-    for (name, args) in [
-        ("grep", json!({ "pattern": "needle" })),
-        ("find_files", json!({ "query": "*.rs" })),
-    ] {
-        let (err, text) = call(&acp, name, args).await;
-        assert!(err && text.contains("not offered to this agent"), "{text}");
-    }
-    acp.cancel().await.ok();
-
-    let native = client_in(&host, dir.path()).await;
-    let listed: Vec<String> = native
-        .list_all_tools()
-        .await
-        .unwrap()
-        .iter()
-        .map(|t| t.name.to_string())
-        .collect();
-    assert_eq!(listed, [tool_names(), index].concat());
-    native.cancel().await.ok();
 }

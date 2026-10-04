@@ -40,12 +40,7 @@ rows best-first, whole rows dropped to fit, and honest paging (`total`, `next_of
 **Offered to every agent that speaks HTTP MCP, gated by its own setting.** "Let agents search code
 with Atlas" (`agentCodeTools`, default on) gates the offer for new sessions and every call in
 running ones. The shared-memory toggle does not gate it, because code search reads only the
-working tree and stores nothing. The offer never branches on agent identity.
-
-**`grep` and `find_files` are listed to the native agent only.** Every ACP agent ships a grep and a
-file finder of its own (Claude Code bundles ripgrep), so a second pair only spends its context and
-splits its habits. An ACP session is listed the code index's tools alone, and a call to either
-search tool is refused. The server reads the agent from the session's token (`Grant::agent`).
+working tree and stores nothing. Nothing branches on agent identity.
 
 **Scoped to the session's launch directory** (`Grant::cwd`). A path that resolves outside it
 (`../`, an absolute path elsewhere, a symlink out) is refused. Symlinks are not followed. Secret
@@ -68,12 +63,11 @@ so the user and the agents get the same matches.
 ## Consequences
 
 - Search no longer depends on `rg` being installed, and needs no approval prompt in any mode.
-- The native agent's fixed prefix carries two more tool schemas and the server instructions: about
-  3.1 KB (2.6 KB of schema, 0.5 KB of instructions). ACP agents carry only the instructions and the
-  code index's schemas.
-- ACP agents keep one grep, their own. They get no Atlas annotations on grep hits (enclosing symbol,
-  caller count) and no grep prefilter on very large repositories; `find_symbol` and `related` are
-  where they get the index.
+- Every session's fixed prefix carries two more tool schemas and the server instructions: about
+  3.1 KB (2.6 KB of schema, 0.5 KB of instructions) for the native agent, and the same for ACP
+  agents that take the server.
+- ACP agents that bundle their own grep (Claude Code) see two search tools. The server
+  instructions say when to prefer this one. Neither is disabled.
 - Atlas's search is read-only and confined to the session directory, so auto-approval adds no new
   power. It does bypass the shell sandbox's read rules: in-process reads are confined by the root
   check and the deny list instead, and the deny list is the thing to extend when a new secret shape
