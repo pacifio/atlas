@@ -60,11 +60,19 @@
  *   - bubblewrap needs the container's seccomp, AppArmor and /proc masks
  *     relaxed (see sandboxOpts). Without them the engine's sandbox fails as
  *     it would on a runner without bwrap installed.
+ *   - Two lanes. The jobs left on this machine (the macOS app) run alongside
+ *     the container's, which still run one after another. The two never share
+ *     a target dir, so neither waits on the other's cargo lock and nothing is
+ *     built twice; they only share cores, and each leaves some idle (linking,
+ *     running tests). The container jobs stay sequential because they do
+ *     share one target dir. This machine's lane writes to a log file, printed
+ *     in full if it fails, so the terminal shows one stream.
  */
 
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { closeSync, openSync, readFileSync, writeSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   REPO_ROOT,
@@ -326,23 +334,28 @@ function containerContext() {
   };
 }
 
-function containerRun(ctx, cwd, command, { interactive = false } = {}) {
+function containerArgs(ctx, cwd, command, { interactive = false } = {}) {
   const tty = interactive || (process.stdout.isTTY && process.stdin.isTTY);
-  return spawnSync(
-    DOCKER,
-    [
-      "run",
-      "--rm",
-      "--init",
-      ...(interactive ? ["-it"] : tty ? ["-t"] : []),
-      ...ctx.opts,
-      "-w",
-      path.posix.join(ctx.root, cwd),
-      ctx.image,
-      ...command,
-    ],
-    { stdio: "inherit" },
-  );
+  return [
+    "run",
+    "--rm",
+    "--init",
+    ...(interactive ? ["-it"] : tty ? ["-t"] : []),
+    ...ctx.opts,
+    "-w",
+    path.posix.join(ctx.root, cwd),
+    ctx.image,
+    ...command,
+  ];
+}
+
+/** Run `cmd`, resolving to its exit status (1 if it could not start). */
+function run(cmd, args, opts) {
+  return new Promise((resolve) => {
+    const child = spawn(cmd, args, opts);
+    child.on("error", () => resolve(1));
+    child.on("close", (code) => resolve(code ?? 1));
+  });
 }
 
 /** Where a job runs: in the container, on this machine, or not at all. */
@@ -352,11 +365,12 @@ function placement(job, linux) {
   return "native";
 }
 
-function main(argv) {
+async function main(argv) {
   const linux = argv.includes("--linux");
   if (argv.includes("--shell")) {
     const ctx = containerContext();
-    process.exit(containerRun(ctx, ".", ["bash"], { interactive: true }).status ?? 1);
+    const args = containerArgs(ctx, ".", ["bash"], { interactive: true });
+    process.exit(spawnSync(DOCKER, args, { stdio: "inherit" }).status ?? 1);
   }
 
   const all = ciJobs();
@@ -416,39 +430,29 @@ function main(argv) {
     env.SDKROOT = execFileSync("xcrun", ["--show-sdk-path"], { encoding: "utf8" }).trim();
   }
 
-  const results = [];
-  for (const job of jobs) {
-    if (job.where === "skip") {
-      console.log(`\n── ${job.name}: skipped (CI runs it on ${job.os})`);
-      results.push({ job: job.name, skipped: true, secs: 0 });
-      continue;
-    }
-    const started = Date.now();
-    let failed = null;
-    for (const step of job.steps) {
-      const skip = skipReason(job, step);
-      if (skip) {
-        console.log(`\n── ${job.name} › ${step.name}: skipped (${skip})`);
-        continue;
-      }
-      console.log(
-        `\n── ${job.name} › ${step.name}${job.where === "container" ? " (container)" : ""}\n   [${step.cwd}] ${step.run.replace(/\s*\n\s*/g, " ")}`,
-      );
-      const command = ["bash", "-eo", "pipefail", "-c", step.run];
-      const r =
-        job.where === "container"
-          ? containerRun(ctx, step.cwd, command)
-          : spawnSync(command[0], command.slice(1), {
-              cwd: path.join(REPO_ROOT, step.cwd),
-              env,
-              stdio: "inherit",
-            });
-      if (r.status !== 0) {
-        failed = step.name;
-        break;
-      }
-    }
-    results.push({ job: job.name, failed, secs: Math.round((Date.now() - started) / 1000) });
+  // Two lanes when both kinds of job are planned (see the docblock); one
+  // otherwise, since native jobs share this machine's target dir.
+  const here = jobs.filter((j) => j.where === "native");
+  const lanes = ctx && here.length ? [jobs.filter((j) => j.where !== "native"), here] : [jobs];
+  let log = null;
+  if (lanes.length === 2) {
+    log = path.join(tmpdir(), `atlas-ci-local-${process.pid}.log`);
+    console.log(
+      `ci-local: ${here.map((j) => j.name).join(", ")} runs on this machine alongside the container jobs; its output goes to ${log}`,
+    );
+  }
+  const done = new Map();
+  await Promise.all(
+    lanes.map(async (lane, i) => {
+      const out = i === 1 ? openSync(log, "w") : null;
+      for (const job of lane) done.set(job, await runJob(job, ctx, env, out));
+      if (out !== null) closeSync(out);
+    }),
+  );
+  const results = jobs.map((j) => done.get(j));
+  if (log && here.some((j) => done.get(j).failed)) {
+    console.log(`\n── output from this machine's lane (${log}):\n`);
+    console.log(readFileSync(log, "utf8"));
   }
 
   console.log("\nci-local summary");
@@ -470,6 +474,51 @@ function main(argv) {
   process.exit(failures ? 1 : 0);
 }
 
+/**
+ * Run one job's steps in order, stopping at the first failure. `out` is a file
+ * descriptor to write to, or null for this terminal.
+ */
+async function runJob(job, ctx, env, out) {
+  const say = (line) => (out === null ? console.log(line) : writeSync(out, `${line}\n`));
+  if (job.where === "skip") {
+    say(`\n── ${job.name}: skipped (CI runs it on ${job.os})`);
+    return { job: job.name, skipped: true, secs: 0 };
+  }
+  const started = Date.now();
+  const stdio = out === null ? "inherit" : ["ignore", out, out];
+  let failed = null;
+  for (const step of job.steps) {
+    const skip = skipReason(job, step);
+    if (skip) {
+      say(`\n── ${job.name} › ${step.name}: skipped (${skip})`);
+      continue;
+    }
+    say(
+      `\n── ${job.name} › ${step.name}${job.where === "container" ? " (container)" : ""}\n   [${step.cwd}] ${step.run.replace(/\s*\n\s*/g, " ")}`,
+    );
+    const command = ["bash", "-eo", "pipefail", "-c", step.run];
+    const status =
+      job.where === "container"
+        ? await run(DOCKER, containerArgs(ctx, step.cwd, command), { stdio })
+        : await run(command[0], command.slice(1), {
+            cwd: path.join(REPO_ROOT, step.cwd),
+            env,
+            stdio,
+          });
+    if (status !== 0) {
+      failed = step.name;
+      break;
+    }
+  }
+  const secs = Math.round((Date.now() - started) / 1000);
+  if (out !== null) {
+    console.log(
+      `\n── ${job.name} (this machine): ${failed ? `FAILED at ${failed}` : "ok"} in ${secs}s`,
+    );
+  }
+  return { job: job.name, failed, secs };
+}
+
 /** Why a step doesn't run where this job runs, or null if it does. */
 function skipReason(job, step) {
   if (job.where === "container") {
@@ -478,4 +527,4 @@ function skipReason(job, step) {
   return MUTATES_MACHINE.test(step.run) ? "changes this machine" : null;
 }
 
-main(process.argv.slice(2));
+await main(process.argv.slice(2));
