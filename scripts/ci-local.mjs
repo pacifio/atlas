@@ -60,6 +60,11 @@
  *   - bubblewrap needs the container's seccomp, AppArmor and /proc masks
  *     relaxed (see sandboxOpts). Without them the engine's sandbox fails as
  *     it would on a runner without bwrap installed.
+ *   - One container per job, as CI gives each job its own VM: started when
+ *     the job starts, each step run in it with `docker exec`, removed when
+ *     the job ends (or the run is interrupted). Steps of one job share its
+ *     filesystem, `/tmp` and leftover processes included, exactly as they
+ *     share a runner in CI; nothing outside the volumes reaches the next job.
  *   - Two lanes. The jobs left on this machine (the macOS app) run alongside
  *     the container's, which still run one after another. The two never share
  *     a target dir, so neither waits on the other's cargo lock and nothing is
@@ -204,6 +209,8 @@ function checkVersions() {
 }
 
 const DOCKER = process.env.ATLAS_CI_DOCKER || "docker";
+/** Where scripts/ci-linux/Dockerfile installs entrypoint.sh. */
+const ENTRYPOINT = "/usr/local/bin/ci-linux-entrypoint";
 const IMAGE_DIR = path.join(REPO_ROOT, "scripts", "ci-linux");
 
 /**
@@ -334,17 +341,67 @@ function containerContext() {
   };
 }
 
-function containerArgs(ctx, cwd, command, { interactive = false } = {}) {
-  const tty = interactive || (process.stdout.isTTY && process.stdin.isTTY);
+/** `docker run` arguments for an interactive shell (`--shell`). */
+function shellArgs(ctx) {
+  return ["run", "--rm", "--init", "-it", ...ctx.opts, "-w", ctx.root, ctx.image, "bash"];
+}
+
+/** Containers started for a job and not yet removed, for cleanup on exit. */
+const liveContainers = new Set();
+
+function removeLiveContainers() {
+  if (liveContainers.size) {
+    spawnSync(DOCKER, ["rm", "-f", ...liveContainers], { stdio: "ignore" });
+    liveContainers.clear();
+  }
+}
+process.on("exit", removeLiveContainers);
+for (const signal of ["SIGINT", "SIGTERM"]) {
+  process.on(signal, () => {
+    removeLiveContainers();
+    process.exit(130);
+  });
+}
+
+/**
+ * Start a job's container, idle until its steps are exec'd into it. The
+ * entrypoint runs once here (volume ownership); each step goes back through
+ * it (see `execArgs`) for the environment and the drop to the host user.
+ */
+function startJobContainer(ctx) {
+  const r = spawnSync(
+    DOCKER,
+    ["run", "-d", "--rm", "--init", ...ctx.opts, ctx.image, "sleep", "infinity"],
+    { encoding: "utf8" },
+  );
+  const id = r.stdout?.trim();
+  if (r.status !== 0 || !id) {
+    console.error(`ci-local: could not start the container: ${r.stderr?.trim()}`);
+    return null;
+  }
+  liveContainers.add(id);
+  return id;
+}
+
+function stopJobContainer(id) {
+  spawnSync(DOCKER, ["rm", "-f", id], { stdio: "ignore" });
+  liveContainers.delete(id);
+}
+
+/**
+ * `docker exec` arguments for one step. `exec` skips the image's entrypoint,
+ * so the step runs through it explicitly: it sets HOME, CARGO_HOME and
+ * CARGO_TARGET_DIR and drops to the host user, as it does for `docker run`.
+ */
+function execArgs(ctx, id, cwd, command) {
+  const tty = process.stdout.isTTY && process.stdin.isTTY;
   return [
-    "run",
-    "--rm",
-    "--init",
-    ...(interactive ? ["-it"] : tty ? ["-t"] : []),
-    ...ctx.opts,
+    "exec",
+    ...(tty ? ["-t"] : []),
     "-w",
     path.posix.join(ctx.root, cwd),
-    ctx.image,
+    id,
+    ENTRYPOINT,
     ...command,
   ];
 }
@@ -369,8 +426,7 @@ async function main(argv) {
   const linux = argv.includes("--linux");
   if (argv.includes("--shell")) {
     const ctx = containerContext();
-    const args = containerArgs(ctx, ".", ["bash"], { interactive: true });
-    process.exit(spawnSync(DOCKER, args, { stdio: "inherit" }).status ?? 1);
+    process.exit(spawnSync(DOCKER, shellArgs(ctx), { stdio: "inherit" }).status ?? 1);
   }
 
   const all = ciJobs();
@@ -486,6 +542,10 @@ async function runJob(job, ctx, env, out) {
   }
   const started = Date.now();
   const stdio = out === null ? "inherit" : ["ignore", out, out];
+  const container = job.where === "container" ? startJobContainer(ctx) : null;
+  if (job.where === "container" && !container) {
+    return { job: job.name, failed: "starting the container", secs: 0 };
+  }
   let failed = null;
   for (const step of job.steps) {
     const skip = skipReason(job, step);
@@ -499,7 +559,7 @@ async function runJob(job, ctx, env, out) {
     const command = ["bash", "-eo", "pipefail", "-c", step.run];
     const status =
       job.where === "container"
-        ? await run(DOCKER, containerArgs(ctx, step.cwd, command), { stdio })
+        ? await run(DOCKER, execArgs(ctx, container, step.cwd, command), { stdio })
         : await run(command[0], command.slice(1), {
             cwd: path.join(REPO_ROOT, step.cwd),
             env,
@@ -510,6 +570,7 @@ async function runJob(job, ctx, env, out) {
       break;
     }
   }
+  if (container) stopJobContainer(container);
   const secs = Math.round((Date.now() - started) / 1000);
   if (out !== null) {
     console.log(
