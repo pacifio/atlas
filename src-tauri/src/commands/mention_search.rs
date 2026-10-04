@@ -22,7 +22,8 @@
 //! doesn't fit the unified shape.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Matcher, Utf32Str};
@@ -30,6 +31,7 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tauri::{State, WebviewWindow};
 
+use super::code_index::CodeIndexRegistry;
 use super::fileindex::FileIndexState;
 use super::git::{GitRef, GitRefs};
 use super::git_watcher::GitWatcherState;
@@ -44,7 +46,7 @@ const TOTAL_LIMIT: usize = 40;
 /// Per-process cache of the mention-search inputs that aren't already held in
 /// a lock-protected Rust state. Knowledge entries are pushed in from JS
 /// (`useKnowledgeStore`) via `mention_cache_set_knowledge`; symbols are loaded
-/// Rust-side from the persisted `atlas-codeindex` by [`ensure_symbol_cache`]
+/// Rust-side from the project's code index by [`ensure_symbol_cache`]
 /// (no JS push). Read by `mention_search`.
 ///
 /// Why this exists: before the cache, every @-picker keystroke
@@ -62,16 +64,16 @@ const TOTAL_LIMIT: usize = 40;
 struct WindowCache {
     knowledge: Vec<KnowledgeInput>,
     symbols: Vec<SymbolInput>,
-    /// Which project `symbols` was loaded from. Symbols are now sourced
-    /// Rust-side from the persisted `atlas-codeindex` (see
-    /// `ensure_symbol_cache`) rather than pushed from JS, so we lazily load
-    /// them on the first symbol-search per project and remember the project
-    /// here to avoid re-reading `docs.json` on every keystroke.
+    /// Which project `symbols` was loaded from. Symbols are sourced Rust-side
+    /// from the project's code index (see `ensure_symbol_cache`) rather than
+    /// pushed from JS, so we lazily load them on the first symbol-search per
+    /// project and remember the project here to avoid re-reading the index on
+    /// every keystroke.
     symbols_project: Option<String>,
-    /// `docs.json` mtime (ms) the cached `symbols` were built from. Re-read
-    /// when the index is (re)built so freshly-indexed symbols show up without
-    /// a window reload; a cheap `stat` per keystroke gates the reload.
-    symbols_mtime: i64,
+    /// The code index generation the cached `symbols` were built from. It
+    /// moves on every write that changed rows, so freshly-indexed symbols show
+    /// up without a window reload; comparing it per keystroke is an atomic load.
+    symbols_generation: i64,
 }
 
 #[derive(Default)]
@@ -112,7 +114,7 @@ pub fn mention_cache_clear(
 }
 
 /// Ranked shape for a code symbol in the @-mention picker. Built Rust-side
-/// from the persisted `atlas-codeindex` (`docs.json`) by [`ensure_symbol_cache`].
+/// from the project's code index by [`ensure_symbol_cache`].
 #[derive(Debug, Clone)]
 pub struct SymbolInput {
     pub name: String,
@@ -122,62 +124,70 @@ pub struct SymbolInput {
     pub signature: String,
 }
 
-/// Lazily populate a window's symbol cache from the persisted codebase index
-/// (`atlas-codeindex`) the first time symbols are searched for a given
-/// project. The `docs.json` read + flatten runs once per project on a blocking
-/// thread; every subsequent keystroke hits the hot in-memory cache. Mirrors
-/// the branch-refs lazy-cache pattern. A project that has never been indexed
-/// (no `docs.json`) yields an empty list — `@symbol` simply returns nothing
-/// until chat-with-codebase indexing has run.
-async fn ensure_symbol_cache(state: &MentionCacheState, label: &str, project_path: Option<&str>) {
+/// Lazily populate a window's symbol cache from the project's code index the
+/// first time symbols are searched for a given project, and again whenever
+/// the index's generation moves. The read runs on a blocking thread; every
+/// other keystroke hits the hot in-memory cache. A project with no open code
+/// index yields an empty list: `@symbol` returns nothing until it is indexed.
+async fn ensure_symbol_cache(
+    state: &MentionCacheState,
+    code_index: &CodeIndexRegistry,
+    label: &str,
+    project_path: Option<&str>,
+) {
     let Some(project) = project_path else {
         return;
     };
-    // Cheap stat of `docs.json` — its mtime tells us whether the index was
-    // (re)built since we cached. 0 when it doesn't exist yet (unindexed).
-    let mtime = std::fs::metadata(atlas_codeindex::docs_path(project))
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0);
+    // The open code index covering the project; its generation moves on every
+    // write that changed rows. 0 when no index is open (nothing to list yet).
+    let index = code_index.root_for(Path::new(project));
+    let generation = index.as_ref().map_or(0, |p| {
+        i64::try_from(p.index.generation()).unwrap_or(i64::MAX)
+    });
     // Already loaded for this exact project + index revision → nothing to do.
     {
         let map = state.per_window.read();
         if let Some(c) = map.get(label) {
-            if c.symbols_project.as_deref() == Some(project) && c.symbols_mtime == mtime {
+            if c.symbols_project.as_deref() == Some(project) && c.symbols_generation == generation {
                 return;
             }
         }
     }
-    let project_owned = project.to_string();
-    let symbols = tokio::task::spawn_blocking(move || {
-        let index = atlas_codeindex::load_index(&project_owned);
-        let mut out: Vec<SymbolInput> = Vec::new();
-        for doc in &index.docs {
-            for s in &doc.symbols {
-                out.push(SymbolInput {
-                    name: s.name.clone(),
-                    kind: s.kind.clone(),
+    let symbols = match index {
+        None => Vec::new(),
+        Some(index) => tokio::task::spawn_blocking(move || {
+            let root = index.index.root().to_path_buf();
+            let hits = match index.index.picker_symbols(20_000) {
+                Ok(hits) => hits,
+                Err(e) => {
+                    tracing::warn!(target: "atlas::mention_search", "picker symbols: {e}");
+                    Vec::new()
+                }
+            };
+            hits.into_iter()
+                .map(|s| SymbolInput {
+                    signature: if s.signature.is_empty() {
+                        format!("{} {}", s.kind, s.name)
+                    } else {
+                        s.signature.clone()
+                    },
                     // Absolute path so the picker can open the file directly.
-                    file_path: doc.abs_path.clone(),
-                    line: s.line,
-                    // atlas-codeindex stores no signature; synthesize a compact
-                    // "kind name" so the picker's detail line still reads well.
-                    signature: format!("{} {}", s.kind, s.name),
-                });
-            }
-        }
-        out
-    })
-    .await
-    .unwrap_or_default();
+                    file_path: root.join(&s.rel).to_string_lossy().into_owned(),
+                    line: s.start_line,
+                    name: s.name,
+                    kind: s.kind,
+                })
+                .collect::<Vec<_>>()
+        })
+        .await
+        .unwrap_or_default(),
+    };
 
     let mut map = state.per_window.write();
     let entry = map.entry(label.to_string()).or_default();
     entry.symbols = symbols;
     entry.symbols_project = Some(project.to_string());
-    entry.symbols_mtime = mtime;
+    entry.symbols_generation = generation;
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -259,6 +269,7 @@ pub async fn mention_search(
     fileindex: State<'_, FileIndexState>,
     git_watcher: State<'_, GitWatcherState>,
     cache: State<'_, MentionCacheState>,
+    code_index: State<'_, Arc<CodeIndexRegistry>>,
 ) -> Result<Vec<MentionResult>, String> {
     let label = workspace_id.unwrap_or_else(|| webview.label().to_string());
     let scope_ref = scope.as_deref();
@@ -350,10 +361,16 @@ pub async fn mention_search(
     // entries across the IPC boundary on every keystroke (the old
     // path could push 100-500 KB per keystroke on a project with
     // many symbols, which was the visible typing lag).
-    // Symbols are sourced from the persisted codebase index, loaded lazily
-    // into the per-window cache on the first symbol-search per project.
+    // Symbols are sourced from the project's code index, loaded lazily into
+    // the per-window cache on the first symbol-search per project.
     if want_symbol {
-        ensure_symbol_cache(cache.inner(), &label, project_path.as_deref()).await;
+        ensure_symbol_cache(
+            cache.inner(),
+            code_index.inner(),
+            &label,
+            project_path.as_deref(),
+        )
+        .await;
     }
     let symbols_data: Vec<SymbolInput> = if want_symbol {
         cache

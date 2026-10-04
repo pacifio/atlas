@@ -117,7 +117,7 @@ job carries a `cwd`** so multiple open projects stay isolated.
 | Trigger | Job |
 |---|---|
 | Project opened (first `engine_for`) | one cold `IndexCorpus{cwd}` + one `Compact{cwd}` (global promotion) |
-| Watched file changes (`*.md`, `CLAUDE.md`, `AGENTS.md`, `codebase-index/docs.json`), debounced ~2s | `IndexCorpus{cwd}` |
+| Watched file changes (`*.md`, `CLAUDE.md`, `AGENTS.md`), debounced ~2s | `IndexCorpus{cwd}` |
 | A chat turn finishes | `IndexCorpus{cwd}` (always) + `ExtractSession{cwd,writer,turns}` (the extractor's gated pass) |
 | A session ends | `SessionEnded{cwd,writer}` (the extractor's one end-of-session pass) |
 | An extractor pass stored entries | `IndexCorpus{cwd}` + `Compact{cwd}` |

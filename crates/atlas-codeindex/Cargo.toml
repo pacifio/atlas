@@ -1,28 +1,36 @@
 [package]
 name = "atlas-codeindex"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "Deterministic codebase scanner for Atlas: turns live source into structural, embeddable docs via its own tree-sitter code intelligence."
+description = "Atlas code index: parallel tree-sitter symbol extraction into a per-project SQLite + FTS5 index, updated per file."
 
 [lib]
 name = "atlas_codeindex"
 
 [dependencies]
-# Tree-sitter code intelligence (imports + symbols for Rust/TS/JS/Python/Go).
-# Atlas owns this outright (see src/code_intel.rs) — these are the upstream
-# grammars, not an SDK wrapper around them.
-tree-sitter = "0.26"
+# Compact output, cancel tokens and the grep-annotation seam the index fills.
+atlas-search = { path = "../atlas-search" }
+# Tree-sitter extraction (Rust, TS/TSX/JS, Python, Go). One core in the graph
+# (root Cargo.toml), grammars bound through `tree-sitter-language`.
+tree-sitter = { workspace = true }
 tree-sitter-rust = "0.23"
 tree-sitter-typescript = "0.23"
 tree-sitter-python = "0.23"
 tree-sitter-go = "0.23"
-# gitignore-respecting project walk (same crate the file index uses).
-ignore = "0.4"
-# Content fingerprints for incremental rebuilds.
-sha2 = "0.10"
-anyhow = "1"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# gitignore-respecting discovery (same crate the file index uses).
+ignore = { workspace = true }
+# Parallel extraction with a thread-local parser.
+rayon = { workspace = true }
+# Content fingerprints behind the stat gate.
+blake3 = { workspace = true }
+dunce = { workspace = true }
+thiserror = { workspace = true }
+# The one SQLite in the graph (FTS5 compiled in); same version and features as
+# `crates/atlas-thread-metadata`.
+rusqlite = { version = "0.39", features = ["bundled"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }
 
 # The workspace lint table is only real for members that opt in —
 # without this stanza it is dead configuration (#60).

@@ -268,6 +268,33 @@ pub fn run() {
                 }),
             );
 
+            // The code index: one SQLite index + worker per open project,
+            // fed by the file and git watchers. Managed before
+            // `install_manager`, whose code tool server reads it. The
+            // observer tells the window a job finished; the status pill
+            // re-reads `codebase_index_status` on it.
+            {
+                use tauri::Emitter;
+                let code_app = app.handle().clone();
+                let code_index = Arc::new(commands::code_index::CodeIndexRegistry::new(Some(
+                    Arc::new(
+                        move |project: &str, job: &'static str, result: &Result<bool, String>| {
+                            let _ = code_app.emit(
+                                "atlas:codebase-index:progress",
+                                serde_json::json!({
+                                    "phase": if result.is_ok() { "done" } else { "error" },
+                                    "current": 0,
+                                    "total": 0,
+                                    "project": project,
+                                    "job": job,
+                                }),
+                            );
+                        },
+                    ),
+                )));
+                app.manage(code_index);
+            }
+
             commands::agents::install_manager(app.handle());
             // Silent background refresh of model pricing from models.dev — first
             // launch populates the cache; later launches update only on change.
@@ -384,7 +411,9 @@ pub fn run() {
             match event {
                 tauri::WindowEvent::Destroyed => {
                     let label = window.label();
-                    window.state::<FileIndexState>().drop_window(label);
+                    if let Some(root) = window.state::<FileIndexState>().drop_window(label) {
+                        commands::fileindex::close_code_index(window.app_handle(), &root);
+                    }
                     window.state::<MentionCacheState>().drop_window(label);
                     window
                         .state::<commands::git_autofetch::GitAutoFetchState>()
@@ -798,8 +827,8 @@ pub fn run() {
             commands::models::model_download,
             commands::models::model_remove,
             commands::models::model_select,
-            commands::codebase_index::codebase_index_status,
-            commands::codebase_index::codebase_index_build,
+            commands::code_index::codebase_index_status,
+            commands::code_index::codebase_index_build,
             commands::session_chat::session_chat_retrieve,
             commands::session_chat_sessions::session_chat_threads_list,
             commands::session_chat_sessions::session_chat_thread_get,

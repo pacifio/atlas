@@ -250,9 +250,9 @@ impl MemoryRegistry {
     /// cwd watch never saw at all. `collect_corpus` reads exactly:
     ///  - `~/.claude/projects/<encoded>/memory/*.md` → watched recursively,
     ///  - `<cwd>/CLAUDE.md` + `<cwd>/AGENTS.md` → cwd watched NON-recursively,
-    ///  - `<cwd>/.atlas/codebase-index/docs.json` → watched when present
-    ///    (created later → picked up next open; the codebase-index build
-    ///    enqueues its own reindex anyway),
+    ///  - the code index's file docs (`<cwd>/.atlas/code-index/index.db`) →
+    ///    not watched: its WAL changes on every write. A codebase build calls
+    ///    `request_reindex`, and every finished turn nudges an index pass,
     ///  - Codex sqlite under `~/.codex` → not watchable meaningfully (WAL
     ///    churn); its content rides the debounced reindexes above.
     fn start_watcher(&self, cwd: &str) {
@@ -306,15 +306,6 @@ impl MemoryRegistry {
                     }
                 }
 
-                // The persisted codebase index, when it exists.
-                let codebase_index = Path::new(cwd).join(".atlas").join("codebase-index");
-                if codebase_index.is_dir()
-                    && w.watch(&codebase_index, notify::RecursiveMode::Recursive)
-                        .is_ok()
-                {
-                    watched_any = true;
-                }
-
                 if watched_any {
                     self.watchers.insert(cwd.to_string(), w);
                 }
@@ -326,8 +317,8 @@ impl MemoryRegistry {
     }
 }
 
-/// True for paths the corpus is built from: any `*.md`, `CLAUDE.md`, `AGENTS.md`,
-/// or the codebase index's `codebase-index/docs.json`. Dependency/build trees
+/// True for paths the corpus is built from: any `*.md`, `CLAUDE.md` and
+/// `AGENTS.md`. Dependency/build trees
 /// are rejected outright — the scoped roots in `start_watcher` shouldn't
 /// deliver them, but a top-level rename can surface such paths in an event
 /// batch, and node_modules is full of README/CHANGELOG `.md` files that would
@@ -346,9 +337,6 @@ fn is_corpus_path(path: &Path) -> bool {
         return true;
     }
     if path.extension().and_then(|e| e.to_str()) == Some("md") {
-        return true;
-    }
-    if name == "docs.json" && path.components().any(|c| c.as_os_str() == "codebase-index") {
         return true;
     }
     false
@@ -710,9 +698,6 @@ mod tests {
         assert!(is_corpus_path(Path::new("/p/NOTES.md")));
         assert!(is_corpus_path(Path::new("/p/CLAUDE.md")));
         assert!(is_corpus_path(Path::new("/p/sub/AGENTS.md")));
-        assert!(is_corpus_path(Path::new(
-            "/p/.atlas/codebase-index/docs.json"
-        )));
         assert!(!is_corpus_path(Path::new("/p/main.rs")));
         assert!(!is_corpus_path(Path::new("/p/other/docs.json")));
         assert!(!is_corpus_path(Path::new("/p/data.json")));
@@ -834,7 +819,7 @@ mod tests {
     }
 
     /// A codebase build asks for exactly one corpus pass (the pass that reads
-    /// docs.json through `collect_corpus` and embeds the code docs). A
+    /// the code index's file docs through `collect_corpus` and embeds them). A
     /// never-opened project gets the cold pass its open queues; an open one
     /// gets the nudge. Neither ever blocks.
     #[test]

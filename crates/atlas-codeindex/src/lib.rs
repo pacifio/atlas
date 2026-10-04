@@ -1,306 +1,176 @@
-//! `atlas-codeindex` — turn a live codebase into fresh, embeddable documents.
+//! `atlas-codeindex` v2: a per-project symbol index in SQLite.
 //!
-//! Deterministic half of the Memory-Chat codebase indexer: walk the project
-//! (gitignore-respecting), parse each supported source file with Atlas's own
-//! tree-sitter [`code_intel`], and emit one [`CodebaseDoc`] per file carrying
-//! its language, imports, top-level symbols, and a content hash for incremental
-//! rebuilds. The embedding step and the optional Tier-2 LLM summary both live
-//! in the app's command layer; this crate is pure (no network, and no I/O
-//! beyond reading source files).
+//! - **Extraction** (`lang`, `extract`): one tree-sitter cursor walk per file
+//!   driven by per-language tables resolved to kind-id bitsets. It yields
+//!   definitions with qualified names, parents, ranges, signatures, docs and
+//!   export/test flags, plus normalized imports.
+//! - **Scan** (`scan`, `skip`): a parallel gitignore-respecting walk; paths
+//!   sorted for deterministic row ids; vendored, generated, minified and
+//!   oversized files skipped with a reason; extraction on a rayon pool.
+//! - **Store** (`store`, `update`): `<root>/.atlas/code-index/index.db`,
+//!   schema v1, a stat → BLAKE3 gate so only changed files re-parse.
+//! - **Query** (`query`, `docs`): FTS5 BM25 symbol search with exact-name
+//!   boosts, outlines, symbol source read from disk, the grep locator, and
+//!   file-level docs for the memory corpus.
+//!
+//! Pure: no Tauri. The app owns the registry, worker thread and watchers.
 
-pub mod code_intel;
+mod docs;
+mod error;
+mod extract;
+mod lang;
+mod query;
+mod scan;
+mod skip;
+mod store;
+mod update;
 
 #[cfg(test)]
 mod tests;
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 
-use anyhow::{Context, Result};
-use code_intel::{Language, SymbolKind};
-use ignore::WalkBuilder;
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+use rusqlite::Connection;
 
-/// Skip files larger than this (minified bundles, generated blobs).
-const MAX_SOURCE_BYTES: u64 = 1_000_000;
-/// Cap on indexed files for very large repos. `scan` parses candidates in
-/// path order, so the files it keeps are the first ones by path, the same on
-/// every run.
-pub const DEFAULT_MAX_FILES: usize = 1500;
-/// Directories holding third-party code or build output. Their files stay out
-/// of the index by default (decision 3 in `docs/research/codeindex-search`).
-/// Matched against path components below the project root only, so a project
-/// that itself lives under `build/` or `vendor/` is still indexed.
-const SKIP_DIRS: &[&str] = &[
-    "vendor",
-    "third_party",
-    "node_modules",
-    "target",
-    "dist",
-    "build",
-    "__generated__",
-];
-/// File-name endings of minified bundles and code-generator output.
-const SKIP_FILE_SUFFIXES: &[&str] = &[
-    ".min.js",
-    ".min.mjs",
-    ".min.cjs",
-    ".bundle.js",
-    ".pb.go",
-    "_pb2.py",
-    "_pb2_grpc.py",
-    ".gen.go",
-    ".gen.ts",
-    ".generated.ts",
-];
+pub use docs::{read_file_docs, FileDoc, SummaryTarget};
+pub use error::IndexError;
+pub use lang::Lang;
+pub use query::{SymbolHit, SymbolQuery, SymbolSource};
+pub use skip::{SkipReason, MAX_FILE_BYTES};
+pub use store::{split_name, EXTRACTOR_VERSION, SCHEMA_VERSION};
+pub use update::{BuildProgress, BuildStats, IndexStatus, UpdateStats};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CodebaseSymbol {
-    pub name: String,
-    /// Short kind label: "fn" | "struct" | "class" | "interface" | "enum" |
-    /// "mod" | "type" | "const".
-    pub kind: String,
-    pub line: u32,
+use skip::{IgnoreChain, Rules};
+
+/// Idle query connections kept for reuse.
+const MAX_IDLE_READERS: usize = 4;
+
+/// One project's code index. Cheap to share behind an `Arc`; every method
+/// takes `&self`. Writes serialize on one connection; reads use a small pool.
+pub struct CodeIndex {
+    inner: Arc<Inner>,
 }
 
-/// One indexed source file. Persisted to `.atlas/codebase-index/docs.json`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CodebaseDoc {
-    /// Project-relative path.
-    pub rel: String,
-    /// Absolute path (for opening the file from the chat sources).
-    pub abs_path: String,
-    pub language: String,
-    pub imports: Vec<String>,
-    pub symbols: Vec<CodebaseSymbol>,
-    /// SHA-256 of the source — drives incremental reuse.
-    pub hash: String,
-    pub mtime_ms: i64,
-    /// LLM summary (Tier 2); empty for structural-only.
-    #[serde(default)]
-    pub summary: String,
-    /// Final embeddable text (summary + structural facts), computed at index time.
-    #[serde(default)]
-    pub text: String,
-    /// Number of project files that import this one — importance for ranking +
-    /// which files get a Tier-2 summary first.
-    #[serde(default)]
-    pub import_rank: u32,
+pub(crate) struct Inner {
+    /// Canonical root, then the root as given (watcher paths may use either).
+    roots: [PathBuf; 2],
+    writer: Mutex<Connection>,
+    readers: Mutex<Vec<Connection>>,
+    rules: RwLock<Arc<Rules>>,
+    ignore: RwLock<Arc<IgnoreChain>>,
+    generation: AtomicU64,
 }
 
-/// A freshly-scanned file before incremental merge / summarization.
-#[derive(Debug, Clone)]
-pub struct ScannedFile {
-    pub rel: String,
-    pub abs_path: String,
-    pub language: String,
-    pub imports: Vec<String>,
-    pub symbols: Vec<CodebaseSymbol>,
-    pub hash: String,
-    pub mtime_ms: i64,
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-fn language_label(language: Language) -> &'static str {
-    language.label()
-}
-
-fn symbol_label(kind: SymbolKind) -> &'static str {
-    kind.label()
-}
-
-fn content_hash(source: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(source.as_bytes());
-    let digest = hasher.finalize();
-    let mut out = String::with_capacity(digest.len() * 2);
-    for byte in digest {
-        out.push_str(&format!("{byte:02x}"));
-    }
-    out
-}
-
-/// Whether `rel` (a path relative to the project root) is vendored code,
-/// build output or generated, and so left out of the index.
-fn is_vendor_or_generated(rel: &Path) -> bool {
-    let in_skipped_dir = rel.components().any(|c| {
-        c.as_os_str()
-            .to_str()
-            .is_some_and(|name| SKIP_DIRS.contains(&name))
-    });
-    let generated_file = rel
-        .file_name()
-        .and_then(|n| n.to_str())
-        .is_some_and(|name| {
-            SKIP_FILE_SUFFIXES
-                .iter()
-                .any(|suffix| name.ends_with(suffix))
-        });
-    in_skipped_dir || generated_file
-}
-
-/// Walk the project and parse every supported source file, in path order.
-/// Blocking (reads files + runs tree-sitter); call under `spawn_blocking`.
-pub fn scan(root: &Path, mtime_ms_of: impl Fn(&Path) -> i64) -> Vec<ScannedFile> {
-    let prune_root = root.to_path_buf();
-    let walker = WalkBuilder::new(root)
-        .hidden(false)
-        .git_ignore(true)
-        .git_global(true)
-        .git_exclude(true)
-        .ignore(true)
-        .parents(true)
-        .follow_links(false)
-        // Prune vendored / generated trees before descending into them.
-        .filter_entry(move |entry| {
-            !entry
-                .path()
-                .strip_prefix(&prune_root)
-                .is_ok_and(is_vendor_or_generated)
-        })
-        .build();
-
-    // Collect every candidate, then sort: the walk yields entries in the
-    // filesystem's directory order, which differs between machines and runs,
-    // and the cap below must keep the same files every time.
-    let mut candidates: Vec<PathBuf> = walker
-        .flatten()
-        .filter(|entry| entry.file_type().is_some_and(|t| t.is_file()))
-        .filter(|entry| {
-            entry
-                .path()
-                .extension()
-                .and_then(|e| e.to_str())
-                .is_some_and(|ext| !matches!(Language::from_extension(ext), Language::Unknown))
-        })
-        .filter(|entry| entry.metadata().is_ok_and(|m| m.len() <= MAX_SOURCE_BYTES))
-        .map(ignore::DirEntry::into_path)
-        .collect();
-    candidates.sort();
-
-    let mut out: Vec<ScannedFile> = Vec::new();
-    for path in &candidates {
-        let Ok(rel) = path.strip_prefix(root) else {
-            continue;
+impl Inner {
+    pub(crate) fn with_reader<R>(
+        &self,
+        f: impl FnOnce(&Connection) -> rusqlite::Result<R>,
+    ) -> Result<R, IndexError> {
+        let conn = lock(&self.readers).pop();
+        let conn = match conn {
+            Some(c) => c,
+            None => store::open_reader(&self.roots[0])?,
         };
-        let rel = rel.to_string_lossy().into_owned();
-        let Ok(source) = std::fs::read_to_string(path) else {
-            continue;
-        };
-        let Some(intel) = code_intel::analyze_file(path, &source) else {
-            continue;
-        };
-        if intel.symbols.is_empty() && intel.imports.is_empty() {
-            continue; // grammar produced nothing useful
+        let out = f(&conn);
+        let mut idle = lock(&self.readers);
+        if idle.len() < MAX_IDLE_READERS {
+            idle.push(conn);
         }
-        out.push(ScannedFile {
-            rel,
-            abs_path: path.to_string_lossy().into_owned(),
-            language: language_label(intel.language).to_string(),
-            imports: intel.imports,
-            symbols: intel
-                .symbols
-                .into_iter()
-                .map(|s| CodebaseSymbol {
-                    name: s.name,
-                    kind: symbol_label(s.kind).to_string(),
-                    line: s.line as u32,
-                })
-                .collect(),
-            hash: content_hash(&source),
-            mtime_ms: mtime_ms_of(path),
-        });
-        // The cap counts files that produced an index entry, not candidates,
-        // so a tree full of empty files can't starve it.
-        if out.len() >= DEFAULT_MAX_FILES {
-            break;
-        }
-    }
-    out
-}
-
-/// Deterministic embeddable text for a file: a compact, natural-language-ish
-/// description of what it defines and imports, so a vector query can match it.
-pub fn structural_text(
-    rel: &str,
-    language: &str,
-    symbols: &[CodebaseSymbol],
-    imports: &[String],
-) -> String {
-    let mut s = format!("File {rel} ({language}).");
-    if !symbols.is_empty() {
-        let defs: Vec<String> = symbols
-            .iter()
-            .take(60)
-            .map(|sym| format!("{} {}", sym.kind, sym.name))
-            .collect();
-        s.push_str(" Defines: ");
-        s.push_str(&defs.join(", "));
-        s.push('.');
-    }
-    if !imports.is_empty() {
-        let imps: Vec<String> = imports.iter().take(30).cloned().collect();
-        s.push_str(" Imports: ");
-        s.push_str(&imps.join(", "));
-        s.push('.');
-    }
-    s
-}
-
-/// Compose the final embeddable text from an optional summary + structural facts.
-pub fn compose_text(summary: &str, structural: &str) -> String {
-    if summary.trim().is_empty() {
-        structural.to_string()
-    } else {
-        format!("{}\n{}", summary.trim(), structural)
+        Ok(out?)
     }
 }
 
-/// Filename stem + symbol names — used as `[[wikilink]]` aliases in the corpus.
-pub fn aliases(rel: &str, symbols: &[CodebaseSymbol]) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    if let Some(stem) = Path::new(rel).file_stem().and_then(|s| s.to_str()) {
-        out.push(stem.to_string());
+impl CodeIndex {
+    /// Open (creating if needed) the index of the project at `project_root`.
+    /// Also makes sure git ignores `.atlas/` via `.git/info/exclude`.
+    /// Does not build: check [`IndexStatus::needs_full_build`].
+    pub fn open(project_root: &Path) -> Result<Self, IndexError> {
+        let canonical = dunce::canonicalize(project_root)?;
+        // Best effort: a read-only `.git` must not stop the index.
+        let _ = store::ensure_git_exclude(&canonical);
+        let writer = store::open_writer(&canonical)?;
+        Ok(Self {
+            inner: Arc::new(Inner {
+                rules: RwLock::new(Arc::new(Rules::load(&canonical))),
+                ignore: RwLock::new(Arc::new(IgnoreChain::new(&canonical))),
+                roots: [canonical, project_root.to_path_buf()],
+                writer: Mutex::new(writer),
+                readers: Mutex::new(Vec::new()),
+                generation: AtomicU64::new(1),
+            }),
+        })
     }
-    for s in symbols.iter().take(40) {
-        out.push(s.name.clone());
+
+    /// The canonical project root.
+    pub fn root(&self) -> &Path {
+        &self.inner.roots[0]
     }
-    out
-}
 
-// ── Persistence ──────────────────────────────────────────────────────────────
+    /// Bumped after every write that changed rows; caches key on it.
+    pub fn generation(&self) -> u64 {
+        self.inner.generation.load(Ordering::SeqCst)
+    }
 
-pub fn index_dir(project_path: &str) -> PathBuf {
-    Path::new(project_path)
-        .join(".atlas")
-        .join("codebase-index")
-}
+    pub(crate) fn bump(&self) {
+        self.inner.generation.fetch_add(1, Ordering::SeqCst);
+    }
 
-pub fn docs_path(project_path: &str) -> PathBuf {
-    index_dir(project_path).join("docs.json")
-}
+    pub(crate) fn roots(&self) -> &[PathBuf; 2] {
+        &self.inner.roots
+    }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CodebaseIndex {
-    #[serde(default)]
-    pub built_at_ms: i64,
-    #[serde(default)]
-    pub docs: Vec<CodebaseDoc>,
-}
+    pub(crate) fn writer(&self) -> MutexGuard<'_, Connection> {
+        lock(&self.inner.writer)
+    }
 
-pub fn load_index(project_path: &str) -> CodebaseIndex {
-    std::fs::read(docs_path(project_path))
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default()
-}
+    pub(crate) fn with_writer<R>(
+        &self,
+        f: impl FnOnce(&Connection) -> rusqlite::Result<R>,
+    ) -> Result<R, IndexError> {
+        Ok(f(&self.writer())?)
+    }
 
-pub fn save_index(project_path: &str, index: &CodebaseIndex) -> Result<()> {
-    let dir = index_dir(project_path);
-    std::fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
-    let bytes = serde_json::to_vec(index).context("serialize codebase index")?;
-    std::fs::write(docs_path(project_path), bytes).context("write docs.json")?;
-    Ok(())
+    pub(crate) fn with_reader<R>(
+        &self,
+        f: impl FnOnce(&Connection) -> rusqlite::Result<R>,
+    ) -> Result<R, IndexError> {
+        self.inner.with_reader(f)
+    }
+
+    pub(crate) fn rules(&self) -> Arc<Rules> {
+        self.inner
+            .rules
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    pub(crate) fn ignore_chain(&self) -> Arc<IgnoreChain> {
+        self.inner
+            .ignore
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Re-read `.atlasignore` and drop cached gitignore matchers.
+    pub(crate) fn reload_rules(&self) {
+        let root = self.root();
+        *self
+            .inner
+            .rules
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = Arc::new(Rules::load(root));
+        *self
+            .inner
+            .ignore
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = Arc::new(IgnoreChain::new(root));
+    }
 }

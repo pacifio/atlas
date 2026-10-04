@@ -486,7 +486,7 @@ impl OutboundMiddleware<SessionDeltaEnvelope> for MemoryIngestMiddleware {
                 });
             }
 
-            // Background reindex nudge: the FS watcher only watches `*.md`/docs.json,
+            // Background reindex nudge: the FS watcher only watches `*.md` files,
             // not session transcripts, so a finished turn needs an explicit nudge to
             // make chat-derived corpus searchable. Fire-and-forget — `enqueue_index`
             // `try_send`s and drops on a full queue, so `emit` never blocks here.
@@ -776,8 +776,14 @@ pub fn install_manager(app: &AppHandle) {
                 .try_state::<crate::state::AtlasConfigHandle>()
                 .is_some_and(|config| config.lock().effective().agent_code_tools)
         });
-        let code_router =
-            super::code_server::router(super::code_server::CodeTools::new(code_tools.clone()));
+        // The code index (Phase 2) serves the symbol tools and names grep
+        // hits by their enclosing symbol; it is managed in `setup` before
+        // this runs.
+        let mut code_server_tools = super::code_server::CodeTools::new(code_tools.clone());
+        if let Some(registry) = app.try_state::<Arc<super::code_index::CodeIndexRegistry>>() {
+            code_server_tools = code_server_tools.with_index(registry.inner().clone());
+        }
+        let code_router = super::code_server::router(code_server_tools);
         // Every agent that can take the server is handed it on each session
         // request, with a token of its own. It is the only way memory reaches
         // an agent (ADR-0010): nothing is prepended to a prompt. A connection

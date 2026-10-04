@@ -121,8 +121,15 @@ pub(super) fn tool_names() -> Vec<String> {
 }
 
 /// The `tools/list` answer, cached as the memory and UI servers' are.
-pub(super) fn tools_list() -> ListToolsResult {
-    ListToolsResult::with_all_items(tools())
+/// `with_index`: the code index is attached, so its tools are listed too.
+pub(super) fn tools_list(with_index: bool) -> ListToolsResult {
+    let mut all = tools();
+    if with_index {
+        for (name, description, input) in crate::commands::code_index::symbol_tool_specs() {
+            all.push(tool(name, description, input));
+        }
+    }
+    ListToolsResult::with_all_items(all)
         .with_ttl_ms(TOOLS_LIST_TTL_MS)
         .with_cache_scope(CacheScope::Private)
 }
@@ -271,11 +278,23 @@ type Job = Box<dyn FnOnce(&CancelToken) -> Result<String, String> + Send>;
 #[derive(Clone)]
 pub struct CodeTools {
     gate: CodeToolsGate,
+    /// The code index registry, when the app attached it: serves the symbol
+    /// tools and names grep hits by their enclosing symbol.
+    index: Option<Arc<crate::commands::code_index::CodeIndexRegistry>>,
 }
 
 impl CodeTools {
     pub fn new(gate: CodeToolsGate) -> Self {
-        Self { gate }
+        Self { gate, index: None }
+    }
+
+    /// Also serve the symbol tools and annotate grep hits from the code index.
+    pub fn with_index(
+        mut self,
+        registry: Arc<crate::commands::code_index::CodeIndexRegistry>,
+    ) -> Self {
+        self.index = Some(registry);
+        self
     }
 
     /// One call, answered under `grant`: its session's launch directory is the
@@ -299,13 +318,19 @@ impl CodeTools {
                     Err(e) => return tool_error(format!("grep: {e}")),
                 };
                 let budget = budget(args.max_output_tokens);
+                // Resolved before `into_request` takes the root; cheap (a map
+                // lookup), and `None` while no open project covers the session.
+                let locator = self
+                    .index
+                    .as_ref()
+                    .and_then(|r| crate::commands::code_index::grep_locator(r, &root));
                 let req = match args.into_request(root) {
                     Ok(req) => req,
                     Err(e) => return tool_error(e),
                 };
                 Box::new(move |cancel: &CancelToken| {
                     atlas_search::grep(&req, cancel)
-                        .map(|res| grep_text(&res, &req, None, budget))
+                        .map(|res| grep_text(&res, &req, locator.as_deref(), budget))
                         .map_err(|e| e.to_string())
                 })
             }
@@ -323,6 +348,17 @@ impl CodeTools {
                     atlas_search::find_files(&req, cancel)
                         .map(|res| find_text(&res, &req, budget))
                         .map_err(|e| e.to_string())
+                })
+            }
+            name if crate::commands::code_index::SYMBOL_TOOLS.contains(&name) => {
+                let Some(registry) = self.index.clone() else {
+                    return tool_error("the code index is not available in this session");
+                };
+                let name = name.to_string();
+                // Symbol queries are bounded SQL; the token is not needed.
+                Box::new(move |_: &CancelToken| {
+                    let scope = crate::commands::code_index::Scope::resolve(&registry, &root)?;
+                    crate::commands::code_index::call_symbol_tool(&scope, &name, &args)
                 })
             }
             _ => return tool_error(format!("unknown tool `{name}`")),
@@ -346,7 +382,7 @@ impl ServerHandler for CodeTools {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
-        Ok(tools_list())
+        Ok(tools_list(self.index.is_some()))
     }
 
     async fn call_tool(

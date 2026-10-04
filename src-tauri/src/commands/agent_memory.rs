@@ -504,31 +504,33 @@ mod shared_promo_tests {
     }
 }
 
-/// Map the persisted codebase index (`.atlas/codebase-index/docs.json`) into
-/// embeddable `MemoryDoc`s for the unified corpus.
+/// Per-file structural docs (plus Tier-2 summaries) from the code index,
+/// for the unified corpus. Until Phase 4 gives code its own semantic tool.
 fn read_codebase_docs(project_path: &str) -> Vec<MemoryDoc> {
-    atlas_codeindex::load_index(project_path)
-        .docs
-        .into_iter()
-        .map(|d| {
-            let summary = if d.summary.trim().is_empty() {
-                format!("{} · {} symbols", d.language, d.symbols.len())
+    let root = Path::new(project_path);
+    let docs = match atlas_codeindex::read_file_docs(root, 1500) {
+        Ok(docs) => docs,
+        Err(e) => {
+            tracing::warn!(target: "atlas::agent_memory", "code index docs for {project_path}: {e}");
+            Vec::new()
+        }
+    };
+    docs.into_iter()
+        .map(|d| MemoryDoc {
+            id: format!("codebase:{}", d.rel),
+            title: d.rel.clone(),
+            summary: if d.summary.trim().is_empty() {
+                format!("{} · {} symbols", d.lang, d.symbols.len())
             } else {
                 d.summary.clone()
-            };
-            let aliases = atlas_codeindex::aliases(&d.rel, &d.symbols);
-            MemoryDoc {
-                id: format!("codebase:{}", d.rel),
-                title: d.rel,
-                summary,
-                kind: "file".into(),
-                source: "codebase".into(),
-                file_path: Some(d.abs_path),
-                timestamp_ms: d.mtime_ms,
-                text: d.text,
-                aliases,
-                links: vec![],
-            }
+            },
+            kind: "file".into(),
+            source: "codebase".into(),
+            file_path: Some(root.join(&d.rel).to_string_lossy().into_owned()),
+            timestamp_ms: d.mtime_ms,
+            text: d.text(),
+            aliases: d.aliases(),
+            links: vec![],
         })
         .collect()
 }

@@ -9,7 +9,7 @@
 //! **BERT-family** sentence-transformers (`atlas_embed::Embedder`, varied dims).
 //! Other architectures are surfaced by HF search but flagged incompatible.
 //!
-//! On-device *generation* was removed on 2026-08-22 (see `codebase_index`): the
+//! On-device *generation* was removed on 2026-08-22 (see `code_index`): the
 //! only consumer was the code-index Tier-2 summary, which now runs on BYOK.
 
 use std::path::{Path, PathBuf};

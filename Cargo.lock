@@ -917,13 +917,16 @@ dependencies = [
 
 [[package]]
 name = "atlas-codeindex"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
- "anyhow",
+ "atlas-search",
+ "blake3",
+ "dunce",
  "ignore",
- "serde",
- "serde_json",
- "sha2 0.10.9",
+ "rayon",
+ "rusqlite",
+ "tempfile",
+ "thiserror 2.0.18",
  "tree-sitter",
  "tree-sitter-go",
  "tree-sitter-python",

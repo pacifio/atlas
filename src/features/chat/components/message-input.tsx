@@ -45,6 +45,7 @@ import {
 } from "@/features/chat/lib/switch-agent";
 import { AgentMark } from "@/components/agent-mark";
 import { loadNativeEffort } from "../lib/native-model-pref";
+import { useCodebaseIndexStatus } from "../lib/use-codebase-index-status";
 import { loadCachedAcpModels } from "../lib/acp-models-cache";
 import { modelLabel } from "../lib/model-label";
 // `ChatInput` pulls in CodeMirror (~870 KB) via `cm-mention-extension`.
@@ -234,32 +235,13 @@ function acpModeColor(modeId: string | undefined): string {
   return "var(--muted-foreground)";
 }
 
-interface CodebaseIndexStatus {
-  indexed: boolean;
-  // Rust serializes this struct as camelCase (see codebase_index.rs).
-  fileCount: number;
-  summaryCount: number;
-  builtAtMs: number;
-}
-
 /** Codebase-index status pill for the native agent — the index that grounds
  *  `memory_search`. Shows file count (or "Index memory" when unbuilt), flips to
  *  "Indexing…" while the auto-indexer runs, and re-indexes on click. */
 function NativeMemoryPill() {
   const projectPath = useAppStore((s) => s.currentProject?.path ?? null);
-  const [status, setStatus] = useState<CodebaseIndexStatus | null>(null);
+  const { status, refresh } = useCodebaseIndexStatus(projectPath);
   const [indexing, setIndexing] = useState(false);
-
-  const refresh = useCallback(() => {
-    if (!projectPath) return;
-    invoke<CodebaseIndexStatus>("codebase_index_status", { projectPath })
-      .then(setStatus)
-      .catch(() => {});
-  }, [projectPath]);
-
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
 
   // Track the auto-indexer (fired from App.tsx after a turn) for this project.
   useEffect(() => {

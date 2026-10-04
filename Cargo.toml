@@ -456,6 +456,7 @@ pretty_assertions = "1.4.1"
 pulldown-cmark = { version = "0.10", default-features = false }
 quick-xml = "0.41.0"
 rand = "0.9"
+rayon = "1.12"
 ratatui = { version = "0.30.2", default-features = false, features = [
     "crossterm",
     "layout-cache",
