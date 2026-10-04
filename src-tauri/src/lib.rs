@@ -765,6 +765,7 @@ pub fn run() {
             commands::agents::threads_delete,
             commands::agents::threads_import_candidates,
             commands::agents::threads_import,
+            commands::agents::threads_sync_project,
             commands::agents::threads_projects,
             commands::agents::threads_history,
             commands::agents::threads_archive,

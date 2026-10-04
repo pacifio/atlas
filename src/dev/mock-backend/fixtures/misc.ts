@@ -250,6 +250,7 @@ export const miscHandlers: MockHandlers = {
   // ── chat history ────────────────────────────────────────────────────────
   threads_history: ({ archivedOnly }): ThreadRow[] =>
     threads.filter((thread) => (archivedOnly ? thread.archived : !thread.archived)),
+  threads_sync_project: () => 0,
   threads_projects: ({ cwd }): ThreadProject[] =>
     threadProjects(cwd === null || cwd === undefined ? null : String(cwd)),
   threads_resume: ({ threadId }): ResumedThread => {

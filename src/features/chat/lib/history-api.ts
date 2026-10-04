@@ -9,6 +9,12 @@ import type { SessionKey } from "@/types/agents";
  * re-reading it whenever a file changed. It is Atlas's own store now, and the
  * only refresh signal is the store saying it changed: no filesystem watching,
  * no polling.
+ *
+ * One softening (ADR-0001 amendment, 2026-10-05, ATL-421/ATL-422): sessions
+ * started outside Atlas, in a terminal, reach the store only if someone asks
+ * the agent. {@link syncProjectThreads} does that for the open project, on the
+ * sidebar's own triggers (mount, project change, window focus). There is still
+ * no watcher and no timer, and the store still says when it changed.
  */
 
 /** Fired whenever a thread row is added, changed or removed. */
@@ -65,6 +71,17 @@ export interface ThreadProject {
  */
 export function threadProjects(cwd: string): Promise<ThreadProject[]> {
   return invoke<ThreadProject[]>("threads_projects", { cwd: cwd || null });
+}
+
+/**
+ * Ask the agents Atlas already has history with for the recent sessions they
+ * hold for `cwd`, and add them to the sidebar. Answers how many rows landed.
+ *
+ * Cheap to call often: the backend answers `0` for a project synced in the last
+ * 30 seconds. The change event does the refreshing, so callers need not.
+ */
+export function syncProjectThreads(cwd: string): Promise<number> {
+  return invoke<number>("threads_sync_project", { cwd });
 }
 
 /** Every thread, archived or not, newest-started first — the history view. */

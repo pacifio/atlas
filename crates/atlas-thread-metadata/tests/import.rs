@@ -128,6 +128,7 @@ fn import_writes_metadata_only_and_lands_in_history_not_the_active_list() {
         vec![session("a", &["/tmp/atlas"])],
         &"some-agent".into(),
         &store.known_session_ids(),
+        None,
     );
     store.save_all(rows);
     store.flush().unwrap();
@@ -166,10 +167,16 @@ fn importing_twice_never_duplicates_a_row() {
         listed.clone(),
         &"some-agent".into(),
         &store.known_session_ids(),
+        None,
     ));
     store.flush().unwrap();
 
-    let second = importable_threads(listed, &"some-agent".into(), &store.known_session_ids());
+    let second = importable_threads(
+        listed,
+        &"some-agent".into(),
+        &store.known_session_ids(),
+        None,
+    );
 
     assert!(second.is_empty(), "everything was already known");
     assert_eq!(store.threads().len(), 2);
@@ -191,6 +198,7 @@ fn a_session_that_belongs_nowhere_is_not_imported() {
         ],
         &"some-agent".into(),
         &store.known_session_ids(),
+        None,
     );
 
     assert_eq!(
@@ -214,6 +222,7 @@ fn an_imported_row_keeps_the_time_the_agent_reported() {
         }],
         &"some-agent".into(),
         &store.known_session_ids(),
+        None,
     );
 
     assert_eq!(rows[0].updated_at, when);
@@ -262,9 +271,74 @@ fn an_agent_that_lists_the_same_session_twice_produces_one_row() {
         ],
         &"some-agent".into(),
         &store.known_session_ids(),
+        None,
     );
     store.save_all(rows);
     store.flush().unwrap();
 
     assert_eq!(store.threads().len(), 2, "two conversations, two rows");
+}
+
+fn session_updated(id: &str, updated_at: chrono::DateTime<Utc>) -> AgentSessionInfo {
+    AgentSessionInfo {
+        updated_at: Some(updated_at),
+        ..session(id, &["/tmp/atlas"])
+    }
+}
+
+#[test]
+fn the_cutoff_splits_rows_into_sidebar_and_history() {
+    let cutoff = Utc.with_ymd_and_hms(2026, 10, 1, 0, 0, 0).unwrap();
+    let rows = importable_threads(
+        vec![
+            session_updated("old", cutoff - chrono::Duration::days(30)),
+            session_updated("just-before", cutoff - chrono::Duration::seconds(1)),
+            session_updated("exactly-at", cutoff),
+            session_updated("new", cutoff + chrono::Duration::days(2)),
+        ],
+        &"some-agent".into(),
+        &Default::default(),
+        Some(cutoff),
+    );
+
+    let archived_of = |id: &str| {
+        rows.iter()
+            .find(|row| row.session_id == Some(acp::SessionId::new(id)))
+            .unwrap()
+            .archived
+    };
+    assert!(archived_of("old"));
+    assert!(archived_of("just-before"));
+    assert!(!archived_of("exactly-at"), "the cutoff itself is recent");
+    assert!(!archived_of("new"));
+}
+
+#[test]
+fn without_a_cutoff_everything_is_archived() {
+    let rows = importable_threads(
+        vec![session_updated("fresh", Utc::now())],
+        &"some-agent".into(),
+        &Default::default(),
+        None,
+    );
+
+    assert_eq!(rows.len(), 1);
+    assert!(rows[0].archived, "no cutoff means the old behaviour");
+}
+
+#[test]
+fn a_recent_session_that_is_already_known_is_still_skipped() {
+    let known = [acp::SessionId::new("seen")].into_iter().collect();
+    let rows = importable_threads(
+        vec![
+            session_updated("seen", Utc::now()),
+            session_updated("unseen", Utc::now()),
+        ],
+        &"some-agent".into(),
+        &known,
+        Some(Utc::now() - chrono::Duration::days(7)),
+    );
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].session_id, Some(acp::SessionId::new("unseen")));
 }
