@@ -58,6 +58,12 @@ RUN curl -sSf https://sh.rustup.rs | CARGO_HOME=/opt/cargo sh -s -- -y -q \
       $(for t in $RUST_TARGETS; do printf -- '-t %s ' "$t"; done) \
  && chmod -R a+rX /opt/rustup /opt/cargo
 
+# For scripts/target-gc.sh, which ci:local runs on the cache volume's target dir
+# before each run. Pinned, since the image is rebuilt only on a pin change.
+RUN CARGO_HOME=/opt/cargo cargo install --locked --quiet cargo-sweep --version 0.8.0 \
+ && rm -rf /opt/cargo/registry /opt/cargo/git \
+ && chmod -R a+rX /opt/cargo
+
 # Bun and Node through mise, as CI's jdx/mise-action does, so "node = 24"
 # resolves the same way. Only the binaries are kept on PATH.
 RUN curl -sSf https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh \

@@ -27,6 +27,10 @@
  * runs, clippy was the largest single cause of failed jobs, and no local gate
  * ran it.
  *
+ * Before the jobs, scripts/target-gc.sh collects garbage in every target dir
+ * the run builds into (this machine's, and the container's cache volume),
+ * since cargo itself never does; its header has the policy.
+ *
  * Deliberately NOT replicated:
  *   - steps that change this machine (`git config --global`, `sudo apt-get`).
  *     CI sets a throwaway git identity; yours is used instead.
@@ -604,6 +608,8 @@ async function main(argv) {
     env.SDKROOT = execFileSync("xcrun", ["--show-sdk-path"], { encoding: "utf8" }).trim();
   }
 
+  collectGarbage(jobs, ctx, env);
+
   // Two lanes when both kinds of job are planned (see the docblock); one
   // otherwise, since native jobs share this machine's target dir.
   const here = jobs.filter((j) => j.where === "native");
@@ -651,6 +657,38 @@ async function main(argv) {
     );
   }
   process.exit(failures ? 1 : 0);
+}
+
+/**
+ * scripts/target-gc.sh on every target dir this run will build into: this
+ * machine's when a native job runs cargo, the cache volume's when the
+ * container is used. Before the jobs, so they don't race it for the cargo
+ * lock, and never fatal.
+ */
+function collectGarbage(jobs, ctx, env) {
+  const gc = path.join("scripts", "target-gc.sh");
+  if (jobs.some((j) => j.where === "native" && j.id !== "frontend")) {
+    const target = path.resolve(REPO_ROOT, env.CARGO_TARGET_DIR || "target");
+    spawnSync("bash", [gc, target], { cwd: REPO_ROOT, env, stdio: "inherit" });
+  }
+  if (ctx) {
+    spawnSync(
+      DOCKER,
+      [
+        "run",
+        "--rm",
+        "--init",
+        ...ctx.opts,
+        "-w",
+        ctx.root,
+        ctx.image,
+        "bash",
+        gc,
+        "/cache/target",
+      ],
+      { stdio: "inherit" },
+    );
+  }
 }
 
 /**

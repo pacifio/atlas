@@ -250,19 +250,24 @@ worktree leaves its small per-checkout volumes behind, and a Rust or Bun pin
 change leaves the old `atlas-ci-linux:*` image; `ci:local` prints the
 `docker image rm` for that.
 
-**Disk.** Cargo never deletes anything from `target/`. Every Rust bump in
-`rust-toolchain.toml` rebuilds every dependency under the new compiler, next to
-the old builds. After the 1.98 → 1.99 bump that was 41 GB of an 81 GB `target/`,
-plus 17 GB of `incremental/` the new compiler discards anyway. After a bump,
-[`cargo-sweep`](https://github.com/holmgr/cargo-sweep) removes everything the
-pinned compiler didn't build. Name the pin explicitly: `--installed` keeps
-whatever your `stable` built, and that's usually the previous pin.
+**Disk.** Stable cargo never deletes anything from `target/`; left alone it
+reached 67 GB, more than half of it unusable. `bun run ci:local` runs
+`scripts/target-gc.sh` before its jobs, on your `target/` and on the
+container's cache volume:
 
-```bash
-cargo install cargo-sweep   # once
-cargo sweep --toolchains "$(rustup show active-toolchain | cut -d' ' -f1)"   # from the repo root
-rm -rf target/debug/incremental   # the sweep leaves it; all of it is stale after a bump
-```
+- **After a Rust upgrade** in `rust-toolchain.toml`, it removes everything
+  the old compiler built, which can't be reused. After the 1.98 → 1.99 bump
+  that was 41 GB plus 17 GB of incremental state. Only an upgrade triggers it,
+  so alternating with a worktree on an older pin doesn't throw builds away.
+- **Once a week**, it removes artifacts cargo hasn't used in 30 days: mostly
+  old dependency versions left behind by lockfile bumps. Getting one wrong
+  costs a rebuild, never a broken build.
+
+Both use [`cargo-sweep`](https://github.com/holmgr/cargo-sweep), which the
+container image ships with. On your machine, install it once with
+`cargo install cargo-sweep`; without it, an upgrade still clears incremental
+state and prints the hint. Run the script by hand any time with
+`bash scripts/target-gc.sh target`.
 
 Linting each crate on its own, as CI does, keeps a few builds of shared
 dependencies with different feature sets. That's expected, and they're reused
