@@ -8,8 +8,9 @@
 //! - **summaries** (optional): a 1–2 sentence plain-English summary per important
 //!   file via the local model or a BYOK provider, prepended to the doc text.
 //!
-//! After building, it re-runs `memory_index_build` to embed the unified corpus;
-//! `collect_corpus` already folds in `.atlas/codebase-index/docs.json`.
+//! After building, it queues the memory indexer's `IndexCorpus` pass, which
+//! embeds the unified corpus; `collect_corpus` already folds in
+//! `.atlas/codebase-index/docs.json`.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -22,7 +23,6 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 
 use super::byok::byok_get;
-use super::memory_graph::memory_index_build;
 use super::memory_indexer::MemoryRegistry;
 
 /// Caps on how many files get an LLM summary per build (structural is uncapped).
@@ -157,9 +157,11 @@ pub async fn codebase_index_build(
     let _ = tokio::task::spawn_blocking(move || atlas_codeindex::save_index(&save_pp, &save_index))
         .await;
 
-    // 6. Re-embed the unified corpus (codebase docs are now in collect_corpus).
-    emit(&app, "embedding", 0, 0);
-    let _ = memory_index_build(app.clone(), pp.clone(), registry).await;
+    // 6. Queue the corpus pass that embeds these docs. `memory_index_build`
+    //    (the Memory ▸ Graph build) leaves the codebase corpus out, so calling
+    //    it here never embedded code; the indexer's `IndexCorpus` reads
+    //    docs.json through `collect_corpus` and embeds whatever changed.
+    registry.request_reindex(&pp);
 
     emit(&app, "done", index.docs.len(), index.docs.len());
     Ok(status_of(&index))

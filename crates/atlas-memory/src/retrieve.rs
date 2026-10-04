@@ -1,7 +1,7 @@
-//! Fused retrieval (Step 6) — the single recall path behind the frozen
-//! `MemorySearchFn` seam. Both the native `search_memory` pull tool and the
-//! Claude/Codex push (Tauri site C) reach this through
-//! `memory_retrieve::retrieve`.
+//! Fused retrieval (Step 6) — the single recall path over the project's memory
+//! index. Every agent reaches it the same way: the `memory_search` tool on the
+//! memory tool server, whose `IndexSearch` closure (`src-tauri` `agents.rs`)
+//! calls `memory_retrieve::retrieve`. Nothing is pushed into prompts (ADR-0010).
 //!
 //! Pipeline:
 //! 1. **Embedding.** Embed the query with the shared [`MiniLmProvider`],

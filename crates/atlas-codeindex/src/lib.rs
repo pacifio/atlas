@@ -23,8 +23,36 @@ use sha2::{Digest, Sha256};
 
 /// Skip files larger than this (minified bundles, generated blobs).
 const MAX_SOURCE_BYTES: u64 = 1_000_000;
-/// Default cap on indexed files for very large repos.
+/// Cap on indexed files for very large repos. `scan` parses candidates in
+/// path order, so the files it keeps are the first ones by path, the same on
+/// every run.
 pub const DEFAULT_MAX_FILES: usize = 1500;
+/// Directories holding third-party code or build output. Their files stay out
+/// of the index by default (decision 3 in `docs/research/codeindex-search`).
+/// Matched against path components below the project root only, so a project
+/// that itself lives under `build/` or `vendor/` is still indexed.
+const SKIP_DIRS: &[&str] = &[
+    "vendor",
+    "third_party",
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    "__generated__",
+];
+/// File-name endings of minified bundles and code-generator output.
+const SKIP_FILE_SUFFIXES: &[&str] = &[
+    ".min.js",
+    ".min.mjs",
+    ".min.cjs",
+    ".bundle.js",
+    ".pb.go",
+    "_pb2.py",
+    "_pb2_grpc.py",
+    ".gen.go",
+    ".gen.ts",
+    ".generated.ts",
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -93,9 +121,29 @@ fn content_hash(source: &str) -> String {
     out
 }
 
-/// Walk the project and parse every supported source file. Blocking (reads files
-/// + runs tree-sitter); call under `spawn_blocking`.
+/// Whether `rel` (a path relative to the project root) is vendored code,
+/// build output or generated, and so left out of the index.
+fn is_vendor_or_generated(rel: &Path) -> bool {
+    let in_skipped_dir = rel.components().any(|c| {
+        c.as_os_str()
+            .to_str()
+            .is_some_and(|name| SKIP_DIRS.contains(&name))
+    });
+    let generated_file = rel
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|name| {
+            SKIP_FILE_SUFFIXES
+                .iter()
+                .any(|suffix| name.ends_with(suffix))
+        });
+    in_skipped_dir || generated_file
+}
+
+/// Walk the project and parse every supported source file, in path order.
+/// Blocking (reads files + runs tree-sitter); call under `spawn_blocking`.
 pub fn scan(root: &Path, mtime_ms_of: impl Fn(&Path) -> i64) -> Vec<ScannedFile> {
+    let prune_root = root.to_path_buf();
     let walker = WalkBuilder::new(root)
         .hidden(false)
         .git_ignore(true)
@@ -104,27 +152,35 @@ pub fn scan(root: &Path, mtime_ms_of: impl Fn(&Path) -> i64) -> Vec<ScannedFile>
         .ignore(true)
         .parents(true)
         .follow_links(false)
+        // Prune vendored / generated trees before descending into them.
+        .filter_entry(move |entry| {
+            !entry
+                .path()
+                .strip_prefix(&prune_root)
+                .is_ok_and(is_vendor_or_generated)
+        })
         .build();
 
+    // Collect every candidate, then sort: the walk yields entries in the
+    // filesystem's directory order, which differs between machines and runs,
+    // and the cap below must keep the same files every time.
+    let mut candidates: Vec<PathBuf> = walker
+        .flatten()
+        .filter(|entry| entry.file_type().is_some_and(|t| t.is_file()))
+        .filter(|entry| {
+            entry
+                .path()
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|ext| !matches!(Language::from_extension(ext), Language::Unknown))
+        })
+        .filter(|entry| entry.metadata().is_ok_and(|m| m.len() <= MAX_SOURCE_BYTES))
+        .map(ignore::DirEntry::into_path)
+        .collect();
+    candidates.sort();
+
     let mut out: Vec<ScannedFile> = Vec::new();
-    for entry in walker.flatten() {
-        if !entry.file_type().is_some_and(|t| t.is_file()) {
-            continue;
-        }
-        let path = entry.path();
-        let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
-            continue;
-        };
-        if matches!(Language::from_extension(ext), Language::Unknown) {
-            continue;
-        }
-        if entry
-            .metadata()
-            .map(|m| m.len() > MAX_SOURCE_BYTES)
-            .unwrap_or(true)
-        {
-            continue;
-        }
+    for path in &candidates {
         let Ok(rel) = path.strip_prefix(root) else {
             continue;
         };
@@ -155,8 +211,8 @@ pub fn scan(root: &Path, mtime_ms_of: impl Fn(&Path) -> i64) -> Vec<ScannedFile>
             hash: content_hash(&source),
             mtime_ms: mtime_ms_of(path),
         });
-        // The cap counts files that produced an index entry, not files walked,
-        // so a tree full of unsupported or empty files can't starve it.
+        // The cap counts files that produced an index entry, not candidates,
+        // so a tree full of empty files can't starve it.
         if out.len() >= DEFAULT_MAX_FILES {
             break;
         }

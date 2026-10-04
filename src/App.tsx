@@ -56,6 +56,10 @@ import { stripInjectedContext } from "@/features/chat/lib/atlas-context";
 import { openNewAgentChat } from "@/features/chat/lib/open-agent-session";
 import { requestCloseTab } from "@/features/chat/lib/close-tab";
 import { pruneContextUsageCache } from "@/features/chat/lib/context-usage-cache";
+import {
+  createTurnIndexScheduler,
+  sessionProjectPath,
+} from "@/features/chat/lib/turn-index-scheduler";
 import { isScrollHot } from "@/lib/scroll-hot";
 import { isWindows, isLinux } from "@/lib/platform";
 import type { CliStatus } from "@/features/settings/components/settings-panel";
@@ -912,41 +916,29 @@ export function App() {
       pendingDeltas.push(env);
     };
 
-    // After a native-agent turn that may have changed files, refresh the
+    // After any agent's turn that may have changed files, refresh the
     // project's codebase index (incremental + structural — cheap, no LLM) so
     // `memory_search` and the Memory tab stay current. Debounced per project so
     // a burst of turns triggers one rebuild.
-    const indexTimers = new Map<string, ReturnType<typeof setTimeout>>();
-    const autoIndexAfterTurn = (acpSessionId: string) => {
-      const sessions = useChatStore.getState().sessions;
-      const sess = Object.values(sessions).find((s) => s.acpSessionId === acpSessionId);
-      if (sess?.agentType !== "atlas-agent") return;
-      const path = sess.workingDirectory;
-      if (!path) return;
-      const existing = indexTimers.get(path);
-      if (existing) clearTimeout(existing);
-      indexTimers.set(
-        path,
-        setTimeout(() => {
-          indexTimers.delete(path);
-          // Broadcast index activity so the composer's memory pill can show
-          // "Indexing…" then refresh its status.
-          const emit = (active: boolean) =>
-            window.dispatchEvent(
-              new CustomEvent("atlas:agent-index", {
-                detail: { path, active },
-              }),
-            );
-          emit(true);
-          void invoke("codebase_index_build", {
-            projectPath: path,
-            opts: { mode: "incremental", backend: "structural" },
-          })
-            .catch((err) => console.warn("auto codebase index failed:", err))
-            .finally(() => emit(false));
-        }, 4000),
-      );
-    };
+    const turnIndex = createTurnIndexScheduler((path) => {
+      // Broadcast index activity so the composer's memory pill can show
+      // "Indexing…" then refresh its status.
+      const emit = (active: boolean) =>
+        window.dispatchEvent(
+          new CustomEvent("atlas:agent-index", {
+            detail: { path, active },
+          }),
+        );
+      emit(true);
+      void invoke("codebase_index_build", {
+        projectPath: path,
+        opts: { mode: "incremental", backend: "structural" },
+      })
+        .catch((err) => console.warn("auto codebase index failed:", err))
+        .finally(() => emit(false));
+    });
+    const autoIndexAfterTurn = (acpSessionId: string) =>
+      turnIndex.schedule(sessionProjectPath(useChatStore.getState().sessions, acpSessionId));
 
     // Record a chat into the sidebar "Chats" (recently-invoked) list whenever a
     // session sees meaningful activity. Resolves project + title from the chat
@@ -1090,7 +1082,7 @@ export function App() {
           // Superseded by a newer send → the store ignores the idle flip; skip
           // the memory reindex and log too (the notifier checks this itself).
           if (isStaleAgentTurn(env.session_id, env.turn_seq)) return;
-          // Keep the native agent's project memory fresh (debounced, cheap).
+          // Keep the project's memory fresh after any agent's turn (debounced, cheap).
           if (env.stop_reason !== "cancelled") autoIndexAfterTurn(env.session_id);
           logEvent({
             source: "atlas",
@@ -1161,7 +1153,7 @@ export function App() {
       window.removeEventListener("wheel", onUserActivity);
       window.clearInterval(keepWarm);
       window.clearTimeout(pruneTimer);
-      indexTimers.forEach((t) => clearTimeout(t));
+      turnIndex.cancelAll();
       unlisten?.();
     };
   }, []);

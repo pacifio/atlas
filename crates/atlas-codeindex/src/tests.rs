@@ -40,12 +40,10 @@ impl Project {
         self
     }
 
-    /// Scan, sorted by path: the walk order is the filesystem's, which is not
-    /// a property worth asserting.
+    /// Scan as the app does. `scan` returns files in path order, so the
+    /// assertions below pin that order too.
     fn scan(&self) -> Vec<ScannedFile> {
-        let mut files = scan(self.root(), |_| 7);
-        files.sort_by(|a, b| a.rel.cmp(&b.rel));
-        files
+        scan(self.root(), |_| 7)
     }
 
     fn rels(&self) -> Vec<String> {
@@ -160,15 +158,93 @@ fn scan_does_not_follow_symlinks() {
     assert_eq!(project.rels(), ["src/lib.rs"]);
 }
 
-/// `DEFAULT_MAX_FILES` caps what `scan` returns (and so what
-/// `codebase_index_build` embeds) for very large repositories.
 #[test]
-fn scan_caps_the_number_of_files() {
+fn scan_returns_files_in_path_order() {
+    let project = Project::new();
+    // Written out of order on purpose: the walk yields the filesystem's
+    // directory order, which must not leak into the result.
+    project
+        .write("c/a.rs", RUST)
+        .write("b.rs", RUST)
+        .write("a/z.rs", RUST)
+        .write("a/b.rs", RUST);
+    assert_eq!(project.rels(), ["a/b.rs", "a/z.rs", "b.rs", "c/a.rs"]);
+}
+
+#[test]
+fn scan_skips_vendored_build_and_generated_files() {
+    // No .gitignore: each of these would be indexed without the skip rules.
+    let project = Project::new();
+    project
+        .write("src/lib.rs", RUST)
+        .write("vendor/dep/lib.rs", RUST)
+        .write("third_party/x/y.py", "def f():\n    pass\n")
+        .write("web/node_modules/pkg/index.js", "export function f() {}\n")
+        .write("dist/app.js", "export function f() {}\n")
+        .write("build/gen.rs", RUST)
+        .write("target/debug/build.rs", RUST)
+        .write("web/__generated__/types.ts", "export function f() {}\n")
+        .write("web/app.min.js", "export function f() {}\n")
+        .write("api/service.pb.go", "package api\n\nfunc F() {}\n")
+        .write("py/service_pb2.py", "def f():\n    pass\n")
+        .write("web/schema.gen.ts", "export function f() {}\n");
+    assert_eq!(project.rels(), ["src/lib.rs"]);
+}
+
+/// The skip rules look only below the project root: a project that itself
+/// lives in a `build/` or `vendor/` directory is indexed normally.
+#[test]
+fn skip_rules_apply_below_the_root_only() {
+    let outer = Project::new();
+    let root = outer.root().join("build").join("vendor").join("app");
+    std::fs::create_dir_all(root.join(".git")).unwrap();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(root.join("src/lib.rs"), RUST).unwrap();
+    let rels: Vec<String> = scan(&root, |_| 7).into_iter().map(|f| f.rel).collect();
+    assert_eq!(rels, ["src/lib.rs"]);
+}
+
+#[test]
+fn vendor_and_generated_rules_match_components_and_suffixes() {
+    for skipped in [
+        "vendor/a.rs",
+        "a/node_modules/b.js",
+        "x/target/y.rs",
+        "third_party/z.py",
+        "web/app.min.js",
+        "api/x.pb.go",
+        "py/x_pb2.py",
+    ] {
+        assert!(is_vendor_or_generated(Path::new(skipped)), "{skipped}");
+    }
+    for kept in [
+        "",
+        "src/vendor.rs",
+        "src/targets/a.rs",
+        "src/build_info.rs",
+        "src/rebuild/x.rs",
+        "web/admin.js",
+    ] {
+        assert!(!is_vendor_or_generated(Path::new(kept)), "{kept}");
+    }
+}
+
+/// `DEFAULT_MAX_FILES` caps what `scan` returns (and so what
+/// `codebase_index_build` embeds) for very large repositories. The cap keeps
+/// the first files by path, so every scan of the same tree keeps the same
+/// files.
+#[test]
+fn scan_caps_the_number_of_files_keeping_the_first_by_path() {
     let project = Project::new();
     for i in 0..=DEFAULT_MAX_FILES {
-        project.write(&format!("src/f{i}.rs"), &format!("pub fn f{i}() {{}}\n"));
+        project.write(&format!("src/f{i:05}.rs"), &format!("pub fn f{i}() {{}}\n"));
     }
-    assert!(project.scan().len() <= DEFAULT_MAX_FILES);
+    let rels = project.rels();
+    assert_eq!(rels.len(), DEFAULT_MAX_FILES);
+    assert_eq!(rels.first().map(String::as_str), Some("src/f00000.rs"));
+    let last = format!("src/f{:05}.rs", DEFAULT_MAX_FILES - 1);
+    assert_eq!(rels.last(), Some(&last));
+    assert_eq!(rels, project.rels(), "a second scan keeps the same files");
 }
 
 // ── Hashing ─────────────────────────────────────────────────────────────────

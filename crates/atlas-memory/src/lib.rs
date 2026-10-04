@@ -124,6 +124,10 @@ pub struct MemoryEngine {
     /// id → display text ({title, source, text}), persisted beside the manifest so
     /// retrieval can build [`RetrievedDoc`]s without re-gathering the corpus.
     docstore: DocStore,
+    /// A persist failed since the last successful one, so disk is behind
+    /// memory. The next [`persist_changes`](Self::persist_changes) must write
+    /// even when nothing new changed.
+    persist_pending: bool,
 }
 
 impl MemoryEngine {
@@ -160,6 +164,7 @@ impl MemoryEngine {
             store,
             manifest,
             docstore,
+            persist_pending: false,
         }
     }
 
@@ -198,7 +203,7 @@ impl MemoryEngine {
         // Drop the stale on-disk index so a crash before the first re-index can't
         // reload vectors from the old model; persist the fresh empty state.
         let _ = std::fs::remove_file(self.memory_dir.join("hnsw.usearch"));
-        self.persist()?;
+        self.persist_changes(true)?;
         tracing::info!(
             provider_name,
             dim,
@@ -228,7 +233,7 @@ impl MemoryEngine {
             return Ok(false);
         }
         self.docstore.remove(doc_id);
-        self.persist()?;
+        self.persist_changes(true)?;
         Ok(true)
     }
 
@@ -242,6 +247,20 @@ impl MemoryEngine {
         Ok(())
     }
 
+    /// Persist after a mutation, but only when it changed something or an
+    /// earlier write failed. Every mutator goes through here, so a failed
+    /// write anywhere is retried by the next index pass, even one whose own
+    /// diff is empty.
+    fn persist_changes(&mut self, changed: bool) -> anyhow::Result<()> {
+        if !changed && !self.persist_pending {
+            return Ok(());
+        }
+        self.persist_pending = true;
+        self.persist()?;
+        self.persist_pending = false;
+        Ok(())
+    }
+
     /// Incrementally index `docs` into the HNSW store + manifest, embedding only
     /// what actually changed.
     ///
@@ -251,7 +270,8 @@ impl MemoryEngine {
     ///   re-embed never leaves a stale duplicate under the same key);
     /// - **delete** → remove the key from both the manifest and the store.
     ///
-    /// Persists HNSW + manifest atomically at the end. Off the hot path: the
+    /// Persists HNSW + manifest + docstore at the end when the pass changed
+    /// anything (or an earlier write failed). Off the hot path: the
     /// indexer task (Step 4) calls this under the engine **write lock**, while the
     /// retrieve closure reads under the read lock.
     pub async fn index_corpus(
@@ -336,7 +356,9 @@ impl MemoryEngine {
             self.docstore.remove(id);
         }
 
-        self.persist()?;
+        // An unchanged corpus leaves memory and disk identical; rewriting the
+        // HNSW + manifest + docstore anyway cost a full write every turn.
+        self.persist_changes(added + updated + deleted > 0)?;
 
         Ok(IndexStats {
             added,
@@ -386,7 +408,7 @@ impl MemoryEngine {
                 },
             );
         }
-        self.persist()
+        self.persist_changes(true)
     }
 
     /// Top-`k` `(doc id, similarity)` for an already-embedded query, best first,
@@ -651,6 +673,56 @@ mod index_corpus_tests {
         assert!(hits[0].1 > hits[1].1);
     }
 
+    /// A pass whose diff is empty leaves memory and disk identical, so it
+    /// writes nothing. Before, every pass (so every agent turn) rewrote the
+    /// HNSW file, the manifest and the docstore.
+    #[test]
+    fn an_unchanged_pass_writes_nothing_to_disk() {
+        let (_tmp, root) = tmp_root("noop");
+        let mut engine = MemoryEngine::open(root);
+        engine
+            .add_embedded(&[(doc("note:a", "A\n\nbody a", "h_a"), axis(1))])
+            .unwrap();
+        let manifest = engine.memory_dir().join("manifest.json");
+        let hnsw = engine.memory_dir().join("hnsw.usearch");
+        std::fs::remove_file(&manifest).unwrap();
+        std::fs::remove_file(&hnsw).unwrap();
+
+        engine.persist_changes(false).unwrap();
+        assert!(
+            !manifest.exists() && !hnsw.exists(),
+            "an empty diff must not persist"
+        );
+
+        engine.persist_changes(true).unwrap();
+        assert!(manifest.exists() && hnsw.exists(), "a real change persists");
+    }
+
+    /// A failed write leaves disk behind memory. The next pass must persist
+    /// even when its own diff is empty, or the on-disk index stays stale until
+    /// some unrelated doc changes.
+    #[test]
+    fn a_failed_write_is_retried_by_the_next_pass() {
+        let (_tmp, root) = tmp_root("retry");
+        let mut engine = MemoryEngine::open(root.clone());
+        // A plain file where the memory dir belongs makes `persist` fail.
+        std::fs::create_dir_all(root.join(".atlas")).unwrap();
+        std::fs::write(engine.memory_dir(), b"").unwrap();
+        assert!(engine
+            .add_embedded(&[(doc("note:a", "A\n\nbody a", "h_a"), axis(1))])
+            .is_err());
+
+        std::fs::remove_file(engine.memory_dir()).unwrap();
+        engine.persist_changes(false).unwrap();
+        let manifest = engine.memory_dir().join("manifest.json");
+        assert!(manifest.exists(), "the pending write is retried");
+
+        // Once retried, the debt is paid: the next empty pass writes nothing.
+        std::fs::remove_file(&manifest).unwrap();
+        engine.persist_changes(false).unwrap();
+        assert!(!manifest.exists());
+    }
+
     /// Full `index_corpus` against a real MiniLM model. Ignored by default; run
     /// with `ATLAS_MINILM_DIR` pointing at an installed model and `--ignored`
     /// (no network). Asserts the add/update/delete counts and that re-running
@@ -675,11 +747,15 @@ mod index_corpus_tests {
         assert_eq!(stats.updated, 0);
         assert_eq!(engine.store.len(), 2);
 
-        // Re-run unchanged → no add/update, nothing re-embedded.
+        // Re-run unchanged → no add/update, nothing re-embedded, nothing
+        // written: the manifest removed here must stay gone.
+        let manifest = engine.memory_dir().join("manifest.json");
+        std::fs::remove_file(&manifest).unwrap();
         let stats2 = rt.block_on(engine.index_corpus(&docs, &provider)).unwrap();
         assert_eq!(stats2.added, 0);
         assert_eq!(stats2.updated, 0);
         assert_eq!(stats2.unchanged, 2);
+        assert!(!manifest.exists(), "an unchanged pass must not persist");
 
         // Change one, drop the other.
         let docs3 = vec![doc("a", "rust lifetimes and the borrow checker", "h1b")];
@@ -687,5 +763,6 @@ mod index_corpus_tests {
         assert_eq!(stats3.updated, 1);
         assert_eq!(stats3.deleted, 1);
         assert_eq!(engine.store.len(), 1);
+        assert!(manifest.exists(), "a changing pass persists");
     }
 }

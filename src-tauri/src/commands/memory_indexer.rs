@@ -204,6 +204,18 @@ impl MemoryRegistry {
         }
     }
 
+    /// Queue one `IndexCorpus` pass for `cwd`, the pass that embeds the whole
+    /// corpus including the codebase docs. If the project's engine is not open
+    /// yet, opening it queues its own cold pass, so this never queues two.
+    /// Non-blocking, like [`enqueue_index`](Self::enqueue_index).
+    pub fn request_reindex(&self, cwd: &str) {
+        if self.open_engine(cwd).is_some() {
+            self.enqueue_index(cwd);
+        } else {
+            let _ = self.engine_for(cwd);
+        }
+    }
+
     /// Get-only lookup: the engine if this project is currently open, `None`
     /// otherwise. Background jobs (index/promotion) use this instead of
     /// [`engine_for`](Self::engine_for) so a stale queued job for a closed
@@ -819,6 +831,34 @@ mod tests {
         assert!(matches!(job_rx.try_recv(), Ok(Job::IndexCorpus { cwd }) if cwd == "/proj/a"));
         assert!(matches!(job_rx.try_recv(), Ok(Job::Compact { cwd }) if cwd == "/proj/a"));
         assert!(job_rx.try_recv().is_err());
+    }
+
+    /// A codebase build asks for exactly one corpus pass (the pass that reads
+    /// docs.json through `collect_corpus` and embeds the code docs). A
+    /// never-opened project gets the cold pass its open queues; an open one
+    /// gets the nudge. Neither ever blocks.
+    #[test]
+    fn request_reindex_queues_exactly_one_index_corpus() {
+        let (job_tx, mut job_rx) = mpsc::channel::<Job>(16);
+        let registry = MemoryRegistry::with_window(job_tx, Duration::from_millis(50));
+        let root = tmp_root("reindex");
+        let cwd = root.to_string_lossy().to_string();
+
+        // Not open yet: opening queues the cold IndexCorpus + one-time Compact.
+        registry.request_reindex(&cwd);
+        assert!(matches!(job_rx.try_recv(), Ok(Job::IndexCorpus { cwd: c }) if c == cwd));
+        assert!(matches!(job_rx.try_recv(), Ok(Job::Compact { cwd: c }) if c == cwd));
+        assert!(
+            job_rx.try_recv().is_err(),
+            "no second IndexCorpus on first open"
+        );
+
+        // Open: exactly one IndexCorpus, no further Compact.
+        registry.request_reindex(&cwd);
+        assert!(matches!(job_rx.try_recv(), Ok(Job::IndexCorpus { cwd: c }) if c == cwd));
+        assert!(job_rx.try_recv().is_err());
+
+        std::fs::remove_dir_all(&root).ok();
     }
 
     /// A job for cwd-A only ever touches cwd-A's `.atlas/memory/`; cwd-B's engine
