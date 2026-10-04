@@ -49,6 +49,9 @@ pub struct RelatedQuery {
     pub relation: Relation,
     pub hops: u8,
     pub include_tests: bool,
+    /// Only hits in files inside this root-relative directory; the walk still
+    /// passes through code outside it.
+    pub within: Option<String>,
     pub limit: usize,
     pub offset: usize,
 }
@@ -295,7 +298,7 @@ impl CodeIndex {
                         let keep = match q.relation {
                             Relation::Tests => h.is_test,
                             _ => q.include_tests || !h.is_test,
-                        };
+                        } && crate::is_within(&h.rel, q.within.as_deref());
                         if keep {
                             hits.push(h);
                         }

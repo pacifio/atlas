@@ -39,6 +39,7 @@ fn focus_files_are_left_out_and_their_neighbours_rise() {
             &RepoMapFocus {
                 files: vec!["src/a.rs".into()],
                 idents: vec![],
+                within: None,
             },
             1000,
         )

@@ -95,6 +95,7 @@ pub fn call(scope: &Scope, name: &str, args: &Value) -> Result<String, String> {
                     .get("include_tests")
                     .and_then(Value::as_bool)
                     .unwrap_or(false),
+                within: scope.within(),
                 limit: arg_usize(args, "limit").unwrap_or(50),
                 offset: arg_usize(args, "offset").unwrap_or(0),
             };
@@ -120,9 +121,13 @@ pub fn call(scope: &Scope, name: &str, args: &Value) -> Result<String, String> {
             let hunks =
                 git_diff_hunks(index.root(), arg_str(args, "base")).map_err(|e| e.to_string())?;
             let depth = u8::try_from(arg_usize(args, "depth").unwrap_or(2)).unwrap_or(3);
-            let r = index
+            let mut r = index
                 .impact_of_diff(&hunks, depth)
                 .map_err(|e| e.to_string())?;
+            // Changes and impact outside the session root are not shown.
+            r.changed_files.retain(|f| scope.contains(f));
+            r.changed.retain(|h| scope.contains(&h.rel));
+            r.impacted.retain(|h| scope.contains(&h.rel));
             let changed_files = Table {
                 name: "changed_files".into(),
                 cols: vec!["path"],
@@ -174,6 +179,7 @@ pub fn call(scope: &Scope, name: &str, args: &Value) -> Result<String, String> {
                     .map(|f| scope.to_index(f))
                     .collect(),
                 idents: list("focus_idents"),
+                within: scope.within(),
             };
             let tokens = budget(args) / 4;
             let map = index.repo_map(&focus, tokens).map_err(|e| e.to_string())?;

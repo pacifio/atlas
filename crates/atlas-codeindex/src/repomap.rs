@@ -16,6 +16,9 @@ pub struct RepoMapFocus {
     pub files: Vec<String>,
     /// Identifiers mentioned in the task: edges to them weigh more.
     pub idents: Vec<String>,
+    /// Only definitions in files inside this root-relative directory; ranks
+    /// still come from the whole project's graph.
+    pub within: Option<String>,
 }
 
 const DAMPING: f64 = 0.85;
@@ -238,7 +241,8 @@ impl CodeIndex {
         focus: &RepoMapFocus,
         token_budget: usize,
     ) -> Result<String, IndexError> {
-        let (defs, _) = self.with_reader(|c| rank(c, focus))?;
+        let (mut defs, _) = self.with_reader(|c| rank(c, focus))?;
+        defs.retain(|(_, d)| crate::is_within(&d.rel, focus.within.as_deref()));
         let fits = |k: usize| render(&defs, k).len() / 4 <= token_budget;
         let (mut lo, mut hi) = (0usize, defs.len());
         while lo < hi {

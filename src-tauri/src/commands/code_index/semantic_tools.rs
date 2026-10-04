@@ -88,6 +88,7 @@ pub fn call(
                     .to_string(),
                 path_glob: arg_str(args, "path_glob").map(|g| scope.to_index(g)),
                 lang: arg_str(args, "lang").map(str::to_string),
+                within: scope.within(),
                 limit: arg_usize(args, "limit").unwrap_or(10),
                 offset: arg_usize(args, "offset").unwrap_or(0),
             };
@@ -118,10 +119,18 @@ pub fn call(
                 .unwrap_or_default();
             let budget = budget(args);
             let map = index
-                .repo_map(&RepoMapFocus { files, idents }, budget / 4 / 2)
+                .repo_map(
+                    &RepoMapFocus {
+                        files,
+                        idents,
+                        within: scope.within(),
+                    },
+                    budget / 4 / 2,
+                )
                 .map_err(|e| e.to_string())?;
             let q = SemanticQuery {
                 query: task.to_string(),
+                within: scope.within(),
                 limit: 5,
                 ..Default::default()
             };

@@ -143,8 +143,19 @@ pub struct ProjectIndex {
     /// The grep prefilter (Phase 5), at a git work-tree root only. Fed by
     /// the watchers; built in the background; never needed for correctness.
     pub(super) grep: Option<Arc<atlas_grepindex::GrepIndex>>,
+    grep_refresh: Arc<GrepRefresh>,
     queue: Arc<Queue>,
     busy: Arc<AtomicBool>,
+}
+
+/// Git-driven grep index refreshes: one thread at a time, a burst of git
+/// events coalesced into one more pass, and none at all for a repository the
+/// last build found below the size thresholds (it is re-checked on reopen).
+#[derive(Default)]
+struct GrepRefresh {
+    small: AtomicBool,
+    running: AtomicBool,
+    again: AtomicBool,
 }
 
 impl ProjectIndex {
@@ -213,6 +224,19 @@ fn key(root: &Path) -> PathBuf {
     dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf())
 }
 
+/// Why `root` never gets a code index: it is the filesystem root, or the home
+/// folder or a folder above it. An agent launched there would otherwise have
+/// every source file the user owns parsed and embedded.
+fn refused(root: &Path, home: Option<&Path>) -> Option<&'static str> {
+    if root.parent().is_none() {
+        Some("the filesystem root")
+    } else if home.is_some_and(|h| h.starts_with(root)) {
+        Some("the home folder or a folder above it")
+    } else {
+        None
+    }
+}
+
 impl CodeIndexRegistry {
     pub fn new(observer: Option<JobObserver>) -> Self {
         Self {
@@ -272,6 +296,13 @@ impl CodeIndexRegistry {
         if let Some(p) = projects.get(&k) {
             return Ok(p.clone());
         }
+        let home = dirs::home_dir().map(|h| key(&h));
+        if let Some(why) = refused(&k, home.as_deref()) {
+            return Err(format!(
+                "not indexing {}: it is {why}. Open a project folder instead.",
+                k.display()
+            ));
+        }
         let index = Arc::new(CodeIndex::open(&k).map_err(|e| e.to_string())?);
         let first = match index.status() {
             Ok(st) if !st.needs_full_build => Job::Reconcile,
@@ -281,6 +312,7 @@ impl CodeIndexRegistry {
             index,
             opened_as: root.to_string_lossy().into_owned(),
             grep: super::grep_index::open_for(&k),
+            grep_refresh: Arc::default(),
             queue: Arc::new(Queue {
                 pending: Mutex::new(Pending::default()),
                 wake: Condvar::new(),
@@ -292,17 +324,21 @@ impl CodeIndexRegistry {
         spawn_worker(&project, self.observer.clone(), self.embedder.clone())?;
         if let Some(g) = project.grep.clone() {
             // Built off the worker: a large build must not delay symbol
-            // updates. It waits for the first index job's file reads to pass.
+            // updates. It waits for the first index job's file reads to pass,
+            // but not for a vector sync, which can run for many minutes.
             let queue = project.queue.clone();
             let busy = project.busy.clone();
+            let state = project.grep_refresh.clone();
             spawn_grep(g, move |g| {
-                while !queue.closed.load(Ordering::SeqCst)
-                    && (busy.load(Ordering::SeqCst) || lock(&queue.pending).has_index_work())
-                {
+                let indexing = || {
+                    (busy.load(Ordering::SeqCst) && lock(&queue.running_vectors).is_none())
+                        || lock(&queue.pending).has_index_work()
+                };
+                while !queue.closed.load(Ordering::SeqCst) && indexing() {
                     std::thread::sleep(std::time::Duration::from_millis(200));
                 }
                 if !queue.closed.load(Ordering::SeqCst) {
-                    build_grep(g);
+                    build_grep(g, &state);
                 }
             });
         }
@@ -345,14 +381,41 @@ impl CodeIndexRegistry {
             return;
         };
         project.enqueue(Job::Reconcile);
-        if let Some(g) = project.grep.clone() {
-            spawn_grep(g, |g| match g.refresh_head() {
-                Ok(atlas_grepindex::HeadAction::RebuildNeeded) => build_grep(g),
-                Ok(_) => {}
-                Err(e) => {
-                    tracing::warn!(target: "atlas::code_index", "grep index head refresh: {e}");
+        let Some(g) = project.grep.clone() else {
+            return;
+        };
+        let state = project.grep_refresh.clone();
+        if state.small.load(Ordering::SeqCst) {
+            return;
+        }
+        state.again.store(true, Ordering::SeqCst);
+        if state.running.swap(true, Ordering::SeqCst) {
+            return; // the running thread makes one more pass
+        }
+        let thread_state = state.clone();
+        let started = spawn_grep(g, move |g| {
+            let state = thread_state;
+            loop {
+                while state.again.swap(false, Ordering::SeqCst) {
+                    match g.refresh_head() {
+                        Ok(atlas_grepindex::HeadAction::RebuildNeeded) => build_grep(g, &state),
+                        Ok(_) => {}
+                        Err(e) => {
+                            tracing::warn!(target: "atlas::code_index", "grep index head refresh: {e}");
+                        }
+                    }
                 }
-            });
+                state.running.store(false, Ordering::SeqCst);
+                // An event between the last pass and the line above saw
+                // `running` still set: take it unless another thread has.
+                if !state.again.load(Ordering::SeqCst) || state.running.swap(true, Ordering::SeqCst)
+                {
+                    break;
+                }
+            }
+        });
+        if !started {
+            state.running.store(false, Ordering::SeqCst);
         }
     }
 
@@ -364,27 +427,34 @@ impl CodeIndexRegistry {
 
 /// Run `job` on a thread of its own: grep index work (a build takes seconds
 /// on a large repository) must never hold up the code index worker or a
-/// watcher callback.
+/// watcher callback. `false` when the thread could not start.
 pub(super) fn spawn_grep(
     g: Arc<atlas_grepindex::GrepIndex>,
     job: impl FnOnce(&atlas_grepindex::GrepIndex) + Send + 'static,
-) {
+) -> bool {
     let spawned = std::thread::Builder::new()
         .name("atlas-grep-index".into())
         .spawn(move || job(&g));
-    if let Err(e) = spawned {
+    if let Err(e) = &spawned {
         tracing::warn!(target: "atlas::code_index", "start grep index thread: {e}");
     }
+    spawned.is_ok()
 }
 
 /// Load or build the grep prefilter for HEAD (serialized inside the index).
-fn build_grep(g: &atlas_grepindex::GrepIndex) {
+fn build_grep(g: &atlas_grepindex::GrepIndex, state: &GrepRefresh) {
     match g.ensure_built(&CancelToken::new()) {
-        Ok(outcome) => tracing::info!(
-            target: "atlas::code_index",
-            "grep index for {}: {outcome:?}",
-            g.root().display()
-        ),
+        Ok(outcome) => {
+            state.small.store(
+                outcome == atlas_grepindex::BuildOutcome::BelowThreshold,
+                Ordering::SeqCst,
+            );
+            tracing::info!(
+                target: "atlas::code_index",
+                "grep index for {}: {outcome:?}",
+                g.root().display()
+            );
+        }
         Err(e) => tracing::warn!(
             target: "atlas::code_index",
             "grep index for {}: {e}",
@@ -507,6 +577,16 @@ mod tests {
         std::fs::create_dir_all(dir.path().join("src")).unwrap();
         std::fs::write(dir.path().join("src/a.rs"), "pub fn alpha() {}\n").unwrap();
         dir
+    }
+
+    #[test]
+    fn home_and_filesystem_roots_are_never_indexed() {
+        let home = Path::new("/home/u");
+        assert!(refused(Path::new("/"), Some(home)).is_some());
+        assert!(refused(home, Some(home)).is_some());
+        assert!(refused(Path::new("/home"), Some(home)).is_some());
+        assert!(refused(Path::new("/home/u/code/app"), Some(home)).is_none());
+        assert!(refused(Path::new("/srv/app"), None).is_none());
     }
 
     fn wait_for(mut cond: impl FnMut() -> bool) {

@@ -169,3 +169,16 @@ fn sync_on_empty_index_is_a_no_op() {
         crate::VectorStats::default()
     );
 }
+
+#[test]
+fn a_file_with_a_non_utf8_byte_is_still_embedded() {
+    let p = Project::new();
+    std::fs::create_dir_all(p.path("src")).unwrap();
+    std::fs::write(p.path("src/l.rs"), b"// caf\xe9\npub fn latin() {}\n").unwrap();
+    let ix = p.built();
+    let e = FakeEmbedder::new("fake");
+    let s = ix
+        .sync_vectors(&e, &atlas_search::CancelToken::new())
+        .unwrap();
+    assert!(s.embedded >= 1 && s.skipped_stale == 0, "{s:?}");
+}

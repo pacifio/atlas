@@ -67,6 +67,25 @@ pub fn symbol_tool_specs() -> Vec<(&'static str, &'static str, Value)> {
     ]
 }
 
+/// Files whose presence marks a folder as a project root.
+const PROJECT_MARKERS: [&str; 8] = [
+    ".git",
+    "Cargo.toml",
+    "package.json",
+    "go.mod",
+    "pyproject.toml",
+    "setup.py",
+    "tsconfig.json",
+    "deno.json",
+];
+
+/// Whether an agent's working folder may get a code index opened for it on
+/// first use: only a folder that looks like a project, so an agent launched
+/// in some large plain folder does not have all of it parsed.
+fn looks_like_project(root: &Path) -> bool {
+    PROJECT_MARKERS.iter().any(|m| root.join(m).exists())
+}
+
 /// Where a session sits inside an indexed project.
 pub struct Scope {
     pub project: Arc<ProjectIndex>,
@@ -89,13 +108,30 @@ impl Scope {
             .map_err(|e| format!("{}: {e}", session_root.display()))?;
         let project = match registry.root_for(&session) {
             Some(p) => p,
-            None => registry.ensure_open(&session)?,
+            None if looks_like_project(&session) => registry.ensure_open(&session)?,
+            None => {
+                return Err(format!(
+                    "no code index for {}: it is not an open project and has no .git or project manifest. \
+                     grep and find_files still work here.",
+                    session.display()
+                ))
+            }
         };
         let prefix = session
             .strip_prefix(project.index.root())
             .map(rel_string)
             .unwrap_or_default();
         Ok(Scope { project, prefix })
+    }
+
+    /// The session root as a `within` filter: `None` when it is the index root.
+    pub(super) fn within(&self) -> Option<String> {
+        (!self.prefix.is_empty()).then(|| self.prefix.clone())
+    }
+
+    /// Whether an index-relative path lies inside the session root.
+    pub(super) fn contains(&self, index_rel: &str) -> bool {
+        atlas_codeindex::is_within(index_rel, Some(&self.prefix))
     }
 
     pub(super) fn to_index(&self, session_rel: &str) -> String {
@@ -188,6 +224,7 @@ fn find_symbol(scope: &Scope, args: &Value) -> Result<String, String> {
         kind: arg_str(args, "kind").map(str::to_string),
         path_prefix: arg_str(args, "path").map(|p| scope.to_index(p)),
         exclude_tests: args.get("include_tests").and_then(Value::as_bool) == Some(false),
+        within: scope.within(),
         limit: arg_usize(args, "limit").unwrap_or(20).min(MAX_FIND_LIMIT),
         offset: arg_usize(args, "offset").unwrap_or(0),
     };
@@ -239,10 +276,14 @@ fn outline_rows(hits: &[SymbolHit]) -> Vec<Vec<String>> {
 
 fn outline(scope: &Scope, args: &Value) -> Result<String, String> {
     let path = arg_str(args, "path").ok_or("outline needs `path`")?;
+    let rel = scope.to_index(path);
+    if !scope.contains(&rel) {
+        return Err(format!("`{path}` is outside the session root"));
+    }
     let hits = scope
         .project
         .index
-        .outline(&scope.to_index(path))
+        .outline(&rel)
         .map_err(|e| e.to_string())?;
     if hits.is_empty() {
         return Ok(format!(
@@ -274,16 +315,21 @@ fn read_symbol(scope: &Scope, args: &Value) -> Result<String, String> {
     let max_lines = arg_usize(args, "max_lines")
         .unwrap_or(DEFAULT_MAX_LINES)
         .max(1);
-    let src = match scope.project.index.read_symbol(&key, max_lines) {
-        Ok(s) => s,
-        Err(IndexError::NotFound { suggestions, .. }) if !suggestions.is_empty() => {
-            return Err(format!(
-                "no symbol named `{name}`. Closest: {}",
-                suggestions.join(", ")
-            ));
-        }
-        Err(e) => return Err(e.to_string()),
-    };
+    let src =
+        match scope
+            .project
+            .index
+            .read_symbol_within(&key, max_lines, scope.within().as_deref())
+        {
+            Ok(s) => s,
+            Err(IndexError::NotFound { suggestions, .. }) if !suggestions.is_empty() => {
+                return Err(format!(
+                    "no symbol named `{name}`. Closest: {}",
+                    suggestions.join(", ")
+                ));
+            }
+            Err(e) => return Err(e.to_string()),
+        };
     let budget = budget(args);
     let s = &src.symbol;
     let mut out = format!(
@@ -469,6 +515,19 @@ mod tests {
             loc.enclosing("src/lib.rs", 5).unwrap().qualified_name,
             "Store::open"
         );
+    }
+
+    #[test]
+    fn a_subdirectory_session_never_sees_code_outside_it() {
+        let dir = project();
+        let reg = ready(dir.path());
+        let scope = Scope::resolve(&reg, &dir.path().join("crates/store")).unwrap();
+        let found = call(&scope, "find_symbol", &json!({ "query": "openStore" })).unwrap();
+        assert!(!found.contains("app.ts"), "{found}");
+        let read = call(&scope, "read_symbol", &json!({ "name": "openStore" })).unwrap_err();
+        assert!(!read.contains("app.ts"), "{read}");
+        let outline = call(&scope, "outline", &json!({ "path": "../../web/app.ts" })).unwrap_err();
+        assert!(outline.contains("outside the session root"), "{outline}");
     }
 
     #[test]

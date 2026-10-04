@@ -113,13 +113,23 @@ pub(crate) fn classify(
 
 /// Every indexable file under `dir` (the root or a subdirectory), sorted by
 /// path, plus the files skipped by path or size with their reasons.
+/// What a walk saw that is not a source file to index: one it skipped, or a
+/// graph config file (`Cargo.toml`, `tsconfig.json`, …) as a
+/// `rel size mtime_ns` stamp.
+enum Seen {
+    File(Result<Candidate, (String, SkipReason)>),
+    Config(String),
+}
+
+/// The indexable files under `dir`, the files skipped and why, and a stamp of
+/// every graph config file met on the way (see [`config_stamp`]).
 pub(crate) fn discover(
     root: &Path,
     dir: &Path,
     rules: &Arc<Rules>,
     cancel: &CancelToken,
-) -> (Vec<Candidate>, Vec<(String, SkipReason)>) {
-    let (tx, rx) = mpsc::channel::<Result<Candidate, (String, SkipReason)>>();
+) -> (Vec<Candidate>, Vec<(String, SkipReason)>, Vec<String>) {
+    let (tx, rx) = mpsc::channel::<Seen>();
     walker(dir, root, rules.clone()).build_parallel().run(|| {
         let tx = tx.clone();
         let rules = rules.clone();
@@ -137,8 +147,18 @@ pub(crate) fn discover(
             let Ok(md) = entry.metadata() else {
                 return WalkState::Continue;
             };
+            let is_config = entry
+                .file_name()
+                .to_str()
+                .is_some_and(|n| crate::graph_batch::CONFIG_FILES.contains(&n));
+            if is_config {
+                if let Ok(rel) = entry.path().strip_prefix(root) {
+                    let stamp = format!("{} {} {}", rel_string(rel), md.len(), mtime_ns(&md));
+                    let _ = tx.send(Seen::Config(stamp));
+                }
+            }
             if let Some(found) = classify(root, entry.path(), &md, &rules) {
-                let _ = tx.send(found);
+                let _ = tx.send(Seen::File(found));
             }
             WalkState::Continue
         })
@@ -146,15 +166,26 @@ pub(crate) fn discover(
     drop(tx);
     let mut kept = Vec::new();
     let mut skipped = Vec::new();
-    for found in rx {
-        match found {
-            Ok(c) => kept.push(c),
-            Err(s) => skipped.push(s),
+    let mut configs = Vec::new();
+    for seen in rx {
+        match seen {
+            Seen::File(Ok(c)) => kept.push(c),
+            Seen::File(Err(s)) => skipped.push(s),
+            Seen::Config(stamp) => configs.push(stamp),
         }
     }
     kept.sort_by(|a, b| a.rel.cmp(&b.rel));
     skipped.sort();
-    (kept, skipped)
+    configs.sort();
+    (kept, skipped, configs)
+}
+
+/// One value for a walk's config stamps: it changes when any graph config
+/// file is added, removed or edited.
+pub(crate) fn config_stamp(configs: &[String]) -> String {
+    blake3::hash(configs.join("\n").as_bytes())
+        .to_hex()
+        .to_string()
 }
 
 /// Read, sniff, hash and (unless the hash matches `known`) extract one file.

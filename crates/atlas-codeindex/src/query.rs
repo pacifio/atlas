@@ -47,6 +47,9 @@ pub struct SymbolQuery {
     pub path_prefix: Option<String>,
     /// Leave test code out entirely (it is otherwise ranked last).
     pub exclude_tests: bool,
+    /// Only symbols in files inside this root-relative directory (a session
+    /// launched in a subdirectory of the project); see [`is_within`].
+    pub within: Option<String>,
     /// Page size; 0 means the default (20). Capped at 200.
     pub limit: usize,
     pub offset: usize,
@@ -136,6 +139,21 @@ fn last_segment(q: &str) -> &str {
     q.rsplit([':', '.']).next().unwrap_or(q)
 }
 
+/// Whether root-relative `rel` lies inside root-relative directory `dir`
+/// (`None` or "" is the whole project). Component-wise: `sub` holds
+/// `sub/a.rs`, not `sub2/a.rs`, nor `sub/../a.rs`.
+pub fn is_within(rel: &str, dir: Option<&str>) -> bool {
+    match dir.map(|d| d.trim_matches('/')) {
+        None | Some("") => true,
+        Some(d) => {
+            !rel.split('/').any(|c| c == "..")
+                && rel
+                    .strip_prefix(d)
+                    .is_some_and(|r| r.is_empty() || r.starts_with('/'))
+        }
+    }
+}
+
 impl CodeIndex {
     /// Ranked symbol search: FTS5 BM25 over (split name, qualified name,
     /// path, doc) takes the best 2000, exact name matches are added, then
@@ -157,6 +175,7 @@ impl CodeIndex {
                     .as_deref()
                     .is_none_or(|p| h.rel.starts_with(p.trim_start_matches("./")))
                 && !(q.exclude_tests && h.is_test)
+                && is_within(&h.rel, q.within.as_deref())
         });
         scored.sort_by(|(a, ra), (b, rb)| {
             let (ta, tb) = (tier(a, query), tier(b, query));
@@ -212,6 +231,17 @@ impl CodeIndex {
         name_or_qn: &str,
         max_lines: usize,
     ) -> Result<SymbolSource, IndexError> {
+        self.read_symbol_within(name_or_qn, max_lines, None)
+    }
+
+    /// [`CodeIndex::read_symbol`] restricted to definitions inside `within`
+    /// (root-relative directory); one outside it is never read.
+    pub fn read_symbol_within(
+        &self,
+        name_or_qn: &str,
+        max_lines: usize,
+        within: Option<&str>,
+    ) -> Result<SymbolSource, IndexError> {
         let (path, name) = match name_or_qn.split_once('#') {
             Some((p, n)) => (Some(p.trim_start_matches("./")), n.trim()),
             None => (None, name_or_qn.trim()),
@@ -220,10 +250,12 @@ impl CodeIndex {
         if let Some(p) = path {
             found.retain(|h| h.rel == p);
         }
+        found.retain(|h| is_within(&h.rel, within));
         if found.is_empty() {
             let suggestions = self
                 .find_symbol(&SymbolQuery {
                     query: name.to_string(),
+                    within: within.map(str::to_string),
                     limit: 5,
                     ..SymbolQuery::default()
                 })

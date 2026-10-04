@@ -200,12 +200,18 @@ fn has_generated_header(head: &[u8]) -> bool {
     })
 }
 
-/// Gitignore semantics for one path at a time: per-directory `.gitignore`
-/// and `.ignore` (deepest wins), then `.git/info/exclude`, then the user's
-/// global excludes. Matchers are cached per directory and dropped by
-/// [`IgnoreChain::new`] when an ignore file changes.
+/// Gitignore semantics for one path at a time, matching the reconcile
+/// walker's: per-directory `.gitignore` and `.ignore` (deepest wins), up
+/// through the directories above the root to the repository's top, then
+/// `.git/info/exclude`, then the user's global excludes. Matchers are cached
+/// per directory and dropped by [`IgnoreChain::new`] when an ignore file
+/// changes.
 pub(crate) struct IgnoreChain {
     root: PathBuf,
+    /// Directories above `root` up to the repository top, nearest first
+    /// (empty when the root is the top, or not in a repository).
+    above: Vec<PathBuf>,
+    /// Anchored at the repository top, as git anchors it.
     exclude: Gitignore,
     global: Gitignore,
     per_dir: Mutex<HashMap<PathBuf, Arc<Gitignore>>>,
@@ -213,12 +219,23 @@ pub(crate) struct IgnoreChain {
 
 impl IgnoreChain {
     pub(crate) fn new(root: &Path) -> Self {
-        let mut exclude = GitignoreBuilder::new(root);
+        let top = repo_top(root);
+        let above: Vec<PathBuf> = match &top {
+            Some(top) if top.as_path() != root => root
+                .ancestors()
+                .skip(1)
+                .take_while(|d| d.starts_with(top))
+                .map(Path::to_path_buf)
+                .collect(),
+            _ => Vec::new(),
+        };
+        let mut exclude = GitignoreBuilder::new(top.as_deref().unwrap_or(root));
         if let Some(git_dir) = git_common_dir(root) {
             let _ = exclude.add(git_dir.join("info").join("exclude"));
         }
         Self {
             root: root.to_path_buf(),
+            above,
             exclude: exclude.build().unwrap_or_else(|_| Gitignore::empty()),
             global: Gitignore::global().0,
             per_dir: Mutex::new(HashMap::new()),
@@ -248,20 +265,17 @@ impl IgnoreChain {
     /// Whether `rel` (relative to the root) is ignored by git rules.
     pub(crate) fn is_ignored(&self, rel: &str, is_dir: bool) -> bool {
         let rel_path = Path::new(rel);
+        let abs = self.root.join(rel_path);
         let mut dirs: Vec<PathBuf> = Vec::new();
         let mut cur = rel_path.parent();
         while let Some(d) = cur {
             dirs.push(self.root.join(d));
             cur = d.parent();
         }
-        // `dirs` runs deepest-first and ends with the root itself.
+        // `dirs` runs deepest-first through the root itself, then above it.
+        dirs.extend(self.above.iter().cloned());
         for dir in dirs {
-            let Ok(sub) = self
-                .root
-                .join(rel_path)
-                .strip_prefix(&dir)
-                .map(Path::to_path_buf)
-            else {
+            let Ok(sub) = abs.strip_prefix(&dir).map(Path::to_path_buf) else {
                 continue;
             };
             match self
@@ -273,8 +287,9 @@ impl IgnoreChain {
                 Match::None => {}
             }
         }
-        for m in [&self.exclude, &self.global] {
-            match m.matched_path_or_any_parents(rel_path, is_dir) {
+        // `exclude` strips its own root (the repository top) from `abs`.
+        for (m, path) in [(&self.exclude, abs.as_path()), (&self.global, rel_path)] {
+            match m.matched_path_or_any_parents(path, is_dir) {
                 Match::Ignore(_) => return true,
                 Match::Whitelist(_) => return false,
                 Match::None => {}
@@ -282,6 +297,14 @@ impl IgnoreChain {
         }
         false
     }
+}
+
+/// The repository's top-level directory: the nearest directory at or above
+/// `root` holding `.git` (a directory, or a worktree's file).
+fn repo_top(root: &Path) -> Option<PathBuf> {
+    root.ancestors()
+        .find(|d| d.join(".git").exists())
+        .map(Path::to_path_buf)
 }
 
 /// The directory holding `info/exclude`: `<root>/.git`, or for a linked

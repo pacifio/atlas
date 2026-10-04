@@ -1,6 +1,7 @@
 //! The app's code embedder: the selected code model, loaded once on a
 //! blocking thread, handed to the code index registry.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use tauri::{AppHandle, Manager};
@@ -28,24 +29,44 @@ impl atlas_codeindex::Embedder for CodeEmbedder {
     }
 }
 
+/// Refreshes overlap (a slow load still running when the user picks another
+/// model); only the latest one may install its result.
+static LATEST: AtomicU64 = AtomicU64::new(0);
+
+/// Start a refresh; its ticket stays current until a newer refresh starts.
+fn begin() -> u64 {
+    LATEST.fetch_add(1, Ordering::SeqCst) + 1
+}
+
+fn is_current(ticket: u64) -> bool {
+    LATEST.load(Ordering::SeqCst) == ticket
+}
+
 /// Load the selected code model if it is downloaded and give it to the
 /// registry (`None` when it is not: search stays keyword + symbol). Called at
 /// startup, after a code model downloads, and when the selection changes.
 pub async fn refresh(app: &AppHandle) {
+    let ticket = begin();
     let Some(registry) = app.try_state::<Arc<super::CodeIndexRegistry>>() else {
         return;
     };
     let registry = registry.inner().clone();
+    // A newer refresh decides; this one's (possibly outdated) model is dropped.
+    let install = |e: Option<Arc<dyn atlas_codeindex::Embedder>>| {
+        if is_current(ticket) {
+            registry.set_embedder(e);
+        }
+    };
     let id = crate::state::atlas_config::read(app).code_embedding_model_id;
     if !crate::commands::models::is_downloaded(app, &id) {
-        registry.set_embedder(None);
+        install(None);
         return;
     }
     let dir = match crate::commands::models::model_dir_for(app, &id) {
         Ok(dir) => dir,
         Err(e) => {
             tracing::warn!(target: "atlas::code_index", "code model {id}: {e}");
-            registry.set_embedder(None);
+            install(None);
             return;
         }
     };
@@ -62,15 +83,30 @@ pub async fn refresh(app: &AppHandle) {
                 embedder.inner.dim(),
                 embedder.inner.backend()
             );
-            registry.set_embedder(Some(Arc::new(embedder)));
+            install(Some(
+                Arc::new(embedder) as Arc<dyn atlas_codeindex::Embedder>
+            ));
         }
         Ok(Err(e)) => {
             tracing::warn!(target: "atlas::code_index", "load code model {id}: {e:#}");
-            registry.set_embedder(None);
+            install(None);
         }
         Err(e) => {
             tracing::warn!(target: "atlas::code_index", "load code model {id}: {e}");
-            registry.set_embedder(None);
+            install(None);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_the_latest_refresh_installs() {
+        let older = begin();
+        let newer = begin();
+        assert!(!is_current(older));
+        assert!(is_current(newer));
     }
 }

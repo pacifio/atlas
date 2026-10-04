@@ -57,7 +57,7 @@ pub use docs::{read_file_docs, FileDoc, SummaryTarget};
 pub use error::IndexError;
 pub use graph::{ImpactReport, RelatedHit, RelatedQuery, Relation, MAX_ROWS};
 pub use lang::Lang;
-pub use query::{SymbolHit, SymbolQuery, SymbolSource};
+pub use query::{is_within, SymbolHit, SymbolQuery, SymbolSource};
 pub use repomap::RepoMapFocus;
 pub use semantic::{ChunkHit, SemanticQuery};
 pub use skip::{SkipReason, MAX_FILE_BYTES};

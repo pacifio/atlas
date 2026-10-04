@@ -20,6 +20,8 @@ use crate::store::{self, FileRow, EXTRACTOR_VERSION};
 use crate::{CodeIndex, IndexError};
 
 const RACY_WINDOW_MS: i64 = 2000;
+/// The last walk's [`scan::config_stamp`].
+const META_CONFIG_STAMP: &str = "graph.config_stamp";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BuildProgress {
@@ -111,7 +113,7 @@ impl CodeIndex {
             current: 0,
             total: 0,
         });
-        let (cands, mut skipped) = scan::discover(&root, &root, &rules, cancel);
+        let (cands, mut skipped, configs) = scan::discover(&root, &root, &rules, cancel);
         if cancel.is_cancelled() {
             return Err(IndexError::Cancelled);
         }
@@ -163,6 +165,7 @@ impl CodeIndex {
             gb.finish(&tx, &root)?;
             store::set_meta(&tx, "built_at_ms", &now.to_string())?;
             store::set_meta(&tx, "extractor_version", EXTRACTOR_VERSION)?;
+            store::set_meta(&tx, META_CONFIG_STAMP, &scan::config_stamp(&configs))?;
             store::set_meta(&tx, "skipped", &skip_counts(&skipped))?;
             tx.commit()?;
         }
@@ -215,7 +218,8 @@ impl CodeIndex {
                         remove.extend(indexed);
                         continue;
                     }
-                    let (found, skipped) = scan::discover(&root, &abs, &rules, &CancelToken::new());
+                    let (found, skipped, _) =
+                        scan::discover(&root, &abs, &rules, &CancelToken::new());
                     let present: HashSet<&str> = found.iter().map(|c| c.rel.as_str()).collect();
                     remove.extend(
                         indexed
@@ -248,7 +252,7 @@ impl CodeIndex {
         }
         let wanted: Vec<&str> = cands.iter().map(|c| c.rel.as_str()).collect();
         let rows = self.with_writer(|c| store::file_rows_for(c, &wanted))?;
-        self.apply(cands, remove, &dirs_gone, rows, stats)
+        self.apply(cands, remove, &dirs_gone, rows, stats, None)
     }
 
     /// Walk the tree and compare with the index: new and changed files are
@@ -258,10 +262,11 @@ impl CodeIndex {
         self.reload_rules();
         let rules = self.rules();
         let root = self.root().to_path_buf();
-        let (cands, skipped) = scan::discover(&root, &root, &rules, cancel);
+        let (cands, skipped, configs) = scan::discover(&root, &root, &rules, cancel);
         if cancel.is_cancelled() {
             return Err(IndexError::Cancelled);
         }
+        let stamp = scan::config_stamp(&configs);
         let rows = self.with_writer(store::load_file_rows)?;
         let present: HashSet<&str> = cands.iter().map(|c| c.rel.as_str()).collect();
         let remove: BTreeSet<String> = rows
@@ -273,11 +278,15 @@ impl CodeIndex {
             skipped: skipped.len(),
             ..UpdateStats::default()
         };
-        self.apply(cands, remove, &[], rows, stats)
+        // Config files are not indexed, so only this stamp tells a reconcile
+        // that one changed (an edit while Atlas was closed, or one whose
+        // watcher path a queued reconcile absorbed).
+        self.apply(cands, remove, &[], rows, stats, Some(&stamp))
     }
 
     /// Stat-gate, hash, extract and write `cands`; delete `remove` and
-    /// everything under `dirs_gone`; all in one transaction.
+    /// everything under `dirs_gone`; all in one transaction. A
+    /// `config_stamp` unlike the stored one resolves the whole graph.
     fn apply(
         &self,
         cands: Vec<Candidate>,
@@ -285,6 +294,7 @@ impl CodeIndex {
         dirs_gone: &[String],
         rows: HashMap<String, FileRow>,
         mut stats: UpdateStats,
+        config_stamp: Option<&str>,
     ) -> Result<UpdateStats, IndexError> {
         let mut work: Vec<Candidate> = Vec::new();
         let mut known: Vec<Option<Vec<u8>>> = Vec::new();
@@ -320,6 +330,13 @@ impl CodeIndex {
                 .chain(remove.iter().map(PathBuf::from))
                 .collect();
             gb.note_paths(&noted);
+            if let Some(stamp) = config_stamp {
+                if store::get_meta(&tx, META_CONFIG_STAMP)?.as_deref() != Some(stamp) {
+                    gb.note_config_change();
+                    changed_any = true;
+                    store::set_meta(&tx, META_CONFIG_STAMP, stamp)?;
+                }
+            }
             for (c, outcome) in work.iter().zip(outcomes) {
                 let existing = rows.get(&c.rel).map(|r| r.id);
                 match outcome {

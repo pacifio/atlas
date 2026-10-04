@@ -6,6 +6,7 @@ fn sq(q: &str) -> SemanticQuery {
         query: q.into(),
         path_glob: None,
         lang: None,
+        within: None,
         limit: 10,
         offset: 0,
     }
@@ -80,4 +81,34 @@ fn symbol_leg_only_for_identifiers() {
 fn punctuation_only_query_is_invalid() {
     let (_p, ix) = project();
     assert!(ix.semantic_search(&sq("?!"), None).is_err());
+}
+
+#[test]
+fn a_narrow_filter_still_finds_its_chunks_behind_many_better_ones() {
+    let p = Project::new();
+    for i in 0..120 {
+        p.write(
+            &format!("web/f{i:03}.ts"),
+            &format!("// upload retry upload retry\nexport function upload{i}() {{}}\n"),
+        );
+    }
+    p.write("src/up.rs", "/// upload retry\npub fn send_upload() {}\n");
+    let ix = p.built();
+    let e = FakeEmbedder::new("fake");
+    ix.sync_vectors(&e, &atlas_search::CancelToken::new())
+        .unwrap();
+    for embedder in [None, Some(&e as &dyn crate::Embedder)] {
+        let mut q = sq("upload retry");
+        q.path_glob = Some("src/**".into());
+        assert_eq!(
+            ix.semantic_search(&q, embedder).unwrap().0[0].rel,
+            "src/up.rs"
+        );
+        let mut q = sq("upload retry");
+        q.within = Some("src".into());
+        assert_eq!(
+            ix.semantic_search(&q, embedder).unwrap().0[0].rel,
+            "src/up.rs"
+        );
+    }
 }

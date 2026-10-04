@@ -22,6 +22,8 @@ pub struct SemanticQuery {
     pub query: String,
     pub path_glob: Option<String>,
     pub lang: Option<String>,
+    /// Only chunks in files inside this root-relative directory.
+    pub within: Option<String>,
     pub limit: usize,
     pub offset: usize,
 }
@@ -95,6 +97,22 @@ impl CodeIndex {
             ));
         }
         let limit = if q.limit == 0 { 10 } else { q.limit.min(50) };
+        let glob = match &q.path_glob {
+            Some(g) => Some(
+                globset::Glob::new(g)
+                    .map_err(|e| IndexError::Invalid(format!("path_glob: {e}")))?
+                    .compile_matcher(),
+            ),
+            None => None,
+        };
+        // The filters apply inside each leg, before its DEPTH cut, so a narrow
+        // scope still gets DEPTH candidates per leg.
+        let filtered = glob.is_some() || q.lang.is_some() || q.within.is_some();
+        let passes = |rel: &str, lang: &str| {
+            glob.as_ref().is_none_or(|g| g.is_match(rel))
+                && q.lang.as_deref().is_none_or(|l| lang == l)
+                && crate::is_within(rel, q.within.as_deref())
+        };
         // Leg 1: BM25 over chunk header + body.
         let fts = words
             .iter()
@@ -102,11 +120,20 @@ impl CodeIndex {
             .collect::<Vec<_>>()
             .join(" OR ");
         let bm25: Vec<i64> = self.with_reader(|c| {
-            c.prepare_cached(&format!(
-                "SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH ?1 ORDER BY bm25(chunks_fts, 2.0, 1.0), rowid LIMIT {DEPTH}"
-            ))?
-            .query_map([&fts], |r| r.get(0))?
-            .collect()
+            let mut stmt = c.prepare_cached(
+                "SELECT chunks_fts.rowid, f.rel, f.lang FROM chunks_fts
+                 JOIN chunks c ON c.id = chunks_fts.rowid JOIN files f ON f.id = c.file_id
+                 WHERE chunks_fts MATCH ?1 ORDER BY bm25(chunks_fts, 2.0, 1.0), chunks_fts.rowid",
+            )?;
+            let mut rows = stmt.query([&fts])?;
+            let mut out: Vec<i64> = Vec::new();
+            while out.len() < DEPTH {
+                let Some(r) = rows.next()? else { break };
+                if passes(&r.get::<_, String>(1)?, &r.get::<_, String>(2)?) {
+                    out.push(r.get(0)?);
+                }
+            }
+            Ok(out)
         })?;
         // Leg 2: symbols named by identifiers in the query, mapped to their chunks.
         let mut sym_ids: Vec<i64> = Vec::new();
@@ -114,6 +141,7 @@ impl CodeIndex {
             let hits = self
                 .find_symbol(&SymbolQuery {
                     query: ident.to_string(),
+                    within: q.within.clone(),
                     limit: 50,
                     ..Default::default()
                 })
@@ -142,22 +170,34 @@ impl CodeIndex {
         if let Some(e) = embedder {
             let qv = e.embed_query(&q.query).map_err(IndexError::Invalid)?;
             let v = self.vectors_for(e.model_id(), e.dims())?;
-            let keys = v
-                .read()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .search(&qv, DEPTH);
-            dense = self.with_reader(|c| {
-                let mut stmt =
-                    c.prepare_cached("SELECT id FROM chunks WHERE vkey = ?1 ORDER BY id")?;
-                let mut out = Vec::new();
-                for (k, _) in &keys {
-                    out.extend(
-                        stmt.query_map([k], |r| r.get::<_, i64>(0))?
-                            .filter_map(Result::ok),
-                    );
+            let v = v.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+            // With a filter, widen the search until DEPTH chunks pass it or
+            // every vector has been ranked.
+            let mut k = DEPTH;
+            loop {
+                let keys = v.search(&qv, k);
+                dense = self.with_reader(|c| {
+                    let mut stmt = c.prepare_cached(
+                        "SELECT c.id, f.rel, f.lang FROM chunks c JOIN files f ON f.id = c.file_id
+                         WHERE c.vkey = ?1 ORDER BY c.id",
+                    )?;
+                    let mut out = Vec::new();
+                    for (key, _) in &keys {
+                        let mut rows = stmt.query([key])?;
+                        while let Some(r) = rows.next()? {
+                            if passes(&r.get::<_, String>(1)?, &r.get::<_, String>(2)?) {
+                                out.push(r.get::<_, i64>(0)?);
+                            }
+                        }
+                    }
+                    Ok(out)
+                })?;
+                if !filtered || dense.len() >= DEPTH || k >= v.len() {
+                    break;
                 }
-                Ok(out)
-            })?;
+                k = (k * 4).min(v.len());
+            }
+            dense.truncate(DEPTH);
         }
         // Every candidate, then its row: a chunk a concurrent write removed
         // since its leg ran is left out rather than failing the search.
@@ -218,14 +258,6 @@ impl CodeIndex {
         });
         fusion.prior("importance", PRIOR_WEIGHT, by_importance);
         let fused = fusion.finish();
-        let glob = match &q.path_glob {
-            Some(g) => Some(
-                globset::Glob::new(g)
-                    .map_err(|e| IndexError::Invalid(format!("path_glob: {e}")))?
-                    .compile_matcher(),
-            ),
-            None => None,
-        };
         let legs_of: HashMap<i64, String> = fused
             .iter()
             .map(|f| {
@@ -238,8 +270,7 @@ impl CodeIndex {
             .iter()
             .filter(|f| {
                 let r = &rows[&f.id];
-                glob.as_ref().is_none_or(|g| g.is_match(&r.rel))
-                    && q.lang.as_ref().is_none_or(|l| &r.lang == l)
+                passes(&r.rel, &r.lang)
             })
             .map(|f| (f.id, f.score))
             .collect();
@@ -262,8 +293,13 @@ impl CodeIndex {
             .map(|(id, s)| {
                 let r = &rows[&id];
                 let lines = files.entry(r.rel.clone()).or_insert_with(|| {
-                    std::fs::read_to_string(self.root().join(&r.rel))
-                        .map(|t| t.lines().map(str::to_string).collect())
+                    std::fs::read(self.root().join(&r.rel))
+                        .map(|b| {
+                            String::from_utf8_lossy(&b)
+                                .lines()
+                                .map(str::to_string)
+                                .collect()
+                        })
                         .unwrap_or_default()
                 });
                 let from = (r.start as usize).saturating_sub(1).min(lines.len());

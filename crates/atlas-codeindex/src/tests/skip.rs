@@ -81,3 +81,19 @@ fn ignore_chain_follows_nested_gitignores_and_info_exclude() {
     assert!(chain.is_ignored("build", true));
     assert!(!chain.is_ignored("src/main.ts", false));
 }
+
+#[test]
+fn a_project_inside_a_repository_honours_ignores_above_it() {
+    let p = Project::new();
+    p.write(".gitignore", "build/\n*.gen.ts\n")
+        .write("app/src/main.ts", "export {}\n");
+    std::fs::write(p.path(".git/info/exclude"), "/app/tmp/\n").unwrap();
+    let chain = IgnoreChain::new(&p.path("app"));
+    assert!(chain.is_ignored("build/x.ts", false));
+    assert!(chain.is_ignored("src/a.gen.ts", false));
+    assert!(
+        chain.is_ignored("tmp/a.ts", false),
+        "info/exclude is anchored at the repository top"
+    );
+    assert!(!chain.is_ignored("src/main.ts", false));
+}

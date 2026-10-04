@@ -25,7 +25,7 @@ use crate::universe::Universe;
 use crate::IndexError;
 
 /// Files whose change invalidates import configuration.
-const CONFIG_FILES: &[&str] = &[
+pub(crate) const CONFIG_FILES: &[&str] = &[
     "Cargo.toml",
     "tsconfig.json",
     "jsconfig.json",
@@ -99,6 +99,12 @@ impl GraphBatch {
         }) {
             self.config_touched = true;
         }
+    }
+
+    /// A config file changed in a way no watcher path reported (seen by a
+    /// reconcile's walk): resolve everything.
+    pub fn note_config_change(&mut self) {
+        self.config_touched = true;
     }
 
     /// Call before replacing or deleting the rows of an already-indexed file.

@@ -7,6 +7,7 @@ fn q(target: &str, relation: Relation, hops: u8) -> RelatedQuery {
         relation,
         hops,
         include_tests: false,
+        within: None,
         limit: 50,
         offset: 0,
     }
@@ -152,4 +153,31 @@ fn impact_seeds_innermost_symbols_and_handles_deleted_and_new_files() {
             && impacted.contains(&("top", 2)),
         "{impacted:?}"
     );
+}
+
+#[test]
+fn a_reconcile_sees_a_config_file_no_watcher_reported() {
+    let p = Project::new();
+    p.write("src/lib.rs", "pub mod a;\npub mod b;\n");
+    p.write("src/a.rs", "pub fn leaf() {}\n");
+    p.write(
+        "src/b.rs",
+        "use crate::a::leaf;\npub fn top() { leaf(); }\n",
+    );
+    let ix = p.built();
+    let importers = |ix: &CodeIndex| {
+        ix.related(&q("src/a.rs", Relation::Importers, 1))
+            .unwrap()
+            .0
+            .into_iter()
+            .map(|h| h.rel)
+            .collect::<Vec<_>>()
+    };
+    assert!(importers(&ix).is_empty(), "no crate root yet");
+    p.write(
+        "Cargo.toml",
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    );
+    ix.reconcile(&atlas_search::CancelToken::new()).unwrap();
+    assert_eq!(importers(&ix), ["src/b.rs"]);
 }

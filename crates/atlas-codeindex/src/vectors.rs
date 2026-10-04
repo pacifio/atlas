@@ -184,10 +184,15 @@ impl CodeIndex {
             let mut todo: Vec<(i64, String, [u8; 32])> = Vec::new();
             for &k in batch {
                 let p = &present[&k];
+                // Lossy, as chunking read it: a stray non-UTF-8 byte must not
+                // keep the file from ever being embedded.
                 let lines = file_cache.entry(p.rel.clone()).or_insert_with(|| {
-                    std::fs::read_to_string(self.root().join(&p.rel))
-                        .ok()
-                        .map(|t| t.lines().map(str::to_string).collect())
+                    std::fs::read(self.root().join(&p.rel)).ok().map(|b| {
+                        String::from_utf8_lossy(&b)
+                            .lines()
+                            .map(str::to_string)
+                            .collect()
+                    })
                 });
                 let Some(lines) = lines else {
                     stats.skipped_stale += 1;
