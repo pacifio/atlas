@@ -186,6 +186,7 @@ pub(crate) fn process(c: &Candidate, known: Option<&[u8]>) -> Outcome {
         partial: ex.partial,
         symbols: ex.symbols,
         imports: ex.imports,
+        graph: ex.graph,
     }))
 }
 

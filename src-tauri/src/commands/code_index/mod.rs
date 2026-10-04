@@ -7,9 +7,11 @@
 //! - [`watch`]: the file and git watchers' change feed.
 //! - [`symbols`]: `find_symbol`, `outline`, `read_symbol` on `atlas_code`,
 //!   and the locator that names grep hits by their enclosing symbol.
+//! - [`graph_tools`]: `related`, `impact_of_diff`, `repo_map`.
 //! - The `codebase_index_status` / `codebase_index_build` commands the
 //!   composer's index pill and the turn-end refresh call.
 
+mod graph_tools;
 mod registry;
 mod symbols;
 mod watch;
@@ -21,8 +23,35 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 
 pub use registry::{CodeIndexRegistry, Job, ProjectIndex};
-pub use symbols::{call as call_symbol_tool, grep_locator, symbol_tool_specs, Scope, SYMBOL_TOOLS};
+pub use symbols::{grep_locator, Scope};
 pub use watch::feed_from;
+
+/// `(name, description, input schema)` of every tool the code index serves
+/// on `atlas_code`, in listing order.
+pub fn index_tool_specs() -> Vec<(&'static str, &'static str, serde_json::Value)> {
+    let mut specs = symbols::symbol_tool_specs();
+    specs.extend(graph_tools::graph_tool_specs());
+    specs
+}
+
+/// Whether `name` is one of [`index_tool_specs`]'s tools.
+pub fn is_index_tool(name: &str) -> bool {
+    symbols::SYMBOL_TOOLS.contains(&name) || graph_tools::GRAPH_TOOLS.contains(&name)
+}
+
+/// Run one code index tool for a session. Blocking (SQLite, file reads,
+/// `git diff`). `Err` is the text of a tool error.
+pub fn call_index_tool(
+    scope: &Scope,
+    name: &str,
+    args: &serde_json::Value,
+) -> Result<String, String> {
+    if graph_tools::GRAPH_TOOLS.contains(&name) {
+        graph_tools::call(scope, name, args)
+    } else {
+        symbols::call(scope, name, args)
+    }
+}
 
 use super::byok::byok_get;
 use super::memory_indexer::MemoryRegistry;

@@ -15,14 +15,27 @@
 //!
 //! Pure: no Tauri. The app owns the registry, worker thread and watchers.
 
+mod diff;
 mod docs;
 mod error;
 mod extract;
+mod graph;
+mod graph_batch;
+mod graph_extract;
+#[cfg(test)]
+mod graph_fixtures;
+mod import_resolve;
+mod importance;
 mod lang;
 mod query;
+mod repomap;
+mod resolve;
+mod rust_crates;
 mod scan;
+mod schema_v2;
 mod skip;
 mod store;
+mod universe;
 mod update;
 
 #[cfg(test)]
@@ -34,10 +47,13 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 
 use rusqlite::Connection;
 
+pub use diff::{changed_paths, git_diff_hunks, parse_unified_zero, DiffHunk};
 pub use docs::{read_file_docs, FileDoc, SummaryTarget};
 pub use error::IndexError;
+pub use graph::{ImpactReport, RelatedHit, RelatedQuery, Relation, MAX_ROWS};
 pub use lang::Lang;
 pub use query::{SymbolHit, SymbolQuery, SymbolSource};
+pub use repomap::RepoMapFocus;
 pub use skip::{SkipReason, MAX_FILE_BYTES};
 pub use store::{split_name, EXTRACTOR_VERSION, SCHEMA_VERSION};
 pub use update::{BuildProgress, BuildStats, IndexStatus, UpdateStats};

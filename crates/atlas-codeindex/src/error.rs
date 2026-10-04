@@ -15,4 +15,6 @@ pub enum IndexError {
     },
     #[error("{0}")]
     Invalid(String),
+    #[error("graph: {0}")]
+    Graph(String),
 }

@@ -4,9 +4,12 @@
 
 mod build;
 mod docs;
+mod e2e;
 mod extract_golden;
+mod graph;
 mod incremental;
 mod query;
+mod repomap;
 mod scan;
 mod skip;
 

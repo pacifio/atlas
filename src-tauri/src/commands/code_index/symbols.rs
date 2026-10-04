@@ -98,7 +98,7 @@ impl Scope {
         Ok(Scope { project, prefix })
     }
 
-    fn to_index(&self, session_rel: &str) -> String {
+    pub(super) fn to_index(&self, session_rel: &str) -> String {
         let rel = session_rel.trim_start_matches("./").trim_end_matches('/');
         if self.prefix.is_empty() {
             rel.to_string()
@@ -107,7 +107,7 @@ impl Scope {
         }
     }
 
-    fn to_session(&self, index_rel: &str) -> String {
+    pub(super) fn to_session(&self, index_rel: &str) -> String {
         if self.prefix.is_empty() {
             return index_rel.to_string();
         }
@@ -127,7 +127,7 @@ impl Scope {
     }
 }
 
-fn budget(args: &Value) -> usize {
+pub(super) fn budget(args: &Value) -> usize {
     args.get("max_output_tokens")
         .and_then(Value::as_u64)
         .map_or(DEFAULT_BUDGET_BYTES, |t| {
@@ -135,14 +135,14 @@ fn budget(args: &Value) -> usize {
         })
 }
 
-fn arg_str<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
+pub(super) fn arg_str<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
     args.get(key)
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|s| !s.is_empty())
 }
 
-fn arg_usize(args: &Value, key: &str) -> Option<usize> {
+pub(super) fn arg_usize(args: &Value, key: &str) -> Option<usize> {
     args.get(key)
         .and_then(Value::as_u64)
         .and_then(|n| usize::try_from(n).ok())

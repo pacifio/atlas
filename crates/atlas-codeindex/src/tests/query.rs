@@ -250,3 +250,19 @@ fn name_splitting() {
     assert_eq!(split_words("CodeIndex::open"), ["code", "index", "open"]);
     assert_eq!(split_words("find_symbol"), ["find", "symbol"]);
 }
+
+#[test]
+fn locator_reports_callers_once_the_graph_is_built() {
+    let p = Project::new();
+    p.write(
+        "src/lib.rs",
+        "pub fn target() {}\npub fn a() { target(); }\npub fn b() { target(); }\n",
+    );
+    let ix = p.built();
+    let hit = ix
+        .locator()
+        .enclosing("src/lib.rs", 1)
+        .expect("target encloses line 1");
+    assert_eq!(hit.qualified_name.rsplit("::").next(), Some("target"));
+    assert_eq!(hit.callers, 2);
+}

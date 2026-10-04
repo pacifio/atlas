@@ -136,10 +136,12 @@ impl CodeIndex {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let keep = store::load_summaries(&tx)?;
             store::clear_all(&tx)?;
+            let mut gb = crate::graph_batch::GraphBatch::full();
             for (c, outcome) in cands.iter().zip(outcomes) {
                 match outcome {
                     Outcome::Indexed(rec) => {
                         let id = store::upsert_file(&tx, &rec, None, now)?;
+                        gb.after_write(&tx, &rec.rel, &rec.graph)?;
                         if let Some((hash, summary)) = keep.get(&rec.rel) {
                             if hash[..] == rec.hash[..] {
                                 store::put_summary_row(&tx, id, hash, summary)?;
@@ -156,6 +158,9 @@ impl CodeIndex {
                 }
             }
             skipped.sort();
+            // Resolve imports and references into edges; stores its stats
+            // under `graph.last_stats`.
+            gb.finish(&tx, &root)?;
             store::set_meta(&tx, "built_at_ms", &now.to_string())?;
             store::set_meta(&tx, "extractor_version", EXTRACTOR_VERSION)?;
             store::set_meta(&tx, "skipped", &skip_counts(&skipped))?;
@@ -305,11 +310,25 @@ impl CodeIndex {
         {
             let mut conn = self.writer();
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let mut gb = crate::graph_batch::GraphBatch::incremental();
+            // `remove` also carries changed paths the index does not hold (a
+            // `Cargo.toml`, a `tsconfig.json`): a config file among them
+            // forces a full resolve.
+            let noted: Vec<PathBuf> = work
+                .iter()
+                .map(|c| c.abs.clone())
+                .chain(remove.iter().map(PathBuf::from))
+                .collect();
+            gb.note_paths(&noted);
             for (c, outcome) in work.iter().zip(outcomes) {
                 let existing = rows.get(&c.rel).map(|r| r.id);
                 match outcome {
                     Outcome::Indexed(rec) => {
+                        if existing.is_some() {
+                            gb.before_change(&tx, &rec.rel)?;
+                        }
                         store::upsert_file(&tx, &rec, existing, now)?;
+                        gb.after_write(&tx, &rec.rel, &rec.graph)?;
                         stats.indexed += 1;
                     }
                     Outcome::Unchanged { size, mtime_ns } => {
@@ -323,7 +342,9 @@ impl CodeIndex {
                             stats.skipped += 1;
                         }
                         if let Some(id) = existing {
+                            gb.before_change(&tx, &c.rel)?;
                             store::delete_file(&tx, id)?;
+                            gb.after_delete(&c.rel);
                             stats.removed += 1;
                         }
                     }
@@ -332,16 +353,23 @@ impl CodeIndex {
             }
             for rel in &remove {
                 if let Some(id) = store::file_id(&tx, rel)? {
+                    gb.before_change(&tx, rel)?;
                     store::delete_file(&tx, id)?;
+                    gb.after_delete(rel);
                     stats.removed += 1;
                 }
             }
             for dir in dirs_gone {
-                for id in store::ids_under(&tx, dir)? {
-                    store::delete_file(&tx, id)?;
-                    stats.removed += 1;
+                for rel in store::rels_under(&tx, dir)? {
+                    if let Some(id) = store::file_id(&tx, &rel)? {
+                        gb.before_change(&tx, &rel)?;
+                        store::delete_file(&tx, id)?;
+                        gb.after_delete(&rel);
+                        stats.removed += 1;
+                    }
                 }
             }
+            gb.finish(&tx, self.root())?;
             changed_any |= stats.changed();
             tx.commit()?;
         }

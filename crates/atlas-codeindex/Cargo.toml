@@ -28,9 +28,23 @@ thiserror = { workspace = true }
 # The one SQLite in the graph (FTS5 compiled in); same version and features as
 # `crates/atlas-thread-metadata`.
 rusqlite = { version = "0.39", features = ["bundled"] }
+# `git diff -U0` for impact_of_diff, through the git spawn chokepoint.
+atlas-git = { path = "../atlas-git" }
+# `cargo metadata` for the Rust crate graph, through the no-console spawn.
+atlas-process = { path = "../atlas-process" }
+# Cargo metadata, tsconfig/package.json and graph stats.
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+# Cargo.toml manifests when `cargo metadata` is unavailable.
+toml = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+# examples/eval_edges.rs: compare call edges with rust-analyzer's SCIP index.
+# `scip` 0.10 pins `protobuf = "=3.7.2"`; the direct dependency is only for
+# its `Message` trait and resolves to the same version.
+scip = "0.10"
+protobuf = "3"
 
 # The workspace lint table is only real for members that opt in —
 # without this stanza it is dead configuration (#60).

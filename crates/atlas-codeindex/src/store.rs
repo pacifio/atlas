@@ -1,7 +1,8 @@
-//! The SQLite file: location, pragmas, schema v1 and the row writers.
+//! The SQLite file: location, pragmas, the schema and the row writers.
 //!
-//! The schema version lives in `PRAGMA user_version`. A database written by
-//! another version is deleted and rebuilt: the index is a cache of the source
+//! The schema version lives in `PRAGMA user_version`. A known older version
+//! is upgraded in place (v1 → v2 adds the graph, keeping Tier-2 summaries);
+//! anything else is deleted and rebuilt: the index is a cache of the source
 //! tree, so a rebuild loses nothing but time.
 
 use std::collections::HashMap;
@@ -12,7 +13,7 @@ use rusqlite::{params, Connection, OpenFlags, OptionalExtension, Transaction};
 use crate::extract::{ImportRec, SymbolRec};
 use crate::IndexError;
 
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 /// Bump when extraction output changes; a mismatch forces a full build.
 pub const EXTRACTOR_VERSION: &str = "2.0";
 
@@ -65,9 +66,12 @@ pub(crate) fn open_writer(root: &Path) -> Result<Connection, IndexError> {
     let path = db_path(root);
     let conn = Connection::open(&path)?;
     let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-    // A fresh file (version 0, no tables) or the current schema is kept;
-    // anything else is another version's cache and is deleted.
-    let current = version == SCHEMA_VERSION || (version == 0 && !table_exists(&conn, "files")?);
+    // A fresh file (version 0, no tables), the current schema or a known
+    // older one (upgraded below) is kept; anything else is another version's
+    // cache and is deleted.
+    let current = version == SCHEMA_VERSION
+        || version == 1
+        || (version == 0 && !table_exists(&conn, "files")?);
     let conn = if current {
         conn
     } else {
@@ -87,7 +91,13 @@ pub(crate) fn open_writer(root: &Path) -> Result<Connection, IndexError> {
     pragmas(&conn)?;
     if !table_exists(&conn, "files")? {
         conn.execute_batch(SCHEMA_V1)?;
-        conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        conn.pragma_update(None, "user_version", 1)?;
+        crate::schema_v2::upgrade_to_v2(&conn, 0)?;
+        set_meta(&conn, "schema", &SCHEMA_VERSION.to_string())?;
+    } else if version == 1 {
+        // A Phase 2 index: add the graph tables in place; every file
+        // re-extracts on the next reconcile, and Tier-2 summaries are kept.
+        crate::schema_v2::upgrade_to_v2(&conn, 1)?;
         set_meta(&conn, "schema", &SCHEMA_VERSION.to_string())?;
     }
     Ok(conn)
@@ -138,6 +148,8 @@ pub(crate) struct FileRecord {
     pub partial: bool,
     pub symbols: Vec<SymbolRec>,
     pub imports: Vec<ImportRec>,
+    /// The graph half of the extraction, written by `GraphBatch` hooks.
+    pub graph: crate::graph_extract::GraphExtract,
 }
 
 /// The stored identity of one file, for the stat → hash gate.
@@ -205,14 +217,6 @@ pub(crate) fn file_id(conn: &Connection, rel: &str) -> rusqlite::Result<Option<i
 pub(crate) fn rels_under(conn: &Connection, dir: &str) -> rusqlite::Result<Vec<String>> {
     let mut stmt = conn.prepare_cached(
         "SELECT rel FROM files WHERE substr(rel, 1, length(?1) + 1) = ?1 || '/' ORDER BY rel",
-    )?;
-    let rows = stmt.query_map([dir], |r| r.get(0))?;
-    rows.collect()
-}
-
-pub(crate) fn ids_under(conn: &Connection, dir: &str) -> rusqlite::Result<Vec<i64>> {
-    let mut stmt = conn.prepare_cached(
-        "SELECT id FROM files WHERE substr(rel, 1, length(?1) + 1) = ?1 || '/' ORDER BY id",
     )?;
     let rows = stmt.query_map([dir], |r| r.get(0))?;
     rows.collect()

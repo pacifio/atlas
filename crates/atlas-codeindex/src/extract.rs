@@ -47,6 +47,8 @@ pub(crate) struct Extracted {
     /// The tree has ERROR/MISSING nodes, or the parse was abandoned.
     pub partial: bool,
     pub timed_out: bool,
+    /// References, rich imports and `mod` declarations from the same tree (Phase 3).
+    pub graph: crate::graph_extract::GraphExtract,
 }
 
 thread_local! {
@@ -69,6 +71,7 @@ pub(crate) fn extract(lang: Lang, rel: &str, src: &[u8], deadline: Instant) -> E
     let mut walker = Walker::new(lang, src, lang.is_test_path(rel));
     walker.walk(&tree);
     walker.out.partial = tree.root_node().has_error();
+    walker.out.graph = crate::graph_extract::extract_graph(lang.label(), tree.root_node(), src);
     walker.out
 }
 

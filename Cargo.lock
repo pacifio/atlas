@@ -919,14 +919,21 @@ dependencies = [
 name = "atlas-codeindex"
 version = "0.2.0"
 dependencies = [
+ "atlas-git",
+ "atlas-process",
  "atlas-search",
  "blake3",
  "dunce",
  "ignore",
+ "protobuf",
  "rayon",
  "rusqlite",
+ "scip",
+ "serde",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.18",
+ "toml 0.9.12+spec-1.1.0",
  "tree-sitter",
  "tree-sitter-go",
  "tree-sitter-python",
@@ -12244,6 +12251,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "protobuf"
+version = "3.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d65a1d4ddae7d8b5de68153b48f6aa3bba8cb002b243dbdbc55a5afbc98f99f4"
+dependencies = [
+ "once_cell",
+ "protobuf-support",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "protobuf-support"
+version = "3.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e36c2f31e0a47f9280fb347ef5e461ffcd2c52dd520d8e216b52f93b0b0d7d6"
+dependencies = [
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "protoc-bin-vendored"
 version = "3.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -13798,6 +13825,15 @@ dependencies = [
  "quote",
  "serde_derive_internals",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "scip"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7f651fbd0f98742a47b58623a7bcfd8fad14455912689e4867a1f43ee7e02c6"
+dependencies = [
+ "protobuf",
 ]
 
 [[package]]

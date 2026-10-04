@@ -385,22 +385,29 @@ impl SymbolLocator for Locator {
     fn enclosing(&self, rel_path: &str, line: u32) -> Option<EnclosingSymbol> {
         self.0
             .with_reader(|c| {
-                c.query_row(
-                    "SELECT s.qualified_name, s.kind, s.start_line, s.end_line
+                let (id, mut sym) = c.query_row(
+                    "SELECT s.id, s.qualified_name, s.kind, s.start_line, s.end_line
                      FROM symbols s JOIN files f ON f.id = s.file_id
                      WHERE f.rel = ?1 AND s.start_line <= ?2 AND s.end_line >= ?2
                      ORDER BY (s.end_line - s.start_line) ASC, s.start_line DESC, s.id ASC LIMIT 1",
                     params![rel_path, line],
                     |r| {
-                        Ok(EnclosingSymbol {
-                            qualified_name: r.get(0)?,
-                            kind: r.get(1)?,
-                            start_line: r.get(2)?,
-                            end_line: r.get(3)?,
-                            callers: 0,
-                        })
+                        Ok((
+                            r.get::<_, i64>(0)?,
+                            EnclosingSymbol {
+                                qualified_name: r.get(1)?,
+                                kind: r.get(2)?,
+                                start_line: r.get(3)?,
+                                end_line: r.get(4)?,
+                                callers: 0,
+                            },
+                        ))
                     },
-                )
+                )?;
+                // A missing edges table or a failed count only loses the
+                // annotation's caller count, never the annotation.
+                sym.callers = crate::importance::caller_count(c, id).unwrap_or(0);
+                Ok(sym)
             })
             .ok()
     }

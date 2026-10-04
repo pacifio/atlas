@@ -125,7 +125,7 @@ pub(super) fn tool_names() -> Vec<String> {
 pub(super) fn tools_list(with_index: bool) -> ListToolsResult {
     let mut all = tools();
     if with_index {
-        for (name, description, input) in crate::commands::code_index::symbol_tool_specs() {
+        for (name, description, input) in crate::commands::code_index::index_tool_specs() {
             all.push(tool(name, description, input));
         }
     }
@@ -350,15 +350,16 @@ impl CodeTools {
                         .map_err(|e| e.to_string())
                 })
             }
-            name if crate::commands::code_index::SYMBOL_TOOLS.contains(&name) => {
+            name if crate::commands::code_index::is_index_tool(name) => {
                 let Some(registry) = self.index.clone() else {
                     return tool_error("the code index is not available in this session");
                 };
                 let name = name.to_string();
-                // Symbol queries are bounded SQL; the token is not needed.
+                // Index queries are bounded SQL and graph walks (capped rows
+                // and hops); the token is not needed.
                 Box::new(move |_: &CancelToken| {
                     let scope = crate::commands::code_index::Scope::resolve(&registry, &root)?;
-                    crate::commands::code_index::call_symbol_tool(&scope, &name, &args)
+                    crate::commands::code_index::call_index_tool(&scope, &name, &args)
                 })
             }
             _ => return tool_error(format!("unknown tool `{name}`")),
