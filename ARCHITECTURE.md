@@ -343,19 +343,16 @@ atlas/
 ├── vendor/                        vendored source, workspace members
 │   └── atlas-engine                 the engine behind Atlas Agent (ADR-0004, ADR-0011)
 │
-├── scripts/                       build/release helpers (with-posthog-env.mjs)
+├── scripts/                       build/release helpers (with-posthog-env.mjs, bump.sh)
 ├── landing/                       marketing site source
 │
 ├── index.html
 ├── package.json
 ├── vite.config.ts
 ├── tsconfig.json
-├── postcss.config.js
 ├── LICENSE
 ├── README.md
 ├── CONTRIBUTING.md
-├── CODE_OF_CONDUCT.md
-├── SECURITY.md
 ├── TELEMETRY.md
 └── ARCHITECTURE.md                (this file)
 ```

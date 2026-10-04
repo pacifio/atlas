@@ -26,7 +26,7 @@ The form only requires one field: a freeform description. Write as much or as li
 
 ## Security issues
 
-Don't open a public issue for a vulnerability or a potential attack vector. See [SECURITY.md](SECURITY.md) for how to report it privately.
+Don't open a public issue for a vulnerability or a potential attack vector. See [SECURITY.md](.github/SECURITY.md) for how to report it privately.
 
 ## Documentation
 
@@ -169,12 +169,12 @@ Releases are tagged `alpha-X.Y.Z`, with occasional `exp-X.Y.Z-X.Y.Z` snapshots.
 The version lives in four places: `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, and the Settings "About" label in `src/features/settings/components/settings-panel.tsx`. The scripts change all four together, and refresh `Cargo.lock`'s entry for the app so CI's `--locked` builds still run.
 
 ```bash
-./bump.sh          # patch bump: 0.2.3 -> 0.2.4
-./bump.sh 0.3.0    # explicit version
-./debump.sh        # inverse of bump.sh
+bun run bump          # patch bump: 0.2.3 -> 0.2.4
+bun run bump 0.3.0    # explicit version
+bun run debump        # inverse of bump
 ```
 
-Run `bump.sh` once per release, on the version branch, before opening the PR into `main`. Never edit the four files by hand.
+Run `bun run bump` (`scripts/bump.sh`) once per release, on the version branch, before opening the PR into `main`. Never edit the four files by hand.
 
 ## Verification
 
@@ -366,4 +366,4 @@ New events need discussion in the issue before they're built, and any change to 
 
 ## Code of conduct
 
-Participation is covered by our [Code of Conduct](CODE_OF_CONDUCT.md).
+Participation is covered by our [Code of Conduct](.github/CODE_OF_CONDUCT.md).

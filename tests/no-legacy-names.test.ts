@@ -57,7 +57,7 @@ const ENGINE_TERRITORY = [
   /^clippy\.toml$/,
   /^scripts\/(?!one-off\/)/,
   /^tests\/(?!no-legacy-names\.test\.ts$|vendor-licensing\.test\.ts$)/,
-  /^docs\/(?!adr\/|archive\/|atlas-agent-rename-spec\.md$)/,
+  /^docs\/(?!adr\/|archive\/)/,
 ];
 
 /** Files the retired SDK name may still appear in, each with its reason. */
@@ -68,7 +68,6 @@ const RETIRED_SDK_RESIDUE: [pattern: RegExp, reason: string][] = [
   ],
   [/^docs\/adr\//, "decision records are history"],
   [/^docs\/archive\//, "archived specs and research predate the rename"],
-  [/^docs\/atlas-agent-rename-spec\.md$/, "the rename spec names what it renamed"],
   [/^tests\/no-legacy-names\.test\.ts$/, "this file"],
   [
     /^scripts\/one-off\/rename-engine\.py$/,
@@ -101,7 +100,6 @@ const UPSTREAM_RESIDUE: [pattern: RegExp, reason: string][] = [
   ],
   [/^docs\/adr\//, "decision records are history"],
   [/^docs\/archive\//, "archived specs and research predate the rename"],
-  [/^docs\/atlas-agent-rename-spec\.md$/, "the rename spec names what it renamed"],
 ];
 
 /** Lines that legitimately spell the upstream name wherever they appear. */

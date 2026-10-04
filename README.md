@@ -197,7 +197,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). One thing catches people out:
 
 - **Feature work targets the current version branch**, not `main`. `main` only receives a finished version branch, and that merge is the release.
 
-[ARCHITECTURE.md](ARCHITECTURE.md) covers how Atlas is built. [SECURITY.md](SECURITY.md) covers reporting vulnerabilities.
+[ARCHITECTURE.md](ARCHITECTURE.md) covers how Atlas is built. [SECURITY.md](.github/SECURITY.md) covers reporting vulnerabilities.
 
 ---
 

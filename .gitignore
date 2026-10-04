@@ -42,12 +42,12 @@ skills-lock.json
 !TELEMETRY.md
 !CONTRIBUTING.md
 !ARCHITECTURE.md
-!SECURITY.md
-!CODE_OF_CONDUCT.md
+!.github/SECURITY.md
+!.github/CODE_OF_CONDUCT.md
 !CONTEXT.md
 !docs/adr/*.md
 !docs/archive/*.md
-!docs/atlas-agent-rename-spec.md
+!docs/archive/radix-to-base-ui/*.md
 !docs/research/*.md
 !docs/qa/*.md
 !docs/reference/*.md
@@ -58,10 +58,6 @@ skills-lock.json
 # the binary at compile time (`commands/skills.rs`), so it has to ship from a
 # fresh clone the same way the vendored Atlas Agent prompts below do.
 !src-tauri/resources/**/*.md
-# The Radix -> Base UI migration reports, one per primitive family plus the
-# project summary. They are the record of what each family's API translation
-# actually changed, which is what a later reader of those wrappers needs.
-!.migration/*.md
 graphify-out/
 # Local-only working folders (plans/specs + helper scripts)
 plans/
