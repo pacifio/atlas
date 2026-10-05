@@ -1,15 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { Copy, Hash, Link2, Play } from "lucide-react";
-import {
-  EditorView,
-  keymap,
-  lineNumbers,
-  placeholder as cmPlaceholder,
-  Decoration,
-  WidgetType,
-} from "@codemirror/view";
-import type { DecorationSet } from "@codemirror/view";
-import { Compartment, EditorState, StateEffect, StateField } from "@codemirror/state";
+import { EditorView, keymap, lineNumbers, placeholder as cmPlaceholder } from "@codemirror/view";
+import { Compartment, EditorState } from "@codemirror/state";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { toast } from "sonner";
@@ -18,11 +10,11 @@ import { copyText } from "@/lib/clipboard";
 import { editorThemeExtensions } from "@/features/editor/themes/build-cm-theme";
 import { sendToAgentChat } from "@/features/chat/lib/send-to-agent";
 import { yCollab } from "y-codemirror.next";
+import { remoteCaretField, setRemoteCarets } from "@/features/editor/lib/remote-carets";
 import { HintGroup, HintItem } from "@/ui/hint-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/ui/tooltip";
 import { CommsAvatar } from "./comms-avatar";
 import { useDraftSession } from "../lib/use-draft-session";
-import { avatarHue } from "../lib/derive";
 import { useCommsStore } from "../stores/comms-store";
 import type { ChatConversation, PromptDraft } from "../types";
 
@@ -253,76 +245,3 @@ function firstName(name: string | undefined): string {
   return first || "Someone";
 }
 
-// ---------------------------------------------------------------------------
-// Remote carets — the Google-docs treatment, from position-only awareness.
-// ---------------------------------------------------------------------------
-
-interface CaretInfo {
-  userId: string;
-  cursor: number;
-  name: string;
-}
-
-const setRemoteCarets = StateEffect.define<CaretInfo[]>();
-
-class CaretWidget extends WidgetType {
-  constructor(
-    private readonly name: string,
-    private readonly hue: number,
-  ) {
-    super();
-  }
-  override eq(other: CaretWidget): boolean {
-    return other.name === this.name && other.hue === this.hue;
-  }
-  toDOM(): HTMLElement {
-    // ratchet-allow: a collaborator's own caret hue, assigned per session.
-    const color = `hsl(${this.hue} 55% 55%)`;
-    const wrap = document.createElement("span");
-    wrap.className = "atlas-remote-caret";
-    wrap.style.cssText =
-      "position:relative;display:inline-block;width:0;height:1em;vertical-align:text-bottom;";
-    const bar = document.createElement("span");
-    bar.style.cssText = `position:absolute;left:-1px;top:0;bottom:-2px;width:2px;border-radius:1px;background:${color};`;
-    const flag = document.createElement("span");
-    flag.textContent = this.name;
-    flag.style.cssText =
-      `position:absolute;left:-1px;top:-14px;padding:0 4px;border-radius:3px 3px 3px 0;` +
-      // ratchet-allow: white on that saturated caret hue, which is not a theme surface.
-      `background:${color};color:#fff;font-size:9px;line-height:13px;white-space:nowrap;` +
-      `pointer-events:none;user-select:none;`;
-    wrap.append(bar, flag);
-    return wrap;
-  }
-  override ignoreEvent(): boolean {
-    return true;
-  }
-}
-
-/** Carets as a StateField so positions MAP through document changes between
- *  awareness frames — a peer's caret keeps riding its text while you type
- *  above it, instead of drifting until their next 500ms publish. */
-const remoteCaretField = StateField.define<DecorationSet>({
-  create: () => Decoration.none,
-  update(carets, tr) {
-    let next = carets.map(tr.changes);
-    for (const effect of tr.effects) {
-      if (effect.is(setRemoteCarets)) {
-        const len = tr.newDoc.length;
-        next = Decoration.set(
-          effect.value
-            .map((c) => {
-              const at = Math.min(Math.max(0, c.cursor), len);
-              return Decoration.widget({
-                widget: new CaretWidget(c.name, avatarHue(c.userId)),
-                side: -1,
-              }).range(at);
-            })
-            .sort((a, b) => a.from - b.from),
-        );
-      }
-    }
-    return next;
-  },
-  provide: (field) => EditorView.decorations.from(field),
-});

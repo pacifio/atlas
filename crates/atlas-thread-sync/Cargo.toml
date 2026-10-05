@@ -1,0 +1,40 @@
+[package]
+name = "atlas-thread-sync"
+version = "0.1.0"
+edition = "2021"
+description = "Shared Threads on the desktop: the replica worktree, one Yjs text per touched file, the file watcher with echo suppression, and the client for the thread socket's wire protocol v1. Tauri-free."
+
+[lib]
+name = "atlas_thread_sync"
+
+[dependencies]
+atlas-process = { path = "../atlas-process" }
+# The secret rules every other disclosure in Atlas uses (share blocking).
+atlas-redact = { path = "../atlas-redact" }
+# The Rust port of Yjs. The web viewer runs `yjs` itself, so the text type name
+# and the UTF-16 offset kind below are part of the contract, not a choice.
+yrs = "0.24"
+tokio = { version = "1", features = ["sync", "time", "rt", "macros", "net"] }
+# The workspace pin, for the reason `atlas-artifacts` gives: it resolves to the
+# openai-oss-forks 0.28 fork already in the graph. An inline version would unify
+# with axum's 0.29 instead.
+tokio-tungstenite = { workspace = true }
+futures-util = "0.3"
+notify = { workspace = true }
+serde = { version = "1", features = ["derive"] }
+# `merge.submit` carries each file's Yjs update as base64.
+base64 = { workspace = true }
+# Line hunks for a Run's three-way merge (ATL-405).
+similar = { workspace = true }
+serde_json = "1"
+sha2 = { workspace = true }
+thiserror = "2"
+tracing = "0.1"
+uuid = { workspace = true, features = ["v4"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util", "time"] }
+
+[lints]
+workspace = true

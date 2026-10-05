@@ -704,6 +704,7 @@ dependencies = [
  "atlas-terminal",
  "atlas-theme",
  "atlas-thread-metadata",
+ "atlas-thread-sync",
  "axum",
  "base64 0.21.7",
  "block2",
@@ -3424,6 +3425,28 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "atlas-thread-sync"
+version = "0.1.0"
+dependencies = [
+ "atlas-process",
+ "atlas-redact",
+ "base64 0.22.1",
+ "futures-util",
+ "notify",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "similar",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-tungstenite 0.28.0",
+ "tracing",
+ "uuid",
+ "yrs",
 ]
 
 [[package]]
@@ -14448,6 +14471,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
+name = "smallstr"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "862077b1e764f04c251fe82a2ef562fd78d7cadaeb072ca7c2bcaf7217b1ff3b"
+dependencies = [
+ "smallvec",
+]
+
+[[package]]
 name = "smallvec"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -18418,6 +18450,24 @@ dependencies = [
  "quote",
  "syn 2.0.117",
  "synstructure",
+]
+
+[[package]]
+name = "yrs"
+version = "0.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f904a99678a852d7cbc6958c94087f739c10cfb19642635951219c525a5fdb89"
+dependencies = [
+ "arc-swap",
+ "async-lock",
+ "async-trait",
+ "dashmap",
+ "fastrand",
+ "serde",
+ "serde_json",
+ "smallstr",
+ "smallvec",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

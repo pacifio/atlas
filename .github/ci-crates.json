@@ -110,5 +110,9 @@
   {
     "crate": "atlas-thread-metadata",
     "clippy": true
+  },
+  {
+    "crate": "atlas-thread-sync",
+    "clippy": true
   }
 ]

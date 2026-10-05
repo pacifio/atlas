@@ -120,6 +120,8 @@ atlas-agent-transcript = { path = "../crates/atlas-agent-transcript" }
 atlas-native-agent = { path = "../crates/atlas-native-agent" }
 # Atlas's session history — the only source for the sidebar (ADR-0001).
 atlas-thread-metadata = { path = "../crates/atlas-thread-metadata" }
+# Shared Threads (ATL-395): the replica, its documents and the thread socket.
+atlas-thread-sync = { path = "../crates/atlas-thread-sync" }
 atlas-bus = { path = "../crates/atlas-bus" }
 atlas-artifacts = { path = "../crates/atlas-artifacts" }
 atlas-comms = { path = "../crates/atlas-comms" }

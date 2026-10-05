@@ -28,7 +28,7 @@ use rusqlite::Connection;
 use crate::error::{Error, Result};
 
 /// Bump when adding a migration, and add the matching arm in [`migrate`].
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 4;
 
 pub fn migrate(conn: &Connection) -> Result<()> {
     // Fast path, outside any transaction: the common case is a database
@@ -61,6 +61,9 @@ pub fn migrate(conn: &Connection) -> Result<()> {
         }
         if found < 3 {
             conn.execute_batch(V3)?;
+        }
+        if found < 4 {
+            conn.execute_batch(V4)?;
         }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(())
@@ -132,6 +135,15 @@ CREATE TABLE IF NOT EXISTS backfilled_agents(
 const V3: &str = "
 DELETE FROM threads WHERE agent_id = 'cersei';
 DELETE FROM backfilled_agents WHERE agent_id = 'cersei';
+";
+
+/// A thread shared as a Shared Thread (ATL-395): its id on the server, the
+/// Base commit, and this person's role. Three nullable columns rather than a
+/// JSON blob, because the app looks threads up by `shared_thread_id`.
+const V4: &str = "
+ALTER TABLE threads ADD COLUMN shared_thread_id TEXT;
+ALTER TABLE threads ADD COLUMN shared_base TEXT;
+ALTER TABLE threads ADD COLUMN shared_role TEXT;
 ";
 
 #[cfg(test)]

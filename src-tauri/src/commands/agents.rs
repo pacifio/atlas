@@ -80,6 +80,11 @@ impl TauriDeltaSink {
         let pipeline = OutboundPipeline::new()
             // Broadcast first so the UI updates before any heavier work.
             .with(Arc::new(BroadcastMiddleware { app: app.clone() }))
+            // A Shared Thread Run's live stream (ATL-405): early, so the
+            // people watching see it as soon as the Runner does.
+            .with(Arc::new(super::shared_threads::SharedRunMiddleware {
+                app: app.clone(),
+            }))
             .with(Arc::new(AnalyticsMiddleware { app: app.clone() }))
             .with(Arc::new(KeepAwakeMiddleware { app: app.clone() }))
             // Session capture lives here rather than on the event bus because
@@ -684,6 +689,7 @@ pub fn install_manager(app: &AppHandle) {
         config_dir.clone(),
     )));
     let sink: Arc<dyn DeltaSink> = Arc::new(TauriDeltaSink::new(app.clone()));
+    app.manage(super::shared_threads::RunDeltaSink(sink.clone()));
     let data_dir = app
         .path()
         .app_data_dir()
@@ -1655,6 +1661,25 @@ pub async fn agents_send(
         app.state::<SharedMemoryStore>()
             .register_session(&key.session_id, &cwd, &plugin_id);
     }
+
+    // A session working in a Shared Thread's Run worktree: this prompt is a
+    // Run (ATL-405). Forked and announced before the agent sees it.
+    let digest = super::shared_threads::begin_run(
+        &app,
+        &key.agent_id,
+        &key.session_id,
+        &cwd,
+        &plugin_id,
+        current_model.as_deref(),
+        &text,
+    )
+    .await?;
+    // The thread's context digest goes in front of the prompt (ATL-411);
+    // capture and the transcript above recorded the person's own words.
+    let text = match digest {
+        Some(digest) => format!("{digest}{text}"),
+        None => text,
+    };
     host.send(
         &key,
         prompt::with_resource_links(prompt::compose(text, images), links),

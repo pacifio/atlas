@@ -105,6 +105,21 @@ pub struct ThreadMetadata {
     /// one needing a migration the day Atlas grows them.
     pub remote_connection: Option<serde_json::Value>,
     pub archived: bool,
+    /// Set once this thread is shared as a Shared Thread (ATL-395): which one,
+    /// the Base commit it started from, and this person's role in it. `None`
+    /// for an ordinary, single-person thread.
+    pub shared: Option<SharedThreadLink>,
+}
+
+/// A local thread's link to the Shared Thread it was shared as.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SharedThreadLink {
+    /// The server's id for the Shared Thread.
+    pub shared_thread_id: String,
+    /// The git commit the Shared Thread's canonical state starts from.
+    pub base: String,
+    /// `owner`, `participant` or `viewer`, as the server named it.
+    pub role: String,
 }
 
 impl ThreadMetadata {
@@ -125,6 +140,7 @@ impl ThreadMetadata {
             interacted_at: Some(now),
             worktree_paths: WorktreePaths::from_folder_paths(&folder_paths),
             remote_connection: None,
+            shared: None,
             archived: false,
         }
     }

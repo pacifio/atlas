@@ -107,6 +107,8 @@ import { ChatHeader } from "./chat-header";
 import { openNewAgentChat } from "../lib/open-agent-session";
 import { forkSessionToNewTab } from "../lib/fork-session";
 import { projectPathForTab } from "../lib/tab-project";
+import type { ShareTarget } from "@/features/shared-threads/components/shared-thread-panel";
+import { useRunLock } from "@/features/shared-threads/stores/shared-threads-store";
 import { useQueryClient } from "@tanstack/react-query";
 import { prefetchTextDiff } from "@/features/git/lib/git-diff-api";
 import { OPEN_TURN_DIFF_EVENT, type TurnDiffRequest } from "../lib/open-turn-diff";
@@ -375,6 +377,22 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
   );
 
   const acpSessionId = session?.acpSessionId ?? "";
+  // What the header's Share popover acts on (ATL-395). Memoised: the header is
+  // memo'd and re-rendered per streaming frame only if a prop changes.
+  const sessionAgentType = useChatStore((s) => s.sessions[tabId]?.agentType);
+  // A session in a Shared Thread's Run worktree prompts Runs; somebody who may
+  // not change that thread (a viewer, a closed thread) cannot (ATL-406).
+  const workingDirectory = useChatStore((s) => s.sessions[tabId]?.workingDirectory);
+  const runLock = useRunLock(workingDirectory);
+  const shareTarget = useMemo<ShareTarget>(
+    () => ({
+      sessionId: acpSessionId || null,
+      projectPath: projectPathForTab(tabId),
+      title: headerTitle,
+      agentType: sessionAgentType,
+    }),
+    [acpSessionId, tabId, headerTitle, sessionAgentType],
+  );
   /** Handle on the bind effect's in-flight attempt — see `epoch` inside it.
    *  Null whenever no bind effect is mounted (tab already bound). */
   const bindControlRef = useRef<{
@@ -1454,6 +1472,7 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
                 plansPanelOpen={plansPanelOpen}
                 onTogglePlans={onTogglePlansStable}
                 commentCount={commentCount}
+                shareTarget={shareTarget}
                 commentsPanelOpen={commentsPanelOpen}
                 onToggleComments={onToggleCommentsStable}
                 // Zero-arg wrapper, NOT a bare reference: React would call
@@ -1497,6 +1516,7 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
             onStop={onStopStable}
             running={isBusyAgentStatus(session.status) || hasInFlightToolCalls(session)}
             stopping={!!session.stopping}
+            lockedReason={runLock}
           />
         </div>
       </div>
@@ -1658,12 +1678,19 @@ const ChatComposer = memo(function ChatComposer({
   onStop,
   running,
   stopping,
+  lockedReason,
 }: {
   tabId: string;
   onSend: (message: string, mentions: MentionData[], attachments?: ImageAttachment[]) => void;
   onStop: () => void;
   running: boolean;
   stopping: boolean;
+  /**
+   * Why this session may not prompt — it works in a Shared Thread this person
+   * may not change (ATL-406). Only the text area and send are blocked; the
+   * toolbar stays live, as ADR-0002 requires.
+   */
+  lockedReason: string | null;
 }) {
   // OpenCode / Cursor / Kilo auth used to raise a "copy `cursor-agent login`"
   // pill here. It is gone: `atlas:auth-required` now routes ONLY to the
@@ -1679,12 +1706,21 @@ const ChatComposer = memo(function ChatComposer({
       <div className="relative">
         <AgentUpdateBar tabId={tabId} />
         <DisconnectedBanner tabId={tabId} />
+        {lockedReason && (
+          <p
+            role="status"
+            className="mx-3 mb-1.5 rounded-md bg-[var(--atlas-element-hover)] px-2.5 py-1.5 text-xs text-[var(--secondary-foreground)]"
+          >
+            {lockedReason}
+          </p>
+        )}
         <MessageInput
           tabId={tabId}
           onSend={onSend}
           onStop={onStop}
           running={running}
           stopping={stopping}
+          disabled={!!lockedReason}
           placeholder="Ask Atlas what to do ..."
         />
       </div>

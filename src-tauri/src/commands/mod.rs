@@ -68,6 +68,7 @@ pub mod search;
 pub mod session_chat;
 pub mod session_chat_sessions;
 pub mod shared_memory;
+pub mod shared_threads;
 pub mod shell_profile;
 pub mod skills;
 pub mod spaces;

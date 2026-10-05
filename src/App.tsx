@@ -70,6 +70,7 @@ import {
 import { AgentOAuthModalHost } from "@/features/agents/components/agent-oauth-modal";
 import { watchRemovedAgents } from "@/features/chat/lib/removed-agents";
 import { AgentElicitationHost } from "@/features/chat/components/agent-elicitation-host";
+import { RemoteRunHost } from "@/features/shared-threads/components/remote-runs";
 import { UiActionBridge } from "@/features/ui-actions/components/ui-action-bridge";
 import { OrgActionLogBridge } from "@/features/org-actions/components/org-action-log-bridge";
 import { initWindowFocusTracking, isWindowFocused } from "@/lib/window-focus";
@@ -1511,6 +1512,7 @@ export function App() {
       {/* Sign-in asks questions of its own (device codes, login URLs), and they
           arrive before the agent has any session to route them by. */}
       <AgentElicitationHost />
+      <RemoteRunHost />
       <UiActionBridge />
       <OrgActionLogBridge />
       <NotificationPanel />

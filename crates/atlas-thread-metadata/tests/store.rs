@@ -9,8 +9,8 @@ use std::path::PathBuf;
 
 use agent_client_protocol::schema::v1 as acp;
 use atlas_thread_metadata::{
-    LiveThreadUpdate, PathList, ThreadFilter, ThreadId, ThreadMetadata, ThreadMetadataStore,
-    ThreadStoreEvent, WorktreePaths,
+    LiveThreadUpdate, PathList, SharedThreadLink, ThreadFilter, ThreadId, ThreadMetadata,
+    ThreadMetadataStore, ThreadStoreEvent, WorktreePaths,
 };
 use chrono::{TimeZone, Utc};
 
@@ -752,4 +752,32 @@ fn the_chat_you_are_looking_at_is_not_also_listed_beneath_itself() {
         vec![sent.thread_id],
         "a draft is the open tab, not a history row"
     );
+}
+
+/// A thread shared as a Shared Thread keeps its link — id, Base and role —
+/// across live updates from the agent and across a restart (ATL-395).
+#[test]
+fn a_shared_thread_link_survives_live_updates_and_reopening() {
+    let dir = tempfile::tempdir().unwrap();
+    let saved = thread("atlas-agent", &["/tmp/atlas"]);
+    let link = SharedThreadLink {
+        shared_thread_id: "01JTHREAD".into(),
+        base: "a".repeat(40),
+        role: "owner".into(),
+    };
+    {
+        let store = open(&dir);
+        store.save_one(saved.clone());
+        store.set_shared_thread(saved.thread_id, Some(link.clone()));
+        store.record_live_update(live(&saved, Some("Banner colour")));
+        store.flush().expect("queued writes drain");
+    }
+    let store = open(&dir);
+    let found = store.thread(saved.thread_id).expect("row survives");
+    assert_eq!(found.shared, Some(link));
+
+    store.set_shared_thread(saved.thread_id, None);
+    store.flush().unwrap();
+    drop(store);
+    assert_eq!(open(&dir).thread(saved.thread_id).unwrap().shared, None);
 }

@@ -279,7 +279,7 @@ impl ExtractionModel for AppExtractionModel {
 
 /// One non-streamed chat completion on the gateway, on the model the gateway
 /// lists first for this account (the native agent's default).
-async fn gateway_completion(app: &AppHandle, prompt: String) -> Result<String, String> {
+pub(crate) async fn gateway_completion(app: &AppHandle, prompt: String) -> Result<String, String> {
     use atlas_native_agent::engine::catalog_cache::{project, resolve};
     use atlas_native_agent::engine::config::GATEWAY_BASE_URL;
     use atlas_native_agent::engine::{EngineHome, GatewayCatalogueFetcher, SystemClock};

@@ -19,15 +19,16 @@ use crate::schema;
 
 const LIST_QUERY: &str = "SELECT thread_id, session_id, agent_id, title, title_override, \
      updated_at, created_at, interacted_at, folder_paths, folder_paths_order, \
-     main_worktree_paths, main_worktree_paths_order, remote_connection, archived \
+     main_worktree_paths, main_worktree_paths_order, remote_connection, archived, \
+     shared_thread_id, shared_base, shared_role \
      FROM threads \
      ORDER BY updated_at DESC";
 
 const UPSERT: &str = "INSERT INTO threads(thread_id, session_id, agent_id, title, \
          title_override, updated_at, created_at, interacted_at, folder_paths, \
          folder_paths_order, main_worktree_paths, main_worktree_paths_order, \
-         remote_connection, archived) \
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14) \
+         remote_connection, archived, shared_thread_id, shared_base, shared_role) \
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17) \
      ON CONFLICT(thread_id) DO UPDATE SET \
          session_id = excluded.session_id, \
          agent_id = excluded.agent_id, \
@@ -41,7 +42,10 @@ const UPSERT: &str = "INSERT INTO threads(thread_id, session_id, agent_id, title
          main_worktree_paths = excluded.main_worktree_paths, \
          main_worktree_paths_order = excluded.main_worktree_paths_order, \
          remote_connection = excluded.remote_connection, \
-         archived = excluded.archived";
+         archived = excluded.archived, \
+         shared_thread_id = excluded.shared_thread_id, \
+         shared_base = excluded.shared_base, \
+         shared_role = excluded.shared_role";
 
 /// The durable half of the store.
 pub(crate) struct Db {
@@ -106,6 +110,9 @@ impl Db {
                 mains.as_ref().map(|s| &s.order),
                 remote,
                 row.archived,
+                row.shared.as_ref().map(|s| s.shared_thread_id.as_str()),
+                row.shared.as_ref().map(|s| s.base.as_str()),
+                row.shared.as_ref().map(|s| s.role.as_str()),
             ],
         )?;
         Ok(())
@@ -189,6 +196,9 @@ fn decode(row: &rusqlite::Row<'_>) -> rusqlite::Result<ThreadMetadata> {
     let main_paths_order: Option<String> = row.get(11)?;
     let remote_connection: Option<String> = row.get(12)?;
     let archived: bool = row.get(13)?;
+    let shared_thread_id: Option<String> = row.get(14)?;
+    let shared_base: Option<String> = row.get(15)?;
+    let shared_role: Option<String> = row.get(16)?;
 
     let folder_paths = path_list(serialized(folder_paths, folder_paths_order));
     let main_paths = path_list(serialized(main_paths, main_paths_order));
@@ -216,6 +226,17 @@ fn decode(row: &rusqlite::Row<'_>) -> rusqlite::Result<ThreadMetadata> {
         worktree_paths,
         remote_connection: remote_connection.and_then(|s| serde_json::from_str(&s).ok()),
         archived,
+        // All three or nothing: a half-written link is not a link.
+        shared: match (shared_thread_id, shared_base, shared_role) {
+            (Some(shared_thread_id), Some(base), Some(role)) => {
+                Some(crate::model::SharedThreadLink {
+                    shared_thread_id,
+                    base,
+                    role,
+                })
+            }
+            _ => None,
+        },
     })
 }
 

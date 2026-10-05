@@ -2316,6 +2316,10 @@ pub struct ThreadRow {
     /// outside its project's group.
     pub project_name: String,
     pub folder_paths: Vec<String>,
+    /// Set when the thread was shared as a Shared Thread (ATL-395).
+    pub shared_thread_id: Option<String>,
+    /// The person's role in that Shared Thread.
+    pub shared_role: Option<String>,
 }
 
 /// One project's threads, as the sidebar groups them.
@@ -2344,6 +2348,8 @@ fn thread_row(thread: &ThreadMetadata) -> ThreadRow {
         archived: thread.archived,
         project_name: project_name(thread.main_worktree_paths()),
         folder_paths: paths_of(thread.folder_paths()),
+        shared_thread_id: thread.shared.as_ref().map(|s| s.shared_thread_id.clone()),
+        shared_role: thread.shared.as_ref().map(|s| s.role.clone()),
     }
 }
 

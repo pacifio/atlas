@@ -127,6 +127,7 @@ pub fn importable_threads(
                 worktree_paths: WorktreePaths::from_folder_paths(&folder_paths),
                 remote_connection: None,
                 archived: true,
+                shared: None,
             })
         })
         .collect()

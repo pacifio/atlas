@@ -316,6 +316,8 @@ pub fn run() {
                 // manager that is not yet managed would miss the first one.
                 commands::comms::install(app.handle());
                 commands::artifacts_cloud::install(app.handle());
+                // Shared Threads (ATL-395): rejoin what this machine had joined.
+                commands::shared_threads::install(app.handle());
                 commands::auth::restore_on_launch(app.handle());
 
                 // Seed the Organisation every event is attributed to, from the
@@ -617,6 +619,41 @@ pub fn run() {
             commands::capture::capture_disable,
             commands::capture::capture_git_init,
             commands::capture::capture_git_available,
+            commands::shared_threads::shared_thread_share,
+            commands::shared_threads::shared_thread_join,
+            commands::shared_threads::shared_thread_open,
+            commands::shared_threads::shared_thread_run_worktree,
+            commands::shared_threads::shared_thread_share_preview,
+            commands::shared_threads::shared_thread_serve_history,
+            commands::shared_threads::shared_thread_owner_view,
+            commands::shared_threads::shared_thread_set_role,
+            commands::shared_threads::shared_thread_decline,
+            commands::shared_threads::shared_thread_set_join_policy,
+            commands::shared_threads::shared_thread_set_open,
+            commands::shared_threads::shared_thread_resolve_conflict,
+            commands::shared_threads::shared_thread_ask_agent_to_resolve,
+            commands::shared_threads::shared_thread_continue_from,
+            commands::shared_threads::shared_thread_comments,
+            commands::shared_threads::shared_thread_comment_lines,
+            commands::shared_threads::shared_thread_comment_reply,
+            commands::shared_threads::shared_thread_comment_resolve,
+            commands::shared_threads::shared_thread_comment_vote,
+            commands::shared_threads::shared_thread_versions,
+            commands::shared_threads::shared_thread_diff,
+            commands::shared_threads::shared_thread_restore,
+            commands::shared_threads::shared_thread_mark_version,
+            commands::shared_threads::shared_thread_remote_settings,
+            commands::shared_threads::shared_thread_answer_remote_run,
+            commands::shared_threads::shared_thread_execute_remote_run,
+            commands::shared_threads::shared_thread_remote_runners,
+            commands::shared_threads::shared_thread_request_remote_run,
+            commands::shared_threads::shared_thread_apply,
+            commands::shared_threads::shared_thread_doc_open,
+            commands::shared_threads::shared_thread_doc_close,
+            commands::shared_threads::shared_thread_doc_update,
+            commands::shared_threads::shared_thread_cursors,
+            commands::shared_threads::shared_thread_list,
+            commands::shared_threads::shared_thread_leave,
             commands::artifacts_cloud::artifacts_cloud_retarget,
             commands::artifacts_cloud::artifacts_cloud_follow,
             commands::artifacts_cloud::artifacts_cloud_unfollow,

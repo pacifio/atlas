@@ -247,6 +247,10 @@ const models: ModelStatus[] = MODELS.map((model) => ({ ...model }));
 // ── handlers ──────────────────────────────────────────────────────────────
 
 export const miscHandlers: MockHandlers = {
+  // ── shared threads (ATL-395) ────────────────────────────────────────────
+  // Nothing joined in the browser mock: the panel renders its share and join
+  // forms, which is what there is to look at without a server.
+  shared_thread_list: () => [],
   // ── chat history ────────────────────────────────────────────────────────
   threads_history: ({ archivedOnly }): ThreadRow[] =>
     threads.filter((thread) => (archivedOnly ? thread.archived : !thread.archived)),

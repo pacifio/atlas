@@ -371,4 +371,25 @@ export type AgentDelta =
       agent_id: AgentId;
       session_id: AcpSessionId;
       reason: string;
+    }
+  | {
+      /** This turn is a Run in a Shared Thread (ATL-405). */
+      kind: "shared_run_started";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      shared_thread_id: string;
+      run_id: string;
+      run_no: number;
+    }
+  | {
+      /** The Run ended: merged into the thread, or not, and why. */
+      kind: "shared_run_ended";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      shared_thread_id: string;
+      run_id: string;
+      status: string;
+      files: string[];
+      version: number | null;
+      error: string | null;
     };

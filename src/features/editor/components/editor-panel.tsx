@@ -16,7 +16,7 @@ import { useAppStore } from "@/features/app/stores/app-store";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { ChevronRight, RefreshCw } from "lucide-react";
+import { ChevronRight, MessageSquare, MessageSquarePlus, RefreshCw } from "lucide-react";
 import { logEvent } from "@/features/log/lib/log";
 import { diffGutter, applyDiffStatus } from "../lib/diff-gutter";
 import { gitDiffLineStatus } from "@/features/git/lib/git-diff-api";
@@ -29,8 +29,31 @@ import { MarkdownFile } from "@/lib/markdown-fileviewer";
 import { openFileAs } from "@/lib/open-file";
 import { cn } from "@/lib/utils";
 import { useSettingsStore } from "@/features/settings/stores/settings-store";
+import { setRemoteCarets } from "../lib/remote-carets";
+import {
+  sharedDocExtensions,
+  useSharedDoc,
+} from "@/features/shared-threads/lib/use-shared-doc";
+import { usePeers } from "@/features/shared-threads/stores/shared-threads-store";
+import { usePersonName } from "@/features/shared-threads/lib/use-person-name";
+import { useLineComments } from "@/features/shared-threads/lib/use-line-comments";
+import {
+  LineCommentList,
+  NewLineComment,
+  commentedLines,
+  threadsOf,
+} from "@/features/shared-threads/components/line-comments";
+import { useSharedThreadsStore } from "@/features/shared-threads/stores/shared-threads-store";
+import {
+  commentLines,
+  selectedLines,
+  setCommentLines,
+  type CommentSpan,
+} from "../lib/comment-lines";
 
 const TOOLBAR_HEIGHT = 32;
+/** The height of a Shared Thread file's comments pane, when open (ATL-416). */
+const COMMENTS_HEIGHT = 240;
 const DIRTY_CHECK_DEBOUNCE = 300; // ms — only check dirty state, not sync content
 
 // Theme colours are live-swappable through a compartment; the resolved theme
@@ -61,6 +84,41 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
   const refreshGutterRef = useRef<() => void>(() => {});
   const refreshBlameRef = useRef<() => void>(() => {});
   const dirtyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // A file of a joined Shared Thread's replica is edited live (ATL-407): the
+  // view binds to the file's document, keystrokes sync as they are typed and
+  // the replica writes the file. If they may not sync, the text is saved to
+  // disk instead and the view goes back to the usual open-edit-save.
+  const shared = useSharedDoc(isUntitled ? "" : path, (text) => {
+    void invoke("write_file_content", { path, content: text }).catch((e: unknown) =>
+      logEvent({
+        source: "editor",
+        kind: "save",
+        status: "failure",
+        summary: path.split("/").pop() ?? path,
+        payload: { path, error: String(e), sharedThread: true },
+      }),
+    );
+  });
+  const sharedRef = useRef(shared.binding);
+  sharedRef.current = shared.binding;
+  const peers = usePeers(shared.binding?.doc.sharedThreadId);
+  const nameOf = usePersonName();
+
+  // Comments on this file's lines (ATL-416): marked in the text, and listed —
+  // with a new one on the selected lines — in a pane under it.
+  const lineComments = useLineComments(shared.binding?.doc.sharedThreadId ?? null);
+  const [selection, setSelection] = useState<CommentSpan | null>(null);
+  const [commentsOpen, setCommentsOpen] = useState(false);
+  const [composing, setComposing] = useState<CommentSpan | null>(null);
+  const me = useSharedThreadsStore(
+    (s) =>
+      s.threads.find((t) => t.sharedThreadId === shared.binding?.doc.sharedThreadId)?.status.remote?.userId ??
+      null,
+  );
+  const fileThreads = shared.binding
+    ? threadsOf(lineComments.comments, shared.binding.doc.fileId)
+    : [];
 
   const [renderMode, setRenderMode] = useState<"editor" | "preview">("editor");
   // Bumped when a view is built, so a reveal that arrived before the view
@@ -116,7 +174,9 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
   // immediately without a disk round-trip.
   const handleSave = useCallback(async () => {
     const view = viewRef.current;
-    if (!view) return;
+    // A Shared Thread's file is saved as it is typed; writing the view over it
+    // could race a batch still on its way and land the same text twice.
+    if (!view || sharedRef.current) return;
     const content = view.state.doc.toString();
     if (isUntitled) {
       try {
@@ -233,7 +293,9 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
   // the buffer is clean we reload silently; when it has unsaved edits we only
   // flag it (`externallyChanged`) so the user can reload via the toolbar.
   const revalidate = useCallback(async () => {
-    if (!path || isUntitled) return;
+    // Bound to a Shared Thread's document, which owns the text: the replica
+    // writes disk from it, never the other way.
+    if (!path || isUntitled || sharedRef.current) return;
     const buf = useEditorStore.getState().buffers[path];
     if (!buf) return;
     const mtime = await invoke<number>("file_mtime_ms", { path }).catch(() => 0);
@@ -268,7 +330,7 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
   // User-initiated reload from the "changed on disk" toolbar affordance —
   // discards unsaved edits (the user explicitly chose disk).
   const forceReload = useCallback(async () => {
-    if (!path || isUntitled) return;
+    if (!path || isUntitled || sharedRef.current) return;
     let content: string;
     try {
       content = await invoke<string>("read_file_content", { path });
@@ -322,12 +384,15 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
 
   // Create/destroy CodeMirror view
   useEffect(() => {
-    if (!buffer || !containerRef.current) return;
+    if (!buffer || !containerRef.current || shared.pending) return;
+    const binding = shared.binding;
 
     // Seed from the freshest store content — a disk revalidation may have
-    // reloaded the buffer between mount and this (async) view creation.
-    const originalContent =
-      useEditorStore.getState().buffers[path]?.originalContent ?? buffer.originalContent;
+    // reloaded the buffer between mount and this (async) view creation. A
+    // Shared Thread's file starts from its document instead.
+    const originalContent = binding
+      ? binding.ytext.toString()
+      : (useEditorStore.getState().buffers[path]?.originalContent ?? buffer.originalContent);
     let cancelled = false;
 
     (async () => {
@@ -364,9 +429,19 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
             ...historyKeymap,
             ...searchKeymap,
           ]),
-          // Debounced dirty check — never sync full content to store on keystroke
+          ...(binding
+            ? [
+                ...sharedDocExtensions(binding),
+                commentLines,
+                EditorView.updateListener.of((u) => {
+                  if (u.selectionSet) setSelection(selectedLines(u.state));
+                }),
+              ]
+            : []),
+          // Debounced dirty check — never sync full content to store on keystroke.
+          // A Shared Thread's file is never dirty: every keystroke is saved.
           EditorView.updateListener.of((update) => {
-            if (update.docChanged) {
+            if (update.docChanged && !binding) {
               if (dirtyTimerRef.current) clearTimeout(dirtyTimerRef.current);
               dirtyTimerRef.current = setTimeout(() => {
                 const current = update.view.state.doc.toString();
@@ -388,8 +463,9 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
       viewRef.current = view;
       // A revalidation that landed while the view was being built updates only
       // the store; sync the view to it now (idempotent — no-op when equal).
+      // Never for a Shared Thread's file: the document owns that text.
       const latest = useEditorStore.getState().buffers[path]?.originalContent;
-      if (latest !== undefined) replaceViewDoc(latest);
+      if (latest !== undefined && !binding) replaceViewDoc(latest);
       refreshDiffGutter();
       refreshBlameRef.current();
       unregisterViewRef.current = registerEditorView(tabId, view);
@@ -406,7 +482,28 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
         viewRef.current = null;
       }
     };
-  }, [path, !!buffer]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [path, !!buffer, shared.pending, shared.binding]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Where this file's open discussions are now (ATL-416).
+  useEffect(() => {
+    const view = viewRef.current;
+    const binding = shared.binding;
+    if (!view || !binding) return;
+    view.dispatch({ effects: setCommentLines.of(commentedLines(lineComments.comments, binding.doc.fileId)) });
+  }, [lineComments.comments, shared.binding, viewGen]);
+
+  // Everybody else's carets in this file (ATL-407).
+  useEffect(() => {
+    const view = viewRef.current;
+    const binding = shared.binding;
+    if (!view || !binding) return;
+    const carets = peers.flatMap((p) =>
+      p.cursors
+        .filter((c) => c.fileId === binding.doc.fileId)
+        .map((c) => ({ userId: p.userId, cursor: c.head, name: nameOf(p.userId) })),
+    );
+    view.dispatch({ effects: setRemoteCarets.of(carets) });
+  }, [peers, shared.binding, viewGen, nameOf]);
 
   // Apply a pending reveal ("open at line") once the view exists. Editor tabs
   // stay mounted while hidden, so a reveal on an open tab lands at once; one
@@ -457,8 +554,10 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
     );
   }
 
+  const paneOpen = commentsOpen && shared.binding !== null;
   const editorHeight =
-    containerHeight > TOOLBAR_HEIGHT ? containerHeight - TOOLBAR_HEIGHT : window.innerHeight - 140;
+    (containerHeight > TOOLBAR_HEIGHT ? containerHeight - TOOLBAR_HEIGHT : window.innerHeight - 140) -
+    (paneOpen ? COMMENTS_HEIGHT : 0);
 
   return (
     <div
@@ -478,6 +577,35 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
             margin off it meant the layout changed shape when a file went stale
             on disk. */}
         <div className="ml-auto flex items-center gap-2 pl-2">
+          {shared.binding && (
+            <>
+              <button
+                type="button"
+                disabled={selection === null}
+                onClick={() => {
+                  setComposing(selection);
+                  setCommentsOpen(true);
+                }}
+                title="Comment on the selected lines — teammates see it here and on the web"
+                className="inline-flex items-center gap-1 h-control-xs px-2 rounded-full border border-border bg-card text-2xs font-medium text-secondary-foreground hover:text-foreground hover:bg-element-hover transition-colors shrink-0 disabled:opacity-40 disabled:pointer-events-none"
+              >
+                <MessageSquarePlus size={10} /> Comment
+              </button>
+              <button
+                type="button"
+                aria-pressed={commentsOpen}
+                onClick={() => setCommentsOpen((o) => !o)}
+                className={cn(
+                  "inline-flex items-center gap-1 h-control-xs px-2 rounded-full border border-border text-2xs font-medium transition-colors shrink-0",
+                  commentsOpen
+                    ? "bg-element-hover text-foreground"
+                    : "bg-card text-secondary-foreground hover:text-foreground hover:bg-element-hover",
+                )}
+              >
+                <MessageSquare size={10} /> {fileThreads.length}
+              </button>
+            </>
+          )}
           {buffer.externallyChanged && (
             <button
               type="button"
@@ -541,6 +669,37 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
           </div>
         )}
       </div>
+      {paneOpen && shared.binding && (
+        <div
+          style={{ height: COMMENTS_HEIGHT }}
+          className="flex flex-col gap-2 overflow-auto border-t border-border bg-background px-3 py-2 text-xs"
+          aria-label="Comments on this file"
+        >
+          {composing && (
+            <NewLineComment
+              path={path.split("/").pop() ?? path}
+              lines={composing}
+              onSubmit={(body) => lineComments.comment({ fileId: shared.binding!.doc.fileId }, composing, body)}
+              onCancel={() => setComposing(null)}
+            />
+          )}
+          {fileThreads.length === 0 && !composing && (
+            <p className="text-muted-foreground">
+              No comments on this file. Select lines and choose Comment.
+            </p>
+          )}
+          <LineCommentList
+            threads={fileThreads}
+            me={me}
+            nameOf={nameOf}
+            canWrite
+            onReply={lineComments.reply}
+            onResolve={lineComments.resolve}
+            onVote={lineComments.vote}
+          />
+          {lineComments.error && <p className="text-error">{lineComments.error.message}</p>}
+        </div>
+      )}
     </div>
   );
 }

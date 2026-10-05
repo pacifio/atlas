@@ -48,6 +48,7 @@ members = [
   "crates/atlas-terminal",
   "crates/atlas-theme",
   "crates/atlas-thread-metadata",
+  "crates/atlas-thread-sync",
   "src-tauri",
 
   # The vendored engine — see the block below.
@@ -812,6 +813,8 @@ opt-level = 1
 [profile.dev.package.atlas-theme]
 opt-level = 1
 [profile.dev.package.atlas-thread-metadata]
+opt-level = 1
+[profile.dev.package.atlas-thread-sync]
 opt-level = 1
 
 # The vendored engine's members, same reasoning as the stanzas above (#65).

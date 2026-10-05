@@ -81,6 +81,21 @@ fn expected() -> BTreeMap<String, BTreeSet<String>> {
         ("turn_finished", &["stop_reason", "turn_seq"]),
         ("turn_failed", &["error", "turn_seq", "error_kind"]),
         ("agent_disconnected", &["reason"]),
+        (
+            "shared_run_started",
+            &["shared_thread_id", "run_id", "run_no"],
+        ),
+        (
+            "shared_run_ended",
+            &[
+                "shared_thread_id",
+                "run_id",
+                "status",
+                "files",
+                "version",
+                "error",
+            ],
+        ),
     ]
     .into_iter()
     .map(|(kind, fields)| {
@@ -125,6 +140,8 @@ fn contract_kind(delta: &SessionDelta) -> &'static str {
         SessionDelta::TurnFinished { .. } => "turn_finished",
         SessionDelta::TurnFailed { .. } => "turn_failed",
         SessionDelta::AgentDisconnected { .. } => "agent_disconnected",
+        SessionDelta::SharedRunStarted { .. } => "shared_run_started",
+        SessionDelta::SharedRunEnded { .. } => "shared_run_ended",
     }
 }
 
@@ -290,6 +307,19 @@ fn samples() -> Vec<SessionDelta> {
         },
         SessionDelta::AgentDisconnected {
             reason: "process died".into(),
+        },
+        SessionDelta::SharedRunStarted {
+            shared_thread_id: "thr-1".into(),
+            run_id: "run-1".into(),
+            run_no: 2,
+        },
+        SessionDelta::SharedRunEnded {
+            shared_thread_id: "thr-1".into(),
+            run_id: "run-1".into(),
+            status: "merged".into(),
+            files: vec!["src/a.ts".into()],
+            version: Some(9),
+            error: Some("none".into()),
         },
     ]
 }
@@ -509,6 +539,27 @@ fn golden() -> BTreeMap<&'static str, serde_json::Value> {
         (
             "agent_disconnected",
             json!({ "kind": "agent_disconnected", "reason": "process died" }),
+        ),
+        (
+            "shared_run_started",
+            json!({
+                "kind": "shared_run_started",
+                "shared_thread_id": "thr-1",
+                "run_id": "run-1",
+                "run_no": 2,
+            }),
+        ),
+        (
+            "shared_run_ended",
+            json!({
+                "kind": "shared_run_ended",
+                "shared_thread_id": "thr-1",
+                "run_id": "run-1",
+                "status": "merged",
+                "files": ["src/a.ts"],
+                "version": 9,
+                "error": "none",
+            }),
         ),
     ])
 }

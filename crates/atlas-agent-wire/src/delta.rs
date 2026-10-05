@@ -181,6 +181,27 @@ pub enum SessionDelta {
     AgentDisconnected {
         reason: String,
     },
+    /// This turn is a Run in a Shared Thread (ATL-405): the agent works in the
+    /// thread's Run worktree, and its output streams live to the thread.
+    /// Emitted by the host when the Run starts. Additive: old frontends
+    /// ignore unknown kinds.
+    SharedRunStarted {
+        shared_thread_id: String,
+        run_id: String,
+        run_no: u64,
+    },
+    /// The Run's turn ended and its result was merged into the thread — or
+    /// not: `status` is the server's (`merged`, `ended`, `interrupted`), and
+    /// `error` says why a merge failed (overlapping edits, say). `files` are
+    /// the paths it merged. Additive, like `SharedRunStarted`.
+    SharedRunEnded {
+        shared_thread_id: String,
+        run_id: String,
+        status: String,
+        files: Vec<String>,
+        version: Option<u64>,
+        error: Option<String>,
+    },
 }
 
 /// Envelope shipped through the Tauri event channel — keys for routing.

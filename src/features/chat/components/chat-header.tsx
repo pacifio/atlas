@@ -33,11 +33,17 @@ import {
   Sparkles,
   Check,
   Plus,
+  Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { HintGroup, HintItem } from "@/ui/hint-group";
 import { SessionSidebar } from "./session-sidebar";
 import { ChatPinnedMenu } from "./chat-pinned-menu";
+import {
+  SharedThreadPanel,
+  useSharedThreadFor,
+  type ShareTarget,
+} from "@/features/shared-threads/components/shared-thread-panel";
 import type { ChatPin } from "../stores/chat-pins-store";
 
 export type RoleFilter = "all" | "user" | "assistant";
@@ -90,6 +96,8 @@ interface ChatHeaderProps {
   /** Comments on this session in the shared Timeline, or `null` when the
    *  session is not in the cloud — then there is no button at all. */
   commentCount: number | null;
+  /** What the Share popover shares (ATL-395). */
+  shareTarget: ShareTarget;
   commentsPanelOpen: boolean;
   onToggleComments: () => void;
   /** P3.4: only rendered when the agent advertised `sessionCapabilities.fork`.
@@ -117,6 +125,7 @@ function ChatHeaderImpl({
   plansPanelOpen,
   onTogglePlans,
   commentCount,
+  shareTarget,
   commentsPanelOpen,
   onToggleComments,
   onForkSession,
@@ -227,6 +236,8 @@ function ChatHeaderImpl({
             </HeaderCircleButton>
           )}
 
+          <ShareThreadButton target={shareTarget} />
+
           <HeaderCircleButton
             title={findHint ? `Find in chat (${findHint})` : "Find in chat"}
             onClick={onOpenSearch}
@@ -314,6 +325,49 @@ function ChatHeaderImpl({
           painted behind it, so it has to live in the scroller's stacking
           context — not in a header that owns its own row. */}
     </div>
+  );
+}
+
+/**
+ * Share this thread, join one from a link, and see what is joined (ATL-395).
+ * Filled while the thread shown is a Shared Thread, so its state reads at a
+ * glance without opening anything.
+ */
+function ShareThreadButton({ target }: { target: ShareTarget }) {
+  const [open, setOpen] = useState(false);
+  const current = useSharedThreadFor(target.sessionId);
+  return (
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Popover.Trigger
+        render={
+          <HeaderCircleButton
+            title={current ? `Shared thread · ${current.status.connected ? "live" : "offline"}` : "Share thread"}
+            aria-pressed={current !== null}
+            className={cn(
+              "relative",
+              current && "bg-[var(--atlas-element-active)] text-[var(--foreground)]",
+            )}
+          >
+            <Users size={13} />
+            {current?.status.connected && (
+              <span className="absolute -right-0.5 -top-0.5 size-[7px] rounded-full bg-success" />
+            )}
+          </HeaderCircleButton>
+        }
+      />
+      <Popover.Portal>
+        <Popover.Positioner className="z-popover" align="end" sideOffset={6}>
+          <Popover.Popup
+            className={cn(
+              "overflow-hidden rounded-xl inset-highlight shadow-md",
+              "border border-[var(--atlas-element-active)] bg-[var(--card)]/95 backdrop-blur-2xl",
+            )}
+          >
+            <SharedThreadPanel target={target} />
+          </Popover.Popup>
+        </Popover.Positioner>
+      </Popover.Portal>
+    </Popover.Root>
   );
 }
 

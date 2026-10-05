@@ -39,7 +39,7 @@ use tokio::sync::broadcast;
 
 use crate::db::Db;
 use crate::error::{Error, Result};
-use crate::model::{ThreadFilter, ThreadId, ThreadMetadata};
+use crate::model::{SharedThreadLink, ThreadFilter, ThreadId, ThreadMetadata};
 use crate::paths::{PathList, WorktreePaths};
 
 /// How many change events a slow subscriber may fall behind before it is told
@@ -487,6 +487,21 @@ impl ThreadMetadataStore {
             worktree_paths,
             remote_connection,
             archived,
+            // Sharing is the person's act, never the conversation's: a live
+            // update carries no opinion on it.
+            shared: existing.as_ref().and_then(|t| t.shared.clone()),
+        });
+    }
+
+    /// Link the thread to the Shared Thread it was shared as, or unlink it
+    /// (ATL-395).
+    pub fn set_shared_thread(&self, thread_id: ThreadId, shared: Option<SharedThreadLink>) {
+        self.update(thread_id, |thread| {
+            if thread.shared == shared {
+                return false;
+            }
+            thread.shared = shared;
+            true
         });
     }
 

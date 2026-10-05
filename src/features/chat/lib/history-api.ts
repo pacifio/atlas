@@ -38,6 +38,10 @@ export interface ThreadRow {
   archived: boolean;
   projectName: string;
   folderPaths: string[];
+  /** Set when the thread was shared as a Shared Thread (ATL-395). */
+  sharedThreadId?: string | null;
+  /** The person's role in that Shared Thread. */
+  sharedRole?: string | null;
 }
 
 /** One project's threads, as the sidebar groups them. */

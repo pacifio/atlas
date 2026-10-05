@@ -20,7 +20,8 @@ import { highlightDiffLine } from "../lib/diff-highlight";
 
 type SortMode = "default" | "most-changes";
 
-export type HunkAction = "stage" | "unstage" | "discard";
+/** `comment`: start a comment on the hunk's (or the selected) lines — a Shared Thread's diff (ATL-416). */
+export type HunkAction = "stage" | "unstage" | "discard" | "comment";
 
 /**
  * Virtualized unified-diff renderer. Takes raw `git diff`/`git show` text and
@@ -337,6 +338,22 @@ export function DiffView({
                             className="px-1.5 h-[16px] rounded border border-border text-3xs text-secondary-foreground hover:text-foreground hover:bg-element-hover"
                           >
                             {label("Unstage")}
+                          </button>
+                        )}
+                        {hunkActions.includes("comment") && (
+                          <button
+                            onClick={() =>
+                              fireHunkAction(
+                                "comment",
+                                row.file.path,
+                                row.hunk,
+                                row.fileIndex,
+                                row.hunkIndex,
+                              )
+                            }
+                            className="px-1.5 h-[16px] rounded border border-border text-3xs text-secondary-foreground hover:text-foreground hover:bg-element-hover"
+                          >
+                            {label("Comment on")}
                           </button>
                         )}
                         {hunkActions.includes("discard") && (

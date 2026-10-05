@@ -1,0 +1,17 @@
+[
+  {
+    "name": "client update, small numbers",
+    "frame": { "version": 1, "kind": 1, "seq": 0, "fileId": 1, "clientSeq": 1, "payload": [170, 187] },
+    "hex": "0101000101aabb"
+  },
+  {
+    "name": "relayed update, multi-byte varints",
+    "frame": { "version": 1, "kind": 1, "seq": 300, "fileId": 128, "clientSeq": 0, "payload": [] },
+    "hex": "0101ac02800100"
+  },
+  {
+    "name": "awareness, large client seq",
+    "frame": { "version": 1, "kind": 2, "seq": 0, "fileId": 0, "clientSeq": 4294967296, "payload": [1] },
+    "hex": "01020000808080801001"
+  }
+]
