@@ -210,28 +210,40 @@ fn cargo_candidates() -> Vec<PathBuf> {
     if let Some(home) = std::env::var_os("CARGO_HOME") {
         v.push(PathBuf::from(home).join("bin").join(exe));
     }
-    if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
-        v.push(PathBuf::from(home).join(".cargo").join("bin").join(exe));
+    if let Some(home) = home_dir() {
+        v.push(home.join(".cargo").join("bin").join(exe));
     }
     v
 }
 
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+}
+
 /// Run `cargo metadata` with a hard timeout. `None` on any failure.
 fn cargo_metadata(manifest: &Path) -> Option<String> {
+    // Run from the user's home, never the app's inherited directory: rustup
+    // picks the toolchain from `rust-toolchain.toml` and cargo reads
+    // `.cargo/config.toml` up the working directory's ancestry, and both name
+    // programs to run. The project's own files are not searched from there.
+    let cwd = home_dir()?;
     for cargo in cargo_candidates() {
         let mut cmd = atlas_process::command(&cargo);
-        cmd.args([
-            "metadata",
-            "--format-version",
-            "1",
-            "--no-deps",
-            "--offline",
-            "--manifest-path",
-        ])
-        .arg(manifest)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
+        cmd.current_dir(&cwd)
+            .args([
+                "metadata",
+                "--format-version",
+                "1",
+                "--no-deps",
+                "--offline",
+                "--manifest-path",
+            ])
+            .arg(manifest)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
         let Ok(mut child) = cmd.spawn() else { continue };
         let mut stdout = child.stdout.take()?;
         let reader = std::thread::spawn(move || {
