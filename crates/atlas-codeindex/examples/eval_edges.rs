@@ -18,6 +18,8 @@ fn main() {
     let mut def_at: HashMap<String, (String, i32)> = HashMap::new();
     let mut refs: HashMap<(String, i32), HashSet<String>> = HashMap::new();
     for doc in &index.documents {
+        // rust-analyzer on Windows writes `\` separators; the index uses `/`.
+        let rel = doc.relative_path.replace('\\', "/");
         for occ in &doc.occurrences {
             // `local N` symbols are numbered per document: never a cross-file definition.
             if occ.symbol.is_empty() || occ.symbol.starts_with("local ") {
@@ -25,9 +27,9 @@ fn main() {
             }
             let line = occ.range.first().copied().unwrap_or(0) + 1;
             if occ.symbol_roles & (scip::types::SymbolRole::Definition as i32) != 0 {
-                def_at.insert(occ.symbol.clone(), (doc.relative_path.clone(), line));
+                def_at.insert(occ.symbol.clone(), (rel.clone(), line));
             } else {
-                refs.entry((doc.relative_path.clone(), line))
+                refs.entry((rel.clone(), line))
                     .or_default()
                     .insert(occ.symbol.clone());
             }

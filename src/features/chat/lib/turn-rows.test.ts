@@ -6,6 +6,7 @@ import {
   type MarkerRow,
   type ProjectOptions,
   type WorkHeaderRow,
+  toolDisplayName,
 } from "./turn-rows";
 import type { ChatMessage, ToolCallDisplay } from "@/types/agent";
 
@@ -705,5 +706,16 @@ describe("the work header", () => {
     expect(timed[1]).toMatchObject({ kind: RowKind.WorkHeader, foldable: false });
     const untimed = project([user("u1", "2026-08-23T00:00:00Z"), said("a1", "Hi.")]);
     expect(untimed.map((r) => r.kind)).toEqual([RowKind.User, RowKind.Prose]);
+  });
+});
+
+describe("an Atlas tool's marker", () => {
+  it("names the tool in words, not by its MCP name", () => {
+    expect(toolDisplayName("mcp__atlas_code__find_symbol")).toBe("Find symbol");
+    expect(toolDisplayName("atlas_code.impact_of_diff")).toBe("Impact of diff");
+    expect(toolDisplayName("mcp__atlas_memory__memory_search")).toBe("Memory search");
+    expect(toolDisplayName("mcp__github__create_issue")).toBe("mcp__github__create_issue");
+    const m = markers(turn(toolCall({ kind: null, toolName: "mcp__atlas_code__repo_map" })))[0];
+    expect(m.verb).toBe("Repo map");
   });
 });

@@ -368,6 +368,19 @@ const TOOL_ICON_BY_KIND: Record<string, MarkerTool> = {
 };
 
 /**
+ * How a marker names a call no verb branch recognised. Atlas's own tool
+ * servers read as their tool, in words: `mcp__atlas_code__find_symbol`
+ * (Claude Code's name for it) and `atlas_code.find_symbol` (Atlas Agent's)
+ * both become "Find symbol". Any other tool keeps its own name.
+ */
+export function toolDisplayName(toolName: string): string {
+  const tool = /^(?:mcp__atlas_[a-z]+__|atlas_[a-z]+\.)([a-z_]+)$/.exec(toolName)?.[1];
+  if (!tool) return toolName;
+  const words = tool.replace(/_/g, " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/**
  * The icon key for a call the verb branches did not already classify.
  *
  * `kind` first — it is the protocol's own answer. The name sniff below only
@@ -629,13 +642,13 @@ function markerFor(tc: ToolCallDisplay, turnId: string, first: boolean): MarkerR
     detail = args.pattern;
     opens = "output";
   } else if (path) {
-    verb = tc.toolName;
+    verb = toolDisplayName(tc.toolName);
     // It named a file but neither `kind` nor its arguments say what it did to
     // it. A neutral page beats guessing between the book and the pencil.
     if (tool === "tool") tool = "file";
     detail = shortPath(path);
   } else {
-    verb = tc.toolName;
+    verb = toolDisplayName(tc.toolName);
     detail = "";
   }
 

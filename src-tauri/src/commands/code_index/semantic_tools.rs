@@ -78,7 +78,7 @@ pub fn call(
     let mode_note = if embedder.is_some() {
         ""
     } else {
-        "mode: keyword+symbol only (code embedding model not downloaded: Settings → Models)\n"
+        "mode: keyword+symbol only (code embedding model not downloaded: Settings → Local Models)\n"
     };
     match name {
         "semantic_search" => {
