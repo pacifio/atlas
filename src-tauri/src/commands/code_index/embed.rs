@@ -70,6 +70,14 @@ pub async fn refresh(app: &AppHandle) {
             return;
         }
     };
+    // Written on every load, not only at download: a model downloaded before its
+    // preset changed, or placed by hand, is driven with today's pooling, prefixes
+    // and batch size (without the file it would fall back to mean pooling).
+    if let Some(spec) = crate::commands::models::code_model_spec(&id) {
+        if let Err(e) = spec.write(&dir) {
+            tracing::warn!(target: "atlas::code_index", "code model {id}: write spec: {e}");
+        }
+    }
     let model = id.clone();
     let loaded = tokio::task::spawn_blocking(move || {
         atlas_embed::Embedder::load(&dir).map(|inner| CodeEmbedder { inner, id: model })

@@ -1,5 +1,6 @@
 //! Retrieval quality on a question set: R@5, R@10, MRR and nDCG@10 per method.
 //! Usage: cargo run -p atlas-codeindex --release --example eval_retrieval -- <repo> <questions.jsonl> [model_dir]
+//! `model_dir` must hold the `atlas-embed.json` Atlas writes (a model downloaded through the app).
 use std::path::Path;
 
 use atlas_codeindex::{CodeIndex, SemanticQuery};
@@ -47,6 +48,12 @@ fn main() {
     ix.full_build(&atlas_search::CancelToken::new(), &|_| {})
         .unwrap();
     let emb = a.get(3).map(|d| {
+        assert!(
+            Path::new(d).join(atlas_embed::SPEC_FILE).is_file(),
+            "{d} has no {}: without it the model runs with mean pooling, 512 tokens and no \
+             query prefix, which is not how Atlas drives it",
+            atlas_embed::SPEC_FILE
+        );
         Emb(
             atlas_embed::Embedder::load(Path::new(d)).unwrap(),
             Path::new(d)

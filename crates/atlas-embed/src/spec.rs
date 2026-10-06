@@ -55,13 +55,15 @@ impl ModelSpec {
     /// ibm-granite/granite-embedding-small-english-r2, the default code model:
     /// CLS pooling, no prefixes (model card). Trained to 8192 positions; capped
     /// at 1024 like the other code models, which fits the 1800-character chunks.
+    /// Batches of 4: attention memory grows with batch × tokens², and on CPU a
+    /// batch of 16 peaked at 4.5 GB against 1.29 GB for 4, at about the same speed.
     pub fn granite_embedding_small() -> Self {
         Self {
             pooling: Pooling::Cls,
             query_prefix: String::new(),
             document_prefix: String::new(),
             max_tokens: 1024,
-            batch_size: 16,
+            batch_size: 4,
         }
     }
 
