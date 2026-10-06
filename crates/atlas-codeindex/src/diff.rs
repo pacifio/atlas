@@ -41,7 +41,24 @@ pub fn parse_unified_zero(diff: &str) -> Vec<DiffHunk> {
     let mut out = Vec::new();
     let mut old_path: Option<String> = None;
     let mut new_path: Option<String> = None;
+    // Body lines the current hunk still owes. A removed `-- x` reads `--- x`,
+    // so `---`/`+++` are file headers only outside a hunk (exact with -U0).
+    let (mut old_left, mut new_left) = (0u32, 0u32);
     for line in diff.lines() {
+        if old_left > 0 || new_left > 0 {
+            if line.starts_with('-') {
+                old_left = old_left.saturating_sub(1);
+                continue;
+            }
+            if line.starts_with('+') {
+                new_left = new_left.saturating_sub(1);
+                continue;
+            }
+            if line.starts_with('\\') {
+                continue; // "\ No newline at end of file"
+            }
+            (old_left, new_left) = (0, 0);
+        }
         if line.starts_with("diff --git ") {
             old_path = None;
             new_path = None;
@@ -53,6 +70,7 @@ pub fn parse_unified_zero(diff: &str) -> Vec<DiffHunk> {
             let Some((old, new)) = parse_header(h) else {
                 continue;
             };
+            (old_left, new_left) = (old.1, new.1);
             let Some(rel) = new_path.clone().or_else(|| old_path.clone()) else {
                 continue;
             };
@@ -220,6 +238,25 @@ diff --git \"a/sp ace\\303\\251.ts\" \"b/sp ace\\303\\251.ts\"\n--- \"a/sp ace\\
         );
         assert_eq!(h[1].line_range(), (9, 10));
         assert_eq!(h[2].line_range(), (1, 4));
+    }
+
+    #[test]
+    fn hunk_lines_that_look_like_file_headers_stay_body_lines() {
+        // A removed SQL comment `-- x` and an added `++ y` read `--- x` / `+++ y`.
+        let diff = "diff --git a/gone.sql b/gone.sql\ndeleted file mode 100644\n--- a/gone.sql\n+++ /dev/null\n@@ -1,2 +0,0 @@\n--- note\n-select 1;\n\\ No newline at end of file\n\
+diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-x\n+++ y\n@@ -5 +5,0 @@\n-z\n";
+        let got: Vec<(String, u32, bool)> = parse_unified_zero(diff)
+            .into_iter()
+            .map(|x| (x.rel, x.new_start, x.deleted_file))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("gone.sql".to_string(), 0, true),
+                ("a.ts".to_string(), 1, false),
+                ("a.ts".to_string(), 5, false),
+            ]
+        );
     }
 
     #[test]
