@@ -52,9 +52,18 @@ const EVENT_CAPACITY: usize = 64;
 /// why, and the rest would only grow without bound.
 const MAX_RETAINED_ERRORS: usize = 64;
 
+/// How far past an archived row's `updated_at` observed activity must be to
+/// count as new and unarchive it ([`ThreadMetadataStore::touch_sessions`]).
+/// A few seconds covers an agent flushing its transcript just after Atlas
+/// recorded the turn's end; a person typing into a terminal is far slower.
+pub const NEW_ACTIVITY_SLACK: chrono::Duration = chrono::Duration::seconds(10);
+
 /// Something changed in the store.
 ///
-/// The sidebar's refresh comes from these, not from watching anyone's files.
+/// The sidebar's refresh comes from these. Activity Atlas does not host — a
+/// terminal session, seen by the app's session watcher — reaches the store
+/// through [`ThreadMetadataStore::touch_sessions`] and is announced the same
+/// way.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ThreadStoreEvent {
     /// One or more rows were added, changed or removed.
@@ -125,6 +134,14 @@ enum DbOperation {
     Delete(ThreadId),
     /// The one-time backfill has run for this agent and must not run again.
     MarkBackfilled(AgentId),
+    /// The user deleted this session's row; no import may bring it back.
+    MarkSessionDeleted(acp::SessionId),
+    /// Atlas wrote a row for the session again, so the delete is moot.
+    UnmarkSessionDeleted(acp::SessionId),
+    /// A transcript id confirmed to belong to another session: (alias, owner).
+    SaveAlias(acp::SessionId, acp::SessionId),
+    /// The alias's owner was deleted.
+    DeleteAlias(acp::SessionId),
 }
 
 /// What a queued write is *about*, so a burst about the same thing collapses.
@@ -132,6 +149,8 @@ enum DbOperation {
 enum OpKey {
     Thread(ThreadId),
     Backfill(AgentId),
+    DeletedSession(acp::SessionId),
+    Alias(acp::SessionId),
 }
 
 impl DbOperation {
@@ -140,6 +159,13 @@ impl DbOperation {
             DbOperation::Upsert(thread) => OpKey::Thread(thread.thread_id),
             DbOperation::Delete(thread_id) => OpKey::Thread(*thread_id),
             DbOperation::MarkBackfilled(agent_id) => OpKey::Backfill(agent_id.clone()),
+            DbOperation::MarkSessionDeleted(session_id)
+            | DbOperation::UnmarkSessionDeleted(session_id) => {
+                OpKey::DeletedSession(session_id.clone())
+            }
+            DbOperation::SaveAlias(alias, _) | DbOperation::DeleteAlias(alias) => {
+                OpKey::Alias(alias.clone())
+            }
         }
     }
 }
@@ -152,6 +178,11 @@ struct Cache {
     by_session: HashMap<acp::SessionId, ThreadId>,
     /// Agents the one-time first-run backfill has already run for.
     backfilled: HashSet<AgentId>,
+    /// Sessions whose rows the user deleted (schema V4). Disjoint from
+    /// `by_session`: writing a row for one removes it from here.
+    deleted: HashSet<acp::SessionId>,
+    /// Confirmed transcript aliases, alias → owner (schema V5).
+    aliases: HashMap<acp::SessionId, acp::SessionId>,
 }
 
 /// Lets a caller wait for the queue to reach the disk, and reports what failed
@@ -192,6 +223,17 @@ impl ThreadMetadataStore {
             .into_iter()
             .map(AgentId::new)
             .collect();
+        cache.deleted = db
+            .deleted_sessions()?
+            .into_iter()
+            .map(acp::SessionId::new)
+            .filter(|id| !cache.by_session.contains_key(id))
+            .collect();
+        cache.aliases = db
+            .session_aliases()?
+            .into_iter()
+            .map(|(alias, owner)| (acp::SessionId::new(alias), acp::SessionId::new(owner)))
+            .collect();
 
         let (ops_tx, ops_rx) = mpsc::channel::<DbOperation>();
         let (events, _) = broadcast::channel(EVENT_CAPACITY);
@@ -228,6 +270,14 @@ impl ThreadMetadataStore {
                             DbOperation::MarkBackfilled(agent_id) => {
                                 db.mark_backfilled(agent_id.as_str())
                             }
+                            DbOperation::MarkSessionDeleted(id) => db.mark_session_deleted(&id.0),
+                            DbOperation::UnmarkSessionDeleted(id) => {
+                                db.unmark_session_deleted(&id.0)
+                            }
+                            DbOperation::SaveAlias(alias, owner) => {
+                                db.save_session_alias(&alias.0, &owner.0)
+                            }
+                            DbOperation::DeleteAlias(alias) => db.delete_session_alias(&alias.0),
                         };
                         if let Err(e) = outcome {
                             tracing::warn!(error = %e, "thread-metadata write failed");
@@ -328,9 +378,51 @@ impl ThreadMetadataStore {
         self.enqueue(DbOperation::MarkBackfilled(agent_id.clone()));
     }
 
-    /// Every session id the store knows. Import dedupes against this.
+    /// Every session id the store knows — those with a row, and those whose
+    /// row the user deleted. Import dedupes against this, which is what keeps
+    /// a deleted session deleted while its agent still lists it; the watcher
+    /// reads it to tell a new session from one already accounted for.
     pub fn known_session_ids(&self) -> HashSet<acp::SessionId> {
-        read(&self.inner.cache).by_session.keys().cloned().collect()
+        let cache = read(&self.inner.cache);
+        cache
+            .by_session
+            .keys()
+            .chain(cache.deleted.iter())
+            .chain(cache.aliases.keys())
+            .cloned()
+            .collect()
+    }
+
+    /// Every confirmed transcript alias, alias → owner session id.
+    pub fn session_aliases(&self) -> HashMap<acp::SessionId, acp::SessionId> {
+        read(&self.inner.cache).aliases.clone()
+    }
+
+    /// Record a confirmed transcript alias: `alias` is another on-disk id of
+    /// `owner`, a session Atlas ran. Answers whether it was recorded.
+    ///
+    /// Refused when the owner has no row (a deleted owner's continuation must
+    /// not be resurrected as anything) or the alias already has one. From
+    /// here on the alias id is known (`known_session_ids`), so no import or
+    /// sync lists it in as a session of its own, across restarts.
+    pub fn record_session_alias(&self, alias: &acp::SessionId, owner: &acp::SessionId) -> bool {
+        let mut cache = write(&self.inner.cache);
+        if alias == owner
+            || !cache.by_session.contains_key(owner)
+            || cache.by_session.contains_key(alias)
+            || cache.aliases.get(alias) == Some(owner)
+        {
+            return false;
+        }
+        cache.aliases.insert(alias.clone(), owner.clone());
+        self.enqueue(DbOperation::SaveAlias(alias.clone(), owner.clone()));
+        true
+    }
+
+    /// Whether the user deleted this session's row (and Atlas has not written
+    /// one for it since).
+    pub fn is_session_deleted(&self, session_id: &acp::SessionId) -> bool {
+        read(&self.inner.cache).deleted.contains(session_id)
     }
 
     /// Every project the user has threads in, newest first, each with its own
@@ -432,6 +524,41 @@ impl ThreadMetadataStore {
         self.notify(ThreadStoreEvent::Changed);
     }
 
+    /// Insert imported rows whose session the store does not know, as one
+    /// atomic step. Answers how many landed.
+    ///
+    /// Every import path — the manual import, the first-run backfill, the
+    /// per-project sync — lists an agent's sessions (slowly, over ACP), filters
+    /// them against [`ThreadMetadataStore::known_session_ids`], and saves the
+    /// rest. Two of those running at once both filter against the same
+    /// snapshot and both save: two rows for one session, and nothing in the
+    /// schema forbids it. This re-checks every row's session id under the same
+    /// write lock that inserts it, so whichever import lands second finds the
+    /// first one's rows and skips them. A session the user deleted is known
+    /// too, and skipped the same way. A row without a session id is skipped:
+    /// an import never produces one.
+    pub fn insert_new_sessions(&self, rows: Vec<ThreadMetadata>) -> usize {
+        let mut inserted = 0;
+        {
+            let mut cache = write(&self.inner.cache);
+            for row in rows {
+                let Some(session_id) = row.session_id.as_ref() else {
+                    continue;
+                };
+                if cache.by_session.contains_key(session_id) || cache.deleted.contains(session_id) {
+                    continue;
+                }
+                cache.insert(row.clone());
+                self.enqueue(DbOperation::Upsert(Box::new(row)));
+                inserted += 1;
+            }
+        }
+        if inserted > 0 {
+            self.notify(ThreadStoreEvent::Changed);
+        }
+        inserted
+    }
+
     /// Record what a live conversation currently is, preserving everything the
     /// conversation does not own: the user's rename, when the thread was
     /// created, when the user last interacted, and — for an archived thread —
@@ -440,8 +567,14 @@ impl ThreadMetadataStore {
     /// A thread with no folder path is archived on creation, because it would
     /// otherwise be invisible: the sidebar lists by project, and it belongs to
     /// none (`:1325-1331`).
+    ///
+    /// Read-modify-write under one write lock, so a concurrent rename or
+    /// archive is never overwritten with the copy read before it. A session
+    /// whose row the user had deleted stops being deleted: Atlas is writing
+    /// its row again because the conversation carried on.
     pub fn record_live_update(&self, update: LiveThreadUpdate) {
-        let existing = self.thread(update.thread_id);
+        let mut cache = write(&self.inner.cache);
+        let existing = cache.threads.get(&update.thread_id).cloned();
         let updated_at = Utc::now();
 
         let (worktree_paths, remote_connection) = match existing.as_ref().filter(|t| t.archived) {
@@ -456,7 +589,7 @@ impl ThreadMetadataStore {
             .map(|t| t.archived)
             .unwrap_or_else(|| worktree_paths.is_empty());
 
-        self.save(ThreadMetadata {
+        let row = ThreadMetadata {
             thread_id: update.thread_id,
             // A draft's session id is never persisted (`:1286-1290`) — but a
             // thread that already has one never goes back to being a draft.
@@ -487,7 +620,16 @@ impl ThreadMetadataStore {
             worktree_paths,
             remote_connection,
             archived,
-        });
+        };
+        if let Some(session_id) = row.session_id.as_ref() {
+            if cache.deleted.remove(session_id) {
+                self.enqueue(DbOperation::UnmarkSessionDeleted(session_id.clone()));
+            }
+        }
+        cache.insert(row.clone());
+        self.enqueue(DbOperation::Upsert(Box::new(row)));
+        drop(cache);
+        self.notify(ThreadStoreEvent::Changed);
     }
 
     /// The user renamed the thread. Survives every later agent title
@@ -535,21 +677,52 @@ impl ThreadMetadataStore {
         });
     }
 
-    /// Bump `updated_at` for known sessions, only ever forward. One change
-    /// event if anything moved. Returns how many rows changed.
+    /// Record activity seen for known sessions: bump `updated_at`, only ever
+    /// forward, and bring an archived row back to the sidebar when the
+    /// activity is genuinely new. One change event if anything moved. Returns
+    /// how many rows changed.
     ///
-    /// Activity seen outside Atlas (a terminal session writing its transcript)
-    /// is the caller; sessions the store does not know are ignored, and a time
-    /// at or before the row's own never moves it back.
-    pub fn touch_sessions(&self, updates: &[(acp::SessionId, DateTime<Utc>)]) -> usize {
+    /// Activity observed outside Atlas is the caller — the session watcher
+    /// seeing a terminal session write its transcript, or the project sync
+    /// reading an agent's `session/list` (ADR-0001 amendment, Rule 5).
+    /// Sessions the store does not know are ignored, and a time at or before
+    /// the row's own never moves it back.
+    ///
+    /// An **archived** row is different, because archiving is a decision the
+    /// user (or the first-run backfill) made, and only new activity overrules
+    /// it. It is unarchived — and only then has its `updated_at` moved — when
+    /// `unarchive_since` is given, the observed time is at or after it (the
+    /// recency window), and the time is more than [`NEW_ACTIVITY_SLACK`] past
+    /// the row's `updated_at`. The row has no archived-at time; `updated_at`
+    /// stands in for it, which is sound because an archived row's `updated_at`
+    /// is never moved by anything that is not itself an unarchive. The slack
+    /// is what keeps a thread Atlas itself last ran (its `updated_at` stamped
+    /// when the turn stopped) from being revived by the agent's own trailing
+    /// write a moment later — the user archived *that*, and nothing new has
+    /// happened since. Leaving an archived row's time alone otherwise is what
+    /// lets a terminal session writing every second still clear the slack.
+    ///
+    /// A session whose row the user deleted is never touched — there is no row
+    /// to touch, and this never makes one. Each row is read and written under
+    /// the cache's write lock, so a delete, archive or rename that lands while
+    /// a batch is being applied is never undone by it.
+    pub fn touch_sessions(
+        &self,
+        updates: &[(acp::SessionId, DateTime<Utc>)],
+        unarchive_since: Option<DateTime<Utc>>,
+    ) -> usize {
         let mut changed = 0;
         for (session_id, time) in updates {
-            let Some(thread) = self.thread_for_session(session_id) else {
-                continue;
-            };
             let time = *time;
-            if self.update_silently(thread.thread_id, |thread| {
-                if time <= thread.updated_at {
+            if self.update_session_silently(session_id, |thread| {
+                if thread.archived {
+                    let revives = unarchive_since.is_some_and(|cutoff| time >= cutoff)
+                        && time > thread.updated_at + NEW_ACTIVITY_SLACK;
+                    if !revives {
+                        return false;
+                    }
+                    thread.archived = false;
+                } else if time <= thread.updated_at {
                     return false;
                 }
                 thread.updated_at = time;
@@ -631,6 +804,11 @@ impl ThreadMetadataStore {
 
     /// Remove the row. Local only — asking the agent to forget its session is
     /// a separate, capability-gated step the caller makes.
+    ///
+    /// A row with a session id also records that session as deleted (schema
+    /// V4), durably: import is ongoing (ADR-0001 amendment), and an agent that
+    /// cannot forget the session would otherwise list it straight back into
+    /// the sidebar on the next sync. A draft has no session to remember.
     pub fn delete(&self, thread_id: ThreadId) {
         if self.delete_internal(thread_id) {
             self.notify(ThreadStoreEvent::Changed);
@@ -663,37 +841,99 @@ impl ThreadMetadataStore {
         changed
     }
 
+    /// The read, the mutation and the write all happen under the cache's
+    /// write lock, and the disk write is queued before it is released. Reading
+    /// a copy under a read lock and saving it back later — what this used to
+    /// do — let a concurrent delete, archive or rename land in between and be
+    /// overwritten by the stale copy; a deleted row even came back, because
+    /// the queue keeps the last write per thread. `mutate` therefore must not
+    /// call back into the store.
     fn update_silently(
         &self,
         thread_id: ThreadId,
         mutate: impl FnOnce(&mut ThreadMetadata) -> bool,
     ) -> bool {
-        let Some(mut thread) = self.thread(thread_id) else {
+        let mut cache = write(&self.inner.cache);
+        let Some(mut thread) = cache.threads.get(&thread_id).cloned() else {
             return false;
         };
         if !mutate(&mut thread) {
             return false;
         }
-        self.save_internal(thread);
+        cache.insert(thread.clone());
+        self.enqueue(DbOperation::Upsert(Box::new(thread)));
         true
     }
 
-    /// Insert or replace one row wholesale, announcing the change.
-    fn save(&self, metadata: ThreadMetadata) {
-        self.save_internal(metadata);
-        self.notify(ThreadStoreEvent::Changed);
+    /// [`Self::update_silently`], for the row that owns `session_id`; the
+    /// lookup is under the same lock as the write.
+    fn update_session_silently(
+        &self,
+        session_id: &acp::SessionId,
+        mutate: impl FnOnce(&mut ThreadMetadata) -> bool,
+    ) -> bool {
+        let mut cache = write(&self.inner.cache);
+        let Some(mut thread) = cache
+            .by_session
+            .get(session_id)
+            .and_then(|id| cache.threads.get(id))
+            .cloned()
+        else {
+            return false;
+        };
+        if !mutate(&mut thread) {
+            return false;
+        }
+        cache.insert(thread.clone());
+        self.enqueue(DbOperation::Upsert(Box::new(thread)));
+        true
     }
 
+    // Every write below queues its disk operation while still holding the
+    // cache's write lock. Two writers to one row must reach the queue in the
+    // order they changed the cache, or the disk could end on the older one —
+    // an upsert queued after the delete that preceded it resurrects the row at
+    // the next launch.
+
     fn save_internal(&self, metadata: ThreadMetadata) {
-        write(&self.inner.cache).insert(metadata.clone());
+        let mut cache = write(&self.inner.cache);
+        if let Some(session_id) = metadata.session_id.as_ref() {
+            if cache.deleted.remove(session_id) {
+                self.enqueue(DbOperation::UnmarkSessionDeleted(session_id.clone()));
+            }
+        }
+        cache.insert(metadata.clone());
         self.enqueue(DbOperation::Upsert(Box::new(metadata)));
     }
 
     fn delete_internal(&self, thread_id: ThreadId) -> bool {
-        if write(&self.inner.cache).remove(thread_id).is_none() {
+        let mut cache = write(&self.inner.cache);
+        let Some(removed) = cache.remove(thread_id) else {
             return false;
-        }
+        };
         self.enqueue(DbOperation::Delete(thread_id));
+        if let Some(session_id) = removed.session_id {
+            // The owner's aliases go with it, and each alias id is recorded as
+            // deleted too: dropping the alias alone would make the
+            // continuation an unknown session the next sync imports — the
+            // deleted conversation back under another id.
+            let aliases: Vec<acp::SessionId> = cache
+                .aliases
+                .iter()
+                .filter(|(_, owner)| **owner == session_id)
+                .map(|(alias, _)| alias.clone())
+                .collect();
+            for alias in aliases {
+                cache.aliases.remove(&alias);
+                self.enqueue(DbOperation::DeleteAlias(alias.clone()));
+                if cache.deleted.insert(alias.clone()) {
+                    self.enqueue(DbOperation::MarkSessionDeleted(alias));
+                }
+            }
+            if cache.deleted.insert(session_id.clone()) {
+                self.enqueue(DbOperation::MarkSessionDeleted(session_id));
+            }
+        }
         true
     }
 

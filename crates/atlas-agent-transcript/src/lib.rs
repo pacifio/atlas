@@ -57,12 +57,72 @@ pub enum TranscriptKind {
 /// so a path with a space or dot must resolve to the SAME slug or the listing
 /// finds nothing (was: only `/` was replaced → 0 rows for any path with a
 /// space).
+///
+/// A port of the SDK's `xt()` (`@anthropic-ai/claude-agent-sdk` `core.mjs`,
+/// 0.3.287), including the two details a plain reading misses:
+///
+/// - **UTF-16, not chars.** The JS regex `/[^a-zA-Z0-9]/g` replaces code
+///   units, so a character outside the BMP (an emoji) is a surrogate pair and
+///   becomes *two* dashes; `é` is one.
+/// - **Long paths are truncated and hashed.** A slug over
+///   [`MAX_SLUG_LEN`] UTF-16 units is cut to that length and suffixed with
+///   `-` and the base-36 absolute value of a Java-style 32-bit string hash of
+///   the *original* path (`at()` in the SDK's core chunk).
+///
+/// The one Atlas-side step is the trailing-slash trim first: Claude slugs its
+/// `getcwd`, which never ends in one, and a UI path that does is the same
+/// project.
 pub fn encode_cwd(cwd: &str) -> String {
     let trimmed = cwd.trim_end_matches('/');
-    trimmed
+    let slug: String = trimmed
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
-        .collect()
+        .flat_map(|c| {
+            let replacement = if c.is_ascii_alphanumeric() { c } else { '-' };
+            std::iter::repeat_n(replacement, c.len_utf16())
+        })
+        .collect();
+    // Every char of `slug` is ASCII, so its byte length is its UTF-16 length
+    // and slicing by bytes is slicing by code units.
+    if slug.len() <= MAX_SLUG_LEN {
+        return slug;
+    }
+    format!(
+        "{}-{}",
+        &slug[..MAX_SLUG_LEN],
+        base36(java_hash_abs(trimmed))
+    )
+}
+
+/// The SDK's `qe`: the longest slug Claude Code uses verbatim.
+pub const MAX_SLUG_LEN: usize = 200;
+
+/// `Math.abs(at(s))`: `h = (h << 5) - h + unit | 0` over UTF-16 code units,
+/// wrapping in 32 bits. The absolute value is taken in 64 bits because JS's
+/// `Math.abs(-2147483648)` is `2147483648`, which an `i32` cannot hold.
+fn java_hash_abs(s: &str) -> u64 {
+    let mut h: i32 = 0;
+    for unit in s.encode_utf16() {
+        h = h
+            .wrapping_shl(5)
+            .wrapping_sub(h)
+            .wrapping_add(i32::from(unit));
+    }
+    i64::from(h).unsigned_abs()
+}
+
+/// `n.toString(36)` for a non-negative integer.
+fn base36(mut n: u64) -> String {
+    const DIGITS: &[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    if n == 0 {
+        return "0".to_owned();
+    }
+    let mut out = Vec::new();
+    while n > 0 {
+        out.push(DIGITS[(n % 36) as usize]);
+        n /= 36;
+    }
+    out.reverse();
+    String::from_utf8(out).unwrap_or_default()
 }
 
 /// Identify user content injected by Claude Code itself (system tags,

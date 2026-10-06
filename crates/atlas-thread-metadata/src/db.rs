@@ -1,7 +1,7 @@
 //! The SQLite layer: list, upsert, delete. Nothing else.
 //!
 //! Ported from Zed's `ThreadMetadataDb` (`thread_metadata_store.rs:1468-1581`).
-//! Every statement here is one of those three, because the store keeps the
+//! Every thread statement here is one of those three, because the store keeps the
 //! whole table in memory and answers reads from there — the database is the
 //! durable copy, not the query engine.
 
@@ -144,6 +144,68 @@ impl Db {
             "INSERT INTO backfilled_agents(agent_id, at) VALUES (?1, ?2) \
              ON CONFLICT(agent_id) DO NOTHING",
             rusqlite::params![agent_id, chrono::Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    /// Session ids whose rows the user deleted (schema V4).
+    pub(crate) fn deleted_sessions(&self) -> Result<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT session_id FROM deleted_sessions")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    pub(crate) fn mark_session_deleted(&self, session_id: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO deleted_sessions(session_id, at) VALUES (?1, ?2) \
+             ON CONFLICT(session_id) DO NOTHING",
+            rusqlite::params![session_id, chrono::Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn unmark_session_deleted(&self, session_id: &str) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM deleted_sessions WHERE session_id = ?1",
+            rusqlite::params![session_id],
+        )?;
+        Ok(())
+    }
+
+    /// Confirmed transcript aliases, `(alias, owner)` (schema V5).
+    pub(crate) fn session_aliases(&self) -> Result<Vec<(String, String)>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT alias_id, owner_session_id FROM session_aliases")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    pub(crate) fn save_session_alias(&self, alias: &str, owner: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO session_aliases(alias_id, owner_session_id, at) VALUES (?1, ?2, ?3) \
+             ON CONFLICT(alias_id) DO UPDATE SET owner_session_id = excluded.owner_session_id",
+            rusqlite::params![alias, owner, chrono::Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn delete_session_alias(&self, alias: &str) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM session_aliases WHERE alias_id = ?1",
+            rusqlite::params![alias],
         )?;
         Ok(())
     }

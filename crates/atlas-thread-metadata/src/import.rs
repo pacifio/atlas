@@ -123,12 +123,15 @@ pub fn importable_threads(
                 title: session.title,
                 title_override: None,
                 updated_at,
-                // Verbatim, and so always `None` today: schema v1's
-                // `SessionInfo` has no `createdAt`. Filling it in with
-                // `updated_at` would be Atlas claiming to know when a
-                // conversation started; the history view already falls back to
-                // `updated_at` when it needs an ordering.
-                created_at: session.created_at,
+                // The agent's own start time when it reports one; otherwise
+                // the activity time it reported at import. Schema v1's
+                // `SessionInfo` has no `createdAt`, and this used to stay
+                // `None`, leaving History (which orders by "started") to fall
+                // back to `updated_at` — which, since discovery is ongoing
+                // (ADR-0001 amendment), keeps moving, so imported rows jumped
+                // about. A fixed instant no later than the true last activity
+                // is the honest stand-in, and it never moves again.
+                created_at: session.created_at.or(Some(updated_at)),
                 // Atlas was not there. Claiming the user interacted at some
                 // moment it did not observe would be an invention.
                 interacted_at: None,

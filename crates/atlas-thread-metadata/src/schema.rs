@@ -22,13 +22,24 @@
 //! renamed (ADR-0011) and, by decision, rows under the retired id are dropped
 //! rather than aliased. Nothing resolves them any more, so leaving them would
 //! only put unopenable rows in the sidebar.
+//!
+//! V4 adds `deleted_sessions`: the session ids whose rows the user deleted.
+//! Since the ADR-0001 amendment import is ongoing, so "delete" has to outlast
+//! the next sync — an agent that could not (or would not) forget the session
+//! keeps listing it, and without a durable record the row would be back
+//! within seconds.
+//!
+//! V5 adds `session_aliases`: on-disk session ids confirmed to be another
+//! transcript of a session Atlas ran (an adapter that writes a conversation's
+//! continuation under a fresh id). Only confirmed aliases are written; the
+//! provisional guess that precedes confirmation is never persisted.
 
 use rusqlite::Connection;
 
 use crate::error::{Error, Result};
 
 /// Bump when adding a migration, and add the matching arm in [`migrate`].
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 5;
 
 pub fn migrate(conn: &Connection) -> Result<()> {
     // Fast path, outside any transaction: the common case is a database
@@ -61,6 +72,12 @@ pub fn migrate(conn: &Connection) -> Result<()> {
         }
         if found < 3 {
             conn.execute_batch(V3)?;
+        }
+        if found < 4 {
+            conn.execute_batch(V4)?;
+        }
+        if found < 5 {
+            conn.execute_batch(V5)?;
         }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(())
@@ -132,6 +149,33 @@ CREATE TABLE IF NOT EXISTS backfilled_agents(
 const V3: &str = "
 DELETE FROM threads WHERE agent_id = 'cersei';
 DELETE FROM backfilled_agents WHERE agent_id = 'cersei';
+";
+
+/// Session ids the user deleted, so no import brings them back.
+///
+/// Keyed by session id, not thread id: the thread id is Atlas's and is gone
+/// with the row, while the session id is what an agent's `session/list` and the
+/// session watcher both name. A row Atlas itself writes again for the session
+/// (its conversation is still open, and continued) removes the entry.
+const V4: &str = "
+CREATE TABLE IF NOT EXISTS deleted_sessions(
+    session_id TEXT PRIMARY KEY,
+    at         TEXT NOT NULL
+) STRICT;
+";
+
+/// Transcript ids confirmed to belong to another session, alias → owner.
+///
+/// Both columns are agent session ids, not thread ids: the alias never has a
+/// row of its own, and the owner's row is found through its session id. A
+/// row's delete removes its aliases (and records each alias id as deleted, so
+/// the continuation is not imported in the owner's place).
+const V5: &str = "
+CREATE TABLE IF NOT EXISTS session_aliases(
+    alias_id         TEXT PRIMARY KEY,
+    owner_session_id TEXT NOT NULL,
+    at               TEXT NOT NULL
+) STRICT;
 ";
 
 #[cfg(test)]
@@ -206,6 +250,8 @@ mod tests {
         migrate(&conn).unwrap();
         assert_eq!(version_of(&conn), SCHEMA_VERSION);
         assert!(has_table(&conn, "backfilled_agents"));
+        assert!(has_table(&conn, "deleted_sessions"));
+        assert!(has_table(&conn, "session_aliases"));
         let rows: i64 = conn
             .query_row("SELECT COUNT(*) FROM threads", [], |r| r.get(0))
             .unwrap();

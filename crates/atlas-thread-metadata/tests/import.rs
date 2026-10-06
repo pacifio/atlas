@@ -227,8 +227,10 @@ fn an_imported_row_keeps_the_time_the_agent_reported() {
 
     assert_eq!(rows[0].updated_at, when);
     assert_eq!(
-        rows[0].created_at, None,
-        "schema v1 has no createdAt, and Atlas does not invent one"
+        rows[0].created_at,
+        Some(when),
+        "without an agent-reported start, the reported activity time pins the \
+         row's place in History, so a later touch does not move it"
     );
     assert_eq!(
         rows[0].interacted_at, None,
@@ -341,4 +343,132 @@ fn a_recent_session_that_is_already_known_is_still_skipped() {
 
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].session_id, Some(acp::SessionId::new("unseen")));
+}
+
+#[test]
+fn an_agent_reported_start_time_is_kept() {
+    let started = Utc.with_ymd_and_hms(2026, 3, 1, 9, 0, 0).unwrap();
+    let rows = importable_threads(
+        vec![AgentSessionInfo {
+            created_at: Some(started),
+            ..session_updated("a", Utc::now())
+        }],
+        &"some-agent".into(),
+        &Default::default(),
+        None,
+    );
+    assert_eq!(rows[0].created_at, Some(started));
+}
+
+/// History orders by `created_at`; an imported row must not move in it when
+/// later activity bumps `updated_at`.
+#[test]
+fn an_imported_row_keeps_its_place_in_history_when_touched() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = ThreadMetadataStore::open(dir.path().join("threads.db")).unwrap();
+    let t0 = Utc.with_ymd_and_hms(2026, 9, 1, 0, 0, 0).unwrap();
+    let older = session_updated("older", t0);
+    let newer = session_updated("newer", t0 + chrono::Duration::days(1));
+    store.insert_new_sessions(importable_threads(
+        vec![older, newer],
+        &"some-agent".into(),
+        &store.known_session_ids(),
+        Some(t0 - chrono::Duration::days(7)),
+    ));
+
+    store.touch_sessions(
+        &[(acp::SessionId::new("older"), t0 + chrono::Duration::days(5))],
+        None,
+    );
+
+    let order: Vec<_> = store
+        .history(ThreadFilter::All)
+        .into_iter()
+        .map(|t| t.session_id.unwrap().0.to_string())
+        .collect();
+    assert_eq!(
+        order,
+        ["newer", "older"],
+        "started order, not activity order"
+    );
+}
+
+/// Two imports racing each filter against the same snapshot of known ids; the
+/// atomic insert is what keeps one row per session.
+#[test]
+fn concurrent_imports_of_one_session_make_one_row() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = ThreadMetadataStore::open(dir.path().join("threads.db")).unwrap();
+    let snapshot = store.known_session_ids();
+    let first = importable_threads(
+        vec![session("a", &["/tmp/atlas"])],
+        &"some-agent".into(),
+        &snapshot,
+        None,
+    );
+    let second = importable_threads(
+        vec![session("a", &["/tmp/atlas"]), session("b", &["/tmp/atlas"])],
+        &"some-agent".into(),
+        &snapshot,
+        None,
+    );
+
+    // Both spawned before either is joined, so they genuinely race.
+    let spawn = |rows: Vec<_>| {
+        let store = store.clone();
+        std::thread::spawn(move || store.insert_new_sessions(rows))
+    };
+    let (a, b) = (spawn(first), spawn(second));
+    let inserted = a.join().unwrap() + b.join().unwrap();
+
+    assert_eq!(inserted, 2);
+    assert_eq!(store.threads().len(), 2, "a once, b once");
+}
+
+/// The review finding: a deleted row came straight back on the next sync,
+/// because the agent still listed the session. Deletion is remembered, across
+/// a restart, and every import path skips it.
+#[test]
+fn a_deleted_session_is_never_imported_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("threads.db");
+    {
+        let store = ThreadMetadataStore::open(&path).unwrap();
+        store.insert_new_sessions(importable_threads(
+            vec![session_updated("gone", Utc::now())],
+            &"some-agent".into(),
+            &store.known_session_ids(),
+            Some(Utc::now() - chrono::Duration::days(7)),
+        ));
+        let thread_id = store.threads()[0].thread_id;
+        store.delete(thread_id);
+        store.flush().unwrap();
+    }
+
+    let store = ThreadMetadataStore::open(&path).unwrap();
+    assert!(store.is_session_deleted(&acp::SessionId::new("gone")));
+    let listed_again = vec![session_updated("gone", Utc::now())];
+    assert!(
+        importable_threads(
+            listed_again.clone(),
+            &"some-agent".into(),
+            &store.known_session_ids(),
+            Some(Utc::now() - chrono::Duration::days(7)),
+        )
+        .is_empty(),
+        "the filter skips it"
+    );
+    // Even rows built without the filter are refused at insert.
+    let unfiltered = importable_threads(
+        listed_again,
+        &"some-agent".into(),
+        &Default::default(),
+        None,
+    );
+    assert_eq!(store.insert_new_sessions(unfiltered), 0);
+    assert_eq!(
+        store.touch_sessions(&[(acp::SessionId::new("gone"), Utc::now())], None),
+        0
+    );
+    assert!(store.threads().is_empty());
 }
