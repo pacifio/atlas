@@ -256,11 +256,13 @@ impl CodeIndex {
             Some((p, n)) => (Some(p.trim_start_matches("./")), n.trim()),
             None => (None, name_or_qn.trim()),
         };
-        let mut found = self.with_reader(|c| exact(c, name))?;
-        if let Some(p) = path {
-            found.retain(|h| h.rel == p || (CASE_BLIND_FS && h.rel.eq_ignore_ascii_case(p)));
-        }
-        found.retain(|h| is_within(&h.rel, within));
+        // Filtered before the cap: a common name (`new`, `run`) can have more
+        // definitions than the cap, and `path#name` exists to pick one of them.
+        let keep = |h: &SymbolHit| {
+            path.is_none_or(|p| h.rel == p || (CASE_BLIND_FS && h.rel.eq_ignore_ascii_case(p)))
+                && is_within(&h.rel, within)
+        };
+        let mut found = self.with_reader(|c| exact(c, name, &keep))?;
         if found.is_empty() {
             let suggestions = self
                 .find_symbol(&SymbolQuery {
@@ -290,7 +292,18 @@ impl CodeIndex {
         });
         let symbol = found.remove(0);
         found.truncate(MAX_ALTERNATIVES);
-        let abs = self.root().join(&symbol.rel);
+        // Read the file the path resolves to now, and only inside the project and
+        // `within`: a file swapped for a symlink since indexing is not followed out.
+        let abs = dunce::canonicalize(self.root().join(&symbol.rel))?;
+        let inside = abs
+            .strip_prefix(self.root())
+            .is_ok_and(|r| is_within(&crate::scan::rel_string(r), within));
+        if !inside {
+            return Err(IndexError::Invalid(format!(
+                "{} now resolves outside the project",
+                symbol.rel
+            )));
+        }
         let bytes = std::fs::read(&abs)?;
         let stale = self
             .with_reader(|c| {
@@ -395,16 +408,28 @@ fn candidates(
     Ok((out, fts_full))
 }
 
-/// Definitions whose qualified name, then name, equals `name`.
-fn exact(c: &Connection, name: &str) -> rusqlite::Result<Vec<SymbolHit>> {
+/// The first 50 definitions `keep` accepts whose qualified name, then name,
+/// equals `name`.
+fn exact(
+    c: &Connection,
+    name: &str,
+    keep: &dyn Fn(&SymbolHit) -> bool,
+) -> rusqlite::Result<Vec<SymbolHit>> {
     for col in ["qualified_name", "name"] {
         let mut stmt = c.prepare_cached(&format!(
             "SELECT {HIT_COLUMNS} FROM symbols s JOIN files f ON f.id = s.file_id
-             WHERE s.{col} = ?1 ORDER BY s.id LIMIT 50"
+             WHERE s.{col} = ?1 ORDER BY s.id"
         ))?;
-        let rows = stmt
-            .query_map([name], hit)?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut rows = Vec::new();
+        for h in stmt.query_map([name], hit)? {
+            let h = h?;
+            if keep(&h) {
+                rows.push(h);
+                if rows.len() == 50 {
+                    break;
+                }
+            }
+        }
         if !rows.is_empty() {
             return Ok(rows);
         }

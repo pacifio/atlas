@@ -160,6 +160,37 @@ fn read_symbol_returns_current_source() {
 }
 
 #[test]
+fn read_symbol_filters_by_path_and_within_before_its_cap() {
+    let p = Project::new();
+    for i in 0..60 {
+        p.write(&format!("src/m{i:02}.rs"), "pub fn run() {}\n");
+    }
+    p.write("zz/main.rs", "pub fn run() {}\n");
+    let ix = p.built();
+    // Row ids follow path order, so these `run`s are past the first 50.
+    let s = ix.read_symbol("src/m59.rs#run", 200).unwrap();
+    assert_eq!(s.symbol.rel, "src/m59.rs");
+    let s = ix.read_symbol_within("run", 200, Some("zz")).unwrap();
+    assert_eq!(s.symbol.rel, "zz/main.rs");
+}
+
+#[cfg(unix)]
+#[test]
+fn read_symbol_never_follows_a_swapped_in_symlink_out_of_the_project() {
+    let p = search_fixture();
+    let ix = p.built();
+    let outside = tempfile::tempdir().unwrap();
+    let secret = outside.path().join("secret.rs");
+    std::fs::write(&secret, "pub struct Store;\n").unwrap();
+    std::fs::remove_file(p.path("src/store.rs")).unwrap();
+    std::os::unix::fs::symlink(&secret, p.path("src/store.rs")).unwrap();
+    assert!(matches!(
+        ix.read_symbol("src/store.rs#Store", 200),
+        Err(IndexError::Invalid(_))
+    ));
+}
+
+#[test]
 fn long_symbol_returns_members_not_source() {
     let p = Project::new();
     let body: String = (0..30)
