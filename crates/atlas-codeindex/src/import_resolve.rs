@@ -116,15 +116,34 @@ fn strip_ext(rel: &str) -> &str {
 }
 
 fn py_init_dirs(u: &Universe) -> HashSet<String> {
-    u.files
-        .iter()
-        .filter(|f| family(&f.lang) == PY)
+    let py = || u.files.iter().filter(|f| family(&f.lang) == PY);
+    let mut dirs: HashSet<String> = py()
         .filter_map(|f| {
             let name = f.rel.rsplit('/').next().unwrap_or(&f.rel);
             (name == "__init__.py" || name == "__init__.pyi")
                 .then(|| parent_dir(&f.rel).to_string())
         })
-        .collect()
+        .collect();
+    // PEP 420: a directory of modules inside a package is a sub-package even without an
+    // `__init__.py` (flask's `sansio/`). Shallower directories first, so each sees its
+    // parent's verdict.
+    let mut nested: Vec<&str> = py()
+        .flat_map(|f| {
+            std::iter::successors(Some(parent_dir(&f.rel)), |d| {
+                (!d.is_empty()).then(|| parent_dir(*d))
+            })
+        })
+        .filter(|d| !d.is_empty())
+        .collect();
+    nested.sort_by_key(|d| (d.matches('/').count(), *d));
+    nested.dedup();
+    for d in nested {
+        let parent = parent_dir(d);
+        if !parent.is_empty() && dirs.contains(parent) {
+            dirs.insert(d.to_string());
+        }
+    }
+    dirs
 }
 
 /// (package root dir, dotted module) for a Python file.

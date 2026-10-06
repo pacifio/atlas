@@ -285,6 +285,24 @@ fn new_file_resolves_previously_dangling_ref() {
     );
 }
 
+/// PEP 420: `sansio/` has no `__init__.py` but sits inside the `flask` package, so
+/// `from .sansio.app import App` resolves through the import, not by name.
+#[test]
+fn a_sub_package_without_init_resolves_through_its_import() {
+    let (_d, idx) = build_index(&[
+        ("src/flask/__init__.py", ""),
+        (
+            "src/flask/app.py",
+            "from .sansio.app import App\n\n\ndef run():\n    App()\n",
+        ),
+        ("src/flask/sansio/app.py", "class App:\n    pass\n"),
+    ]);
+    assert_eq!(
+        edge(&idx, "run", "App").map(|x| x.2),
+        Some("import_map".into())
+    );
+}
+
 #[test]
 fn deleted_file_symbols_and_edges_gone() {
     let (d, idx) = build_index(RUST_WORKSPACE);
@@ -300,6 +318,29 @@ fn config_change_forces_full_resolve() {
     let (d, idx) = build_index(RUST_WORKSPACE);
     idx.update_paths(&[d.path().join("Cargo.toml")]).unwrap();
     assert!(last_stats(&idx).full);
+}
+
+/// A config edit the watcher reported updates the stored config stamp, so the next
+/// reconcile finds nothing to re-resolve (and runs no second `cargo metadata`).
+#[test]
+fn a_watched_config_edit_leaves_the_next_reconcile_nothing_to_do() {
+    let (d, idx) = build_index(RUST_WORKSPACE);
+    std::fs::write(
+        d.path().join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/*\"]\nresolver = \"2\"\n# edited\n",
+    )
+    .unwrap();
+    idx.update_paths(&[d.path().join("Cargo.toml")]).unwrap();
+    let stamp = |idx: &crate::CodeIndex| {
+        idx.with_reader(|c| crate::store::get_meta(c, "graph.config_stamp"))
+            .unwrap()
+    };
+    let after_watch = stamp(&idx);
+    assert!(after_watch
+        .as_deref()
+        .is_some_and(|s| s.contains("Cargo.toml")));
+    idx.reconcile(&atlas_search::CancelToken::new()).unwrap();
+    assert_eq!(stamp(&idx), after_watch);
 }
 
 /// A Phase 2 (v1) index upgrades in place to the current schema: the graph

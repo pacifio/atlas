@@ -150,11 +150,10 @@ pub(crate) fn discover(
             let is_config = entry
                 .file_name()
                 .to_str()
-                .is_some_and(|n| crate::graph_batch::CONFIG_FILES.contains(&n));
+                .is_some_and(crate::graph_batch::is_config_file);
             if is_config {
                 if let Ok(rel) = entry.path().strip_prefix(root) {
-                    let stamp = format!("{} {} {}", rel_string(rel), md.len(), mtime_ns(&md));
-                    let _ = tx.send(Seen::Config(stamp));
+                    let _ = tx.send(Seen::Config(config_line(&rel_string(rel), &md)));
                 }
             }
             if let Some(found) = classify(root, entry.path(), &md, &rules) {
@@ -180,12 +179,21 @@ pub(crate) fn discover(
     (kept, skipped, configs)
 }
 
-/// One value for a walk's config stamps: it changes when any graph config
-/// file is added, removed or edited.
+/// A graph config file's line in the config stamp: `rel size mtime_ns`.
+pub(crate) fn config_line(rel: &str, md: &std::fs::Metadata) -> String {
+    format!("{rel} {} {}", md.len(), mtime_ns(md))
+}
+
+/// The `rel` of a [`config_line`].
+pub(crate) fn config_line_rel(line: &str) -> &str {
+    line.rsplitn(3, ' ').nth(2).unwrap_or("")
+}
+
+/// One value for a walk's sorted config lines: it changes when any graph config
+/// file is added, removed or edited. The lines themselves, so a watcher-reported
+/// edit can replace just its own (see `CodeIndex::update_paths`).
 pub(crate) fn config_stamp(configs: &[String]) -> String {
-    blake3::hash(configs.join("\n").as_bytes())
-        .to_hex()
-        .to_string()
+    configs.join("\n")
 }
 
 /// Read, sniff, hash and (unless the hash matches `known`) extract one file.

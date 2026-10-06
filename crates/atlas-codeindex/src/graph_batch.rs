@@ -25,14 +25,21 @@ use crate::universe::Universe;
 use crate::IndexError;
 
 /// Files whose change invalidates import configuration.
-pub(crate) const CONFIG_FILES: &[&str] = &[
+const CONFIG_FILES: &[&str] = &[
     "Cargo.toml",
-    "tsconfig.json",
-    "jsconfig.json",
     "package.json",
     "pnpm-workspace.yaml",
     "go.mod",
 ];
+
+/// Whether a file named `name` configures import resolution: one of [`CONFIG_FILES`], or
+/// any `tsconfig*.json` / `jsconfig*.json`, since `tsconfig.json` can `extends` another
+/// (`tsconfig.base.json`).
+pub(crate) fn is_config_file(name: &str) -> bool {
+    CONFIG_FILES.contains(&name)
+        || ((name.starts_with("tsconfig") || name.starts_with("jsconfig"))
+            && name.ends_with(".json"))
+}
 /// Above this many changed files (and 30% of the index), re-resolve everything.
 const INCREMENTAL_MAX_FILES: usize = 64;
 const META_CRATES: &str = "graph.rust_crates";
@@ -95,7 +102,7 @@ impl GraphBatch {
         if changed.iter().any(|p| {
             p.file_name()
                 .and_then(|n| n.to_str())
-                .is_some_and(|n| CONFIG_FILES.contains(&n))
+                .is_some_and(is_config_file)
         }) {
             self.config_touched = true;
         }

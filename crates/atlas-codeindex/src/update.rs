@@ -252,7 +252,49 @@ impl CodeIndex {
         }
         let wanted: Vec<&str> = cands.iter().map(|c| c.rel.as_str()).collect();
         let rows = self.with_writer(|c| store::file_rows_for(c, &wanted))?;
-        self.apply(cands, remove, &dirs_gone, rows, stats, None)
+        let stamp = self.patched_config_stamp(&rels, &chain)?;
+        self.apply(cands, remove, &dirs_gone, rows, stats, stamp.as_deref())
+    }
+
+    /// The stored config stamp with the lines of the changed config files among `rels`
+    /// replaced, so the next reconcile does not resolve the whole graph (and run
+    /// `cargo metadata`) a second time for an edit already resolved here. `None` when no
+    /// config file changed or no stamp is stored yet. A directory event is left to the
+    /// next reconcile's walk.
+    fn patched_config_stamp(
+        &self,
+        rels: &BTreeSet<String>,
+        chain: &crate::skip::IgnoreChain,
+    ) -> Result<Option<String>, IndexError> {
+        let changed: Vec<&str> = rels
+            .iter()
+            .map(String::as_str)
+            .filter(|r| crate::graph_batch::is_config_file(r.rsplit('/').next().unwrap_or(r)))
+            .collect();
+        if changed.is_empty() {
+            return Ok(None);
+        }
+        let Some(stored) = self.with_writer(|c| store::get_meta(c, META_CONFIG_STAMP))? else {
+            return Ok(None);
+        };
+        let mut lines: BTreeSet<String> = stored
+            .lines()
+            .filter(|l| !l.is_empty() && !changed.contains(&scan::config_line_rel(l)))
+            .map(str::to_string)
+            .collect();
+        for rel in changed {
+            if chain.is_ignored(rel, false) {
+                continue;
+            }
+            if let Ok(md) = std::fs::metadata(self.root().join(rel)) {
+                if md.is_file() {
+                    lines.insert(scan::config_line(rel, &md));
+                }
+            }
+        }
+        Ok(Some(scan::config_stamp(
+            &lines.into_iter().collect::<Vec<_>>(),
+        )))
     }
 
     /// Walk the tree and compare with the index: new and changed files are
