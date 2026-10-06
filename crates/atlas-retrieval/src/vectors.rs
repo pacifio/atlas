@@ -2,6 +2,10 @@
 //! truth. It is saved atomically (temp + rename); opening a missing,
 //! corrupt or other-dimension file yields an empty index and says which,
 //! so the owner rebuilds it from its cache.
+//!
+//! The file I/O is Rust's: usearch serializes to and from a buffer. Its own
+//! path API opens the path with C `fopen`, which on Windows reads a UTF-8
+//! path in the ANSI code page and fails under non-ASCII project folders.
 
 use std::path::PathBuf;
 
@@ -51,7 +55,8 @@ impl VectorFile {
             ));
         }
         let index = Self::fresh(dims)?;
-        let ok = path.to_str().is_some_and(|p| index.load(p).is_ok()) && index.dimensions() == dims;
+        let ok = std::fs::read(&path).is_ok_and(|bytes| index.load_from_buffer(&bytes).is_ok())
+            && index.dimensions() == dims;
         if ok {
             Ok((Self { index, path, dims }, Opened::Loaded))
         } else {
@@ -113,15 +118,16 @@ impl VectorFile {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let tmp = self.path.with_extension("usearch.tmp");
-        let p = tmp
-            .to_str()
-            .ok_or_else(|| RetrievalError::Index("non-utf8 path".into()))?;
+        let mut bytes = vec![0; self.index.serialized_length()];
         self.index
-            .save(p)
+            .save_to_buffer(&mut bytes)
             .map_err(|e| RetrievalError::Index(e.to_string()))?;
-        std::fs::rename(&tmp, &self.path)?;
-        Ok(())
+        let tmp = self.path.with_extension("usearch.tmp");
+        let written = std::fs::write(&tmp, &bytes).and_then(|()| std::fs::rename(&tmp, &self.path));
+        if written.is_err() {
+            let _ = std::fs::remove_file(&tmp);
+        }
+        written.map_err(RetrievalError::from)
     }
 
     pub fn len(&self) -> usize {

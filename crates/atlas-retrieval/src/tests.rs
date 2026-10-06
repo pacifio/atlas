@@ -35,6 +35,20 @@ fn a_vector_file_saves_atomically_and_reloads() {
     assert_eq!(g.search(&[1.0, 0.0, 0.0], 1)[0].0, 7);
 }
 
+/// usearch's own path API fails under non-ASCII folders on Windows; the file
+/// I/O is Rust's, so any folder name works.
+#[test]
+fn a_vector_file_round_trips_under_a_non_ascii_folder() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("Zoë проект").join("v.usearch");
+    let (f, _) = VectorFile::open(path.clone(), 3).unwrap();
+    f.add(7, &[1.0, 0.0, 0.0]).unwrap();
+    f.save().unwrap();
+    let (g, opened) = VectorFile::open(path, 3).unwrap();
+    assert_eq!(opened, Opened::Loaded);
+    assert!(g.contains(7));
+}
+
 #[test]
 fn a_corrupt_or_wrong_dimension_file_opens_empty_and_says_so() {
     let dir = tempfile::tempdir().unwrap();
