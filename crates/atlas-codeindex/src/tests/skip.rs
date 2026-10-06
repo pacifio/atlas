@@ -53,8 +53,14 @@ fn atlasignore_excludes_and_reincludes() {
         Some(SkipReason::GeneratedName)
     );
     assert_eq!(rules.path_verdict("src/main.rs"), None);
-    // A re-include keeps skipped directories walkable; without one they are pruned.
-    assert!(!rules.prune_dir("vendor"));
+    // A re-include keeps the skipped directories it names walkable; others,
+    // and every one without a re-include, are pruned.
+    assert!(!rules.prune_dir("vendor") && !rules.prune_dir("vendor/ours/sub"));
+    assert!(rules.prune_dir("target") && rules.prune_dir("web/node_modules"));
+    assert!(rules.prune_dir("experiments"));
+    let anywhere = Project::new();
+    anywhere.write(".atlasignore", "!*.keep.rs\n");
+    assert!(!Rules::load(anywhere.root()).prune_dir("web/node_modules"));
     let plain = Project::new();
     let rules = Rules::load(plain.root());
     assert!(

@@ -106,18 +106,22 @@ impl SkipReason {
 /// Path rules: built-in skips plus the project's `.atlasignore`.
 pub(crate) struct Rules {
     atlasignore: Gitignore,
-    /// `.atlasignore` has `!` lines, so skipped directories must still be
-    /// walked to find what they re-include.
-    has_reinclude: bool,
+    /// The patterns of `.atlasignore`'s `!` lines: a skipped directory one of
+    /// them can reach must still be walked to find what it re-includes.
+    reincludes: Vec<String>,
 }
 
 impl Rules {
     pub(crate) fn load(root: &Path) -> Self {
         let file = root.join(".atlasignore");
         let mut builder = GitignoreBuilder::new(root);
-        let mut has_reinclude = false;
+        let mut reincludes = Vec::new();
         if let Ok(text) = std::fs::read_to_string(&file) {
-            has_reinclude = text.lines().any(|l| l.trim_start().starts_with('!'));
+            reincludes = text
+                .lines()
+                .filter_map(|l| l.trim().strip_prefix('!'))
+                .map(str::to_string)
+                .collect();
             for line in text.lines() {
                 // A bad pattern is skipped, never fatal.
                 let _ = builder.add_line(Some(file.clone()), line);
@@ -125,7 +129,7 @@ impl Rules {
         }
         Self {
             atlasignore: builder.build().unwrap_or_else(|_| Gitignore::empty()),
-            has_reinclude,
+            reincludes,
         }
     }
 
@@ -153,16 +157,35 @@ impl Rules {
 
     /// Whether the walk may skip the directory at `rel` entirely.
     pub(crate) fn prune_dir(&self, rel: &str) -> bool {
-        if self.has_reinclude {
-            return false;
-        }
         let name = rel.rsplit('/').next().unwrap_or(rel);
-        SKIP_DIRS.contains(&name)
+        let skipped = SKIP_DIRS.contains(&name)
             || matches!(
                 self.atlasignore.matched_path_or_any_parents(rel, true),
                 Match::Ignore(_)
-            )
+            );
+        skipped && !self.reincludes.iter().any(|p| may_reach(p, rel))
     }
+}
+
+/// Whether re-include `pattern` (a `!` line without the `!`) can match a path
+/// under directory `dir`. Gitignore rules: a pattern with no inner `/`
+/// matches at any depth; otherwise it is anchored at the project root and
+/// compared component by component (a glob component or `**` may match).
+fn may_reach(pattern: &str, dir: &str) -> bool {
+    let p = pattern.trim_end_matches('/');
+    if !p.contains('/') {
+        return true;
+    }
+    let mut parts = p.trim_start_matches('/').split('/');
+    for d in dir.split('/') {
+        match parts.next() {
+            // `dir` lies inside what the pattern names, or `**` spans it.
+            None | Some("**") => return true,
+            Some(c) if c == d || c.contains(['*', '?', '[']) => {}
+            Some(_) => return false,
+        }
+    }
+    true
 }
 
 /// Content checks, run on the bytes read for hashing.

@@ -58,12 +58,10 @@ fn atlasignore_reinclude_walks_into_vendor() {
         .write("src/main.rs", "fn main() {}\n");
     let (kept, skipped) = walk(&p);
     assert_eq!(rels(&kept), ["src/main.rs", "vendor/ours/a.rs"]);
+    // `experiments/` is pruned unwalked: no re-include reaches into it.
     assert_eq!(
         skipped,
-        [
-            ("experiments/x.rs".to_string(), SkipReason::AtlasIgnore),
-            ("vendor/theirs/b.rs".to_string(), SkipReason::Vendor),
-        ]
+        [("vendor/theirs/b.rs".to_string(), SkipReason::Vendor)]
     );
 }
 
