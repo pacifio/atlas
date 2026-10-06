@@ -25,7 +25,7 @@ export function LiveElsewhereBar({ tabId }: { tabId: string }) {
           className="shrink-0 text-[var(--atlas-status-warning-foreground)]"
         />
         <span className="min-w-0 truncate text-[var(--muted-foreground)]">
-          This session is still running in a terminal. Sending here will fork it.
+          This session is active in another process (likely a terminal). Sending here will fork it.
         </span>
       </span>
       <button

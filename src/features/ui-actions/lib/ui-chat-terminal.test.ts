@@ -8,6 +8,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(async () => undefined) })
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useChatStore } from "@/features/chat/stores/chat-store";
 import { useTerminalStore } from "@/features/terminal/stores/terminal-store";
+import { useLiveElsewhereStore } from "@/features/chat/stores/live-elsewhere-store";
 import { useProjectStore } from "@/features/projects/stores/project-store";
 import { performUiAction } from "./ui-actions";
 import { seedWindow, tab, uiRequest } from "./test-fixtures";
@@ -65,6 +66,7 @@ beforeEach(() => {
     ] as never,
     activeProjectId: "w-1",
   });
+  useLiveElsewhereStore.setState({ live: {}, overridden: {} });
   useTerminalStore.setState({
     tabs: {},
     pendingCommands: {},
@@ -136,6 +138,26 @@ describe("ui_chat", () => {
       act("ui_chat", { op: "send", tabId: "chat-2", text: "status?" }),
     );
     expect(events).toContainEqual(["atlas:chat-send", { tabId: "chat-2", text: "status?" }]);
+  });
+
+  it("refuses send into a chat whose session another process is writing, until Send anyway", async () => {
+    // ADR-0001 amendment, Rule 7: another agent must not fork a terminal
+    // session with no prompt. The refusal names the way out.
+    useLiveElsewhereStore.getState().actions.setLive(["sess-2"]);
+    const held = await heard(async () =>
+      expect(error(await act("ui_chat", { op: "send", tabId: "chat-2", text: "go" }))).toMatch(
+        /active in another process.*prefill/,
+      ),
+    );
+    expect(held.filter(([n]) => n === "atlas:chat-send")).toEqual([]);
+    // Prefill is still allowed: the user decides.
+    expect(result(await act("ui_chat", { op: "prefill", tabId: "chat-2", text: "go" })).op).toBe(
+      "prefill",
+    );
+
+    useLiveElsewhereStore.getState().actions.sendAnyway("sess-2");
+    const sent = await heard(() => act("ui_chat", { op: "send", tabId: "chat-2", text: "go" }));
+    expect(sent).toContainEqual(["atlas:chat-send", { tabId: "chat-2", text: "go" }]);
   });
 
   it("refuses a chat another project owns, naming it", async () => {

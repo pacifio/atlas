@@ -18,9 +18,11 @@
  * path's falling edge (`justResumed`) are the other two legitimate moments,
  * both of which carry a session id by definition.
  *
- * And nothing drains while the gate is closed (`curResuming`): a resume still
- * loading, or one that could not restore the user's mode. Its falling edge is
- * the release.
+ * And nothing drains while the gate is closed: a resume still loading, or one
+ * that could not restore the user's mode (`curResuming`), or a session another
+ * process is writing that the user has not said "Send anyway" to
+ * (`curHeldElsewhere`, ADR-0001 amendment Rule 7). The gate's falling edge —
+ * either cause clearing — is the release.
  */
 export interface DrainEdgeInput {
   prevStatus: string | null;
@@ -30,12 +32,16 @@ export interface DrainEdgeInput {
   /** The send gate: resume pending, or a mode the resume could not restore. */
   prevResuming: boolean;
   curResuming: boolean;
+  /** Live elsewhere and not overridden: sending would fork the session. */
+  prevHeldElsewhere?: boolean;
+  curHeldElsewhere?: boolean;
 }
 
 export interface DrainEdge {
   /** The binding just landed: the held first message goes out ahead of the queue. */
   justBound: boolean;
-  /** An optimistic resume just became sendable. */
+  /** The gate just opened on a bound session: an optimistic resume became
+   *  sendable, a restored mode was picked, or a live-elsewhere hold lifted. */
   justResumed: boolean;
   /** A real turn ended on a bound session. */
   turnFinished: boolean;
@@ -44,13 +50,14 @@ export interface DrainEdge {
 }
 
 export function drainEdge(input: DrainEdgeInput): DrainEdge {
-  const { prevStatus, curStatus, prevAcp, curAcp, prevResuming, curResuming } = input;
-  const justBound = !prevAcp && !!curAcp && !curResuming;
-  const justResumed = prevResuming && !curResuming && !!curAcp;
+  const { prevStatus, curStatus, prevAcp, curAcp } = input;
+  const prevGated = input.prevResuming || !!input.prevHeldElsewhere;
+  const curGated = input.curResuming || !!input.curHeldElsewhere;
+  const justBound = !prevAcp && !!curAcp && !curGated;
+  const justResumed = prevGated && !curGated && !!curAcp;
   // `curAcp` is the gate: with no session there is nothing a turn could
   // have finished on, and nothing the next message could go to.
-  const turnFinished =
-    prevStatus === "running" && curStatus !== "running" && !!curAcp && !curResuming;
+  const turnFinished = prevStatus === "running" && curStatus !== "running" && !!curAcp && !curGated;
   return {
     justBound,
     justResumed,

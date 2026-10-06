@@ -2,10 +2,12 @@
 // writing, and which of those the user chose to send to anyway (ADR-0001
 // amendment, Rule 7, ATL-424).
 //
-// The sidebar writes the live ids after it fetches rows, since the backend
-// decides liveness (`ThreadRow.liveElsewhere`). The composer reads them to hold
-// a send behind a banner. Its own store, per the usual rule: stores never call
-// other stores, and the composer must not re-render on unrelated sidebar state.
+// The backend decides liveness (`ThreadRow.liveElsewhere`). Exactly one writer
+// sets the live ids: the shared query in `hooks/use-live-elsewhere-feed.ts`,
+// which reads the whole history store, so the set never depends on which view
+// or project a session was opened from. The composer reads it to hold a send
+// behind a banner. Its own store, per the usual rule: stores never call other
+// stores, and the composer must not re-render on unrelated history state.
 
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
@@ -18,8 +20,9 @@ interface LiveElsewhereState {
   /** Live sessions the user pressed "Send anyway" on. */
   overridden: Record<string, true>;
   actions: {
-    /** Replace the live set. An override outlives only its liveness: once the
-     *  terminal goes quiet it is dropped, so a later live spell asks again. */
+    /** Replace the live set — the complete one, from the feed's query only.
+     *  An override outlives only its liveness: once the other process goes
+     *  quiet it is dropped, so a later live spell asks again. */
     setLive: (ids: readonly string[]) => void;
     /** Let sends through for this session while it stays live. */
     sendAnyway: (sessionId: string) => void;
@@ -58,4 +61,14 @@ export function useSendHeldForTerminal(sessionId: string | null | undefined): bo
   return useLiveElsewhereStore((s) =>
     sessionId ? !!s.live[sessionId] && !s.overridden[sessionId] : false,
   );
+}
+
+/**
+ * The same answer outside React, for the action boundaries every send passes
+ * through (`ChatPanel.handleSend`, `ui_chat`'s `send`).
+ */
+export function isSendHeldElsewhere(sessionId: string | null | undefined): boolean {
+  if (!sessionId) return false;
+  const s = useLiveElsewhereStore.getState();
+  return !!s.live[sessionId] && !s.overridden[sessionId];
 }

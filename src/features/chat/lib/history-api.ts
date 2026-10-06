@@ -7,14 +7,15 @@ import type { SessionKey } from "@/types/agents";
  *
  * History used to be assembled by reading each agent CLI's private storage and
  * re-reading it whenever a file changed. It is Atlas's own store now, and the
- * only refresh signal is the store saying it changed: no filesystem watching,
- * no polling.
+ * UI's only refresh signal is {@link THREADS_CHANGED_EVENT}: nothing here polls.
  *
- * One softening (ADR-0001 amendment, 2026-10-05, ATL-421/ATL-422): sessions
- * started outside Atlas, in a terminal, reach the store only if someone asks
- * the agent. {@link syncProjectThreads} does that for the open project, on the
- * sidebar's own triggers (mount, project change, window focus). There is still
- * no watcher and no timer, and the store still says when it changed.
+ * Discovery (ADR-0001 amendment, ATL-421–424) feeds that store from outside
+ * Atlas, metadata only — a transcript is never read for content; replay goes
+ * through the agent. {@link syncProjectThreads} asks the agents for the open
+ * project's sessions, and also arms a Rust watcher on that project's Claude
+ * transcript directory (`session_watcher.rs`) that syncs new sessions and
+ * bumps active ones. While any session is live elsewhere, a 30s ticker there
+ * re-announces the change event when the clock alone changes `liveElsewhere`.
  */
 
 /** Fired whenever a thread row is added, changed or removed. */

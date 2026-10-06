@@ -28,7 +28,7 @@ import { useActiveOrgProjects } from "@/features/projects/lib/org-scope";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useChatStore } from "../stores/chat-store";
-import { useLiveElsewhereStore } from "../stores/live-elsewhere-store";
+import { useFrozenOrder } from "../hooks/use-frozen-order";
 import { bumpLoadToken, isLoadStale } from "../lib/load-tokens";
 import {
   archiveThread,
@@ -44,6 +44,9 @@ import { useRecentChatsStore } from "@/features/projects/stores/recent-chats-sto
 import { resumeThreadFast, ResumeError } from "../lib/resume-session";
 import { applyModeOnResume, holdUnrestoredMode } from "../lib/resume-mode";
 import { AGENT_TYPE_BY_SIDEBAR, sidebarAgentOf, type SidebarAgent } from "../lib/sidebar-agents";
+
+/** A row's identity for the frozen order (and its React key). */
+const rowKey = (item: SidebarItem) => item.threadId;
 
 /** One key for the whole sidebar: history is one store, so there is one query. */
 const THREAD_PROJECTS_KEY = ["thread-projects"] as const;
@@ -98,7 +101,7 @@ interface SidebarItem {
   /** The thread's own working directory — where it resumes, which is not
    *  necessarily the project that happens to be open. */
   cwd: string;
-  /** Another process is still writing this session (a terminal). */
+  /** Another process (likely a terminal) is still writing this session. */
   liveElsewhere: boolean;
 }
 
@@ -290,7 +293,7 @@ export const SessionSidebar = memo(function SessionSidebar({
   // coupled the sidebar to four private storage formats and meant an agent
   // nobody had written a reader for had no history at all (ADR-0001).
   //
-  // No polling and no file watching: the store says when it changed.
+  // No polling here: the store's change event says when to re-read.
   const {
     data: projects = [],
     isLoading,
@@ -340,15 +343,6 @@ export const SessionSidebar = memo(function SessionSidebar({
       ),
     [projects],
   );
-
-  // Hand the composer which sessions a terminal is still writing, so it can
-  // hold a send behind "Send anyway". The backend decides liveness; this only
-  // forwards it.
-  useEffect(() => {
-    useLiveElsewhereStore
-      .getState()
-      .actions.setLive(items.filter((i) => i.liveElsewhere && i.id).map((i) => i.id));
-  }, [items]);
 
   // Self-heal the project panel's persisted "Chats" list for THIS project.
   // That list (`atlas-recent-chats`) is recorded on agent activity and never
@@ -410,9 +404,15 @@ export const SessionSidebar = memo(function SessionSidebar({
   // Headings are stamped AFTER filtering, not before: a search that hides a
   // project's first row would otherwise take the project's name with it and
   // leave the rest of its threads under the previous project's heading.
+  //
+  // Rows keep their order while the pointer is over the list or focus is in
+  // it: a session another process keeps writing moves to the top on every
+  // write, and used to jump under the pointer just as it was clicked. Content
+  // still updates live; leaving applies the real order (`use-frozen-order.ts`).
+  const { ordered, listProps: frozenListProps } = useFrozenOrder(items, rowKey);
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const matching = q ? items.filter((it) => it.title.toLowerCase().includes(q)) : items;
+    const matching = q ? ordered.filter((it) => it.title.toLowerCase().includes(q)) : ordered;
     // Label the groups whenever more than one project is on screen, or when a
     // row belongs to some other project. Scoped to the open project this is
     // false and no headings are drawn — it earns its keep in the unscoped case
@@ -427,7 +427,7 @@ export const SessionSidebar = memo(function SessionSidebar({
       previous = item.projectName;
       return { ...item, projectHeading: heading };
     });
-  }, [items, search]);
+  }, [ordered, search]);
 
   // Singleton model: "New chat" always starts a fresh session in the CURRENT
   // tab (never a second tab). Shared with ⌘T / the palette / the context menu.
@@ -593,7 +593,16 @@ export const SessionSidebar = memo(function SessionSidebar({
       useRecentChatsStore.getState().actions.removeBySession(item.id);
     } catch (err) {
       console.error("Failed to delete session:", err);
-      toast.error(`Couldn't delete session: ${err instanceof Error ? err.message : String(err)}`);
+      // A rejected `invoke` carries the backend's `CmdError` — a plain
+      // `{ message, kind }` object, not an `Error` — and its message is the
+      // reason (e.g. the session is still active in another process).
+      const message =
+        err instanceof Error
+          ? err.message
+          : typeof err === "object" && err !== null && "message" in err
+            ? String((err as { message: unknown }).message)
+            : String(err);
+      toast.error(`Couldn't delete session: ${message}`);
     }
   };
 
@@ -700,7 +709,11 @@ export const SessionSidebar = memo(function SessionSidebar({
       />
 
       {/* List */}
-      <div className="flex-1 overflow-y-auto hide-scrollbar">
+      <div
+        data-testid="session-list"
+        className="flex-1 overflow-y-auto hide-scrollbar"
+        {...frozenListProps}
+      >
         {isLoading && (
           <div className="text-xs text-[var(--muted-foreground)] px-3 py-2">Loading…</div>
         )}
@@ -787,8 +800,8 @@ export const SessionSidebar = memo(function SessionSidebar({
                   {item.liveElsewhere && (
                     <span
                       role="img"
-                      aria-label="Running in a terminal"
-                      title="Running in a terminal"
+                      aria-label="Active in another process"
+                      title="Active in another process"
                       data-testid="live-elsewhere-dot"
                       className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--atlas-status-success-foreground)]"
                     />

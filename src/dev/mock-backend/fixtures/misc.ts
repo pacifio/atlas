@@ -255,8 +255,10 @@ const models: ModelStatus[] = MODELS.map((model) => ({ ...model }));
 
 export const miscHandlers: MockHandlers = {
   // ── chat history ────────────────────────────────────────────────────────
+  // As in Rust: `archivedOnly` narrows to archived rows, otherwise every row,
+  // archived or not (the composer's live-elsewhere feed relies on that).
   threads_history: ({ archivedOnly }): ThreadRow[] =>
-    threads.filter((thread) => (archivedOnly ? thread.archived : !thread.archived)),
+    archivedOnly ? threads.filter((thread) => thread.archived) : threads,
   threads_sync_project: () => 0,
   threads_projects: ({ cwd }): ThreadProject[] =>
     threadProjects(cwd === null || cwd === undefined ? null : String(cwd)),

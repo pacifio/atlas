@@ -82,6 +82,7 @@ import { RemovedAgentBar } from "./removed-agent-bar";
 import { ModeRestoreBar, OPEN_MODE_PICKER_EVENT } from "./mode-restore-bar";
 import { LiveElsewhereBar } from "./live-elsewhere-bar";
 import { useSendHeldForTerminal } from "../stores/live-elsewhere-store";
+import { useLiveElsewhereFeed } from "../hooks/use-live-elsewhere-feed";
 import { useAiGrantProbe, useNoAiGrant } from "../stores/ai-grant-store";
 import {
   QUALITY_LADDER,
@@ -941,9 +942,11 @@ export function MessageInput({
   // until they pick one. Only the send — typing and the mode picker stay live.
   const modeUnrestored = useChatStore((s) => !!s.sessions[tabId]?.unrestoredModeId);
   // Another process is still writing this session: sends wait for "Send anyway".
-  const heldForTerminal = useSendHeldForTerminal(
-    useChatStore((s) => s.sessions[tabId]?.acpSessionId),
-  );
+  // The composer feeds the live set itself, so the guard holds whichever view
+  // (sidebar, History, another project) the session was opened from.
+  const acpSessionId = useChatStore((s) => s.sessions[tabId]?.acpSessionId);
+  useLiveElsewhereFeed(!!acpSessionId);
+  const heldForTerminal = useSendHeldForTerminal(acpSessionId);
   // The BYOK provider/model bindings for the native agent stood here — the
   // provider pick, the model re-push on bind, the whole BYOK selection path.
   // Gone: the native agent's model comes from the seam's published catalogue
@@ -1987,7 +1990,7 @@ export function MessageInput({
             they pick one. */}
         <ModeRestoreBar tabId={tabId} />
 
-        {/* The session is still running in a terminal: sending would fork it. */}
+        {/* Another process is writing this session: sending would fork it. */}
         <LiveElsewhereBar tabId={tabId} />
 
         {/* Live plan docked on top of the input bar (JetBrains-Air style). */}
@@ -2151,6 +2154,13 @@ export function MessageInput({
               <button
                 onClick={submit}
                 disabled={!buttonEnabled}
+                aria-label={
+                  mode === "stop"
+                    ? "Stop generation"
+                    : mode === "queue"
+                      ? "Queue message"
+                      : "Send message"
+                }
                 className={cn(
                   // Reference-style squircle send: a soft rounded-square,
                   // transparent at rest, muted fill + border on hover, pinned
