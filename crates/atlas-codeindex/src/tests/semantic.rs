@@ -112,3 +112,27 @@ fn a_narrow_filter_still_finds_its_chunks_behind_many_better_ones() {
         );
     }
 }
+
+/// The symbol leg filters before its cut too: 60 `send_upload` definitions under `web/`
+/// must not crowd the one under `src/` out of its first 50.
+#[test]
+fn the_symbol_leg_filters_before_its_cut() {
+    let p = Project::new();
+    for i in 0..60 {
+        p.write(
+            &format!("web/f{i:03}.ts"),
+            "export function send_upload() {}\n",
+        );
+    }
+    p.write("src/up.rs", "pub fn send_upload() {}\n");
+    let ix = p.built();
+    let mut q = sq("send_upload");
+    q.path_glob = Some("src/**".into());
+    let (hits, _) = ix.semantic_search(&q, None).unwrap();
+    assert_eq!(hits[0].rel, "src/up.rs");
+    assert!(hits[0].legs.contains("symbol"), "{}", hits[0].legs);
+    let mut q = sq("send_upload");
+    q.lang = Some("rust".into());
+    let (hits, _) = ix.semantic_search(&q, None).unwrap();
+    assert!(hits[0].legs.contains("symbol"), "{}", hits[0].legs);
+}
