@@ -39,7 +39,10 @@ fn word_style(name: &str) -> bool {
         || (name.chars().any(char::is_uppercase) && name.chars().any(char::is_lowercase))
 }
 
-fn rank(c: &Connection, focus: &RepoMapFocus) -> rusqlite::Result<(Vec<(f64, Def)>, Vec<String>)> {
+/// Ranked definitions, and every file path by id order.
+type Ranked = (Vec<(f64, Def)>, Vec<String>);
+
+fn rank(c: &Connection, focus: &RepoMapFocus) -> rusqlite::Result<Ranked> {
     let files: Vec<(i64, String)> = c
         .prepare("SELECT id, rel FROM files ORDER BY id")?
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?

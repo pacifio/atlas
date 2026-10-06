@@ -351,14 +351,14 @@ pub fn module_tree(
     let mut queue: VecDeque<(i64, String)> = VecDeque::new();
     for root in &graph.roots {
         if let Some(&id) = files.get(&root.root_rel) {
-            if !assigned.contains_key(&id) {
+            if let std::collections::btree_map::Entry::Vacant(slot) = assigned.entry(id) {
                 // A bin/test/example crate is its own crate even when it shares the lib's name.
                 let name = if root.is_lib {
                     root.name.clone()
                 } else {
                     format!("{}#bin", root.name)
                 };
-                assigned.insert(id, name.clone());
+                slot.insert(name.clone());
                 queue.push_back((id, name));
             }
         }

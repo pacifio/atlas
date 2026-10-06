@@ -42,14 +42,16 @@
     "clippy": true
   },
   {
-    "crate": "atlas-codeindex"
+    "crate": "atlas-codeindex",
+    "clippy": true
   },
   {
     "crate": "atlas-comms",
     "clippy": true
   },
   {
-    "crate": "atlas-embed"
+    "crate": "atlas-embed",
+    "clippy": true
   },
   {
     "crate": "atlas-git",
