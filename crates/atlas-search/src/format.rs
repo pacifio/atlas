@@ -366,17 +366,32 @@ fn content(
     };
     let shown = |lines: &[Out]| lines.iter().filter(|l| l.kind == Kind::Match).count();
 
-    let mut cut = false;
+    let text = assemble(&lines, &page_for(shown(&lines), false));
+    if text.len() <= budget_bytes || lines.is_empty() {
+        return fit(text, budget_bytes);
+    }
+    // Drop lines from the end until it fits, counting bytes rather than
+    // assembling the text again per line (a large page is thousands of lines).
+    let mut keep = lines.len();
+    let mut body: usize = lines.iter().map(|l| l.text.len() + 1).sum();
+    let mut matches = shown(&lines);
     loop {
-        let text = assemble(&lines, &page_for(shown(&lines), cut));
-        if text.len() <= budget_bytes || lines.is_empty() {
-            return fit(text, budget_bytes);
+        // One line, then any it leaves dangling: never end on a path,
+        // separator or annotation.
+        loop {
+            keep -= 1;
+            body -= lines[keep].text.len() + 1;
+            if lines[keep].kind == Kind::Match {
+                matches -= 1;
+            }
+            if keep == 0 || lines[keep - 1].kind != Kind::Other {
+                break;
+            }
         }
-        cut = true;
-        lines.pop();
-        // Never end on a dangling path, separator or annotation.
-        while lines.last().is_some_and(|l| l.kind == Kind::Other) {
-            lines.pop();
+        let page = page_for(matches, true);
+        let size = head.len() + body + compact::render_footer(&page).len() + notes.len();
+        if size <= budget_bytes || keep == 0 {
+            return fit(assemble(&lines[..keep], &page), budget_bytes);
         }
     }
 }
