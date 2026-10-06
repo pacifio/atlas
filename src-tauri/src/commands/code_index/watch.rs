@@ -69,7 +69,11 @@ impl CodeIndexRegistry {
             } else if g.status().ready {
                 // Only a built index takes overlay docs (reading each changed
                 // file); below the size threshold there is nothing to feed.
-                g.note_paths(&feed.paths);
+                // Read off the watcher thread: a build can change thousands of
+                // files at once. Searches meanwhile stay correct, as a file
+                // whose live stamp moved is searched, not skipped.
+                let paths = feed.paths.clone();
+                super::registry::spawn_grep(g, move |g| g.note_paths(&paths));
             }
         }
         if feed.rescan {
