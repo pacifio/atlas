@@ -4,8 +4,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
- * Four small, independent wire-shape regressions, each found by hand while
- * auditing the app for pre-existing bugs (none is about the theme system):
+ * Small, independent wire-shape pins. The first four are regressions found by
+ * hand while auditing the app for pre-existing bugs (none is about the theme
+ * system):
  *
  * 1. `comms_send`'s Rust `SendReceipt` is `#[serde(rename_all = "camelCase")]`
  *    (wire key `clientMsgId`), but the frontend declared the invoke result as
@@ -17,6 +18,13 @@ import { fileURLToPath } from "node:url";
  *    frontend's `EventKind` union didn't list them.
  * 4. Rust's `GraphEdge` sends a `weight` field the frontend's `MemoryEdge`
  *    interface didn't declare.
+ *
+ * 5. The thread-history surface (`history-api.ts` ↔ `agent_host.rs` /
+ *    `agents.rs`): every row and project struct field for field, after the
+ *    camelCase rename, and every `threads_*` command's argument keys. A
+ *    renamed field (`liveElsewhere` gating the composer's send hold) or a
+ *    renamed argument (`threads_sync_project`'s `cwd`) compiles on both sides
+ *    and silently arrives as `undefined` / fails to deserialize.
  *
  * Unlike `tests/state-payload-contract.test.ts` (which is specifically the
  * `save_app_state` / `bootstrap_app_state` payload and generalises over many
@@ -180,5 +188,98 @@ describe("MemoryEdge ↔ GraphEdge (#4)", () => {
 
     const tsFields = tsInterfaceProps(ts, "MemoryEdge");
     expect(rustFields.filter((f) => !tsFields.includes(f))).toEqual([]);
+  });
+});
+
+const snakeToCamel = (s: string) => s.replace(/_([a-z0-9])/g, (_, c: string) => c.toUpperCase());
+
+/** Tauri-visible argument names of `pub (async) fn <name>(...)`, as the
+ *  frontend must spell them: injected `State`/`AppHandle`/`Window` parameters
+ *  dropped, snake_case turned camelCase (Tauri's default for command args). */
+function rustCommandArgKeys(source: string, name: string): string[] {
+  const m = new RegExp(`pub (?:async )?fn ${name}\\s*\\(([\\s\\S]*?)\\)\\s*->`).exec(source);
+  if (!m) throw new Error(`Rust command ${name} not found — the source moved`);
+  // Strip generics first, innermost out, so `State<'_, Arc<X>>`'s comma
+  // cannot split a parameter.
+  let params = m[1];
+  for (let prev = ""; prev !== params;) {
+    prev = params;
+    params = params.replace(/<[^<>]*>/g, "");
+  }
+  return params
+    .split(",")
+    .map((p) => p.trim())
+    .filter((p) => p && !/:\s*(?:tauri::)?(?:State|AppHandle|Window|WebviewWindow)\s*$/.test(p))
+    .map((p) => snakeToCamel(p.split(":")[0].trim()));
+}
+
+/** Top-level keys of the object literal passed to `invoke("<name>", { ... })`
+ *  in `source`; `[]` when it is called with no argument object. */
+function tsInvokeArgKeys(source: string, name: string): string[] {
+  const m = new RegExp(`invoke(?:<[^(]*>)?\\(\\s*"${name}"\\s*(?:,\\s*\\{([^}]*)\\})?\\s*\\)`).exec(
+    source,
+  );
+  if (!m) throw new Error(`invoke("${name}") not found — the source moved`);
+  if (!m[1]) return [];
+  return m[1]
+    .split(",")
+    .map((p) => /^\s*(\w+)/.exec(p)?.[1])
+    .filter((k): k is string => !!k);
+}
+
+describe("thread history ↔ agent_host wire shapes (#5)", () => {
+  const host = read("src-tauri", "src", "commands", "agent_host.rs");
+  const commands = read("src-tauri", "src", "commands", "agents.rs");
+  const ts = read("src", "features", "chat", "lib", "history-api.ts");
+
+  // Rust struct → the TS interface that reads it.
+  const PAIRS: Array<[rust: string, ts: string]> = [
+    ["ThreadRow", "ThreadRow"],
+    ["ThreadProjectWire", "ThreadProject"],
+    ["ResumedThread", "ResumedThread"],
+    ["ImportCandidate", "ImportCandidate"],
+  ];
+
+  for (const [rustName, tsName] of PAIRS) {
+    it(`${tsName} matches Rust ${rustName} field for field`, () => {
+      const { attrs, body } = rustItem(host, "struct", rustName);
+      expect(attrs).toMatch(/rename_all\s*=\s*"camelCase"/);
+      const rustWire = rustStructFields(body).map(snakeToCamel);
+      expect(rustWire.length).toBeGreaterThan(1);
+      expect([...tsInterfaceProps(ts, tsName)].sort()).toEqual([...rustWire].sort());
+    });
+  }
+
+  it("ThreadRow carries liveElsewhere (floor against a vacuous pass)", () => {
+    expect(tsInterfaceProps(ts, "ThreadRow")).toContain("liveElsewhere");
+  });
+
+  it("the threads_* history commands are returned as those structs", () => {
+    expect(commands).toMatch(/fn threads_history\([\s\S]*?\) -> Result<Vec<[\w:]*ThreadRow>/);
+    expect(commands).toMatch(
+      /fn threads_projects\([\s\S]*?\) -> Result<Vec<[\w:]*ThreadProjectWire>/,
+    );
+  });
+
+  // Every `threads_*` command history-api.ts invokes, with its argument keys.
+  const invoked = [...ts.matchAll(/invoke(?:<[^(]*>)?\(\s*"(threads_\w+)"/g)].map((m) => m[1]);
+
+  it("covers the thread commands, including threads_sync_project", () => {
+    expect(invoked).toEqual(
+      expect.arrayContaining(["threads_sync_project", "threads_projects", "threads_history"]),
+    );
+  });
+
+  for (const name of invoked) {
+    it(`${name}'s argument keys match its Rust parameters`, () => {
+      expect([...tsInvokeArgKeys(ts, name)].sort()).toEqual(
+        [...rustCommandArgKeys(commands, name)].sort(),
+      );
+    });
+  }
+
+  it("threads_sync_project takes `cwd` on both sides", () => {
+    expect(rustCommandArgKeys(commands, "threads_sync_project")).toEqual(["cwd"]);
+    expect(tsInvokeArgKeys(ts, "threads_sync_project")).toEqual(["cwd"]);
   });
 });
