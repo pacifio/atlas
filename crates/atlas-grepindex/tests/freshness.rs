@@ -1,5 +1,7 @@
 //! Read-your-writes, fallbacks and HEAD moves: the index must never hide a match the plain
 //! scan finds.
+// `GrepIndex::open` refuses off Unix (see `Error::Unsupported`).
+#![cfg(unix)]
 
 mod common;
 

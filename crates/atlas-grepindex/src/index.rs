@@ -128,6 +128,12 @@ impl GrepIndex {
     /// [`ensure_built`](Self::ensure_built); until then [`candidates`](CandidateSource::candidates)
     /// returns `None`.
     pub fn open(root: &Path, opts: IndexOptions) -> Result<GrepIndex, Error> {
+        // Skipping a file unread is sound only while its stamp would change on
+        // any write. Windows exposes no change time or file id to std, so a
+        // same-size rewrite that restores mtime would be skipped there.
+        if !cfg!(unix) {
+            return Err(Error::Unsupported);
+        }
         let root = root.canonicalize()?;
         let repo = gix::open(&root).map_err(|_| Error::NotWorktreeRoot(root.clone()))?;
         let workdir = repo

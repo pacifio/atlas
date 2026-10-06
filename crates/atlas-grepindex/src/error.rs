@@ -16,6 +16,10 @@ pub enum Error {
     TooLarge,
     #[error("cancelled")]
     Cancelled,
+    #[error(
+        "the grep index runs on Unix only: elsewhere a file stamp cannot prove a file unchanged"
+    )]
+    Unsupported,
 }
 
 pub(crate) fn git_err(e: impl std::fmt::Display) -> Error {

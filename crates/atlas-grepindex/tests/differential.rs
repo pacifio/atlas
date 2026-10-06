@@ -1,5 +1,7 @@
 //! Differential test: on a fixture repository with a dirty work tree, `grep` with the index
 //! must return exactly what the plain scan returns, for random regexes and flags.
+// `GrepIndex::open` refuses off Unix (see `Error::Unsupported`).
+#![cfg(unix)]
 
 mod common;
 

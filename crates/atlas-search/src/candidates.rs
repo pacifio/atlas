@@ -18,17 +18,21 @@ use crate::{CancelToken, GrepRequest};
 pub struct FileStamp {
     pub size: u64,
     pub mtime_ns: i64,
-    /// Unix: status-change time, which no user tool can set (`cp -p`, `rsync -t` and
-    /// `touch -r` restore mtime only). Windows: creation time, which a save that
-    /// replaces the file changes; an in-place rewrite that restores mtime and size
-    /// is the remaining gap there.
+    /// Status-change time, which no user tool can set (`cp -p`, `rsync -t` and
+    /// `touch -r` restore mtime only).
     pub ctime_ns: i64,
-    /// Unix: the inode, which an atomic save (temp file renamed over) changes. 0 elsewhere.
+    /// The inode, which an atomic save (temp file renamed over) changes.
     pub inode: u64,
 }
 
 impl FileStamp {
+    /// `None` off Unix: std exposes no change time or file id there, so no
+    /// stamp could tell a same-size rewrite that restores mtime, and an index
+    /// must never vouch for a file.
     pub fn from_metadata(meta: &Metadata) -> Option<FileStamp> {
+        if !cfg!(unix) {
+            return None;
+        }
         let since_epoch = meta.modified().ok()?.duration_since(UNIX_EPOCH).ok()?;
         let (ctime_ns, inode) = change_time_and_inode(meta);
         Some(FileStamp {
@@ -52,14 +56,8 @@ fn change_time_and_inode(meta: &Metadata) -> (i64, u64) {
 }
 
 #[cfg(not(unix))]
-fn change_time_and_inode(meta: &Metadata) -> (i64, u64) {
-    let created = meta
-        .created()
-        .ok()
-        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-        .and_then(|d| i64::try_from(d.as_nanos()).ok())
-        .unwrap_or(0);
-    (created, 0)
+fn change_time_and_inode(_meta: &Metadata) -> (i64, u64) {
+    unreachable!("FileStamp::from_metadata returns None before asking")
 }
 
 /// Per-request answer from a [`CandidateSource`].
@@ -155,6 +153,7 @@ mod tests {
         assert_eq!(res.skipped_by_index, 0);
     }
 
+    #[cfg(unix)]
     #[test]
     fn stamp_is_the_files_metadata() {
         let dir = two_files();

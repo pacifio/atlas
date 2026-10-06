@@ -13,7 +13,8 @@ fn options() -> IndexOptions {
     }
 }
 
-/// `None` when `root` is not a git work-tree root or indexing is switched off.
+/// `None` when `root` is not a git work-tree root, indexing is switched off,
+/// or off Unix (`atlas_grepindex::Error::Unsupported`).
 pub fn open_for(root: &Path) -> Option<Arc<GrepIndex>> {
     if std::env::var("ATLAS_GREP_INDEX").as_deref() == Ok("off") {
         return None;
@@ -26,6 +27,7 @@ mod tests {
     use std::process::Command;
     use std::sync::Arc;
 
+    #[cfg(unix)]
     #[test]
     fn index_follows_watcher_and_git() {
         let dir = tempfile::tempdir().unwrap();
