@@ -36,8 +36,9 @@ pub(crate) const GRAMMARS: usize = 5;
 
 impl Lang {
     pub fn from_path(rel: &str) -> Option<Self> {
-        let ext = Path::new(rel).extension()?.to_str()?;
-        Some(match ext {
+        // `MAIN.RS` and `App.TS` are code too.
+        let ext = Path::new(rel).extension()?.to_str()?.to_ascii_lowercase();
+        Some(match ext.as_str() {
             "rs" => Self::Rust,
             "ts" | "mts" | "cts" => Self::TypeScript,
             "tsx" => Self::Tsx,

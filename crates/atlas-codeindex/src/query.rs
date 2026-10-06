@@ -17,7 +17,10 @@ const FTS_CANDIDATES: usize = 2000;
 /// Exact name / qualified-name matches always considered, even past the FTS cap.
 const EXACT_CANDIDATES: usize = 200;
 const DEFAULT_LIMIT: usize = 20;
-const MAX_LIMIT: usize = 200;
+pub(crate) const MAX_LIMIT: usize = 200;
+/// File systems that ignore case by default: a path that differs from the indexed one
+/// only in case names the same file there.
+const CASE_BLIND_FS: bool = cfg!(any(windows, target_os = "macos"));
 const MAX_ALTERNATIVES: usize = 8;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -213,12 +216,19 @@ impl CodeIndex {
     pub fn outline(&self, rel: &str) -> Result<Vec<SymbolHit>, IndexError> {
         let rel = rel.trim_start_matches("./").to_string();
         self.with_reader(|c| {
-            let mut stmt = c.prepare_cached(&format!(
-                "SELECT {HIT_COLUMNS} FROM symbols s JOIN files f ON f.id = s.file_id
-                 WHERE f.rel = ?1 ORDER BY s.start_byte, s.id"
-            ))?;
-            let rows = stmt.query_map([&rel], hit)?;
-            rows.collect()
+            let query = |collate: &str| -> rusqlite::Result<Vec<SymbolHit>> {
+                let mut stmt = c.prepare_cached(&format!(
+                    "SELECT {HIT_COLUMNS} FROM symbols s JOIN files f ON f.id = s.file_id
+                     WHERE f.rel = ?1{collate} ORDER BY s.start_byte, s.id"
+                ))?;
+                let rows = stmt.query_map([&rel], hit)?;
+                rows.collect()
+            };
+            let hits = query("")?;
+            if hits.is_empty() && CASE_BLIND_FS {
+                return query(" COLLATE NOCASE");
+            }
+            Ok(hits)
         })
     }
 
@@ -248,7 +258,7 @@ impl CodeIndex {
         };
         let mut found = self.with_reader(|c| exact(c, name))?;
         if let Some(p) = path {
-            found.retain(|h| h.rel == p);
+            found.retain(|h| h.rel == p || (CASE_BLIND_FS && h.rel.eq_ignore_ascii_case(p)));
         }
         found.retain(|h| is_within(&h.rel, within));
         if found.is_empty() {

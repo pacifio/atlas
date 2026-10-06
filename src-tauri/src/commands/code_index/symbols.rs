@@ -134,8 +134,27 @@ impl Scope {
         atlas_codeindex::is_within(index_rel, Some(&self.prefix))
     }
 
+    /// A path an agent passed, as an index-relative `/` path: relative to the
+    /// session root, or absolute inside the project (`\\` separators on Windows).
     pub(super) fn to_index(&self, session_rel: &str) -> String {
-        let rel = session_rel.trim_start_matches("./").trim_end_matches('/');
+        let root = self.project.index.root();
+        let given = Path::new(session_rel);
+        if given.is_absolute() {
+            let inside = given.strip_prefix(root).map(rel_string).or_else(|_| {
+                dunce::canonicalize(given)
+                    .map_err(|_| ())
+                    .and_then(|p| p.strip_prefix(root).map(rel_string).map_err(|_| ()))
+            });
+            if let Ok(rel) = inside {
+                return rel;
+            }
+        }
+        let normalized = if cfg!(windows) {
+            session_rel.replace('\\', "/")
+        } else {
+            session_rel.to_string()
+        };
+        let rel = normalized.trim_start_matches("./").trim_end_matches('/');
         if self.prefix.is_empty() {
             rel.to_string()
         } else {
@@ -510,6 +529,16 @@ mod tests {
         assert!(!found.contains("crates/store/src"), "{found}");
         let outline = call(&scope, "outline", &json!({ "path": "src/lib.rs" })).unwrap();
         assert!(outline.contains("Store"), "{outline}");
+        // An absolute path inside the project names the same file.
+        let abs = dir.path().join("crates/store/src/lib.rs");
+        let outline = call(&scope, "outline", &json!({ "path": abs.to_string_lossy() })).unwrap();
+        assert!(outline.contains("Store"), "{outline}");
+        let read = call(
+            &scope,
+            "read_symbol",
+            &json!({ "name": "open", "path": abs.to_string_lossy() }),
+        );
+        assert!(read.is_ok_and(|r| r.contains("Store::open")));
         let loc = grep_locator(&reg, &dir.path().join("crates/store")).unwrap();
         assert_eq!(
             loc.enclosing("src/lib.rs", 5).unwrap().qualified_name,
