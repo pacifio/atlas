@@ -10,6 +10,10 @@
 //! untyped receiver) never bind by name alone in Python/JS/TS, and only to methods in Rust/Go;
 //! value refs bind only through imports, module paths, the same module or a qualified tail;
 //! ties break deterministically (non-test +1000, module-prefix proximity, shallower QN, QN, id).
+//! Never bound: a name imported from outside the project or a Rust path into another crate
+//! (`tokio::spawn`, `use rusqlite::Connection`), which name matching would pin on an
+//! unrelated project symbol; a member call to its own caller (`self.inner.f()` inside `f`);
+//! and anything below [`MIN_CONFIDENCE`].
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -18,6 +22,10 @@ use crate::import_resolve::{rust_abs, rust_longest_module, ImportTarget, Reexpor
 use crate::universe::{SymRow, Universe, GO, PY, RUST, TS};
 
 pub(crate) const MAX_CANDIDATES: usize = 256;
+
+/// Edges weaker than this are dropped: a name shared by many symbols, or one no import
+/// reaches, is a guess, and a guess at hop 1 would read as a direct caller.
+pub(crate) const MIN_CONFIDENCE: f32 = 0.3;
 
 pub(crate) const CALLABLE_KINDS: &[&str] =
     &["fn", "function", "method", "constructor", "macro", "func"];
@@ -150,6 +158,8 @@ struct Binding {
     module: Option<String>,
     symbol: Option<String>,
     glob: bool,
+    /// Imported from outside the project (a dependency, the standard library).
+    external: bool,
 }
 
 pub(crate) struct Resolver<'u> {
@@ -159,6 +169,8 @@ pub(crate) struct Resolver<'u> {
     bindings: HashMap<i64, Vec<Binding>>,
     reach: HashMap<i64, (HashSet<i64>, Vec<String>)>,
     memo: HashMap<(i64, u8, String, String), Option<Resolved>>,
+    /// A symbol no candidate may be (see [`Resolver::resolve`]).
+    exclude: Option<i64>,
 }
 
 impl<'u> Resolver<'u> {
@@ -173,12 +185,22 @@ impl<'u> Resolver<'u> {
             if row.local_name.is_empty() {
                 continue;
             }
+            let unresolved = t.file.is_none() && t.module.is_none() && !t.glob;
+            let external = unresolved
+                && if u.fam_of(row.file_id) == RUST {
+                    let first = row.module_path.split("::").next().unwrap_or("");
+                    is_external_crate(u, &libs, first)
+                } else {
+                    // A relative import that failed to resolve is still the project's.
+                    !row.module_path.starts_with('.')
+                };
             bindings.entry(row.file_id).or_default().push(Binding {
                 local: row.local_name.clone(),
                 file: t.file,
                 module: t.module.clone(),
                 symbol: t.symbol.clone(),
                 glob: t.glob,
+                external,
             });
         }
         Resolver {
@@ -188,6 +210,7 @@ impl<'u> Resolver<'u> {
             bindings,
             reach: HashMap::new(),
             memo: HashMap::new(),
+            exclude: None,
         }
     }
 
@@ -209,12 +232,28 @@ impl<'u> Resolver<'u> {
             _ => 2,
         };
         let key = (r.file_id, group, receiver.clone(), r.name.clone());
-        if let Some(hit) = self.memo.get(&key) {
-            return hit.map(|d| (src, d));
-        }
-        let res = self.cascade(r.file_id, r.kind, &receiver, &r.name);
-        self.memo.insert(key, res);
-        res.map(|d| (src, d))
+        let res = match self.memo.get(&key) {
+            Some(hit) => *hit,
+            None => {
+                let res = self.cascade(r.file_id, r.kind, &receiver, &r.name);
+                self.memo.insert(key, res);
+                res
+            }
+        };
+        let (segs, qualified) = parse_receiver(&receiver);
+        let res = match res {
+            // `self.inner.with_reader(f)` inside `fn with_reader`: name matching found the
+            // caller itself, but an untyped member call goes to another symbol of that name.
+            Some(d) if d.dst == src && !segs.is_empty() && !qualified => {
+                self.exclude = Some(src);
+                let other = self.cascade(r.file_id, r.kind, &receiver, &r.name);
+                self.exclude = None;
+                other
+            }
+            res => res,
+        };
+        res.filter(|d| d.confidence >= MIN_CONFIDENCE)
+            .map(|d| (src, d))
     }
 
     /// The implementing/deriving type: the enclosing class (TS/Python), a same-file type, or
@@ -256,11 +295,16 @@ impl<'u> Resolver<'u> {
         if fam == RUST && member && RUST_STD_METHODS.contains(&name) {
             return None;
         }
-        let ok = |s: &SymRow| kind_ok(kind, s) && u.fam_of(s.file_id) == fam;
+        let exclude = self.exclude;
+        let ok =
+            |s: &SymRow| kind_ok(kind, s) && u.fam_of(s.file_id) == fam && Some(s.id) != exclude;
         let value = kind == RefKind::Value;
 
         // Rust paths through the real module tree.
         if fam == RUST && qualified {
+            if self.is_external_path(f, &segs) {
+                return None;
+            }
             if let Some(abs) = rust_abs(u, &self.libs, &u.file(f).module, &segs) {
                 if let Some((_, m, rest)) = rust_longest_module(u, &abs) {
                     let files: Vec<i64> = u.files_of_module(RUST, &m).to_vec();
@@ -275,6 +319,9 @@ impl<'u> Resolver<'u> {
 
         // S1 import_map / S1b import_map_suffix.
         if let Some((b, rest)) = self.binding_for(f, &segs, name) {
+            if b.external {
+                return None;
+            }
             let (files, mut need) = self.binding_scope(fam, &b, &rest);
             let target_name = match (&b.symbol, segs.is_empty()) {
                 (Some(s), true) if s != "*" && s != "default" => s.clone(),
@@ -453,6 +500,21 @@ impl<'u> Resolver<'u> {
     }
 
     /// The import binding a receiver (or a bare name) goes through, plus the leftover segments.
+    /// A Rust path into another crate (`tokio::spawn`, `std::fs::read`, `u64::from`): its
+    /// first segment is no import, module or crate of this project.
+    fn is_external_path(&self, f: i64, segs: &[&str]) -> bool {
+        let Some(first) = segs.first() else {
+            return false;
+        };
+        let imported = self
+            .bindings
+            .get(&f)
+            .is_some_and(|v| v.iter().any(|b| !b.glob && b.local == *first));
+        !imported
+            && rust_abs(self.u, &self.libs, &self.u.file(f).module, segs).is_none()
+            && is_external_crate(self.u, &self.libs, first)
+    }
+
     fn binding_for(&self, f: i64, segs: &[&str], name: &str) -> Option<(Binding, Vec<String>)> {
         let list = self.bindings.get(&f)?;
         if segs.is_empty() {
@@ -577,13 +639,26 @@ fn kind_ok(kind: RefKind, s: &SymRow) -> bool {
     }
 }
 
+/// Whether `first`, the first segment of a Rust path, names a crate outside the project:
+/// lower-case (a type such as `Self` or `Vec` is not a crate), not `crate`/`self`/`super`,
+/// no library of the workspace, and no module the project declares (an inline `mod tests`
+/// has no module key of its own).
+fn is_external_crate(u: &Universe, libs: &BTreeSet<String>, first: &str) -> bool {
+    first.starts_with(|c: char| c.is_ascii_lowercase())
+        && !matches!(first, "crate" | "self" | "super")
+        && !libs.contains(first)
+        && !u
+            .by_name
+            .get(first)
+            .is_some_and(|v| v.iter().any(|i| u.syms[*i].kind == "mod"))
+}
+
 fn starts_upper(s: &str) -> bool {
     s.chars().next().is_some_and(|c| c.is_ascii_uppercase())
 }
 
 fn split_segments(s: &str) -> impl Iterator<Item = &str> {
-    s.split(|c| c == ':' || c == '.' || c == '/' || c == '#')
-        .filter(|x| !x.is_empty())
+    s.split([':', '.', '/', '#']).filter(|x| !x.is_empty())
 }
 
 fn qn_depth(qn: &str) -> usize {
@@ -784,10 +859,92 @@ mod tests {
         files.extend((0..6).map(|k| file(2 + k, &format!("p{k}.py"), "python", &format!("p{k}"))));
         let u = Universe::from_parts(files, syms, vec![], HashMap::new());
         let mut r = resolver(&u, vec![]);
-        let (_, d) = r.resolve(&call(1, 1, "run", "")).unwrap();
+        let d = r.cascade(1, RefKind::Call, "", "run").unwrap();
         assert_eq!((d.dst, d.strategy), (104, "suffix_match"));
         // 6 candidates, none import-reachable: 0.55 · 3/6 · 0.5
         assert!((d.confidence - 0.1375).abs() < 1e-6);
+        // ... below the floor, so no edge is written.
+        assert!(r.resolve(&call(1, 1, "run", "")).is_none());
+    }
+
+    /// `tempfile::tempdir()` and `use rusqlite::Connection` name other crates: binding them
+    /// to a project symbol of the same name was 396 and 77 false edges in Atlas itself.
+    #[test]
+    fn paths_and_imports_into_other_crates_never_bind_by_name() {
+        let u = Universe::from_parts(
+            vec![
+                file(1, "a.rs", "rust", "c::a"),
+                file(2, "b.rs", "rust", "c::b"),
+            ],
+            vec![
+                sym(1, 1, None, "fn", "caller", "c::a::caller"),
+                sym(2, 1, None, "mod", "tests", "c::a::tests"),
+                sym(3, 1, Some(2), "fn", "helper", "c::a::tests::helper"),
+                sym(20, 2, None, "fn", "tempdir", "c::b::tempdir"),
+                sym(30, 2, None, "struct", "Connection", "c::b::Connection"),
+            ],
+            vec![imp(1, "Connection", "rusqlite", "Connection")],
+            HashMap::new(),
+        );
+        let mut r = resolver(&u, vec![ImportTarget::default()]);
+        assert!(r.resolve(&call(1, 1, "tempdir", "tempfile::")).is_none());
+        assert!(r.resolve(&call(1, 1, "from", "u64::")).is_none());
+        let ty = RefRow {
+            kind: RefKind::Type,
+            ..call(1, 1, "Connection", "")
+        };
+        assert!(r.resolve(&ty).is_none());
+        // The project's own paths still resolve: through `crate::`, and through a
+        // module declared inline (`mod tests { .. }` has no module key of its own).
+        let d = r.resolve(&call(1, 1, "tempdir", "crate::b::")).unwrap().1;
+        assert_eq!((d.dst, d.strategy), (20, "module_path"));
+        assert_eq!(
+            r.resolve(&call(1, 1, "helper", "tests::")).unwrap().1.dst,
+            3
+        );
+    }
+
+    /// `self.inner.with_reader(f)` inside `fn with_reader` calls the other `with_reader`;
+    /// name matching alone picked the caller, a self-loop that hid the real target.
+    #[test]
+    fn an_untyped_member_call_never_resolves_to_its_own_caller() {
+        let u = Universe::from_parts(
+            vec![file(1, "lib.rs", "rust", "c")],
+            vec![
+                sym(10, 1, None, "struct", "CodeIndex", "CodeIndex"),
+                sym(
+                    11,
+                    1,
+                    Some(10),
+                    "method",
+                    "with_reader",
+                    "CodeIndex::with_reader",
+                ),
+                sym(20, 1, None, "struct", "Inner", "Inner"),
+                sym(
+                    21,
+                    1,
+                    Some(20),
+                    "method",
+                    "with_reader",
+                    "Inner::with_reader",
+                ),
+            ],
+            vec![],
+            HashMap::new(),
+        );
+        let mut r = resolver(&u, vec![]);
+        let d = r
+            .resolve(&call(1, 11, "with_reader", "self.inner"))
+            .unwrap()
+            .1;
+        assert_eq!(d.dst, 21);
+        // Recursion through a typed receiver is still recorded.
+        let d = r
+            .resolve(&call(1, 11, "with_reader", "CodeIndex::"))
+            .unwrap()
+            .1;
+        assert_eq!(d.dst, 11);
     }
 
     #[test]

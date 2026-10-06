@@ -180,17 +180,22 @@ fn neighbours(
         .collect()
 }
 
-/// Breadth-first from `seeds`; returns (node, hop, confidence) without the seeds.
+/// Nodes a walk reached: (node, hop, confidence).
+type Reached = Vec<(Node, u8, f64)>;
+
+/// Breadth-first from `seeds`; returns (node, hop, confidence) without the seeds. A node's
+/// confidence is its path's weakest edge: a hop-2 caller is no surer than the hop-1 edge
+/// it was reached through.
 fn bfs(
     c: &Connection,
     seeds: &[Node],
     relation: Relation,
     hops: u8,
-) -> rusqlite::Result<(Vec<(Node, u8, f64)>, bool)> {
+) -> rusqlite::Result<(Reached, bool)> {
     let mut seen: BTreeSet<Node> = seeds.iter().copied().collect();
-    let mut queue: VecDeque<(Node, u8)> = seeds.iter().map(|&n| (n, 0)).collect();
+    let mut queue: VecDeque<(Node, u8, f64)> = seeds.iter().map(|&n| (n, 0, 1.0)).collect();
     let mut out = Vec::new();
-    while let Some((node, hop)) = queue.pop_front() {
+    while let Some((node, hop, path)) = queue.pop_front() {
         if hop >= hops {
             continue;
         }
@@ -201,8 +206,9 @@ fn bfs(
             if seen.len() > MAX_ROWS {
                 return Ok((out, true));
             }
+            let conf = conf.min(path);
             out.push((next, hop + 1, conf));
-            queue.push_back((next, hop + 1));
+            queue.push_back((next, hop + 1, conf));
         }
     }
     Ok((out, false))
