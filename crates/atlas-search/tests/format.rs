@@ -25,6 +25,31 @@ fn files_mode_is_a_table_with_the_count_first() {
     );
 }
 
+/// A capped search's totals are lower bounds, and the header says so.
+#[test]
+fn a_capped_count_is_marked_as_a_lower_bound() {
+    let body = "x\n".repeat(2_000);
+    let files: Vec<(String, Vec<u8>)> = (0..10)
+        .map(|i| (format!("f{i}.txt"), body.clone().into_bytes()))
+        .collect();
+    let refs: Vec<(&str, &[u8])> = files
+        .iter()
+        .map(|(n, b)| (n.as_str(), b.as_slice()))
+        .collect();
+    let dir = tree(&refs);
+    let req = GrepRequest {
+        mode: OutputMode::Count,
+        limit: Some(1),
+        ..GrepRequest::new(dir.path(), "x")
+    };
+    let out = text(&req);
+    assert!(out.contains(": >="), "{out}");
+    assert!(
+        out.contains("partial: stopped after 10000 matching lines"),
+        "{out}"
+    );
+}
+
 #[test]
 fn content_mode_is_ripgrep_heading_style() {
     let dir = tree(&[

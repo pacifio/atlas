@@ -169,6 +169,24 @@ fn smart_case_is_the_default() {
     assert_eq!(rels(&run(&forced)), ["b.txt"]);
 }
 
+/// Git for Windows checks files out with CRLF endings by default: `$` must
+/// still match at the end of each line.
+#[test]
+fn line_end_anchor_matches_crlf_lines() {
+    let dir = tree(&[("win.c", b"int a;\r\nint b\r\nint c;\r\n")]);
+    let res = run(&content(dir.path(), ";$"));
+    let lines: Vec<u64> = res.files[0].lines.iter().map(|l| l.line).collect();
+    assert_eq!(lines, [1, 3]);
+    assert_eq!(res.files[0].lines[0].text, "int a;");
+    let multiline = GrepRequest {
+        multiline: true,
+        ..content(dir.path(), r"b$\s+int c")
+    };
+    let res = run(&multiline);
+    let lines: Vec<u64> = res.files[0].lines.iter().map(|l| l.line).collect();
+    assert_eq!(lines, [2, 3], "a match across a CRLF");
+}
+
 #[test]
 fn line_anchors_match_every_line() {
     let dir = tree(&[("a.rs", b"// x\nfn one() {}\n")]);
@@ -239,6 +257,8 @@ fn deny_globs_hide_secrets() {
         ("app/.env.local", b"TOKEN=needle\n"),
         (".env.example", b"TOKEN=needle\n"),
         ("certs/server.pem", b"needle\n"),
+        ("certs/Server.PEM", b"needle\n"),
+        ("upper/.ENV", b"needle\n"),
         ("home/id_rsa", b"needle\n"),
         ("src/main.rs", b"needle\n"),
     ]);
@@ -297,6 +317,25 @@ fn gitignore_is_respected_unless_include_ignored() {
         ..GrepRequest::new(dir.path(), "needle")
     };
     assert_eq!(run(&all).total_files, 3);
+}
+
+/// `.atlas/` holds Atlas's indexes and logs with the user's own prompts.
+#[test]
+fn the_atlas_dir_is_never_searched() {
+    for dir in [
+        tree(&[(".atlas/logs.jsonl", b"needle\n"), ("a.txt", b"needle\n")]),
+        git_tree(&[(".atlas/logs.jsonl", b"needle\n"), ("a.txt", b"needle\n")]),
+    ] {
+        let all = GrepRequest {
+            include_ignored: true,
+            ..GrepRequest::new(dir.path(), "needle")
+        };
+        assert_eq!(rels(&run(&all)), ["a.txt"]);
+        assert_eq!(
+            rels(&run(&GrepRequest::new(dir.path(), "needle"))),
+            ["a.txt"]
+        );
+    }
 }
 
 #[test]

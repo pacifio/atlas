@@ -232,16 +232,18 @@ fn build_matcher(req: &GrepRequest) -> Result<RegexMatcher, SearchError> {
         .word(req.word)
         // `^`/`$` match at line boundaries, as in ripgrep.
         .multi_line(true)
+        // ... and `$` also before a `\r\n` (Windows checkouts). This sets a
+        // `\r\n` terminator, replaced below: the searcher splits on `\n`.
+        .crlf(true)
         .dot_matches_new_line(req.multiline)
         // A pattern can never match NUL: walked binaries stop at the first one.
         .ban_byte(Some(b'\0'))
         // Reject pathological model-supplied patterns at compile time.
         .size_limit(32 << 20)
         .dfa_size_limit(64 << 20);
-    if !req.multiline {
-        // The inner-literal fast path (spec 05 §1 #4) needs this.
-        builder.line_terminator(Some(b'\n'));
-    }
+    // The inner-literal fast path (spec 05 §1 #4) needs a terminator; a
+    // multiline match may span one, so it gets none.
+    builder.line_terminator((!req.multiline).then_some(b'\n'));
     builder.build(&req.pattern).map_err(|e| regex_error(&e))
 }
 

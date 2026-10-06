@@ -27,7 +27,10 @@ pub fn grep_text(
     let pat = shown_pattern(req);
     match req.mode {
         OutputMode::FilesWithMatches => {
-            let head = format!("grep {pat}: {} files, newest first\n", res.total_files);
+            let head = format!(
+                "grep {pat}: {} files, newest first\n",
+                at_least(res.total_files, res)
+            );
             let rows = res.files.iter().map(|f| vec![f.rel.clone()]).collect();
             tabled(
                 res,
@@ -43,7 +46,8 @@ pub fn grep_text(
         OutputMode::Count => {
             let head = format!(
                 "grep {pat}: {} matching lines in {} files, newest first\n",
-                res.total_matches, res.total_files
+                at_least(res.total_matches, res),
+                at_least(res.total_files, res)
             );
             let rows = res
                 .files
@@ -139,6 +143,16 @@ fn shown_pattern(req: &GrepRequest) -> String {
 
 fn where_(path: Option<&std::path::Path>) -> String {
     path.map_or_else(|| "the project".to_string(), |p| p.display().to_string())
+}
+
+/// A total, as `>=N` when the search stopped early (the match cap, the
+/// deadline or a cancel), so it is never mistaken for the whole count.
+fn at_least(n: usize, res: &GrepResult) -> String {
+    if res.partial || res.match_cap_hit {
+        format!(">={n}")
+    } else {
+        n.to_string()
+    }
 }
 
 fn notes(res: &GrepResult) -> String {
@@ -322,8 +336,8 @@ fn content(
     let head = format!(
         "grep {}: {} matching lines in {} files, newest first (at most {PER_FILE_LINE_CAP} shown per file)\n",
         shown_pattern(req),
-        res.total_matches,
-        res.total_files
+        at_least(res.total_matches, res),
+        at_least(res.total_files, res)
     );
     let assemble = |lines: &[Out], page: &Page| {
         let mut out = head.clone();

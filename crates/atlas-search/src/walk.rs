@@ -14,6 +14,7 @@ use crate::SearchError;
 /// Secret files hidden from both tools unless a request names the file as its
 /// `path`. Gitignore-style: a pattern without `/` matches a file name at any
 /// depth; a leading `!` re-includes (so `.env.example` stays searchable).
+/// Matched ignoring case, so `.ENV` and `Server.PEM` are hidden too.
 pub const DEFAULT_DENY_GLOBS: &[&str] = &[
     ".env",
     ".env.*",
@@ -27,6 +28,10 @@ pub const DEFAULT_DENY_GLOBS: &[&str] = &[
 /// Version-control directories, skipped even though hidden files are walked.
 const VCS_DIRS: &[&str] = &[".git", ".hg", ".svn", ".jj", ".sl"];
 
+/// Atlas's own per-project state (indexes, and logs that hold the user's
+/// prompts): never searched, ignored or not, git repository or not.
+const ATLAS_DIR: &str = ".atlas";
+
 /// Files larger than this are skipped and counted, never read.
 pub(crate) const MAX_FILE_BYTES: u64 = 10 << 20;
 
@@ -39,6 +44,12 @@ pub(crate) fn threads() -> usize {
 
 fn is_vcs_dir(name: &OsStr) -> bool {
     VCS_DIRS.iter().any(|vcs| name == OsStr::new(vcs))
+}
+
+fn is_skipped_dir(entry: &ignore::DirEntry) -> bool {
+    let name = entry.file_name();
+    is_vcs_dir(name)
+        || (name == OsStr::new(ATLAS_DIR) && entry.file_type().is_some_and(|t| t.is_dir()))
 }
 
 /// The canonical session root and the canonical place a request starts from.
@@ -134,6 +145,7 @@ impl DenyList {
             };
             let glob = GlobBuilder::new(pattern)
                 .literal_separator(true)
+                .case_insensitive(true)
                 .build()
                 .map_err(|e| SearchError::Glob(format!("deny glob {raw:?}: {e}")))?;
             let by_rel = pattern.contains('/');
@@ -181,7 +193,7 @@ pub(crate) fn parallel_walker(spec: &WalkSpec<'_>) -> Result<WalkParallel, Searc
         .require_git(true)
         .follow_links(false)
         .threads(threads())
-        .filter_entry(|entry| !is_vcs_dir(entry.file_name()));
+        .filter_entry(|entry| !is_skipped_dir(entry));
     if spec.include_ignored {
         wb.git_ignore(false)
             .git_global(false)
