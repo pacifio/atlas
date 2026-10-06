@@ -63,6 +63,11 @@ so the user and the agents get the same matches.
 ## Consequences
 
 - Search no longer depends on `rg` being installed, and needs no approval prompt in any mode.
+- Claude Code asked before every call to it until the session request carried the offered servers
+  as pre-approved: `_meta.claudeCode.options.allowedTools` (`mcp__<server>`), which its ACP adapter
+  passes to the Agent SDK. That is the native agent's standing for the same servers. An ACP session
+  is offered no server with ask-first tools, so nothing outward is pre-approved. Other ACP adapters
+  ignore the key, and their own permission rules still apply.
 - Every session's fixed prefix carries two more tool schemas and the server instructions: about
   3.1 KB (2.6 KB of schema, 0.5 KB of instructions) for the native agent, and the same for ACP
   agents that take the server.

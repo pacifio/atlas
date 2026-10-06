@@ -36,7 +36,7 @@ pub const INSTRUCTIONS: &str = "\
 Code search over your session's directory, in-process. grep finds text in files (Rust regex, or \
 literal=true); find_files finds paths by glob or fuzzy name. Both read the working tree as it is \
 now, including your own edits, respect .gitignore, and skip binary and secret files (.env, keys). \
-Prefer them to rg, grep or find in a shell: they are faster, need no approval, and page their \
+Prefer them to rg, grep or find in a shell: they are faster, read-only, and page their \
 output, so follow next_offset instead of re-running a broader search. Paths are relative to your cwd. \
 Searching: grep for exact identifiers and strings; find_symbol for definitions by name; \
 semantic_search for behaviour described in words; related/impact_of_diff before edits; \

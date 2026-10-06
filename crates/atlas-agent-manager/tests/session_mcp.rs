@@ -83,6 +83,11 @@ async fn an_agent_advertising_http_mcp_gets_the_server_with_its_token_on_session
     assert_eq!(requests.len(), 1, "{requests:?}");
     assert_eq!(requests[0].0, "session/new");
     assert_eq!(requests[0].1["mcpServers"], the_memory_entry("token-1"));
+    assert_eq!(
+        requests[0].1["_meta"]["claudeCode"]["options"]["allowedTools"],
+        json!(["mcp__atlas_memory"]),
+        "the offered server rides pre-approved for the Claude Code adapter",
+    );
 
     let asked = offering.asked.lock().unwrap().clone();
     assert_eq!(asked.len(), 1);
@@ -134,6 +139,11 @@ async fn an_agent_without_http_mcp_gets_no_server_entry() {
         json!([]),
         "an HTTP server never reaches an agent that did not advertise HTTP MCP",
     );
+    assert_eq!(
+        requests[0].1["_meta"],
+        serde_json::Value::Null,
+        "nothing to pre-approve"
+    );
     let asked = offering.asked.lock().unwrap().clone();
     assert!(
         !asked[0].http_mcp,
@@ -168,6 +178,11 @@ async fn a_loaded_session_gets_the_server_and_its_token_is_bound_to_that_session
     let requests = session_requests(&pid_file);
     assert_eq!(requests[0].0, "session/load");
     assert_eq!(requests[0].1["mcpServers"], the_memory_entry("token-1"));
+    assert_eq!(
+        requests[0].1["_meta"]["claudeCode"]["options"]["allowedTools"],
+        json!(["mcp__atlas_memory"]),
+        "the offered server rides pre-approved for the Claude Code adapter",
+    );
     assert_eq!(
         offering.asked.lock().unwrap()[0].session_id,
         Some(acp::SessionId::new("stored-7")),
@@ -205,6 +220,11 @@ async fn a_resumed_session_gets_the_server() {
     let requests = session_requests(&pid_file);
     assert_eq!(requests[0].0, "session/resume");
     assert_eq!(requests[0].1["mcpServers"], the_memory_entry("token-1"));
+    assert_eq!(
+        requests[0].1["_meta"]["claudeCode"]["options"]["allowedTools"],
+        json!(["mcp__atlas_memory"]),
+        "the offered server rides pre-approved for the Claude Code adapter",
+    );
     assert_eq!(
         *offering.settled.lock().unwrap(),
         vec![("token-1".to_string(), Some("stored-8".to_string()))],

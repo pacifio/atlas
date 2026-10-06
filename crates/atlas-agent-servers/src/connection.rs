@@ -1024,6 +1024,7 @@ impl AgentConnection for AcpConnection {
                     |conn, id, dirs, mcp_servers| {
                         async move {
                             let mut request = acp::LoadSessionRequest::new(id, dirs.cwd);
+                            request.meta = session_mcp::preapproval_meta(&mcp_servers);
                             request.mcp_servers = mcp_servers;
                             if !dirs.additional_directories.is_empty() {
                                 request.additional_directories = dirs.additional_directories;
@@ -1071,6 +1072,7 @@ impl AgentConnection for AcpConnection {
                     |conn, id, dirs, mcp_servers| {
                         async move {
                             let mut request = acp::ResumeSessionRequest::new(id, dirs.cwd);
+                            request.meta = session_mcp::preapproval_meta(&mcp_servers);
                             request.mcp_servers = mcp_servers;
                             if !dirs.additional_directories.is_empty() {
                                 request.additional_directories = dirs.additional_directories;
