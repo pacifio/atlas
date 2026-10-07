@@ -4,8 +4,8 @@ mod support;
 
 use atlas_search::format::{find_text, grep_text};
 use atlas_search::{
-    grep, CancelToken, EnclosingSymbol, FindRequest, FindResult, GrepRequest, OutputMode,
-    SymbolLocator, DEFAULT_BUDGET_BYTES,
+    grep, CancelToken, EnclosingSymbol, FileHit, FindRequest, FindResult, GrepRequest, GrepResult,
+    OutputMode, SymbolLocator, DEFAULT_BUDGET_BYTES,
 };
 use support::{set_mtime, tree};
 
@@ -48,6 +48,41 @@ fn a_capped_count_is_marked_as_a_lower_bound() {
         out.contains("partial: stopped after 10000 matching lines"),
         "{out}"
     );
+}
+
+/// `\r$` never matches: a CRLF line is matched without its `\r`. Say so.
+#[test]
+fn a_carriage_return_that_matches_nothing_is_explained() {
+    let dir = tree(&[("win.c", b"int a;\r\n")]);
+    let out = text(&GrepRequest::new(dir.path(), r";\r$"));
+    assert!(out.starts_with("No matches"), "{out}");
+    assert!(out.contains("drop \\r"), "{out}");
+}
+
+/// The file the cap stopped in shows its count as a lower bound too.
+#[test]
+fn a_file_cut_by_the_cap_shows_its_count_as_a_lower_bound() {
+    let hit = |rel: &str, matches: u32, cut: bool| FileHit {
+        rel: rel.into(),
+        mtime_ms: 0,
+        matches,
+        cut,
+        lines: Vec::new(),
+    };
+    let res = GrepResult {
+        files: vec![hit("a.txt", 2000, false), hit("b.txt", 37, true)],
+        total_files: 2,
+        total_matches: 2037,
+        match_cap_hit: true,
+        ..GrepResult::default()
+    };
+    let req = GrepRequest {
+        mode: OutputMode::Count,
+        ..GrepRequest::new(".", "x")
+    };
+    let out = grep_text(&res, &req, None, DEFAULT_BUDGET_BYTES);
+    assert!(out.contains("  a.txt 2000\n"), "{out}");
+    assert!(out.contains("  b.txt >=37\n"), "{out}");
 }
 
 #[test]

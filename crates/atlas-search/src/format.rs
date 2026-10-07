@@ -52,7 +52,14 @@ pub fn grep_text(
             let rows = res
                 .files
                 .iter()
-                .map(|f| vec![f.rel.clone(), f.matches.to_string()])
+                .map(|f| {
+                    let n = if f.cut {
+                        format!(">={}", f.matches)
+                    } else {
+                        f.matches.to_string()
+                    };
+                    vec![f.rel.clone(), n]
+                })
                 .collect();
             tabled(
                 res,
@@ -197,8 +204,14 @@ fn no_matches(res: &GrepResult, req: &GrepRequest) -> String {
     } else {
         String::new()
     };
+    // CRLF files are matched line by line without their `\r`, as `rg --crlf` does.
+    let cr = if !req.multiline && !req.literal && req.pattern.contains("\\r") {
+        " A line never holds its \\r: `$` already matches before a CRLF ending, so drop \\r."
+    } else {
+        ""
+    };
     format!(
-        "No matches for {} in {} (searched {} files{by_index}{ignored}).\n",
+        "No matches for {} in {} (searched {} files{by_index}{ignored}).{cr}\n",
         shown_pattern(req),
         where_(req.path.as_deref()),
         res.searched_files

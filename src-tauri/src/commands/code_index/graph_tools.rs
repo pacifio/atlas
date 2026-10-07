@@ -20,13 +20,13 @@ pub fn graph_tool_specs() -> Vec<(&'static str, &'static str, Value)> {
              editing or renaming to see the ripple.",
             json!({ "type": "object", "properties": {
                 "symbol": { "type": "string", "description": "Qualified or plain name, or a path for importers/imports." },
-                "relation": { "type": "string", "enum": ["callers","callees","importers","imports","implementations","tests"] },
+                "relation": { "type": "string", "enum": ["callers","callees","importers","imports","implementations","tests"], "description": "Default callers." },
                 "hops": { "type": "integer", "minimum": 1, "maximum": 3, "description": "Default 1." },
                 "include_tests": { "type": "boolean" },
                 "limit": { "type": "integer", "minimum": 1, "maximum": 500 },
                 "offset": { "type": "integer", "minimum": 0 },
                 "max_output_tokens": budget },
-                "required": ["symbol", "relation"] }),
+                "required": ["symbol"] }),
         ),
         (
             "impact_of_diff",
@@ -76,8 +76,8 @@ pub fn call(scope: &Scope, name: &str, args: &Value) -> Result<String, String> {
     match name {
         "related" => {
             let target = arg_str(args, "symbol").ok_or("related needs `symbol`")?;
-            let relation = arg_str(args, "relation")
-                .and_then(Relation::parse)
+            let relation_name = arg_str(args, "relation").unwrap_or("callers");
+            let relation = Relation::parse(relation_name)
                 .ok_or_else(|| format!("related needs `relation`: one of {RELATIONS}"))?;
             // Importers/imports take a session-relative path; every other relation a name
             // (Python qualified names contain dots, so dots alone do not make a path).
@@ -111,7 +111,7 @@ pub fn call(scope: &Scope, name: &str, args: &Value) -> Result<String, String> {
                 e => e.to_string(),
             })?;
             let table = Table {
-                name: arg_str(args, "relation").unwrap_or("related").into(),
+                name: relation_name.into(),
                 cols: COLS.to_vec(),
                 rows: rows(scope, &hits),
             };
@@ -245,5 +245,8 @@ mod tests {
         )
         .unwrap_err();
         assert!(bad.contains("callers, callees"), "{bad}");
+        // No relation: callers.
+        let callers = call(&scope, "related", &serde_json::json!({ "symbol": "leaf" })).unwrap();
+        assert!(callers.starts_with("callers:"), "{callers}");
     }
 }

@@ -123,6 +123,16 @@ fn lookaround_error_is_actionable() {
 }
 
 #[test]
+fn a_newline_without_multiline_says_how_to_match_across_lines() {
+    let dir = tree(&[("a.rs", b"x\ny\n")]);
+    let err = grep(&GrepRequest::new(dir.path(), r"x\ny"), &CancelToken::new()).unwrap_err();
+    let SearchError::Regex(message) = err else {
+        panic!("expected a regex error, got {err:?}")
+    };
+    assert!(message.contains("multiline=true"), "{message}");
+}
+
+#[test]
 fn pathological_regex_bounded() {
     let dir = tree(&[("a.txt", "a".repeat(1 << 20).as_bytes())]);
     let started = Instant::now();
@@ -348,6 +358,34 @@ fn the_atlas_dir_is_never_searched() {
             ));
         }
     }
+}
+
+/// The cap stops a search inside a file: that file's count is marked, every
+/// other one is whole.
+#[test]
+fn a_file_the_match_cap_stopped_in_is_marked_cut() {
+    let body = "x\n".repeat(2_000);
+    let files: Vec<(String, Vec<u8>)> = (0..10)
+        .map(|i| (format!("f{i}.txt"), body.clone().into_bytes()))
+        .collect();
+    let refs: Vec<(&str, &[u8])> = files
+        .iter()
+        .map(|(n, b)| (n.as_str(), b.as_slice()))
+        .collect();
+    let dir = tree(&refs);
+    let req = GrepRequest {
+        mode: OutputMode::Count,
+        limit: Some(1),
+        ..GrepRequest::new(dir.path(), "x")
+    };
+    let res = run(&req);
+    assert!(res.match_cap_hit);
+    assert!(res.files.iter().any(|f| f.cut), "{:?}", res.files);
+    assert!(res
+        .files
+        .iter()
+        .filter(|f| !f.cut)
+        .all(|f| f.matches == 2_000));
 }
 
 #[test]

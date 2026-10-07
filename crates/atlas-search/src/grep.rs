@@ -114,6 +114,9 @@ pub struct FileHit {
     pub mtime_ms: i64,
     /// Matching lines in the file (files mode stops at the first: 1).
     pub matches: u32,
+    /// The search stopped inside this file (the match cap, or a cancel), so
+    /// `matches` is a lower bound.
+    pub cut: bool,
     /// Content mode only: at most [`PER_FILE_LINE_CAP`] matching lines plus
     /// their context, in line order.
     pub lines: Vec<LineHit>,
@@ -244,11 +247,13 @@ fn build_matcher(req: &GrepRequest) -> Result<RegexMatcher, SearchError> {
     // The inner-literal fast path (spec 05 §1 #4) needs a terminator; a
     // multiline match may span one, so it gets none.
     builder.line_terminator((!req.multiline).then_some(b'\n'));
-    builder.build(&req.pattern).map_err(|e| regex_error(&e))
+    builder
+        .build(&req.pattern)
+        .map_err(|e| regex_error(&e, req))
 }
 
 /// The engine's message cut to its one useful line, plus what to do instead.
-fn regex_error(err: &grep_regex::Error) -> SearchError {
+fn regex_error(err: &grep_regex::Error, req: &GrepRequest) -> SearchError {
     let text = err.to_string();
     let detail = text
         .lines()
@@ -257,6 +262,11 @@ fn regex_error(err: &grep_regex::Error) -> SearchError {
         .map(str::trim)
         .or_else(|| text.lines().map(str::trim).find(|l| !l.is_empty()))
         .unwrap_or("invalid pattern");
+    if !req.multiline && req.pattern.contains("\\n") {
+        return SearchError::Regex(format!(
+            "{detail}. A match stays within one line: set multiline=true to match across lines."
+        ));
+    }
     SearchError::Regex(format!(
         "{detail}. Rust regex syntax: no look-around or backreferences; escape literal ( ) [ ] {{ }} with \\, or set literal=true."
     ))
@@ -346,6 +356,7 @@ impl Shared<'_> {
             kept: 0,
             last_kept: false,
             binary: false,
+            cut: false,
         };
         // An unreadable file is skipped, as ripgrep skips it.
         if searcher.search_path(self.matcher, path, &mut sink).is_err() {
@@ -361,6 +372,7 @@ impl Shared<'_> {
             rel,
             mtime_ms: mtime_ms(meta),
             matches: sink.matches,
+            cut: sink.cut,
             lines: sink.lines,
         };
         self.hits
@@ -385,6 +397,8 @@ struct HitSink<'s, 'a> {
     kept: usize,
     last_kept: bool,
     binary: bool,
+    /// Stopped here by [`Shared::should_stop`].
+    cut: bool,
 }
 
 impl Sink for HitSink<'_, '_> {
@@ -417,7 +431,8 @@ impl Sink for HitSink<'_, '_> {
         if self.shared.req.mode == OutputMode::FilesWithMatches {
             return Ok(false); // the first hit is enough
         }
-        Ok(!self.shared.should_stop())
+        self.cut = self.shared.should_stop();
+        Ok(!self.cut)
     }
 
     fn context(&mut self, _: &Searcher, c: &SinkContext<'_>) -> Result<bool, io::Error> {
@@ -436,7 +451,8 @@ impl Sink for HitSink<'_, '_> {
                 });
             }
         }
-        Ok(!self.shared.should_stop())
+        self.cut = self.shared.should_stop();
+        Ok(!self.cut)
     }
 
     fn binary_data(&mut self, _: &Searcher, _offset: u64) -> Result<bool, io::Error> {
