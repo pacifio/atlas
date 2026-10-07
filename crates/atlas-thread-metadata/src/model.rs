@@ -104,6 +104,11 @@ pub struct ThreadMetadata {
     /// nothing reads it — the row shape is the one the spec fixed, rather than
     /// one needing a migration the day Atlas grows them.
     pub remote_connection: Option<serde_json::Value>,
+    /// The git branch the thread's working directory was on the last time
+    /// Atlas looked — when the thread was bound and at each turn start.
+    /// `None` is "not known": a detached HEAD, a folder outside any
+    /// repository, or a row older than the column. Never guessed.
+    pub branch: Option<Arc<str>>,
     pub archived: bool,
 }
 
@@ -125,6 +130,7 @@ impl ThreadMetadata {
             interacted_at: Some(now),
             worktree_paths: WorktreePaths::from_folder_paths(&folder_paths),
             remote_connection: None,
+            branch: None,
             archived: false,
         }
     }

@@ -38,6 +38,13 @@ export interface ThreadRow {
   archived: boolean;
   projectName: string;
   folderPaths: string[];
+  /**
+   * The git branch the thread's working directory was on when it last started
+   * a turn (or was opened). `null` when Atlas never saw one — a detached HEAD,
+   * a folder outside any repository, or a row recorded before branches were.
+   * Never guessed.
+   */
+  branch: string | null;
 }
 
 /** One project's threads, as the sidebar groups them. */

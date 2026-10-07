@@ -486,6 +486,9 @@ impl ThreadMetadataStore {
                 .unwrap_or(Some(updated_at)),
             worktree_paths,
             remote_connection,
+            // Not the conversation's to know: the branch is read from git by
+            // the host and written through `update_branch`.
+            branch: existing.as_ref().and_then(|t| t.branch.clone()),
             archived,
         });
     }
@@ -571,6 +574,24 @@ impl ThreadMetadataStore {
                 work_dirs.clone(),
             )
             .unwrap_or_else(|_| WorktreePaths::from_folder_paths(&work_dirs));
+            true
+        });
+    }
+
+    /// Record the git branch the thread's working directory is on now.
+    ///
+    /// `None` clears it back to "not known"; an empty name counts as `None`.
+    /// Whether an unresolvable branch (detached HEAD, not a repository)
+    /// should clear the last one seen is the caller's policy — the host keeps
+    /// the last known branch and only writes names it actually read. No change
+    /// means no write and no event.
+    pub fn update_branch(&self, thread_id: ThreadId, branch: Option<Arc<str>>) {
+        let branch = branch.filter(|b| !b.trim().is_empty());
+        self.update(thread_id, |thread| {
+            if thread.branch == branch {
+                return false;
+            }
+            thread.branch = branch;
             true
         });
     }

@@ -330,11 +330,16 @@ pub struct AgentHost {
     /// Atlas's session history.
     ///
     /// `None` only when the store could not be opened — a corrupt or
-    /// newer-schema database. The failure is logged, history is unavailable,
+    /// newer-epoch database. The failure is logged, history is unavailable,
     /// and the app still runs: losing the sidebar must not lose the agent.
-    /// Nothing surfaces this in the UI yet; the sidebar re-point (#21) is where
-    /// an empty history gets a reason attached to it.
     history: Option<ThreadRecorder>,
+    /// Why `history` is `None`, carried into every history command's error so
+    /// the sidebar can say it instead of reading as an empty list.
+    history_error: Option<String>,
+    /// The newest branch probe per session. Probes run on the blocking pool
+    /// and can finish out of order; only the latest one for a session may
+    /// write, so a slow earlier probe cannot overwrite a newer branch.
+    branch_probes: Arc<Mutex<BranchProbes>>,
     /// Request-scoped elicitations, announced by every connection.
     ///
     /// These belong to no session — they are the ones raised during sign-in,
@@ -347,6 +352,34 @@ pub struct AgentHost {
     lifecycle: Mutex<Option<Arc<dyn SessionLifecycle>>>,
     /// What each session is offered in its MCP server list.
     session_mcp: Arc<SessionMcpSlot>,
+}
+
+/// Which branch probe is the newest for each session (see
+/// [`AgentHost::refresh_branch`]).
+#[derive(Default)]
+struct BranchProbes {
+    next: u64,
+    latest: HashMap<acp::SessionId, u64>,
+}
+
+impl BranchProbes {
+    /// Number a new probe for `session_id`, making it the latest.
+    fn start(&mut self, session_id: &acp::SessionId) -> u64 {
+        self.next += 1;
+        self.latest.insert(session_id.clone(), self.next);
+        self.next
+    }
+
+    /// Retire `probe`, answering whether it may write: only the newest one
+    /// started for its session may. The newest also clears the entry, so the
+    /// map holds only sessions with a probe in flight.
+    fn finish(&mut self, session_id: &acp::SessionId, probe: u64) -> bool {
+        if self.latest.get(session_id) != Some(&probe) {
+            return false;
+        }
+        self.latest.remove(session_id);
+        true
+    }
 }
 
 /// The plumbing for elicitations that belong to a connection, not a session.
@@ -411,13 +444,14 @@ impl AgentHost {
         native: Arc<dyn AgentServer>,
     ) -> Arc<Self> {
         let projector = DeltaProjector::new(sink);
-        let history = match ThreadMetadataStore::open(atlas_thread_metadata::db_path(&config_dir)) {
-            Ok(store) => Some(ThreadRecorder::new(store)),
-            Err(e) => {
-                tracing::error!(error = %e, "session history unavailable");
-                None
-            }
-        };
+        let (history, history_error) =
+            match ThreadMetadataStore::open(atlas_thread_metadata::db_path(&config_dir)) {
+                Ok(store) => (Some(ThreadRecorder::new(store)), None),
+                Err(e) => {
+                    tracing::error!(error = %e, "session history unavailable");
+                    (None, Some(e.to_string()))
+                }
+            };
         let (elicitation_tx, elicitation_rx) = mpsc::unbounded_channel();
         let session_mcp = Arc::new(SessionMcpSlot::default());
         let options = ConnectOptions {
@@ -459,6 +493,8 @@ impl AgentHost {
             sessions: Mutex::new(HashMap::new()),
             detected: Mutex::new(Vec::new()),
             history,
+            history_error,
+            branch_probes: Arc::default(),
             request_elicitations: RequestElicitations {
                 stream: Mutex::new(Some(elicitation_rx)),
                 answered_by: Mutex::new(HashMap::new()),
@@ -1108,6 +1144,9 @@ impl AgentHost {
                 snapshot_of(&thread),
             );
         }
+        // After `record_connected`, which is what binds the session to its
+        // row: the branch has somewhere to land by the time git answers.
+        self.refresh_branch(&session_id, &cwd.to_string_lossy());
         self.projector.attach(agent_id, thread.clone());
 
         let (current_mode, available_modes) = self.modes_of(&thread, &session_id);
@@ -1349,14 +1388,18 @@ impl AgentHost {
     /// long gone.
     pub fn send(self: &Arc<Self>, key: &SessionKey, content: Vec<acp::ContentBlock>) -> Result<()> {
         let session_id = acp::SessionId::new(key.session_id.as_str());
-        let turn_seq = {
+        let (turn_seq, cwd) = {
             let mut sessions = lock(&self.sessions);
             let record = sessions
                 .get_mut(&key.session_id)
                 .ok_or_else(HostError::unknown_session)?;
             record.turn_seq = record.turn_seq.wrapping_add(1);
-            record.turn_seq
+            (record.turn_seq, record.cwd.clone())
         };
+        // Every turn start, not only the bind: the user may have switched
+        // branches since the session opened, and the row should name the
+        // branch the latest work ran on.
+        self.refresh_branch(&session_id, &cwd);
         // Before the turn opens, so the `status: running` that `begin_turn`
         // emits already carries this turn's identity.
         self.projector.set_turn_seq(&session_id, turn_seq);
@@ -1390,6 +1433,48 @@ impl AgentHost {
             }
         });
         Ok(())
+    }
+
+    /// Read the git branch `cwd` is on and record it on the session's history
+    /// row, off the async runtime.
+    ///
+    /// Fire-and-forget by design: a thread's branch is a label on a sidebar
+    /// card, and neither binding a session nor sending a turn may wait on, or
+    /// fail because of, a git process. A detached HEAD, a folder outside any
+    /// repository, or git missing altogether all read as "no branch", and
+    /// "no branch" writes nothing — the row keeps the last branch Atlas
+    /// actually saw (or stays unknown). The store skips the write, and the
+    /// sidebar event, when the branch has not changed.
+    fn refresh_branch(&self, session_id: &acp::SessionId, cwd: &str) {
+        if cwd.is_empty() {
+            return;
+        }
+        let Some(history) = self.history().cloned() else {
+            return;
+        };
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            tracing::debug!(%session_id, "no async runtime; thread branch not refreshed");
+            return;
+        };
+        let session_id = session_id.clone();
+        let cwd = PathBuf::from(cwd);
+        let probes = Arc::clone(&self.branch_probes);
+        let probe = lock(&probes).start(&session_id);
+        // `Handle::spawn_blocking` is `tokio::task::spawn_blocking` on the
+        // runtime we were called from; the handle is only how this stays a
+        // no-op instead of a panic for a caller outside one.
+        runtime.spawn_blocking(move || {
+            let branch = atlas_checkpoint::git::current_branch(&cwd);
+            // Checked and written under one lock, so a newer probe cannot
+            // start and finish between the check and the write.
+            let mut probes = lock(&probes);
+            if !probes.finish(&session_id, probe) {
+                return;
+            }
+            if let Some(branch) = branch {
+                history.note_branch(&session_id, Arc::from(branch));
+            }
+        });
     }
 
     /// Whether `turn_seq` is still the turn this session is running.
@@ -2126,8 +2211,13 @@ impl AgentHost {
     }
 
     fn history_or_err(&self) -> Result<&ThreadRecorder> {
-        self.history()
-            .ok_or_else(|| HostError::new("session history is unavailable", ErrorClass::Fatal))
+        self.history().ok_or_else(|| {
+            let message = match &self.history_error {
+                Some(cause) => format!("session history is unavailable: {cause}"),
+                None => "session history is unavailable".to_string(),
+            };
+            HostError::new(message, ErrorClass::Fatal)
+        })
     }
 
     // ---- the agent's own session store -----------------------------------
@@ -2316,6 +2406,11 @@ pub struct ThreadRow {
     /// outside its project's group.
     pub project_name: String,
     pub folder_paths: Vec<String>,
+    /// The git branch the thread's working directory was on when it last
+    /// started a turn (or was opened). `None` when Atlas never saw one — a
+    /// detached HEAD, a folder that is not a repository, a row older than
+    /// the column. Never guessed.
+    pub branch: Option<String>,
 }
 
 /// One project's threads, as the sidebar groups them.
@@ -2344,6 +2439,7 @@ fn thread_row(thread: &ThreadMetadata) -> ThreadRow {
         archived: thread.archived,
         project_name: project_name(thread.main_worktree_paths()),
         folder_paths: paths_of(thread.folder_paths()),
+        branch: thread.branch.as_deref().map(str::to_string),
     }
 }
 
@@ -2876,6 +2972,24 @@ mod auth_method_wire_tests {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_the_newest_branch_probe_for_a_session_may_write() {
+        let mut probes = super::BranchProbes::default();
+        let a = agent_client_protocol::schema::v1::SessionId::new("a");
+        let b = agent_client_protocol::schema::v1::SessionId::new("b");
+
+        let first = probes.start(&a);
+        let second = probes.start(&a);
+        let other = probes.start(&b);
+        // The second turn's probe finishes first; the first one, slower, must
+        // not overwrite the branch it recorded.
+        assert!(probes.finish(&a, second));
+        assert!(!probes.finish(&a, first));
+        // Another session's probes are their own.
+        assert!(probes.finish(&b, other));
+        assert!(probes.latest.is_empty(), "nothing in flight, nothing kept");
+    }
+
     use super::test_support::{fresh_host, fresh_host_with_native};
     use super::*;
     use atlas_acp_thread::{AcpThread, AcpThreadHandle, AgentConnection};

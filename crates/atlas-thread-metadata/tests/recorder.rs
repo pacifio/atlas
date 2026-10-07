@@ -443,3 +443,25 @@ fn a_session_resumed_without_its_history_is_not_mistaken_for_a_draft() {
     store.flush().unwrap();
     assert_eq!(store.threads().len(), 1, "the history row survives");
 }
+
+#[test]
+fn a_noted_branch_lands_on_the_sessions_row_and_an_unbound_session_is_ignored() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = store(&dir);
+    let recorder = ThreadRecorder::new(store.clone());
+    let session = acp::SessionId::new("ses-1");
+
+    // Not bound yet: nothing to write to, and nothing is minted for it.
+    recorder.note_branch(&session, "main".into());
+    assert!(store.threads().is_empty());
+
+    recorder.record_connected(
+        &"atlas-agent".into(),
+        &session,
+        snapshot(false, None, &["/tmp/atlas"]),
+    );
+    recorder.note_branch(&session, "discount-codes".into());
+    store.flush().unwrap();
+
+    assert_eq!(store.threads()[0].branch.as_deref(), Some("discount-codes"));
+}

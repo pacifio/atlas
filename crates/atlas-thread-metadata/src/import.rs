@@ -126,6 +126,8 @@ pub fn importable_threads(
                 interacted_at: None,
                 worktree_paths: WorktreePaths::from_folder_paths(&folder_paths),
                 remote_connection: None,
+                // Atlas was not there to see which branch it ran on.
+                branch: None,
                 archived: true,
             })
         })

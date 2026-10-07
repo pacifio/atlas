@@ -162,6 +162,17 @@ impl ThreadRecorder {
         }
     }
 
+    /// The git branch the session's working directory was found on. Like
+    /// [`ThreadRecorder::note_interaction`], something only the host can know:
+    /// it reads git, the thread's events do not carry it. A session not bound
+    /// to a row is ignored.
+    pub fn note_branch(&self, session_id: &acp::SessionId, branch: Arc<str>) {
+        let thread_id = self.lock().get(session_id).copied();
+        if let Some(thread_id) = thread_id {
+            self.store.update_branch(thread_id, Some(branch));
+        }
+    }
+
     /// The conversation is over.
     ///
     /// A thread that was ever sent to keeps its row — history outliving the
