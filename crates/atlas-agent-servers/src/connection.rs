@@ -966,13 +966,13 @@ impl AgentConnection for AcpConnection {
             // Offered before the id exists; bound to it once the agent answers,
             // and released (dropped unbound) if it never does.
             let (mcp_offer, mcp_servers) = self.mcp_offer(&directories.cwd, None);
+            // Built here: the offer holds a non-`Sync` settle callback, so the
+            // request future must not borrow it across the await.
+            let request = directories.into_new_session_request(mcp_servers, mcp_offer.ask_first());
             let response = self
                 .request_deadline("session/new", async {
                     self.connection
-                        .send_request(
-                            directories
-                                .into_new_session_request(mcp_servers, mcp_offer.ask_first()),
-                        )
+                        .send_request(request)
                         .block_task()
                         .await
                         .map_err(map_acp_error)
