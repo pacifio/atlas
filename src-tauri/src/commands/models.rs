@@ -238,11 +238,7 @@ pub fn selected_embedding_id(app: &AppHandle) -> String {
 /// The spec written next to a code model's weights, so `atlas-embed` drives it
 /// with the right pooling, prefixes and limits.
 pub(crate) fn code_model_spec(id: &str) -> Option<atlas_embed::ModelSpec> {
-    match id {
-        "granite-embedding-small-r2" => Some(atlas_embed::ModelSpec::granite_embedding_small()),
-        "coderankembed" => Some(atlas_embed::ModelSpec::code_rank_embed()),
-        _ => None,
-    }
+    atlas_embed::ModelSpec::for_code_model(id)
 }
 
 /// Whether every file for `id` exists on disk. Uses the catalog's file list; for an

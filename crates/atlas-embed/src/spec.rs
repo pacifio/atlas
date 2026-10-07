@@ -67,6 +67,16 @@ impl ModelSpec {
         }
     }
 
+    /// The preset Atlas runs a code model with, by the model's catalog id (its
+    /// directory name), or `None` for a model that is not a code model.
+    pub fn for_code_model(id: &str) -> Option<Self> {
+        match id {
+            "granite-embedding-small-r2" => Some(Self::granite_embedding_small()),
+            "coderankembed" => Some(Self::code_rank_embed()),
+            _ => None,
+        }
+    }
+
     /// nomic-ai/CodeRankEmbed: CLS pooling, query instruction prefix (model card).
     pub fn code_rank_embed() -> Self {
         Self {
@@ -89,6 +99,19 @@ mod tests {
         assert_eq!(ModelSpec::load(dir.path()), ModelSpec::default());
         std::fs::write(dir.path().join(SPEC_FILE), "{not json").unwrap();
         assert_eq!(ModelSpec::load(dir.path()).pooling, Pooling::Mean);
+    }
+
+    #[test]
+    fn code_models_are_found_by_catalog_id() {
+        assert_eq!(
+            ModelSpec::for_code_model("granite-embedding-small-r2"),
+            Some(ModelSpec::granite_embedding_small())
+        );
+        assert_eq!(
+            ModelSpec::for_code_model("coderankembed"),
+            Some(ModelSpec::code_rank_embed())
+        );
+        assert_eq!(ModelSpec::for_code_model("all-minilm-l6-v2"), None);
     }
 
     #[test]
