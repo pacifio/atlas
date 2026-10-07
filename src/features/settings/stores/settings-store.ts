@@ -126,6 +126,11 @@ function applySettingsSideEffects(next: AppSettings, previous: AppSettings): voi
   // once the appearance it resolves to is known; only a new icon theme has to
   // be applied from here.
   if (next.iconTheme !== previous.iconTheme) applyIcons(next.iconTheme, next.themeMode);
+  // Agents are offered the code tools when a session opens, so an empty chat
+  // opened while they were off is rebound to get them.
+  if (next.agentCodeTools && !previous.agentCodeTools) {
+    void import("@/features/chat/lib/rebind-empty-chats").then((m) => m.rebindEmptyChats());
+  }
 }
 
 /** How many times a settings write adopts the latest generation and retries
