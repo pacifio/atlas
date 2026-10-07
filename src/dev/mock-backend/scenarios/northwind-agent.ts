@@ -33,6 +33,7 @@ import {
 import { NORTHWIND_FILES } from "../fixtures/northwind-repo";
 import type { AgentKey, Beat, ScriptedRun, Step, ToolStep } from "./northwind-content-types";
 import { CONTENT } from "./northwind-content";
+import { NORTHWIND_NATIVE_MODELS } from "./northwind-models";
 import {
   abs,
   AGENT_LABEL,
@@ -79,11 +80,8 @@ const MODELS: Record<AgentKey, AgentModels> = {
   },
   "atlas-agent": {
     current: "claude-sonnet-4",
-    available: [
-      { id: "claude-sonnet-4", name: "Claude Sonnet 4" },
-      { id: "claude-opus-4", name: "Claude Opus 4" },
-      { id: "gpt-5", name: "GPT-5" },
-    ],
+    // The gateway's list — the same one the picker's Refresh returns.
+    available: NORTHWIND_NATIVE_MODELS,
   },
 };
 

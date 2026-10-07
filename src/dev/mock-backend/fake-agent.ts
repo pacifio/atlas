@@ -73,7 +73,7 @@ export function setPromptHandler(handler: PromptHandler | null): void {
  *  says "Mock model". */
 export interface AgentModels {
   current: string;
-  available: { id: string; name: string }[];
+  available: SessionModeInfo[];
 }
 let modelsFor: ((pluginId: string) => AgentModels | null) | null = null;
 export function setAgentModels(lookup: typeof modelsFor): void {
@@ -111,6 +111,22 @@ export function sendTitle(sessionId: string, title: string): Promise<void> {
   const s = latest(sessionId);
   if (!s) return Promise.resolve();
   return sendDelta({ kind: "title_updated", ...at(s), title });
+}
+
+/**
+ * Load a session the agent did not start in this run — what `threads_resume`
+ * does in Rust before the frontend asks for a snapshot. A history row opened
+ * from the sidebar arrives here; without it, `agents_snapshot` answers "not
+ * found" and the resume fails. A session already loaded is left as it is.
+ */
+export function adoptSession(
+  key: SessionKey,
+  pluginId: string,
+  cwd: string,
+  messages: SessionMessage[] = [],
+): void {
+  if (sessions.has(key.session_id)) return;
+  sessions.set(key.session_id, { key, cwd, pluginId, messages });
 }
 
 function sessionOrThrow(key: SessionKey): FakeSession {

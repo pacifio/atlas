@@ -22,6 +22,7 @@
 
 import { emit } from "@tauri-apps/api/event";
 import type { BlameLine } from "@/features/git/lib/git-blame-api";
+import type { RepoPullRequests } from "@/features/git/lib/git-pr-api";
 import type { CommitFile, DiffLineStatus, FileDiff } from "@/features/git/lib/git-diff-api";
 import type { GitErrorCode, GitErrorPayload } from "@/features/git/lib/git-errors";
 import type { BuiltGraph, CommitRow, LaneSegment } from "@/features/git/lib/git-graph";
@@ -1036,6 +1037,7 @@ export interface GitResponses {
   git_diff_file: string;
   git_diff_all: string;
   git_blame_file: BlameLine[];
+  git_repo_pull_requests: RepoPullRequests;
   git_stage: Unread;
   git_unstage: Unread;
   // `runHunkOp` in `changes-view.tsx` picks the command name at run time.
@@ -1249,6 +1251,8 @@ export const gitHandlers: TypedHandlers<GitResponses> = {
       .map((change) => unifiedDiff(change.before(), change.after(), change.path))
       .join(""),
   git_blame_file: ({ file }): BlameLine[] => blame(String(file)),
+  // The default repository has no GitHub remote, so `gh` has nothing to say.
+  git_repo_pull_requests: (): RepoPullRequests => ({ kind: "failed" }),
 
   // ── index ───────────────────────────────────────────────────────────────
   git_stage: ({ files }): null => {

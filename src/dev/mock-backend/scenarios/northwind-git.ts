@@ -27,6 +27,7 @@ import type {
 import type { RecentFile } from "@/features/chat/stores/recent-files-store";
 import type { SearchResult } from "@/components/search-overlay";
 import type { BlameLine } from "@/features/git/lib/git-blame-api";
+import type { BranchPullRequest, RepoPullRequests } from "@/features/git/lib/git-pr-api";
 import type { CommitFile, DiffLineStatus, FileDiff } from "@/features/git/lib/git-diff-api";
 import type { GitErrorPayload } from "@/features/git/lib/git-errors";
 import type { BuiltGraph, CommitRow, LaneSegment } from "@/features/git/lib/git-graph";
@@ -275,6 +276,19 @@ let epoch = 0;
 
 const TAG = { name: "v0.1.0", commit: "c-check" };
 const MERGED_BRANCH = { name: "server-discounts", commit: "c-validate" };
+
+/**
+ * The PR `server-discounts` went up as. Merged, because the branch is: its
+ * commit is already on `main` (see `branches()`), so an open PR for it would
+ * contradict the git panel. `main` has no PR, so every other branch is `null`.
+ */
+const MERGED_BRANCH_PR: BranchPullRequest = {
+  number: 353,
+  state: "merged",
+  title: "Validate discount codes on the server",
+  url: "https://github.com/northwind/northwind-shop/pull/353",
+  isDraft: false,
+};
 
 function mainBranch(): BranchInfo {
   const tip = headCommit();
@@ -932,6 +946,10 @@ export const northwindGitCommands: Partial<TypedHandlers<MockResponses>> = {
       : gitHandlers.git_diff_all(args),
   git_blame_file: (args): BlameLine[] | Promise<BlameLine[]> =>
     ours(args.path) ? blame(String(args.file)) : gitHandlers.git_blame_file(args),
+  git_repo_pull_requests: (args): RepoPullRequests | Promise<RepoPullRequests> =>
+    ours(args.path)
+      ? { kind: "ok", byBranch: { [MERGED_BRANCH.name]: MERGED_BRANCH_PR } }
+      : gitHandlers.git_repo_pull_requests(args),
 
   // ── git: index and working tree ─────────────────────────────────────────
   git_stage: (args) => {

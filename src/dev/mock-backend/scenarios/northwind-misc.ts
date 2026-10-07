@@ -72,8 +72,11 @@ import type { AgentCatalog, AgentCatalogEntry } from "@/types/agent-catalog";
 import type { NativeModelsRefresh } from "@/types/agents";
 import type { MockHandlers, MockResponses, TypedHandlers } from "../types";
 import type { AgentKey, MemoryContent } from "./northwind-content-types";
+import { adoptSession } from "../fake-agent";
 import { NORTHWIND_FILES } from "../fixtures/northwind-repo";
 import { CONTENT } from "./northwind-content";
+import { transcriptOf } from "./northwind-agent";
+import { NORTHWIND_NATIVE_MODELS } from "./northwind-models";
 import { lineStats } from "./northwind-timeline";
 import {
   addMemory,
@@ -486,16 +489,22 @@ function seedThreads(): ThreadRow[] {
       archived: false,
       projectName: PROJECT.name,
       folderPaths: [PROJECT.path],
+      // The branch the Session itself records: `main`, except the run that
+      // built server-side discount validation on `server-discounts`.
+      branch: s.content.branch,
     }));
 }
 
 let threads: ThreadRow[] = seedThreads();
 const threadsChanged = () => void emit("atlas:threads-changed");
 
-function threadProjects(): ThreadProject[] {
+/** One project; current when the sidebar is scoped to it, as Rust marks it
+ *  (unscoped, nothing is current and the sidebar heads the list with it). */
+function threadProjects(cwd: string | null): ThreadProject[] {
   const live = threads.filter((thread) => !thread.archived);
   if (live.length === 0) return [];
-  return [{ name: PROJECT.name, paths: [PROJECT.path], isCurrent: true, threads: live }];
+  const isCurrent = cwd !== null && cwd !== "";
+  return [{ name: PROJECT.name, paths: [PROJECT.path], isCurrent, threads: live }];
 }
 
 function transcript(sessionId: string): AtlasTranscriptMessage[] {
@@ -732,11 +741,7 @@ function uninstallAgent(id: string): null {
 }
 
 /** The gateway's models for the Atlas Agent (ADR-0007). */
-const NATIVE_MODELS = [
-  { id: "claude-sonnet-4", name: "Claude Sonnet 4", description: "The default for new sessions." },
-  { id: "claude-opus-4", name: "Claude Opus 4", description: "For the hardest problems." },
-  { id: "gpt-5", name: "GPT-5", description: null },
-];
+const NATIVE_MODELS = NORTHWIND_NATIVE_MODELS;
 
 // ── Memory ────────────────────────────────────────────────────────────────
 
@@ -1634,12 +1639,21 @@ export const northwindMiscRawCommands: MockHandlers = {
   // ── chat history ────────────────────────────────────────────────────────
   threads_history: ({ archivedOnly }): ThreadRow[] =>
     threads.filter((thread) => (archivedOnly ? thread.archived : !thread.archived)),
-  threads_projects: (): ThreadProject[] => threadProjects(),
+  threads_projects: ({ cwd }): ThreadProject[] =>
+    threadProjects(cwd === null || cwd === undefined ? null : String(cwd)),
   threads_resume: ({ threadId }): ResumedThread => {
     const thread = threads.find((candidate) => candidate.threadId === String(threadId));
     if (!thread) throw new Error(`no such thread: ${String(threadId)}`);
+    const key = { agent_id: thread.agentId, session_id: thread.sessionId ?? thread.threadId };
+    // Loaded with its recorded transcript, the way the agent replays it.
+    adoptSession(
+      key,
+      thread.agentId,
+      thread.folderPaths[0] ?? "",
+      thread.sessionId ? transcriptOf(thread.sessionId) : [],
+    );
     return {
-      key: { agent_id: thread.agentId, session_id: thread.sessionId ?? thread.threadId },
+      key,
       resumedWithoutHistory: false,
     };
   },
@@ -1698,7 +1712,7 @@ export const northwindMiscRawCommands: MockHandlers = {
   }),
   native_agent_refresh_models: (): NativeModelsRefresh => ({
     models: NATIVE_MODELS,
-    defaultModel: NATIVE_MODELS[0].id,
+    defaultModel: NATIVE_MODELS[0]!.id,
     changed: false,
     reconnected: false,
   }),
