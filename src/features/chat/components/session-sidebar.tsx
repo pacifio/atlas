@@ -1,27 +1,18 @@
 import { useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
-import { memo, useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { X, MessageSquare, Search, PanelLeft, Plus, History, Archive } from "lucide-react";
+import { Fragment, memo, useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { Search, PanelLeft, Plus, History } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { HintGroup, HintItem } from "@/ui/hint-group";
 import { Hint } from "@/ui/tooltip";
 import { openNewAgentChat } from "@/features/chat/lib/open-agent-session";
 import { isBusyAgentStatus, agentTypeFromPluginId } from "@/types/agent";
-import {
-  ClaudeIcon,
-  CodexIcon,
-  OpenCodeIcon,
-  CursorIcon,
-  KiloIcon,
-  ExternalAgentIcon,
-  AgentMonogram,
-} from "@/components/agent-icons";
 import { pluginIdForAgent } from "@/types/agent";
-import { agentMeta } from "@/features/agents/lib/agent-meta";
-import { AtlasLoader } from "@/components/atlas-loader";
-import { timeAgo } from "@/lib/time-ago";
+import { repoPullRequestsKey } from "@/features/git/lib/git-pr-api";
 import { ThreadHistoryView } from "./thread-history-view";
+import { SessionCard } from "./session-card";
+import { placeProjectNames } from "../lib/sidebar-grouping";
 import { useAppStore } from "@/features/app/stores/app-store";
 import { useProjectStore } from "@/features/projects/stores/project-store";
 import { useActiveOrgProjects } from "@/features/projects/lib/org-scope";
@@ -37,11 +28,15 @@ import {
   type ThreadRow,
 } from "../lib/history-api";
 import { getAgentSync } from "../lib/agents-api";
-import { AtlasIcon } from "@/components/atlas-icon";
 import { useRecentChatsStore } from "@/features/projects/stores/recent-chats-store";
 import { resumeThreadFast, ResumeError } from "../lib/resume-session";
 import { applyModeOnResume, holdUnrestoredMode } from "../lib/resume-mode";
 import { AGENT_TYPE_BY_SIDEBAR, sidebarAgentOf, type SidebarAgent } from "../lib/sidebar-agents";
+
+/** The message of a failed query, for the error row. */
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
 
 /** One key for the whole sidebar: history is one store, so there is one query. */
 const THREAD_PROJECTS_KEY = ["thread-projects"] as const;
@@ -49,7 +44,7 @@ const THREAD_PROJECTS_KEY = ["thread-projects"] as const;
 /** One history row, as the list renders it. Used by the sidebar's own list and
  *  by the history view handing a row back to be opened — one builder, so the
  *  two cannot disagree about what a row is. */
-function itemFromThread(thread: ThreadRow, projectName: string, isCurrent: boolean): SidebarItem {
+function itemFromThread(thread: ThreadRow, projectName: string, elsewhere = false): SidebarItem {
   return {
     // Never a draft: `threads_projects` lists only threads that have been sent
     // to, so the session id is always there.
@@ -57,17 +52,13 @@ function itemFromThread(thread: ThreadRow, projectName: string, isCurrent: boole
     threadId: thread.threadId,
     kind: "agent",
     title: thread.title,
-    projectHeading: null,
     projectName,
+    elsewhere,
     lastUpdated: thread.updatedAt,
     agent: sidebarAgentOf(thread.agentId),
-    // From the project's own `isCurrent`, not a path-string compare here: the
-    // stored paths are canonicalised and the UI's `cwd` is not, so comparing
-    // them directly marked every row "elsewhere" the moment the two spellings
-    // diverged.
-    elsewhere: !isCurrent,
     // The thread's own directory — where it resumes.
     cwd: thread.folderPaths[0] ?? "",
+    branch: thread.branch ?? null,
   };
 }
 
@@ -84,17 +75,19 @@ interface SidebarItem {
   lastUpdated: string | null;
   /** Which agent ran this session (drives the row icon). */
   agent: SidebarAgent;
-  /** The project's name, on the first row of a run of its threads. Stamped
-   *  after filtering, so it follows what is actually on screen. */
-  projectHeading: string | null;
-  /** The project this thread belongs to, named on every row that is shown
-   *  outside the open project. */
+  /** The project this thread belongs to. Named on the card only when it is
+   *  `elsewhere`, and as a heading when no project is open. */
   projectName: string;
-  /** This thread belongs to a project other than the one that is open. */
+  /** The thread belongs to a project other than the open one. From the
+   *  project's own `isCurrent`, not a path compare here: the stored paths are
+   *  canonicalised and the UI's `cwd` is not, so comparing them directly
+   *  marked every row "elsewhere" the moment the two spellings diverged. */
   elsewhere: boolean;
   /** The thread's own working directory — where it resumes, which is not
    *  necessarily the project that happens to be open. */
   cwd: string;
+  /** The branch the thread ran on, as it recorded it. */
+  branch: string | null;
 }
 
 interface SessionSidebarProps {
@@ -289,6 +282,8 @@ export const SessionSidebar = memo(function SessionSidebar({
   const {
     data: projects = [],
     isLoading,
+    isError: historyFailed,
+    error: historyError,
     isSuccess: historyReady,
   } = useQuery({
     queryKey: [...THREAD_PROJECTS_KEY, cwd],
@@ -296,6 +291,9 @@ export const SessionSidebar = memo(function SessionSidebar({
     staleTime: 30_000,
     refetchInterval: false,
     placeholderData: keepPreviousData,
+    // A history store that failed to open fails the same way on a retry; say
+    // so at once instead of spinning "Loading…" through three attempts.
+    retry: false,
   });
 
   useEffect(() => {
@@ -317,7 +315,7 @@ export const SessionSidebar = memo(function SessionSidebar({
   const items = useMemo<SidebarItem[]>(
     () =>
       projects.flatMap((project) =>
-        project.threads.map((thread) => itemFromThread(thread, project.name, project.isCurrent)),
+        project.threads.map((thread) => itemFromThread(thread, project.name, !project.isCurrent)),
       ),
     [projects],
   );
@@ -352,54 +350,53 @@ export const SessionSidebar = memo(function SessionSidebar({
     }
   }, [cwd, historyReady, projects, tabSummaries]);
 
-  // Threads belonging to the open project. The all-history view lists rows from
-  // every project and has no `isCurrent` of its own, so it resolves one here
-  // rather than re-deriving it from paths.
-  const currentThreadIds = useMemo(() => {
-    const set = new Set<string>();
-    for (const project of projects) {
-      if (!project.isCurrent) continue;
-      for (const thread of project.threads) set.add(thread.threadId);
-    }
-    return set;
-  }, [projects]);
-
-  // Sessions currently running (used to show a spinner on the matching row).
+  // Sessions currently busy (the card's live status, and the tab whose turn
+  // its timer reads).
   // Keys MUST match the `id`s used when constructing `items` above, otherwise
   // the spinner never lights up. Once an agent session is bound we key by
   // `acpSessionId`; while it's still spawning we use the synthetic
   // `live-${tabId}` placeholder.
-  const runningKeys = useMemo(() => {
-    const set = new Set<string>();
-    for (const s of Object.values(tabSummaries)) {
+  const liveByKey = useMemo(() => {
+    const map = new Map<string, { status: "running" | "waiting"; tabId: string }>();
+    for (const [tid, s] of Object.entries(tabSummaries)) {
       if (!isBusyAgentStatus(s.status)) continue;
       const liveId = s.acpSessionId ?? `live-${s.id}`;
-      set.add(`agent:${liveId}`);
+      map.set(`agent:${liveId}`, {
+        status: s.status === "waiting" ? "waiting" : "running",
+        tabId: tid,
+      });
     }
-    return set;
+    return map;
   }, [tabSummaries]);
 
-  // Headings are stamped AFTER filtering, not before: a search that hides a
-  // project's first row would otherwise take the project's name with it and
-  // leave the rest of its threads under the previous project's heading.
+  // A turn that just ended may have pushed a branch or opened a PR: refresh
+  // that repository's pull requests, the one query every card in it shares.
+  const busyDirsRef = useRef(new Map<string, string>());
+  useEffect(() => {
+    const busyNow = new Map<string, string>();
+    for (const [tid, s] of Object.entries(tabSummaries)) {
+      if (isBusyAgentStatus(s.status)) busyNow.set(tid, s.workingDirectory);
+    }
+    for (const [tid, dir] of busyDirsRef.current) {
+      if (!busyNow.has(tid) && dir) {
+        void queryClient.invalidateQueries({ queryKey: repoPullRequestsKey(dir) });
+      }
+    }
+    busyDirsRef.current = busyNow;
+  }, [tabSummaries, queryClient]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const matching = q ? items.filter((it) => it.title.toLowerCase().includes(q)) : items;
-    // Label the groups whenever more than one project is on screen, or when a
-    // row belongs to some other project. Scoped to the open project this is
-    // false and no headings are drawn — it earns its keep in the unscoped case
-    // (no project open), where an unlabelled mix reads as one project's list.
-    const named =
-      matching.length > 0 &&
-      (new Set(matching.map((it) => it.projectName)).size > 1 ||
-        matching.some((it) => it.elsewhere));
-    let previous: string | null = null;
-    return matching.map((item) => {
-      const heading = named && item.projectName !== previous ? item.projectName : null;
-      previous = item.projectName;
-      return { ...item, projectHeading: heading };
-    });
+    return q ? items.filter((it) => it.title.toLowerCase().includes(q)) : items;
   }, [items, search]);
+
+  // Where each row's project is named (`placeProjectNames`): on the card for a
+  // row from another project, as headings when no project is open — Rust then
+  // marks nothing current and returns every project.
+  const placements = useMemo(
+    () => placeProjectNames(filtered, !projects.some((project) => project.isCurrent)),
+    [filtered, projects],
+  );
 
   // Singleton model: "New chat" always starts a fresh session in the CURRENT
   // tab (never a second tab). Shared with ⌘T / the palette / the context menu.
@@ -540,8 +537,7 @@ export const SessionSidebar = memo(function SessionSidebar({
     })();
   };
 
-  const handleArchiveAgent = async (e: React.MouseEvent, item: SidebarItem) => {
-    e.stopPropagation();
+  const handleArchiveAgent = async (item: SidebarItem) => {
     try {
       // Out of the way, not gone. The thread stays in History and comes back
       // the moment it is opened (ADR-0001: archive is a shelf, not a grave).
@@ -551,8 +547,7 @@ export const SessionSidebar = memo(function SessionSidebar({
     }
   };
 
-  const handleDeleteAgent = async (e: React.MouseEvent, item: SidebarItem) => {
-    e.stopPropagation();
+  const handleDeleteAgent = async (item: SidebarItem) => {
     try {
       // One call for every agent. Atlas's own row goes first and always; the
       // agent is asked to forget its copy only if it advertised that it can
@@ -568,6 +563,39 @@ export const SessionSidebar = memo(function SessionSidebar({
       toast.error(`Couldn't delete session: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
+
+  // Stable per-card handlers, so the memoised cards do not all re-render with
+  // the list. They look the row up by thread id and call the latest handler
+  // through a ref (the handlers close over this render's cwd and tab).
+  const itemsByThreadRef = useRef(new Map<string, SidebarItem>());
+  itemsByThreadRef.current = new Map(items.map((it) => [it.threadId, it]));
+  const handlersRef = useRef({
+    open: handleOpenAgent,
+    archive: handleArchiveAgent,
+    remove: handleDeleteAgent,
+    onOpened,
+  });
+  handlersRef.current = {
+    open: handleOpenAgent,
+    archive: handleArchiveAgent,
+    remove: handleDeleteAgent,
+    onOpened,
+  };
+  const onOpenCard = useCallback((threadId: string) => {
+    const item = itemsByThreadRef.current.get(threadId);
+    if (!item) return;
+    handlersRef.current.open(item);
+    // Dismiss the picker; the sidebar variant stays put.
+    handlersRef.current.onOpened?.();
+  }, []);
+  const onArchiveCard = useCallback((threadId: string) => {
+    const item = itemsByThreadRef.current.get(threadId);
+    if (item) void handlersRef.current.archive(item);
+  }, []);
+  const onDeleteCard = useCallback((threadId: string) => {
+    const item = itemsByThreadRef.current.get(threadId);
+    if (item) void handlersRef.current.remove(item);
+  }, []);
 
   // --- Resize handle ---
   const containerRef = useRef<HTMLDivElement>(null);
@@ -615,7 +643,9 @@ export const SessionSidebar = memo(function SessionSidebar({
     return item.id === tabId;
   };
 
-  const showEmpty = !isLoading && filtered.length === 0;
+  // An error is not an empty list: a history store that failed to open says so.
+  const showError = historyFailed && projects.length === 0;
+  const showEmpty = !isLoading && !showError && filtered.length === 0;
 
   return (
     <div
@@ -664,135 +694,65 @@ export const SessionSidebar = memo(function SessionSidebar({
       <ThreadHistoryView
         open={historyOpen}
         onOpenChange={setHistoryOpen}
-        onOpenThread={(thread) =>
-          handleOpenAgent(
-            itemFromThread(thread, thread.projectName, currentThreadIds.has(thread.threadId)),
-          )
-        }
+        onOpenThread={(thread) => handleOpenAgent(itemFromThread(thread, thread.projectName))}
       />
 
       {/* List */}
-      <div className="flex-1 overflow-y-auto hide-scrollbar">
-        {isLoading && (
-          <div className="text-xs text-[var(--muted-foreground)] px-3 py-2">Loading…</div>
+      <div className="flex flex-1 flex-col gap-1.5 overflow-y-auto p-2 hide-scrollbar">
+        {isLoading && <div className="px-1 py-1 text-xs text-muted-foreground">Loading…</div>}
+        {showError && (
+          <div role="alert" className="px-1 py-1 text-xs leading-relaxed text-error">
+            Couldn't load chats: {errorMessage(historyError)}
+          </div>
         )}
         {showEmpty && (
-          <div className="text-xs text-[var(--muted-foreground)] px-3 py-3 leading-relaxed">
+          <div className="px-1 py-1 text-xs leading-relaxed text-muted-foreground">
             {/* Names the scope: the list is this project's, so an empty one
                 means "nothing here yet", not "no chats anywhere". Other
                 projects' chats are behind the History button in the header. */}
             {search.trim() ? "No sessions match your search." : "No chats in this project yet."}
           </div>
         )}
-        {filtered.map((item, idx) => {
-          const active = isActiveItem(item);
-          const isRunning = runningKeys.has(`${item.kind}:${item.id}`);
-          const isLast = idx === filtered.length - 1;
+        {filtered.map((item, index) => {
+          const live = liveByKey.get(`${item.kind}:${item.id}`);
+          const { heading, showProject } = placements[index]!;
+          const card = (
+            <SessionCard
+              key={item.threadId}
+              threadId={item.threadId}
+              title={item.title}
+              projectName={item.projectName}
+              showProject={showProject}
+              branch={item.branch}
+              cwd={item.cwd}
+              lastUpdated={item.lastUpdated}
+              status={live?.status ?? null}
+              liveTabId={live?.tabId ?? null}
+              active={isActiveItem(item)}
+              agent={item.agent}
+              onOpen={onOpenCard}
+              onArchive={onArchiveCard}
+              onDelete={onDeleteCard}
+            />
+          );
+          if (!heading) return card;
           return (
-            <div key={item.threadId}>
-              {item.projectHeading && (
-                // The project a run of rows belongs to. Threads from other
-                // worktrees are listed here too, and resume into their own
-                // worktree — that is what an app-level store is for.
-                <div className="px-3 pt-2.5 pb-1 text-3xs uppercase tracking-wider text-muted-foreground truncate">
-                  {item.projectHeading}
-                </div>
-              )}
+            <Fragment key={item.threadId}>
               <div
-                onClick={() => {
-                  if (item.kind !== "agent") return;
-                  handleOpenAgent(item);
-                  // Dismiss the picker; the sidebar variant stays put.
-                  onOpened?.();
-                }}
+                role="heading"
+                aria-level={3}
                 className={cn(
-                  "group relative w-full text-left px-3 py-3 transition-colors flex flex-col gap-1 cursor-pointer select-none",
-                  active
-                    ? "bg-[var(--atlas-element-selected)] text-[var(--foreground)] opacity-100"
-                    : "text-[var(--secondary-foreground)] opacity-80 hover:opacity-100 hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]",
-                  !isLast && "border-b border-[var(--border)]",
+                  "-mx-2 truncate px-3 pt-1.5 pb-0.5 text-3xs font-medium uppercase tracking-wider text-muted-foreground",
+                  // Sticky in the sidebar, where the list sits on the opaque
+                  // sidebar fill; the dropdown's panel is translucent and
+                  // blurred, and a sticky fill there would punch through it.
+                  !asDropdown && "sticky top-0 z-panel bg-[var(--sidebar)]",
                 )}
               >
-                {/* `pr-12` reserves the hover actions' full footprint: two 16px
-                    buttons + their 2px gap + the cluster's 6px offset is 40px,
-                    and the rest is breathing room. Reserved PERMANENTLY, not on
-                    hover — the actions sit on top of this row, and widening the
-                    title when they hide would reflow (and re-clamp) the text
-                    under the cursor. `pr-5` only cleared 20px, so the title's
-                    first line ran right up under the archive button. */}
-                <div className="flex items-start gap-2 min-w-0 pr-12">
-                  <span
-                    className="shrink-0 inline-flex h-[15px] items-center justify-center text-[var(--secondary-foreground)]"
-                    title={
-                      item.kind !== "agent"
-                        ? "AI Chat"
-                        : agentMeta(AGENT_TYPE_BY_SIDEBAR[item.agent] ?? item.agent).label
-                    }
-                  >
-                    {isRunning ? (
-                      <AtlasLoader size={8} className="text-[var(--primary)]" />
-                    ) : item.kind === "agent" ? (
-                      item.agent === "codex" ? (
-                        <CodexIcon className="size-3" />
-                      ) : item.agent === "opencode" ? (
-                        <OpenCodeIcon className="size-3" />
-                      ) : item.agent === "cursor" ? (
-                        <CursorIcon className="size-3" />
-                      ) : item.agent === "kilo" ? (
-                        <KiloIcon className="size-3" />
-                      ) : item.agent === "atlas-agent" ? (
-                        <AtlasIcon size={12} />
-                      ) : item.agent === "claude" ? (
-                        <ClaudeIcon className="size-3" />
-                      ) : agentMeta(item.agent).iconDataUrl ? (
-                        <ExternalAgentIcon dataUrl={agentMeta(item.agent).iconDataUrl!} size={12} />
-                      ) : (
-                        <AgentMonogram label={agentMeta(item.agent).label} size={12} />
-                      )
-                    ) : (
-                      <MessageSquare size={11} className="text-[var(--primary)]" />
-                    )}
-                  </span>
-                  <span className="text-xs leading-snug line-clamp-2 flex-1">{item.title}</span>
-                </div>
-                <div className="pl-[18px] flex items-center gap-1.5">
-                  <span className="text-3xs text-[var(--muted-foreground)]">
-                    {timeAgo(item.lastUpdated, { suffix: true })}
-                  </span>
-                  {item.elsewhere && (
-                    <span
-                      className="text-3xs text-[var(--muted-foreground)] truncate"
-                      title={item.cwd}
-                    >
-                      · {item.projectName}
-                    </span>
-                  )}
-                </div>
-
-                {/* Both work for every agent now: the row is Atlas's, so neither
-                  depends on reaching the agent that produced it. */}
-                <div className="absolute top-1.5 right-1.5 flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
-                  <Hint label="Archive — keeps it in History">
-                    <button
-                      onClick={(e) => handleArchiveAgent(e, item)}
-                      aria-label="Archive session"
-                      className="flex items-center justify-center w-4 h-4 rounded text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--card)]"
-                    >
-                      <Archive size={10} />
-                    </button>
-                  </Hint>
-                  <Hint label="Delete session">
-                    <button
-                      onClick={(e) => handleDeleteAgent(e, item)}
-                      aria-label="Delete session"
-                      className="flex items-center justify-center w-4 h-4 rounded text-[var(--muted-foreground)] hover:text-[var(--atlas-status-error-foreground)] hover:bg-[var(--card)]"
-                    >
-                      <X size={10} />
-                    </button>
-                  </Hint>
-                </div>
+                {heading}
               </div>
-            </div>
+              {card}
+            </Fragment>
           );
         })}
       </div>

@@ -567,6 +567,7 @@ pub fn run() {
             commands::git::git_checkout,
             commands::git::git_create_branch,
             commands::git::git_blame_file,
+            commands::git_pr::git_repo_pull_requests,
             commands::git::git_graph_signature,
             commands::git_graph::git_graph_build,
             // Extended source-control manager operations.

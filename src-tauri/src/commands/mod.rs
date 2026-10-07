@@ -28,6 +28,7 @@ pub mod git_autofetch;
 pub mod git_conflicts;
 pub mod git_graph;
 pub mod git_ops;
+pub mod git_pr;
 pub mod git_snapshot;
 pub mod git_stage_ops;
 pub mod git_watcher;
