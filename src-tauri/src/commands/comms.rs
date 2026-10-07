@@ -233,19 +233,19 @@ pub(crate) fn manager(app: &AppHandle) -> Result<CommsManager, String> {
 
 pub(crate) fn org(mgr: &CommsManager) -> Result<String, String> {
     mgr.org_id()
-        .ok_or_else(|| "no organisation is connected".to_string())
+        .ok_or_else(|| "no organization is connected".to_string())
 }
 
 /// The error a command answers when the socket moved to another organisation
 /// between its REST round trip and its adopt. The renderer treats it like any
 /// other transient: the retry runs against whatever org is current by then.
-const ORG_CHANGED: &str = "organisation changed";
+const ORG_CHANGED: &str = "organization changed";
 
 /// For commands that await and then ADOPT into state — `org()` is enough for a
 /// pure REST passthrough, but an adopt needs the generation too.
 pub(crate) fn session(mgr: &CommsManager) -> Result<atlas_comms::Session, String> {
     mgr.session()
-        .ok_or_else(|| "no organisation is connected".to_string())
+        .ok_or_else(|| "no organization is connected".to_string())
 }
 
 /// Errors reach the UI as their code plus message; the structured `detail` is
@@ -890,20 +890,41 @@ pub fn comms_disconnect(app: AppHandle) -> Result<(), String> {
 /// Start a call in a conversation. Returns the call row for optimistic
 /// rendering; the renderer builds the join/guest URLs itself. The server's
 /// `auth_token` never reaches this layer — see `RestClient::start_call`.
+///
+/// `provider` is `"mesh"` (a free Voice Call: audio, no guest link) or
+/// `"rtk"` (a paid Meeting). Optional so the argument stays additive, but the
+/// server reads its absence as a Meeting — which an Organisation without
+/// `calls.paid` is refused — so the call buttons always name it.
 #[tauri::command]
 pub async fn comms_start_call(
     app: AppHandle,
     conv_id: String,
     mode: String,
     public: bool,
+    provider: Option<String>,
 ) -> Result<atlas_comms::wire::Call, String> {
     if mode != "audio" && mode != "video" {
         return Err("mode must be audio or video".into());
     }
+    if let Some(p) = provider.as_deref() {
+        if p != "mesh" && p != "rtk" {
+            return Err("provider must be mesh or rtk".into());
+        }
+    }
     let mgr = manager(&app)?;
-    mgr.start_call(&conv_id, &mode, public)
+    mgr.start_call(&conv_id, &mode, public, provider.as_deref())
         .await
         .map_err(map_err)
+}
+
+/// The connected Organisation's platform features (`GET /features`): which
+/// call kinds its plan allows. A hint for drawing the call buttons only —
+/// every start is checked again by the server.
+#[tauri::command]
+pub async fn comms_features(app: AppHandle) -> Result<atlas_comms::rest::ChatFeatures, String> {
+    let mgr = manager(&app)?;
+    let org_id = org(&mgr)?;
+    mgr.rest().features(&org_id).await.map_err(map_err)
 }
 
 /// Save a call's transcript (CSV) to a path the user picked.

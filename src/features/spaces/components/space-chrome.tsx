@@ -295,7 +295,7 @@ export function SpaceActionPill({
 
   const openInWeb = () => {
     if (!orgId) {
-      toast("Not connected to an organisation yet.");
+      toast("Not connected to an organization yet.");
       return;
     }
     const url = `${WEB_ORIGIN}/space/${encodeURIComponent(convId)}?org=${encodeURIComponent(orgId)}`;

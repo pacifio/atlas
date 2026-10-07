@@ -3,7 +3,7 @@
  * can read where the cursor is *on demand*.
  *
  * This is deliberately a lookup and not a mirror: CodeMirror owns the
- * document and the selection (ARCHITECTURE.md, the authoritative-state
+ * document and the selection (docs/architecture.md, the authoritative-state
  * boundary), and copying the cursor into a store on every keystroke is the
  * cost that boundary exists to avoid.
  */

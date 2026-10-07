@@ -159,7 +159,7 @@ async function openSpacePage(convId: string, pageId: string) {
   const conv = comms.conversations.find((c) => c.id === convId);
   if (!conv)
     return refuse(
-      `no conversation ${convId} in this window's organisation chat; you may not be in it`,
+      `no conversation ${convId} in this window's organization chat; you may not be in it`,
     );
   let pages;
   try {

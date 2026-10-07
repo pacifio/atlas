@@ -797,7 +797,7 @@ fn reader(app: &AppHandle) -> Result<(Arc<ArtifactsClient>, String), String> {
         .ok_or("artifacts cloud is not ready")?;
     let org_id = state
         .org_id()
-        .ok_or("sign in to a synced Organisation to use the shared timeline")?;
+        .ok_or("sign in to a synced Organization to use the shared timeline")?;
     Ok((Arc::clone(&state.client), org_id))
 }
 

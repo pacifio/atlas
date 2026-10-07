@@ -63,7 +63,7 @@ export async function switchOrg(id: string): Promise<void> {
   if (busy > 0) {
     const ok = await useStopAgentsConfirmStore.getState().actions.ask({
       count: busy,
-      actionLabel: "Switching organisations",
+      actionLabel: "Switching organizations",
       confirmLabel: "Stop agents & switch",
     });
     if (!ok) {
@@ -163,7 +163,7 @@ export async function switchOrg(id: string): Promise<void> {
       }
     }
     if (!pushed) {
-      toast.error("Couldn't switch team chat to this organisation. Switch away and back to retry.");
+      toast.error("Couldn't switch team chat to this organization. Switch away and back to retry.");
     }
     //    Rust has (re)targeted synchronously inside that command: pull the
     //    incoming org's disk-painted snapshot now, and ask Rust to re-announce
@@ -254,6 +254,63 @@ export async function deleteOrgAndData(id: string): Promise<boolean> {
     logEvent({ source: "project", kind: "org-delete", summary: id });
   }
   return ok;
+}
+
+/**
+ * Leave a synced organisation on the server, then take the desktop off it.
+ * Resolves `true` once left; `false` when the user backed out first.
+ *
+ * Leaving the org on screen when there is another to go to switches there
+ * FIRST, and only then asks the server. The switch can be declined (agents
+ * still running → "Go back") or swallowed by one already in flight, and the
+ * user must still be a member when that happens — not left on the server and
+ * stranded in an org whose every read now 403s.
+ *
+ * The server's refusal (the Owner, the last admin) is thrown to the caller as
+ * a user-facing string, with the org's local tracking untouched.
+ *
+ * Once it has succeeded the org is gone for this account. With another org to
+ * go to, the left org's tracking is dropped exactly as deleting it would — the
+ * project files on disk are not touched. If it is the only org it cannot be
+ * removed (the desktop always has one); it is unlinked instead and kept as a
+ * local-only org with its projects, with team chat and the gateway told there
+ * is no server org any more. The web has no such step: an account there with
+ * no org simply has none, while a desktop org is also the local container its
+ * project folders are listed under.
+ */
+export async function leaveOrgAndData(id: string): Promise<boolean> {
+  const target = useOrgStore.getState().organisations.find((o) => o.id === id);
+  if (!target?.remoteId) throw "This organization isn't synced, so there's nothing to leave.";
+
+  const others = useOrgStore.getState().organisations.filter((o) => o.id !== id);
+  if (useOrgStore.getState().activeOrganisationId === id && others.length > 0) {
+    // Prefer another synced org: the user is signed in and was just working
+    // with a team, so a team is the less surprising place to land.
+    const next = others.find((o) => o.syncEnabled && o.remoteId) ?? others[0];
+    await switchOrg(next.id);
+    if (useOrgStore.getState().activeOrganisationId === id) return false;
+  }
+
+  await auth.leaveOrg(target.remoteId);
+  logEvent({ source: "project", kind: "org-leave", summary: id });
+
+  if (others.length > 0) {
+    useOrgStore.getState().actions.deleteOrg(id);
+    return true;
+  }
+
+  useOrgStore.getState().actions.unlinkOrg(id);
+  if (useOrgStore.getState().activeOrganisationId === id) {
+    // What `switchOrg` does for a local-only target: close the chat socket
+    // and pin "no org" for billing, so neither keeps dialling the org left.
+    commsActions().beginSwitch(null);
+    await invoke("comms_disconnect").catch(() => {});
+    await invoke("auth_set_active_org", { orgId: null }).catch((err) => {
+      console.warn("auth_set_active_org failed:", err);
+    });
+    commsActions().endSwitch();
+  }
+  return true;
 }
 
 /**

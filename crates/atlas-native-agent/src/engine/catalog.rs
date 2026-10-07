@@ -191,16 +191,13 @@ pub async fn write_models_json(home: &Path, catalogue: &ModelsResponse) -> Resul
         .with_context(|| format!("creating the engine home at {}", home.display()))?;
     let path = home.join(CATALOG_FILE);
     let tmp = home.join(format!("{CATALOG_FILE}.{}.tmp", std::process::id()));
-    let body = serde_json::to_vec_pretty(catalogue).context("serialising the model catalogue")?;
+    let body = serde_json::to_vec_pretty(catalogue).context("serializing the model catalog")?;
     tokio::fs::write(&tmp, body)
         .await
-        .with_context(|| format!("writing the model catalogue to {}", tmp.display()))?;
-    tokio::fs::rename(&tmp, &path).await.with_context(|| {
-        format!(
-            "moving the model catalogue into place at {}",
-            path.display()
-        )
-    })?;
+        .with_context(|| format!("writing the model catalog to {}", tmp.display()))?;
+    tokio::fs::rename(&tmp, &path)
+        .await
+        .with_context(|| format!("moving the model catalog into place at {}", path.display()))?;
     Ok(path)
 }
 

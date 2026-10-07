@@ -5,6 +5,7 @@ import {
   Check,
   Copy,
   Loader2,
+  LogOut,
   MoreHorizontal,
   RefreshCw,
   Search,
@@ -26,7 +27,10 @@ import {
   type OrgMember,
   type Role,
 } from "@/features/auth/lib/auth-api";
+import { memberRowAccess } from "../lib/member-access";
+import { leaveOrgAndData } from "../lib/org-switch";
 import { useMembersStore } from "../stores/members-store";
+import { useOrgStore } from "../stores/org-store";
 import type { Organisation } from "../types";
 
 const ROLES: Role[] = ["admin", "product_owner", "developer", "member"];
@@ -109,6 +113,31 @@ export function MembersModal({
       ? (snapshot.orgs?.find((o) => o.id === orgId)?.role ?? null)
       : null;
   const isAdmin = myRole === "admin";
+  /** The org would have no admin left if this account went — the server
+   *  refuses that leave, so the menu says why instead of offering it. */
+  const soleAdmin = isAdmin && members.filter((m) => m.role === "admin").length <= 1;
+
+  /** How many orgs this desktop tracks: leaving the only one keeps it here
+   *  as a local-only org instead of dropping it (see `leaveOrgAndData`). */
+  const orgCount = useOrgStore((s) => s.organisations.length);
+  /** The leave confirmation is open. */
+  const [confirmLeave, setConfirmLeave] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+  const leave = async () => {
+    if (!org) return;
+    setLeaving(true);
+    try {
+      // `false`: the switch away was declined, and nothing was left.
+      if (!(await leaveOrgAndData(org.id))) return;
+      toast.success(`You left ${org.name}.`);
+      setConfirmLeave(false);
+      onOpenChange(false);
+    } catch (e) {
+      toast.error(typeof e === "string" ? e : "Couldn't leave the organization.");
+    } finally {
+      setLeaving(false);
+    }
+  };
 
   const filteredMembers = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -151,14 +180,14 @@ export function MembersModal({
     setInviteEmails([]);
     setEmailDraft("");
     setTab("invitations");
-    // Email delivery is deferred server-side, so the links ARE the invite —
-    // copy them so the inviter can paste them straight out.
+    // The server emails each invitee their accept link; copy the links too so
+    // the inviter can also share them directly (chat, DM) if they prefer.
     if (links.length > 0) {
       void copy(
         links.join("\n"),
         links.length === 1
-          ? "Invite link copied — send it to them."
-          : `${links.length} invite links copied.`,
+          ? "Invitation emailed. Link copied — you can share it directly too."
+          : `${links.length} invitations emailed. Links copied — you can share them directly too.`,
       );
     } else {
       toast.success(`Invited ${sent.join(", ")}.`);
@@ -292,7 +321,7 @@ export function MembersModal({
 
                 {!signedIn ? (
                   <div className="grid place-items-center h-[160px] text-xs text-muted-foreground px-6 text-center">
-                    Sign in to manage this organisation's members.
+                    Sign in to manage this organization's members.
                   </div>
                 ) : firstLoad ? (
                   <div className="grid place-items-center h-[160px] text-xs text-muted-foreground">
@@ -314,8 +343,10 @@ export function MembersModal({
                         member={m}
                         isAdmin={isAdmin}
                         isSelf={snapshot.status === "signed-in" && snapshot.user?.id === m.userId}
+                        soleAdmin={soleAdmin}
                         onRole={(role) => orgId && void setRole(orgId, m.id, role)}
                         onRemove={() => orgId && void remove(orgId, m)}
+                        onLeave={() => setConfirmLeave(true)}
                       />
                     ))
                   )
@@ -336,6 +367,82 @@ export function MembersModal({
               </div>
             </div>
           </div>
+          <LeaveOrgDialog
+            orgName={org.name}
+            onlyOrg={orgCount <= 1}
+            open={confirmLeave}
+            leaving={leaving}
+            onCancel={() => setConfirmLeave(false)}
+            onConfirm={() => void leave()}
+          />
+        </Dialog.Popup>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+/**
+ * "Leave Acme?" — the confirmation in front of a leave.
+ *
+ * Nested in the members dialog rather than replacing it, so Cancel lands you
+ * back on the roster you were reading. Says what is lost and that coming back
+ * takes an invitation, which is the part a misclick most needs to hear.
+ */
+function LeaveOrgDialog({
+  orgName,
+  onlyOrg,
+  open,
+  leaving,
+  onCancel,
+  onConfirm,
+}: {
+  orgName: string;
+  /** It is the only org on this desktop, so it stays as a local-only one. */
+  onlyOrg: boolean;
+  open: boolean;
+  leaving: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <Dialog.Root open={open} onOpenChange={(next) => !next && !leaving && onCancel()}>
+      <Dialog.Portal>
+        <Dialog.Backdrop className="fixed inset-0 z-overlay scrim" />
+        <Dialog.Popup
+          className={cn(
+            "fixed left-1/2 top-1/2 z-modal -translate-x-1/2 -translate-y-1/2",
+            "w-[400px] max-w-[92vw] rounded-lg border border-border",
+            "bg-[var(--card)] p-5 shadow-lg animate-scale-in",
+          )}
+        >
+          <Dialog.Title className="text-md font-medium text-[var(--foreground)]">
+            Leave “{orgName}”?
+          </Dialog.Title>
+          <Dialog.Description className="mt-2 text-sm leading-relaxed text-[var(--secondary-foreground)]">
+            You lose access to its chat, projects and shared sessions at once. Coming back takes a
+            new invitation.{" "}
+            {onlyOrg
+              ? "It stays on this desktop as a local-only organization, with its projects."
+              : "Atlas stops listing its projects here."}{" "}
+            Your project files on this machine are not touched.
+          </Dialog.Description>
+          <div className="mt-5 flex justify-end gap-2">
+            <button
+              onClick={onCancel}
+              disabled={leaving}
+              className="px-3 h-8 rounded-md text-sm text-[var(--secondary-foreground)] hover:bg-[var(--atlas-element-active)] hover:text-[var(--foreground)] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={onConfirm}
+              disabled={leaving}
+              className="px-3 h-8 rounded-md text-sm font-medium bg-error text-destructive-foreground hover:opacity-90 transition-opacity cursor-pointer inline-flex items-center gap-1.5 disabled:opacity-70 disabled:cursor-not-allowed"
+            >
+              {leaving && <Loader2 size={12} className="animate-spin" />}
+              {leaving ? "Leaving…" : "Leave organization"}
+            </button>
+          </div>
         </Dialog.Popup>
       </Dialog.Portal>
     </Dialog.Root>
@@ -346,20 +453,23 @@ function MemberRow({
   member,
   isAdmin,
   isSelf,
+  soleAdmin,
   onRole,
   onRemove,
+  onLeave,
 }: {
   member: OrgMember;
   isAdmin: boolean;
   isSelf: boolean;
+  /** The viewer is the org's only admin. */
+  soleAdmin: boolean;
   onRole: (role: Role) => void;
   onRemove: () => void;
+  /** Ask to leave — the caller confirms first. */
+  onLeave: () => void;
 }) {
-  /** An admin removing themselves could leave the org with no admin at all —
-   *  nobody able to invite, change roles, or delete it. Removing OTHER people
-   *  (including other admins) stays allowed; it's only self-removal that can
-   *  strand the org. */
-  const canLeave = !(isSelf && member.role === "admin");
+  const access = memberRowAccess({ member, isAdmin, isSelf, soleAdmin });
+  const roleLabel = member.role ? ROLE_LABELS[member.role] : null;
 
   return (
     <div className="border-b border-border-subtle">
@@ -387,18 +497,27 @@ function MemberRow({
           </span>
         </span>
         <span className={cn(COL.role, "text-xs text-secondary-foreground")}>
-          {member.role ? ROLE_LABELS[member.role] : "—"}
+          {/* Owner isn't a role, so a demoted Owner shows both. */}
+          {member.isOwner
+            ? member.role === "admin" || !roleLabel
+              ? "Owner"
+              : `Owner · ${roleLabel}`
+            : (roleLabel ?? "—")}
         </span>
         <span className={cn(COL.joined, "text-2xs text-muted-foreground")}>
           {timeAgo(member.createdAt, { suffix: true }) || "—"}
         </span>
         <span className={cn(COL.actions, "flex items-center justify-end")}>
-          {isAdmin && (
+          {access.menu && (
             <DropdownMenu.Root>
-              <Hint label="Manage">
+              <Hint label={access.roles ? "Manage" : "Options"}>
                 <DropdownMenu.Trigger
                   render={
-                    <button className="p-1 rounded text-muted-foreground hover:bg-element-hover hover:text-foreground outline-none transition-colors cursor-pointer">
+                    <button
+                      type="button"
+                      aria-label={`${access.roles ? "Manage" : "Options for"} ${member.name || member.email}`}
+                      className="p-1 rounded text-muted-foreground hover:bg-element-hover hover:text-foreground outline-none focus-visible:ring-1 focus-visible:ring-[var(--ring)] transition-colors cursor-pointer"
+                    >
                       <MoreHorizontal size={12} />
                     </button>
                   }
@@ -407,40 +526,40 @@ function MemberRow({
               <DropdownMenu.Portal>
                 <DropdownMenu.Positioner className="z-popover" align="end" sideOffset={4}>
                   <DropdownMenu.Popup className="min-w-[168px] rounded-md border border-[var(--border)] bg-popover py-0.5 shadow-md text-xs text-[var(--secondary-foreground)]">
-                    <div className="px-2.5 py-1 text-3xs uppercase tracking-wider text-muted-foreground">
-                      Role
-                    </div>
-                    {ROLES.map((r) => (
-                      <DropdownMenu.Item
-                        key={r}
-                        onClick={() => onRole(r)}
-                        className="px-2.5 h-6 flex items-center justify-between outline-none hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] cursor-pointer"
-                      >
-                        {ROLE_LABELS[r]}
-                        {member.role === r && <Check size={11} />}
-                      </DropdownMenu.Item>
-                    ))}
-                    <DropdownMenu.Separator className="my-0.5 h-px bg-[var(--border)]" />
-                    {/* An admin can't leave: doing so could strip the org of its
-                        last admin, leaving nobody able to invite, change roles or
-                        delete it. Hand the role over first. */}
+                    {access.roles && (
+                      <>
+                        <div className="px-2.5 py-1 text-3xs uppercase tracking-wider text-muted-foreground">
+                          Role
+                        </div>
+                        {ROLES.map((r) => (
+                          <DropdownMenu.Item
+                            key={r}
+                            onClick={() => onRole(r)}
+                            className="px-2.5 h-6 flex items-center justify-between outline-none hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] cursor-pointer"
+                          >
+                            {ROLE_LABELS[r]}
+                            {member.role === r && <Check size={11} />}
+                          </DropdownMenu.Item>
+                        ))}
+                        <DropdownMenu.Separator className="my-0.5 h-px bg-[var(--border)]" />
+                      </>
+                    )}
+                    {/* Leave on your own row, Remove on anyone else's — each
+                        disabled with the server's reason when it would refuse.
+                        See `memberRowAccess`. */}
                     <DropdownMenu.Item
-                      disabled={!canLeave}
-                      onClick={canLeave ? onRemove : undefined}
-                      title={
-                        canLeave
-                          ? undefined
-                          : "Admins can't leave — give someone else the Admin role first."
-                      }
+                      disabled={!access.actionAllowed}
+                      onClick={access.actionAllowed ? (isSelf ? onLeave : onRemove) : undefined}
+                      title={access.blockedReason ?? undefined}
                       className={cn(
                         "px-2.5 h-6 flex items-center gap-1.5 outline-none",
-                        canLeave
+                        access.actionAllowed
                           ? "hover:bg-[var(--atlas-element-hover)] hover:text-error cursor-pointer"
                           : "opacity-40 cursor-not-allowed",
                       )}
                     >
-                      <Trash2 size={11} />
-                      {isSelf ? "Leave organisation" : "Remove from organisation"}
+                      {isSelf ? <LogOut size={11} /> : <Trash2 size={11} />}
+                      {isSelf ? "Leave organization…" : "Remove from organization"}
                     </DropdownMenu.Item>
                   </DropdownMenu.Popup>
                 </DropdownMenu.Positioner>

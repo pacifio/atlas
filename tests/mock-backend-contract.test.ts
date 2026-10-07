@@ -146,7 +146,7 @@ function mockedCommands(): Map<string, string[]> {
 
   for (const name of Object.keys(baseHandlers)) add(name, "scenarios/base.ts");
   for (const scenario of Object.values(scenarios)) {
-    for (const name of Object.keys(scenario.commands ?? {})) {
+    for (const name of Object.keys({ ...scenario.rawCommands, ...scenario.commands })) {
       add(name, `scenario "${scenario.name}"`);
     }
   }

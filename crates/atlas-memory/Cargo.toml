@@ -15,7 +15,12 @@ chrono = { version = "0.4", features = ["serde"] }
 # `embedding::EmbeddingError`.
 thiserror = "2"
 # The persistent HNSW vector index — has native save/load/remove (hard deletes).
-usearch = "2.25.3"
+# Without its default `numkong` SIMD backend here; it's turned back on for every
+# target but Windows below. numkong 7.x does not build with MSVC on Windows
+# ARM64 (its headers pull in x86-only `<immintrin.h>` and include
+# `<processthreadsapi.h>` without `<windows.h>`), and usearch falls back to its
+# own distance kernels (`USEARCH_USE_NUMKONG=0`) with the same Rust API.
+usearch = { version = "2.25.3", default-features = false }
 # On-device MiniLM embedder (384-d, CPU). The `MiniLmProvider` wraps this.
 atlas-embed = { path = "../atlas-embed" }
 
@@ -34,6 +39,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt", "sync"] }
 tracing = "0.1"
+
+# usearch's numkong SIMD backend everywhere it builds (see `usearch` above).
+[target.'cfg(not(windows))'.dependencies]
+usearch = { version = "2.25.3", features = ["numkong"] }
 
 [dev-dependencies]
 # Unique temp dirs in the record-store tests.

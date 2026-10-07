@@ -150,7 +150,7 @@ export function CreateOrgDialog({
       await switchOrg(id); // land the user in the org they just made
     } catch (e) {
       // Rust hands back a user-facing string (duplicate handle, offline, …).
-      toast.error(typeof e === "string" ? e : "Couldn't create the organisation.");
+      toast.error(typeof e === "string" ? e : "Couldn't create the organization.");
     } finally {
       setSubmitting(false);
     }
@@ -194,7 +194,7 @@ export function CreateOrgDialog({
           <div className="px-4 pt-3.5 pb-4">
             <Dialog.Title className="flex items-center gap-2 text-base font-semibold tracking-[-0.01em] text-[var(--foreground)]">
               <Building2 size={13} className="text-[var(--muted-foreground)]" />
-              Create organisation
+              Create organization
             </Dialog.Title>
 
             <div className="mt-3.5 space-y-3">
@@ -271,7 +271,7 @@ export function CreateOrgDialog({
                       <button
                         key={id}
                         disabled={isDisabled}
-                        title={isDisabled ? "Sign in to create a cloud organisation" : undefined}
+                        title={isDisabled ? "Sign in to create a cloud organization" : undefined}
                         onClick={() => setMode(id)}
                         className={cn(
                           "rounded-full border px-2.5 py-1 text-xs transition-colors",
@@ -310,7 +310,7 @@ export function CreateOrgDialog({
                         disabled={isDisabled}
                         title={
                           !cloud
-                            ? "A local organisation isn't hosted anywhere"
+                            ? "A local organization isn't hosted anywhere"
                             : r.disabled
                               ? "Not available yet"
                               : undefined
@@ -358,7 +358,7 @@ export function CreateOrgDialog({
                 ) : (
                   <Building2 size={12} />
                 )}
-                Create organisation
+                Create organization
               </button>
             </div>
           </div>

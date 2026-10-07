@@ -1,7 +1,7 @@
 //! The SQLite layer: list, upsert, delete. Nothing else.
 //!
 //! Ported from Zed's `ThreadMetadataDb` (`thread_metadata_store.rs:1468-1581`).
-//! Every statement here is one of those three, because the store keeps the
+//! Every thread statement here is one of those three, because the store keeps the
 //! whole table in memory and answers reads from there — the database is the
 //! durable copy, not the query engine.
 
@@ -19,15 +19,16 @@ use crate::schema;
 
 const LIST_QUERY: &str = "SELECT thread_id, session_id, agent_id, title, title_override, \
      updated_at, created_at, interacted_at, folder_paths, folder_paths_order, \
-     main_worktree_paths, main_worktree_paths_order, remote_connection, archived \
+     main_worktree_paths, main_worktree_paths_order, remote_connection, archived, \
+     branch \
      FROM threads \
      ORDER BY updated_at DESC";
 
 const UPSERT: &str = "INSERT INTO threads(thread_id, session_id, agent_id, title, \
          title_override, updated_at, created_at, interacted_at, folder_paths, \
          folder_paths_order, main_worktree_paths, main_worktree_paths_order, \
-         remote_connection, archived) \
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14) \
+         remote_connection, archived, branch) \
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15) \
      ON CONFLICT(thread_id) DO UPDATE SET \
          session_id = excluded.session_id, \
          agent_id = excluded.agent_id, \
@@ -41,7 +42,8 @@ const UPSERT: &str = "INSERT INTO threads(thread_id, session_id, agent_id, title
          main_worktree_paths = excluded.main_worktree_paths, \
          main_worktree_paths_order = excluded.main_worktree_paths_order, \
          remote_connection = excluded.remote_connection, \
-         archived = excluded.archived";
+         archived = excluded.archived, \
+         branch = excluded.branch";
 
 /// The durable half of the store.
 pub(crate) struct Db {
@@ -62,6 +64,9 @@ impl Db {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
+        if schema::needs_migration(&conn)? {
+            backup_before_migrating(&conn, db_path)?;
+        }
         schema::migrate(&conn)?;
         let db = Self { conn };
         db.prune_drafts()?;
@@ -106,6 +111,7 @@ impl Db {
                 mains.as_ref().map(|s| &s.order),
                 remote,
                 row.archived,
+                row.branch.as_deref(),
             ],
         )?;
         Ok(())
@@ -148,6 +154,68 @@ impl Db {
         Ok(())
     }
 
+    /// Session ids whose rows the user deleted (schema V4).
+    pub(crate) fn deleted_sessions(&self) -> Result<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT session_id FROM deleted_sessions")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    pub(crate) fn mark_session_deleted(&self, session_id: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO deleted_sessions(session_id, at) VALUES (?1, ?2) \
+             ON CONFLICT(session_id) DO NOTHING",
+            rusqlite::params![session_id, chrono::Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn unmark_session_deleted(&self, session_id: &str) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM deleted_sessions WHERE session_id = ?1",
+            rusqlite::params![session_id],
+        )?;
+        Ok(())
+    }
+
+    /// Confirmed transcript aliases, `(alias, owner)` (schema V5).
+    pub(crate) fn session_aliases(&self) -> Result<Vec<(String, String)>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT alias_id, owner_session_id FROM session_aliases")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    pub(crate) fn save_session_alias(&self, alias: &str, owner: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO session_aliases(alias_id, owner_session_id, at) VALUES (?1, ?2, ?3) \
+             ON CONFLICT(alias_id) DO UPDATE SET owner_session_id = excluded.owner_session_id",
+            rusqlite::params![alias, owner, chrono::Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn delete_session_alias(&self, alias: &str) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM session_aliases WHERE alias_id = ?1",
+            rusqlite::params![alias],
+        )?;
+        Ok(())
+    }
+
     pub(crate) fn delete(&self, thread_id: ThreadId) -> Result<()> {
         self.conn.execute(
             "DELETE FROM threads WHERE thread_id = ?1",
@@ -165,6 +233,34 @@ fn optional(list: &PathList) -> Option<SerializedPathList> {
         None
     } else {
         Some(list.serialize())
+    }
+}
+
+/// Copy the database aside before a migration changes it, so no build is
+/// ever the only holder of a user's history.
+///
+/// `VACUUM INTO` rather than a file copy: the database runs in WAL mode, and
+/// copying `threads.db` alone would miss whatever sits in the `-wal` file. One
+/// copy per starting version (`threads.db.bak-v5`): the first one is the
+/// state before anything touched it, and a later open from the same version
+/// keeps it rather than overwriting it. Failing to take the copy fails the
+/// open — the error reaches the sidebar — rather than migrating without one.
+fn backup_before_migrating(conn: &Connection, db_path: &Path) -> Result<()> {
+    let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    let mut name = db_path.as_os_str().to_owned();
+    name.push(format!(".bak-v{version}"));
+    let backup = std::path::PathBuf::from(name);
+    if backup.exists() {
+        return Ok(());
+    }
+    match conn.execute("VACUUM INTO ?1", [backup.to_string_lossy()]) {
+        Ok(_) => Ok(()),
+        // A second connection racing the same open got there first.
+        Err(_) if backup.exists() => Ok(()),
+        Err(e) => Err(Error::Storage(format!(
+            "could not back up {} before migrating it: {e}",
+            db_path.display()
+        ))),
     }
 }
 
@@ -189,6 +285,7 @@ fn decode(row: &rusqlite::Row<'_>) -> rusqlite::Result<ThreadMetadata> {
     let main_paths_order: Option<String> = row.get(11)?;
     let remote_connection: Option<String> = row.get(12)?;
     let archived: bool = row.get(13)?;
+    let branch: Option<String> = row.get(14)?;
 
     let folder_paths = path_list(serialized(folder_paths, folder_paths_order));
     let main_paths = path_list(serialized(main_paths, main_paths_order));
@@ -215,6 +312,9 @@ fn decode(row: &rusqlite::Row<'_>) -> rusqlite::Result<ThreadMetadata> {
         interacted_at: timestamp(interacted_at),
         worktree_paths,
         remote_connection: remote_connection.and_then(|s| serde_json::from_str(&s).ok()),
+        branch: branch
+            .filter(|b| !b.trim().is_empty())
+            .map(|b| Arc::from(b.as_str())),
         archived,
     })
 }

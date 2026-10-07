@@ -144,6 +144,10 @@ interface OrgState {
     /** Remove an org. Refuses if it's the last org or still owns projects
      *  (the caller must reassign/close those first). Returns whether removed. */
     deleteOrg: (id: string) => boolean;
+    /** Cut an org loose from the server — drop its `remoteId` and turn sync
+     *  off — keeping its projects as a local-only org. For an org the user has
+     *  left but cannot delete locally (it is their only one). */
+    unlinkOrg: (id: string) => void;
     /** Record the per-org last-active project (restore target on switch). */
     setActiveProjectForOrg: (orgId: string, projectId: string | null) => void;
     /** Low-level setter used by the org-switch orchestration + overlay gate. */
@@ -186,7 +190,7 @@ export const useOrgStore = createSelectors(
       },
 
       createOrg: (name, slug) => {
-        const trimmed = name.trim() || "New organisation";
+        const trimmed = name.trim() || "New organization";
         const handle = slugify(slug || trimmed);
         // GitHub-style: names are globally unique (case-insensitive). The slug
         // is what the SERVER enforces globally; locally we only stop obvious
@@ -214,13 +218,13 @@ export const useOrgStore = createSelectors(
       createOrgSynced: async (name, slug, cloud) => {
         const trimmed = name.trim();
         const handle = slugify(slug || trimmed);
-        if (!trimmed) throw "Enter a name for the organisation.";
-        if (!handle) throw "Enter a handle for the organisation.";
+        if (!trimmed) throw "Enter a name for the organization.";
+        if (!handle) throw "Enter a handle for the organization.";
         if (nameTaken(trimmed, get().organisations)) {
-          throw `An organisation named “${trimmed}” already exists.`;
+          throw `An organization named “${trimmed}” already exists.`;
         }
         if (get().organisations.some((o) => o.slug === handle)) {
-          throw `The handle “${handle}” is already used by another organisation.`;
+          throw `The handle “${handle}” is already used by another organization.`;
         }
 
         // Server FIRST for a cloud org: the unique index on `organization.slug`
@@ -314,6 +318,18 @@ export const useOrgStore = createSelectors(
         }));
         scheduleAppStateSave();
         return true;
+      },
+
+      unlinkOrg: (id) => {
+        if (!get().organisations.some((o) => o.id === id && (o.remoteId || o.syncEnabled))) return;
+        set((s) => ({
+          organisations: s.organisations.map((o) => {
+            if (o.id !== id) return o;
+            const { remoteId: _remoteId, ...rest } = o;
+            return { ...rest, syncEnabled: false };
+          }),
+        }));
+        scheduleAppStateSave();
       },
 
       setActiveProjectForOrg: (orgId, projectId) => {
@@ -452,7 +468,7 @@ export const useOrgStore = createSelectors(
             payload: { orgId: id, remoteId },
           });
         } catch (e) {
-          toast.error(typeof e === "string" ? e : "Couldn't sync organisation.");
+          toast.error(typeof e === "string" ? e : "Couldn't sync organization.");
         }
       },
 

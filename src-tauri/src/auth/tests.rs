@@ -2161,3 +2161,68 @@ async fn a_refresh_in_flight_cannot_resurrect_a_signed_out_credential() {
     );
     drop(ticket);
 }
+
+// ------------------------------------------------------------------- leave
+
+#[tokio::test]
+async fn leaving_an_organisation_drops_it_from_the_snapshot_at_once() {
+    let stub = Stub::start().await;
+    let dir = TempDir::new();
+    scripted_grant_with_roles(&stub, &[("org_1", "admin"), ("org_2", "member")]);
+    stub.profile("Ada Lovelace", None);
+    stub.org_list(&[("org_1", "Atlas"), ("org_2", "Side Project")]);
+    let auth = core(&stub, &dir);
+    sign_in(&auth).await;
+
+    stub.on("/organization/leave", vec![Reply::ok(r#"{"id":"mem_1"}"#)]);
+    // What the server lists once the membership is gone.
+    stub.org_list(&[("org_1", "Atlas")]);
+    stub.on("/token", vec![jwt_reply(&[("org_1", "admin")])]);
+
+    auth.leave_org("org_2").await.expect("a member may leave");
+
+    let seen = stub.seen("/organization/leave");
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0].method, "POST");
+    assert_eq!(
+        seen[0].bearer.as_deref(),
+        Some("session-tok"),
+        "the desktop has no cookie: the leave rides the session token"
+    );
+    assert_eq!(
+        orgs_of(&auth.snapshot()),
+        Some(vec![org("org_1", "Atlas", Some(Role::Admin))]),
+        "the account menu must stop listing the org without waiting for a revalidate"
+    );
+}
+
+#[tokio::test]
+async fn a_refused_leave_is_denied_and_changes_nothing() {
+    // The Owner, or the last admin: the server answers 403, and the user is
+    // still a member of everything they were in.
+    let stub = Stub::start().await;
+    let dir = TempDir::new();
+    scripted_grant_with_roles(&stub, &[("org_1", "admin")]);
+    stub.profile("Ada Lovelace", None);
+    stub.org_list(&[("org_1", "Atlas")]);
+    let auth = core(&stub, &dir);
+    sign_in(&auth).await;
+
+    stub.on(
+        "/organization/leave",
+        vec![Reply::err(
+            403,
+            r#"{"code":"owner_cannot_leave","message":"The organization's owner cannot leave it."}"#,
+        )],
+    );
+
+    assert_eq!(auth.leave_org("org_1").await, Err(AuthFailure::Denied));
+    assert!(
+        auth.stored().is_some(),
+        "a refusal never costs the credential"
+    );
+    assert_eq!(
+        orgs_of(&auth.snapshot()),
+        Some(vec![org("org_1", "Atlas", Some(Role::Admin))])
+    );
+}

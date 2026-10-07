@@ -66,6 +66,7 @@ are gated behind a keyword prefilter, so a typical call touches a handful of the
 310 and the rest never compile at all.
 
 The layered approach — entropy, vendor corpus, provider prefixes, credentialed
-URIs, connection strings, bounded credential pairs — is adapted from Entire's
-`redact` package (MIT). The rule corpus and the layering are the two pieces of
-that design genuinely worth taking.
+URIs, connection strings, bounded credential pairs — is what lets each layer
+stay narrow: no single detector has to catch every secret shape, so none has to
+be loose enough to flag ordinary text. Provenance for the borrowed pieces is in
+`LICENSE-betterleaks`.

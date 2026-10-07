@@ -326,7 +326,7 @@ function TypeSection() {
       <Section
         title="Named text styles"
         decision="decision 24"
-        note="Reach for one of these before reaching for a size plus a weight plus a colour."
+        note="Reach for one of these before reaching for a size plus a weight plus a color."
       >
         {TEXT_STYLES.map((style) => (
           <Row key={style.utility} name={style.utility}>
@@ -347,7 +347,7 @@ function ControlHeightSection() {
     <Section
       title="Control heights"
       decision="decision 25"
-      note="Four steps. The heights the audit found at 22, 28 and 30 snap to the nearest one. The titlebar and the centre tab strip are named layout constants, not controls."
+      note="Four steps. The heights the audit found at 22, 28 and 30 snap to the nearest one. The titlebar and the center tab strip are named layout constants, not controls."
     >
       {CONTROL_HEIGHTS.map((height) => (
         <Row key={height.name} name={height.utility} value={values[height.cssVar]}>
@@ -396,7 +396,7 @@ function ElevationSection() {
     <Section
       title="Elevation"
       decision="decision 27"
-      note="Three levels; the shadow colour comes from the theme. inset-highlight is the 1px top edge on raised glass, and it composes with a shadow rather than replacing it."
+      note="Three levels; the shadow color comes from the theme. inset-highlight is the 1px top edge on raised glass, and it composes with a shadow rather than replacing it."
     >
       <div className="flex flex-wrap gap-6">
         {ELEVATIONS.map((elevation) => (
@@ -834,7 +834,7 @@ function PrimitiveSection() {
       <Section
         title="Badge"
         decision="decision 32 · src/ui/badge.tsx"
-        note="Not a control, so not on the control-height scale. Status colour comes from the theme's status tokens."
+        note="Not a control, so not on the control-height scale. Status color comes from the theme's status tokens."
       >
         {(["md", "sm"] as const).map((size) => (
           <Row key={size} name={`size="${size}"`}>
@@ -1092,7 +1092,7 @@ function OverlaySection() {
       <Section
         title="Dialog"
         decision="decision 16 · src/ui/dialog.tsx"
-        note="A centred modal has no Positioner — the Popup places itself. The scrim is z-overlay (100) and the dialog z-modal (110); the menu inside the second one is z-popover (200), which is why it draws on top instead of behind."
+        note="A centered modal has no Positioner — the Popup places itself. The scrim is z-overlay (100) and the dialog z-modal (110); the menu inside the second one is z-popover (200), which is why it draws on top instead of behind."
       >
         <Row name="default">
           <div className="flex flex-wrap items-center gap-2">

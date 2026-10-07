@@ -30,6 +30,12 @@ import Voyage from "@lobehub/icons/es/Voyage/components/Color";
 import HuggingFace from "@lobehub/icons/es/HuggingFace/components/Color";
 import Jina from "@lobehub/icons/es/Jina/components/Mono";
 import ElevenLabs from "@lobehub/icons/es/ElevenLabs/components/Mono";
+import Claude from "@lobehub/icons/es/Claude/components/Color";
+import Gemini from "@lobehub/icons/es/Gemini/components/Color";
+import Qwen from "@lobehub/icons/es/Qwen/components/Color";
+import Kimi from "@lobehub/icons/es/Kimi/components/Color";
+import Meta from "@lobehub/icons/es/Meta/components/Color";
+import Zhipu from "@lobehub/icons/es/Zhipu/components/Color";
 import orcaLogo from "@/assets/orcarouter.png";
 
 type IconComp = ComponentType<{
@@ -84,6 +90,15 @@ const LOGOS: Record<string, IconComp> = {
   jina: Jina,
   elevenlabs: ElevenLabs,
   orcarouter: OrcaRouterLogo,
+  // Model families rather than BYOK providers — the composer's model picker
+  // groups by these (see `features/chat/lib/model-provider.ts`), and a family
+  // reads by its model's mark: Claude's spark, not Anthropic's wordmark.
+  claude: Claude,
+  gemini: Gemini,
+  qwen: Qwen,
+  kimi: Kimi,
+  meta: Meta,
+  zhipu: Zhipu,
 };
 
 /**

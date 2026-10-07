@@ -3,7 +3,9 @@ import {
   aggregateReactions,
   conversationTitle,
   groupMessages,
+  initials,
   isNewDay,
+  memberName,
   utf8Bytes,
 } from "./derive";
 import { parseMentions } from "../types";
@@ -81,6 +83,19 @@ describe("groupMessages", () => {
   it("breaks the stack when the author changes", () => {
     const groups = groupMessages([msg({ id: "m1" }), msg({ id: "m2", author_id: "u_b" })], "u_b");
     expect(groups).toHaveLength(2);
+  });
+
+  it("breaks the stack when one webhook posts under a different name", () => {
+    const hook = { author_id: "whk_1", author_kind: "webhook" as const };
+    const groups = groupMessages(
+      [
+        msg({ id: "m1", ...hook, author_name: "CI" }),
+        msg({ id: "m2", ...hook, author_name: "CI" }),
+        msg({ id: "m3", ...hook, author_name: "Deploy" }),
+      ],
+      "u_b",
+    );
+    expect(groups.map((g) => g.messages.map((m) => m.id))).toEqual([["m1", "m2"], ["m3"]]);
   });
 
   it("breaks the stack once the time window lapses", () => {
@@ -213,5 +228,49 @@ describe("isNewDay", () => {
         msg({ id: "m2", created_at: new Date(2026, 8, 1, 0, 1).getTime() }),
       ),
     ).toBe(true);
+  });
+});
+
+describe("memberName", () => {
+  it("uses the display name when there is one", () => {
+    expect(memberName("  Priya Raghunathan ", "priya@acme.dev")).toBe("Priya Raghunathan");
+  });
+
+  it("falls back to the email for an account with no display name", () => {
+    expect(memberName("", "j.okonkwo@acme.dev")).toBe("j.okonkwo@acme.dev");
+    expect(memberName("   ", "j.okonkwo@acme.dev")).toBe("j.okonkwo@acme.dev");
+    expect(memberName(null, "j.okonkwo@acme.dev")).toBe("j.okonkwo@acme.dev");
+  });
+
+  it("never returns an empty label", () => {
+    expect(memberName("", "")).toBe("Unknown");
+    // A payload missing both fields must not throw out of the roster build.
+    expect(memberName(undefined, undefined)).toBe("Unknown");
+    expect(memberName(null, null)).toBe("Unknown");
+  });
+});
+
+describe("initials", () => {
+  it("takes the first and last word of a name", () => {
+    expect(initials("Mirabel Fitzgerald-Okonkwo")).toBe("MF");
+    expect(initials("Sam")).toBe("SA");
+  });
+
+  it("reads an email label by its local part", () => {
+    expect(initials("j.okonkwo@acme.dev")).toBe("JO");
+    expect(initials("wren@acme.dev")).toBe("WR");
+  });
+
+  it("treats any punctuation in the local part as a word break", () => {
+    expect(initials("sam+qa@acme.dev")).toBe("SQ");
+    expect(initials("o'brien@acme.dev")).toBe("OB");
+  });
+
+  it("falls back to the domain when the local part has no letters", () => {
+    expect(initials("_@acme.dev")).toBe("AD");
+    expect(initials("@acme")).toBe("AC");
+  });
+  it("is ? only when there is nothing to draw", () => {
+    expect(initials("  ")).toBe("?");
   });
 });

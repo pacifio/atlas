@@ -553,7 +553,7 @@ function ProjectSubmenu({
                 </div>
               ) : projects.length === 0 ? (
                 <div className="px-3 py-1.5 text-xs text-[var(--muted-foreground)]">
-                  {query ? "No matches." : "No other projects in this organisation."}
+                  {query ? "No matches." : "No other projects in this organization."}
                 </div>
               ) : (
                 projects.map((w) => (

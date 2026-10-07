@@ -17,7 +17,7 @@ pub enum Error {
     /// auth service was unreachable is a `Transport` — classifying it here
     /// would tell a developer on a flaky connection that they had been signed
     /// out, which is the mistake `commands/comms.rs` documents at length.
-    #[error("not authorised: {0}")]
+    #[error("not authorized: {0}")]
     Unauthorized(String),
 
     /// The server understood and refused (403). Terminal for this Project

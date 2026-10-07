@@ -572,7 +572,7 @@ pub fn byok_env_set(app: AppHandle, env_var: String, value: String) -> Result<St
     }
     if !known_vars().iter().any(|(_, v)| *v == env_var) {
         return Err(format!(
-            "'{env_var}' is not a recognised provider key variable."
+            "'{env_var}' is not a recognized provider key variable."
         ));
     }
     let home = home_dir().ok_or("No home directory.")?;

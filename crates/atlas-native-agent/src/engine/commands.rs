@@ -106,7 +106,7 @@ pub fn available(skills: &[SkillRef]) -> Vec<acp::AvailableCommand> {
     let mut commands = vec![
         acp::AvailableCommand::new(
             "compact",
-            "Summarise the conversation so far to free up context",
+            "Summarize the conversation so far to free up context",
         ),
         acp::AvailableCommand::new("diff", "Show the uncommitted changes in this repository"),
         acp::AvailableCommand::new(

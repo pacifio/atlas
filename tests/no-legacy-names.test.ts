@@ -117,6 +117,11 @@ const ALLOWED_LINES: [pattern: RegExp, reason: string][] = [
   ],
   [/codex-acp|@openai\/codex|codex-(darwin|linux|win32)/, "third-party Codex CLI packages"],
   [/`codex-login`/, "the third-party Codex CLI's slash command"],
+  [/`~\/\.codex`/, "the third-party Codex CLI's home directory, which Atlas never reads"],
+  [
+    /the Memory panel's Codex thread list/,
+    "CONTEXT.md's flagged exception names the third-party CLI",
+  ],
 ];
 
 /** Files whose bytes are not text; never read. */

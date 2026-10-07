@@ -111,6 +111,8 @@ import {
   markOrgReconciled,
 } from "@/features/organisations/lib/org-reconciliation";
 import { comms, listenComms, type CommsEnvelope } from "@/features/comms/lib/comms-api";
+import { startTeamPresenceListener } from "@/features/artifacts/lib/team-presence";
+import { useTeamPresenceStore } from "@/features/artifacts/stores/team-presence-store";
 import { useSettingsStore } from "@/features/settings/stores/settings-store";
 import { commsActions, pruneTyping } from "@/features/comms/stores/comms-store";
 import { useUpdaterStore } from "@/features/updater/stores/updater-store";
@@ -373,11 +375,23 @@ export function App() {
         .join("\n"),
     [cloudProjects],
   );
+  // Who the Timeline's sockets say is online. Listened at app scope because
+  // the roster is only re-sent when somebody comes or goes: a listener that
+  // mounted with the panel would miss the one sent when the sockets opened.
+  useEffect(() => startTeamPresenceListener(), []);
+  /** The Organisation the presence rosters were heard under. */
+  const presenceOrgRef = useRef<string | null>(null);
   useEffect(() => {
     const active = bootOrganisations.find((o) => o.id === bootLocalActiveOrg);
     // A local-only Organisation has no `remoteId` and nothing to point at;
     // `null` is what tears the previous tenant's sockets down.
     const orgId = bootAuthStatus === "signed-in" ? (active?.remoteId ?? null) : null;
+    // A roster belongs to the tenant it was heard in. Another Organisation's
+    // teammates must not show as online here while its sockets dial.
+    if (presenceOrgRef.current !== orgId) {
+      presenceOrgRef.current = orgId;
+      useTeamPresenceStore.getState().actions.reset();
+    }
     void invoke("artifacts_cloud_retarget", {
       orgId,
       projectPaths: cloudProjectsKey ? cloudProjectsKey.split("\n") : [],

@@ -669,7 +669,7 @@ function ConversationIntro({
       </div>
       <p className="mt-0.5 text-xs leading-relaxed text-disabled">
         {isChannel
-          ? "This is the beginning of the channel. Anyone in the organisation can be invited, and an invitee sees the full history."
+          ? "This is the beginning of the channel. Anyone in the organization can be invited, and an invitee sees the full history."
           : conv.kind === "group_dm"
             ? "Group membership is fixed for the life of the conversation — adding someone means starting a new group."
             : "This conversation is between the two of you."}

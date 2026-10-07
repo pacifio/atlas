@@ -146,7 +146,7 @@ describe("TimelineSidebar", () => {
     // The icon carries the state, so it is what the assertion reads — a
     // synced row must be distinguishable without opening it.
     expect(screen.getByLabelText("This machine only")).toBeTruthy();
-    expect(screen.getByLabelText("Shared with your Organisation")).toBeTruthy();
+    expect(screen.getByLabelText("Shared with your Organization")).toBeTruthy();
   });
 
   it("says whose work each row is, and never prints a raw id", () => {

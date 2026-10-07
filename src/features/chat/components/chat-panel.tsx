@@ -13,6 +13,7 @@ import { stripInjectedContext } from "../lib/atlas-context";
 import { agents, ensureAgent, resetAgent } from "../lib/agents-api";
 import { isDeadlineError, withDeadline } from "../lib/with-deadline";
 import { drainEdge } from "../lib/drain-gate";
+import { isSendHeldElsewhere, useSendHeldForTerminal } from "../stores/live-elsewhere-store";
 import { CHAT_STOP_EVENT, cycleChatAgent, isSwitchPending } from "../lib/switch-agent";
 import { loadCachedAcpModes } from "../lib/acp-modes-cache";
 import { configOptionPushes, loadConfigOptionPrefs } from "../lib/config-option-prefs";
@@ -118,6 +119,7 @@ const HEADER_INSET = 46;
 import { PermissionModal } from "./permission-modal";
 import { ChatCommentsController } from "./chat-comments-controller";
 import { useCommentCount } from "../stores/chat-comments-store";
+import { grantLocksComposer, useNoAiGrant } from "../stores/ai-grant-store";
 import { SessionElicitation } from "./session-elicitation";
 
 // Both panels are modal-style and never visible on first paint. Lazy so
@@ -141,6 +143,7 @@ const ChatSearchPalette = lazy(() =>
 // messages.
 const Transcript = lazy(() => import("./transcript").then((m) => ({ default: m.Transcript })));
 import type { TranscriptHandle } from "./transcript";
+import { requestModelPicker } from "../lib/model-picker-events";
 // Diffs + tool output live here rather than inline in the thread — see the
 // module header for why that's a perf decision as much as a UX one.
 const DetailPanel = lazy(() => import("./detail-panel").then((m) => ({ default: m.DetailPanel })));
@@ -873,6 +876,22 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
   // any agent seen before; one that has not been opened this session fills its
   // picker when it is.
 
+  // ⌘⇧M → open (or close) this composer's model picker. Same capture-phase,
+  // focus-inside-this-panel gate as the mode chord below.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!matchesAction(e, "chat.toggleModelPicker")) return;
+      const root = rootRef.current;
+      const active = document.activeElement as HTMLElement | null;
+      if (!root || !active || !root.contains(active)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      requestModelPicker(tabId);
+    };
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, [tabId]);
+
   // Shift+Tab → cycle the agent permission mode. Registered on the window in
   // capture phase so the browser's default focus traversal never steals it.
   useEffect(() => {
@@ -950,6 +969,16 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
   const prevStatusRef = useRef<string | null>(null);
   const prevAcpRef = useRef<string | undefined>(undefined);
   const prevResumingRef = useRef(false);
+  // A session another process is writing (ADR-0001 amendment, Rule 7) closes
+  // the drain gate like a pending resume does; "Send anyway" or the other
+  // process going quiet is its falling edge. The composer feeds the live set.
+  const heldElsewhere = useSendHeldForTerminal(session?.acpSessionId);
+  const prevHeldElsewhereRef = useRef(false);
+  // The no-AI-grant hold on the queue (`drain-gate.ts`): what the composer
+  // lock would be with no turn running.
+  const noAiGrant = useNoAiGrant();
+  const grantHold = grantLocksComposer(noAiGrant, session?.agentType ?? "", false);
+  const prevGrantHoldRef = useRef(grantHold);
   const handleSendRef = useRef<
     | ((
         content: string,
@@ -1034,6 +1063,10 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
     const curResuming = !!session?.resumePending || !!session?.unrestoredModeId;
     const prevResuming = prevResumingRef.current;
     prevResumingRef.current = curResuming;
+    const prevHeldElsewhere = prevHeldElsewhereRef.current;
+    prevHeldElsewhereRef.current = heldElsewhere;
+    const prevGrantHold = prevGrantHoldRef.current;
+    prevGrantHoldRef.current = grantHold;
     // The gate lives in `drain-gate.ts` with its own test: a queue drains
     // only into a BOUND session. The bind-failure branch above parks the held
     // message back in the queue and drops the status to idle, and reading
@@ -1047,6 +1080,10 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
       curAcp,
       prevResuming,
       curResuming,
+      prevHeldElsewhere,
+      curHeldElsewhere: heldElsewhere,
+      prevGrantHold,
+      curGrantHold: grantHold,
     });
     if (justBound || justResumed) {
       // The first message held while the session was starting goes out
@@ -1082,6 +1119,8 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
     session?.acpSessionId,
     session?.resumePending,
     session?.unrestoredModeId,
+    heldElsewhere,
+    grantHold,
     tabId,
   ]);
 
@@ -1262,6 +1301,35 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
     // effect sends it once the user has picked a mode. The composer already
     // refuses; this catches every other sender (chips, handoffs).
     if (bound?.unrestoredModeId) {
+      useChatStore.getState().actions.enqueueMessage(tabId, actualContent);
+      return;
+    }
+    // Fail closed on a session another process is still writing (ADR-0001
+    // amendment, Rule 7): sending would fork its transcript. This is the choke
+    // point every sender passes — the composer (which already refuses), chips
+    // and `atlas:chat-send` (another agent's `ui_chat` send, agent-switch
+    // handoffs), the queue drain, the permission modal. Nothing is dropped:
+    // the message queues (a held first message stays held, already recorded),
+    // and the drain gate releases it on "Send anyway" or once the session
+    // stops being live.
+    if (isSendHeldElsewhere(bound?.acpSessionId)) {
+      const cs = useChatStore.getState();
+      if (opts?.recorded) {
+        cs.actions.setPendingSend(tabId, { content: actualContent, mentions, attachments });
+        // Not "Starting…": nothing is starting until the user says so.
+        updateSessionStatus(tabId, "idle");
+      } else {
+        cs.actions.enqueueMessage(tabId, actualContent);
+      }
+      return;
+    }
+    // The same for the no-AI-grant hold: the composer is locked, but a
+    // next-step chip or a handoff is not the composer. Park it with the rest
+    // of the held queue rather than send it to a gateway that will refuse it;
+    // the hold's release drains it (`drain-gate.ts`). Not mid-turn — an answer
+    // to the running turn's own question belongs to the turn already admitted,
+    // and a message held for the bind (`recorded`) already has its bubble.
+    if (grantHold && !opts?.recorded && !isBusyAgentStatus(bound?.status)) {
       useChatStore.getState().actions.enqueueMessage(tabId, actualContent);
       return;
     }
@@ -1521,7 +1589,8 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
       )}
 
       {/* Cloud comments: the resolver runs for the pane's lifetime (it is what
-          decides whether the header button exists); the panel only on demand. */}
+          decides whether the header button exists); the panel only on demand,
+          as a docked flex column that narrows the conversation beside it. */}
       <ChatCommentsController tabId={tabId} />
       {commentsPanelOpen && (
         <Suspense fallback={null}>

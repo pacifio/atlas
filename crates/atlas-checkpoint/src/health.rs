@@ -218,7 +218,7 @@ pub fn evaluate(store: &Store, workspace_id: &str, host: HostSignals) -> Result<
     if binding.mode == ProjectMode::Cloud && binding.drain_state == DrainGate::NotAuthorized {
         issues.push(HealthIssue {
             state: HealthState::Degraded,
-            reason: "No longer authorized to sync with your Organisation — new work stays on \
+            reason: "No longer authorized to sync with your Organization — new work stays on \
                      this machine."
                 .into(),
             next_step: "Reconnect or re-register this Project to resume syncing. Capture \
@@ -246,7 +246,7 @@ pub fn evaluate(store: &Store, workspace_id: &str, host: HostSignals) -> Result<
         issues.push(HealthIssue {
             state: HealthState::Degraded,
             reason: format!(
-                "{failed_rows} record{} could not be sent to your Organisation.",
+                "{failed_rows} record{} could not be sent to your Organization.",
                 plural(failed_rows)
             ),
             next_step: "They are skipped so the rest keep syncing. Retry from the sync status."

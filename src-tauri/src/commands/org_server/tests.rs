@@ -3496,7 +3496,7 @@ async fn org_send_refuses_while_chat_is_on_another_organisation_and_nothing_is_s
     assert!(err);
     let text = answer.as_str().unwrap_or_default();
     assert!(
-        text.contains("chat is connected to organisation org-other") && text.contains("org-acme"),
+        text.contains("chat is connected to organization org-other") && text.contains("org-acme"),
         "{text}"
     );
     assert!(nothing_sent(&org));
@@ -3863,7 +3863,7 @@ async fn a_restricted_workspace_drops_the_reference_appends_the_timeline_link_an
     assert!(
         said["note"]
             .as_str()
-            .is_some_and(|n| n.contains("not visible to the whole organisation")),
+            .is_some_and(|n| n.contains("not visible to the whole organization")),
         "{answer}"
     );
     assert_eq!(answer["body"], json!(format!("Report.\n\n{link}")));
@@ -4527,7 +4527,7 @@ async fn a_non_admin_calling_org_member_activity_anyway_is_refused_and_nothing_i
         )
         .await;
         assert!(err, "{role:?}: {text}");
-        assert!(text.contains("Only an organisation admin"), "{text}");
+        assert!(text.contains("Only an organization admin"), "{text}");
         assert_eq!(org.board_reads(), 0, "{role:?}");
         assert!(
             !org.asked().iter().any(|(_, what)| what == "members"),
@@ -4730,7 +4730,7 @@ async fn a_403_from_the_organisation_is_a_readable_tool_error() {
         "{text}"
     );
     assert!(
-        text.contains("only an organisation admin can read it"),
+        text.contains("only an organization admin can read it"),
         "{text}"
     );
     client.cancel().await.ok();
@@ -5130,7 +5130,7 @@ async fn a_token_that_names_no_organisation_is_refused_and_nothing_is_asked() {
     let (err, text) = call(&client, "org_whoami", json!({})).await;
     assert!(err);
     assert!(
-        text.contains("not given access to an organisation"),
+        text.contains("not given access to an organization"),
         "{text}"
     );
     assert!(org.asked().is_empty());
@@ -5450,7 +5450,7 @@ async fn a_refused_call_is_one_audit_record_that_says_why() {
     assert!(
         records[1]
             .text
-            .contains("not given access to an organisation"),
+            .contains("not given access to an organization"),
         "{}",
         records[1].text
     );
@@ -6510,7 +6510,7 @@ async fn a_demoted_admin_is_refused_org_member_activity_on_the_next_call() {
         json!({ "member": "Grace Hopper" }),
     )
     .await;
-    assert!(err && text.contains("Only an organisation admin"), "{text}");
+    assert!(err && text.contains("Only an organization admin"), "{text}");
     assert_eq!(org.board_reads(), reads, "nothing more was read");
     client.cancel().await.ok();
 }

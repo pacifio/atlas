@@ -2331,8 +2331,8 @@ impl Store {
     /// touch is spent. Without consumption, every future commit that happens to
     /// modify the same path — including purely human work months later, and
     /// teammate commits arriving via pull — would be attributed to the Session
-    /// forever. This mirrors the carry-forward rule in Entire's link engine,
-    /// which is the load-bearing half of the asymmetric rule.
+    /// forever. This is the carry-forward rule, the load-bearing half of the
+    /// asymmetric rule.
     pub fn link_candidates(&self, workspace_id: &str) -> Result<Vec<LinkCandidate>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, started_at FROM agent_session

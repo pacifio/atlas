@@ -753,3 +753,146 @@ fn the_chat_you_are_looking_at_is_not_also_listed_beneath_itself() {
         "a draft is the open tab, not a history row"
     );
 }
+
+/// A conversation still open in Atlas whose row was deleted comes back on its
+/// next message — and with it, the session stops counting as deleted, durably.
+#[test]
+fn a_live_update_for_a_deleted_session_undeletes_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let saved = thread("some-agent", &["/tmp/atlas"]);
+    let session = saved.session_id.clone().unwrap();
+    {
+        let store = open(&dir);
+        store.save_one(saved.clone());
+        store.delete(saved.thread_id);
+        assert!(store.is_session_deleted(&session));
+
+        store.record_live_update(live(&saved, Some("Carried on")));
+        assert!(!store.is_session_deleted(&session));
+        store.flush().unwrap();
+    }
+    let store = open(&dir);
+    assert!(!store.is_session_deleted(&session));
+    assert!(store.thread(saved.thread_id).is_some());
+}
+
+/// The review finding: `touch_sessions` copied a row under a read lock and
+/// wrote the copy back, so a delete landing in between was undone — on disk
+/// too, since the queue keeps the last write. Racing the two many times must
+/// never leave a row behind, in memory or after a reopen.
+#[test]
+fn a_touch_racing_a_delete_never_resurrects_the_row() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let mut ids = Vec::new();
+    for _ in 0..2000 {
+        let row = thread("some-agent", &["/tmp/atlas"]);
+        ids.push((row.thread_id, row.session_id.clone().unwrap()));
+        store.save_one(row);
+    }
+
+    let start = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let toucher = {
+        let (store, start, done) = (store.clone(), start.clone(), done.clone());
+        let sessions: Vec<_> = ids.iter().map(|(_, s)| s.clone()).collect();
+        std::thread::spawn(move || {
+            start.wait();
+            let mut round = 0;
+            while !done.load(std::sync::atomic::Ordering::Acquire) {
+                round += 1;
+                let at = Utc::now() + chrono::Duration::seconds(round);
+                // Back to front, so it meets the deleter mid-list.
+                for s in sessions.iter().rev() {
+                    store.touch_sessions(&[(s.clone(), at)], None);
+                }
+            }
+        })
+    };
+    start.wait();
+    for (thread_id, _) in &ids {
+        store.delete(*thread_id);
+    }
+    done.store(true, std::sync::atomic::Ordering::Release);
+    toucher.join().unwrap();
+    store.flush().unwrap();
+
+    assert!(store.threads().is_empty(), "no deleted row came back");
+    drop(store);
+    assert!(open(&dir).threads().is_empty(), "nor on disk");
+}
+
+/// Same race against a rename: a touch must never write back the name the
+/// row had before.
+#[test]
+fn a_touch_never_undoes_a_concurrent_rename() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let row = thread("some-agent", &["/tmp/atlas"]);
+    let (thread_id, session) = (row.thread_id, row.session_id.clone().unwrap());
+    store.save_one(row);
+
+    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let toucher = {
+        let (store, done) = (store.clone(), done.clone());
+        std::thread::spawn(move || {
+            let mut round = 0;
+            while !done.load(std::sync::atomic::Ordering::Acquire) {
+                round += 1;
+                let at = Utc::now() + chrono::Duration::seconds(round);
+                store.touch_sessions(&[(session.clone(), at)], None);
+            }
+        })
+    };
+    for n in 0..5000 {
+        let name = format!("Mine {n}");
+        store.set_title_override(thread_id, name.as_str());
+        assert_eq!(
+            store.thread(thread_id).unwrap().title_override.as_deref(),
+            Some(name.as_str()),
+            "a touch wrote back an older name"
+        );
+    }
+    done.store(true, std::sync::atomic::Ordering::Release);
+    toucher.join().unwrap();
+}
+
+#[test]
+fn a_recorded_branch_survives_a_reopen_and_later_live_updates() {
+    let dir = tempfile::tempdir().unwrap();
+    let saved = thread("atlas-agent", &["/tmp/atlas"]);
+    {
+        let store = open(&dir);
+        store.save_one(saved.clone());
+        assert_eq!(
+            store.thread(saved.thread_id).unwrap().branch,
+            None,
+            "a new thread's branch is unknown until the host reads it"
+        );
+        let mut changes = store.subscribe();
+
+        store.update_branch(saved.thread_id, Some("discount-codes".into()));
+        assert_eq!(changes.try_recv().unwrap(), ThreadStoreEvent::Changed);
+
+        // The same branch again is not a change.
+        store.update_branch(saved.thread_id, Some("discount-codes".into()));
+        assert!(changes.try_recv().is_err());
+
+        // A conversation event does not own the branch and must not drop it.
+        store.record_live_update(live(&saved, Some("Discount codes")));
+        store.flush().unwrap();
+    }
+
+    let store = open(&dir);
+    assert_eq!(
+        store.thread(saved.thread_id).unwrap().branch.as_deref(),
+        Some("discount-codes")
+    );
+
+    // Clearing goes back to unknown, durably; an empty name is not a name.
+    store.update_branch(saved.thread_id, Some("  ".into()));
+    store.flush().unwrap();
+    drop(store);
+    let store = open(&dir);
+    assert_eq!(store.thread(saved.thread_id).unwrap().branch, None);
+}

@@ -12,7 +12,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
+  CallMode,
+  CallProvider,
   ChatCall,
+  ChatFeatures,
   ChatPin,
   PromptDraft,
   ChatConversation,
@@ -241,9 +244,15 @@ export const comms = {
   draftAwareness: (draftId: string, state: string) =>
     invoke<void>("comms_draft_awareness", { draftId, state }),
   /** Start a call. The server's join token never crosses the bridge — the
-   *  browser's call tab mints its own; this answers the call row only. */
-  startCall: (convId: string, mode: "audio" | "video", isPublic: boolean) =>
-    invoke<ChatCall>("comms_start_call", { convId, mode, public: isPublic }),
+   *  browser's call tab mints its own; this answers the call row only.
+   *  `provider` is required here even though Rust takes it as optional: the
+   *  server reads a start without one as a paid Meeting, which is exactly
+   *  how the free Voice Call went missing from the desktop. */
+  startCall: (convId: string, mode: CallMode, isPublic: boolean, provider: CallProvider) =>
+    invoke<ChatCall>("comms_start_call", { convId, mode, public: isPublic, provider }),
+  /** The Organisation's platform features — which call kinds its plan
+   *  allows. A drawing hint; the server checks every start again. */
+  features: () => invoke<ChatFeatures>("comms_features"),
   /** Save a call's transcript (CSV) to a user-picked path. */
   saveTranscript: (callId: string, dest: string) =>
     invoke<void>("comms_save_transcript", { callId, dest }),

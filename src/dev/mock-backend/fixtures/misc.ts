@@ -36,6 +36,7 @@ import type { UpdateStatus } from "@/features/updater/lib/updater-api";
 import type { NativeModelsRefresh } from "@/types/agents";
 import type { MockHandlers } from "../types";
 import { abs, MOCK_PROJECT, OTHER_PROJECTS } from "../project";
+import { adoptSession } from "../fake-agent";
 
 const nothing = () => null;
 
@@ -61,6 +62,11 @@ const THREADS: ThreadRow[] = [
     archived: false,
     projectName: MOCK_PROJECT.name,
     folderPaths: [MOCK_PROJECT.path],
+    // Another process is writing this one: the live dot, and the composer's
+    // "Send anyway" hold when it is opened.
+    liveElsewhere: true,
+    // One of the fake repo's own branches (`fixtures/git.ts`).
+    branch: "feature/auth-v2",
   },
   {
     threadId: "th-02",
@@ -73,6 +79,8 @@ const THREADS: ThreadRow[] = [
     archived: false,
     projectName: MOCK_PROJECT.name,
     folderPaths: [MOCK_PROJECT.path],
+    liveElsewhere: false,
+    branch: "main",
   },
   {
     threadId: "th-03",
@@ -85,6 +93,8 @@ const THREADS: ThreadRow[] = [
     archived: false,
     projectName: MOCK_PROJECT.name,
     folderPaths: [MOCK_PROJECT.path, abs("src/styles")],
+    liveElsewhere: false,
+    branch: "main",
   },
   {
     threadId: "th-04",
@@ -96,6 +106,8 @@ const THREADS: ThreadRow[] = [
     archived: false,
     projectName: OTHER_PROJECTS[0].name,
     folderPaths: [OTHER_PROJECTS[0].path],
+    liveElsewhere: false,
+    branch: "main",
   },
   {
     threadId: "th-05",
@@ -108,6 +120,9 @@ const THREADS: ThreadRow[] = [
     archived: true,
     projectName: MOCK_PROJECT.name,
     folderPaths: [MOCK_PROJECT.path],
+    liveElsewhere: false,
+    // Detached HEAD when it ran, so Atlas never learned a branch.
+    branch: null,
   },
 ];
 
@@ -118,6 +133,9 @@ function threadsChanged(): void {
   void emit("atlas:threads-changed");
 }
 
+/** As Rust answers it (`AgentHost::thread_projects`): scoped to `cwd`, only
+ *  the project(s) holding it, each current; unscoped, every project and none
+ *  current — the mixed list the sidebar groups under headings. */
 function threadProjects(cwd: string | null): ThreadProject[] {
   const byProject = new Map<string, ThreadRow[]>();
   for (const thread of threads) {
@@ -126,12 +144,15 @@ function threadProjects(cwd: string | null): ThreadProject[] {
     rows.push(thread);
     byProject.set(thread.projectName, rows);
   }
-  return [...byProject].map(([name, rows]) => ({
-    name,
-    paths: [...new Set(rows.flatMap((row) => row.folderPaths))],
-    isCurrent: cwd === null ? name === MOCK_PROJECT.name : rows[0].folderPaths.includes(cwd),
-    threads: rows,
-  }));
+  const scoped = cwd !== null && cwd !== "";
+  return [...byProject]
+    .filter(([, rows]) => !scoped || rows.some((row) => row.folderPaths.includes(cwd)))
+    .map(([name, rows]) => ({
+      name,
+      paths: [...new Set(rows.flatMap((row) => row.folderPaths))],
+      isCurrent: scoped,
+      threads: rows,
+    }));
 }
 
 // ── plans (`.atlas/plans.json`) ────────────────────────────────────────────
@@ -248,15 +269,20 @@ const models: ModelStatus[] = MODELS.map((model) => ({ ...model }));
 
 export const miscHandlers: MockHandlers = {
   // ── chat history ────────────────────────────────────────────────────────
+  // As in Rust: `archivedOnly` narrows to archived rows, otherwise every row,
+  // archived or not (the composer's live-elsewhere feed relies on that).
   threads_history: ({ archivedOnly }): ThreadRow[] =>
-    threads.filter((thread) => (archivedOnly ? thread.archived : !thread.archived)),
+    archivedOnly ? threads.filter((thread) => thread.archived) : threads,
+  threads_sync_project: () => 0,
   threads_projects: ({ cwd }): ThreadProject[] =>
     threadProjects(cwd === null || cwd === undefined ? null : String(cwd)),
   threads_resume: ({ threadId }): ResumedThread => {
     const thread = threads.find((candidate) => candidate.threadId === String(threadId));
     if (!thread) throw new Error(`no such thread: ${String(threadId)}`);
+    const key = { agent_id: thread.agentId, session_id: thread.sessionId ?? thread.threadId };
+    adoptSession(key, thread.agentId, thread.folderPaths[0] ?? "");
     return {
-      key: { agent_id: thread.agentId, session_id: thread.sessionId ?? thread.threadId },
+      key,
       // The agent could only continue, not replay — the state the UI has to
       // tell the user about, and the one nothing else here exercises.
       resumedWithoutHistory: thread.agentId !== "atlas-agent",
@@ -318,6 +344,16 @@ export const miscHandlers: MockHandlers = {
     return { settings, generation };
   },
   open_atlas_config: nothing,
+  // No `config.toml` on a browser's disk: the settings shown come from the
+  // boot snapshot, and `null` is the "no file read" answer the API allows.
+  get_atlas_config_info: nothing,
+
+  // ── OS notifications and the dock badge ─────────────────────────────────
+  // A browser has neither. `null` is what the wrappers read as "no native
+  // backend" / "not granted", the honest state here.
+  notifier_init: nothing,
+  notifier_request_authorization: nothing,
+  "plugin:window|set_badge_count": nothing,
 
   // ── updater ─────────────────────────────────────────────────────────────
   // An update IS available, because "you are up to date" hides the whole
@@ -366,9 +402,27 @@ export const miscHandlers: MockHandlers = {
   // and it is the one state that needs no gateway to be plausible.
   native_agent_entitlement: (): Entitlement => ({ state: "localOrg" }),
   native_agent_refresh_models: (): NativeModelsRefresh => ({
+    // Stated providers, new models, several legacy ones in a provider and one
+    // model with no stated provider, so the picker's rail, "New" badge,
+    // Legacy fold ("N models") and agent-filed group all have something to
+    // show.
     models: [
-      { id: "gpt-5", name: "GPT-5", description: "The default for new sessions." },
-      { id: "gpt-5-mini", name: "GPT-5 mini", description: null },
+      {
+        id: "gpt-5",
+        name: "GPT-5",
+        description: "The default for new sessions.",
+        provider: "openai",
+      },
+      { id: "gpt-5.5", name: "GPT-5.5", description: null, provider: "openai", is_new: true },
+      { id: "gpt-5-mini", name: "GPT-5 mini", description: null, provider: "openai" },
+      { id: "o3", name: "o3", description: null, provider: "openai", legacy: true },
+      { id: "o4-mini", name: "o4-mini", description: null, provider: "openai", legacy: true },
+      { id: "gpt-4.1", name: "GPT-4.1", description: null, provider: "openai", legacy: true },
+      { id: "claude-opus-5", name: "Claude Opus 5", provider: "anthropic", is_new: true },
+      { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", provider: "anthropic" },
+      { id: "claude-sonnet-4", name: "Claude Sonnet 4", provider: "anthropic", legacy: true },
+      { id: "gemini-3.6-pro", name: "Gemini 3.6 Pro", provider: "google" },
+      { id: "house-coder", name: "House coder", description: "A self-hosted model." },
     ],
     defaultModel: "gpt-5",
     changed: false,

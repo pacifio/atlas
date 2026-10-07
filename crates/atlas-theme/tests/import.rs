@@ -505,11 +505,11 @@ fn an_atlas_theme_survives_a_trip_through_shadcn_and_back() {
 #[test]
 fn bad_input_fails_with_something_a_user_can_act_on() {
     let cases: &[(&str, &str)] = &[
-        ("{ not json", "unrecognised theme format"),
-        ("hello world", "unrecognised theme format"),
+        ("{ not json", "unrecognized theme format"),
+        ("hello world", "unrecognized theme format"),
         (r#"{"themes": []}"#, "`themes` is empty"),
         (r#"{"cssVars": {}}"#, "no cssVars found"),
-        (r#"{"colors": {}}"#, "no usable colours"),
+        (r#"{"colors": {}}"#, "no usable colors"),
         (":root { color: red; }", "no CSS custom properties"),
     ];
     for (source, expected) in cases {
@@ -530,7 +530,7 @@ fn an_explicit_format_overrides_the_sniffer() {
     let error = import_themes(ZED, Some(ImportFormat::VsCode), None, &options("forced"))
         .unwrap_err()
         .to_string();
-    assert!(error.contains("no usable colours"), "{error}");
+    assert!(error.contains("no usable colors"), "{error}");
 }
 
 /// The mock backend and the TypeScript resolver test both read this file: it is

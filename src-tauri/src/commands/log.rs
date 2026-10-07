@@ -23,7 +23,7 @@ fn org_log_dir(org: &str) -> Result<PathBuf, String> {
     // treat it as untrusted and refuse anything that could climb out of the log
     // directory rather than trusting the caller.
     if org.is_empty() || org.contains(['/', '\\']) || org.contains("..") {
-        return Err("invalid organisation id".into());
+        return Err("invalid organization id".into());
     }
     Ok(root.join("orgs").join(org))
 }

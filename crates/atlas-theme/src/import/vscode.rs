@@ -462,17 +462,17 @@ const IGNORED_PREFIXES: &[(&str, &str, &str)] = &[
     (
         "symbolIcon",
         "icon roles",
-        "Atlas icons take their colour from the text roles",
+        "Atlas icons take their color from the text roles",
     ),
     (
         "icon",
         "icon roles",
-        "Atlas icons take their colour from the text roles",
+        "Atlas icons take their color from the text roles",
     ),
     (
         "problemsErrorIcon",
         "icon roles",
-        "Atlas icons take their colour from the text roles",
+        "Atlas icons take their color from the text roles",
     ),
     (
         "terminalCommandDecoration",
@@ -523,7 +523,7 @@ pub(crate) fn import(
     if colors.is_empty() && token_colors.is_empty() {
         return Err(crate::validation(
             &options.origin,
-            "no usable colours: a VS Code theme needs `colors` or `tokenColors`",
+            "no usable colors: a VS Code theme needs `colors` or `tokenColors`",
         ));
     }
 
@@ -553,7 +553,7 @@ pub(crate) fn import(
     }
     for include in &resolved.unresolved {
         report.warn(format!(
-            "`include: {include}` could not be read, so the colours it would have supplied are missing — import from the theme file on disk to resolve it"
+            "`include: {include}` could not be read, so the colors it would have supplied are missing — import from the theme file on disk to resolve it"
         ));
     }
     if root.get("type").is_none() {
@@ -664,7 +664,7 @@ fn map_semantic(
 /// Said the same way wherever a `fontStyle` is dropped, so the report groups
 /// them into one line rather than several near-identical ones.
 const FONT_STYLE_REASON: &str =
-    "an Atlas theme key carries a colour only; the scope is imported with its colour and no italics";
+    "an Atlas theme key carries a color only; the scope is imported with its color and no italics";
 
 /// One `tokenColors` rule, flattened.
 struct Rule {

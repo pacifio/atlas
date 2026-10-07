@@ -42,7 +42,7 @@ export function CaptureControl() {
         })
       }
       className="group/nav flex h-7 w-full cursor-pointer items-center gap-2.5 rounded-md px-2 text-left text-sm leading-none text-[var(--secondary-foreground)] outline-none transition-colors hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] focus-visible:ring-1 focus-visible:ring-[var(--atlas-border-strong)]"
-      title="Sessions recorded across this Organisation"
+      title="Sessions recorded across this Organization"
     >
       <AtlasIcon size={14} className="shrink-0 rounded-sm opacity-70 group-hover/nav:opacity-100" />
       <span className="truncate">Timeline</span>

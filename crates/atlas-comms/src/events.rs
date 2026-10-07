@@ -18,7 +18,7 @@
 use serde::Serialize;
 
 use crate::wire::{
-    Attachment, Call, CodeRef, Conversation, ReactionRow, ReadState, SessionReference,
+    Attachment, AuthorKind, Call, CodeRef, Conversation, ReactionRow, ReadState, SessionReference,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -67,6 +67,13 @@ pub struct WireMessage {
     /// reference cards.
     pub artifact_refs: Vec<SessionReference>,
     pub draft_id: Option<String>,
+    /// `"user"` or `"webhook"` (or `"other"` for a kind this build does not
+    /// know). A webhook's `author_id` is not a member — draw `author_name`
+    /// with an App badge instead of looking it up.
+    pub author_kind: AuthorKind,
+    pub author_name: Option<String>,
+    pub author_via: Option<String>,
+    pub author_avatar_hash: Option<String>,
     pub client_msg_id: Option<String>,
     /// `"sending" | "sent" | "failed"`. Two rungs plus a failure — nothing on
     /// this wire reports that a message reached a device, so there is no

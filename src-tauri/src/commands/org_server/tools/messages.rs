@@ -135,7 +135,7 @@ impl MessageReference {
                 "session_id": session_id,
                 "title": title,
                 "link": link,
-                "note": "The recorded session's Workspace is not visible to the whole organisation, so chat would \
+                "note": "The recorded session's Workspace is not visible to the whole organization, so chat would \
                          refuse a Session Reference to it; the message was sent without one, with the recorded \
                          session's timeline link appended to the body instead. Tell the user.",
             }),

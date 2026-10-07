@@ -101,6 +101,14 @@ export interface SessionModeInfo {
   id: string;
   name: string;
   description?: string | null;
+  /** Models only: who makes it, as the agent stated it — the gateway's
+   *  `publisher`, or the name of the group an ACP agent listed it under.
+   *  Absent when unstated; never inferred from the id. */
+  provider?: string | null;
+  /** Models only: newly released — the picker's "New" badge. */
+  is_new?: boolean;
+  /** Models only: superseded but still served — folded under "Legacy models". */
+  legacy?: boolean;
 }
 
 /** What `native_agent_refresh_models` returns — the picker's Refresh for the

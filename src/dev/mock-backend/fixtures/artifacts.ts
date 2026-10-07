@@ -1313,8 +1313,28 @@ function threadsFor(sessionId: string): CommentThreads {
 }
 
 export const artifactsHandlers: TypedHandlers<ArtifactsResponses> = {
-  // Targeting is a Rust-side concern with nothing to answer.
-  artifacts_cloud_retarget: (): null => null,
+  // Targeting is a Rust-side concern with nothing to answer — except that the
+  // real board sockets each hear their Project's roster on connect, which is
+  // what lights the Timeline header's online stack. Sam is on one Project and
+  // Mira on the other: Mira is offline in team chat (`comms.ts`), so her face
+  // here proves the two sources are unioned rather than one replacing the
+  // other. `usr_dev` is the viewer and must never appear in the stack.
+  artifacts_cloud_retarget: ({ orgId }): null => {
+    if (orgId == null) return null;
+    setTimeout(() => {
+      void emit("atlas:artifacts-cloud", {
+        kind: "presence",
+        projectId: "rw_1d55e903",
+        online: ["usr_dev", "usr_sam", "usr_mira"],
+      });
+      void emit("atlas:artifacts-cloud", {
+        kind: "presence",
+        projectId: "rw_8c41f20b",
+        online: ["usr_dev", "usr_priya"],
+      });
+    }, 300);
+    return null;
+  },
   // The harness never fails, so a retry always "succeeds".
   artifacts_cloud_refresh: (): boolean => true,
   artifacts_cloud_follow: (): null => null,

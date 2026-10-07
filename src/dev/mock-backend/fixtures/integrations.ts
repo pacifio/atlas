@@ -132,6 +132,7 @@ const member = (
   role,
   createdAt: iso(-200),
   avatarPath: null,
+  isOwner: false,
   ...extra,
 });
 
@@ -148,10 +149,12 @@ const member = (
  */
 const ACME_MEMBERS: OrgMember[] = [
   member("mem-dev", "Dev Halvorsen", "dev@acme.dev", "admin", {
-    // Same id as the signed-in user, which is what `isSelf` compares.
+    // Same id as the signed-in user, which is what `isSelf` compares. Created
+    // Acme, so they are its Owner: no Leave, and no Remove for anyone else.
     userId: "usr_dev",
     avatarPath: abs("public/logo.png"),
     createdAt: iso(-412),
+    isOwner: true,
   }),
   member("mem-priya", "Priya Raghunathan", "priya@acme.dev", "product_owner", {
     userId: "usr_priya",
@@ -191,6 +194,7 @@ const ACME_MEMBERS: OrgMember[] = [
 const NORTHWIND_MEMBERS: OrgMember[] = [
   member("mem-nw-lead", "Ingrid Solberg", "ingrid@northwind.example", "admin", {
     createdAt: iso(-520),
+    isOwner: true,
   }),
   member("mem-nw-dev", "Dev Halvorsen", "dev@acme.dev", "member", {
     userId: "usr_dev",
@@ -523,7 +527,11 @@ const SPEC_PDF = abs("docs/spec.pdf");
  * tooltip, rather than the one-word note everyone writes by hand.
  *
  * Geometry is normalized 0..1 of the page, so these land in the same place at
- * every zoom level.
+ * every zoom level. The highlights are measured off `SPEC_PDF_BASE64`'s page 1
+ * (Letter, 612×792pt; body text is 11pt Helvetica at x=72): "1. Base tokens…"
+ * has its glyph box at y 0.2288–0.2427 and "3. Dark mode…" at 0.2692–0.2831,
+ * and each rect pads that by ~0.0025 above and below. Change the PDF's text
+ * and these must be re-measured, or they float onto the blank line above.
  */
 const SEEDED_ANNOTATIONS: PdfAnnotation[] = [
   {
@@ -532,7 +540,7 @@ const SEEDED_ANNOTATIONS: PdfAnnotation[] = [
     page: 1,
     color: "#F5C542",
     createdAt: iso(-2),
-    rect: { x: 0.12, y: 0.21, w: 0.63, h: 0.028 },
+    rect: { x: 0.112, y: 0.226, w: 0.29, h: 0.019 },
   },
   {
     kind: "highlight",
@@ -540,7 +548,7 @@ const SEEDED_ANNOTATIONS: PdfAnnotation[] = [
     page: 1,
     color: "#6796E6",
     createdAt: iso(-2),
-    rect: { x: 0.12, y: 0.42, w: 0.41, h: 0.028 },
+    rect: { x: 0.112, y: 0.2665, w: 0.448, h: 0.019 },
   },
   {
     kind: "note",
@@ -586,6 +594,7 @@ export interface IntegrationsResponses {
   auth_cancel_invitation: Unit;
   auth_update_member_role: Unit;
   auth_remove_member: Unit;
+  auth_leave_org: Unit;
   search_github: GithubRepo[];
   clone_github_repo: string;
   list_cloned_repos: ClonedRepo[];
@@ -618,7 +627,7 @@ export const integrationsHandlers: TypedHandlers<IntegrationsResponses> = {
     snapshot = {
       status: "connecting",
       userCode: "WDJB-MJHT",
-      verificationUri: "https://atlas.dev/device",
+      verificationUri: "https://app.tryatlas.cc/device",
       expiresAt: new Date(Date.now() + 600_000).toISOString(),
     };
     broadcast();
@@ -707,14 +716,14 @@ export const integrationsHandlers: TypedHandlers<IntegrationsResponses> = {
   auth_list_invitations: ({ orgId }): OrgInvitation[] => {
     const id = String(orgId);
     if (id === SECOND_ORG_ID) {
-      fail("Only an admin can see this organisation's invites.");
+      fail("Only an admin can see this organization's invites.");
     }
     return invites(id).map((i) => ({ ...i }));
   },
   /**
-   * The resolved `acceptUrl` is the whole point: email delivery is deferred,
-   * so that link is the only way the invitee ever hears about it, and the
-   * modal copies it straight out of this response.
+   * The resolved `acceptUrl` is the same link the server emails the invitee;
+   * the modal copies it straight out of this response so the inviter can also
+   * share it directly.
    */
   auth_invite_member: ({ orgId, email, role }): OrgInvitation => {
     const id = String(orgId);
@@ -754,7 +763,7 @@ export const integrationsHandlers: TypedHandlers<IntegrationsResponses> = {
     if (!target) fail("Only an admin can change a member's role.");
     const admins = list.filter((m) => m.role === "admin");
     if (target.role === "admin" && admins.length === 1 && role !== "admin") {
-      fail("An organisation needs at least one admin.");
+      fail("An organization needs at least one admin.");
     }
     target.role = (role ?? null) as Role | null;
     return null;
@@ -774,6 +783,30 @@ export const integrationsHandlers: TypedHandlers<IntegrationsResponses> = {
       list.filter((m) => m !== target),
     );
     if (target.userId === "usr_dev" && snapshot.status === "signed-in") {
+      snapshot = { ...snapshot, orgs: currentOrgs().filter((o) => o.id !== id) };
+      broadcast();
+    }
+    return null;
+  },
+  /**
+   * Leaving, with the server's two refusals: the Owner (Acme, where the
+   * account is Owner) and the last admin. Northwind, where the account is a
+   * plain member, is the one to leave — the switcher then drops it.
+   */
+  auth_leave_org: ({ orgId }): null => {
+    const id = String(orgId);
+    const list = roster(id);
+    const me = list.find((m) => m.userId === "usr_dev");
+    if (!me) fail("You're not a member of this organization.");
+    if (me.isOwner) fail("The organization's owner cannot leave it.");
+    if (me.role === "admin" && list.filter((m) => m.role === "admin").length === 1) {
+      fail("You're the only admin — make someone else an admin first.");
+    }
+    membersByOrg.set(
+      id,
+      list.filter((m) => m !== me),
+    );
+    if (snapshot.status === "signed-in") {
       snapshot = { ...snapshot, orgs: currentOrgs().filter((o) => o.id !== id) };
       broadcast();
     }

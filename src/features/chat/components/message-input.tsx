@@ -14,7 +14,6 @@ import {
   Database,
   Cpu,
   ChevronDown,
-  Search,
   Plus,
   RotateCw,
   AtSign,
@@ -48,6 +47,10 @@ import { loadNativeEffort } from "../lib/native-model-pref";
 import { useCodebaseIndexStatus } from "../lib/use-codebase-index-status";
 import { loadCachedAcpModels } from "../lib/acp-models-cache";
 import { modelLabel } from "../lib/model-label";
+import { providerDisplay } from "../lib/model-provider";
+import { ModelPicker } from "./model-picker";
+import { onModelPickerRequest } from "../lib/model-picker-events";
+import { ProviderLogo } from "@/components/provider-logo";
 // `ChatInput` pulls in CodeMirror (~870 KB) via `cm-mention-extension`.
 // We import it dynamically so the chunk is not in the initial preload set.
 // The import is kicked off at module-evaluation time (below, outside the
@@ -81,7 +84,10 @@ import { RetryPill } from "./retry-pill";
 import { AiGrantBar } from "./ai-grant-bar";
 import { RemovedAgentBar } from "./removed-agent-bar";
 import { ModeRestoreBar, OPEN_MODE_PICKER_EVENT } from "./mode-restore-bar";
-import { useAiGrantProbe, useNoAiGrant } from "../stores/ai-grant-store";
+import { LiveElsewhereBar } from "./live-elsewhere-bar";
+import { useSendHeldForTerminal } from "../stores/live-elsewhere-store";
+import { useLiveElsewhereFeed } from "../hooks/use-live-elsewhere-feed";
+import { grantLocksComposer, useAiGrantProbe, useNoAiGrant } from "../stores/ai-grant-store";
 import {
   QUALITY_LADDER,
   aggregateExceedsBudget,
@@ -399,7 +405,6 @@ function ComposerGroupsMenu({
 
   const [openGroup, setOpenGroup] = useState<ComposerGroup | null>(null);
   const [dir, setDir] = useState(1);
-  const [q, setQ] = useState("");
   const ref = useRef<HTMLDivElement>(null);
   // Measured content height driving the shared panel's height tween — group
   // switches (and async rows landing) morph the container instead of snapping.
@@ -439,7 +444,6 @@ function ComposerGroupsMenu({
   useEffect(() => {
     const onOpen = (e: Event) => {
       if ((e as CustomEvent<{ tabId?: string }>).detail?.tabId !== tabId) return;
-      setQ("");
       setOpenGroup("mode");
       // Mutual exclusion with the + menu — see atlas:composer-menu-open.
       window.dispatchEvent(new CustomEvent("atlas:composer-menu-open", { detail: "groups" }));
@@ -447,6 +451,20 @@ function ComposerGroupsMenu({
     window.addEventListener(OPEN_MODE_PICKER_EVENT, onOpen);
     return () => window.removeEventListener(OPEN_MODE_PICKER_EVENT, onOpen);
   }, [tabId]);
+
+  // ⌘⇧M (`chat.toggleModelPicker`, dispatched by the chat panel) toggles the
+  // model group, as the reference's model-picker chord does.
+  useEffect(
+    () =>
+      onModelPickerRequest(tabId, () =>
+        setOpenGroup((cur) => {
+          if (cur === "model") return null;
+          window.dispatchEvent(new CustomEvent("atlas:composer-menu-open", { detail: "groups" }));
+          return "model";
+        }),
+      ),
+    [tabId],
+  );
 
   const isNative = agentType === "atlas-agent";
   const refreshingModels = useNativeModelsStore.use.refreshing();
@@ -467,16 +485,6 @@ function ComposerGroupsMenu({
     if (isNative) return [];
     return loadCachedAcpModels(agentType)?.availableModels ?? [];
   }, [availableModels, agentType, isNative]);
-  const filteredModels = useMemo(() => {
-    const s = q.trim().toLowerCase();
-    if (!s) return models;
-    return models.filter(
-      (m) =>
-        m.name.toLowerCase().includes(s) ||
-        m.id.toLowerCase().includes(s) ||
-        (m.description ?? "").toLowerCase().includes(s),
-    );
-  }, [models, q]);
 
   const isClaude = agentType === "claude-code";
   const hasAcpModes = !!availableModes && availableModes.length > 0;
@@ -493,7 +501,6 @@ function ComposerGroupsMenu({
   const showModel = models.length > 0 || isNative;
 
   const toggle = (g: ComposerGroup) => {
-    setQ("");
     setOpenGroup((cur) => {
       if (cur === g) return null;
       if (cur) setDir(GROUP_ORDER.indexOf(g) > GROUP_ORDER.indexOf(cur) ? 1 : -1);
@@ -506,6 +513,7 @@ function ComposerGroupsMenu({
 
   const currentAcpMode = availableModes?.find((m) => m.id === currentMode);
   const currentModelInfo = models.find((m) => m.id === currentModel);
+  const currentProvider = providerDisplay(currentModelInfo?.provider);
 
   // Labels stay visible on every pill — the reference folds unselected tabs
   // to icon-only, but on a toolbar whose pills are real controls that reads
@@ -526,12 +534,18 @@ function ComposerGroupsMenu({
           the same surface — the reference's shared-layout feel. */}
       <div
         aria-hidden={!openGroup}
-        className="absolute bottom-full left-0 z-popover mb-1.5 w-[300px] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] shadow-md"
+        className={cn(
+          "absolute bottom-full left-0 z-popover mb-1.5 overflow-hidden rounded-lg bg-popover text-popover-foreground shadow-md ring-1 ring-foreground/10",
+          // The model group carries a provider rail beside its list, so it
+          // takes more room; the width tweens with the height.
+          openGroup === "model" ? "w-85" : "w-75",
+        )}
         style={{
           height: openGroup ? panelHeight : 0,
           opacity: openGroup ? 1 : 0,
           pointerEvents: openGroup ? "auto" : "none",
-          transition: "height 260ms cubic-bezier(0.32,0.72,0,1), opacity 180ms ease-out",
+          transition:
+            "height 260ms cubic-bezier(0.32,0.72,0,1), width 260ms cubic-bezier(0.32,0.72,0,1), opacity 180ms ease-out",
         }}
       >
         <div ref={contentRef}>
@@ -664,18 +678,16 @@ function ComposerGroupsMenu({
             )}
 
             {openGroup === "model" && (
-              <>
-                <div className="flex h-8 items-center gap-1.5 border-b border-[var(--atlas-border-subtle)] px-2.5">
-                  <Search size={12} className="shrink-0 text-[var(--muted-foreground)]" />
-                  <input
-                    autoFocus
-                    value={q}
-                    onChange={(e) => setQ(e.target.value)}
-                    placeholder="Search models…"
-                    spellCheck={false}
-                    className="min-w-0 flex-1 bg-transparent text-xs text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]"
-                  />
-                  {isNative && (
+              <ModelPicker
+                agentType={agentType}
+                models={models}
+                currentModel={currentModel}
+                onPick={(id) => {
+                  setAcpModel(tabId, id);
+                  close();
+                }}
+                toolbar={
+                  isNative && (
                     // The gateway's list, re-fetched on demand (ADR-0007).
                     // Same icon, spin and disabled idiom as the grant bar's
                     // Refresh — no new pattern.
@@ -685,65 +697,29 @@ function ComposerGroupsMenu({
                         disabled={refreshingModels}
                         onClick={() => void refreshNativeModels()}
                         className={cn(
-                          "shrink-0 rounded p-0.5 text-[var(--muted-foreground)] transition-colors",
+                          "shrink-0 rounded p-0.5 text-muted-foreground transition-colors",
                           refreshingModels
                             ? "cursor-default"
-                            : "cursor-pointer hover:text-[var(--foreground)]",
+                            : "cursor-pointer hover:text-foreground",
                         )}
                       >
                         <RotateCw size={12} className={cn(refreshingModels && "animate-spin")} />
                       </button>
                     </Hint>
-                  )}
-                </div>
-                <div className="max-h-[280px] overflow-y-auto hide-scrollbar p-1">
-                  {filteredModels.length === 0 ? (
-                    <div className="px-2.5 py-2 text-xs text-[var(--muted-foreground)]">
-                      No models
-                      {isNative && models.length === 0 && (
-                        <span className="mt-0.5 block text-3xs leading-snug">
-                          Couldn't load the model list. Check your connection or sign in, then
-                          refresh.
-                        </span>
-                      )}
-                    </div>
-                  ) : (
-                    filteredModels.map((m) => {
-                      const active = m.id === currentModel;
-                      return (
-                        <button
-                          key={m.id}
-                          onClick={() => {
-                            setAcpModel(tabId, m.id);
-                            close();
-                          }}
-                          className={cn(
-                            "flex w-full items-start gap-1.5 rounded-md px-2 py-1.5 text-left transition-colors cursor-pointer",
-                            active
-                              ? "bg-[var(--atlas-element-selected)]"
-                              : "hover:bg-[var(--atlas-element-hover)]",
-                          )}
-                        >
-                          <span className="min-w-0 flex-1">
-                            <span className="flex items-center gap-1.5 label">
-                              <span className="truncate">{modelLabel(m)}</span>
-                              {active && (
-                                <Check size={11} className="shrink-0 text-[var(--primary)]" />
-                              )}
-                            </span>
-                            {m.description &&
-                              m.description.trim().toLowerCase() !== "recommended" && (
-                                <span className="mt-0.5 block text-3xs leading-snug text-[var(--muted-foreground)] line-clamp-2">
-                                  {m.description}
-                                </span>
-                              )}
-                          </span>
-                        </button>
-                      );
-                    })
-                  )}
-                </div>
-              </>
+                  )
+                }
+                emptyState={
+                  <div className="px-2 py-2 text-xs text-muted-foreground">
+                    No models
+                    {isNative && (
+                      <span className="mt-0.5 block caption">
+                        Couldn't load the model list. Check your connection or sign in, then
+                        refresh.
+                      </span>
+                    )}
+                  </div>
+                }
+              />
             )}
           </div>
         </div>
@@ -798,7 +774,13 @@ function ComposerGroupsMenu({
           className={pillCls(openGroup === "model")}
           title="Model"
         >
-          <Cpu size={11} className="shrink-0 text-[var(--muted-foreground)]" />
+          {currentProvider ? (
+            // The provider the agent stated for this model — the same mark
+            // the picker's rail shows for it.
+            <ProviderLogo id={currentProvider.logo} size={11} className="-mx-0.75" />
+          ) : (
+            <Cpu size={11} className="shrink-0 text-muted-foreground" />
+          )}
           <span
             className={cn(composerPillLabelClass(), "max-w-[80px] truncate @[460px]:max-w-[120px]")}
           >
@@ -915,11 +897,20 @@ export function MessageInput({
   // button — the toolbar, and with it the switcher, stays live, so the user can
   // always move to an agent that runs. Verified against the escape hatch: this
   // must never disable the toolbar.
-  const blockedByGrant = noAiGrant && agentType === "atlas-agent";
+  //
+  // Never while a turn runs (`grantLocksComposer`): the lock used to disable
+  // the Stop button of a turn already admitted when the answer turned to no.
+  const blockedByGrant = grantLocksComposer(noAiGrant, agentType, running);
   const disabled = disabledProp || blockedByGrant;
   // A resume could not restore the user's mode (`ModeRestoreBar`): no send
   // until they pick one. Only the send — typing and the mode picker stay live.
   const modeUnrestored = useChatStore((s) => !!s.sessions[tabId]?.unrestoredModeId);
+  // Another process is still writing this session: sends wait for "Send anyway".
+  // The composer feeds the live set itself, so the guard holds whichever view
+  // (sidebar, History, another project) the session was opened from.
+  const acpSessionId = useChatStore((s) => s.sessions[tabId]?.acpSessionId);
+  useLiveElsewhereFeed(!!acpSessionId);
+  const heldForTerminal = useSendHeldForTerminal(acpSessionId);
   // The BYOK provider/model bindings for the native agent stood here — the
   // provider pick, the model re-push on bind, the whole BYOK selection path.
   // Gone: the native agent's model comes from the seam's published catalogue
@@ -1871,7 +1862,7 @@ export function MessageInput({
       // stay in the composer strip and ride the next direct send.
       enqueueMessage(tabId, trimmed);
     } else {
-      if (modeUnrestored) return;
+      if (modeUnrestored || heldForTerminal) return;
       const images = stagedImages;
       onSend(trimmed, mentions, images.length ? images : undefined);
       if (images.length) setStagedImages([]);
@@ -1892,6 +1883,7 @@ export function MessageInput({
     stagedImages,
     githubSyncing,
     modeUnrestored,
+    heldForTerminal,
   ]);
   submitRef.current = submit;
 
@@ -1902,7 +1894,11 @@ export function MessageInput({
   type Mode = "send" | "queue" | "stop";
   const mode: Mode = running ? (hasText ? "queue" : "stop") : "send";
   const buttonEnabled =
-    disabled || (mode === "send" && modeUnrestored) ? false : mode === "stop" ? true : hasText;
+    disabled || (mode === "send" && (modeUnrestored || heldForTerminal))
+      ? false
+      : mode === "stop"
+        ? true
+        : hasText;
 
   // One fixed placeholder, always. The composer used to swap in a queue hint
   // while a turn ran and a no-grant explanation when AI access was missing;
@@ -1947,8 +1943,9 @@ export function MessageInput({
             composer — the explanation for the input being locked below.
             Scoped to the native agent for the same reason the lock is: the
             other agents do not use the Atlas gateway, so an org with no grant
-            is not their problem and a bar over a working composer is noise. */}
-        {agentType === "atlas-agent" && <AiGrantBar />}
+            is not their problem and a bar over a working composer is noise.
+            Deferred while a turn runs, with the lock (`grantLocksComposer`). */}
+        {agentType === "atlas-agent" && <AiGrantBar turnRunning={running} />}
 
         {/* The tab's agent was uninstalled — same strip, same reason: the
             input below cannot send until the chat is switched. */}
@@ -1957,6 +1954,9 @@ export function MessageInput({
         {/* A resume could not restore the user's mode: nothing sends until
             they pick one. */}
         <ModeRestoreBar tabId={tabId} />
+
+        {/* Another process is writing this session: sending would fork it. */}
+        <LiveElsewhereBar tabId={tabId} />
 
         {/* Live plan docked on top of the input bar (JetBrains-Air style). */}
 
@@ -2119,6 +2119,13 @@ export function MessageInput({
               <button
                 onClick={submit}
                 disabled={!buttonEnabled}
+                aria-label={
+                  mode === "stop"
+                    ? "Stop generation"
+                    : mode === "queue"
+                      ? "Queue message"
+                      : "Send message"
+                }
                 className={cn(
                   // Reference-style squircle send: a soft rounded-square,
                   // transparent at rest, muted fill + border on hover, pinned

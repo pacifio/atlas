@@ -189,6 +189,31 @@ export function useActiveGatewayOrgId(): string | null {
 }
 
 /**
+ * Whether the grant answer locks this composer, and shows its bar, NOW.
+ *
+ * Only the native agent bills the gateway, so only its composer is locked.
+ * And never while a turn is running: the answer can turn into "no" mid-turn —
+ * a probe still in flight when the first message went out (launch, sign-in,
+ * an org switch), or a Refresh after an admin revoked the grant — and the
+ * running turn was already admitted. Locking then disabled the very button
+ * that was showing Stop, so the user could not stop a turn the bar said could
+ * not exist; and a bar declaring "no AI grants" over an agent visibly working
+ * reads as Atlas contradicting itself. The lock and the bar both land the
+ * moment the turn ends, which is the first point a send could be refused.
+ *
+ * Called with `turnRunning: false` it is also the hold on the tab's send
+ * queue (`drain-gate.ts`): a message queued during that deferred turn waits
+ * with the lock instead of draining into the refusal at the turn's end.
+ */
+export function grantLocksComposer(
+  noGrant: boolean,
+  agentType: string,
+  turnRunning: boolean,
+): boolean {
+  return noGrant && agentType === "atlas-agent" && !turnRunning;
+}
+
+/**
  * `true` only when the gateway gave a definite no.
  *
  * Not "we could not find out" and not "not asked yet" — both of those must

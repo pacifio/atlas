@@ -23,7 +23,7 @@ use agent_client_protocol::schema::v1 as acp;
 use anyhow::Result;
 use atlas_acp_thread::connection::AgentId;
 use atlas_acp_thread::{AgentSessionInfo, AgentSessionList, AgentSessionListRequest};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 
 use crate::model::{ThreadId, ThreadMetadata};
 use crate::paths::{PathList, WorktreePaths};
@@ -92,10 +92,18 @@ pub async fn collect_all_sessions(
 /// inserts into it). That is not a detail: an agent that ignores the pagination
 /// cursor lists the same session on every page, so a fixed set would let one
 /// conversation through as several rows.
+///
+/// Rows land archived — in History, not the sidebar — unless `unarchive_since`
+/// is given and the session's `updated_at` is at or after it. The manual import
+/// and the one-time backfill pass `None`: dumping an agent's whole past into
+/// the sidebar would bury what the user is doing now. The per-project sync
+/// (ADR-0001 amendment, ATL-422) passes a recency cutoff, so a session started
+/// in a terminal an hour ago shows up and one from last spring does not.
 pub fn importable_threads(
     sessions: Vec<AgentSessionInfo>,
     agent_id: &AgentId,
     known: &HashSet<acp::SessionId>,
+    unarchive_since: Option<DateTime<Utc>>,
 ) -> Vec<ThreadMetadata> {
     let now = Utc::now();
     let mut seen = known.clone();
@@ -115,18 +123,23 @@ pub fn importable_threads(
                 title: session.title,
                 title_override: None,
                 updated_at,
-                // Verbatim, and so always `None` today: schema v1's
-                // `SessionInfo` has no `createdAt`. Filling it in with
-                // `updated_at` would be Atlas claiming to know when a
-                // conversation started; the history view already falls back to
-                // `updated_at` when it needs an ordering.
-                created_at: session.created_at,
+                // The agent's own start time when it reports one; otherwise
+                // the activity time it reported at import. Schema v1's
+                // `SessionInfo` has no `createdAt`, and this used to stay
+                // `None`, leaving History (which orders by "started") to fall
+                // back to `updated_at` — which, since discovery is ongoing
+                // (ADR-0001 amendment), keeps moving, so imported rows jumped
+                // about. A fixed instant no later than the true last activity
+                // is the honest stand-in, and it never moves again.
+                created_at: session.created_at.or(Some(updated_at)),
                 // Atlas was not there. Claiming the user interacted at some
                 // moment it did not observe would be an invention.
                 interacted_at: None,
                 worktree_paths: WorktreePaths::from_folder_paths(&folder_paths),
                 remote_connection: None,
-                archived: true,
+                // Atlas was not there to see which branch it ran on.
+                branch: None,
+                archived: unarchive_since.is_none_or(|cutoff| updated_at < cutoff),
             })
         })
         .collect()

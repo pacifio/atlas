@@ -1005,14 +1005,14 @@ export function ProjectSidebar() {
               label="Chat"
               active={rightMode === "chat"}
               disabled={!orgSynced}
-              title={orgSynced ? undefined : "Sync this organisation to use team chat"}
+              title={orgSynced ? undefined : "Sync this organization to use team chat"}
               onClick={() => toggleRightPanelMode("chat")}
             />
             <NavItem
               icon={<Users size={14} />}
               label="Members"
               disabled={!orgSynced}
-              title={orgSynced ? undefined : "Sync this organisation to manage members"}
+              title={orgSynced ? undefined : "Sync this organization to manage members"}
               onClick={() => setMembersOpen(true)}
             />
 

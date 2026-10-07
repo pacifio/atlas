@@ -37,11 +37,18 @@ export function ThreadHistoryView({
   const [archivedOnly, setArchivedOnly] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
 
-  const { data: threads = [] } = useQuery({
+  const {
+    data: threads = [],
+    isLoading,
+    isError,
+    error,
+  } = useQuery({
     queryKey: ["thread-history", archivedOnly],
     queryFn: () => threadHistory(archivedOnly),
     enabled: open,
     staleTime: 30_000,
+    // A history store that failed to open fails the same way on a retry.
+    retry: false,
   });
 
   useEffect(() => {
@@ -137,7 +144,14 @@ export function ThreadHistoryView({
           </div>
 
           <div className="flex-1 overflow-auto hide-scrollbar">
-            {buckets.length === 0 ? (
+            {isError ? (
+              // An error is not an empty history: say what failed.
+              <div role="alert" className="px-3 py-6 text-center text-xs text-error">
+                Couldn't load history: {error instanceof Error ? error.message : String(error)}
+              </div>
+            ) : isLoading ? (
+              <div className="px-3 py-6 text-center text-xs text-muted-foreground">Loading…</div>
+            ) : buckets.length === 0 ? (
               <div className="px-3 py-6 text-center text-xs text-muted-foreground">
                 {search.trim() ? "Nothing matches your search." : "No threads yet."}
               </div>

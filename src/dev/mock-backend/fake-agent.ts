@@ -42,7 +42,60 @@ export function setSeedTranscript(messages: SessionMessage[]): void {
   seedTranscript = messages;
 }
 
-function latest(): FakeSession | undefined {
+/** What a scenario knows about one new session, to decide its seed. */
+export interface NewSessionInfo {
+  sessionId: string;
+  pluginId: string;
+  cwd: string;
+}
+
+/**
+ * Per-session seeding, for a scenario that wants ONE chat to open on a
+ * recorded transcript and every later one empty. Wins over
+ * `setSeedTranscript` when set; return `null` to seed nothing.
+ */
+let sessionSeeder: ((info: NewSessionInfo) => SessionMessage[] | null) | null = null;
+export function setSessionSeeder(seeder: typeof sessionSeeder): void {
+  sessionSeeder = seeder;
+}
+
+/**
+ * A scenario's answer to a prompt. Return `true` when it has handled the turn
+ * (streamed its own reply), and the default echo is skipped.
+ */
+export type PromptHandler = (info: NewSessionInfo & { text: string }) => boolean;
+let promptHandler: PromptHandler | null = null;
+export function setPromptHandler(handler: PromptHandler | null): void {
+  promptHandler = handler;
+}
+
+/** The model a session reports, per agent — so a scenario's composer never
+ *  says "Mock model". */
+export interface AgentModels {
+  current: string;
+  available: SessionModeInfo[];
+}
+let modelsFor: ((pluginId: string) => AgentModels | null) | null = null;
+export function setAgentModels(lookup: typeof modelsFor): void {
+  modelsFor = lookup;
+}
+
+/** The slash commands a session advertises, per agent (ACP
+ *  `available_commands`: `{ name, description, input? }`). */
+let commandsFor: ((pluginId: string) => unknown[] | null) | null = null;
+export function setAgentCommands(lookup: typeof commandsFor): void {
+  commandsFor = lookup;
+}
+
+/** The name `agents_spawn` reports, per agent. */
+let displayNameFor: ((pluginId: string) => string | null) | null = null;
+export function setAgentDisplayNames(lookup: typeof displayNameFor): void {
+  displayNameFor = lookup;
+}
+
+/** The session `sessionId` names, or the most recent one. */
+function latest(sessionId?: string): FakeSession | undefined {
+  if (sessionId) return sessions.get(sessionId);
   const all = [...sessions.values()];
   return all[all.length - 1];
 }
@@ -51,6 +104,29 @@ const at = (s: FakeSession) => ({ agent_id: s.key.agent_id, session_id: s.key.se
 
 export function sendDelta(delta: AgentDelta): Promise<void> {
   return emit("atlas:agents", delta);
+}
+
+/** Name a session as the agent would (`title_updated`): a seeded chat opens titled, not "New chat". */
+export function sendTitle(sessionId: string, title: string): Promise<void> {
+  const s = latest(sessionId);
+  if (!s) return Promise.resolve();
+  return sendDelta({ kind: "title_updated", ...at(s), title });
+}
+
+/**
+ * Load a session the agent did not start in this run — what `threads_resume`
+ * does in Rust before the frontend asks for a snapshot. A history row opened
+ * from the sidebar arrives here; without it, `agents_snapshot` answers "not
+ * found" and the resume fails. A session already loaded is left as it is.
+ */
+export function adoptSession(
+  key: SessionKey,
+  pluginId: string,
+  cwd: string,
+  messages: SessionMessage[] = [],
+): void {
+  if (sessions.has(key.session_id)) return;
+  sessions.set(key.session_id, { key, cwd, pluginId, messages });
 }
 
 function sessionOrThrow(key: SessionKey): FakeSession {
@@ -82,16 +158,17 @@ const DEFAULT_MODE = "auto";
 
 function snapshot(s: FakeSession, withMessages: boolean): SessionSnapshot {
   const now = new Date().toISOString();
+  const models = modelsFor?.(s.pluginId) ?? null;
   return {
     ...at(s),
     cwd: s.cwd,
     plugin_id: s.pluginId,
     status: "idle",
     current_mode: DEFAULT_MODE,
-    current_model: "mock-model",
+    current_model: models?.current ?? "mock-model",
     available_modes: MODES,
-    available_models: [{ id: "mock-model", name: "Mock model" }],
-    available_commands: [],
+    available_models: models?.available ?? [{ id: "mock-model", name: "Mock model" }],
+    available_commands: commandsFor?.(s.pluginId) ?? [],
     config_options: [],
     prompt_image_supported: true,
     plan: [],
@@ -102,9 +179,13 @@ function snapshot(s: FakeSession, withMessages: boolean): SessionSnapshot {
   };
 }
 
-/** Stream `messages` into the first live session, in order. */
-export async function playTranscript(messages: SessionMessage[], gapMs = 0): Promise<void> {
-  const s = latest();
+/** Stream `messages` into a session (the most recent one by default), in order. */
+export async function playTranscript(
+  messages: SessionMessage[],
+  gapMs = 0,
+  sessionId?: string,
+): Promise<void> {
+  const s = latest(sessionId);
   if (!s) {
     console.warn("[mock-backend] playTranscript: no session bound yet");
     return;
@@ -116,10 +197,55 @@ export async function playTranscript(messages: SessionMessage[], gapMs = 0): Pro
   }
 }
 
+/**
+ * Stream one assistant message into a session word by word, the way a real
+ * turn arrives: an empty message, then `text_chunk` (or `thinking_chunk`)
+ * deltas. The held copy is kept whole so a snapshot re-read agrees.
+ */
+export async function streamText(
+  body: string,
+  opts: { sessionId?: string; mode?: "text" | "thinking"; chunkMs?: number; id?: string } = {},
+): Promise<void> {
+  const s = latest(opts.sessionId);
+  if (!s) return;
+  const mode = opts.mode ?? "text";
+  const message: SessionMessage = {
+    id: opts.id ?? `m-${++seq}`,
+    role: "assistant",
+    mode,
+    content: "",
+    ...(mode === "thinking" ? { thinking: "" } : {}),
+    tool_calls: [],
+    timestamp: new Date().toISOString(),
+  };
+  s.messages.push(message);
+  await sendDelta({ kind: "message_appended", ...at(s), message: { ...message } });
+  for (const chunk of body.match(/\S+\s*/g) ?? []) {
+    if (mode === "thinking") message.thinking = (message.thinking ?? "") + chunk;
+    else message.content += chunk;
+    await sendDelta({
+      kind: mode === "thinking" ? "thinking_chunk" : "text_chunk",
+      ...at(s),
+      message_id: message.id,
+      delta: chunk,
+    });
+    await new Promise((r) => setTimeout(r, opts.chunkMs ?? 28));
+  }
+}
+
 /** Update one tool call in place (status, output) — for live-turn scenarios. */
-export function upsertToolCall(messageId: string, toolCall: ToolCall): Promise<void> {
-  const s = latest();
+export function upsertToolCall(
+  messageId: string,
+  toolCall: ToolCall,
+  sessionId?: string,
+): Promise<void> {
+  const s = latest(sessionId);
   if (!s) return Promise.resolve();
+  // Keep the snapshot in step with the stream, so a re-read agrees.
+  const held = s.messages.find((m) => m.id === messageId);
+  if (held) {
+    held.tool_calls = held.tool_calls.map((call) => (call.id === toolCall.id ? toolCall : call));
+  }
   return sendDelta({
     kind: "tool_call_upserted",
     ...at(s),
@@ -133,8 +259,9 @@ export function appendToolOutput(
   messageId: string,
   toolCallId: string,
   delta: string,
+  sessionId?: string,
 ): Promise<void> {
-  const s = latest();
+  const s = latest(sessionId);
   if (!s) return Promise.resolve();
   return sendDelta({
     kind: "tool_call_output_chunk",
@@ -145,8 +272,11 @@ export function appendToolOutput(
   });
 }
 
-export function setStatus(status: "idle" | "running" | "waiting" | "error"): Promise<void> {
-  const s = latest();
+export function setStatus(
+  status: "idle" | "running" | "waiting" | "error",
+  sessionId?: string,
+): Promise<void> {
+  const s = latest(sessionId);
   if (!s) return Promise.resolve();
   return sendDelta({ kind: "status", ...at(s), status });
 }
@@ -155,8 +285,8 @@ export function setStatus(status: "idle" | "running" | "waiting" | "error"): Pro
  *  not a bare status flip. The store only freezes turn-end state (the turn's
  *  "Worked for" time, its files footer, next-step chips) on the terminal, so a
  *  mock that just went idle never showed any of it. */
-export function finishTurn(): Promise<void> {
-  const s = latest();
+export function finishTurn(sessionId?: string): Promise<void> {
+  const s = latest(sessionId);
   if (!s) return Promise.resolve();
   return sendDelta({ kind: "turn_finished", ...at(s), stop_reason: "end_turn", turn_seq: 0 });
 }
@@ -178,7 +308,7 @@ function isAllowKind(kind: string): boolean {
   return kind === "allow_once" || kind === "allow_always";
 }
 
-interface OpenPermission {
+export interface OpenPermission {
   agentId: string;
   sessionId: string;
   messageId: string;
@@ -194,7 +324,9 @@ interface OpenPermission {
 
 const openPermissions = new Map<string, OpenPermission>();
 
-async function raisePermission(opts: {
+export async function raisePermission(opts: {
+  /** The session to raise it in; the most recent one by default. */
+  sessionId?: string;
   transcriptCall: ToolCall;
   title: string;
   kind: string;
@@ -203,15 +335,16 @@ async function raisePermission(opts: {
   result: OpenPermission["result"];
   reply: OpenPermission["reply"];
 }): Promise<void> {
-  const s = latest();
+  const s = latest(opts.sessionId);
   if (!s) {
     console.warn("[mock-backend] requestPermission: no session bound yet");
     return;
   }
-  await setStatus("running");
-  const message = tools([opts.transcriptCall]);
-  await playTranscript([message]);
-  await setStatus("waiting");
+  const sid = s.key.session_id;
+  await setStatus("running", sid);
+  const message = tools([opts.transcriptCall], new Date().toISOString());
+  await playTranscript([message], 0, sid);
+  await setStatus("waiting", sid);
 
   const requestId = `perm-req-${++seq}`;
   openPermissions.set(requestId, {
@@ -262,15 +395,19 @@ async function resolvePermission(
       : null;
   const allowed = !!option && isAllowKind(option.kind);
 
-  await upsertToolCall(open.messageId, {
-    ...open.toolCall,
-    status: allowed ? "completed" : "failed",
-    result: open.result(allowed),
-  });
+  await upsertToolCall(
+    open.messageId,
+    {
+      ...open.toolCall,
+      status: allowed ? "completed" : "failed",
+      result: open.result(allowed),
+    },
+    sessionId,
+  );
 
   const line = open.reply(decision, option);
-  if (line) await playTranscript([text(line, new Date().toISOString())]);
-  await finishTurn();
+  if (line) await playTranscript([text(line, new Date().toISOString())], 0, sessionId);
+  await finishTurn(sessionId);
 }
 
 let permSeq = 0;
@@ -397,7 +534,7 @@ export const agentHandlers: TypedHandlers<AgentResponses> = {
   agents_spawn: ({ pluginId }): AgentInfo => ({
     agent_id: `agent-${pluginId}`,
     spec_id: pluginId,
-    display_name: "Atlas Agent",
+    display_name: displayNameFor?.(String(pluginId)) ?? "Atlas Agent",
   }),
   agents_new_session: ({ agentId, cwd }): SessionInit => {
     const key = { agent_id: agentId, session_id: `sess-${++seq}` };
@@ -408,9 +545,12 @@ export const agentHandlers: TypedHandlers<AgentResponses> = {
       messages: [],
     };
     sessions.set(key.session_id, s);
-    if (seedTranscript.length) {
+    const seed = sessionSeeder
+      ? (sessionSeeder({ sessionId: key.session_id, pluginId: s.pluginId, cwd: String(cwd) }) ?? [])
+      : seedTranscript;
+    if (seed.length) {
       // After the frontend has stored the binding.
-      setTimeout(() => void playTranscript(seedTranscript), 50);
+      setTimeout(() => void playTranscript(seed, 0, key.session_id), 50);
     }
     return { key, current_mode: DEFAULT_MODE, available_modes: MODES };
   },
@@ -429,6 +569,13 @@ export const agentHandlers: TypedHandlers<AgentResponses> = {
   agents_send: async ({ key, text }) => {
     const s = sessions.get(key.session_id);
     if (!s) return null;
+    const handled = promptHandler?.({
+      sessionId: s.key.session_id,
+      pluginId: s.pluginId,
+      cwd: s.cwd,
+      text: String(text),
+    });
+    if (handled) return null;
     const now = () => new Date().toISOString();
     await setStatus("running");
     const reply: SessionMessage = {

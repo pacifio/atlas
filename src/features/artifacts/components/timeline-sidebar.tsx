@@ -32,9 +32,11 @@ import { AccountAvatar } from "@/features/auth/components/account-avatar";
 import { useOrgDirectory } from "@/features/organisations/lib/use-org-directory";
 
 import { authorOf, type AuthorDirectory } from "../lib/author-directory";
+import { useOnlineIds } from "../lib/team-presence";
 import { boardKey } from "../lib/board-key";
 import { groupSessions, sessionState, sessionTitle, type GroupPeriod } from "../lib/board";
 import type { BoardSession } from "../types";
+import { OnlineDot } from "./online-teammates";
 import { SidebarSkeleton } from "./timeline-skeleton";
 
 interface Props {
@@ -161,6 +163,9 @@ export function TimelineSidebar({ sessions, loading, filtered, openKey, period, 
   // One subscription for the whole nav. Five hundred rows each resolving their
   // own author would re-render the list every time the roster revalidated.
   const directory = useOrgDirectory();
+  // Same reason: one subscription, and each row is handed a boolean so a
+  // teammate coming online re-renders only their own rows.
+  const online = useOnlineIds();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const days = useMemo(() => groupSessions(sessions, period), [sessions, period]);
   const parentRef = useRef<HTMLDivElement | null>(null);
@@ -338,6 +343,7 @@ export function TimelineSidebar({ sessions, loading, filtered, openKey, period, 
                     lane={row.lane}
                     selected={row.key === openKey}
                     directory={directory}
+                    authorOnline={row.session.authorId !== null && online.has(row.session.authorId)}
                     onOpen={onOpen}
                   />
                 )}
@@ -541,6 +547,7 @@ const SessionRow = memo(function SessionRow({
   lane,
   selected,
   directory,
+  authorOnline,
   onOpen,
 }: {
   session: BoardSession;
@@ -549,6 +556,8 @@ const SessionRow = memo(function SessionRow({
   selected: boolean;
   /** Stable across renders, so `memo` on this row still pays for itself. */
   directory: AuthorDirectory;
+  /** The author is online right now. */
+  authorOnline: boolean;
   onOpen: (id: string, projectPath: string, remoteProjectId: string | null) => void;
 }) {
   const state = sessionState(session);
@@ -594,7 +603,7 @@ const SessionRow = memo(function SessionRow({
       >
         {title ?? "Untitled session"}
       </FadingTitle>
-      <SessionMeta session={session} directory={directory} />
+      <SessionMeta session={session} directory={directory} authorOnline={authorOnline} />
     </button>
   );
 });
@@ -610,9 +619,11 @@ const SessionRow = memo(function SessionRow({
 const SessionMeta = memo(function SessionMeta({
   session,
   directory,
+  authorOnline,
 }: {
   session: BoardSession;
   directory: AuthorDirectory;
+  authorOnline: boolean;
 }) {
   const Icon = session.synced ? Check : Laptop;
   const author = authorOf(session.authorId, directory);
@@ -626,7 +637,7 @@ const SessionMeta = memo(function SessionMeta({
             ? "text-[var(--atlas-status-success-foreground)]"
             : "text-[var(--atlas-text-disabled)]",
         )}
-        aria-label={session.synced ? "Shared with your Organisation" : "This machine only"}
+        aria-label={session.synced ? "Shared with your Organization" : "This machine only"}
       />
       {/* The Project first, because it is what a reader scanning the day is
        *  grouping by. It is the part that gives way when the pane is narrow. */}
@@ -637,7 +648,14 @@ const SessionMeta = memo(function SessionMeta({
        *  the way down the list. Never truncated and never dropped — a half-name
        *  reads as the wrong person, which is worse than no byline at all. */}
       <span className="ml-auto flex shrink-0 items-center gap-1 pl-1">
-        {author.avatar && <AccountAvatar user={author.avatar} size={10} />}
+        {author.avatar && (
+          // The dot only for a teammate: your own face is always "here", and
+          // a green dot on every one of your own rows would be noise.
+          <span className="relative inline-flex shrink-0">
+            <AccountAvatar user={author.avatar} size={10} />
+            {authorOnline && !author.isSelf && <OnlineDot px={4} />}
+          </span>
+        )}
         <span className={cn(author.isSelf && "text-[var(--atlas-text-disabled)]")}>
           {author.label}
         </span>

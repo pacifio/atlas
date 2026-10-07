@@ -40,6 +40,7 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AiGrantBar } from "./ai-grant-bar";
 import {
+  grantLocksComposer,
   useAiGrantStore,
   useAiGrantProbe,
   useNoAiGrant,
@@ -112,7 +113,19 @@ describe("the no-grant setup state (bar 14)", () => {
     activeDesktopOrgId = null;
     seed(NO_GRANT);
     render(<AiGrantBar />);
-    expect((await screen.findByTestId("ai-grant-bar")).textContent).toContain("This organisation");
+    expect((await screen.findByTestId("ai-grant-bar")).textContent).toContain("This organization");
+  });
+
+  it("waits for a running turn to end before it shows", () => {
+    // The answer turned to "no" mid-turn (a probe landing after the first
+    // send, or a Refresh after a revocation). The turn was already admitted;
+    // a bar saying the org cannot use AI over an agent visibly working is
+    // the app contradicting itself.
+    seed(NO_GRANT);
+    const { rerender } = render(<AiGrantBar turnRunning />);
+    expect(screen.queryByTestId("ai-grant-bar")).toBeNull();
+    rerender(<AiGrantBar turnRunning={false} />);
+    expect(screen.getByTestId("ai-grant-bar").textContent).toContain("doesn't have AI grants");
   });
 
   it("says nothing at all when the account is entitled", () => {
@@ -325,5 +338,23 @@ describe("the grant store's composer lock", () => {
     await userEvent.click(screen.getByRole("button", { name: /turn on sync/i }));
     expect(enableSync).toHaveBeenCalledWith("local_2");
     expect(bar.textContent).not.toContain("Refresh");
+  });
+});
+
+describe("grantLocksComposer", () => {
+  it("locks the native agent's composer on a definite no", () => {
+    expect(grantLocksComposer(true, "atlas-agent", false)).toBe(true);
+  });
+
+  it("never locks a running turn — the lock would disable its Stop", () => {
+    expect(grantLocksComposer(true, "atlas-agent", true)).toBe(false);
+  });
+
+  it("never locks an agent that does not bill the gateway", () => {
+    expect(grantLocksComposer(true, "claude-code", false)).toBe(false);
+  });
+
+  it("does not lock without a definite no", () => {
+    expect(grantLocksComposer(false, "atlas-agent", false)).toBe(false);
   });
 });

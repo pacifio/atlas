@@ -782,7 +782,7 @@ impl CommsManager {
         artifact_refs: Vec<SessionReference>,
     ) -> Result<String> {
         if self.session().is_none() {
-            return Err(CommsError::Protocol("no organisation is connected".into()));
+            return Err(CommsError::Protocol("no organization is connected".into()));
         }
         let client_msg_id = uuid::Uuid::new_v4().to_string();
         let now = now_ms();
@@ -817,6 +817,10 @@ impl CommsManager {
             code_refs: Vec::new(),
             artifact_refs: artifact_refs.clone(),
             draft_id: None,
+            author_kind: crate::wire::AuthorKind::User,
+            author_name: None,
+            author_via: None,
+            author_avatar_hash: None,
         };
 
         self.inner.pending.lock().unwrap().insert(
@@ -1161,7 +1165,7 @@ impl CommsManager {
     ) -> Result<String> {
         let org_id = self
             .org_id()
-            .ok_or_else(|| CommsError::Protocol("no organisation is connected".into()))?;
+            .ok_or_else(|| CommsError::Protocol("no organization is connected".into()))?;
 
         let filename = path
             .file_name()
@@ -1203,7 +1207,7 @@ impl CommsManager {
             if self.upload_cancelled(upload_id) {
                 let _ = self.inner.rest.abort_upload(&org_id, &intent.file_id).await;
                 self.finish_upload(upload_id);
-                return Err(CommsError::Protocol("upload cancelled".into()));
+                return Err(CommsError::Protocol("upload canceled".into()));
             }
 
             // Every part but the last is exactly `part_bytes`; the last is
@@ -1334,7 +1338,7 @@ impl CommsManager {
     pub async fn download_attachment(&self, file_id: &str, download_id: &str) -> Result<Vec<u8>> {
         let org = self
             .org_id()
-            .ok_or_else(|| CommsError::Protocol("no organisation is connected".into()))?;
+            .ok_or_else(|| CommsError::Protocol("no organization is connected".into()))?;
         let progress = self.progress_reporter(download_id);
         let mut on_chunk = progress;
         let result = self
@@ -1517,19 +1521,20 @@ impl CommsManager {
         conv_id: &str,
         mode: &str,
         public: bool,
+        provider: Option<&str>,
     ) -> Result<crate::wire::Call> {
         let session = self
             .session()
-            .ok_or_else(|| CommsError::Token("no organisation is connected".into()))?;
+            .ok_or_else(|| CommsError::Token("no organization is connected".into()))?;
         let call = self
             .inner
             .rest
-            .start_call(&session.org_id, conv_id, mode, public)
+            .start_call(&session.org_id, conv_id, mode, public, provider)
             .await?;
         {
             let mut state = self.inner.state.lock().unwrap();
             if !self.live(session.generation) {
-                return Err(CommsError::Protocol("organisation changed".into()));
+                return Err(CommsError::Protocol("organization changed".into()));
             }
             state.calls.insert(call.id.clone(), call.clone());
         }
@@ -1541,7 +1546,7 @@ impl CommsManager {
     pub async fn download_transcript(&self, call_id: &str) -> Result<Vec<u8>> {
         let org = self
             .org_id()
-            .ok_or_else(|| CommsError::Token("no organisation is connected".into()))?;
+            .ok_or_else(|| CommsError::Token("no organization is connected".into()))?;
         self.inner.rest.download_transcript(&org, call_id).await
     }
 
@@ -1825,6 +1830,10 @@ pub fn to_wire(row: &LocalMessage) -> WireMessage {
         code_refs: row.message.code_refs.clone(),
         artifact_refs: row.message.artifact_refs.clone(),
         draft_id: row.message.draft_id.clone(),
+        author_kind: row.message.author_kind,
+        author_name: row.message.author_name.clone(),
+        author_via: row.message.author_via.clone(),
+        author_avatar_hash: row.message.author_avatar_hash.clone(),
         client_msg_id: row.client_msg_id.clone(),
         status: match row.status {
             SendStatus::Sending => "sending",
@@ -2277,6 +2286,10 @@ mod tests {
             code_refs: vec![],
             artifact_refs: vec![],
             draft_id: None,
+            author_kind: crate::wire::AuthorKind::User,
+            author_name: None,
+            author_via: None,
+            author_avatar_hash: None,
         };
         assert!(!mgr.adopt_page(&stale, "c1", vec![message], false));
         assert!(mgr.with_state(|s| s.messages("c1").is_empty()));
@@ -2460,6 +2473,10 @@ mod tests {
                     code_refs: vec![],
                     artifact_refs: vec![],
                     draft_id: None,
+                    author_kind: crate::wire::AuthorKind::User,
+                    author_name: None,
+                    author_via: None,
+                    author_avatar_hash: None,
                 })],
             );
         });
@@ -2513,6 +2530,10 @@ mod tests {
                     code_refs: vec![],
                     artifact_refs: vec![],
                     draft_id: None,
+                    author_kind: crate::wire::AuthorKind::User,
+                    author_name: None,
+                    author_via: None,
+                    author_avatar_hash: None,
                 })],
             );
             state.pins.insert("c1".into(), vec!["m1".into()]);

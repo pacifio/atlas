@@ -149,6 +149,8 @@ export interface AppSettings {
   /** An agent turn that finished faster than this stays quiet. 0 = off.
    *  Failures and requests for the user ignore it. */
   notifyAgentMinDurationMs: number;
+  /** Models starred in the composer's model picker, as `agentType:modelId`. */
+  favoriteModels: string[];
   /** Allow once / Deny on permission banners (ATL-381 reads this). */
   notifyPermissionActions: boolean;
   /** The legacy terminal and agent choices have been folded into the keys
@@ -210,6 +212,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   notifyTeamNative: true,
   notifyTeamSound: true,
   notifyAgentMinDurationMs: 0,
+  favoriteModels: [],
   notifyPermissionActions: true,
   notificationsMigrated: false,
   notifyDisabledKinds: [],

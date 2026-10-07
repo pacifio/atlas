@@ -7,8 +7,15 @@ import type { SessionKey } from "@/types/agents";
  *
  * History used to be assembled by reading each agent CLI's private storage and
  * re-reading it whenever a file changed. It is Atlas's own store now, and the
- * only refresh signal is the store saying it changed: no filesystem watching,
- * no polling.
+ * UI's only refresh signal is {@link THREADS_CHANGED_EVENT}: nothing here polls.
+ *
+ * Discovery (ADR-0001 amendment, ATL-421–424) feeds that store from outside
+ * Atlas, metadata only — a transcript is never read for content; replay goes
+ * through the agent. {@link syncProjectThreads} asks the agents for the open
+ * project's sessions, and also arms a Rust watcher on that project's Claude
+ * transcript directory (`session_watcher.rs`) that syncs new sessions and
+ * bumps active ones. While any session is live elsewhere, a 30s ticker there
+ * re-announces the change event when the clock alone changes `liveElsewhere`.
  */
 
 /** Fired whenever a thread row is added, changed or removed. */
@@ -38,6 +45,16 @@ export interface ThreadRow {
   archived: boolean;
   projectName: string;
   folderPaths: string[];
+  /** Another process (typically `claude` in a terminal) wrote this session
+   *  within the last ~90s and Atlas is not hosting it. Decided in Rust. */
+  liveElsewhere: boolean;
+  /**
+   * The git branch the thread's working directory was on when it last started
+   * a turn (or was opened). `null` when Atlas never saw one — a detached HEAD,
+   * a folder outside any repository, or a row recorded before branches were.
+   * Never guessed.
+   */
+  branch: string | null;
 }
 
 /** One project's threads, as the sidebar groups them. */
@@ -65,6 +82,17 @@ export interface ThreadProject {
  */
 export function threadProjects(cwd: string): Promise<ThreadProject[]> {
   return invoke<ThreadProject[]>("threads_projects", { cwd: cwd || null });
+}
+
+/**
+ * Ask the agents Atlas already has history with for the recent sessions they
+ * hold for `cwd`, and add them to the sidebar. Answers how many rows landed.
+ *
+ * Cheap to call often: the backend answers `0` for a project synced in the last
+ * 30 seconds. The change event does the refreshing, so callers need not.
+ */
+export function syncProjectThreads(cwd: string): Promise<number> {
+  return invoke<number>("threads_sync_project", { cwd });
 }
 
 /** Every thread, archived or not, newest-started first — the history view. */
