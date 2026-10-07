@@ -38,6 +38,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { copyText } from "@/lib/clipboard";
+import { UiScaleControl } from "@/features/settings/components/ui-scale-control";
 import { getVersion } from "@tauri-apps/api/app";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { GithubIcon } from "@/components/github-icon";
@@ -1093,10 +1094,14 @@ export function ProjectSidebar() {
           </nav>
         </RailScroll>
 
-        {/* Card footer: help on the left, version on the right. Outside the
-            scroller so it stays put, inside the card so it belongs to it. */}
+        {/* Card footer: help and interface scale on the left, version on the
+            right. Outside the scroller so it stays put, inside the card so it
+            belongs to it. */}
         <div className="relative z-panel flex h-[30px] shrink-0 items-center justify-between px-2">
-          <HelpMenu />
+          <div className="flex items-center gap-1">
+            <HelpMenu />
+            <UiScaleControl />
+          </div>
           <AppVersion />
         </div>
       </div>

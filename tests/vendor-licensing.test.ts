@@ -287,6 +287,11 @@ describe("§4(b) — modified files say they were modified", () => {
     expect(modifiedVendoredFiles().length).toBeGreaterThan(5);
   });
 
+  // Reads every modified vendored file. The hashing is in `beforeAll`; the
+  // reading is not. Under 1s on a quiet machine, but past vitest's 5s default
+  // when the disk is busy (a cargo build, a parallel suite, the pre-commit
+  // hook): 12-14s observed on Windows, failing a run that had found nothing
+  // wrong (#334). The budget is for a slow disk, not a slow check.
   it("puts a change notice in every modified vendored file", () => {
     const modified = modifiedVendoredFiles().filter(
       (rel) => rel !== "vendor/atlas-engine/LICENSE" && rel !== "vendor/atlas-engine/NOTICE",
@@ -323,7 +328,7 @@ describe("§4(b) — modified files say they were modified", () => {
       unlisted,
       `modified files that cannot carry a comment must be listed in ATLAS-CHANGES.md:\n${unlisted.join("\n")}`,
     ).toEqual([]);
-  });
+  }, 60_000);
 });
 
 describe("§4(c) and the rename sweep — the rules are written down", () => {

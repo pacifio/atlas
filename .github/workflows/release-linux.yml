@@ -9,11 +9,11 @@ on:
       version:
         description: 'Release version (leave empty to detect or read from package.json)'
         required: false
-        default: '0.3.4'
+        default: ''
       tag:
         description: 'Release tag name (leave empty to match git tag or alpha-<version>)'
         required: false
-        default: 'alpha-0.3.4'
+        default: ''
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -25,6 +25,21 @@ permissions:
 env:
   CARGO_INCREMENTAL: 0
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  # sccache, as in ci.yml (which explains why it sits alongside rust-cache).
+  # Workflow-wide is safe here, unlike ci.yml: the one job installs sccache
+  # before anything runs cargo, and the Arch package's `docker run` does not
+  # inherit the runner's environment.
+  RUSTC_WRAPPER: sccache
+  SCCACHE_GHA_ENABLED: 'true'
+  # Only a manual run on the default branch writes, for both sccache and
+  # rust-cache (`save-if` below). A run can restore only entries from its own
+  # ref or the default branch's. A release is usually a tag push, and the next
+  # release is a different tag, so whatever a tag run saved would never be
+  # restored and would only evict CI's entries from the shared 10 GB budget
+  # (see "Cache budget" in ci.yml). This job's x86-64 release-profile units
+  # share nothing with CI's aarch64 dev-profile ones, so the main-branch
+  # entries a tag run can read come from a manual run here, never from CI.
+  SCCACHE_GHA_RW_MODE: ${{ github.event_name == 'workflow_dispatch' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && 'READ_WRITE' || 'READ_ONLY' }}
 
 jobs:
   build-linux:
@@ -91,10 +106,16 @@ jobs:
       - name: Setup Rust toolchain
         run: rustup toolchain install
 
+      # Before rust-cache: with RUSTC_WRAPPER set, cargo invokes sccache even
+      # to probe `rustc -vV`.
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.11
+
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: .
+          save-if: ${{ env.SCCACHE_GHA_RW_MODE == 'READ_WRITE' }}
 
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
@@ -195,7 +216,10 @@ jobs:
           [ -d "src-tauri/target" ] && SEARCH_DIRS+=("src-tauri/target")
           # Copy standalone tarball
           cp dist/release-linux/*.tar.gz dist/artifacts/
-          # Copy Arch Linux package
+          # Copy Arch Linux package. `!debug` in the PKGBUILD stops makepkg
+          # splitting out an empty debug package; drop one if it ever does, and
+          # keep the plain `cp` so a missing package still fails the job.
+          rm -f dist/release-linux/*-debug-*.pkg.tar.zst
           cp dist/release-linux/*.pkg.tar.zst dist/artifacts/
           # Copy AUR PKGBUILD for convenience
           cp dist/release-linux/aur-tryatlas-bin/PKGBUILD dist/artifacts/PKGBUILD-tryatlas-bin
@@ -209,12 +233,11 @@ jobs:
           if ! ls dist/artifacts/*.rpm >/dev/null 2>&1; then
             find "${SEARCH_DIRS[@]}" -type f -name "*.rpm" -exec cp -t dist/artifacts/ {} +
           fi
-          # Copy AppImage from Tauri bundles
+          # Copy AppImage from Tauri bundles and normalize name to tryatlas package convention
           find "${SEARCH_DIRS[@]}" -type f -name "*.AppImage" -exec cp -t dist/artifacts/ {} +
-          # Provide both Atlas and tryatlas AppImage aliases
           for appimage in dist/artifacts/*Atlas*.AppImage; do
             if [ -f "$appimage" ]; then
-              cp "$appimage" "${appimage//Atlas/tryatlas}"
+              mv "$appimage" "${appimage//Atlas/tryatlas}"
             fi
           done
 
@@ -230,6 +253,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
+          # When a manual run names a tag that does not exist yet, create it on
+          # the commit just built, not on the default branch's head.
+          target_commitish: ${{ github.sha }}
           files: |
             dist/artifacts/*
         env:

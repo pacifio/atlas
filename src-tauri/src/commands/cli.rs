@@ -285,6 +285,12 @@ pub async fn cli_install_helper() -> Result<CliStatus, String> {
     if cfg!(windows) {
         return Err("the atlas CLI helper is not available on Windows yet".to_string());
     }
+    // `~/.local/bin/atlas` belongs to the released app — it is what `atlas .`
+    // in any terminal opens — and the window refreshes it on every launch, so
+    // a source build would otherwise take it over just by starting.
+    if atlas_profile::is_dev() {
+        return Err("the atlas CLI helper is not installed by the dev profile".to_string());
+    }
     let version = env!("CARGO_PKG_VERSION").to_string();
 
     // The probes below read files (and may scan a system binary), so they

@@ -13,8 +13,8 @@ import {
   type SwitchableAgent,
 } from "@/types/agent";
 import { invalidateLoad } from "./load-tokens";
-import { resumeSessionFast } from "./resume-session";
-import { applyModeOnResume } from "./resume-mode";
+import { ResumeError, resumeSessionFast } from "./resume-session";
+import { applyModeOnResume, holdUnrestoredMode } from "./resume-mode";
 
 /** Active project root, preferring the legacy `currentProject` but falling back
  *  to the active project path (mirrors the sidebar's `cwd` resolution). */
@@ -175,6 +175,9 @@ export async function openAgentSession({
     setResumePending(targetTabId, false);
   } catch (err) {
     setTranscriptLoading(targetTabId, false);
+    // The session is open but its mode was never applied: hold sends until a
+    // pick, before the gate below opens.
+    if (err instanceof ResumeError && err.stage === "snapshot") holdUnrestoredMode(targetTabId);
     setResumePending(targetTabId, false);
     // `errInfo`: the spawn/load commands in this path reject with a structured
     // `{message, kind}` that would render as "[object Object]".

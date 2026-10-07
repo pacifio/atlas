@@ -697,9 +697,11 @@ dependencies = [
  "atlas-gitdiff",
  "atlas-grepindex",
  "atlas-icon-theme",
+ "atlas-instruction-sync",
  "atlas-memory",
  "atlas-native-agent",
  "atlas-process",
+ "atlas-profile",
  "atlas-search",
  "atlas-terminal",
  "atlas-theme",
@@ -904,6 +906,7 @@ name = "atlas-checkpoint"
 version = "0.1.0"
 dependencies = [
  "atlas-process",
+ "atlas-profile",
  "atlas-redact",
  "chrono",
  "reqwest 0.12.28",
@@ -923,6 +926,7 @@ dependencies = [
  "atlas-embed",
  "atlas-git",
  "atlas-process",
+ "atlas-profile",
  "atlas-retrieval",
  "atlas-search",
  "blake3",
@@ -3288,6 +3292,7 @@ name = "atlas-grepindex"
 version = "0.1.0"
 dependencies = [
  "atlas-git",
+ "atlas-profile",
  "atlas-search",
  "gix",
  "ignore",
@@ -3305,6 +3310,7 @@ dependencies = [
 name = "atlas-icon-theme"
 version = "0.1.0"
 dependencies = [
+ "atlas-profile",
  "dirs",
  "serde",
  "serde_json",
@@ -3314,12 +3320,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "atlas-instruction-sync"
+version = "0.1.0"
+dependencies = [
+ "atlas-profile",
+ "serde_json",
+ "tempfile",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
 name = "atlas-memory"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
  "atlas-embed",
+ "atlas-profile",
  "atlas-redact",
  "chrono",
  "rusqlite",
@@ -3388,6 +3405,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "atlas-profile"
+version = "0.1.0"
+
+[[package]]
 name = "atlas-redact"
 version = "0.1.0"
 dependencies = [
@@ -3410,6 +3431,7 @@ dependencies = [
 name = "atlas-search"
 version = "0.1.0"
 dependencies = [
+ "atlas-profile",
  "dunce",
  "globset",
  "grep-matcher",
@@ -3437,6 +3459,7 @@ dependencies = [
 name = "atlas-theme"
 version = "0.1.0"
 dependencies = [
+ "atlas-profile",
  "dirs",
  "notify",
  "schemars 0.8.22",

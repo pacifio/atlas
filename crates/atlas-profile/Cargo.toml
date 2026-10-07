@@ -1,0 +1,13 @@
+[package]
+name = "atlas-profile"
+version = "0.1.0"
+edition = "2021"
+description = "Which set of on-disk data this Atlas process owns: the released app's, or the source build's separate dev profile. Names only — no I/O, no dependencies."
+
+[lib]
+name = "atlas_profile"
+
+# The workspace lint table is only real for members that opt in —
+# without this stanza it is dead configuration (#60).
+[lints]
+workspace = true

@@ -8,6 +8,8 @@ description = "Atlas's agent-session record: local SQLite store, redact-on-write
 name = "atlas_checkpoint"
 
 [dependencies]
+# `.atlas` vs `.atlas-dev`: whose data this process owns (see that crate).
+atlas-profile = { path = "../atlas-profile" }
 atlas-process = { path = "../atlas-process" }
 # The store. Bundled so the database is self-contained and does not depend on a
 # system sqlite — the same reason src-tauri already bundles it for the engine

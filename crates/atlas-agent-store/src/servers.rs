@@ -36,8 +36,8 @@ use crate::archive::{
 use crate::http::HttpClient;
 use crate::node::{
     bounded_npm_package_spec, installed_below_ceiling, installed_package_version,
-    installed_version_satisfies, npm_command_env, npm_platform, read_package_executable,
-    NodeRuntime,
+    installed_version_satisfies, npm_command_env, npm_platform, plain_process_path,
+    read_package_executable, NodeRuntime,
 };
 use crate::npm_tree::{install_state, InstallState, NpmPlatform};
 use crate::registry::{current_platform_key, RegistryTargetConfig};
@@ -438,12 +438,7 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
             if !is_dir(&install_dir.join("node_modules")).await {
                 return Ok(false);
             }
-            // Same resolution as `get_command`, for the same reasons.
-            let resolved = plain_process_path(
-                tokio::fs::canonicalize(&install_dir)
-                    .await
-                    .with_context(|| format!("resolving {install_dir:?}"))?,
-            );
+            let resolved = resolve_install_dir(&install_dir).await?;
             ensure_npx_package(&node, &resolved, &install_dir, &package, &version, None).await
         })
     }
@@ -455,10 +450,9 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
             if !is_dir(&install_dir.join("node_modules")).await {
                 return false;
             }
-            let Ok(resolved) = tokio::fs::canonicalize(&install_dir).await else {
+            let Ok(resolved) = resolve_install_dir(&install_dir).await else {
                 return false;
             };
-            let resolved = plain_process_path(resolved);
             let (package_name, _) = bounded_npm_package_spec(&package);
             install_needed(&resolved, package_name, &package, npm_platform())
                 .await
@@ -488,20 +482,10 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
                 tokio::fs::create_dir_all(&install_dir)
                     .await
                     .with_context(|| format!("creating {install_dir:?}"))?;
-                // npm keys its hidden lockfile by path relative to the
-                // *real* prefix; hand it a symlinked one (a relocated
-                // `~/Library`, `/tmp` on macOS) and every entry comes back as
-                // `../../real/path/node_modules/…`, which nothing below can
-                // match against the tree. Resolve once, up front — and keep
-                // the plain spelling of the result, because npm and Node both
-                // choke on the `\\?\`-verbatim form Windows canonicalizes to
-                // (#277). Every consumer below, the filesystem checks
-                // included, gets the same plain path.
-                let install_dir = plain_process_path(
-                    tokio::fs::canonicalize(&install_dir)
-                        .await
-                        .with_context(|| format!("resolving {install_dir:?}"))?,
-                );
+                // Resolved once, up front, so every consumer below — npm, the
+                // filesystem checks, the agent's script path — sees the same
+                // spelling. See [`resolve_install_dir`].
+                let install_dir = resolve_install_dir(&install_dir).await?;
 
                 // Node first, and through the status-aware path: this is the
                 // one step that can take minutes on a fresh machine, and every
@@ -534,12 +518,17 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
                 base.extend(npm_command_env(&node_binary));
                 let env = layered_env(base, &distribution_env, extra_env, &byok_env, &settings_env);
 
-                let mut command_args = vec![executable.to_string_lossy().into_owned()];
+                // The agent's own Node launch, plain at the boundary like npm's:
+                // Node fails `lstat 'C:'` on a verbatim script path (#277), and
+                // neither path should depend on how its caller resolved it.
+                let mut command_args = vec![plain_process_path(&executable)
+                    .to_string_lossy()
+                    .into_owned()];
                 command_args.extend(args);
                 command_args.extend(extra_args);
 
                 Ok(AgentServerCommand {
-                    path: node_binary,
+                    path: plain_process_path(&node_binary),
                     args: command_args,
                     env: Some(env),
                 })
@@ -1031,39 +1020,22 @@ pub async fn forget_npx_install_decision(registry_dir: &std::path::Path, id: &st
     }
 }
 
-/// The plain spelling of a canonicalized path, safe to hand to a child process.
+/// The npx install directory, resolved the one way every consumer of it needs.
 ///
-/// `canonicalize` on Windows returns the `\\?\`-verbatim spelling, and the two
-/// processes this module spawns cannot digest it: npm's Arborist recurses to a
-/// stack overflow when it is the `--prefix` (`RangeError: Maximum call stack
-/// size exceeded at resolve`), and Node fails with `EISDIR: lstat 'C:'` when it
-/// is the script argument — both reproduced in #277, where a clean-install
-/// Codex ACP agent could not start at all. Stripping the prefix keeps the
-/// symlink resolution `canonicalize` did (the path still points at the same
-/// directory); only the spelling changes.
-///
-/// Only the two spellings that have a plain equivalent are stripped:
-/// `\\?\C:\...` (drive) and `\\?\UNC\server\share` (→ `\\server\share`).
-/// Device paths (`\\?\Volume{...}`) have no plain spelling and are returned
-/// unchanged, as is anything that does not carry the prefix. Not gated on
-/// `cfg!(windows)`: POSIX `canonicalize` never produces the prefix, and an
-/// unconditional strip keeps this testable on the Linux CI runners — the same
-/// call the app makes on Windows.
-fn plain_process_path(path: PathBuf) -> PathBuf {
-    let text = path.to_string_lossy();
-    let Some(rest) = text.strip_prefix(r"\\?\") else {
-        return path;
-    };
-    if let Some(share) = rest.strip_prefix(r"UNC\") {
-        return PathBuf::from(format!(r"\\{share}"));
-    }
-    // `C:\...`: a drive letter, a colon, and a separator. The separator matters
-    // — bare `C:` means "the current directory on C", a different location.
-    let bytes = rest.as_bytes();
-    if bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && bytes[2] == b'\\' {
-        return PathBuf::from(rest);
-    }
-    path
+/// Resolved, because npm keys its hidden lockfile by path relative to the
+/// *real* prefix: hand it a symlinked one (a relocated `~/Library`, `/tmp` on
+/// macOS) and every entry comes back as `../../real/path/node_modules/…`, which
+/// nothing here can match against the tree. Plain, because `canonicalize` on
+/// Windows answers in the `\\?\`-verbatim spelling, and both npm (as
+/// `--prefix`) and Node (as the agent's script path, which is built from this
+/// directory) reject it — the clean-install Codex failure in #277. One helper
+/// for `get_command`, `prefetch_update` and `update_pending`, so the three can
+/// never disagree about which spelling of the directory they are checking.
+async fn resolve_install_dir(install_dir: &std::path::Path) -> Result<PathBuf> {
+    let resolved = tokio::fs::canonicalize(install_dir)
+        .await
+        .with_context(|| format!("resolving {install_dir:?}"))?;
+    Ok(plain_process_path(&resolved))
 }
 
 async fn is_dir(path: &std::path::Path) -> bool {
@@ -1079,46 +1051,28 @@ mod tests {
 
     const PACKAGE: &str = "@scope/agent";
 
-    #[test]
-    fn plain_process_path_drops_windows_verbatim_prefixes() {
-        // A disk path canonicalized on Windows comes back `\\?\C:\...`; npm's
-        // Arborist recurses to a stack overflow on it as `--prefix`, and Node
-        // fails `lstat 'C:'` when it is the script argument (#277).
-        assert_eq!(
-            plain_process_path(PathBuf::from(
-                r"\\?\C:\Users\u\AppData\Roaming\dev.atlas.ide\external-agents\registry\npx\codex-acp"
-            )),
-            PathBuf::from(
-                r"C:\Users\u\AppData\Roaming\dev.atlas.ide\external-agents\registry\npx\codex-acp"
-            )
-        );
-        // The UNC spelling must come back as `\\server\share`, not
-        // `UNC\server\share`.
-        assert_eq!(
-            plain_process_path(PathBuf::from(r"\\?\UNC\server\share\agent")),
-            PathBuf::from(r"\\server\share\agent")
-        );
-    }
-
-    #[test]
-    fn plain_process_path_keeps_every_plain_spelling_untouched() {
-        for plain in [
-            r"C:\Users\u\AppData\Roaming\dev.atlas.ide",
-            "/home/u/.local/share/dev.atlas.ide/npx/codex-acp",
-            // The marker only counts at the very front: a POSIX path with a
-            // literal backslash component stays exactly as it is.
-            r"/tmp/\\?\inside",
-            // A device path has no plain spelling; keep the verbatim one.
-            r"\\?\Volume{12345678-1234-1234-1234-123456789abc}\agent",
-            // Nothing after the prefix to hand back.
-            r"\\?\",
-        ] {
-            assert_eq!(
-                plain_process_path(PathBuf::from(plain)),
-                PathBuf::from(plain),
-                "changed {plain:?}"
+    /// The real `canonicalize`, not a spelled-out string: on Windows it is what
+    /// produced the `\\?\` prefix npm and Node rejected (#277), and on POSIX it
+    /// must still resolve symlinks for npm's hidden lockfile.
+    #[tokio::test]
+    async fn the_install_dir_resolves_to_a_plain_existing_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let canonical = std::fs::canonicalize(dir.path()).unwrap();
+        if cfg!(windows) {
+            // Pins the premise: without it this test would pass vacuously.
+            assert!(
+                canonical.to_string_lossy().starts_with(r"\\?\"),
+                "expected a verbatim path, got {canonical:?}"
             );
         }
+
+        let resolved = resolve_install_dir(dir.path()).await.unwrap();
+        assert!(
+            !resolved.to_string_lossy().starts_with(r"\\?\"),
+            "verbatim install dir would reach npm and Node: {resolved:?}"
+        );
+        assert!(is_dir(&resolved).await, "{resolved:?} is not the directory");
+        assert_eq!(std::fs::canonicalize(&resolved).unwrap(), canonical);
     }
 
     #[test]

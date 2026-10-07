@@ -49,8 +49,11 @@ pub const CONFIG_FILE_NAME: &str = "config.toml";
 
 /// Directory under `~/.config` (or `$XDG_CONFIG_HOME`) holding
 /// [`CONFIG_FILE_NAME`]. Named for the product, not the bundle id: a path a
-/// user types should read `atlas`, not `dev.atlas.ide`.
-pub const CONFIG_DIR_NAME: &str = "atlas";
+/// user types should read `atlas`, not `dev.atlas.ide`. `atlas-dev` under the
+/// dev profile, so a source build never edits the released app's settings.
+pub fn config_dir_name() -> &'static str {
+    atlas_profile::config_dir_name()
+}
 
 /// How many times [`ConfigManager::apply_patch`] rebuilds its patch when an
 /// external write lands inside the merge-then-swap window. Three is enough to
@@ -258,10 +261,12 @@ impl Default for AgentSwitchBehavior {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
-    /// On project open, ensure `.atlas/` is listed in the project's
-    /// `.gitignore` (creating the file if needed). No-op on non-git
-    /// projects. Default ON because Atlas writes caches / state into
-    /// `.atlas/` that don't belong in version control.
+    /// On project open, keep Atlas's directory out of the project's version
+    /// control: `.atlas/` is listed in the project's `.gitignore` (creating
+    /// the file if needed), while the dev profile lists its `.atlas-dev/` in
+    /// `.git/info/exclude` instead (see `commands::fs::ensure_atlas_gitignore`).
+    /// No-op on non-git projects. Default ON because Atlas writes caches /
+    /// state there that don't belong in version control.
     #[serde(default = "default_true")]
     pub auto_add_atlas_gitignore: bool,
     /// Record Atlas-internal events (sign-in, agent start/finish,
@@ -334,6 +339,11 @@ pub struct AppSettings {
     /// What switching agents does to a chat with a conversation in it.
     #[serde(default)]
     pub agent_switch_behavior: AgentSwitchBehavior,
+    /// Before switching agents on a chat with a conversation, send the agent
+    /// being left `/remember` (when it advertises that command) and wait for
+    /// it. Off by default: it costs the user a turn.
+    #[serde(default)]
+    pub remember_before_switch: bool,
     /// Inline Git blame in the code editor. Default ON; when off the editor
     /// doesn't even load the extension (no blame IPC).
     #[serde(default = "default_true")]
@@ -343,6 +353,10 @@ pub struct AppSettings {
     /// Default ON. See `crate::commands::git_autofetch`.
     #[serde(default = "default_true")]
     pub git_auto_fetch: bool,
+    /// Keep the computer awake while an Atlas agent is actively running.
+    /// Default OFF. See `crate::keep_awake`.
+    #[serde(default)]
+    pub keep_awake_while_running: bool,
     /// Auto-update master switch. See `crate::commands::updater`.
     #[serde(default = "default_true")]
     pub auto_update: bool,
@@ -353,6 +367,13 @@ pub struct AppSettings {
     /// see `commands::atlas_config::apply_curated_plugin_sync_gate`.
     #[serde(default)]
     pub curated_plugin_sync: bool,
+    /// Mirror the active project's convention files (`CLAUDE.md`,
+    /// `.claude/rules/`) into a marked block of its `AGENTS.md`, kept current
+    /// as they change, for any agent that reads `AGENTS.md`. Off by default:
+    /// it writes into the user's repository. Switching it off takes the block
+    /// back out. See `commands::instruction_sync`.
+    #[serde(default)]
+    pub instruction_sync: bool,
     /// A version the user chose to "Ignore" in the update prompt. `None` =
     /// nothing ignored. Absent from the TOML file rather than written as a
     /// sentinel empty string — TOML has no native null, and an absent key is
@@ -497,10 +518,13 @@ impl Default for AppSettings {
             legacy_atlas_theme: None,
             adaptive_suggestions: AdaptiveSuggestions::default(),
             agent_switch_behavior: AgentSwitchBehavior::default(),
+            remember_before_switch: false,
             git_blame_inline: true,
             git_auto_fetch: true,
+            keep_awake_while_running: false,
             auto_update: true,
             curated_plugin_sync: false,
+            instruction_sync: false,
             updater_ignored_version: None,
             enter_to_send: true,
             agent_ui_navigation: true,
@@ -568,8 +592,10 @@ const SCHEMA_VERSION_DOC: &str = "
 const SETTINGS_DOCS: &[(&str, &str)] = &[
     (
         "autoAddAtlasGitignore",
-        "# Add `.atlas/` to each opened git project's .gitignore, creating the\n\
-         # file if needed. No-op on non-git projects. (default: true)",
+        "# Keep Atlas's directory in each opened git project out of version\n\
+         # control: `.atlas/` goes into the project's .gitignore (created if\n\
+         # needed); a dev build's `.atlas-dev/` goes into .git/info/exclude.\n\
+         # No-op on non-git projects. (default: true)",
     ),
     (
         "enableAtlasLogs",
@@ -652,6 +678,13 @@ const SETTINGS_DOCS: &[(&str, &str)] = &[
          # switches in place and starts over. (default: \"reset\")",
     ),
     (
+        "rememberBeforeSwitch",
+        "# Before switching agents on a chat with a conversation, send the agent\n\
+         # being left /remember (when it offers that command) and wait for it\n\
+         # to save what it learned to shared memory. Costs one turn per switch.\n\
+         # (default: false)",
+    ),
+    (
         "gitBlameInline",
         "# Inline git blame — a dim author/age/summary annotation trailing the\n\
          # active line in the editor. (default: true)",
@@ -663,6 +696,12 @@ const SETTINGS_DOCS: &[(&str, &str)] = &[
          # the remote has. Never pulls or touches your files. (default: true)",
     ),
     (
+        "keepAwakeWhileRunning",
+        "# Keep the computer awake while an Atlas agent is actively running.\n\
+         # Prevents idle system sleep; display can still turn off. No effect on\n\
+         # Windows. (default: false)",
+    ),
+    (
         "autoUpdate",
         "# Check for a newer signed Atlas release on startup and prompt when one\n\
          # is available. (default: true)",
@@ -672,6 +711,13 @@ const SETTINGS_DOCS: &[(&str, &str)] = &[
         "# Let the Atlas Agent's engine fetch OpenAI's curated plugin catalogue\n\
          # (github.com/openai/plugins) when it starts — a network request at\n\
          # every launch. Applies the next time the agent starts. (default: false)",
+    ),
+    (
+        "instructionSync",
+        "# Mirror CLAUDE.md and .claude/rules/ into a marked block of the active\n\
+         # project's AGENTS.md, kept current as they change, for any agent that\n\
+         # reads AGENTS.md. Writes into the repository; text outside the block\n\
+         # is never changed. Off: the block is taken back out. (default: false)",
     ),
     (
         "updaterIgnoredVersion",
@@ -740,13 +786,13 @@ const SETTINGS_DOCS: &[(&str, &str)] = &[
     ),
     (
         "notificationsEnabled",
-        "# Notifications master switch. Off silences every notification except
+        "# Notifications master switch. Off silences every notification except\n\
          # sign-in problems, which always show. (default: true)",
     ),
     (
         "notifyNeedsYouNative",
-        "# OS banner for notifications that need you — a permission request, a
-         # question, a terminal asking for input. Shown only when you are away.
+        "# OS banner for notifications that need you — a permission request, a\n\
+         # question, a terminal asking for input. Shown only when you are away.\n\
          # (default: true)",
     ),
     (
@@ -755,7 +801,7 @@ const SETTINGS_DOCS: &[(&str, &str)] = &[
     ),
     (
         "notifyOutcomeNative",
-        "# OS banner when an agent turn or terminal command finishes or fails.
+        "# OS banner when an agent turn or terminal command finishes or fails.\n\
          # Shown only when you are away. (default: true)",
     ),
     (
@@ -764,7 +810,7 @@ const SETTINGS_DOCS: &[(&str, &str)] = &[
     ),
     (
         "notifyWarningNative",
-        "# OS banner for warnings — context nearly full, rate limited, retrying,
+        "# OS banner for warnings — context nearly full, rate limited, retrying,\n\
          # agent stopped. (default: false)",
     ),
     (
@@ -773,7 +819,7 @@ const SETTINGS_DOCS: &[(&str, &str)] = &[
     ),
     (
         "notifyTeamNative",
-        "# OS banner for Chat direct messages and @mentions. Shown only when you
+        "# OS banner for Chat direct messages and @mentions. Shown only when you\n\
          # are away. (default: true)",
     ),
     (
@@ -782,12 +828,12 @@ const SETTINGS_DOCS: &[(&str, &str)] = &[
     ),
     (
         "notifyPermissionActions",
-        "# Show Allow once / Deny buttons on permission banners. Off: the banner
+        "# Show Allow once / Deny buttons on permission banners. Off: the banner\n\
          # only opens the session. (default: true)",
     ),
     (
         "notificationsMigrated",
-        "# Set once Atlas has folded your earlier terminal and agent notification
+        "# Set once Atlas has folded your earlier terminal and agent notification\n\
          # choices into the keys above. Leave it alone. (default: false)",
     ),
     (
@@ -1095,10 +1141,13 @@ pub struct SettingsPatch {
     pub app_icon: Option<String>,
     pub adaptive_suggestions: Option<AdaptiveSuggestions>,
     pub agent_switch_behavior: Option<AgentSwitchBehavior>,
+    pub remember_before_switch: Option<bool>,
     pub git_blame_inline: Option<bool>,
     pub git_auto_fetch: Option<bool>,
+    pub keep_awake_while_running: Option<bool>,
     pub auto_update: Option<bool>,
     pub curated_plugin_sync: Option<bool>,
+    pub instruction_sync: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_double_option")]
     pub updater_ignored_version: Option<Option<String>>,
     pub enter_to_send: Option<bool>,
@@ -1174,17 +1223,26 @@ impl SettingsPatch {
         if let Some(v) = self.agent_switch_behavior {
             settings.agent_switch_behavior = v;
         }
+        if let Some(v) = self.remember_before_switch {
+            settings.remember_before_switch = v;
+        }
         if let Some(v) = self.git_blame_inline {
             settings.git_blame_inline = v;
         }
         if let Some(v) = self.git_auto_fetch {
             settings.git_auto_fetch = v;
         }
+        if let Some(v) = self.keep_awake_while_running {
+            settings.keep_awake_while_running = v;
+        }
         if let Some(v) = self.auto_update {
             settings.auto_update = v;
         }
         if let Some(v) = self.curated_plugin_sync {
             settings.curated_plugin_sync = v;
+        }
+        if let Some(v) = self.instruction_sync {
+            settings.instruction_sync = v;
         }
         if let Some(v) = &self.updater_ignored_version {
             settings.updater_ignored_version = v.clone();
@@ -1288,8 +1346,11 @@ impl SettingsPatch {
         set_bool!(link_telemetry_to_account, "linkTelemetryToAccount");
         set_bool!(git_blame_inline, "gitBlameInline");
         set_bool!(git_auto_fetch, "gitAutoFetch");
+        set_bool!(keep_awake_while_running, "keepAwakeWhileRunning");
         set_bool!(auto_update, "autoUpdate");
         set_bool!(curated_plugin_sync, "curatedPluginSync");
+        set_bool!(instruction_sync, "instructionSync");
+        set_bool!(remember_before_switch, "rememberBeforeSwitch");
         set_bool!(enter_to_send, "enterToSend");
         set_bool!(agent_ui_navigation, "agentUiNavigation");
         set_bool!(agent_org_access, "agentOrgAccess");
@@ -1421,6 +1482,7 @@ pub fn settings_from_legacy_json(raw: Option<&serde_json::Value>) -> AppSettings
     take_bool!(link_telemetry_to_account, "linkTelemetryToAccount");
     take_bool!(git_blame_inline, "gitBlameInline");
     take_bool!(git_auto_fetch, "gitAutoFetch");
+    take_bool!(keep_awake_while_running, "keepAwakeWhileRunning");
     take_bool!(auto_update, "autoUpdate");
     take_bool!(curated_plugin_sync, "curatedPluginSync");
     take_bool!(enter_to_send, "enterToSend");
@@ -2040,7 +2102,8 @@ fn write_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
 }
 
 /// `~/.config/atlas/` — deliberately NOT Tauri's `app_config_dir()`, which on
-/// macOS is `~/Library/Application Support/dev.atlas.ide/`.
+/// macOS is `~/Library/Application Support/dev.atlas.ide/`. (`~/.config/
+/// atlas-dev/` under the dev profile — see `atlas-profile`.)
 ///
 /// `config.toml` is meant to be opened, read and hand-edited, by a person or
 /// by an agent; a path they can type is part of that, and a bundle id buried
@@ -2081,10 +2144,10 @@ pub(crate) fn config_root() -> Option<PathBuf> {
 fn config_root_from(xdg: Option<&Path>, home: Option<&Path>) -> Option<PathBuf> {
     if let Some(xdg) = xdg {
         if xdg.is_absolute() {
-            return Some(xdg.join(CONFIG_DIR_NAME));
+            return Some(xdg.join(config_dir_name()));
         }
     }
-    home.map(|home| home.join(".config").join(CONFIG_DIR_NAME))
+    home.map(|home| home.join(".config").join(config_dir_name()))
 }
 
 /// Thread-safe handle registered as Tauri managed state, mirroring
@@ -2752,10 +2815,13 @@ someFutureKey = \"left alone\"
             app_icon: Some("light".to_string()),
             adaptive_suggestions: Some(AdaptiveSuggestions::Off),
             agent_switch_behavior: Some(AgentSwitchBehavior::Handoff),
+            remember_before_switch: Some(!defaults.remember_before_switch),
             git_blame_inline: Some(!defaults.git_blame_inline),
             git_auto_fetch: Some(!defaults.git_auto_fetch),
+            keep_awake_while_running: Some(!defaults.keep_awake_while_running),
             auto_update: Some(!defaults.auto_update),
             curated_plugin_sync: Some(!defaults.curated_plugin_sync),
+            instruction_sync: Some(!defaults.instruction_sync),
             updater_ignored_version: Some(Some("9.9.9".to_string())),
             enter_to_send: Some(!defaults.enter_to_send),
             agent_ui_navigation: Some(!defaults.agent_ui_navigation),
@@ -3243,6 +3309,21 @@ red = "#ee0000"
 
         assert_eq!(fs::read_to_string(&path).unwrap(), "schemaVersion = 1\n");
         assert!(temp_files_beside(&path).is_empty());
+    }
+
+    /// A comment line that misses its `\n\` continuation keeps the source's
+    /// indentation, so the generated `config.toml` shows it pushed right of the
+    /// rest. Valid TOML, so nothing else notices.
+    #[test]
+    fn every_settings_docs_line_starts_with_a_hash() {
+        for (key, comment) in SETTINGS_DOCS {
+            for line in comment.lines() {
+                assert!(
+                    line.starts_with('#'),
+                    "`{key}` has a comment line not starting with `#`: {line:?}"
+                );
+            }
+        }
     }
 
     /// The generated file is the schema documentation now — the skill points

@@ -57,20 +57,23 @@ env:
   #
   # Cache budget: GitHub gives the repo 10 GB, and it sat at ~9.7 GB before
   # sccache. Going over is not an error, it is least-recently-used eviction,
-  # i.e. the caches quietly thrash each other. So only pushes to `main` and the
-  # version branches write — the same scope rust-cache's `save-if` uses below.
-  # A pull request reads its base branch's entries and writes none: a PR that
-  # edits the engine recompiles what it touched on each push, which is the
-  # price of not letting every open PR park its own copy of the engine in the
-  # budget. Keys are content hashes of each rustc invocation, so jobs on the
-  # same OS that compile a crate identically share one entry rather than
-  # storing it per job. To purge everything sccache wrote, change
+  # i.e. the caches quietly thrash each other. So only `main` and the version
+  # branches write, from a push or a manual run (`cache-write` in the `changes`
+  # job decides, and each Rust job's SCCACHE_GHA_RW_MODE and rust-cache
+  # `save-if` follow it). A manual run on any other branch reads but writes
+  # nothing: its entries would be scoped to that branch, which no pull request
+  # can restore from. A pull request reads its base branch's entries and writes
+  # none: a PR that edits the engine recompiles what it touched on each push,
+  # which is the price of not letting every open PR park its own copy of the
+  # engine in the budget. Keys are content hashes of each rustc invocation, so
+  # jobs on the same OS that compile a crate identically share one entry
+  # rather than storing it per job. To purge everything sccache wrote, change
   # SCCACHE_GHA_VERSION.
   SCCACHE_GHA_ENABLED: 'true'
-  SCCACHE_GHA_RW_MODE: ${{ github.event_name == 'push' && 'READ_WRITE' || 'READ_ONLY' }}
 
 # Every job runs on aarch64: the Linux jobs on `ubuntu-24.04-arm`, the app
-# job on `macos-latest` (Apple Silicon). The team develops on Apple Silicon, so
+# job on `macos-latest` (Apple Silicon), its Windows compile check on
+# `windows-11-arm`. The team develops on Apple Silicon, so
 # a red job reproduces on the same architecture it failed on, and Linux and
 # Windows releases are moving to ARM too. Until they do, `release-linux.yml`
 # still builds x86-64 on `ubuntu-latest`, and no CI job compiles or tests x86-64.
@@ -100,6 +103,7 @@ jobs:
       app: ${{ steps.plan.outputs.app }}
       engine-dialect: ${{ steps.plan.outputs.engine-dialect }}
       crates: ${{ steps.plan.outputs.crates }}
+      cache-write: ${{ steps.cache.outputs.write }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -116,6 +120,23 @@ jobs:
         # RUSTUP_TOOLCHAIN overrides rust-toolchain.toml, which would otherwise
         # make rustup download the pinned toolchain just to read manifests.
         run: node scripts/ci-affected.mjs --github
+      # Which runs may write caches (see "Cache budget" above). A push already
+      # only reaches `main` and the version branches; a manual run can be on
+      # any branch, and expressions have no regex, hence a step.
+      - name: Cache policy
+        id: cache
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref_name }}
+        run: |
+          write=false
+          if [ "$EVENT" = push ]; then
+            write=true
+          elif [ "$EVENT" = workflow_dispatch ] &&
+            { [ "$REF" = main ] || [[ "$REF" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; }; then
+            write=true
+          fi
+          echo "write=$write" >> "$GITHUB_OUTPUT"
 
   frontend:
     name: frontend
@@ -165,8 +186,8 @@ jobs:
     # build at all; `crates` only covers the libraries underneath it.
     #
     # Runs on macOS because that is the supported platform (see CONTRIBUTING).
-    # `app-linux` checks that the app still compiles for Linux, without
-    # running its tests.
+    # `app-linux` and `app-windows` check that the app still compiles for
+    # Linux and Windows, without running its tests.
     #
     # This is the slowest job in the pipeline by a wide margin on a cold cache.
     name: app (src-tauri)
@@ -177,6 +198,8 @@ jobs:
       # Set per job, never workflow-wide: with no sccache on PATH every cargo
       # invocation fails, so only a job that runs sccache-action may set it.
       RUSTC_WRAPPER: sccache
+      # Per job because workflow-level `env` cannot read `needs`.
+      SCCACHE_GHA_RW_MODE: ${{ needs.changes.outputs.cache-write == 'true' && 'READ_WRITE' || 'READ_ONLY' }}
     steps:
       - uses: actions/checkout@v5
       # The version rust-toolchain.toml pins, with its components (clippy
@@ -189,12 +212,12 @@ jobs:
       # cargo.
       - uses: mozilla-actions/sccache-action@v0.0.11
       # One cargo workspace since #38: the lockfile and the target dir both
-      # live at the repo root, so that is what the cache keys off. Saved from
-      # pushes only, for the cache budget (see SCCACHE_GHA_RW_MODE).
+      # live at the repo root, so that is what the cache keys off. Saved only
+      # when `cache-write` says so, for the cache budget (see the workflow env).
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: .
-          save-if: ${{ github.event_name == 'push' }}
+          save-if: ${{ needs.changes.outputs.cache-write == 'true' }}
       - name: Configure git identity for test repos
         run: |
           git config --global user.name "CI"
@@ -235,6 +258,7 @@ jobs:
     runs-on: ubuntu-24.04-arm
     env:
       RUSTC_WRAPPER: sccache # see the app job
+      SCCACHE_GHA_RW_MODE: ${{ needs.changes.outputs.cache-write == 'true' && 'READ_WRITE' || 'READ_ONLY' }}
     steps:
       - uses: actions/checkout@v5
       # What Tauri links against on Linux; the same set release-linux.yml
@@ -252,7 +276,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: .
-          save-if: ${{ github.event_name == 'push' }}
+          save-if: ${{ needs.changes.outputs.cache-write == 'true' }}
       - name: Clippy (workspace lint table)
         working-directory: src-tauri
         run: cargo clippy --locked --all-targets
@@ -280,6 +304,7 @@ jobs:
     runs-on: ubuntu-24.04-arm
     env:
       RUSTC_WRAPPER: sccache # see the app job
+      SCCACHE_GHA_RW_MODE: ${{ needs.changes.outputs.cache-write == 'true' && 'READ_WRITE' || 'READ_ONLY' }}
     steps:
       - uses: actions/checkout@v5
       - name: Install the pinned Rust toolchain # see the app job
@@ -288,7 +313,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: .
-          save-if: ${{ github.event_name == 'push' }}
+          save-if: ${{ needs.changes.outputs.cache-write == 'true' }}
       # Some of the vendored suites build scratch git repositories; same reason
       # as in `crates`.
       - name: Configure git identity for test repos
@@ -328,7 +353,13 @@ jobs:
     # `release-build: true` additionally builds the crate with its release
     # profile (see the step).
     #
-    # `sandbox: true` installs bubblewrap (see the step).
+    # `sandbox: true` installs bubblewrap (see the step). `ci:local` also runs
+    # these crates in its Linux container by default, since only a Linux
+    # kernel can exercise the sandbox.
+    #
+    # `cross: true` marks the crates whose dependency tree builds no C, so
+    # they can be clippy'd for another OS from any machine (see the Windows
+    # step). `ci:local` on a Mac clippies them for Linux too.
 
     name: ${{ matrix.crate }}
     needs: changes
@@ -337,6 +368,7 @@ jobs:
     runs-on: ubuntu-24.04-arm
     env:
       RUSTC_WRAPPER: sccache # see the app job
+      SCCACHE_GHA_RW_MODE: ${{ needs.changes.outputs.cache-write == 'true' && 'READ_WRITE' || 'READ_ONLY' }}
     strategy:
       # Report every failing crate in one run instead of stopping at the first.
       fail-fast: false
@@ -353,7 +385,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: ${{ matrix.crate == 'atlas-kb-server' && 'crates/atlas-kb-server' || '.' }}
-          save-if: ${{ github.event_name == 'push' }}
+          save-if: ${{ needs.changes.outputs.cache-write == 'true' }}
       # Several suites build real git repositories in a tempdir, and `git
       # commit` refuses to run without an identity. Set for every crate so
       # adding such a test to another crate doesn't fail mysteriously.
@@ -419,6 +451,56 @@ jobs:
         if: ${{ !matrix.clippy }}
         working-directory: crates/${{ matrix.crate }}
         run: cargo clippy --locked --all-targets
+      # The crate's `cfg(windows)` arms, which no other step compiles: a
+      # Linux runner and a Mac both skip them, so a Windows-only break used to
+      # surface on a contributor's Windows machine (#324). `cross` marks the
+      # crates whose dependency tree builds no C for the target: clippy is
+      # metadata-only, nothing links, and the standard library for the target
+      # comes from rust-toolchain.toml's `targets`, so a Linux runner can check
+      # Windows with no Windows SDK. The other crates run a C compiler for the
+      # target in some build script (ring, zstd, bundled sqlite, aws-lc), which
+      # fails without that SDK; their Windows arms are checked as part of the
+      # app on a Windows runner (`app-windows`) instead.
+      #
+      # The workspace lint table only, as in `app-linux`: the question is
+      # whether it compiles and passes the denies on Windows, and a single
+      # argument set keeps this one extra pass rather than two.
+      - name: Clippy (Windows target)
+        if: matrix.cross
+        working-directory: crates/${{ matrix.crate }}
+        run: cargo clippy --locked --all-targets --target aarch64-pc-windows-msvc
+
+  app-windows:
+    # The app compiled for Windows, which neither the macOS `app` job nor
+    # `app-linux` can see: the `cfg(windows)` arms (the updater, the
+    # PowerShell terminal default, console-window suppression, the native
+    # agent's Windows sandbox key) were compiled by no job at all. Windows is
+    # not yet a supported platform, but parity is the goal, and a break here
+    # otherwise surfaces on a contributor's machine.
+    #
+    # On a Windows runner rather than cross-compiled: src-tauri's tree builds
+    # C for the target (aws-lc, ring, sqlite, zstd), which needs the MSVC
+    # toolchain and Windows SDK. Clippy only, as in `app-linux`, and for the
+    # same reason; `ci:local` skips it anywhere but Windows.
+    name: app (src-tauri, Windows)
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
+    runs-on: windows-11-arm
+    env:
+      RUSTC_WRAPPER: sccache # see the app job
+      SCCACHE_GHA_RW_MODE: ${{ needs.changes.outputs.cache-write == 'true' && 'READ_WRITE' || 'READ_ONLY' }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install the pinned Rust toolchain # see the app job
+        run: rustup toolchain install
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .
+          save-if: ${{ needs.changes.outputs.cache-write == 'true' }}
+      - name: Clippy (workspace lint table)
+        working-directory: src-tauri
+        run: cargo clippy --locked --all-targets
 
   ci-ok:
     # The one check to require in branch protection. A job the plan skipped
@@ -427,7 +509,7 @@ jobs:
     # every PR that does not touch them. This job always runs and fails if
     # anything it waits on failed or was cancelled.
     name: CI passed
-    needs: [changes, frontend, app, app-linux, engine-dialect, crates]
+    needs: [changes, frontend, app, app-linux, app-windows, engine-dialect, crates]
     if: always()
     runs-on: ubuntu-24.04-arm
     steps:

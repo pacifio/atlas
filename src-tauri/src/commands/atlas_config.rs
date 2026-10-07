@@ -152,6 +152,17 @@ pub fn notify_settings_changed(app: &AppHandle, settings: &AppSettings, generati
     // 5. re-apply the app icon, so an external edit of `appIcon` takes
     //    effect live like the Settings picker does. A no-op unless it changed.
     crate::app_icon::apply(app, &settings.app_icon);
+    // 6. follow `instructionSync`: switched on, sync and watch each window's
+    //    active project; switched off, stop watching and take the mirrored
+    //    block back out. A no-op unless it changed.
+    if let Some(state) = app.try_state::<crate::commands::instruction_sync::InstructionSyncState>()
+    {
+        state.apply_setting(app, settings.instruction_sync);
+    }
+    // 7. re-sync the keep-awake manager with the live setting.
+    if let Some(keep_awake) = app.try_state::<Arc<crate::keep_awake::KeepAwakeManager>>() {
+        keep_awake.set_enabled(settings.keep_awake_while_running);
+    }
 }
 
 /// The gate for the vendored engine's curated-plugin sync

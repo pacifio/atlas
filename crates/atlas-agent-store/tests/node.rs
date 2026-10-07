@@ -119,6 +119,20 @@ fn puts_the_managed_node_first_on_path() {
     );
 }
 
+/// Node resolves `node` off this `PATH` for npm's scripts and the agent's own
+/// children, and rejects the `\\?\`-verbatim spelling (#277). Windows only:
+/// POSIX `join_paths` refuses an entry containing `:`, which `C:` does.
+#[cfg(windows)]
+#[test]
+fn the_managed_node_goes_on_path_in_its_plain_spelling() {
+    let env = npm_command_env(Path::new(r"\\?\C:\atlas\node\node-v24\node.exe"));
+    let path = env.get("PATH").expect("PATH is always set");
+    assert!(
+        path.starts_with(r"C:\atlas\node\node-v24;"),
+        "managed node must come first, plainly spelled, got {path}"
+    );
+}
+
 #[tokio::test]
 async fn an_unavailable_runtime_says_so() {
     let node = NodeRuntime::unavailable("disabled in this test");

@@ -28,9 +28,16 @@ pub const DEFAULT_DENY_GLOBS: &[&str] = &[
 /// Version-control directories, skipped even though hidden files are walked.
 const VCS_DIRS: &[&str] = &[".git", ".hg", ".svn", ".jj", ".sl"];
 
-/// Atlas's own per-project state (indexes, and logs that hold the user's
-/// prompts): never searched, ignored or not, git repository or not.
-const ATLAS_DIR: &str = ".atlas";
+/// Whether a directory named `name` is Atlas's own per-project state
+/// (indexes, and logs that hold the user's prompts), under either profile:
+/// never searched or indexed, ignored or not, git repository or not. Both
+/// profiles, so a dev build never reads the released app's data, nor the
+/// reverse.
+pub fn is_atlas_dir(name: &str) -> bool {
+    [atlas_profile::Profile::Default, atlas_profile::Profile::Dev]
+        .iter()
+        .any(|p| p.dir_name() == name)
+}
 
 /// Files larger than this are skipped and counted, never read.
 pub(crate) const MAX_FILE_BYTES: u64 = 10 << 20;
@@ -49,7 +56,8 @@ fn is_vcs_dir(name: &OsStr) -> bool {
 fn is_skipped_dir(entry: &ignore::DirEntry) -> bool {
     let name = entry.file_name();
     is_vcs_dir(name)
-        || (name == OsStr::new(ATLAS_DIR) && entry.file_type().is_some_and(|t| t.is_dir()))
+        || (name.to_str().is_some_and(is_atlas_dir)
+            && entry.file_type().is_some_and(|t| t.is_dir()))
 }
 
 /// The canonical session root and the canonical place a request starts from.

@@ -40,7 +40,7 @@ import { getAgentSync } from "../lib/agents-api";
 import { AtlasIcon } from "@/components/atlas-icon";
 import { useRecentChatsStore } from "@/features/projects/stores/recent-chats-store";
 import { resumeThreadFast, ResumeError } from "../lib/resume-session";
-import { applyModeOnResume } from "../lib/resume-mode";
+import { applyModeOnResume, holdUnrestoredMode } from "../lib/resume-mode";
 import { AGENT_TYPE_BY_SIDEBAR, sidebarAgentOf, type SidebarAgent } from "../lib/sidebar-agents";
 
 /** One key for the whole sidebar: history is one store, so there is one query. */
@@ -488,7 +488,9 @@ export const SessionSidebar = memo(function SessionSidebar({
         const stage = err instanceof ResumeError ? err.stage : "resume";
         const msg = err instanceof Error ? err.message : String(err);
         if (stage === "snapshot") {
-          // The session IS open — only reading it back failed. Leave the bind.
+          // The session IS open — only reading it back failed. Leave the bind,
+          // and since the mode was never applied, hold sends until a pick.
+          holdUnrestoredMode(targetTabId);
           toast.error(`Couldn't load session: ${msg}`);
         } else {
           // Roll the optimistic binding back: leaving `acpSessionId` pointing

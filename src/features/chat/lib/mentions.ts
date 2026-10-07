@@ -17,6 +17,7 @@ import {
   readAtlasTranscript,
   type AtlasTranscriptMessage,
 } from "./atlas-transcripts";
+import { isRememberTurn } from "./remember";
 import { ensureFileIndex } from "@/features/file-picker/lib/file-picker-api";
 import { activeProjectId } from "@/features/projects/lib/active-project";
 import { useProjectStore } from "@/features/projects/stores/project-store";
@@ -183,6 +184,11 @@ export interface MentionPastSession {
   sessionTitle: string;
   /** Which project's transcripts to read it from, at send time. */
   cwd: string;
+  /** Set by an agent-switch handoff that ran after save-before-switch: the
+   *  transcript ends before its last `/remember` turn, so the new agent gets
+   *  the conversation without the save request and the list of what was
+   *  saved (`transcriptBeforeRemember`). */
+  endBeforeRemember?: boolean;
 }
 
 export type MentionData =
@@ -704,6 +710,17 @@ function formatSessionTranscript(dump: AtlasTranscriptMessage[]): string {
   return parts.join("\n\n");
 }
 
+/** The transcript up to, not including, its last `/remember` user turn: that
+ *  turn and everything after it (the agent's reply, any echo of the skill) go.
+ *  Unchanged when there is no such turn. Only for a handoff that follows a
+ *  `/remember` Atlas itself sent, so the last one is that one. */
+export function transcriptBeforeRemember(dump: AtlasTranscriptMessage[]): AtlasTranscriptMessage[] {
+  for (let i = dump.length - 1; i >= 0; i--) {
+    if (dump[i].role === "user" && isRememberTurn(dump[i].content ?? "")) return dump.slice(0, i);
+  }
+  return dump;
+}
+
 /** One `@`-mention the agent reaches itself: a path on disk (`file://`, P2.1)
  *  or an organisation member, conversation or recorded session
  *  (`atlas-org://`, issue 122), read by the org tools. */
@@ -745,7 +762,9 @@ export async function composePrompt(
         let inlineBody: string | null = null;
         try {
           const dump = await readAtlasTranscript(m.cwd, m.sessionId);
-          inlineBody = formatSessionTranscript(dump);
+          inlineBody = formatSessionTranscript(
+            m.endBeforeRemember ? transcriptBeforeRemember(dump) : dump,
+          );
         } catch (e) {
           console.warn("readAtlasTranscript for compose failed:", e);
         }

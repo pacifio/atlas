@@ -1,6 +1,7 @@
 mod app_icon;
 mod auth;
 mod commands;
+mod keep_awake;
 mod logging;
 #[cfg(target_os = "macos")]
 mod menu;
@@ -33,6 +34,19 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Whose data this process owns, fixed before ANYTHING resolves a path —
+    // the log file below is the first thing that does. The profile is read
+    // off the identifier this binary was built with: `dev:app` builds with
+    // `tauri.dev.conf.json`'s `dev.atlas.ide.dev`, which moves the app config
+    // dir by itself and, through `atlas-profile`, every `.atlas` directory and
+    // `~/.config/atlas` with it. A release build's identifier is
+    // `dev.atlas.ide`, so it is the default profile and nothing here can make
+    // it otherwise. See `crates/atlas-profile`.
+    let context = tauri::generate_context!();
+    atlas_profile::init(atlas_profile::Profile::from_identifier(
+        &context.config().identifier,
+    ));
+
     // Pick the rustls crypto provider, once, before anything can open a TLS
     // connection.
     //
@@ -198,8 +212,16 @@ pub fn run() {
             // The app icon, before the window shows. Later changes arrive
             // through `notify_settings_changed`.
             app_icon::apply(app.handle(), &migration.manager.effective().app_icon);
+            // Whether `instructionSync` is on as Atlas starts, so switching it
+            // off before any project opens still takes the mirrored blocks out.
+            app.state::<commands::instruction_sync::InstructionSyncState>()
+                .init(migration.manager.effective().instruction_sync);
             let atlas_config: state::AtlasConfigHandle = Arc::new(Mutex::new(migration.manager));
             app.manage(atlas_config.clone());
+            let keep_awake = Arc::new(keep_awake::KeepAwakeManager::new(
+                atlas_config.lock().effective().keep_awake_while_running,
+            ));
+            app.manage(keep_awake);
             commands::atlas_config::start_watcher(app.handle(), atlas_config);
             commands::themes::start_watcher(app.handle());
             commands::git_autofetch::start(app.handle());
@@ -213,9 +235,12 @@ pub fn run() {
             let app_state: AppStateHandle = Arc::new(Mutex::new(loaded));
             app.manage(app_state);
 
-            // Bundled `atlas-self-configure` skill (issue #64): install/
-            // upgrade it into the canonical global skills store so it's
-            // discoverable the same way any other managed skill is.
+            // Bundled skills (`atlas-self-configure`, issue #64; `remember`):
+            // install/upgrade them into the canonical global skills store so
+            // they're discoverable the same way any other managed skill is.
+            // The dev profile seeds its own `atlas-dev-self-configure`
+            // beside the released app's, and never overwrites a shared one:
+            // that store (`~/.agents/skills`) is shared with the released app.
             commands::skills::ensure_bundled_skills();
 
             // Opt-in product telemetry. Inert unless the user has enabled it AND
@@ -368,8 +393,15 @@ pub fn run() {
             app.manage(Arc::new(notifier::Notifier::new(app.handle())));
 
             commands::updater::init_on_startup(app.handle());
-            commands::updater::check_in_background(app.handle());
-            commands::updater::spawn_periodic(app.handle());
+            // No automatic update checks for the dev profile: an update it
+            // staged would be the released installer, and applying it on quit
+            // would upgrade the user's installed Atlas from inside a source
+            // build. The manual verbs (`update_check_now`, `update_apply`)
+            // refuse under the dev profile for the same reason.
+            if !atlas_profile::is_dev() {
+                commands::updater::check_in_background(app.handle());
+                commands::updater::spawn_periodic(app.handle());
+            }
 
             // Background memory indexer (Step 4): a single owned Tokio task drains
             // a bounded queue and indexes each open project's corpus into its
@@ -397,6 +429,7 @@ pub fn run() {
         .manage(commands::modelchat::ModelChatState::new())
         .manage(FileIndexState::new())
         .manage(GitWatcherState::new())
+        .manage(commands::instruction_sync::InstructionSyncState::new())
         .manage(commands::git_autofetch::GitAutoFetchState::new())
         .manage(RecentFilesState::new())
         .manage(MentionCacheState::new())
@@ -423,6 +456,9 @@ pub fn run() {
                     window.state::<MentionCacheState>().drop_window(label);
                     window
                         .state::<commands::git_autofetch::GitAutoFetchState>()
+                        .drop_window(label);
+                    window
+                        .state::<commands::instruction_sync::InstructionSyncState>()
                         .drop_window(label);
                 }
                 // Coming back to Atlas is when a stale Pull badge misleads.
@@ -608,6 +644,8 @@ pub fn run() {
             commands::git_ops::git_squash_last,
             commands::git_watcher::git_watch_start,
             commands::git_watcher::git_watch_stop,
+            commands::instruction_sync::instruction_sync_start,
+            commands::instruction_sync::instruction_sync_stop,
             commands::capture::capture_detect,
             commands::capture::capture_binding,
             commands::capture::capture_enable,
@@ -708,6 +746,7 @@ pub fn run() {
             commands::log::clear_project_log,
             commands::app_state::bootstrap_app_state,
             commands::app_state::save_app_state,
+            commands::app_state::app_profile,
             commands::atlas_config::get_atlas_config_info,
             commands::atlas_config::update_atlas_settings,
             commands::atlas_config::reset_atlas_config,
@@ -868,7 +907,7 @@ pub fn run() {
             commands::skills::pack_projections,
             commands::skills::pack_components_list,
         ])
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building Atlas")
         .run(|app_handle, event| {
             // Apply-on-quit: if the user chose "Later" for a staged update, swap

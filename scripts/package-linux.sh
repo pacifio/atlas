@@ -214,6 +214,7 @@ optdepends=(
     'xsel: Alternative X11 clipboard support'
 )
 provides=("tryatlas=\${pkgver}" "atl=\${pkgver}")
+options=('!strip' '!debug')
 source_${ARCH}=("atlas-\${pkgver}-linux-${ARCH}.tar.gz::https://github.com/${REPO}/releases/download/${RELEASE_TAG}/atlas-\${pkgver}-linux-${ARCH}.tar.gz")
 sha256sums_${ARCH}=('${TARBALL_SHA256}')
 

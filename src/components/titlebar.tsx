@@ -28,6 +28,7 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAppProfile } from "@/lib/app-profile";
 import { HintGroup, HintItem } from "@/ui/hint-group";
 import { TitlebarDock, type DockItem } from "./titlebar-dock";
 import { invoke, isTauri } from "@tauri-apps/api/core";
@@ -87,6 +88,9 @@ export function Titlebar() {
   const orgName = organisations.find((o) => o.id === activeOrganisationId)?.name ?? null;
   // Same path can be a project in several orgs — prefer the ACTIVE org's
   // twin so a rename in another org never re-labels this titlebar.
+  // With no project open the label is the product: `Atlas`, or `Atlas Dev`
+  // for a dev-profile build, so the two windows can be told apart.
+  const { productName } = useAppProfile();
   const displayName =
     (currentProject
       ? projects.find((w) => w.path === currentProject.path && w.orgId === activeOrganisationId)
@@ -94,7 +98,7 @@ export function Titlebar() {
       : undefined) ??
     (currentProject ? projects.find((w) => w.path === currentProject.path)?.name : undefined) ??
     currentProject?.name ??
-    "Atlas";
+    productName;
   const { windowRef } = useTauriWindow();
   // The same hook the project sidebar reads, so the two cannot disagree about
   // whether the traffic lights are on screen.

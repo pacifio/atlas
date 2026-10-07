@@ -14,6 +14,9 @@
 FROM ubuntu:24.04
 
 ARG RUST_VERSION
+# rust-toolchain.toml's `targets`, space-separated. Installed here because the
+# toolchain is read-only at run time, so rustup cannot add them on first use.
+ARG RUST_TARGETS
 ARG BUN_VERSION
 ARG NODE_VERSION
 
@@ -27,7 +30,17 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # headers are for the `app-linux` job, which installs the same list. bubblewrap
 # is the engine's Linux sandbox; CI installs it for `sandbox: true` crates.
 # ci-local skips both jobs' `sudo apt-get` steps because they are already here.
-RUN apt-get update -qq \
+# Any mirror of ubuntu-ports (arm64) or ubuntu (x86-64) can stand in for the
+# official one, which can be slow far from it; ci-local passes
+# ATLAS_CI_APT_MIRROR through. An http:// URL: this layer runs before
+# ca-certificates is installed, and apt verifies packages by the signed
+# Release file, not the transport. It is not part of the image tag: whichever
+# mirror serves them, the packages are the same.
+ARG APT_MIRROR
+RUN if [ -n "$APT_MIRROR" ]; then \
+      sed -i -E "s#^URIs: .*#URIs: $APT_MIRROR#" /etc/apt/sources.list.d/ubuntu.sources; \
+    fi \
+ && apt-get update -qq \
  && apt-get install -y -qq --no-install-recommends \
       build-essential pkg-config cmake clang perl python3 \
       libssl-dev libdbus-1-dev libsqlite3-dev \
@@ -42,7 +55,14 @@ RUN apt-get update -qq \
 RUN curl -sSf https://sh.rustup.rs | CARGO_HOME=/opt/cargo sh -s -- -y -q \
       --no-modify-path --profile minimal \
       --default-toolchain "$RUST_VERSION" -c clippy -c rustfmt \
+      $(for t in $RUST_TARGETS; do printf -- '-t %s ' "$t"; done) \
  && chmod -R a+rX /opt/rustup /opt/cargo
+
+# For scripts/target-gc.sh, which ci:local runs on the cache volume's target dir
+# before each run. Pinned, since the image is rebuilt only on a pin change.
+RUN CARGO_HOME=/opt/cargo cargo install --locked --quiet cargo-sweep --version 0.8.0 \
+ && rm -rf /opt/cargo/registry /opt/cargo/git \
+ && chmod -R a+rX /opt/cargo
 
 # Bun and Node through mise, as CI's jdx/mise-action does, so "node = 24"
 # resolves the same way. Only the binaries are kept on PATH.

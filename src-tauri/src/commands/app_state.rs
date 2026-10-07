@@ -56,6 +56,29 @@ pub fn bootstrap_app_state(
     }
 }
 
+/// Which data profile this process runs under (`atlas-profile`), for the few
+/// places the window names it: the title says "Atlas Dev", and copy that
+/// spells out a path says `.atlas-dev/`. The profile is the backend's to know
+/// — it comes from the identifier the binary was built with — so the window
+/// asks rather than guessing from its own build.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppProfile {
+    pub dev: bool,
+    pub product_name: &'static str,
+    pub dir_name: &'static str,
+}
+
+#[tauri::command]
+pub fn app_profile() -> AppProfile {
+    let profile = atlas_profile::current();
+    AppProfile {
+        dev: profile.is_dev(),
+        product_name: profile.product_name(),
+        dir_name: profile.dir_name(),
+    }
+}
+
 /// Merge a frontend save into the in-memory snapshot and persist it to disk.
 /// The disk write runs on a background thread so the IPC reply isn't blocked on
 /// fsync — this command resolves as soon as the in-memory state is updated. For

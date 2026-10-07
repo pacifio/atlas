@@ -5,6 +5,8 @@ edition = "2021"
 license = "Apache-2.0"
 
 [dependencies]
+# `~/.config/atlas` vs `~/.config/atlas-dev`: whose config this process owns.
+atlas-profile = { path = "../atlas-profile" }
 dirs = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

@@ -2306,37 +2306,41 @@
 }
 
 /* The workspace rail. One monochrome gradient — brighter at the top, falling
-   to the app's base by the fold — so the rail reads as a distinct surface
-   beside the editor without a coloured tint or a hard edge; a 1px inner
+   to the theme's sidebar surface by the fold — so the rail reads as a distinct
+   surface beside the editor without a coloured tint or a hard edge; a 1px inner
    highlight along the top edge is the only "light source". Two variants: the
    docked rail is opaque over the base; the floating one is translucent and
    sits on the overlay wrapper's own backdrop blur (blur + fill must share one
-   element or WKWebView has nothing to sample). */
+   element or WKWebView has nothing to sample).
+
+   Every colour comes off the theme. The fill used to be a fixed near-black with
+   a white sheen, which on a light theme put a black band behind the traffic
+   lights and the org row, and drew the org name dark-on-black. The sheen is
+   the theme's foreground at a few percent, so it lifts on dark and shades on
+   light. */
 .atlas-project-rail {
   background:
     linear-gradient(
       180deg,
-      rgba(255, 255, 255, 0.038) 0%,
-      rgba(255, 255, 255, 0.016) 34%,
-      rgba(255, 255, 255, 0.006) 70%,
-      rgba(255, 255, 255, 0) 100%
+      color-mix(in srgb, var(--foreground) 3.8%, transparent) 0%,
+      color-mix(in srgb, var(--foreground) 1.6%, transparent) 34%,
+      color-mix(in srgb, var(--foreground) 0.6%, transparent) 70%,
+      transparent 100%
     ),
-    #0b0b0b;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.034);
+    var(--sidebar);
+  box-shadow: var(--inset-highlight);
 }
 .atlas-project-rail--glass {
   background:
     linear-gradient(
       180deg,
-      rgba(255, 255, 255, 0.041) 0%,
-      rgba(255, 255, 255, 0.018) 34%,
-      rgba(255, 255, 255, 0.006) 70%,
-      rgba(255, 255, 255, 0) 100%
+      color-mix(in srgb, var(--foreground) 4.1%, transparent) 0%,
+      color-mix(in srgb, var(--foreground) 1.8%, transparent) 34%,
+      color-mix(in srgb, var(--foreground) 0.6%, transparent) 70%,
+      transparent 100%
     ),
-    rgba(14, 14, 14, 0.66);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.038),
-    var(--elevation-menu);
+    color-mix(in srgb, var(--sidebar) 66%, transparent);
+  box-shadow: var(--inset-highlight), var(--elevation-menu);
 }
 
 /* Set by use-transcript-scroll on the content element for the life of a

@@ -8,6 +8,7 @@ import type { UpdaterSnapshot } from "@/features/updater/lib/updater-api";
 import type { FileEntry } from "@/features/explorer/stores/explorer-store";
 import type { Theme, ThemeCatalogSummary } from "@/features/theme/lib/theme-api";
 import type { MockHandlers } from "../types";
+import { DEFAULT_APP_PROFILE, type AppProfile } from "@/lib/app-profile";
 import builtinThemesJson from "../fixtures/builtin-themes.json";
 import { agentHandlers } from "../fake-agent";
 import { artifactsHandlers } from "../fixtures/artifacts";
@@ -101,6 +102,7 @@ export const baseHandlers: MockHandlers = {
 
   // ── boot ────────────────────────────────────────────────────────────────
   bootstrap_app_state: () => appState(),
+  app_profile: (): AppProfile => DEFAULT_APP_PROFILE,
   cli_take_initial_project_path: nothing,
   set_window_title: nothing,
   telemetry_config: () => ({
@@ -171,6 +173,9 @@ export const baseHandlers: MockHandlers = {
   // ── fire-and-forget housekeeping ────────────────────────────────────────
   comms_ready: nothing,
   fileindex_close_project: nothing,
+  // Mirrored instructions: Rust writes AGENTS.md; nothing to fake in a browser.
+  instruction_sync_start: nothing,
+  instruction_sync_stop: nothing,
   recent_files_close_project: nothing,
   mention_cache_clear: nothing,
   mention_cache_set_knowledge: nothing,

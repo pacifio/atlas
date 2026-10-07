@@ -23,6 +23,7 @@ import {
   useStopAgentsConfirmStore,
 } from "../lib/stop-agents-confirm";
 import { markFileIndexClosedFor } from "@/features/file-picker/lib/file-picker-api";
+import { instructionSync } from "../lib/instruction-sync-api";
 
 /** The org id used to tag newly-created projects/groups so they belong to
  *  the org the user is currently in. Read lazily to avoid an import-time
@@ -241,6 +242,7 @@ function teardownHot(id: string): void {
   // one of these commands has taken it since the multi-project model landed.
   void invoke("fileindex_close_project", { workspaceId: id }).catch(() => {});
   void invoke("git_watch_stop", { workspaceId: id }).catch(() => {});
+  void instructionSync.stop(id).catch(() => {});
   void invoke("recent_files_close_project", { workspaceId: id }).catch(() => {});
   void invoke("mention_cache_clear", { workspaceId: id }).catch(() => {});
 }

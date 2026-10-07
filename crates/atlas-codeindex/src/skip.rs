@@ -24,8 +24,8 @@ const SNIFF_BYTES: usize = 64 * 1024;
 const MINIFIED_AVG_LINE: usize = 300;
 
 /// Directory names skipped at any depth unless `.atlasignore` re-includes them.
+/// Atlas's own directories are skipped too (see [`is_skip_dir`]).
 pub(crate) const SKIP_DIRS: &[&str] = &[
-    ".atlas",
     ".git",
     ".hg",
     ".svn",
@@ -143,7 +143,7 @@ impl Rules {
         }
         let mut parts = rel.split('/').collect::<Vec<_>>();
         let file = parts.pop().unwrap_or(rel);
-        if parts.iter().any(|d| SKIP_DIRS.contains(d)) {
+        if parts.iter().any(|d| is_skip_dir(d)) {
             return Some(SkipReason::Vendor);
         }
         if GENERATED_SUFFIXES.iter().any(|s| file.ends_with(s))
@@ -158,13 +158,18 @@ impl Rules {
     /// Whether the walk may skip the directory at `rel` entirely.
     pub(crate) fn prune_dir(&self, rel: &str) -> bool {
         let name = rel.rsplit('/').next().unwrap_or(rel);
-        let skipped = SKIP_DIRS.contains(&name)
+        let skipped = is_skip_dir(name)
             || matches!(
                 self.atlasignore.matched_path_or_any_parents(rel, true),
                 Match::Ignore(_)
             );
         skipped && !self.reincludes.iter().any(|p| may_reach(p, rel))
     }
+}
+
+/// A built-in skipped directory name: [`SKIP_DIRS`] or Atlas's own.
+fn is_skip_dir(name: &str) -> bool {
+    SKIP_DIRS.contains(&name) || atlas_search::is_atlas_dir(name)
 }
 
 /// Whether re-include `pattern` (a `!` line without the `!`) can match a path

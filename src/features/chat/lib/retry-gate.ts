@@ -48,7 +48,7 @@ export function sessionCanRetry(
 ): boolean {
   if (!session) return false;
   if (!agentSupportsRewind) return false;
-  if (session.disconnected || session.resumePending) return false;
+  if (session.disconnected || session.resumePending || session.unrestoredModeId) return false;
   // `isBusyAgentStatus` rather than a status set of our own: it also covers
   // `waiting`, the turn that is paused on a permission or plan approval.
   // Rewinding there would drop the exchange out from under a modal the user

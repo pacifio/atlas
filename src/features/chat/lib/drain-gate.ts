@@ -17,12 +17,17 @@
  * tab is the loop. The bind's own success (`justBound`) and the resume
  * path's falling edge (`justResumed`) are the other two legitimate moments,
  * both of which carry a session id by definition.
+ *
+ * And nothing drains while the gate is closed (`curResuming`): a resume still
+ * loading, or one that could not restore the user's mode. Its falling edge is
+ * the release.
  */
 export interface DrainEdgeInput {
   prevStatus: string | null;
   curStatus: string;
   prevAcp: string | undefined;
   curAcp: string | undefined;
+  /** The send gate: resume pending, or a mode the resume could not restore. */
   prevResuming: boolean;
   curResuming: boolean;
 }
@@ -40,11 +45,12 @@ export interface DrainEdge {
 
 export function drainEdge(input: DrainEdgeInput): DrainEdge {
   const { prevStatus, curStatus, prevAcp, curAcp, prevResuming, curResuming } = input;
-  const justBound = !prevAcp && !!curAcp;
+  const justBound = !prevAcp && !!curAcp && !curResuming;
   const justResumed = prevResuming && !curResuming && !!curAcp;
   // `curAcp` is the gate: with no session there is nothing a turn could
   // have finished on, and nothing the next message could go to.
-  const turnFinished = prevStatus === "running" && curStatus !== "running" && !!curAcp;
+  const turnFinished =
+    prevStatus === "running" && curStatus !== "running" && !!curAcp && !curResuming;
   return {
     justBound,
     justResumed,

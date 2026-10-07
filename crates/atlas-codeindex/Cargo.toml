@@ -8,6 +8,8 @@ description = "Atlas code index: parallel tree-sitter symbol extraction into a p
 name = "atlas_codeindex"
 
 [dependencies]
+# `.atlas` vs `.atlas-dev`: whose data this process owns (see that crate).
+atlas-profile = { path = "../atlas-profile" }
 # Compact output, cancel tokens and the grep-annotation seam the index fills.
 atlas-search = { path = "../atlas-search" }
 # The retrieval core shared with memory: cache keys, f16 codec, vkeys, the

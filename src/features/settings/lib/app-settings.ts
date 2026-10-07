@@ -66,6 +66,10 @@ export interface AppSettings {
    *  "new-tab" keeps it and opens the new agent in a new tab, "handoff"
    *  switches in place and attaches it to the next message. */
   agentSwitchBehavior: "new-tab" | "handoff" | "reset";
+  /** Before switching agents on a chat with a conversation, send the agent
+   *  being left `/remember` (when it advertises it) and wait for it
+   *  (`switch-agent.ts`). OFF by default — it costs a turn. */
+  rememberBeforeSwitch: boolean;
   /** Inline Git blame in the code editor — dim author/age/summary annotation
    *  trailing the active line. Off = the CodeMirror extension isn't loaded. */
   gitBlameInline: boolean;
@@ -75,10 +79,19 @@ export interface AppSettings {
   /** Auto-update master switch. ON (default) → every startup checks PostHog
    *  remote config and prompts when a newer signed DMG is available. */
   autoUpdate: boolean;
+  /** Keep the computer awake while an Atlas agent is actively running.
+   *  Default OFF. Prevents idle system sleep; display can still turn off. */
+  keepAwakeWhileRunning: boolean;
   /** Let the Atlas Agent's engine sync OpenAI's curated plugin catalogue
    *  (github.com/openai/plugins) when it starts. OFF by default — it is a
    *  network fetch at every launch. Applies the next time the agent starts. */
   curatedPluginSync: boolean;
+  /** Mirror the active project's convention files (`CLAUDE.md`,
+   *  `.claude/rules/`) into a marked block of its `AGENTS.md`, kept current as
+   *  they change, for any agent that reads `AGENTS.md`
+   *  (`commands::instruction_sync`). OFF by default — it writes into the
+   *  repository. Switching it off takes the block back out. */
+  instructionSync: boolean;
   /** A version the user chose to "Ignore" in the update prompt; the startup
    *  check won't re-prompt for exactly this version. */
   updaterIgnoredVersion: string | null;
@@ -169,10 +182,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
   appIcon: DEFAULT_APP_ICON,
   adaptiveSuggestions: "agent",
   agentSwitchBehavior: "reset",
+  rememberBeforeSwitch: false,
   gitBlameInline: true,
   gitAutoFetch: true,
+  keepAwakeWhileRunning: false,
   autoUpdate: true,
   curatedPluginSync: false,
+  instructionSync: false,
   updaterIgnoredVersion: null,
   enterToSend: true,
   agentUiNavigation: true,

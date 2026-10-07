@@ -101,8 +101,7 @@ fn classify(text: &str) -> &'static str {
 // ── Statement-vector cache (per project) ────────────────────────────────────
 
 fn cache_path(project_path: &str) -> PathBuf {
-    Path::new(project_path)
-        .join(".atlas")
+    atlas_profile::dir_in(Path::new(project_path))
         .join("memory-index")
         .join("policy.json")
 }

@@ -22,7 +22,7 @@ pub async fn save_project_session(
     session_data: String,
 ) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
-        let atlas_dir = Path::new(&project_path).join(".atlas");
+        let atlas_dir = atlas_profile::dir_in(Path::new(&project_path));
         fs::create_dir_all(&atlas_dir).map_err(|e| e.to_string())?;
         let session_path = atlas_dir.join("session.json");
         fs::write(&session_path, &session_data).map_err(|e| e.to_string())?;
@@ -35,7 +35,7 @@ pub async fn save_project_session(
 #[tauri::command]
 pub async fn load_project_session(project_path: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
-        let session_path = Path::new(&project_path).join(".atlas").join("session.json");
+        let session_path = atlas_profile::dir_in(Path::new(&project_path)).join("session.json");
         if session_path.exists() {
             fs::read_to_string(&session_path).map_err(|e| e.to_string())
         } else {

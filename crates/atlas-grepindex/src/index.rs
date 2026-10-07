@@ -156,9 +156,11 @@ impl GrepIndex {
         &self.root
     }
 
-    /// `<root>/.atlas/code-index/grep`
+    /// `<root>/.atlas/code-index/grep` (`.atlas-dev` under the dev profile)
     pub fn grep_dir(&self) -> PathBuf {
-        self.root.join(".atlas").join("code-index").join("grep")
+        atlas_profile::dir_in(&self.root)
+            .join("code-index")
+            .join("grep")
     }
 
     /// Loads (or builds) the snapshot for HEAD's tree, then resyncs the overlay. Blocking;
@@ -388,7 +390,8 @@ impl GrepIndex {
             }
         }
         match parts.first() {
-            None | Some(&".git") | Some(&".atlas") => None,
+            None => None,
+            Some(&first) if first == ".git" || atlas_search::is_atlas_dir(first) => None,
             Some(_) => Some(parts.join("/")),
         }
     }
@@ -413,18 +416,17 @@ impl GrepIndex {
 
 /// The index's own files, which must never feed back into it.
 fn is_atlas_path(rel: &str) -> bool {
-    rel == ".atlas" || rel.starts_with(".atlas/")
+    atlas_search::is_atlas_dir(rel.split('/').next().unwrap_or(rel))
 }
 
-/// Adds `/.atlas/` to `<common git dir>/info/exclude` (never to `.gitignore`) so snapshots
+/// Adds `/.atlas/` (the profile's directory) to `<common git dir>/info/exclude` (never to `.gitignore`) so snapshots
 /// never show up as untracked files. Idempotent; Phase 2's code index relies on the same line.
 fn ensure_excluded(common_dir: &Path) -> Result<(), Error> {
     let path = common_dir.join("info").join("exclude");
     let existing = fs::read_to_string(&path).unwrap_or_default();
-    if existing
-        .lines()
-        .any(|l| matches!(l.trim(), "/.atlas/" | ".atlas/" | "/.atlas" | ".atlas"))
-    {
+    let name = atlas_profile::dir_name();
+    // `name`, `/name`, `name/` or `/name/`.
+    if existing.lines().any(|l| l.trim().trim_matches('/') == name) {
         return Ok(());
     }
     fs::create_dir_all(common_dir.join("info"))?;
@@ -432,7 +434,7 @@ fn ensure_excluded(common_dir: &Path) -> Result<(), Error> {
     if !text.is_empty() && !text.ends_with('\n') {
         text.push('\n');
     }
-    text.push_str("/.atlas/\n");
+    text.push_str(&format!("/{name}/\n"));
     fs::write(&path, text)?;
     Ok(())
 }

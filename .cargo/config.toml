@@ -50,11 +50,15 @@ AWS_LC_SYS_PREBUILT_NASM = "1"
 # -> `atlas-memory`) has non-ASCII comments throughout its headers, and on
 # cp936 `cast/serial.h` failed with a cascade of "C2059: syntax error: 'if'";
 # `/utf-8` makes the same command exit 0. Invisible on an English install.
-# cc concatenates CFLAGS, TARGET_CFLAGS and CFLAGS_<target>, so these add to a
-# contributor's own flags rather than shadowing them, and cc only reads (and
-# reruns on) the variable for the triple being built, so other targets' caches
-# are untouched. Both MSVC triples, since Windows releases are headed for ARM.
-CFLAGS_x86_64_pc_windows_msvc = "/utf-8"
-CXXFLAGS_x86_64_pc_windows_msvc = "/utf-8"
-CFLAGS_aarch64_pc_windows_msvc = "/utf-8"
-CXXFLAGS_aarch64_pc_windows_msvc = "/utf-8"
+#
+# Passed through `CL`, the environment variable cl.exe (and clang-cl) prepends
+# to every command line, not through cc's `CFLAGS_<target>`: cc appends those
+# to EVERY compiler it runs for the triple, and on aarch64-pc-windows-msvc
+# `ring` forces GNU-style `clang` (MSVC cannot build its assembly), which took
+# `/utf-8` for an input file — "clang: error: no such file or directory:
+# '/utf-8'" — and failed the `app-windows` job on every run. GNU clang never
+# reads `CL` and already reads source as UTF-8, so the flag now reaches exactly
+# the compilers that need it, C and C++ alike, on both MSVC triples. Off
+# Windows nothing reads `CL`, and cc does not track it, so no cache moves.
+# Like every key here it yields to a `CL` the contributor already exports.
+CL = "/utf-8"

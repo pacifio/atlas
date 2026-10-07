@@ -325,7 +325,7 @@ export default defineConfig(() => ({
       // Only the frontend (`src/`, index.html, the config files) is part of
       // Vite's module graph; everything else in the repo is Rust, scripts,
       // docs or build output. Without ignoring them, editing ANY such file
-      // while dogfooding Atlas on its own repo (e.g. tweaking `bump.sh` to
+      // while dogfooding Atlas on its own repo (e.g. tweaking `scripts/bump.sh` to
       // watch the project git +/- update) makes Vite bounce the whole page.
       ignored: [
         "**/src-tauri/**",

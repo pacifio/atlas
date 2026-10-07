@@ -27,7 +27,7 @@ pub async fn list_knowledge(project_path: String) -> Result<Vec<KnowledgeEntry>,
 }
 
 pub(crate) fn list_knowledge_sync(project_path: &str) -> Result<Vec<KnowledgeEntry>, String> {
-    let kb_dir = Path::new(project_path).join(".atlas").join("knowledge");
+    let kb_dir = atlas_profile::dir_in(Path::new(project_path)).join("knowledge");
     if !kb_dir.exists() {
         return Ok(vec![]);
     }
@@ -143,7 +143,7 @@ pub async fn save_knowledge_note(
 ) -> Result<String, String> {
     let id = kb_rel(&id)?.to_string();
     tokio::task::spawn_blocking(move || {
-        let kb_dir = Path::new(&project_path).join(".atlas").join("knowledge");
+        let kb_dir = atlas_profile::dir_in(Path::new(&project_path)).join("knowledge");
         let filepath = kb_dir.join(format!("{id}.md"));
         if let Some(parent) = filepath.parent() {
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -232,7 +232,7 @@ pub async fn import_into_knowledge(
     sources: Vec<String>,
 ) -> Result<KbImportResult, String> {
     tokio::task::spawn_blocking(move || -> Result<KbImportResult, String> {
-        let kb = Path::new(&project_path).join(".atlas").join("knowledge");
+        let kb = atlas_profile::dir_in(Path::new(&project_path)).join("knowledge");
         fs::create_dir_all(&kb).map_err(|e| e.to_string())?;
         let mut res = KbImportResult::default();
         for src in &sources {
@@ -251,8 +251,7 @@ pub async fn import_into_knowledge(
 pub async fn delete_knowledge_note(project_path: String, id: String) -> Result<(), String> {
     let id = kb_rel(&id)?.to_string();
     tokio::task::spawn_blocking(move || {
-        let filepath = Path::new(&project_path)
-            .join(".atlas")
+        let filepath = atlas_profile::dir_in(Path::new(&project_path))
             .join("knowledge")
             .join(format!("{id}.md"));
         if filepath.exists() {
@@ -269,8 +268,7 @@ pub async fn delete_knowledge_note(project_path: String, id: String) -> Result<(
 pub async fn create_knowledge_dir(project_path: String, dir_name: String) -> Result<(), String> {
     let dir_name = kb_rel(&dir_name)?.to_string();
     tokio::task::spawn_blocking(move || {
-        let dir = Path::new(&project_path)
-            .join(".atlas")
+        let dir = atlas_profile::dir_in(Path::new(&project_path))
             .join("knowledge")
             .join(&dir_name);
         fs::create_dir_all(&dir).map_err(|e| e.to_string())
@@ -310,8 +308,7 @@ pub async fn knowledge_cover_upload(
             return Err("invalid entry id".to_string());
         }
         let rel = format!("covers/{safe_name}.{ext}");
-        let dest = Path::new(&project_path)
-            .join(".atlas")
+        let dest = atlas_profile::dir_in(Path::new(&project_path))
             .join("knowledge")
             .join(&rel);
         if let Some(parent) = dest.parent() {
@@ -346,8 +343,7 @@ pub async fn knowledge_cover_data_url(
         // any snapshot that captures it. Covers are decorative; 2MiB is
         // generous.
         const MAX_COVER_BYTES: u64 = 2 * 1024 * 1024;
-        let abs = Path::new(&project_path)
-            .join(".atlas")
+        let abs = atlas_profile::dir_in(Path::new(&project_path))
             .join("knowledge")
             .join(&cover);
         let meta = fs::metadata(&abs).map_err(|e| e.to_string())?;
@@ -383,7 +379,7 @@ pub async fn log_interaction(
     summary: String,
 ) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
-        let atlas_dir = Path::new(&project_path).join(".atlas");
+        let atlas_dir = atlas_profile::dir_in(Path::new(&project_path));
         fs::create_dir_all(&atlas_dir).map_err(|e| e.to_string())?;
 
         let log_path = atlas_dir.join("interactions.jsonl");
@@ -415,7 +411,7 @@ pub async fn log_interaction(
 #[tauri::command]
 pub async fn save_editor_state(project_path: String, state_json: String) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
-        let atlas_dir = Path::new(&project_path).join(".atlas");
+        let atlas_dir = atlas_profile::dir_in(Path::new(&project_path));
         fs::create_dir_all(&atlas_dir).map_err(|e| e.to_string())?;
         let state_path = atlas_dir.join("editor-state.json");
         fs::write(&state_path, &state_json).map_err(|e| e.to_string())?;
@@ -429,9 +425,7 @@ pub async fn save_editor_state(project_path: String, state_json: String) -> Resu
 #[tauri::command]
 pub async fn load_editor_state(project_path: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
-        let state_path = Path::new(&project_path)
-            .join(".atlas")
-            .join("editor-state.json");
+        let state_path = atlas_profile::dir_in(Path::new(&project_path)).join("editor-state.json");
         if state_path.exists() {
             fs::read_to_string(&state_path).map_err(|e| e.to_string())
         } else {

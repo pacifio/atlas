@@ -100,7 +100,7 @@ impl KnowledgeLinksState {
 const SNIPPET_RADIUS: usize = 90;
 
 fn knowledge_dir(project_path: &str) -> std::path::PathBuf {
-    Path::new(project_path).join(".atlas").join("knowledge")
+    atlas_profile::dir_in(Path::new(project_path)).join("knowledge")
 }
 
 /// One-shot rebuild — walks every .md file, parses refs, builds the

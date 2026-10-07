@@ -9,6 +9,8 @@ name = "atlas_grepindex"
 
 [dependencies]
 atlas-search = { path = "../atlas-search" }
+# `.atlas` vs `.atlas-dev`: where the snapshots live.
+atlas-profile = { path = "../atlas-profile" }
 atlas-git = { path = "../atlas-git" }
 gix = { workspace = true }
 rayon = { workspace = true }

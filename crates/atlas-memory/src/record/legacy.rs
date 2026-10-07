@@ -64,14 +64,17 @@ struct LegacyEvent {
     payload: serde_json::Value,
 }
 
+// Through the profile like the record itself: a dev build migrating the
+// released app's legacy files would fold them into its own record, and the
+// legacy log is the released app's to retire.
 fn events_path(dir: &Path) -> PathBuf {
-    dir.join(".atlas")
+    atlas_profile::dir_in(dir)
         .join("shared-memory")
         .join("events.jsonl")
 }
 
 fn memdir_path(dir: &Path) -> PathBuf {
-    dir.join(".atlas").join("memory").join("extracted")
+    atlas_profile::dir_in(dir).join("memory").join("extracted")
 }
 
 fn marker_path(dir: &Path) -> PathBuf {

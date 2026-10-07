@@ -15,6 +15,16 @@ export const MAX_SCALE = 2.0;
 export const SCALE_STEP = 0.1;
 export const DEFAULT_SCALE = 1;
 
+/** The named steps the interface-scale popover offers. The stepper and the
+ *  zoom shortcuts still move on the `SCALE_STEP` grid; a preset is just a
+ *  shortcut to a size worth naming. */
+export const SCALE_PRESETS = [
+  { value: 0.9, label: "Compact" },
+  { value: 1, label: "Default" },
+  { value: 1.15, label: "Large" },
+  { value: 1.3, label: "Larger" },
+] as const;
+
 /** Round to a clean grid and clamp into [MIN_SCALE, MAX_SCALE]. */
 export function clampScale(scale: number): number {
   const clamped = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale));

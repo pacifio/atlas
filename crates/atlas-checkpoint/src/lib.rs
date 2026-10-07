@@ -100,10 +100,11 @@ pub use timeline::{
 };
 pub use tools::{canonical_name, ResolvedPath, ToolName};
 
-/// The per-project state directory Atlas already uses, under a Project root.
+/// The per-project state directory Atlas already uses, under a Project root:
+/// `.atlas`, or `.atlas-dev` under the dev profile (`atlas-profile`).
 ///
 /// Auto-gitignored, and a dozen features already write here — this crate is the
 /// first to put a database in it.
 pub fn atlas_dir(project_root: impl AsRef<std::path::Path>) -> std::path::PathBuf {
-    project_root.as_ref().join(".atlas")
+    atlas_profile::dir_in(project_root)
 }

@@ -77,10 +77,10 @@ pub(crate) fn now_ms() -> i64 {
         .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }
 
-/// `.atlas/` and `.git/` are never indexed and never trigger work.
+/// Atlas's own directory and `.git/` are never indexed and never trigger work.
 fn is_internal(rel: &str) -> bool {
     let first = rel.split('/').next().unwrap_or(rel);
-    first == ".atlas" || first == ".git"
+    atlas_search::is_atlas_dir(first) || first == ".git"
 }
 
 fn skip_counts(skipped: &[(String, SkipReason)]) -> String {

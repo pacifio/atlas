@@ -105,7 +105,8 @@ pub struct Candidate {
 
 /// Resolve the global memory dir: `ATLAS_GLOBAL_MEMORY_DIR` if set, else
 /// `$HOME/.atlas/memory` (`%USERPROFILE%` on Windows, where `HOME` is normally
-/// unset; falling back to `./.atlas/memory` if neither is set).
+/// unset; falling back to `./.atlas/memory` if neither is set). `.atlas-dev`
+/// rather than `.atlas` under the dev profile (`atlas-profile`).
 pub fn global_dir() -> PathBuf {
     if let Ok(d) = std::env::var(GLOBAL_DIR_ENV) {
         if !d.is_empty() {
@@ -115,7 +116,7 @@ pub fn global_dir() -> PathBuf {
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home).join(".atlas").join("memory")
+    atlas_profile::dir_in(home).join("memory")
 }
 
 fn ledger_path(dir: &Path) -> PathBuf {

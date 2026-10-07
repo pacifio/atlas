@@ -8,6 +8,8 @@ description = "In-process code search for Atlas: ripgrep-engine grep and glob/fu
 name = "atlas_search"
 
 [dependencies]
+# `.atlas` vs `.atlas-dev`: Atlas's own directories, never searched.
+atlas-profile = { path = "../atlas-profile" }
 # `canonicalize` without Windows' `\\?\` verbatim prefix, so root checks and
 # relative paths agree with what the walker yields.
 dunce = { workspace = true }

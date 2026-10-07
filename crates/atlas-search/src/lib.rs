@@ -29,7 +29,7 @@ pub use candidates::{CandidateFilter, CandidateSource, FileStamp};
 pub use error::SearchError;
 pub use find::{find_files, FindMode, FindRequest, FindResult};
 pub use grep::{grep, FileHit, GrepRequest, GrepResult, LineHit, OutputMode};
-pub use walk::DEFAULT_DENY_GLOBS;
+pub use walk::{is_atlas_dir, DEFAULT_DENY_GLOBS};
 
 /// The default output budget of one tool reply, in bytes (about 4k tokens).
 pub const DEFAULT_BUDGET_BYTES: usize = 16 * 1024;

@@ -39,6 +39,7 @@ import {
   markFileIndexClosed,
 } from "@/features/file-picker/lib/file-picker-api";
 import { activeProjectId } from "@/features/projects/lib/active-project";
+import { instructionSync } from "@/features/projects/lib/instruction-sync-api";
 import { useProjectStore } from "@/features/projects/stores/project-store";
 import { pickAndAddProject } from "@/features/projects/lib/pick-project";
 import { flushAll } from "@/features/projects/lib/flush-registry";
@@ -62,6 +63,7 @@ import {
 } from "@/features/chat/lib/turn-index-scheduler";
 import { isScrollHot } from "@/lib/scroll-hot";
 import { isWindows, isLinux } from "@/lib/platform";
+import { loadAppProfile, useAppProfile } from "@/lib/app-profile";
 import type { CliStatus } from "@/features/settings/components/settings-panel";
 import { basename } from "@/lib/paths";
 import {
@@ -200,10 +202,14 @@ export function App() {
   // in Settings → General. Not on Windows: the helper is a bash script
   // (see `commands::cli::cli_install_helper`). On Linux, skip if a
   // system-wide /usr/bin/atlas exists so ~/.local/bin/atlas does not shadow it.
+  // Not from the dev profile either: the helper is the released app's, and
+  // Rust refuses to install it from a dev build (`cli_install_helper`).
   useEffect(() => {
     if (isWindows) return;
-    void invoke<CliStatus>("cli_status")
-      .then((status) => {
+    void loadAppProfile()
+      .then(async (profile) => {
+        if (profile.dev) return;
+        const status = await invoke<CliStatus>("cli_status");
         // If installed system-wide outside ~/.local/ (e.g. /usr/bin/atlas on Linux), don't shadow it
         if (status?.installed && status.path && !status.path.includes("/.local/")) return;
         // If already installed and up to date on Linux, skip (macOS re-runs to self-heal edited/deleted helpers)
@@ -1273,6 +1279,12 @@ export function App() {
       projectPath: currentProject.path,
       workspaceId: projectId,
     }).catch((e) => console.warn("git watch start failed:", e));
+    // Mirrored instructions: tells Rust which project this window works in.
+    // With `instructionSync` on it syncs and watches it; off, Rust only
+    // remembers it as the project to act on when the setting is switched on.
+    void instructionSync
+      .start(currentProject.path, projectId)
+      .catch((e) => console.warn("instruction sync start failed:", e));
     // Background fetch follows the project this window shows, so its Pull
     // badge reflects the remote (Rust `git_autofetch`).
     void useGitStore
@@ -1305,11 +1317,13 @@ export function App() {
 
   // Native window title: `projectName - Atlas` while a project is open,
   // plain `Atlas` otherwise. This is what macOS shows on the window-menu,
-  // on minimize, and on title hover.
+  // on minimize, and on title hover — and the taskbar and Alt-Tab on Windows,
+  // which is why the dev profile's window says `Atlas Dev` here.
+  const { productName } = useAppProfile();
   useEffect(() => {
-    const title = currentProject ? `${currentProject.name} - Atlas` : "Atlas";
+    const title = currentProject ? `${currentProject.name} - ${productName}` : productName;
     void invoke("set_window_title", { title }).catch(() => {});
-  }, [currentProject?.name]);
+  }, [currentProject?.name, productName]);
 
   // Install the singleton listener for `atlas:recent-files-changed`
   // once — every push from Rust patches the mirror in place.

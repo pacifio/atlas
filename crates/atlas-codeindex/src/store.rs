@@ -47,7 +47,7 @@ CREATE TABLE file_summaries(file_id INTEGER PRIMARY KEY REFERENCES files(id) ON 
 ";
 
 pub(crate) fn index_dir(root: &Path) -> PathBuf {
-    root.join(".atlas").join("code-index")
+    atlas_profile::dir_in(root).join("code-index")
 }
 
 pub(crate) fn db_path(root: &Path) -> PathBuf {
@@ -456,7 +456,7 @@ fn size_i64(size: u64) -> i64 {
     i64::try_from(size).unwrap_or(i64::MAX)
 }
 
-/// Keep `.atlas/` out of git without touching the user's `.gitignore`:
+/// Keep Atlas's directory out of git without touching the user's `.gitignore`:
 /// append it to `info/exclude` once. Returns whether a line was added.
 pub(crate) fn ensure_git_exclude(root: &Path) -> std::io::Result<bool> {
     let Some(git_dir) = crate::skip::git_common_dir(root) else {
@@ -465,10 +465,9 @@ pub(crate) fn ensure_git_exclude(root: &Path) -> std::io::Result<bool> {
     let info = git_dir.join("info");
     let path = info.join("exclude");
     let existing = std::fs::read_to_string(&path).unwrap_or_default();
-    if existing
-        .lines()
-        .any(|l| matches!(l.trim(), ".atlas/" | "/.atlas/" | ".atlas" | "/.atlas"))
-    {
+    let name = atlas_profile::dir_name();
+    // `name`, `/name`, `name/` or `/name/`.
+    if existing.lines().any(|l| l.trim().trim_matches('/') == name) {
         return Ok(false);
     }
     std::fs::create_dir_all(&info)?;
@@ -476,7 +475,9 @@ pub(crate) fn ensure_git_exclude(root: &Path) -> std::io::Result<bool> {
     if !text.is_empty() && !text.ends_with('\n') {
         text.push('\n');
     }
-    text.push_str("# Atlas per-project data (code index, memory)\n.atlas/\n");
+    text.push_str(&format!(
+        "# Atlas per-project data (code index, memory)\n{name}/\n"
+    ));
     std::fs::write(&path, text)?;
     Ok(true)
 }

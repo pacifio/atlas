@@ -6,4 +6,9 @@
 [toolchain]
 channel = "1.99.0"
 components = ["clippy", "rustfmt"]
+# The standard library for the other OSes CI lints for. The crates flagged
+# `cross` in .github/ci-crates.json are clippy'd for Windows in CI and for
+# Linux too by `ci:local` on a Mac, which compiles the cfg arms the host never
+# sees. Check-only: nothing is linked, so no foreign linker or SDK is needed.
+targets = ["aarch64-unknown-linux-gnu", "aarch64-pc-windows-msvc"]
 profile = "minimal"

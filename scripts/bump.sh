@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
-# Revert Atlas's version one step back — the inverse of bump.sh. Handy for
-# undoing an accidental version bump.
+# Bump Atlas's version in every file that has to stay in sync.
 #
 # Usage:
-#   ./debump.sh           # decrements the patch number: 0.1.3 -> 0.1.2
-#   ./debump.sh 0.1.0     # sets the version explicitly (must be X.Y.Z)
+#   ./scripts/bump.sh             # bumps the patch number: 0.1.2 -> 0.1.3
+#   ./scripts/bump.sh 0.2.0       # sets the version explicitly (must be X.Y.Z)
 #
-# Touches the same files bump.sh does:
+# Touches:
 #   - package.json                  ("version": "...")
 #   - src-tauri/Cargo.toml          (version = "...")
 #   - Cargo.lock                    (the atlas package's entry)
@@ -15,7 +14,7 @@
 
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PKG="$ROOT/package.json"
 CARGO="$ROOT/src-tauri/Cargo.toml"
 TAURI_CONF="$ROOT/src-tauri/tauri.conf.json"
@@ -40,12 +39,7 @@ else
     echo "error: current version '$current' is not X.Y.Z" >&2
     exit 1
   fi
-  if [ "$patch" -le 0 ]; then
-    echo "error: patch is already 0 in '$current' — can't decrement the patch." >&2
-    echo "       pass an explicit version, e.g. ./debump.sh 0.0.9" >&2
-    exit 1
-  fi
-  new="$major.$minor.$((patch - 1))"
+  new="$major.$minor.$((patch + 1))"
 fi
 
 if [ "$current" = "$new" ]; then
@@ -53,7 +47,7 @@ if [ "$current" = "$new" ]; then
   exit 0
 fi
 
-echo "reverting $current -> $new"
+echo "bumping $current -> $new"
 
 # Escape the dots in the current version so they're treated as literal in
 # sed (the only special character that appears in a semver string).

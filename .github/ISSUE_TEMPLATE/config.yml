@@ -10,4 +10,4 @@ contact_links:
     about: Ask in #dev on Discord rather than opening an issue.
   - name: Report a security vulnerability
     url: https://github.com/pacifio/atlas/security/policy
-    about: Don't open a public issue for a vulnerability — see SECURITY.md for how to report it privately.
+    about: Don't open a public issue for a vulnerability — see .github/SECURITY.md for how to report it privately.

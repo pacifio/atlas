@@ -184,7 +184,7 @@ pub(crate) fn module_of(idx: &crate::CodeIndex, rel: &str) -> String {
 /// A Phase 2 (schema v1) index with one file and one Tier-2 summary, for the migration test.
 /// The DDL is v1 frozen as Phase 2 shipped it.
 pub(crate) fn create_v1_only(root: &std::path::Path) {
-    let dir = root.join(".atlas").join("code-index");
+    let dir = crate::store::index_dir(root);
     std::fs::create_dir_all(&dir).expect("mkdir");
     let conn = rusqlite::Connection::open(dir.join("index.db")).expect("open v1");
     conn.execute_batch(

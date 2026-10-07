@@ -104,7 +104,7 @@ One Rust module per IPC domain under `src-tauri/src/commands/`. `commands/mod.rs
 | Git | git, git_graph, git_watcher, git_autofetch, gitdiff, git_ops, git_conflicts, git_snapshot, git_stage_ops |
 | GitHub | github |
 | Knowledge | knowledge, knowledge_meta, knowledge_links, knowledge_export, knowledge_graph_layout |
-| Memory | memory_* — graph, pack, policy, sharing, summarize, timeline, delta, inject, compile, indexer, retrieve; plus shared_memory |
+| Memory | memory_* — graph, pack, policy, sharing, summarize, timeline, delta, inject, compile, indexer, retrieve; plus shared_memory, instruction_sync |
 | Models & usage | models, models_pricing, usage, tool_stats |
 | Session chat | session_chat, session_chat_sessions, modelchat |
 | Auth & environment | auth, byok, shell_profile, mcp |
@@ -234,10 +234,12 @@ All wired in as `path` dependencies from `src-tauri/Cargo.toml`, and all members
 | `atlas-gitdiff` | Structured side-by-side diff engine: parses unified diffs, computes word-level intra-line change spans (word-diff vendored from `dandavison/delta`, MIT). |
 | `atlas-terminal` | Wraps `portable-pty`, manages `TerminalSession`s, bridges PTY bytes to Tauri events. |
 | `atlas-memory` | On-device RAG/memory engine: MiniLM → usearch HNSW behind a `MemorySearchFn` seam; the shared-memory record store (`record`: SQLite per repository scope, redact-on-write, one-time legacy migration); and global promotion of Facts seen in two or more repositories to `~/.atlas/memory` (`global`). Read its `README.md` and `MIGRATION.md` before changing on-disk index formats. |
+| `atlas-instruction-sync` | Mirrors `CLAUDE.md` and `.claude/rules/` into one marked block of a project's `AGENTS.md`, for agents that read only `AGENTS.md`. Plain file I/O, no async, no Tauri; every byte outside the block is kept, and anything it cannot be sure of is skipped and logged. `commands::instruction_sync` decides when it runs. |
 | `atlas-embed` | On-device text embeddings (BERT-family sentence-transformers) and a small vector store, isolated so `candle`'s heavy dependency tree doesn't slow everything else's incremental builds. Embedding only — on-device generation was removed 2026-08-22. |
 | `atlas-codeindex` | The per-project code index: parallel tree-sitter extraction (Rust/TS/TSX/JS/Python/Go) into SQLite + FTS5 at `<project>/.atlas/code-index/index.db`, updated per file from the watchers; symbol search, outlines and symbol source for the `atlas_code` tools. |
 | `atlas-search` | In-process code search: grep on ripgrep's crates and glob/fuzzy file finding over a session root, with one compact, byte-budgeted output format for the `atlas_code` tools (ADR-0015). |
 | `atlas-retrieval` | The retrieval core memory and the code index share: content-keyed embedding cache codec, per-model usearch vector files that heal on open, RRF fusion, the `Embedder` trait. |
+| `atlas-profile` | Which data this process owns: the default profile or the dev profile `bun run dev:app` runs under. Derived once from the bundle identifier; every `.atlas` and `~/.config/atlas` name goes through it. Names only — no I/O, no dependencies. |
 | `atlas-kb-server` | Standalone static-server binary produced by the knowledge base's "Export server" action. Embeds the exported HTML/CSS via `include_dir!`, serves on `localhost:4747`. |
 
 ## Persistence
@@ -281,6 +283,8 @@ Everything else is per-project files under `<project-root>/.atlas/`:
 ~/.atlas/
 └── log/pinned.jsonl          pinned activity-log rows (survive restart)
 ```
+
+**Profiles.** Every name above belongs to the default profile. `bun run dev:app` builds with `src-tauri/tauri.dev.conf.json` (identifier `dev.atlas.ide.dev`, product name "Atlas Dev"), and `crates/atlas-profile` derives the rest from that identifier at the top of `run()`: `<app-config-dir>` moves with the identifier, `.atlas/` becomes `.atlas-dev/` (in projects and in `~`), and `~/.config/atlas/` becomes `~/.config/atlas-dev/`. One switch, read from the binary rather than the environment, so it cannot half-apply and a child process cannot inherit it; a release build is always the default profile. Other programs' stores (`~/.claude`, `~/.codex`, `CLAUDE.md`, `AGENTS.md`, `.agents/skills`) are not Atlas's and are shared by both; in `~/.agents/skills` the dev profile seeds its bundled skill as `atlas-dev-self-configure`, beside the default profile's `atlas-self-configure` rather than over it. Beyond names, the dev profile changes three behaviours: it keeps `.atlas-dev/` out of git through the repository's `info/exclude` instead of the project's `.gitignore`, it never checks for or installs updates (the release would replace the installed app), and it does not refresh the `atlas` CLI helper.
 
 **IPC** is Tauri's `invoke()` for request/response, `listen()` for event streams. All payloads are JSON.
 
@@ -332,28 +336,27 @@ atlas/
 │   ├── atlas-gitdiff              structured diff engine
 │   ├── atlas-terminal             PTY (portable-pty)
 │   ├── atlas-memory               on-device RAG/memory engine
+│   ├── atlas-instruction-sync     CLAUDE.md + .claude/rules → AGENTS.md block
 │   ├── atlas-embed                on-device embeddings (candle)
 │   ├── atlas-codeindex            code index (tree-sitter → SQLite + FTS5)
 │   ├── atlas-search               in-process grep / find_files
 │   ├── atlas-retrieval            shared retrieval core (vectors, RRF)
+│   ├── atlas-profile              default vs dev data profile (directory names)
 │   └── atlas-kb-server            self-contained KB static-server binary
 │
 ├── vendor/                        vendored source, workspace members
 │   └── atlas-engine                 the engine behind Atlas Agent (ADR-0004, ADR-0011)
 │
-├── scripts/                       build/release helpers (with-posthog-env.mjs)
+├── scripts/                       build/release helpers (with-posthog-env.mjs, bump.sh)
 ├── landing/                       marketing site source
 │
 ├── index.html
 ├── package.json
 ├── vite.config.ts
 ├── tsconfig.json
-├── postcss.config.js
 ├── LICENSE
 ├── README.md
 ├── CONTRIBUTING.md
-├── CODE_OF_CONDUCT.md
-├── SECURITY.md
 ├── TELEMETRY.md
 └── ARCHITECTURE.md                (this file)
 ```

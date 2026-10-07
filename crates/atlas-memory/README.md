@@ -168,7 +168,8 @@ Left behind by older versions and no longer read (safe to delete): `graph/`
 (the grafeo store), `.shared-memory-imported`, `.consolidation_state.json`,
 `.consolidation_lock`.
 
-Global, under `~/.atlas/memory/` (override `ATLAS_GLOBAL_MEMORY_DIR`):
+Global, under `~/.atlas/memory/` (`~/.atlas-dev/memory/` for the dev profile, see
+`atlas-profile`; override `ATLAS_GLOBAL_MEMORY_DIR`):
 
 | File | What |
 |---|---|

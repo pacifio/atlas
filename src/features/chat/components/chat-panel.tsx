@@ -13,7 +13,7 @@ import { stripInjectedContext } from "../lib/atlas-context";
 import { agents, ensureAgent, resetAgent } from "../lib/agents-api";
 import { isDeadlineError, withDeadline } from "../lib/with-deadline";
 import { drainEdge } from "../lib/drain-gate";
-import { cycleChatAgent } from "../lib/switch-agent";
+import { CHAT_STOP_EVENT, cycleChatAgent, isSwitchPending } from "../lib/switch-agent";
 import { loadCachedAcpModes } from "../lib/acp-modes-cache";
 import { configOptionPushes, loadConfigOptionPrefs } from "../lib/config-option-prefs";
 import type { ImageAttachment, SessionKey } from "@/types/agents";
@@ -159,7 +159,7 @@ import { logEvent } from "@/features/log/lib/log";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/features/app/stores/app-store";
 import { loadCachedAcpModels } from "../lib/acp-models-cache";
-import { resolveEffectiveMode, applyModeOnResume } from "../lib/resume-mode";
+import { resolveEffectiveMode, applyModeOnResume, holdUnrestoredMode } from "../lib/resume-mode";
 
 interface ChatPanelProps {
   tabId: string;
@@ -227,6 +227,7 @@ async function respawnAndRebind(tabId: string): Promise<boolean> {
       await applyModeOnResume(tabId, key, await agents.snapshotMeta(key));
     } catch (err) {
       console.warn("mode restore after agent restart failed:", err);
+      holdUnrestoredMode(tabId);
     }
     // Bind and clear the flag in the same tick, so a send the bind releases
     // never sees the tab still disconnected.
@@ -1028,7 +1029,9 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
     // A resumed session is bound optimistically, so `acpSessionId` appears long
     // before the backend can accept a prompt. Track the resume flag separately —
     // its falling edge is the real "sendable now" signal for that path.
-    const curResuming = !!session?.resumePending;
+    // A mode a resume could not restore holds the gate the same way, until the
+    // user picks one (`resume-mode.ts`).
+    const curResuming = !!session?.resumePending || !!session?.unrestoredModeId;
     const prevResuming = prevResumingRef.current;
     prevResumingRef.current = curResuming;
     // The gate lives in `drain-gate.ts` with its own test: a queue drains
@@ -1061,7 +1064,9 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
         return;
       }
     }
-    if (drainQueue) {
+    // A switch waiting on `/remember` holds the queue: what was typed during
+    // the save is for the agent the tab switches to (`switch-agent.ts`).
+    if (drainQueue && !isSwitchPending(tabId)) {
       const next = useChatStore.getState().actions.shiftQueue(tabId);
       if (next && handleSendRef.current) {
         // Defer one microtask so the React commit completes first.
@@ -1072,7 +1077,13 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
     }
     // Next-step chips are extracted from the agent's own `<next_steps>` block in
     // the chat-store `turn_finished` reducer — nothing to do here.
-  }, [session?.status, session?.acpSessionId, session?.resumePending, tabId]);
+  }, [
+    session?.status,
+    session?.acpSessionId,
+    session?.resumePending,
+    session?.unrestoredModeId,
+    tabId,
+  ]);
 
   // Suggestion chips (and other adaptive affordances) send as the next message.
   // This is a GLOBAL window event and every mounted ChatPanel hears it, so only
@@ -1089,6 +1100,18 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
     };
     window.addEventListener("atlas:chat-send", handler);
     return () => window.removeEventListener("atlas:chat-send", handler);
+  }, [tabId]);
+
+  // Stop this tab's turn from outside the composer — an agent switch that
+  // waited on `/remember` and now switches in place (`switch-agent.ts`). Only
+  // ever addressed to one tab.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      if ((e as CustomEvent<{ tabId?: string }>).detail?.tabId !== tabId) return;
+      handleStopRef.current?.();
+    };
+    window.addEventListener(CHAT_STOP_EVENT, handler);
+    return () => window.removeEventListener(CHAT_STOP_EVENT, handler);
   }, [tabId]);
 
   // No session yet. Normally a single frame (the effect above creates it on
@@ -1234,6 +1257,13 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
         return;
       }
       bound = useChatStore.getState().sessions[tabId];
+    }
+    // Fail closed on a mode a resume could not restore: queue, and the drain
+    // effect sends it once the user has picked a mode. The composer already
+    // refuses; this catches every other sender (chips, handoffs).
+    if (bound?.unrestoredModeId) {
+      useChatStore.getState().actions.enqueueMessage(tabId, actualContent);
+      return;
     }
     // `resumePending` is the resume-path equivalent of "not bound yet": the
     // transcript has painted from disk but the agent spawn + ACP `session/load`

@@ -151,6 +151,10 @@ export const CLAUDE_PERMISSION_MODES: ClaudePermissionMode[] = [
   "auto",
 ];
 
+export function isClaudePermissionMode(id: string | null | undefined): id is ClaudePermissionMode {
+  return !!id && (CLAUDE_PERMISSION_MODES as readonly string[]).includes(id);
+}
+
 export const CLAUDE_PERMISSION_MODE_LABEL: Record<ClaudePermissionMode, string> = {
   default: "Default",
   acceptEdits: "Accept Edits",
@@ -257,6 +261,13 @@ export interface ChatSession {
   acpCurrentMode?: string;
   /** True only after the user explicitly changes an ACP mode in this tab. */
   acpModeExplicit?: boolean;
+  /**
+   * The mode id a resume could not put this session in (see `resume-mode.ts`):
+   * the agent refused it, or no longer offers it, so the session runs in the
+   * agent's own mode. While set, `ModeRestoreBar` shows it and sending is held
+   * until the user picks a mode; the next resume of this tab asks for it again.
+   */
+  unrestoredModeId?: string;
   /** Modes the agent advertised for this session — drives the composer's mode
    *  picker for non-Claude agents (e.g. Codex). Seeded from the snapshot. */
   acpAvailableModes?: SessionModeInfo[];

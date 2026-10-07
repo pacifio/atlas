@@ -30,6 +30,9 @@ default = []
 
 [dependencies]
 atlas-process = { path = "../crates/atlas-process" }
+# Whose data this process owns — the released app's or the dev profile's.
+# Fixed from the bundle identifier at the top of `run()`.
+atlas-profile = { path = "../crates/atlas-profile" }
 # Devtools intentionally NOT enabled here. Release builds ship without
 # right-click → Inspect Element / Cmd+Option+I; `tauri dev` still auto-
 # enables devtools because the Tauri runtime turns them on for debug
@@ -133,6 +136,8 @@ atlas-embed = { path = "../crates/atlas-embed" }
 # layer owns the per-project engine registry + background indexer
 # (`commands::memory_indexer`); the crate itself stays Tauri-free.
 atlas-memory = { path = "../crates/atlas-memory" }
+# CLAUDE.md + .claude/rules mirrored into AGENTS.md (commands::instruction_sync).
+atlas-instruction-sync = { path = "../crates/atlas-instruction-sync" }
 # The per-project code index (tree-sitter → SQLite + FTS5), updated per file
 # from the watchers. Drives `commands::code_index` and the atlas_code symbol tools.
 atlas-codeindex = { path = "../crates/atlas-codeindex" }

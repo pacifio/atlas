@@ -39,6 +39,7 @@ import { setEnabled as setTelemetryEnabled } from "@/features/telemetry/posthog-
 import { useFeedbackStore } from "@/features/feedback/stores/feedback-store";
 import { updater } from "@/features/updater/lib/updater-api";
 import { useUpdaterStore } from "@/features/updater/stores/updater-store";
+import { useAppProfile } from "@/lib/app-profile";
 import { useSettingsNav, type SettingsSection } from "../stores/settings-nav-store";
 import { openConfigFile } from "../lib/atlas-config-api";
 import type { AppSettings } from "../lib/app-settings";
@@ -244,6 +245,10 @@ function GeneralSettings() {
   const [cli, setCli] = useState<CliStatus | null>(null);
   const [installing, setInstalling] = useState(false);
   const [resettingConfig, setResettingConfig] = useState(false);
+  // `.atlas` in the released app, `.atlas-dev` in a dev-profile build, which
+  // also keeps it out of git through `.git/info/exclude` rather than editing
+  // the project's own `.gitignore`.
+  const { dev: devProfile, dirName: atlasDir, productName } = useAppProfile();
 
   const recreateConfigDefaults = async () => {
     setResettingConfig(true);
@@ -387,12 +392,30 @@ function GeneralSettings() {
           onChange={(next) => updateSettings({ enterToSend: next })}
         />
       </SettingRow>
+      <SettingRow
+        label="Keep awake while an agent is working"
+        description={
+          isWindows
+            ? "Keep-awake is currently not supported on Windows."
+            : `Keeps your ${isMac ? "Mac" : "computer"} from sleeping while an agent is working. The display can still turn off.`
+        }
+      >
+        <Toggle
+          checked={!isWindows && settings.keepAwakeWhileRunning}
+          disabled={isWindows}
+          onChange={(next) => updateSettings({ keepAwakeWhileRunning: next })}
+        />
+      </SettingRow>
       <NotificationsSettings />
 
       <SectionTitle title="Behaviour" subtitle="Files, logs and the editor" />
       <SettingRow
-        label="Auto-add .atlas to .gitignore"
-        description="When you open a git-tracked project, Atlas adds `.atlas/` to the project's .gitignore (creating one if needed). Atlas keeps its caches and state in `.atlas/` — keeping it out of version control is almost always what you want. No-op on non-git projects."
+        label={devProfile ? `Keep ${atlasDir} out of git` : `Auto-add ${atlasDir} to .gitignore`}
+        description={
+          devProfile
+            ? `When you open a git-tracked project, ${productName} lists \`${atlasDir}/\` in the repository's local .git/info/exclude, so it stays out of version control without editing the project's .gitignore. ${productName} keeps its caches and state in \`${atlasDir}/\`. No-op on non-git projects.`
+            : `When you open a git-tracked project, Atlas adds \`${atlasDir}/\` to the project's .gitignore (creating one if needed). Atlas keeps its caches and state in \`${atlasDir}/\` — keeping it out of version control is almost always what you want. No-op on non-git projects.`
+        }
       >
         <Toggle
           checked={settings.autoAddAtlasGitignore}
@@ -401,7 +424,7 @@ function GeneralSettings() {
       </SettingRow>
       <SettingRow
         label="Show hidden files"
-        description="Show dotfiles and dot-directories (e.g. `.git`, `.atlas`, `.env`) in the file tree. Default ON so nothing is silently hidden. Turn off for a cleaner tree that only lists your project's visible files."
+        description={`Show dotfiles and dot-directories (e.g. \`.git\`, \`${atlasDir}\`, \`.env\`) in the file tree. Default ON so nothing is silently hidden. Turn off for a cleaner tree that only lists your project's visible files.`}
       >
         <Toggle
           checked={settings.showHiddenFiles}
@@ -502,6 +525,24 @@ function GeneralSettings() {
           <option value="new-tab">New tab</option>
           <option value="handoff">Hand off</option>
         </select>
+      </SettingRow>
+      <SettingRow
+        label="Save to memory before switching agents"
+        description="Before you switch agents in a chat that has a conversation, the agent you are leaving is sent /remember, so it saves its decisions and findings to shared memory, and the switch waits for it. Only for agents that offer /remember. Costs one turn per switch; you can switch right away from the notice."
+      >
+        <Toggle
+          checked={settings.rememberBeforeSwitch}
+          onChange={(next) => updateSettings({ rememberBeforeSwitch: next })}
+        />
+      </SettingRow>
+      <SettingRow
+        label="Mirror CLAUDE.md and .claude/rules into AGENTS.md"
+        description="For agents that read AGENTS.md. When on, Atlas keeps a marked block in the active project's AGENTS.md with CLAUDE.md and every .claude/rules file, rewritten as they change, and creates AGENTS.md if there is none. Your own text outside the block is never changed. Turning it off removes the block. Hooks and permission lists are not instructions and are not copied."
+      >
+        <Toggle
+          checked={settings.instructionSync}
+          onChange={(next) => updateSettings({ instructionSync: next })}
+        />
       </SettingRow>
       <SettingRow
         label="Let Atlas Agent navigate the app"
@@ -630,6 +671,10 @@ function UpdatesSettings() {
   const progress = useUpdaterStore.use.progress();
   const { beginApply, setError } = useUpdaterStore.use.actions();
   const [checking, setChecking] = useState(false);
+  // A dev-profile build (`bun run dev:app`) never fetches or installs a
+  // release: the backend refuses both, since the release would replace the
+  // installed Atlas. Say so instead of offering a button that can only fail.
+  const { dev: devProfile, productName } = useAppProfile();
 
   const downloading = phase === "downloading";
   const ready = phase === "ready" || phase === "applying";
@@ -657,7 +702,9 @@ function UpdatesSettings() {
 
   // The "Check for updates" row swaps its control based on the live phase:
   // downloading → progress; ready → Restart button; else → Check now.
-  const control = ready ? (
+  const control = devProfile ? (
+    <span className="text-xs text-muted-foreground">Off in {productName}</span>
+  ) : ready ? (
     <button
       type="button"
       onClick={restart}
@@ -717,9 +764,11 @@ function UpdatesSettings() {
       <SettingRow
         label={ready ? `Update ready${version ? ` (${version})` : ""}` : "Check for updates"}
         description={
-          ready
-            ? "A new version has been downloaded and verified. Restart now, or it'll be applied automatically the next time you quit Atlas."
-            : "Check now regardless of the automatic-update setting. Newer versions download in the background; you'll be prompted to restart when ready."
+          devProfile
+            ? "This is a source build (bun run dev:app). It never downloads or installs a release, because that would replace your installed Atlas — update the installed app from itself."
+            : ready
+              ? "A new version has been downloaded and verified. Restart now, or it'll be applied automatically the next time you quit Atlas."
+              : "Check now regardless of the automatic-update setting. Newer versions download in the background; you'll be prompted to restart when ready."
         }
       >
         {control}

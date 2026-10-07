@@ -1,0 +1,28 @@
+[package]
+name = "atlas-instruction-sync"
+version = "0.1.0"
+edition = "2021"
+description = "Mirrors a project's convention files (CLAUDE.md and .claude/rules/) into a marked block of its AGENTS.md, for any agent that reads AGENTS.md, without ever changing the text around the block. Plain file I/O, no async, no Tauri."
+
+[lib]
+name = "atlas_instruction_sync"
+
+[dependencies]
+# `.atlas` vs `.atlas-dev`: where the pack ledger lives (see that crate).
+atlas-profile = { path = "../atlas-profile" }
+# Reads the pack-projection ledger, so a rule a pack already put in AGENTS.md
+# as its own block is not mirrored a second time.
+serde_json = { workspace = true }
+
+# The link count and file identity on Windows (hard-link detection), which
+# stable std does not expose there. Already in the tree via the engine.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+# The workspace lint table is only real for members that opt in —
+# without this stanza it is dead configuration (#60).
+[lints]
+workspace = true

@@ -26,7 +26,7 @@ The form only requires one field: a freeform description. Write as much or as li
 
 ## Security issues
 
-Don't open a public issue for a vulnerability or a potential attack vector. See [SECURITY.md](SECURITY.md) for how to report it privately.
+Don't open a public issue for a vulnerability or a potential attack vector. See [SECURITY.md](.github/SECURITY.md) for how to report it privately.
 
 ## Documentation
 
@@ -70,6 +70,13 @@ bun run dev:app
 ```
 
 The first Rust compile takes a few minutes; after that, seconds. `bun run dev:app` hot-reloads the frontend on save — Rust changes need a restart.
+
+There are two ways to run a source build, and they differ in whose data they use:
+
+- **`bun run dev:app`: the dev profile.** This is the normal way to work. It runs as **Atlas Dev** (bundle identifier `dev.atlas.ide.dev`, from `src-tauri/tauri.dev.conf.json`), with its own app data dir, its own `<project>/.atlas-dev/` instead of `.atlas/`, `~/.atlas-dev/` instead of `~/.atlas/`, and `~/.config/atlas-dev/` instead of `~/.config/atlas/`. It never touches an installed Atlas's data, so it is safe beside one on the same projects. It keeps `.atlas-dev/` out of git through `.git/info/exclude` rather than your projects' `.gitignore`, and it never checks for or installs updates or refreshes the `atlas` CLI helper. A fresh dev profile starts empty: no history, settings, sign-in or knowledge notes. To start it over, `bun run clean:app:dev` wipes Atlas Dev's data only; `bun run clean:app` wipes the installed Atlas's. A bundled skill both builds ship under one name (`remember`) is installed by Atlas Dev only when it is missing, so it never overwrites the installed Atlas's copy: to try a change to one, delete it from `~/.agents/skills` first.
+- **`bun run tauri dev` (or `cargo run`): no overlay, so the default profile, running against your real data** — the same thread history, settings and `.atlas/` directories as an installed Atlas. Use it on purpose, for example to reproduce a user's state, and not by accident.
+
+`crates/atlas-profile` derives every name from the bundle identifier the binary was built with. New code that needs Atlas's directory goes through `atlas_profile::dir_name()` / `dir_in(root)` (and `config_dir_name()` for `~/.config/atlas`), never a literal `".atlas"` or `"atlas"` (`tests/dev-profile.test.ts` checks). Switching between `cargo check` / rust-analyzer and `bun run dev:app` reruns `tauri-build` and recompiles the `atlas` crate each time, because the two pass a different `TAURI_CONFIG`; if that gets in your way, give rust-analyzer its own target dir (`rust-analyzer.cargo.targetDir`).
 
 That's enough to build and run Atlas. If you're planning to submit a change and don't have write access, clone your **fork** instead of `pacifio/atlas` directly — see "Fork, branch, PR" below.
 
@@ -135,9 +142,9 @@ Leave **Allow edits from maintainers** checked when you open the PR. It lets sma
 
 ## Branching model
 
-Most open-source projects merge every PR straight into `main`, because `main` is deployed continuously — there's no fixed "next release," just a constantly moving target. Atlas doesn't work that way: it ships as a numbered, installable build with an auto-updater, so `main` has to always equal exactly what's been released, nothing ahead of it. That means work needs somewhere to collect *before* it becomes a release, instead of landing on `main` directly.
+Most open-source projects merge every PR straight into `main`, because `main` is deployed continuously — there's no fixed "next release," just a constantly moving target. Atlas doesn't work that way: it ships as a numbered, installable build with an auto-updater, so `main` has to always equal exactly what's been released, nothing ahead of it. That means work needs somewhere to collect _before_ it becomes a release, instead of landing on `main` directly.
 
-That somewhere is a version branch — one per upcoming release (`0.2.5`, `0.2.6`, …). PRs target the version branch, not `main`. Once the version branch is ready to ship, it gets merged into `main` in a single PR, and that merge *is* the release.
+That somewhere is a version branch — one per upcoming release (`0.2.5`, `0.2.6`, …). PRs target the version branch, not `main`. Once the version branch is ready to ship, it gets merged into `main` in a single PR, and that merge _is_ the release.
 
 ```
 you/fix-sidebar-collapse ──┐
@@ -145,13 +152,15 @@ you/add-vim-keybindings ───┼──►  0.2.5  ──►  main     (this 
 someone/fix-x ──────────────┘
 ```
 
-| Branch | Purpose | Merges into |
-|---|---|---|
-| `main` | Always equals the latest release, nothing more | — |
-| `0.2.4`, `0.2.5`, … | Collects everything going into the next release | `main`, and that merge is the release |
-| `<you>/<short-slug>` | One issue's worth of work | The current version branch |
+| Branch               | Purpose                                         | Merges into                           |
+| -------------------- | ----------------------------------------------- | ------------------------------------- |
+| `main`               | Always equals the latest release, nothing more  | —                                     |
+| `0.2.4`, `0.2.5`, …  | Collects everything going into the next release | `main`, and that merge is the release |
+| `<you>/<short-slug>` | One issue's worth of work                       | The current version branch            |
 
 PR straight into `main` only when the change has no version-branch dependency and doesn't need to wait for the next release — a doc fix or a one-line hotfix, say. When in doubt, target the version branch.
+
+**An issue is closed when its fix merges into the version branch**, not when it reaches `main`. GitHub only auto-closes `Fixes #N` on merges into the default branch, and releases go out when they're ready rather than on a schedule, so waiting for `main` would leave fixed issues looking open for weeks — and invite a second PR for the same fix. The maintainer who merges closes the issue by hand, with a comment naming the PR and the branch. If an open issue looks unclaimed, check the version branch's open and merged PRs before starting on it.
 
 Releases are tagged `alpha-X.Y.Z`, with occasional `exp-X.Y.Z-X.Y.Z` snapshots.
 
@@ -160,12 +169,12 @@ Releases are tagged `alpha-X.Y.Z`, with occasional `exp-X.Y.Z-X.Y.Z` snapshots.
 The version lives in four places: `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, and the Settings "About" label in `src/features/settings/components/settings-panel.tsx`. The scripts change all four together, and refresh `Cargo.lock`'s entry for the app so CI's `--locked` builds still run.
 
 ```bash
-./bump.sh          # patch bump: 0.2.3 -> 0.2.4
-./bump.sh 0.3.0    # explicit version
-./debump.sh        # inverse of bump.sh
+bun run bump          # patch bump: 0.2.3 -> 0.2.4
+bun run bump 0.3.0    # explicit version
+bun run debump        # inverse of bump
 ```
 
-Run `bump.sh` once per release, on the version branch, before opening the PR into `main`. Never edit the four files by hand.
+Run `bun run bump` (`scripts/bump.sh`) once per release, on the version branch, before opening the PR into `main`. Never edit the four files by hand.
 
 ## Verification
 
@@ -192,25 +201,46 @@ bun run ci:local                      # the jobs CI would run for this branch
 bun run ci:local --all                # every job
 bun run ci:local atlas-git frontend   # chosen jobs, by the names CI shows
 bun run ci:local --list               # what it would run, without running it
-bun run ci:local --linux              # CI's Linux jobs in a Linux container
+bun run ci:local --linux              # every Linux job in the container, not just the ones that need it
+bun run ci:local --native             # no container at all
 bun run ci:local --shell              # a shell in that container
 ```
 
-By default every job runs on your machine, and a job CI runs on macOS (the app)
-is skipped on any other OS. So is the app's Linux compile check, except on
-Linux: on a Mac it would only repeat the macOS build. CI
-runs every other job on arm64 Ubuntu, so from a Mac or Windows the Linux-only
-paths go untested; the engine's bubblewrap sandbox and code gated on
-`target_os = "macos"` are the ones that bite. `--linux` runs those jobs in a container built
-from `scripts/ci-linux/Dockerfile`, with Rust, Bun and Node at the pinned
-versions. It's opt-in because the first run is a cold build; the target dir,
-cargo registry and a Linux `node_modules` then live in Docker volumes for that
-checkout, and later runs are incremental. Your checkout's own `node_modules`
-and `dist/` are left alone.
+Jobs run on your machine, except:
+
+- **A job CI runs on macOS** (the app) is skipped on any other OS.
+- **The app's Linux and Windows compile checks** run only on their own OS. On a
+  Mac the Linux one goes to the container.
+- **The jobs that need Linux itself** go to a container built from
+  `scripts/ci-linux/Dockerfile`, with Rust, Bun and Node at the pinned versions.
+  That means `atlas-native-agent`, whose suites drive the engine's sandbox, and
+  the app's Linux compile check. On Linux the sandbox is bubblewrap, landlock
+  and seccomp; on a Mac it's seatbelt, which allows what landlock denies, so a
+  macOS run passes where Linux fails. The container starts only when the plan
+  includes one of these jobs.
+
+Code that only _compiles_ on Linux needs no container. Crates flagged `cross` in
+`.github/ci-crates.json` have no C in their dependency tree. When their Linux
+job runs on a Mac, each clippy step is repeated with
+`--target aarch64-unknown-linux-gnu`; that type-checks the `cfg(target_os =
+"linux")` arms a Mac otherwise never compiles. CI also clippies the same crates
+for Windows. Both targets' standard libraries come from rust-toolchain.toml's
+`targets`, which `rustup toolchain install` adds.
+
+With no container runtime running, the jobs that need Linux run on your machine
+instead (the app's Linux check is skipped), and the summary names what went
+untested. The container's target dir, cargo registry and a Linux `node_modules`
+live in Docker volumes, so only the first run is cold. Your checkout's own
+`node_modules` and `dist/` are left alone.
 
 - **Any Docker-compatible runtime works**: Docker Desktop, OrbStack, Colima,
   or Podman (`ATLAS_CI_DOCKER=podman`). Give its VM enough memory for a
   parallel Rust build.
+- **A slow Ubuntu mirror** makes the image's one-time `apt-get install` crawl.
+  `ATLAS_CI_APT_MIRROR=<url>` points it at any mirror of `ubuntu-ports` (arm64)
+  or `ubuntu` (x86-64), e.g. `http://mirror.sg.gs/ubuntu-ports`. Use `http://`:
+  the base image has no CA certificates yet, and apt checks every package
+  against the signed Release file either way. It doesn't change the image tag.
 - **Windows**: clone inside WSL2 and run from there. A checkout on the Windows
   filesystem is bind-mounted over a slow bridge, too slow for a build.
 - **x86-64 hosts** get an x86-64 container, never an emulated arm64 one
@@ -222,8 +252,35 @@ and `dist/` are left alone.
   On Linux, Docker needs AppArmor and seccomp relaxed for the sandbox, which
   `ci:local` does per container.
 
-Volumes are named `atlas-ci-<hash>-*`, one set per checkout; `docker volume rm`
-them to start cold.
+Volumes are named `atlas-ci-<hash>-*`. The build cache (`-cache`) is one per
+clone, shared by its worktrees, so a new worktree starts warm; `-node-modules`
+and `-dist` are per checkout. `docker volume rm` them to start cold. A deleted
+worktree leaves its small per-checkout volumes behind, and a Rust or Bun pin
+change leaves the old `atlas-ci-linux:*` image; `ci:local` prints the
+`docker image rm` for that.
+
+**Disk.** Stable cargo never deletes anything from `target/`; left alone it
+reached 67 GB, more than half of it unusable. `bun run ci:local` runs
+`scripts/target-gc.sh` before its jobs, on your `target/` and on the
+container's cache volume:
+
+- **After a Rust upgrade** in `rust-toolchain.toml`, it removes everything
+  the old compiler built, which can't be reused. After the 1.98 → 1.99 bump
+  that was 41 GB plus 17 GB of incremental state. Only an upgrade triggers it,
+  so alternating with a worktree on an older pin doesn't throw builds away.
+- **Once a week**, it removes artifacts cargo hasn't used in 30 days: mostly
+  old dependency versions left behind by lockfile bumps. Getting one wrong
+  costs a rebuild, never a broken build.
+
+Both use [`cargo-sweep`](https://github.com/holmgr/cargo-sweep), which the
+container image ships with. On your machine, install it once with
+`cargo install cargo-sweep`; without it, an upgrade still clears incremental
+state and prints the hint. Run the script by hand any time with
+`bash scripts/target-gc.sh target`.
+
+Linting each crate on its own, as CI does, keeps a few builds of shared
+dependencies with different feature sets. That's expected, and they're reused
+from run to run.
 
 A pre-push hook runs the full `bun run test`; pre-commit runs only `tests/`.
 
@@ -279,7 +336,7 @@ every PR and are worth knowing about:
 
 For a new IPC module, copy the pattern in
 `src/features/settings/lib/byok-api.test.ts`: mock `invoke` and assert the
-command name and payload. Whether the command *exists* is already covered.
+command name and payload. Whether the command _exists_ is already covered.
 
 Rendering and interaction still need a real window — Vitest covers logic and the
 IPC seam, not the UI itself.
@@ -309,4 +366,4 @@ New events need discussion in the issue before they're built, and any change to 
 
 ## Code of conduct
 
-Participation is covered by our [Code of Conduct](CODE_OF_CONDUCT.md).
+Participation is covered by our [Code of Conduct](.github/CODE_OF_CONDUCT.md).

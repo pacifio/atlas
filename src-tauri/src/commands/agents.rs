@@ -81,6 +81,7 @@ impl TauriDeltaSink {
             // Broadcast first so the UI updates before any heavier work.
             .with(Arc::new(BroadcastMiddleware { app: app.clone() }))
             .with(Arc::new(AnalyticsMiddleware { app: app.clone() }))
+            .with(Arc::new(KeepAwakeMiddleware { app: app.clone() }))
             // Session capture lives here rather than on the event bus because
             // the bus drops events for a lagging subscriber, and a dropped event
             // is a turn missing from the permanent record. This stage only
@@ -114,6 +115,25 @@ impl OutboundMiddleware<SessionDeltaEnvelope> for BroadcastMiddleware {
         if let Err(e) = self.app.emit("atlas:agents", envelope) {
             tracing::error!(target: "atlas_agents::emit", "failed to emit atlas:agents event: {e}");
         }
+    }
+}
+
+/// Manages OS power assertions to prevent idle system sleep while agents are
+/// running. Sessions that end without a status delta are released through
+/// `SharingGatedLifecycle::session_ended`.
+struct KeepAwakeMiddleware {
+    app: AppHandle,
+}
+
+impl OutboundMiddleware<SessionDeltaEnvelope> for KeepAwakeMiddleware {
+    fn on_event(&self, envelope: &SessionDeltaEnvelope) {
+        let Some(manager) = self
+            .app
+            .try_state::<Arc<crate::keep_awake::KeepAwakeManager>>()
+        else {
+            return;
+        };
+        manager.observe(&envelope.session_id, &envelope.delta);
     }
 }
 
@@ -549,6 +569,9 @@ struct SharingGatedLifecycle {
     /// in memory, so a session's token exists as soon as its start is
     /// reported; its per-session clock is dropped when the session ends.
     server: Arc<super::memory_server::MemoryServerHost>,
+    /// Released here rather than from deltas: a session can end without a
+    /// terminal status (sign-out, killing an agent, quitting).
+    keep_awake: Option<Arc<crate::keep_awake::KeepAwakeManager>>,
 }
 
 enum LifecycleWrite {
@@ -564,6 +587,9 @@ enum LifecycleWrite {
 
 impl SharingGatedLifecycle {
     fn new(app: AppHandle, server: Arc<super::memory_server::MemoryServerHost>) -> Self {
+        let keep_awake = app
+            .try_state::<Arc<crate::keep_awake::KeepAwakeManager>>()
+            .map(|state| state.inner().clone());
         let (tx, rx) = std::sync::mpsc::channel::<LifecycleWrite>();
         std::thread::Builder::new()
             .name("atlas-session-lifecycle".into())
@@ -598,7 +624,11 @@ impl SharingGatedLifecycle {
                 }
             })
             .expect("the session lifecycle thread starts");
-        Self { writes: tx, server }
+        Self {
+            writes: tx,
+            server,
+            keep_awake,
+        }
     }
 
     fn queue(&self, write: LifecycleWrite) {
@@ -623,6 +653,9 @@ impl super::agent_host::SessionLifecycle for SharingGatedLifecycle {
 
     fn session_ended(&self, session_id: &str) {
         super::agent_host::SessionLifecycle::session_ended(&**self.server.tokens(), session_id);
+        if let Some(keep_awake) = &self.keep_awake {
+            keep_awake.session_ended(session_id);
+        }
         self.server.clocks().forget(session_id);
         self.queue(LifecycleWrite::Ended {
             session_id: session_id.to_string(),

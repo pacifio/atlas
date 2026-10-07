@@ -163,8 +163,7 @@ impl KnowledgeMetaState {
 }
 
 fn meta_path(project_path: &str) -> PathBuf {
-    Path::new(project_path)
-        .join(".atlas")
+    atlas_profile::dir_in(Path::new(project_path))
         .join("knowledge")
         .join("_meta.json")
 }

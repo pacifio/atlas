@@ -10,7 +10,7 @@
     "build:vite": "vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "dev:app": "node scripts/with-posthog-env.mjs tauri dev",
+    "dev:app": "node scripts/with-posthog-env.mjs tauri dev --config src-tauri/tauri.dev.conf.json",
     "build:app": "node scripts/with-posthog-env.mjs tauri build --target aarch64-apple-darwin --bundles app",
     "build:app:dmg": "bash scripts/build-dmg.sh arm",
     "build:app:dmg:arm": "bash scripts/build-dmg.sh arm",
@@ -28,11 +28,14 @@
     "icons:check": "node scripts/app-icons.mjs --check",
     "test:rust": "bash scripts/test-rust.sh",
     "ci:local": "bun scripts/ci-local.mjs",
+    "bump": "bash scripts/bump.sh",
+    "debump": "bash scripts/debump.sh",
     "test:watch": "vitest",
     "typecheck": "bun run --parallel typecheck:app typecheck:test",
     "typecheck:app": "tsc --noEmit -p tsconfig.json",
     "typecheck:test": "tsc --noEmit -p tsconfig.test.json",
     "clean:app": "bash scripts/clean-atlas-config.sh",
+    "clean:app:dev": "bash scripts/clean-atlas-config.sh --dev",
     "clean:rust": "find . crates vendor -maxdepth 2 -path ./target -prune -o -type d -name target -prune -exec sh -c 'test -f \"$1/CACHEDIR.TAG\" && du -sh \"$1\" && rm -rf \"$1\"' _ {} \\;",
     "clean:rust:stale": "find src-tauri crates -mindepth 1 -maxdepth 2 -type d -name target -prune ! -path 'crates/atlas-kb-server/*' -exec sh -c 'test -f \"$1/CACHEDIR.TAG\" && du -sh \"$1\" && rm -rf \"$1\"' _ {} \\;",
     "prepare": "husky"
@@ -153,6 +156,11 @@
   "overrides": {
     "@codemirror/state": "^6.6.0",
     "@codemirror/view": "^6.43.0"
+  },
+  "lint-staged": {
+    "{src,tests,scripts}/**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}": ["oxfmt --write", "oxlint"],
+    "{src,tests,scripts}/**/*.{json,css}": "oxfmt --write",
+    "**/*.rs": "node scripts/rustfmt-staged.mjs"
   },
   "packageManager": "bun@1.4.0"
 }
