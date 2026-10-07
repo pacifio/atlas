@@ -117,19 +117,21 @@ fn a_narrow_filter_still_finds_its_chunks_behind_many_better_ones() {
 /// must not crowd the one under `src/` out of its first 50.
 #[test]
 fn the_symbol_leg_filters_before_its_cut() {
+    // More same-named symbols than one page of find_symbol (200), all sorting
+    // before the target (row ids follow path order).
     let p = Project::new();
-    for i in 0..60 {
+    for i in 0..210 {
         p.write(
             &format!("web/f{i:03}.ts"),
             "export function send_upload() {}\n",
         );
     }
-    p.write("src/up.rs", "pub fn send_upload() {}\n");
+    p.write("zz/up.rs", "pub fn send_upload() {}\n");
     let ix = p.built();
     let mut q = sq("send_upload");
-    q.path_glob = Some("src/**".into());
+    q.path_glob = Some("zz/**".into());
     let (hits, _) = ix.semantic_search(&q, None).unwrap();
-    assert_eq!(hits[0].rel, "src/up.rs");
+    assert_eq!(hits[0].rel, "zz/up.rs");
     assert!(hits[0].legs.contains("symbol"), "{}", hits[0].legs);
     let mut q = sq("send_upload");
     q.lang = Some("rust".into());

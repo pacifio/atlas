@@ -11,7 +11,7 @@ use rusqlite::{params, OptionalExtension};
 
 use crate::store::split_words;
 use crate::vectors::Embedder;
-use crate::{CodeIndex, IndexError, Lang, SymbolQuery};
+use crate::{CodeIndex, IndexError, Lang, SymbolHit, SymbolQuery};
 
 const DEPTH: usize = 100;
 const PRIOR_WEIGHT: f64 = 0.5;
@@ -136,22 +136,23 @@ impl CodeIndex {
             Ok(out)
         })?;
         // Leg 2: symbols named by identifiers in the query, mapped to their chunks; the
-        // filters apply before each identifier's cut of 50.
+        // filters apply inside the symbol search, before each identifier's cut of 50.
+        let keep = |h: &SymbolHit| passes(&h.rel, Lang::from_path(&h.rel).map_or("", Lang::label));
         let mut sym_ids: Vec<i64> = Vec::new();
         for ident in identifiers(&q.query) {
             let hits = self
-                .find_symbol(&SymbolQuery {
-                    query: ident.to_string(),
-                    within: q.within.clone(),
-                    limit: crate::query::MAX_LIMIT,
-                    ..Default::default()
-                })
+                .find_symbol_where(
+                    &SymbolQuery {
+                        query: ident.to_string(),
+                        within: q.within.clone(),
+                        limit: 50,
+                        ..Default::default()
+                    },
+                    &keep,
+                )
                 .map(|(hits, _)| hits)
                 .unwrap_or_default();
-            let passing = hits
-                .into_iter()
-                .filter(|h| passes(&h.rel, Lang::from_path(&h.rel).map_or("", Lang::label)));
-            for h in passing.take(50) {
+            for h in hits {
                 if !sym_ids.contains(&h.id) {
                     sym_ids.push(h.id);
                 }

@@ -17,7 +17,7 @@ const FTS_CANDIDATES: usize = 2000;
 /// Exact name / qualified-name matches always considered, even past the FTS cap.
 const EXACT_CANDIDATES: usize = 200;
 const DEFAULT_LIMIT: usize = 20;
-pub(crate) const MAX_LIMIT: usize = 200;
+const MAX_LIMIT: usize = 200;
 /// File systems that ignore case by default: a path that differs from the indexed one
 /// only in case names the same file there.
 const CASE_BLIND_FS: bool = cfg!(any(windows, target_os = "macos"));
@@ -162,6 +162,16 @@ impl CodeIndex {
     /// path, doc) takes the best 2000, exact name matches are added, then
     /// exact-name and kind tiers, tests last, BM25, and id give a total order.
     pub fn find_symbol(&self, q: &SymbolQuery) -> Result<(Vec<SymbolHit>, Page), IndexError> {
+        self.find_symbol_where(q, &|_| true)
+    }
+
+    /// [`CodeIndex::find_symbol`] keeping only the hits `keep` accepts, filtered
+    /// with the query's own filters, before ranking and paging.
+    pub(crate) fn find_symbol_where(
+        &self,
+        q: &SymbolQuery,
+        keep: &dyn Fn(&SymbolHit) -> bool,
+    ) -> Result<(Vec<SymbolHit>, Page), IndexError> {
         let query = q.query.trim();
         let Some(expr) = match_expr(query) else {
             return Err(IndexError::Invalid("query has no letters or digits".into()));
@@ -179,6 +189,7 @@ impl CodeIndex {
                     .is_none_or(|p| h.rel.starts_with(p.trim_start_matches("./")))
                 && !(q.exclude_tests && h.is_test)
                 && is_within(&h.rel, q.within.as_deref())
+                && keep(h)
         });
         scored.sort_by(|(a, ra), (b, rb)| {
             let (ta, tb) = (tier(a, query), tier(b, query));
