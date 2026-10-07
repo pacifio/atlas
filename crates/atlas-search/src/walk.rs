@@ -62,7 +62,8 @@ fn is_skipped_dir(entry: &ignore::DirEntry) -> bool {
 
 /// The canonical session root and the canonical place a request starts from.
 /// A `path` outside the root (`../`, an absolute path elsewhere, a symlink
-/// out) is refused.
+/// out) is refused, and so is one inside Atlas's own directory: the walk's
+/// filter never sees its start.
 pub(crate) fn resolve(root: &Path, path: Option<&Path>) -> Result<(PathBuf, PathBuf), SearchError> {
     let root = dunce::canonicalize(root).map_err(|e| {
         SearchError::Io(format!(
@@ -85,6 +86,16 @@ pub(crate) fn resolve(root: &Path, path: Option<&Path>) -> Result<(PathBuf, Path
             "{} is outside the session root {}; search inside it",
             path.display(),
             root.display()
+        )));
+    }
+    let inside_atlas = start.strip_prefix(&root).is_ok_and(|rel| {
+        rel.components()
+            .any(|c| c.as_os_str().to_str().is_some_and(is_atlas_dir))
+    });
+    if inside_atlas {
+        return Err(SearchError::Path(format!(
+            "{} is Atlas's own data, which is never searched",
+            path.display()
         )));
     }
     Ok((root, start))

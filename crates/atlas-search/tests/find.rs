@@ -119,4 +119,13 @@ fn find_refuses_paths_outside_the_root_and_files() {
         find_files(&file, &CancelToken::new()),
         Err(SearchError::Path(_))
     ));
+    std::fs::create_dir_all(dir.path().join(".atlas")).unwrap();
+    let atlas = FindRequest {
+        path: Some(".atlas".into()),
+        ..FindRequest::new(dir.path(), "*")
+    };
+    assert!(matches!(
+        find_files(&atlas, &CancelToken::new()),
+        Err(SearchError::Path(_))
+    ));
 }

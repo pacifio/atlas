@@ -335,6 +335,18 @@ fn the_atlas_dir_is_never_searched() {
             rels(&run(&GrepRequest::new(dir.path(), "needle"))),
             ["a.txt"]
         );
+        // Nor when asked for by path: a walk's start is never filtered.
+        for path in [".atlas", ".atlas/logs.jsonl"] {
+            let req = GrepRequest {
+                path: Some(path.into()),
+                include_ignored: true,
+                ..GrepRequest::new(dir.path(), "needle")
+            };
+            assert!(matches!(
+                grep(&req, &CancelToken::new()),
+                Err(SearchError::Path(_))
+            ));
+        }
     }
 }
 
