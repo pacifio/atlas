@@ -195,6 +195,14 @@ export const PROVIDERS: ProviderDef[] = [
     chat: true,
   },
   {
+    id: "opper",
+    name: "Opper",
+    env: "OPPER_API_KEY",
+    category: "Gateway",
+    docsUrl: "https://platform.opper.ai",
+    chat: true,
+  },
+  {
     id: "litellm",
     name: "LiteLLM Proxy",
     env: "LITELLM_API_KEY",

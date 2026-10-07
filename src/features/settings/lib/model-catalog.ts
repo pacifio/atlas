@@ -34,6 +34,7 @@ const PREFERRED: Record<string, string[]> = {
   empero: ["glm-5.3-flash"],
   orcarouter: ["orcarouter/auto"],
   cheaperinference: ["gpt-5.4-mini", "gpt-5.4", "claude-sonnet-5"],
+  opper: ["claude-sonnet-4-6", "gpt-5.5", "gemini-3.8-flash"],
 };
 
 const MAX_MODELS = 18;
