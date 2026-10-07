@@ -315,6 +315,8 @@ impl LiveCatalogue {
                 is_latest: false,
                 cost: None,
                 disabled: None,
+                provider: None,
+                legacy: false,
             }],
             default_model: model,
             fingerprint: 0,

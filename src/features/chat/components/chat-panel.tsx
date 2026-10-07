@@ -142,6 +142,7 @@ const ChatSearchPalette = lazy(() =>
 // messages.
 const Transcript = lazy(() => import("./transcript").then((m) => ({ default: m.Transcript })));
 import type { TranscriptHandle } from "./transcript";
+import { requestModelPicker } from "../lib/model-picker-events";
 // Diffs + tool output live here rather than inline in the thread — see the
 // module header for why that's a perf decision as much as a UX one.
 const DetailPanel = lazy(() => import("./detail-panel").then((m) => ({ default: m.DetailPanel })));
@@ -873,6 +874,22 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
   // to harvest its model list. The persisted cache still drives the picker for
   // any agent seen before; one that has not been opened this session fills its
   // picker when it is.
+
+  // ⌘⇧M → open (or close) this composer's model picker. Same capture-phase,
+  // focus-inside-this-panel gate as the mode chord below.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!matchesAction(e, "chat.toggleModelPicker")) return;
+      const root = rootRef.current;
+      const active = document.activeElement as HTMLElement | null;
+      if (!root || !active || !root.contains(active)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      requestModelPicker(tabId);
+    };
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, [tabId]);
 
   // Shift+Tab → cycle the agent permission mode. Registered on the window in
   // capture phase so the browser's default focus traversal never steals it.

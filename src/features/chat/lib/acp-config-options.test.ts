@@ -240,6 +240,26 @@ describe("modelSelectOf", () => {
     ).toBeNull();
   });
 
+  /// A grouped list is read the way the backend's snapshot reads it: the
+  /// group's name is each model's provider, and the picker's rail is built on
+  /// it.
+  it("keeps a group's name as the provider of each model in it", () => {
+    const select = modelSelectOf([
+      {
+        ...modelOption,
+        currentValue: "gpt-5",
+        options: [
+          { group: "openai", name: "OpenAI", options: [{ value: "gpt-5", name: "GPT-5" }] },
+          { group: "local", name: "Local", options: [{ value: "qwen", name: "Qwen" }] },
+        ],
+      },
+    ]);
+    expect(select?.availableModels).toEqual([
+      { id: "gpt-5", name: "GPT-5", description: undefined, provider: "OpenAI" },
+      { id: "qwen", name: "Qwen", description: undefined, provider: "Local" },
+    ]);
+  });
+
   /// An empty list is a dead picker, same rule as the generic knobs.
   it("is null when the model select offers nothing", () => {
     expect(modelSelectOf([{ ...modelOption, currentValue: "", options: [] }])).toBeNull();

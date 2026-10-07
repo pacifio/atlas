@@ -623,11 +623,19 @@ pub struct AgentModelInfo {
     pub name: Arc<str>,
     pub description: Option<Arc<str>>,
     pub icon: Option<AgentModelIcon>,
+    /// Newly released — the picker's "New" badge.
     pub is_latest: bool,
     pub cost: Option<Arc<str>>,
     /// Zed carries `language_model::DisabledReason`; that enum is about Zed's
     /// own plan/billing states, so the port carries the reason as text.
     pub disabled: Option<Arc<str>>,
+    /// Who makes the model, as the agent stated it: the gateway's
+    /// `publisher`, or the name of the group an agent listed it under. `None`
+    /// when the agent said nothing — never inferred from the id.
+    pub provider: Option<Arc<str>>,
+    /// Superseded but still served — the picker folds these into a
+    /// "Legacy models" section.
+    pub legacy: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

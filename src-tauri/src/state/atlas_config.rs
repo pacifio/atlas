@@ -453,6 +453,9 @@ pub struct AppSettings {
     /// An agent turn that finished faster than this stays quiet (milliseconds); 0 = off.
     #[serde(default)]
     pub notify_agent_min_duration_ms: u32,
+    /// Models starred in the composer's model picker, as `agentType:modelId`. Unknown entries are ignored.
+    #[serde(default)]
+    pub favorite_models: Vec<String>,
 }
 
 fn default_true() -> bool {
@@ -533,6 +536,7 @@ impl Default for AppSettings {
             notify_disabled_kinds: Vec::new(),
             notify_kinds_migrated: false,
             notify_agent_min_duration_ms: 0,
+            favorite_models: Vec::new(),
         }
     }
 }
@@ -821,6 +825,12 @@ const SETTINGS_DOCS: &[(&str, &str)] = &[
         "# An agent turn that finished faster than this many milliseconds stays\n\
          # quiet; failures and requests for you are never held back. 0 turns it\n\
          # off. Must be between 0 and 3600000. (default: 0)",
+    ),
+    (
+        "favoriteModels",
+        "# Models you starred in the composer's model picker, as\n\
+         # \"agentType:modelId\", e.g. [\"claude-code:opus\"]. Starred models open\n\
+         # the picker on Favorites. Unknown entries are ignored. (default: [])",
     ),
 ];
 
@@ -1135,6 +1145,7 @@ pub struct SettingsPatch {
     pub notify_disabled_kinds: Option<Vec<String>>,
     pub notify_kinds_migrated: Option<bool>,
     pub notify_agent_min_duration_ms: Option<u32>,
+    pub favorite_models: Option<Vec<String>>,
 }
 
 impl SettingsPatch {
@@ -1271,6 +1282,9 @@ impl SettingsPatch {
         if let Some(v) = self.notify_kinds_migrated {
             settings.notify_kinds_migrated = v;
         }
+        if let Some(v) = &self.favorite_models {
+            settings.favorite_models = v.clone();
+        }
         if let Some(v) = self.notify_agent_min_duration_ms {
             settings.notify_agent_min_duration_ms = v;
         }
@@ -1335,6 +1349,13 @@ impl SettingsPatch {
         }
         if let Some(v) = self.notify_agent_min_duration_ms {
             table["notifyAgentMinDurationMs"] = toml_edit::value(i64::from(v));
+        }
+        if let Some(v) = &self.favorite_models {
+            let mut arr = toml_edit::Array::new();
+            for model in v {
+                arr.push(model.as_str());
+            }
+            table["favoriteModels"] = toml_edit::value(arr);
         }
         if let Some(v) = self.terminal_notify_min_duration_ms {
             table["terminalNotifyMinDurationMs"] = toml_edit::value(i64::from(v));
@@ -2778,6 +2799,7 @@ someFutureKey = \"left alone\"
             ]),
             notify_kinds_migrated: Some(!defaults.notify_kinds_migrated),
             notify_agent_min_duration_ms: Some(defaults.notify_agent_min_duration_ms + 1),
+            favorite_models: Some(vec!["claude-code:opus".to_string()]),
         };
         let mut expected = defaults.clone();
         patch.apply_to(&mut expected);

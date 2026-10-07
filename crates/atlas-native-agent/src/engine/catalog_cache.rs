@@ -116,6 +116,27 @@ pub struct GatewayRow {
     /// what every gateway model took before this was on the wire.
     #[serde(default)]
     pub input_modalities: Option<Vec<String>>,
+    /// When the gateway first listed the model, in Unix seconds (the stock
+    /// OpenAI list's `created`). Drives the picker's "New" badge.
+    #[serde(default)]
+    pub created: Option<i64>,
+    /// Superseded but still served. The picker folds these away under
+    /// "Legacy models"; absent means current.
+    #[serde(default)]
+    pub legacy: bool,
+}
+
+/// How long after the gateway first lists a model the picker calls it new.
+const NEW_MODEL_WINDOW_SECS: i64 = 30 * 24 * 60 * 60;
+
+/// Listed within [`NEW_MODEL_WINDOW_SECS`] of the fetch. Measured against the
+/// fetch rather than the wall clock, so a projection is a pure function of
+/// the cache it was given.
+fn is_new(row: &GatewayRow, fetched_at: u64) -> bool {
+    row.created.is_some_and(|created| {
+        let age = fetched_at as i64 - created;
+        (0..NEW_MODEL_WINDOW_SECS).contains(&age)
+    })
 }
 
 /// The gateway's whole answer.
@@ -541,12 +562,14 @@ pub fn project(cache: &CatalogueCache) -> Option<ProjectedCatalogue> {
             name: row.display_name.as_deref().unwrap_or(&row.id).into(),
             description: row.description.as_deref().map(Into::into),
             icon: None,
-            is_latest: false,
+            is_latest: is_new(row, cache.fetched_at),
             // Deliberately blank. The BYOK picker shows per-million provider
             // rates, which are not what an Atlas turn costs — a turn is
             // metered against the account's own weighted cap.
             cost: None,
             disabled: None,
+            provider: row.publisher.as_deref().map(Into::into),
+            legacy: row.legacy,
         })
         .collect();
 
@@ -712,6 +735,40 @@ mod tests {
         assert_eq!(glm.description, None, "null is absent, not the string null");
         assert!(!glm.is_default);
         assert_eq!(glm.input_modalities, None);
+    }
+
+    #[test]
+    fn the_picker_carries_the_publisher_and_the_new_and_legacy_marks() {
+        const DAY: u64 = 24 * 60 * 60;
+        let fetched_at = 400 * DAY;
+        let mut fresh = row("claude-opus-5", true);
+        fresh.created = Some((fetched_at - 3 * DAY) as i64);
+        let mut old = row("claude-sonnet-4", true);
+        old.created = Some((fetched_at - 90 * DAY) as i64);
+        old.legacy = true;
+        let mut unknown = row("glm-5.3-flash", true);
+        unknown.publisher = None;
+        let cache = cache_with(vec![fresh, old, unknown], None, fetched_at);
+        let picker = project(&cache).expect("rows").picker;
+
+        assert_eq!(picker[0].provider.as_deref(), Some("anthropic"));
+        assert!(picker[0].is_latest, "listed three days before the fetch");
+        assert!(!picker[0].legacy);
+        assert!(!picker[1].is_latest, "listed ninety days before the fetch");
+        assert!(picker[1].legacy);
+        assert_eq!(
+            picker[2].provider, None,
+            "an unstated publisher stays unstated"
+        );
+        assert!(!picker[2].is_latest, "no `created`, no badge");
+    }
+
+    #[test]
+    fn a_created_time_after_the_fetch_is_not_new() {
+        // A clock skewed against the gateway must not badge a model forever.
+        let mut row = row("claude-opus-5", true);
+        row.created = Some(1_000);
+        assert!(!is_new(&row, 500));
     }
 
     #[test]
