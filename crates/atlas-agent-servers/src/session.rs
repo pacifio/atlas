@@ -198,9 +198,10 @@ impl SessionDirectories {
     pub fn into_new_session_request(
         self,
         mcp_servers: Vec<acp::McpServer>,
+        ask_first: &crate::session_mcp::AskFirst,
     ) -> acp::NewSessionRequest {
         let mut request = acp::NewSessionRequest::new(self.cwd);
-        request.meta = crate::session_mcp::preapproval_meta(&mcp_servers);
+        request.meta = crate::session_mcp::preapproval_meta(&mcp_servers, ask_first);
         request.mcp_servers = mcp_servers;
         if !self.additional_directories.is_empty() {
             request.additional_directories = self.additional_directories;
