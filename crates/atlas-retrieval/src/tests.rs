@@ -35,6 +35,27 @@ fn a_vector_file_saves_atomically_and_reloads() {
     assert_eq!(g.search(&[1.0, 0.0, 0.0], 1)[0].0, 7);
 }
 
+/// A save that fails (on Windows, a file another process holds) leaves the
+/// changes marked unsaved, so the next caller saves them instead of leaving
+/// the file stale until it is reopened.
+#[test]
+fn a_failed_save_stays_unsaved_until_one_succeeds() {
+    let dir = tempfile::tempdir().unwrap();
+    let blocker = dir.path().join("blocker");
+    std::fs::write(&blocker, "").unwrap();
+    let (f, _) = VectorFile::open(blocker.join("v.usearch"), 3).unwrap();
+    assert!(!f.has_unsaved());
+    f.add(7, &[1.0, 0.0, 0.0]).unwrap();
+    assert!(f.has_unsaved());
+    assert!(f.save().is_err(), "the parent is a file");
+    assert!(f.has_unsaved());
+    std::fs::remove_file(&blocker).unwrap();
+    f.save().unwrap();
+    assert!(!f.has_unsaved());
+    f.remove(42);
+    assert!(!f.has_unsaved(), "removing an absent key changes nothing");
+}
+
 /// usearch's own path API fails under non-ASCII folders on Windows; the file
 /// I/O is Rust's, so any folder name works.
 #[test]

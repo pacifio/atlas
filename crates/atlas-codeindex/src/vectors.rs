@@ -271,12 +271,11 @@ impl CodeIndex {
             stats.embedded += fresh.len();
             stats.cached += todo.len() - fresh.len();
         }
-        if stats.added + stats.removed > 0 {
-            vectors
-                .read()
-                .unwrap_or_else(PoisonError::into_inner)
-                .save()
-                .map_err(retrieval_err)?;
+        // Also when nothing changed this time: a save that failed last time
+        // (a locked file) is retried rather than left stale until reopen.
+        let v = vectors.read().unwrap_or_else(PoisonError::into_inner);
+        if v.has_unsaved() {
+            v.save().map_err(retrieval_err)?;
         }
         Ok(stats)
     }

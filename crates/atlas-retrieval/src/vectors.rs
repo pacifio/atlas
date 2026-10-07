@@ -8,6 +8,7 @@
 //! path in the ANSI code page and fails under non-ASCII project folders.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use usearch::{Index, IndexOptions, MetricKind, ScalarKind};
 
@@ -27,6 +28,9 @@ pub struct VectorFile {
     index: Index,
     path: PathBuf,
     dims: usize,
+    /// Changed since the last successful [`save`](Self::save): a save that
+    /// failed (a file locked on Windows) is retried by the next caller.
+    unsaved: AtomicBool,
 }
 
 impl VectorFile {
@@ -43,31 +47,26 @@ impl VectorFile {
         Index::new(&Self::options(dims)).map_err(|e| RetrievalError::Index(e.to_string()))
     }
 
+    fn with(index: Index, path: PathBuf, dims: usize) -> Self {
+        Self {
+            index,
+            path,
+            dims,
+            unsaved: AtomicBool::new(false),
+        }
+    }
+
     pub fn open(path: PathBuf, dims: usize) -> Result<(Self, Opened), RetrievalError> {
         if !path.is_file() {
-            return Ok((
-                Self {
-                    index: Self::fresh(dims)?,
-                    path,
-                    dims,
-                },
-                Opened::Fresh,
-            ));
+            return Ok((Self::with(Self::fresh(dims)?, path, dims), Opened::Fresh));
         }
         let index = Self::fresh(dims)?;
         let ok = std::fs::read(&path).is_ok_and(|bytes| index.load_from_buffer(&bytes).is_ok())
             && index.dimensions() == dims;
         if ok {
-            Ok((Self { index, path, dims }, Opened::Loaded))
+            Ok((Self::with(index, path, dims), Opened::Loaded))
         } else {
-            Ok((
-                Self {
-                    index: Self::fresh(dims)?,
-                    path,
-                    dims,
-                },
-                Opened::Reset,
-            ))
+            Ok((Self::with(Self::fresh(dims)?, path, dims), Opened::Reset))
         }
     }
 
@@ -85,13 +84,21 @@ impl VectorFile {
                 .map_err(|e| RetrievalError::Index(e.to_string()))?;
         }
         let _ = self.index.remove(key as u64);
+        self.unsaved.store(true, Ordering::SeqCst);
         self.index
             .add(key as u64, v)
             .map_err(|e| RetrievalError::Index(e.to_string()))
     }
 
     pub fn remove(&self, key: i64) {
-        let _ = self.index.remove(key as u64);
+        if self.index.remove(key as u64).is_ok_and(|n| n > 0) {
+            self.unsaved.store(true, Ordering::SeqCst);
+        }
+    }
+
+    /// Whether the index holds changes [`save`](Self::save) has not written.
+    pub fn has_unsaved(&self) -> bool {
+        self.unsaved.load(Ordering::SeqCst)
     }
 
     pub fn contains(&self, key: i64) -> bool {
@@ -115,6 +122,16 @@ impl VectorFile {
     }
 
     pub fn save(&self) -> Result<(), RetrievalError> {
+        // Cleared first: a change landing while this writes stays unsaved.
+        let was = self.unsaved.swap(false, Ordering::SeqCst);
+        let saved = self.write();
+        if saved.is_err() && was {
+            self.unsaved.store(true, Ordering::SeqCst);
+        }
+        saved
+    }
+
+    fn write(&self) -> Result<(), RetrievalError> {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)?;
         }
