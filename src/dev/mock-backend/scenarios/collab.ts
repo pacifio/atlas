@@ -15,7 +15,7 @@ import { MOCK_ORG_ID, MOCK_PROJECT } from "../project";
 export const collab: Scenario = {
   name: "collab",
   description:
-    "acme-app synced to the team's Organisation: @members, @conversations and @sessions in agent chat.",
+    "acme-app synced to the team's Organization: @members, @conversations and @sessions in agent chat.",
   commands: {
     capture_binding: async (args): Promise<Binding | null> => {
       const binding = await captureHandlers.capture_binding(args);

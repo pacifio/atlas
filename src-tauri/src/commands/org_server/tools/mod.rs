@@ -121,11 +121,11 @@ pub const WINDOW_TOOLS: &[&str] = &["org_page_write"];
 
 /// What a tool answers while the user has switched organisation access off.
 const OFF_NOTE: &str =
-    "Atlas Agent's organisation access is switched off in Settings → General; ask the user to turn it on.";
+    "Atlas Agent's organization access is switched off in Settings → General; ask the user to turn it on.";
 
 /// What a tool answers for a session that was not offered the server — its
 /// token names no organisation.
-const NO_ORG_NOTE: &str = "This session was not given access to an organisation: its project is not bound to a \
+const NO_ORG_NOTE: &str = "This session was not given access to an organization: its project is not bound to a \
      cloud Workspace, or it was opened before it was. Ask the user to bind the project and start a new chat.";
 
 /// What a tool answers once nobody is signed in on this machine any more.
@@ -863,7 +863,7 @@ impl OrgTools {
     ) -> Result<SessionTarget, CallToolResult> {
         let Some(grant_workspace) = scope.workspace_id.clone() else {
             return Err(tool_error(
-                "this session's project is bound to the organisation but its Workspace id is not recorded yet; \
+                "this session's project is bound to the organization but its Workspace id is not recorded yet; \
                  ask the user to reopen the project's cloud settings and start a new chat",
             ));
         };

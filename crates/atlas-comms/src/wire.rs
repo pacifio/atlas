@@ -172,6 +172,39 @@ pub struct Message {
     pub artifact_refs: Vec<SessionReference>,
     #[serde(default)]
     pub draft_id: Option<String>,
+    /// A person, or an incoming webhook. For a webhook `author_id` is the
+    /// webhook's id (`whk_…`), never a member, and the message is drawn under
+    /// [`Self::author_name`] with an App badge. Defaulted: older rows are a
+    /// person's.
+    #[serde(default)]
+    pub author_kind: AuthorKind,
+    /// The name a webhook message was posted under, frozen at post time.
+    /// `None` for a person's message.
+    #[serde(default)]
+    pub author_name: Option<String>,
+    /// The webhook's own name at post time, drawn beside an overridden
+    /// `author_name` ("CI · via Deploy bot"). `None` for a person's.
+    #[serde(default)]
+    pub author_via: Option<String>,
+    /// SHA-256 of the webhook's avatar in the shared media store, frozen at
+    /// post time. `None` for a person, or a webhook with no picture.
+    #[serde(default)]
+    pub author_avatar_hash: Option<String>,
+}
+
+/// Who wrote a message (the server's `ChatAuthorKind`).
+///
+/// `Other` absorbs a kind this build does not know, so a future author type
+/// renders as a stranger rather than failing the whole message's parse — a
+/// row that does not deserialize is a row that silently never appears.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthorKind {
+    #[default]
+    User,
+    Webhook,
+    #[serde(other)]
+    Other,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -518,6 +551,14 @@ pub struct MessageNew {
     pub artifact_refs: Vec<SessionReference>,
     #[serde(default)]
     pub draft_id: Option<String>,
+    #[serde(default)]
+    pub author_kind: AuthorKind,
+    #[serde(default)]
+    pub author_name: Option<String>,
+    #[serde(default)]
+    pub author_via: Option<String>,
+    #[serde(default)]
+    pub author_avatar_hash: Option<String>,
     /// Echoed back so a client can recognise its own send arriving on another
     /// device. Absent on frames from other authors.
     #[serde(default)]
@@ -539,6 +580,10 @@ impl MessageNew {
             code_refs: self.code_refs,
             artifact_refs: self.artifact_refs,
             draft_id: self.draft_id,
+            author_kind: self.author_kind,
+            author_name: self.author_name,
+            author_via: self.author_via,
+            author_avatar_hash: self.author_avatar_hash,
         }
     }
 }
@@ -890,5 +935,41 @@ mod tests {
         }))
         .unwrap();
         assert!(message.artifact_refs.is_empty());
+        // Written before integrations existed: a person's.
+        assert_eq!(message.author_kind, AuthorKind::User);
+        assert_eq!(message.author_name, None);
+    }
+
+    #[test]
+    fn a_webhook_message_carries_its_frozen_name_and_reaches_the_renderer() {
+        let frame: MessageNew = serde_json::from_value(json!({
+            "seq": 9, "conv_id": "c1", "id": "m9", "author_id": "whk_1", "body": "Build 41 passed",
+            "created_at": 1,
+            "author_kind": "webhook", "author_name": "CI", "author_via": "Deploy bot",
+            "author_avatar_hash": "ab12",
+        }))
+        .unwrap();
+        let message = frame.into_message();
+        assert_eq!(message.author_kind, AuthorKind::Webhook);
+        assert_eq!(message.author_name.as_deref(), Some("CI"));
+        assert_eq!(message.author_via.as_deref(), Some("Deploy bot"));
+        assert_eq!(message.author_avatar_hash.as_deref(), Some("ab12"));
+        // The renderer switches on these exact keys and spelling.
+        let out = serde_json::to_value(&message).unwrap();
+        assert_eq!(out["author_kind"], "webhook");
+        assert_eq!(out["author_name"], "CI");
+        assert_eq!(out["author_via"], "Deploy bot");
+    }
+
+    #[test]
+    fn an_author_kind_this_build_does_not_know_still_reads_the_message() {
+        // A row that fails to parse never appears at all; an unknown kind
+        // must cost the badge, not the message.
+        let message: Message = serde_json::from_value(json!({
+            "id": "m1", "conv_id": "c1", "seq": 1, "author_id": "bot_1", "body": "hi",
+            "created_at": 1, "author_kind": "agent",
+        }))
+        .unwrap();
+        assert_eq!(message.author_kind, AuthorKind::Other);
     }
 }

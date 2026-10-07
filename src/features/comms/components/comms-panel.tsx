@@ -14,7 +14,7 @@ import { useOrgStore } from "@/features/organisations/stores/org-store";
 import { useAuthStore } from "@/features/auth/stores/auth-store";
 import { useMembersStore } from "@/features/organisations/stores/members-store";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { conversationTitle } from "../lib/derive";
+import { conversationTitle, memberName } from "../lib/derive";
 import type { ChatConversation, OrgMemberProfile } from "../types";
 
 /**
@@ -104,7 +104,7 @@ export function CommsPanel() {
       // `id` on a membership row is the membership; `userId` is the person,
       // and the person is what a message's `author_id` names.
       id: m.userId,
-      name: m.name,
+      name: memberName(m.name, m.email),
       email: m.email,
       image: m.avatarPath ? convertFileSrc(m.avatarPath) : null,
       role: m.role ?? ("member" as const),
@@ -374,9 +374,9 @@ function CommsConnecting({
         <div className="text-sm font-medium text-foreground">Chat is unavailable</div>
         <p className="max-w-[220px] text-xs leading-relaxed text-secondary-foreground">
           {reason === "not_a_member"
-            ? "Your account isn't a member of this organisation's chat."
+            ? "Your account isn't a member of this organization's chat."
             : reason === "evicted"
-              ? "You were removed from this organisation."
+              ? "You were removed from this organization."
               : "Couldn't authenticate with the chat service."}
         </p>
         <button

@@ -282,7 +282,7 @@ function healthOf(project: ProjectCapture): CaptureHealth {
     issues.push({
       state: "degraded",
       reason:
-        "No longer authorized to sync with your Organisation — new work stays on this machine.",
+        "No longer authorized to sync with your Organization — new work stays on this machine.",
       nextStep:
         "Reconnect or re-register this Project to resume syncing. Capture itself continues.",
     });
@@ -298,7 +298,7 @@ function healthOf(project: ProjectCapture): CaptureHealth {
   if (project.failedRows > 0) {
     issues.push({
       state: "degraded",
-      reason: `${project.failedRows} record${plural(project.failedRows)} could not be sent to your Organisation.`,
+      reason: `${project.failedRows} record${plural(project.failedRows)} could not be sent to your Organization.`,
       nextStep: "They are skipped so the rest keep syncing. Retry from the sync status.",
     });
   }

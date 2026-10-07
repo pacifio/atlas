@@ -225,10 +225,7 @@ fn build(
         drafts.push(draft);
     }
     if drafts.is_empty() {
-        return Err(crate::validation(
-            &options.origin,
-            "no usable colours found",
-        ));
+        return Err(crate::validation(&options.origin, "no usable colors found"));
     }
 
     // Everything the source said that did not land anywhere.

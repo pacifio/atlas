@@ -453,6 +453,9 @@ pub struct AppSettings {
     /// An agent turn that finished faster than this stays quiet (milliseconds); 0 = off.
     #[serde(default)]
     pub notify_agent_min_duration_ms: u32,
+    /// Models starred in the composer's model picker, as `agentType:modelId`. Unknown entries are ignored.
+    #[serde(default)]
+    pub favorite_models: Vec<String>,
 }
 
 fn default_true() -> bool {
@@ -533,6 +536,7 @@ impl Default for AppSettings {
             notify_disabled_kinds: Vec::new(),
             notify_kinds_migrated: false,
             notify_agent_min_duration_ms: 0,
+            favorite_models: Vec::new(),
         }
     }
 }
@@ -631,7 +635,7 @@ const SETTINGS_DOCS: &[(&str, &str)] = &[
     ),
     (
         "iconTheme",
-        "# File and folder icons, on their own track from the colour theme.\n\
+        "# File and folder icons, on their own track from the color theme.\n\
          # \"minimal\" keeps Atlas's own lucide icons; anything else names a VS\n\
          # Code icon theme, bundled or installed from Open VSX.\n\
          # (default: \"material-icon-theme\")",
@@ -685,9 +689,9 @@ const SETTINGS_DOCS: &[(&str, &str)] = &[
     ),
     (
         "curatedPluginSync",
-        "# Let the Atlas Agent's engine fetch OpenAI's curated plugin catalogue\n\
-         # (github.com/openai/plugins) when it starts — a network request at\n\
-         # every launch. Applies the next time the agent starts. (default: false)",
+        "# Let Atlas Agent download the latest curated plugin catalog when it\n\
+         # starts — a network request at every launch. Applies the next time the\n\
+         # agent starts. (default: false)",
     ),
     (
         "instructionSync",
@@ -718,10 +722,10 @@ const SETTINGS_DOCS: &[(&str, &str)] = &[
     ),
     (
         "agentOrgAccess",
-        "# Let Atlas Agent act in your organisation, as you: read the recorded\n\
-         # sessions, comments, members and conversations of the organisation a\n\
+        "# Let Atlas Agent act in your organization, as you: read the recorded\n\
+         # sessions, comments, members and conversations of the organization a\n\
          # cloud-bound Project belongs to. Anything that reaches another person\n\
-         # asks you first. Off: its organisation tools are withdrawn and every\n\
+         # asks you first. Off: its organization tools are withdrawn and every\n\
          # call is refused. (default: true)",
     ),
     (
@@ -821,6 +825,12 @@ const SETTINGS_DOCS: &[(&str, &str)] = &[
         "# An agent turn that finished faster than this many milliseconds stays\n\
          # quiet; failures and requests for you are never held back. 0 turns it\n\
          # off. Must be between 0 and 3600000. (default: 0)",
+    ),
+    (
+        "favoriteModels",
+        "# Models you starred in the composer's model picker, as\n\
+         # \"agentType:modelId\", e.g. [\"claude-code:opus\"]. Starred models open\n\
+         # the picker on Favorites. Unknown entries are ignored. (default: [])",
     ),
 ];
 
@@ -1135,6 +1145,7 @@ pub struct SettingsPatch {
     pub notify_disabled_kinds: Option<Vec<String>>,
     pub notify_kinds_migrated: Option<bool>,
     pub notify_agent_min_duration_ms: Option<u32>,
+    pub favorite_models: Option<Vec<String>>,
 }
 
 impl SettingsPatch {
@@ -1271,6 +1282,9 @@ impl SettingsPatch {
         if let Some(v) = self.notify_kinds_migrated {
             settings.notify_kinds_migrated = v;
         }
+        if let Some(v) = &self.favorite_models {
+            settings.favorite_models = v.clone();
+        }
         if let Some(v) = self.notify_agent_min_duration_ms {
             settings.notify_agent_min_duration_ms = v;
         }
@@ -1335,6 +1349,13 @@ impl SettingsPatch {
         }
         if let Some(v) = self.notify_agent_min_duration_ms {
             table["notifyAgentMinDurationMs"] = toml_edit::value(i64::from(v));
+        }
+        if let Some(v) = &self.favorite_models {
+            let mut arr = toml_edit::Array::new();
+            for model in v {
+                arr.push(model.as_str());
+            }
+            table["favoriteModels"] = toml_edit::value(arr);
         }
         if let Some(v) = self.terminal_notify_min_duration_ms {
             table["terminalNotifyMinDurationMs"] = toml_edit::value(i64::from(v));
@@ -2778,6 +2799,7 @@ someFutureKey = \"left alone\"
             ]),
             notify_kinds_migrated: Some(!defaults.notify_kinds_migrated),
             notify_agent_min_duration_ms: Some(defaults.notify_agent_min_duration_ms + 1),
+            favorite_models: Some(vec!["claude-code:opus".to_string()]),
         };
         let mut expected = defaults.clone();
         patch.apply_to(&mut expected);

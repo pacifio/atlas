@@ -35,7 +35,7 @@ never "check who the agent is".
 **Every call crosses to the webview as one UI action** — a Tauri event carrying a request id,
 answered by one command — and the frontend owns the semantics entirely: it performs the action
 through the app's existing openers and store actions and returns JSON that Rust forwards to the
-model verbatim. Rust mirrors no focus state (ARCHITECTURE.md's authoritative-state boundary keeps
+model verbatim. Rust mirrors no focus state (docs/architecture.md's authoritative-state boundary keeps
 layout and focus in the frontend). An action the window does not answer within ten seconds is a
 tool error, never a hung turn.
 

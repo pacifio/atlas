@@ -23,7 +23,8 @@ export type When =
   | "knowledgePanel"
   | "knowledgeFocus"
   | "pdfFocus"
-  | "canvasFocus";
+  | "canvasFocus"
+  | "modelPicker";
 
 export type ActionCategory =
   | "Project"
@@ -56,7 +57,18 @@ export const WHEN_LABELS: Record<When, string> = {
   knowledgeFocus: "knowledgeFocus",
   pdfFocus: "pdfFocus",
   canvasFocus: "canvasFocus",
+  modelPicker: "modelPickerOpen",
 };
+
+/** ⌘N picks the Nth visible row while the composer's model picker is open —
+ *  the same chord as focusing tab N, which the open picker shadows. */
+const modelPickerJump = (n: number): ActionDef => ({
+  id: `modelPicker.jump${n}`,
+  title: `Pick model ${n}`,
+  category: "Chat",
+  when: "modelPicker",
+  defaults: [`cmd+${n}`],
+});
 
 const focusTab = (n: number): ActionDef => ({
   id: `tabs.focus${n}`,
@@ -299,6 +311,44 @@ export const ACTIONS = [
     when: "chatFocus",
     defaults: ["cmd+f"],
   },
+  {
+    id: "chat.toggleModelPicker",
+    title: "Open model picker",
+    category: "Chat",
+    when: "chatFocus",
+    defaults: ["cmd+shift+m"],
+  },
+  {
+    id: "modelPicker.previousProvider",
+    title: "Previous provider in model picker",
+    category: "Chat",
+    when: "modelPicker",
+    defaults: ["cmd+shift+up"],
+  },
+  {
+    id: "modelPicker.nextProvider",
+    title: "Next provider in model picker",
+    category: "Chat",
+    when: "modelPicker",
+    defaults: ["cmd+shift+down"],
+  },
+  {
+    // ⌘⇧S: "star". Unbound anywhere else, and the reference ships no default.
+    id: "modelPicker.toggleFavorite",
+    title: "Star or unstar the highlighted model",
+    category: "Chat",
+    when: "modelPicker",
+    defaults: ["cmd+shift+s"],
+  },
+  modelPickerJump(1),
+  modelPickerJump(2),
+  modelPickerJump(3),
+  modelPickerJump(4),
+  modelPickerJump(5),
+  modelPickerJump(6),
+  modelPickerJump(7),
+  modelPickerJump(8),
+  modelPickerJump(9),
   // ── Terminal ──
   {
     id: "terminal.prevTab",

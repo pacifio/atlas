@@ -8,6 +8,8 @@ const base = {
   curAcp: "acp-1" as string | undefined,
   prevResuming: false,
   curResuming: false,
+  prevGrantHold: false,
+  curGrantHold: false,
 };
 
 describe("drainEdge", () => {
@@ -96,5 +98,59 @@ describe("drainEdge", () => {
         prevHeldElsewhere: true,
       }).drainQueue,
     ).toBe(false);
+  });
+
+  describe("the no-AI-grant hold", () => {
+    const held = { ...base, prevGrantHold: true, curGrantHold: true };
+
+    it("keeps a message queued during the deferred turn from draining at its end", () => {
+      // The answer turned to no mid-turn; the lock waited for the turn, and
+      // the user queued a follow-up meanwhile. The turn ending must not send
+      // it into a gateway that refuses it.
+      const edge = drainEdge({ ...held, prevGrantHold: false });
+      expect(edge.turnFinished).toBe(true);
+      expect(edge.drainQueue).toBe(false);
+      expect(drainEdge(held).drainQueue).toBe(false);
+    });
+
+    it("releases the queue when the hold lifts on an idle, bound session", () => {
+      const edge = drainEdge({ ...held, prevStatus: "idle", curGrantHold: false });
+      expect(edge.grantReleased).toBe(true);
+      expect(edge.drainQueue).toBe(true);
+    });
+
+    it("does not release into a turn still running or an unbound tab", () => {
+      expect(
+        drainEdge({ ...held, prevStatus: "running", curStatus: "running", curGrantHold: false })
+          .drainQueue,
+      ).toBe(false);
+      expect(
+        drainEdge({ ...held, prevStatus: "idle", curGrantHold: false, curAcp: undefined })
+          .drainQueue,
+      ).toBe(false);
+    });
+
+    it("leaves an agent switch to its own bind", () => {
+      // Switching off the native agent lifts the hold in the same commit the
+      // session changes; the new bind's `justBound` is the drain, not this.
+      const switching = drainEdge({
+        ...held,
+        prevStatus: "idle",
+        curGrantHold: false,
+        prevAcp: "acp-1",
+        curAcp: undefined,
+      });
+      expect(switching.grantReleased).toBe(false);
+      expect(switching.drainQueue).toBe(false);
+      const bound = drainEdge({ ...base, prevStatus: "idle", prevAcp: undefined, curAcp: "acp-2" });
+      expect(bound.justBound).toBe(true);
+      expect(bound.drainQueue).toBe(true);
+    });
+
+    it("holds a fresh bind on the native agent too", () => {
+      const edge = drainEdge({ ...held, prevStatus: "idle", prevAcp: undefined, curAcp: "acp-2" });
+      expect(edge.justBound).toBe(true);
+      expect(edge.drainQueue).toBe(false);
+    });
   });
 });

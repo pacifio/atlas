@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { copyText } from "@/lib/clipboard";
 
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
+import { useOrgDirectory } from "@/features/organisations/lib/use-org-directory";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
 import { useActiveOrgProjects } from "@/features/projects/lib/org-scope";
 import { BranchLine, GitDot, NumStatPill } from "@/features/projects/components/git-summary";
@@ -18,6 +19,7 @@ import { cn } from "@/lib/utils";
 import { Hint } from "@/ui/tooltip";
 import { HintGroup, HintItem } from "@/ui/hint-group";
 
+import { onlineTeammates, useOnlineIds } from "../lib/team-presence";
 import { useSessionComments } from "../lib/use-session-comments";
 import { useArtifactsStore, type OpenSession } from "../stores/artifacts-store";
 import type { BoardPage, BoardSession, SessionDetail as Detail } from "../types";
@@ -39,6 +41,7 @@ import { readSessionDetail } from "../lib/read-session-detail";
 import { DockButton, DOCK_ACTIVE, DOCK_TRIGGER, HeaderDock } from "./header-dock";
 import { CheckpointsPicker } from "./checkpoints-picker";
 import { ExportButton } from "./export-button";
+import { OnlineTeammates } from "./online-teammates";
 import { SessionChatPanel } from "./session-chat-panel";
 import { SessionCommentsPanel } from "./session-comments-panel";
 import { SessionDetail } from "./session-detail";
@@ -250,6 +253,14 @@ export function ArtifactsPanel() {
   // hook resolves the Organisation's roster itself, so the account no longer
   // has to be plumbed through here.
   const comments = useSessionComments(open?.remoteProjectId ?? null, open?.sessionId ?? null);
+  // Who else is here, for the header's facepile. The roster is the same
+  // cached one the bylines read; the online set is one subscription here.
+  const directory = useOrgDirectory();
+  const onlineSet = useOnlineIds();
+  const teammatesOnline = useMemo(
+    () => onlineTeammates(onlineSet, directory),
+    [onlineSet, directory],
+  );
   // Stable identity for the memo'd board rows — an inline arrow here would
   // re-render all ~500 of them on every panel render.
   const onOpenRow = useCallback(
@@ -326,7 +337,7 @@ export function ArtifactsPanel() {
       }
       if (cloudFailureToldFor.current === orgId) return;
       cloudFailureToldFor.current = orgId;
-      toast.error("Couldn't load this Organisation's shared sessions.", {
+      toast.error("Couldn't load this Organization's shared sessions.", {
         id: "timeline-cloud-failed",
         description: "Showing the sessions recorded on this machine.",
         action: { label: "Retry", onClick: retryCloud },
@@ -736,9 +747,11 @@ export function ArtifactsPanel() {
                 className="flex h-full shrink-0 items-center gap-2 px-1.5"
                 style={{ width: sidebarWidth }}
               >
-                <span className="flex-1 truncate text-sm font-semibold text-[var(--foreground)]">
+                <span className="min-w-0 truncate text-sm font-semibold text-[var(--foreground)]">
                   Timeline
                 </span>
+                <OnlineTeammates members={teammatesOnline} />
+                <span className="flex-1" />
                 {/* Grain. It changes what the rows under it are grouped INTO,
                     which is the one control that belongs to the list itself;
                     scope and the rest live in the pane header's dock. */}
@@ -756,7 +769,7 @@ export function ArtifactsPanel() {
                     place, whichever state you are in. */}
                 <HintGroup>
                   <DockButton
-                    label={showSidebar ? "Maximise session" : "Show timeline"}
+                    label={showSidebar ? "Maximize session" : "Show timeline"}
                     active={!showSidebar}
                     onClick={toggleTimelineSidebar}
                   >

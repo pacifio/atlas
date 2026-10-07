@@ -187,7 +187,7 @@ const ZED: ThemeImportPreview = {
       fidelity: "near-lossless",
       variants: ["dark"],
       summary: [
-        "Atlas's theme keys were modelled on Zed's roles, so the editor, terminal, syntax and diff colours transfer directly.",
+        "Atlas's theme keys were modeled on Zed's roles, so the editor, terminal, syntax and diff colors transfer directly.",
         "Zed has no shadcn layer, so all 45 base tokens were derived from the style — check `primary`, `accent` and `card` first if the chrome looks off.",
       ],
       mapped: [
@@ -203,7 +203,7 @@ const ZED: ThemeImportPreview = {
         {
           source: "5 icon roles key(s)",
           category: "icon roles",
-          reason: "Atlas icons take their colour from the text roles",
+          reason: "Atlas icons take their color from the text roles",
           weight: 5,
         },
         {
@@ -222,7 +222,7 @@ const ZED: ThemeImportPreview = {
           source: "syntax.keyword.font_style",
           category: "font styles",
           reason:
-            "an Atlas theme key carries a colour only; the scope is imported with its colour and no italics",
+            "an Atlas theme key carries a color only; the scope is imported with its color and no italics",
           weight: 1,
         },
       ],
@@ -243,7 +243,7 @@ const ZED: ThemeImportPreview = {
         {
           source: "5 icon roles key(s)",
           category: "icon roles",
-          reason: "Atlas icons take their colour from the text roles",
+          reason: "Atlas icons take their color from the text roles",
           weight: 5,
         },
         {
@@ -260,7 +260,7 @@ const ZED: ThemeImportPreview = {
 
 const VSCODE: ThemeImportPreview = {
   origin: "nocturne-bright.json",
-  format: "VS Code colour theme",
+  format: "VS Code color theme",
   themes: [
     candidate(byId("nocturne-bright"), {
       format: "vscode",
@@ -323,7 +323,7 @@ const VSCODE: ThemeImportPreview = {
           source: "tokenColors[keyword].fontStyle",
           category: "font styles",
           reason:
-            "an Atlas theme key carries a colour only; the scope is imported with its colour and no italics",
+            "an Atlas theme key carries a color only; the scope is imported with its color and no italics",
           weight: 3,
         },
       ],
@@ -345,7 +345,7 @@ function rejection(source: string): string | null {
     return null;
   }
   if (text.includes("--") || text.includes("{")) return null;
-  return "invalid theme in pasted text: unrecognised theme format: expected a shadcn registry item, a shadcn globals.css, a Zed theme family, or a VS Code colour theme";
+  return "invalid theme in pasted text: unrecognized theme format: expected a shadcn registry item, a shadcn globals.css, a Zed theme family, or a VS Code color theme";
 }
 
 function previewFor(args: { text?: string; url?: string; path?: string }): ThemeImportPreview {
@@ -366,7 +366,7 @@ function previewFor(args: { text?: string; url?: string; path?: string }): Theme
     return VSCODE;
   }
   if (haystack.includes("no-usable-colours")) {
-    throw new Error("invalid theme in pasted text: no usable colours found");
+    throw new Error("invalid theme in pasted text: no usable colors found");
   }
   return SHADCN;
 }
@@ -405,7 +405,7 @@ function exportOf(id: string): ShadcnExport {
       droppedByCategory: countFamilies(theme),
       notes: [
         "Base tokens cross verbatim: shadcn's names are Atlas's names, so the chrome is exact.",
-        `${dropped} Atlas values have no shadcn equivalent and were dropped — the editor, terminal, syntax, diff, comms and agent colours. To move this theme to another Atlas install, copy the TOML instead.`,
+        `${dropped} Atlas values have no shadcn equivalent and were dropped — the editor, terminal, syntax, diff, comms and agent colors. To move this theme to another Atlas install, copy the TOML instead.`,
       ],
     },
   };

@@ -34,6 +34,7 @@ import type {
 import { EmojiPicker } from "./emoji-picker";
 import { insertLink, insertText, linePrefix, wrap, type Edit } from "../lib/markdown-insert";
 import { utf8Bytes } from "../lib/derive";
+import { authorLabel } from "../lib/message-author";
 import { toPlainText } from "../lib/to-plain-text";
 import { CHAT_BODY_MAX_BYTES, CHAT_MESSAGE_ATTACHMENT_MAX } from "../types";
 import type { CommsMessage, OrgMemberProfile } from "../types";
@@ -383,7 +384,11 @@ export function CommsComposer({
             {editing ? "Editing" : "Replying to"}
           </span>
           <span className="min-w-0 flex-1 truncate text-xs text-secondary-foreground">
-            {editing ? null : (memberMap.get(intentTarget?.author_id ?? "")?.name ?? "Unknown")}
+            {editing
+              ? null
+              : intentTarget
+                ? authorLabel(intentTarget, (id) => memberMap.get(id)?.name ?? "Unknown")
+                : "Unknown"}
             {intentTarget && !editing ? " · " : ""}
             {intentTarget?.deleted
               ? "deleted message"

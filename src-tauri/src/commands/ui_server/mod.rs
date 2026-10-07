@@ -11,7 +11,7 @@
 //!   [`UI_ACTION_EVENT`], performed by the frontend through the app's own
 //!   openers and store actions, answered by [`ui_action_respond`]. Rust
 //!   forwards the frontend's JSON verbatim and mirrors no UI state — the
-//!   frontend owns layout and focus (ARCHITECTURE.md). An action the window
+//!   frontend owns layout and focus (docs/architecture.md). An action the window
 //!   does not answer in time is a tool error, never a hung turn.
 //! - **Gated by the user's navigation setting** ([`NavigationGate`]), at
 //!   offer time and on every call.

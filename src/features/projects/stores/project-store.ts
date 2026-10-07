@@ -44,7 +44,7 @@ const requireActiveOrgId = (): string | undefined => {
  *  so on screen: the state is not recoverable from inside the app, since the
  *  org switcher hides itself with no active org. */
 const NO_ORG_MESSAGE =
-  "Atlas couldn't find an organisation to own this. Restart Atlas and try again.";
+  "Atlas couldn't find an organization to own this. Restart Atlas and try again.";
 
 const refuseWithoutOrg = (summary: string, payload?: Record<string, unknown>): null => {
   logEvent({ source: "project", kind: "project-add-refused", summary, payload });

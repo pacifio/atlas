@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { HintGroup, HintItem } from "@/ui/hint-group";
+import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
 import { usePdfAnnotationStore, PDF_COLORS, type PdfTool } from "../stores/pdf-annotation-store";
 
 interface PdfToolbarProps {
@@ -38,6 +39,7 @@ const COLOR_NAMES: Record<string, string> = {
 export function PdfToolbar({ fileName, zoom, dirty, onZoomIn, onZoomOut }: PdfToolbarProps) {
   const tool = usePdfAnnotationStore.use.tool();
   const color = usePdfAnnotationStore.use.color();
+  const saveShortcut = useActionShortcut("pdf.save");
   const { setTool, setColor } = usePdfAnnotationStore.use.actions();
 
   return (
@@ -92,11 +94,15 @@ export function PdfToolbar({ fileName, zoom, dirty, onZoomIn, onZoomOut }: PdfTo
         className="mx-1 flex flex-1 items-center justify-center gap-1.5 truncate text-xs font-mono text-[var(--muted-foreground)]"
         title={fileName}
       >
-        {/* Unsaved-changes dot — Cmd+S bakes annotations into the PDF file. */}
+        {/* Unsaved-changes dot. Annotations are saved beside the PDF, in the
+            project's profile dir (`.atlas/pdf-annotations.json`, see
+            `commands/pdf_annotations.rs`) — the PDF file itself is
+            never modified, which is what keeps them erasable. They autosave a
+            beat after each edit; the shortcut only saves now. */}
         {dirty && (
           <span
             className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--foreground)]"
-            title="Unsaved annotations — ⌘S to save into the PDF"
+            title={`Unsaved annotations — saving shortly${saveShortcut ? `, or ${saveShortcut.label} to save now` : ""}. Annotations are kept with the project; the PDF file is never changed.`}
           />
         )}
         <span className="truncate">{fileName}</span>

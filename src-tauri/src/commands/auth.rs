@@ -393,7 +393,7 @@ pub async fn auth_list_members(
         .core()
         .list_members(&org_id)
         .await
-        .map_err(|e| e.user_message_denied("You don't have access to this organisation's members."))
+        .map_err(|e| e.user_message_denied("You don't have access to this organization's members."))
 }
 
 /// Pending + past invitations. Admin-scoped server-side, so a non-admin's call
@@ -407,12 +407,12 @@ pub async fn auth_list_invitations(
         .core()
         .list_invitations(&org_id)
         .await
-        .map_err(|e| e.user_message_denied("Only an admin can see this organisation's invites."))
+        .map_err(|e| e.user_message_denied("Only an admin can see this organization's invites."))
 }
 
-/// Invite someone by email. The returned `acceptUrl` is the whole point —
-/// email delivery is deferred, so that link is the only way the invitee hears
-/// about it. Changes server state only; the snapshot holds no members, so
+/// Invite someone by email. The server emails the invitee; the returned
+/// `acceptUrl` is the same link, for the inviter to copy too. Changes server
+/// state only; the snapshot holds no members, so
 /// there is nothing to broadcast.
 #[tauri::command]
 pub async fn auth_invite_member(
@@ -476,6 +476,26 @@ pub async fn auth_remove_member(
     core.remove_member(&org_id, &member_id_or_email)
         .await
         .map_err(|e| e.user_message_denied("Only an admin can remove a member."))?;
+    broadcast(&app, core.snapshot());
+    Ok(())
+}
+
+/// Leave an organisation (`org_id` is the SERVER id). Open to every member but
+/// the Owner; the last admin is refused too. Re-broadcasts the snapshot so the
+/// account menu drops the org at once.
+#[tauri::command]
+pub async fn auth_leave_org(
+    org_id: String,
+    app: AppHandle,
+    state: State<'_, AuthState>,
+) -> Result<(), String> {
+    let core = state.core();
+    core.leave_org(&org_id).await.map_err(|e| {
+        e.user_message_denied(
+            "Couldn't leave. The owner can't leave their organization, and an organization's \
+             last admin has to make someone else an admin first.",
+        )
+    })?;
     broadcast(&app, core.snapshot());
     Ok(())
 }

@@ -856,3 +856,43 @@ fn a_touch_never_undoes_a_concurrent_rename() {
     done.store(true, std::sync::atomic::Ordering::Release);
     toucher.join().unwrap();
 }
+
+#[test]
+fn a_recorded_branch_survives_a_reopen_and_later_live_updates() {
+    let dir = tempfile::tempdir().unwrap();
+    let saved = thread("atlas-agent", &["/tmp/atlas"]);
+    {
+        let store = open(&dir);
+        store.save_one(saved.clone());
+        assert_eq!(
+            store.thread(saved.thread_id).unwrap().branch,
+            None,
+            "a new thread's branch is unknown until the host reads it"
+        );
+        let mut changes = store.subscribe();
+
+        store.update_branch(saved.thread_id, Some("discount-codes".into()));
+        assert_eq!(changes.try_recv().unwrap(), ThreadStoreEvent::Changed);
+
+        // The same branch again is not a change.
+        store.update_branch(saved.thread_id, Some("discount-codes".into()));
+        assert!(changes.try_recv().is_err());
+
+        // A conversation event does not own the branch and must not drop it.
+        store.record_live_update(live(&saved, Some("Discount codes")));
+        store.flush().unwrap();
+    }
+
+    let store = open(&dir);
+    assert_eq!(
+        store.thread(saved.thread_id).unwrap().branch.as_deref(),
+        Some("discount-codes")
+    );
+
+    // Clearing goes back to unknown, durably; an empty name is not a name.
+    store.update_branch(saved.thread_id, Some("  ".into()));
+    store.flush().unwrap();
+    drop(store);
+    let store = open(&dir);
+    assert_eq!(store.thread(saved.thread_id).unwrap().branch, None);
+}

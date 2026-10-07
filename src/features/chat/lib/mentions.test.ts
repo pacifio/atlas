@@ -105,6 +105,7 @@ function orgMember(userId: string, name: string, email: string) {
     role: null,
     createdAt: null,
     avatarPath: null,
+    isOwner: false,
   };
 }
 

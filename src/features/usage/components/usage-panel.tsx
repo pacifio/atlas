@@ -122,7 +122,7 @@ export function UsagePanel() {
               <Card index={0} section="empty">
                 <div className="text-xs font-medium text-[var(--foreground)]">Nothing yet</div>
                 <div className="mt-0.5 text-2xs leading-snug text-[var(--muted-foreground)]">
-                  Usage appears after the first agent turn in one of this organisation's projects.
+                  Usage appears after the first agent turn in one of this organization's projects.
                 </div>
               </Card>
             </div>

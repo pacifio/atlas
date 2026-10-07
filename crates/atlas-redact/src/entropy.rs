@@ -15,7 +15,7 @@ use crate::Category;
 
 /// Minimum Shannon entropy (bits/byte) for a token to read as a secret.
 ///
-/// 4.5 is inherited from Entire's redactor, which arrived at it empirically:
+/// 4.5 is an empirical threshold, and a well-established one for this job:
 /// above common English words and identifiers, below the ~5.0+ that real API
 /// keys and tokens sit at. The negative test cases in `tests/negatives.rs` are
 /// what hold this number honest — changing it without running them is how a

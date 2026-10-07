@@ -315,6 +315,8 @@ impl LiveCatalogue {
                 is_latest: false,
                 cost: None,
                 disabled: None,
+                provider: None,
+                legacy: false,
             }],
             default_model: model,
             fingerprint: 0,
@@ -430,7 +432,7 @@ impl EngineConnection {
             WireDialect::Chat => {
                 let Some(fetcher) = catalogue else {
                     return Err(anyhow!(
-                        "the gateway dialect needs a catalogue fetcher and none was supplied"
+                        "the gateway dialect needs a catalog fetcher and none was supplied"
                     ));
                 };
                 let resolved = catalog_cache::resolve(
@@ -3593,7 +3595,7 @@ impl RewindHandle {
         let Some(thread) = self.sessions.thread(session_id) else {
             return Err(anyhow!(
                 "rewound the engine's history but the session's thread is gone; \
-                 reopen the conversation to resynchronise"
+                 reopen the conversation to resynchronize"
             ));
         };
         let mut locked = thread
@@ -3614,7 +3616,7 @@ impl RewindHandle {
         let Some((from, text)) = last_user else {
             return Err(anyhow!(
                 "rewound the engine's history but the transcript holds no prompt to \
-                 replay; reopen the conversation to resynchronise"
+                 replay; reopen the conversation to resynchronize"
             ));
         };
         // `EntriesRemoved` is what the delta projector turns into
@@ -3815,7 +3817,7 @@ impl AgentModelSelector for EngineModelSelector {
             .map(|m| AgentModelId::new(m.as_str()))
             .unwrap_or_else(|| AgentModelId::new(self.default_model().as_str()));
         let found = self.catalogue().into_iter().find(|m| m.id == selected);
-        async move { found.ok_or_else(|| anyhow!("the selected model is not in the catalogue")) }
+        async move { found.ok_or_else(|| anyhow!("the selected model is not in the catalog")) }
             .boxed()
     }
 }

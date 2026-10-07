@@ -22,7 +22,9 @@ import { copyText } from "@/lib/clipboard";
 import { save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import { comms } from "../lib/comms-api";
-import { CommsAvatar } from "./comms-avatar";
+import { Badge } from "@/ui/badge";
+import { authorLabel, isWebhookMessage, presentAuthor } from "../lib/message-author";
+import { CommsAvatar, IntegrationAvatar } from "./comms-avatar";
 import { MessageBody } from "./message-body";
 import { openConversationMedia } from "../stores/lightbox-store";
 import { toPlainText } from "../lib/to-plain-text";
@@ -192,6 +194,8 @@ const MessageRow = memo(function MessageRow({
   // The open flag therefore has to live OUT here, above the thing that unmounts.
   const [menuOpen, setMenuOpen] = useState(false);
   const parent = m.reply_to_id ? lookup(m.reply_to_id) : undefined;
+  const webhook = isWebhookMessage(m);
+  const presented = presentAuthor(m, (id) => members.get(id)?.name ?? "Unknown");
 
   return (
     <div
@@ -201,7 +205,9 @@ const MessageRow = memo(function MessageRow({
       onMouseLeave={() => setHovered(false)}
     >
       <div className={cn("shrink-0 pt-[3px]", GUTTER)}>
-        {first ? (
+        {first && webhook ? (
+          <IntegrationAvatar id={m.author_id} name={presented.name} size={30} />
+        ) : first ? (
           <CommsAvatar member={author} size={30} online={authorOnline} />
         ) : (
           // The gutter is never empty-looking on hover: a continuation
@@ -222,15 +228,34 @@ const MessageRow = memo(function MessageRow({
           />
         )}
 
-        {first && (
-          <div className="flex items-baseline gap-1.5">
-            <span className="truncate text-sm font-semibold text-foreground">
-              {showAuthor ? (author?.name ?? "Unknown") : (author?.name ?? "You")}
-            </span>
+        {first && webhook ? (
+          // An integration is named however its DM-ness: there is no "You" or
+          // counterpart to fall back on, and the badge is the whole point.
+          <div className="flex min-w-0 items-baseline gap-1.5" title={presented.title ?? undefined}>
+            <span className="truncate text-sm font-semibold text-foreground">{presented.name}</span>
+            <Badge variant="outline" size="sm" className="self-center uppercase tracking-wider">
+              App
+            </Badge>
+            {presented.via && (
+              <span className="min-w-0 truncate text-2xs text-muted-foreground">
+                via {presented.via}
+              </span>
+            )}
             <span className="shrink-0 text-2xs tabular-nums text-disabled">
               {formatClock(m.created_at)}
             </span>
           </div>
+        ) : (
+          first && (
+            <div className="flex items-baseline gap-1.5">
+              <span className="truncate text-sm font-semibold text-foreground">
+                {showAuthor ? (author?.name ?? "Unknown") : (author?.name ?? "You")}
+              </span>
+              <span className="shrink-0 text-2xs tabular-nums text-disabled">
+                {formatClock(m.created_at)}
+              </span>
+            </div>
+          )
         )}
 
         <MessageContent message={m} members={members} me={me} pinned={pinned} />
@@ -365,7 +390,9 @@ function ReplyLine({
           !deleted && "group-hover/reply:underline",
         )}
       >
-        {author?.name ?? "Unknown"}
+        {parent && isWebhookMessage(parent)
+          ? authorLabel(parent, (id) => members.get(id)?.name ?? "Unknown")
+          : (author?.name ?? "Unknown")}
       </span>
       <span className="min-w-0 truncate opacity-80">
         {deleted ? (

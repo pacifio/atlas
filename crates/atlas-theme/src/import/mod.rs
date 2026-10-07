@@ -93,7 +93,7 @@ impl ImportFormat {
             Self::Shadcn => "shadcn registry item",
             Self::ShadcnCss => "shadcn CSS",
             Self::Zed => "Zed theme",
-            Self::VsCode => "VS Code colour theme",
+            Self::VsCode => "VS Code color theme",
         }
     }
 }
@@ -172,7 +172,7 @@ pub fn import_themes(
     let format = format.or_else(|| detect_format(source)).ok_or_else(|| {
         crate::validation(
             &options.origin,
-            "unrecognised theme format: expected a shadcn registry item, a shadcn globals.css, a Zed theme family, or a VS Code colour theme",
+            "unrecognized theme format: expected a shadcn registry item, a shadcn globals.css, a Zed theme family, or a VS Code color theme",
         )
     })?;
     match format {

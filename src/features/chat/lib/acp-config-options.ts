@@ -14,7 +14,13 @@
 import type { SessionModeInfo } from "@/types/agents";
 
 /** One selectable value in a select knob. */
-type Choice = { id: string; name: string; description: string | null };
+type Choice = {
+  id: string;
+  name: string;
+  description: string | null;
+  /** The name of the group the agent listed it under, if it grouped them. */
+  group?: string;
+};
 
 /** A knob the composer can render. */
 export type AcpConfigOption =
@@ -187,6 +193,10 @@ export function modelSelectOf(
         id: choice.id,
         name: choice.name,
         description: choice.description ?? undefined,
+        // A group's name is who makes the model, when the agent lists them by
+        // maker (OpenCode's "Anthropic", "OpenAI") — the same reading the
+        // backend's snapshot makes, so both paths fill the rail alike.
+        ...(choice.group ? { provider: choice.group } : {}),
       })),
     };
   }
@@ -197,22 +207,25 @@ export function modelSelectOf(
  *  its own `options` (`SessionConfigSelectOptions` is untagged, so the two are
  *  told apart by shape). Groups are flattened: the composer's popover is a
  *  single list, and inventing a nested menu for it would be a new visual
- *  pattern. */
+ *  pattern. Each choice keeps its group's name. */
 function parseChoices(raw: unknown): Choice[] {
   const flat: Choice[] = [];
-  const push = (entry: unknown) => {
+  const push = (entry: unknown, group?: string) => {
     if (!entry || typeof entry !== "object") return;
     const e = entry as Record<string, unknown>;
     const id = str(e.id) ?? str(e.value);
     const name = str(e.name) ?? id;
     if (!id || !name) return;
-    flat.push({ id, name, description: str(e.description) });
+    flat.push({ id, name, description: str(e.description), ...(group ? { group } : {}) });
   };
   if (!Array.isArray(raw)) return flat;
   for (const entry of raw) {
-    const nested = (entry as Record<string, unknown> | null)?.options;
-    if (Array.isArray(nested)) nested.forEach(push);
-    else push(entry);
+    const e = entry as Record<string, unknown> | null;
+    const nested = e?.options;
+    if (Array.isArray(nested)) {
+      const group = str(e?.name) ?? undefined;
+      for (const choice of nested) push(choice, group);
+    } else push(entry);
   }
   return flat;
 }

@@ -12,7 +12,7 @@ import type {
   AgentType,
   PendingSend,
 } from "@/types/agent";
-import { CLAUDE_PERMISSION_MODES, pluginIdForAgent } from "@/types/agent";
+import { CLAUDE_PERMISSION_MODES, isBusyAgentStatus, pluginIdForAgent } from "@/types/agent";
 import type { PendingPermission } from "@/types/acp";
 import type {
   AgentDelta,
@@ -1792,6 +1792,39 @@ export const useChatStore = createSelectors(
     })),
   ),
 );
+
+/**
+ * Keep every tab's `turnStartedAt` in step with its status: stamped once when
+ * the status enters a busy state (running/waiting — a turn paused on a
+ * permission is still the same turn), cleared to null when it leaves one.
+ *
+ * One subscription rather than a stamp at each status write, because the
+ * status is written from a dozen places (status / turn_finished / turn_failed
+ * deltas, the resume snapshot, kill, disconnect, bind failure…) and a writer
+ * that forgot the stamp would leave a timer counting forever. Each pass reads
+ * a handful of scalars and writes only on a transition. Registered at module
+ * load, so it is the store's first listener: its nested `setState` lands
+ * before any component reads the change, and no render sees a busy tab
+ * without a start.
+ */
+function turnStartsOutOfStep(state: ChatState): boolean {
+  for (const session of Object.values(state.sessions)) {
+    if (isBusyAgentStatus(session.status) !== (session.turnStartedAt != null)) return true;
+  }
+  return false;
+}
+
+useChatStore.subscribe((state) => {
+  if (!turnStartsOutOfStep(state)) return;
+  const now = Date.now();
+  useChatStore.setState((s) => {
+    for (const session of Object.values(s.sessions)) {
+      const busy = isBusyAgentStatus(session.status);
+      if (busy && session.turnStartedAt == null) session.turnStartedAt = now;
+      else if (!busy && session.turnStartedAt != null) session.turnStartedAt = null;
+    }
+  });
+});
 
 // ── Draft-mutating helpers ────────────────────────────────────────────────
 //

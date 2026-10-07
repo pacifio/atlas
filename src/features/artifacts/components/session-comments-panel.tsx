@@ -163,7 +163,12 @@ export function CommentsPanelBase({
           value={filters.query}
           onChange={(e) => setFilters((f) => ({ ...f, query: e.target.value }))}
           onKeyDown={(e) => {
-            if (e.key === "Escape") setFilters((f) => ({ ...f, query: "" }));
+            // First Escape clears the search; only an empty box lets it
+            // through to whatever hosts the panel (which closes on it).
+            if (e.key === "Escape" && filters.query) {
+              e.preventDefault();
+              setFilters((f) => ({ ...f, query: "" }));
+            }
           }}
           placeholder="Search comments…"
           spellCheck={false}
@@ -284,7 +289,12 @@ const ThreadRow = memo(function ThreadRow({
         {thread.root.deletedAt ? (
           <span className="italic text-[var(--atlas-text-disabled)]">deleted this comment</span>
         ) : (
-          thread.root.body
+          // Mentions are stored as `<@user-id>`; the preview names them, as
+          // the thread itself does.
+          (thread.root.body ?? "").replace(
+            /<@([A-Za-z0-9_.:-]{1,128})>/g,
+            (_, id: string) => `@${directory.byId.get(id)?.name ?? id}`,
+          )
         )}
       </span>
 

@@ -59,6 +59,9 @@ export function groupMessages(messages: CommsMessage[], me: string): MessageGrou
       last &&
       previous &&
       last.authorId === m.author_id &&
+      // One webhook can post under many names ("CI", "Deploy"); the group head
+      // shows one, so a different name starts a new stack.
+      (previous.author_name ?? null) === (m.author_name ?? null) &&
       // A reply starts a new stack — the quoted parent needs its own head.
       !m.reply_to_id &&
       // A day boundary always starts a new stack. The day divider is drawn
@@ -142,8 +145,35 @@ export function dmCounterpart(
   return other ? (members.get(other) ?? null) : null;
 }
 
+/**
+ * What to call a member. The server can hold an account with no display name —
+ * an invite accepted from an email link and never completed — so the email
+ * stands in, as the web's members list labels such a row. Applied once, where
+ * the roster becomes `OrgMemberProfile`s, so every `member.name` reader (DM and
+ * contact rows, bylines, mentions, typing hints) gets a real label.
+ */
+export function memberName(
+  name: string | null | undefined,
+  email: string | null | undefined,
+): string {
+  return name?.trim() || email?.trim() || "Unknown";
+}
+
+/**
+ * Avatar initials. A label that is an email (see `memberName`) is read by its
+ * local part with any punctuation as a word break — `j.okonkwo@acme.dev` is
+ * "JO", as the web's `initialsOf` draws it, and `o'brien@acme.dev` is "OB" —
+ * not "J." or "O'" off the raw address. A local part with no letters or
+ * digits in it (`_@acme.dev`) falls back to the domain rather than to "?".
+ */
 export function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
+  let source = name.trim();
+  if (!/\s/.test(source) && source.includes("@")) {
+    const at = source.indexOf("@");
+    const words = (s: string) => s.replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+    source = words(source.slice(0, at)) || words(source.slice(at + 1));
+  }
+  const parts = source.split(/\s+/).filter(Boolean);
   if (parts.length === 0) return "?";
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();

@@ -155,7 +155,7 @@ const SYNTAX_MAP: &[(&str, &[&str])] = &[
 /// Zed style keys that exist, are understood, and have nowhere to go.
 /// Listed by prefix so the report can say *why* rather than "unknown".
 const IGNORED_PREFIXES: &[(&str, &str, &str)] = &[
-    ("icon", "icon roles", "Atlas icons take their colour from the text roles"),
+    ("icon", "icon roles", "Atlas icons take their color from the text roles"),
     ("players", "collaboration", "Atlas has no multiplayer cursors"),
     ("editor.wrap_guide", "editor furniture", "Atlas's editor draws no wrap guides"),
     ("editor.active_wrap_guide", "editor furniture", "Atlas's editor draws no wrap guides"),
@@ -187,15 +187,15 @@ const IGNORED_PREFIXES: &[(&str, &str, &str)] = &[
     ("panel.background", "app chrome", "Atlas's project rail follows the panel tokens"),
     ("scrollbar.track", "app chrome", "Atlas paints the scrollbar track transparent"),
     ("conflict", "vcs", "Atlas shows conflicts through the status tokens"),
-    ("renamed", "vcs", "Atlas has no renamed-file colour"),
-    ("ignored", "vcs", "Atlas has no ignored-file colour"),
-    ("hidden", "vcs", "Atlas has no hidden-file colour"),
-    ("unreachable", "vcs", "Atlas has no unreachable-code colour"),
-    ("predictive", "editor furniture", "Atlas has no inline-prediction colour"),
-    ("hint", "editor furniture", "Atlas has no inlay-hint colour"),
+    ("renamed", "vcs", "Atlas has no renamed-file color"),
+    ("ignored", "vcs", "Atlas has no ignored-file color"),
+    ("hidden", "vcs", "Atlas has no hidden-file color"),
+    ("unreachable", "vcs", "Atlas has no unreachable-code color"),
+    ("predictive", "editor furniture", "Atlas has no inline-prediction color"),
+    ("hint", "editor furniture", "Atlas has no inlay-hint color"),
     ("terminal.bright_foreground", "terminal", "Atlas has one terminal foreground"),
     ("terminal.dim_foreground", "terminal", "Atlas has one terminal foreground"),
-    ("terminal.ansi.dim", "terminal", "Atlas exposes the 16-colour ANSI set, not Zed's dim ramp"),
+    ("terminal.ansi.dim", "terminal", "Atlas exposes the 16-color ANSI set, not Zed's dim ramp"),
 ];
 
 pub(crate) fn import(
@@ -272,7 +272,7 @@ fn import_one(
 
     record_ignored(style, &mut report);
     report.note(
-        "Atlas's theme keys were modelled on Zed's roles, so the editor, terminal, syntax and diff colours transfer directly",
+        "Atlas's theme keys were modeled on Zed's roles, so the editor, terminal, syntax and diff colors transfer directly",
     );
     report.note(
         "Zed has no shadcn layer, so all 45 base tokens were derived from the style — check `primary`, `accent` and `card` first if the chrome looks off",
@@ -361,7 +361,7 @@ fn map_syntax(style: &Map<String, Value>, draft: &mut VariantDraft, report: &mut
         report.ignore(
             format!("syntax.{scope}.font_style"),
             "font styles",
-            "an Atlas theme key carries a colour only; the scope is imported with its colour and no italics",
+            "an Atlas theme key carries a color only; the scope is imported with its color and no italics",
         );
     }
     let unused = syntax.keys().filter(|scope| !used.contains(*scope)).count();

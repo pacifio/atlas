@@ -8,7 +8,6 @@ import { useAppStore } from "@/features/app/stores/app-store";
 import { AtlasIcon } from "@/components/atlas-icon";
 import {
   Globe,
-  CheckSquare,
   Terminal,
   Settings,
   PanelLeft,
@@ -161,13 +160,6 @@ export function CommandPalette({
         icon: Globe,
         category: "Open",
         action: () => openTab("browser", "Browser"),
-      },
-      {
-        id: "new-tasks",
-        label: "Task Board",
-        icon: CheckSquare,
-        category: "Open",
-        action: () => openTab("tasks", "Tasks"),
       },
       {
         id: "new-knowledge",

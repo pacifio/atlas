@@ -88,3 +88,28 @@ describe("mergeServerOrgs — reconciling names of already-linked orgs", () => {
     expect(useOrgStore.getState().activeOrganisationId).toBe("local-1");
   });
 });
+
+describe("unlinkOrg — after leaving the only org", () => {
+  it("drops the server link and sync, keeping the org and its identity", () => {
+    useOrgStore.setState({ organisations: [linked()], activeOrganisationId: "local-1" });
+
+    useOrgStore.getState().actions.unlinkOrg("local-1");
+
+    const [org] = useOrgStore.getState().organisations;
+    expect(org).toMatchObject({ id: "local-1", name: "Acme", syncEnabled: false });
+    expect(org.remoteId).toBeUndefined();
+    expect(useOrgStore.getState().activeOrganisationId).toBe("local-1");
+    expect(scheduleAppStateSave).toHaveBeenCalledTimes(1);
+  });
+
+  it("is a no-op for an org that is already local", () => {
+    const local: Org = { id: "local-2", name: "Scratch", slug: "scratch", syncEnabled: false };
+    const before = [local];
+    useOrgStore.setState({ organisations: before });
+
+    useOrgStore.getState().actions.unlinkOrg("local-2");
+
+    expect(useOrgStore.getState().organisations).toBe(before);
+    expect(scheduleAppStateSave).not.toHaveBeenCalled();
+  });
+});

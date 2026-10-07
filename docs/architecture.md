@@ -153,7 +153,7 @@ Streaming from Rust to the UI runs on Tauri events, `atlas:*` channels, most pay
 
 Atlas's agent stack is a port of Zed's, taken as a mechanism rather than rewritten. Two kinds of agent run behind one seam: the **native agent** — Atlas's own engine, a hard fork vendored under `vendor/atlas-engine` and reached through `crates/atlas-native-agent` (ADR-0003, ADR-0011), running in-process — and any number of **external ACP agents** — subprocesses speaking Agent Client Protocol (JSON-RPC over stdio). Nothing above the seam knows which it is talking to.
 
-**A fresh install has no ACP agents at all.** Only the native agent is offered. An external agent exists exactly when the user installed it from the Marketplace, which writes the single entry in the installed-agents map; nothing else makes an agent runnable. Finding a binary on `PATH` is a *detection* — an offer the user can accept, never a spawn candidate. See [ADR-0002](docs/adr/0002-no-default-acp-agents.md).
+**A fresh install has no ACP agents at all.** Only the native agent is offered. An external agent exists exactly when the user installed it from the Marketplace, which writes the single entry in the installed-agents map; nothing else makes an agent runnable. Finding a binary on `PATH` is a *detection* — an offer the user can accept, never a spawn candidate. See [ADR-0002](adr/0002-no-default-acp-agents.md).
 
 ### The seam: `AgentConnection`
 
@@ -198,7 +198,7 @@ Deltas return over the single `atlas:agents` channel, payload-typed by `kind`.
 
 ### Three invariants
 
-- **Atlas owns its history.** The sidebar reads the app-owned thread-metadata store (`crates/atlas-thread-metadata`, `threads.db`) and nothing else. Atlas does not read any agent CLI's private storage to build history — the per-agent scrape readers were deleted and must not come back. See [ADR-0001](docs/adr/0001-app-owned-thread-metadata-store.md), and `CONTEXT.md` for the thread/session/draft/archive vocabulary.
+- **Atlas owns its history.** The sidebar reads the app-owned thread-metadata store (`crates/atlas-thread-metadata`, `threads.db`) and nothing else. Atlas does not read any agent CLI's private storage to build history — the per-agent scrape readers were deleted and must not come back. See [ADR-0001](adr/0001-app-owned-thread-metadata-store.md), and `CONTEXT.md` for the thread/session/draft/archive vocabulary.
 - **A thread is not a session.** A *thread* is the conversation Atlas tracks, keyed by an id Atlas mints; it exists before any agent process and outlives one forgetting the session. A *session* is the agent-side conversation, keyed by an ACP session id. A thread references at most one session. Collapsing the two is the mistake the old `acpSessionId`-as-filename design made.
 - **Streams are tab-independent.** The projector owns the broadcast, not any UI component — concurrent prompts in several tabs keep streaming regardless of focus. Switching tabs resubscribes; no in-flight state is created, paused, or lost.
 
@@ -340,6 +340,7 @@ atlas/
 │   ├── atlas-profile              default vs dev data profile (directory names)
 │   └── atlas-kb-server            self-contained KB static-server binary
 │
+├── docs/                          architecture.md (this file), ADRs, reference
 ├── vendor/                        vendored source, workspace members
 │   └── atlas-engine                 the engine behind Atlas Agent (ADR-0004, ADR-0011)
 │
@@ -353,8 +354,7 @@ atlas/
 ├── LICENSE
 ├── README.md
 ├── CONTRIBUTING.md
-├── TELEMETRY.md
-└── ARCHITECTURE.md                (this file)
+└── TELEMETRY.md
 ```
 
 ## Gotchas

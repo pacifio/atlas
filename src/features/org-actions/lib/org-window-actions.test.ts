@@ -44,7 +44,7 @@ describe("org_page_write in the window", () => {
     chatOn("org-globex");
     const reply = await performOrgWindowAction(request("org-acme"));
     expect(reply.ok).toBe(false);
-    expect(!reply.ok && reply.error).toMatch(/not on this chat's organisation.*Nothing was drawn/);
+    expect(!reply.ok && reply.error).toMatch(/not on this chat's organization.*Nothing was drawn/);
     expect(writeSpacePage).not.toHaveBeenCalled();
   });
 

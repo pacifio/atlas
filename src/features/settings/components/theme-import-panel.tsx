@@ -56,7 +56,7 @@ const SOURCES: { id: Source; label: string; icon: typeof Upload }[] = [
 
 const PLACEHOLDER = [
   "Paste a shadcn registry item, a globals.css, a Zed theme family,",
-  "or a VS Code colour theme. The format is detected.",
+  "or a VS Code color theme. The format is detected.",
 ].join("\n");
 
 export function ThemeImportPanel({ themes, onClose, onImported }: Props) {

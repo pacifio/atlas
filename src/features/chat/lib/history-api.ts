@@ -48,6 +48,13 @@ export interface ThreadRow {
   /** Another process (typically `claude` in a terminal) wrote this session
    *  within the last ~90s and Atlas is not hosting it. Decided in Rust. */
   liveElsewhere: boolean;
+  /**
+   * The git branch the thread's working directory was on when it last started
+   * a turn (or was opened). `null` when Atlas never saw one — a detached HEAD,
+   * a folder outside any repository, or a row recorded before branches were.
+   * Never guessed.
+   */
+  branch: string | null;
 }
 
 /** One project's threads, as the sidebar groups them. */

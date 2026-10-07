@@ -1,4 +1,5 @@
 import { memo } from "react";
+import { Webhook } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { avatarHue, initials } from "../lib/derive";
 import type { OrgMemberProfile } from "../types";
@@ -71,6 +72,44 @@ export const CommsAvatar = memo(function CommsAvatar({
           )}
         />
       )}
+    </span>
+  );
+});
+
+/**
+ * An integration's face: a rounded square, not a circle, so it never reads as
+ * a person — the generated webhook glyph on a hue derived from the webhook's
+ * id. No presence dot: an integration is not somewhere.
+ *
+ * The webhook's uploaded picture (`author_avatar_hash`) lives in the server's
+ * media store behind the web session; the desktop has no fetch for it yet, so
+ * every integration draws the glyph, as the web does when there is no picture.
+ */
+export const IntegrationAvatar = memo(function IntegrationAvatar({
+  id,
+  name,
+  size = 24,
+}: {
+  id: string;
+  name: string;
+  size?: number;
+}) {
+  return (
+    <span
+      role="img"
+      aria-label={`${name} (app)`}
+      style={{
+        width: size,
+        height: size,
+        // ratchet-allow: an identity hue derived from the webhook id, the same
+        // derivation a member's initials use, not a theme colour.
+        backgroundColor: `hsl(${avatarHue(id)} 42% 40%)`,
+      }}
+      // ratchet-allow: the glyph rides on that identity hue, which is
+      // saturated at a fixed lightness; white is what reads on all of them.
+      className="inline-flex shrink-0 items-center justify-center rounded-md text-white/90"
+    >
+      <Webhook size={Math.round(size * 0.55)} strokeWidth={1.75} />
     </span>
   );
 });

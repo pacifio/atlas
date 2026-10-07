@@ -798,7 +798,7 @@ fn flatten_keys(
         } else {
             return Err(validation(
                 origin,
-                format!("{field}.{dotted} must be a colour or style"),
+                format!("{field}.{dotted} must be a color or style"),
             ));
         }
     }
@@ -817,7 +817,7 @@ fn parse_style(value: &toml::Value, key: &str) -> Result<Option<ThemeKeyStyle>, 
     };
     if table.contains_key("font_style") {
         return Err(format!(
-            "{key} sets font_style, which Atlas does not apply — a theme key is a colour. \
+            "{key} sets font_style, which Atlas does not apply — a theme key is a color. \
              Remove it; leaving it in would silently render upright."
         ));
     }
@@ -888,7 +888,7 @@ fn validate_variant(
     {
         return Err(validation(
             origin,
-            format!("unknown palette colour '{key}' in {appearance}"),
+            format!("unknown palette color '{key}' in {appearance}"),
         ));
     }
     for (key, value) in base {
@@ -902,7 +902,7 @@ fn validate_variant(
         } else if !is_css_color(value) {
             return Err(validation(
                 origin,
-                format!("{appearance}.base.{key} is not a CSS colour"),
+                format!("{appearance}.base.{key} is not a CSS color"),
             ));
         }
     }
@@ -910,7 +910,7 @@ fn validate_variant(
         if !is_css_color(value) {
             return Err(validation(
                 origin,
-                format!("{appearance}.palette.{key} is not a CSS colour"),
+                format!("{appearance}.palette.{key} is not a CSS color"),
             ));
         }
     }
@@ -918,7 +918,7 @@ fn validate_variant(
         if !is_css_color(value.color()) {
             return Err(validation(
                 origin,
-                format!("{appearance}.keys.{key} is not a CSS colour"),
+                format!("{appearance}.keys.{key} is not a CSS color"),
             ));
         }
     }

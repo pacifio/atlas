@@ -84,6 +84,14 @@ export interface Scenario {
    * declares a response type for.
    */
   commands?: Partial<TypedHandlers<MockResponses>>;
+  /**
+   * Overrides for commands no fixture has a `<Domain>Responses` type for yet —
+   * the boot commands written inline in `base.ts` and the catch-all
+   * `fixtures/misc.ts`. Untyped, so prefer `commands`; a scenario that has to
+   * restate the app's identity (its organisation, its projects, its version)
+   * has no other way in. `commands` wins when both name a command.
+   */
+  rawCommands?: MockHandlers;
   /** Runs synchronously at install, before any app code. Seed fake state here. */
   init?: () => void;
   /**

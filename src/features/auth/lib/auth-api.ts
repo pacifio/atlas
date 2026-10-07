@@ -186,9 +186,9 @@ export const auth = {
    *  caller should render an empty invitations tab rather than an error. */
   listInvitations: (orgId: string) => invoke<OrgInvitation[]>("auth_list_invitations", { orgId }),
   /**
-   * Invite by email. Email delivery is deferred server-side, so the resolved
-   * `acceptUrl` is the ONLY way the invitee learns of the invite — surface it
-   * for the inviter to copy.
+   * Invite by email. The server emails the invitee their accept link; the
+   * resolved `acceptUrl` is that same link, surfaced so the inviter can also
+   * copy and share it directly.
    */
   inviteMember: (orgId: string, email: string, role: Role) =>
     invoke<OrgInvitation>("auth_invite_member", { orgId, email, role }),
@@ -200,6 +200,12 @@ export const auth = {
   /** Remove a member. Re-broadcasts the snapshot — this can remove YOU. */
   removeMember: (orgId: string, memberIdOrEmail: string) =>
     invoke<void>("auth_remove_member", { orgId, memberIdOrEmail }),
+  /**
+   * Leave an org yourself. Any member but the Owner; the server also refuses
+   * the last admin. Re-broadcasts the snapshot without the org. Callers go
+   * through `leaveOrgAndData`, which also moves the desktop off the org.
+   */
+  leaveOrg: (orgId: string) => invoke<void>("auth_leave_org", { orgId }),
 };
 
 /**
@@ -224,6 +230,10 @@ export interface OrgMember {
   /** Absolute path to the cached photo, or `null` (no photo / fetch failed).
    *  Both render as initials. Feed it through `convertFileSrc`. */
   avatarPath: string | null;
+  /** The Organisation's Owner — the person who created it. Not a role: the
+   *  Owner also holds one (normally admin). The server refuses to remove the
+   *  Owner or let them leave. `false` when the server couldn't say. */
+  isOwner: boolean;
 }
 
 /** A pending/past invitation. Mirrors Rust `OrgInvitation`. */

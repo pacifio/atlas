@@ -6,15 +6,15 @@ If you're not sure where to begin, `#dev` on [Discord](https://discord.gg/GmnFgg
 
 ## Where to start
 
-[`good first issue`](https://github.com/pacifio/atlas/labels/good%20first%20issue) and [`help wanted`](https://github.com/pacifio/atlas/labels/help%20wanted) are labelled for exactly this.
+[`good first issue`](https://github.com/pacifio/atlas/labels/good%20first%20issue) and [`help wanted`](https://github.com/pacifio/atlas/labels/help%20wanted) are labeled for exactly this.
 
 Areas where help goes furthest right now:
 
-- **Linux and Windows testing** of the production bundle — terminal font, PATH resolution, general GUI behaviour.
+- **Linux and Windows testing** of the production bundle — terminal font, PATH resolution, general GUI behavior.
 - **More ACP agents.** `atlas-acp` already speaks the wire format, so adding Gemini CLI, OpenCode, or Kilo Code is mostly plugin discovery and auth.
 - **LSP support** for diagnostics and go-to-definition in the editor.
 - **MCP server integration** for tool-call extensibility.
-- **Themes** and additional colour palettes.
+- **Themes** and additional color palettes.
 
 ## Reporting a bug
 
@@ -36,7 +36,7 @@ Open a PR directly. No issue needed for typos, clarifications, or filling in som
 
 Open an issue first, or bring it to `#feature-requests` on [Discord](https://discord.gg/GmnFggaPfP).
 
-Most Atlas features cross three layers — React UI, a Tauri command, and a workspace crate — so agreeing the approach first saves you from building something that has to be restructured. [ARCHITECTURE.md](ARCHITECTURE.md) covers how those layers fit together.
+Most Atlas features cross three layers — React UI, a Tauri command, and a workspace crate — so agreeing the approach first saves you from building something that has to be restructured. [docs/architecture.md](docs/architecture.md) covers how those layers fit together.
 
 Match the patterns already in the codebase: feature folder under `src/features/<feature>/`, Zustand store wrapped in `createSelectors`, Tailwind composed through `cn()`, IPC verbs grouped into a single `commands/<domain>.rs`. If your change doesn't fit any of them, propose the structure in the issue.
 

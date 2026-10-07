@@ -106,7 +106,23 @@ export interface ChatMessage {
   /** Absent on a row written before references existed. */
   artifact_refs?: ChatSessionReference[];
   draft_id: string | null;
+  /**
+   * A person, or an incoming webhook (the server's `ChatAuthorKind`). For a
+   * webhook `author_id` is the webhook's id (`whk_…`), never a member: draw
+   * `author_name` with an App badge rather than looking the id up. Absent on
+   * a row from before integrations, which is a person's.
+   */
+  author_kind?: ChatAuthorKind;
+  /** The name a webhook message was posted under, frozen at post time. */
+  author_name?: string | null;
+  /** The webhook's own name at post time — "CI · via Deploy bot". */
+  author_via?: string | null;
+  /** The webhook's avatar (media-store hash) at post time, if it had one. */
+  author_avatar_hash?: string | null;
 }
+
+/** `other` is Rust's catch-all for a kind this build does not know. */
+export type ChatAuthorKind = "user" | "webhook" | "other";
 
 /** The server sends reaction ROWS, never aggregates — counts are derived. */
 export interface ChatReaction {
@@ -124,6 +140,23 @@ export interface ChatReadState {
 }
 
 export type CallMode = "audio" | "video";
+/**
+ * Which kind of call a start asks for: `mesh` is a free Voice Call (audio
+ * only, no guest link, peers capped by `mesh_call_max`), `rtk` a paid
+ * Meeting. The server reads a start that names neither as a Meeting.
+ */
+export type CallProvider = "mesh" | "rtk";
+
+/**
+ * `GET /features` (via `comms_features`): what the Organisation's plan
+ * allows. A hint for drawing the call buttons — every start is checked again
+ * server-side. `features` is open-ended: the server adds flags ahead of any
+ * given client.
+ */
+export interface ChatFeatures {
+  features: Record<string, boolean>;
+  mesh_call_max: number;
+}
 export type CallRecordingState =
   | "off"
   | "starting"

@@ -25,13 +25,14 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Popover } from "@base-ui/react/popover";
-import { Check, CornerDownLeft, Link2, Loader2, MessageSquare, Trash2 } from "lucide-react";
+import { Check, CornerDownLeft, Link2, Loader2, MessageSquare, Pencil, Trash2 } from "lucide-react";
 
 import { AccountAvatar } from "@/features/auth/components/account-avatar";
 import type { AccountUser, OrgMember } from "@/features/auth/lib/auth-api";
 import type { OrgDirectory } from "@/features/organisations/lib/use-org-directory";
 import { cn } from "@/lib/utils";
 
+import { toEditable, toWireBody } from "../lib/comment-edit";
 import { COMMENT_BODY_MAX, visibleCount, type AnchorKind, type Comment } from "../lib/comments-api";
 
 /** Everything the thread needs to talk to the server, supplied by the panel. */
@@ -44,6 +45,11 @@ export interface CommentActions {
   ) => Promise<void>;
   resolve: (commentId: string, resolved: boolean) => Promise<void>;
   remove: (commentId: string) => Promise<void>;
+  /**
+   * Replace your own comment's body. Optional, like the web's `patch`: a
+   * surface that cannot write edits simply draws no Edit.
+   */
+  edit?: (commentId: string, body: string) => Promise<void>;
   /**
    * Reference this comment in the agent chat composer, so the agent attends
    * to it. Only a surface with a composer to link into supplies it (the live
@@ -399,6 +405,21 @@ const CommentRow = memo(function CommentRow({
   onReply?: () => void;
 }) {
   const [busy, setBusy] = useState(false);
+  /** The body is open in a composer in place of the text. */
+  const [editing, setEditing] = useState(false);
+  const editButton = useRef<HTMLButtonElement | null>(null);
+  /** Leaving the edit hands focus back to the pencil that opened it, rather
+   *  than dropping it on the body when the field unmounts. */
+  const returnFocus = useRef(false);
+  const stopEditing = useCallback(() => {
+    returnFocus.current = true;
+    setEditing(false);
+  }, []);
+  useEffect(() => {
+    if (editing || !returnFocus.current) return;
+    returnFocus.current = false;
+    editButton.current?.focus();
+  }, [editing]);
   // A guest is never resolved against the roster, even if an id collides.
   const member = comment.guestName ? null : (directory.byId.get(comment.authorId) ?? null);
   // Never the raw id: an opaque key in a byline is not a name, and it is what
@@ -469,9 +490,21 @@ const CommentRow = memo(function CommentRow({
                 <Link2 size={11} />
               </button>
             )}
-            {/* Where the reference design puts an overflow menu. There is one
-             *  action behind it and only the author has it, so the menu would
-             *  be a click in front of a single item. */}
+            {/* Edit and delete are the author's alone — the server refuses
+             *  anyone else either way. Inline buttons rather than an overflow
+             *  menu: two actions are not worth a click in front of them. */}
+            {mine && !busy && !editing && actions.edit && (
+              <button
+                ref={editButton}
+                type="button"
+                aria-label="Edit comment"
+                title="Edit"
+                onClick={() => setEditing(true)}
+                className="flex shrink-0 cursor-pointer items-center rounded p-0.5 text-[var(--muted-foreground)] opacity-0 transition-colors hover:text-[var(--foreground)] focus-visible:opacity-100 group-hover/comment:opacity-100"
+              >
+                <Pencil size={11} />
+              </button>
+            )}
             {mine && !busy && (
               <button
                 type="button"
@@ -484,14 +517,38 @@ const CommentRow = memo(function CommentRow({
             )}
           </div>
 
-          <p className="mt-0.5 whitespace-pre-wrap break-words text-xs leading-snug text-[var(--secondary-foreground)]">
-            <Body text={comment.body ?? ""} directory={directory} />
-          </p>
+          {editing && actions.edit ? (
+            <div className="mt-1">
+              <Composer
+                placeholder="Edit comment…"
+                directory={directory}
+                autoFocus
+                ariaLabel="Edit comment"
+                initial={toEditable(comment.body ?? "", directory)}
+                onCancel={stopEditing}
+                onSend={async (text) => {
+                  // Saving what was already there is not an edit — no request,
+                  // and no "edited" marker for a change nobody made. Compared
+                  // as the person saw it: re-encoding an untouched body can
+                  // still differ from the stored one (a plain "@Ada" typed
+                  // before it was a mention would quietly become one).
+                  if (text.trim() !== toEditable(comment.body ?? "", directory).trim()) {
+                    await actions.edit?.(comment.id, toWireBody(text, directory).trim());
+                  }
+                  stopEditing();
+                }}
+              />
+            </div>
+          ) : (
+            <p className="mt-0.5 whitespace-pre-wrap break-words text-xs leading-snug text-[var(--secondary-foreground)]">
+              <Body text={comment.body ?? ""} directory={directory} />
+            </p>
+          )}
 
           {/* Root only. A reply has no actions of its own: the server refuses
            *  to re-parent one, so offering Reply here would promise a third
            *  level that cannot exist. */}
-          {isRoot && (
+          {isRoot && !editing && (
             <div className="mt-1 flex items-center gap-0.5">
               <Action
                 onClick={() => run(() => actions.resolve(comment.id, !resolved))}
@@ -580,13 +637,34 @@ function Composer({
   onSend,
   directory,
   autoFocus,
+  initial,
+  onCancel,
+  ariaLabel,
 }: {
   placeholder: string;
+  /** The field's accessible name. The placeholder vanishes once there is
+   *  text, which an edit always starts with. */
+  ariaLabel?: string;
   onSend: (body: string) => Promise<void>;
   directory: OrgDirectory;
   autoFocus?: boolean;
+  /** An existing body, for an edit. Its presence is what makes this one. */
+  initial?: string;
+  /** Escape. Only an edit has something to go back to. */
+  onCancel?: () => void;
 }) {
-  const [value, setValue] = useState("");
+  const editing = initial !== undefined;
+  const [value, setValue] = useState(initial ?? "");
+  const field = useRef<HTMLTextAreaElement | null>(null);
+  // An edit opens with the caret after the text, where a correction starts —
+  // not before the first word, where a bare focus leaves it.
+  useEffect(() => {
+    const el = field.current;
+    if (!editing || !el) return;
+    el.setSelectionRange(el.value.length, el.value.length);
+    // Mount only: the caret belongs to the person once they start typing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const me = directory.currentUserId ? directory.byId.get(directory.currentUserId) : null;
@@ -617,7 +695,9 @@ function Composer({
         {/* A placeholder rather than nothing when the roster has not resolved
          *  you: the field would otherwise jump left, and the rail measures
          *  against this element. */}
-        {me ? (
+        {/* An edit sits under the comment's own byline, so a second face
+         *  would only repeat it. */}
+        {editing ? null : me ? (
           <span className="shrink-0">
             <AccountAvatar user={avatarUser(me)} size={AVATAR_PX} />
           </span>
@@ -631,12 +711,21 @@ function Composer({
          *  right edge rather than stealing width from it. */}
         <div className="relative min-w-0 flex-1">
           <textarea
+            ref={field}
             value={value}
             autoFocus={autoFocus}
+            aria-label={ariaLabel ?? placeholder.replace(/…$/, "")}
             placeholder={placeholder}
             rows={1}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={(e) => {
+              if (e.key === "Escape" && onCancel) {
+                // Leave the edit without closing the popover around it.
+                e.preventDefault();
+                e.stopPropagation();
+                onCancel();
+                return;
+              }
               // Enter sends, Shift+Enter breaks the line — the chat composer's
               // rule, because this reads as chat.
               if (e.key === "Enter" && !e.shiftKey) {
@@ -657,7 +746,7 @@ function Composer({
            *  not a second way to do it. */}
           <button
             type="button"
-            aria-label="Send comment"
+            aria-label={editing ? "Save comment" : "Send comment"}
             disabled={!ready}
             onClick={send}
             className={cn(

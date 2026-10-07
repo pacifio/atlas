@@ -495,6 +495,36 @@ pub struct CallList {
     pub calls: Vec<crate::wire::Call>,
 }
 
+/// `GET /features`: the flags the server resolves for this Organisation.
+///
+/// `features` stays a map rather than named fields: the server adds flags
+/// ahead of any given client, and a key this build does not know must not
+/// fail the read. `calls.mesh` is a free Voice Call, `calls.paid` a billed
+/// Meeting (RealtimeKit). `mesh_call_max` is the most people one Voice Call
+/// admits; `0` means Voice Calls are not configured on this deployment.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub struct ChatFeatures {
+    #[serde(default)]
+    pub features: std::collections::BTreeMap<String, bool>,
+    #[serde(default)]
+    pub mesh_call_max: u32,
+}
+
+/// The `POST /calls` body. `provider` is sent only when named, so a start
+/// without one is byte-for-byte the request this client always made.
+fn start_call_body(
+    conv_id: &str,
+    mode: &str,
+    public: bool,
+    provider: Option<&str>,
+) -> serde_json::Value {
+    let mut body = serde_json::json!({ "conv_id": conv_id, "mode": mode, "public": public });
+    if let Some(provider) = provider {
+        body["provider"] = serde_json::Value::String(provider.to_owned());
+    }
+    body
+}
+
 impl RestClient {
     /// A conversation's prompt drafts, newest-updated first. Unpaginated by
     /// contract; a non-member's answer is the ordinary 404.
@@ -533,23 +563,40 @@ impl RestClient {
     /// desktop (the browser's call tab mints its own), and an unused mint
     /// burns a 30-minute reservation the server has no release route for.
     /// It must never cross the bridge, be stored, or be logged.
+    ///
+    /// `provider` is `"mesh"` for a free Voice Call or `"rtk"` for a paid
+    /// Meeting. **Leaving it out means a Meeting**: the server defaults a
+    /// missing provider to `rtk` so clients that predate Voice Calls keep
+    /// their behaviour, and an Organisation without `calls.paid` is refused.
+    /// A Voice Call start answers `200` with the call already live in the
+    /// conversation, if there is one, rather than making a second.
     pub async fn start_call(
         &self,
         org: &str,
         conv_id: &str,
         mode: &str,
         public: bool,
+        provider: Option<&str>,
     ) -> Result<crate::wire::Call> {
         #[derive(Deserialize)]
         struct Wrapper {
             call: crate::wire::Call,
             // `auth_token` intentionally absent: serde drops it unread.
         }
-        let body = serde_json::json!({ "conv_id": conv_id, "mode": mode, "public": public });
+        let body = start_call_body(conv_id, mode, public, provider);
         let w: Wrapper = self
             .json(reqwest::Method::POST, "/calls", org, Some(body))
             .await?;
         Ok(w.call)
+    }
+
+    /// The Organisation's effective platform features (`GET /features`,
+    /// ADR-0018): which call kinds its plan allows, and the Voice Call
+    /// ceiling. A hint for drawing buttons, never a permission — every start
+    /// is checked again server-side, so a stale answer costs a refusal.
+    pub async fn features(&self, org: &str) -> Result<ChatFeatures> {
+        self.json(reqwest::Method::GET, "/features", org, None)
+            .await
     }
 
     /// A call's transcript as CSV bytes. The route answers a 302 into a
@@ -874,5 +921,41 @@ impl RestClient {
         )
         .await?;
         Self::drain(res, &mut |_, _| {}).await
+    }
+}
+
+#[cfg(test)]
+mod call_tests {
+    use super::*;
+
+    #[test]
+    fn a_voice_call_names_its_provider() {
+        let body = start_call_body("c1", "audio", false, Some("mesh"));
+        assert_eq!(
+            body,
+            serde_json::json!({ "conv_id": "c1", "mode": "audio", "public": false, "provider": "mesh" })
+        );
+    }
+
+    #[test]
+    fn a_start_without_a_provider_keeps_the_old_body() {
+        let body = start_call_body("c1", "video", true, None);
+        assert_eq!(
+            body,
+            serde_json::json!({ "conv_id": "c1", "mode": "video", "public": true })
+        );
+    }
+
+    #[test]
+    fn features_tolerate_unknown_and_missing_keys() {
+        let parsed: ChatFeatures = serde_json::from_str(
+            r#"{"features":{"calls.paid":false,"calls.mesh":true,"some.future":true},"mesh_call_max":20}"#,
+        )
+        .unwrap();
+        assert_eq!(parsed.features.get("calls.mesh"), Some(&true));
+        assert_eq!(parsed.features.get("calls.paid"), Some(&false));
+        assert_eq!(parsed.mesh_call_max, 20);
+        let empty: ChatFeatures = serde_json::from_str("{}").unwrap();
+        assert_eq!(empty, ChatFeatures::default());
     }
 }

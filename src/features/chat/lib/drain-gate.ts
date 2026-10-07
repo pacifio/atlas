@@ -23,6 +23,16 @@
  * process is writing that the user has not said "Send anyway" to
  * (`curHeldElsewhere`, ADR-0001 amendment Rule 7). The gate's falling edge —
  * either cause clearing — is the release.
+ *
+ * The grant hold (`curGrantHold`) is the same shape for the native agent's
+ * no-AI-grant answer (`grantLocksComposer`). That answer can land mid-turn,
+ * and the lock waits for the turn to end so its Stop stays live — but a
+ * message queued during that turn would then drain at the turn's end straight
+ * into a gateway that refuses it. So the queue is held while the composer
+ * would be locked, and released on the hold's falling edge (a Refresh that
+ * finds a grant, an org switch to one that has it) on the SAME session. An
+ * agent switch is not that edge: its own bind (`justBound`) drains the queue
+ * into the new agent.
  */
 export interface DrainEdgeInput {
   prevStatus: string | null;
@@ -35,6 +45,9 @@ export interface DrainEdgeInput {
   /** Live elsewhere and not overridden: sending would fork the session. */
   prevHeldElsewhere?: boolean;
   curHeldElsewhere?: boolean;
+  /** The no-AI-grant answer would lock this composer once idle. */
+  prevGrantHold: boolean;
+  curGrantHold: boolean;
 }
 
 export interface DrainEdge {
@@ -45,12 +58,14 @@ export interface DrainEdge {
   justResumed: boolean;
   /** A real turn ended on a bound session. */
   turnFinished: boolean;
+  /** The grant hold lifted on an idle, bound session. */
+  grantReleased: boolean;
   /** Whether the queue may shift its head into `handleSend` on this edge. */
   drainQueue: boolean;
 }
 
 export function drainEdge(input: DrainEdgeInput): DrainEdge {
-  const { prevStatus, curStatus, prevAcp, curAcp } = input;
+  const { prevStatus, curStatus, prevAcp, curAcp, prevGrantHold, curGrantHold } = input;
   const prevGated = input.prevResuming || !!input.prevHeldElsewhere;
   const curGated = input.curResuming || !!input.curHeldElsewhere;
   const justBound = !prevAcp && !!curAcp && !curGated;
@@ -58,10 +73,18 @@ export function drainEdge(input: DrainEdgeInput): DrainEdge {
   // `curAcp` is the gate: with no session there is nothing a turn could
   // have finished on, and nothing the next message could go to.
   const turnFinished = prevStatus === "running" && curStatus !== "running" && !!curAcp && !curGated;
+  const grantReleased =
+    prevGrantHold &&
+    !curGrantHold &&
+    !!curAcp &&
+    prevAcp === curAcp &&
+    curStatus !== "running" &&
+    !curGated;
   return {
     justBound,
     justResumed,
     turnFinished,
-    drainQueue: turnFinished || justBound || justResumed,
+    grantReleased,
+    drainQueue: !curGrantHold && (turnFinished || justBound || justResumed || grantReleased),
   };
 }

@@ -8,23 +8,120 @@ import { copyText } from "@/lib/clipboard";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/ui/tooltip";
 import { comms, parseRefusal } from "../lib/comms-api";
 import { copyShareLink, memberCallUrl, shareUrl } from "../lib/call-links";
+import { callButtonPlan, NO_CALLS_REASON, NO_MEETINGS_REASON } from "../lib/call-plan";
+import { useCallFeatures } from "../lib/use-call-features";
 import { useCommsStore } from "../stores/comms-store";
-import type { CallMode } from "../types";
+import type { CallMode, CallProvider } from "../types";
+
+/** One row of the start menu: what it starts, and how it reads. */
+interface StartOption {
+  key: string;
+  provider: CallProvider;
+  isPublic: boolean;
+  guestIcon: boolean;
+  label: string;
+  sub: string;
+}
+
+/**
+ * The rows a header button offers, per {@link callButtonPlan}. The phone is a
+ * free Voice Call (`mesh`) wherever the plan has one, with an audio Meeting
+ * behind it only for its guest link; the camera is always a Meeting (`rtk`).
+ * `null` means the plan rules this button out.
+ */
+function startOptions(
+  mode: CallMode,
+  plan: ReturnType<typeof callButtonPlan>,
+  meshMax: number | null,
+): StartOption[] | null {
+  if (mode === "video") {
+    if (!plan.video) return null;
+    return [
+      {
+        key: "channel",
+        provider: "rtk",
+        isPublic: false,
+        guestIcon: false,
+        label: "Call channel",
+        sub: "Start a video call for members",
+      },
+      {
+        key: "guests",
+        provider: "rtk",
+        isPublic: true,
+        guestIcon: true,
+        label: "Call with guests",
+        sub: "Anyone with the link can knock",
+      },
+    ];
+  }
+  if (plan.phone === null) return null;
+  if (plan.phone.kind === "voice") {
+    const rows: StartOption[] = [
+      {
+        key: "voice",
+        provider: "mesh",
+        isPublic: false,
+        guestIcon: false,
+        label: "Start voice call",
+        sub: `Members of this conversation${meshMax ? `, up to ${meshMax}` : ""}`,
+      },
+    ];
+    if (plan.phone.guestMeeting) {
+      rows.push({
+        key: "guests",
+        provider: "rtk",
+        isPublic: true,
+        guestIcon: true,
+        label: "Meeting with guest link",
+        sub: "People outside Atlas knock; a host lets them in",
+      });
+    }
+    return rows;
+  }
+  return [
+    {
+      key: "channel",
+      provider: "rtk",
+      isPublic: false,
+      guestIcon: false,
+      label: "Call channel",
+      sub: "Start a call for members",
+    },
+    {
+      key: "guests",
+      provider: "rtk",
+      isPublic: true,
+      guestIcon: true,
+      label: "Call with guests",
+      sub: "Anyone with the link can knock",
+    },
+  ];
+}
 
 /**
  * One header call button (audio or video): a blur menu, never an instant
- * dial. Two rows — call the channel, or call with a guest link. Starting
- * shows its progress in the row, then hands the user to the web call tab
- * (which mints its own join token; the desktop deliberately discards the
- * one the start answered — an unused mint burns a 30-minute reservation).
+ * dial. What the rows start follows the Organisation's plan, as the web
+ * client draws it (`callButtonPlan`): the phone starts a free Voice Call, and
+ * Meetings — the camera, and the phone's guest-link row — need `calls.paid`.
+ * A button the plan rules out is drawn disabled with the reason on hover.
+ *
+ * Every start names its `provider`: the server reads a start without one as
+ * a paid Meeting, so an Organisation without Meetings was refused on both
+ * buttons and could only start a Voice Call from the web.
+ *
+ * Starting shows its progress in the row, then hands the user to the web
+ * call tab (which mints its own join token; the desktop deliberately discards
+ * the one a Meeting start answered — an unused mint burns a 30-minute
+ * reservation).
  *
  * If a live call already exists in this conversation, the rows become
- * Join / Copy link instead: the server runs no one-live-call check, and a
- * second start would be a second billable room.
+ * Join / Copy link instead: a second Meeting start would be a second
+ * billable room (a second Voice Call start answers with the live one).
  */
 export function CallMenu({ convId, mode }: { convId: string; mode: CallMode }) {
   const [open, setOpen] = useState(false);
-  const [pending, setPending] = useState<"channel" | "guests" | null>(null);
+  const [pending, setPending] = useState<string | null>(null);
   const orgId = useCommsStore((s) => s.connection.orgId);
   const liveCall = useCommsStore((s) => {
     for (const call of Object.values(s.calls)) {
@@ -32,22 +129,29 @@ export function CallMenu({ convId, mode }: { convId: string; mode: CallMode }) {
     }
     return undefined;
   });
+  const features = useCallFeatures(orgId);
+  const options = startOptions(
+    mode,
+    callButtonPlan(features?.features),
+    features?.mesh_call_max ?? null,
+  );
 
   const Icon = mode === "video" ? Video : Phone;
-  const noun = mode === "video" ? "video call" : "call";
+  const label = mode === "video" ? "Start video call" : "Start voice call";
 
-  const start = async (withGuests: boolean) => {
+  const start = async (option: StartOption) => {
     if (pending || !orgId) return;
-    setPending(withGuests ? "guests" : "channel");
+    setPending(option.key);
     try {
-      const call = await comms.startCall(convId, mode, withGuests);
+      const call = await comms.startCall(convId, mode, option.isPublic, option.provider);
       // Copy first: the guest door when one was minted, else the member URL.
       const copied = await copyText(shareUrl(orgId, call));
       // Then hand this user to the call itself, always via the member page.
       await openUrl(memberCallUrl(orgId, call.id)).catch(() => {
         toast.error("Could not open your browser — the link is on your clipboard.");
       });
-      toast.success(copied ? "Call started — link copied." : "Call started.");
+      const what = option.provider === "mesh" ? "Voice call" : "Call";
+      toast.success(copied ? `${what} started — link copied.` : `${what} started.`);
       setOpen(false);
     } catch (e) {
       const refusal = parseRefusal(e);
@@ -56,6 +160,32 @@ export function CallMenu({ convId, mode }: { convId: string; mode: CallMode }) {
       setPending(null);
     }
   };
+
+  // Ruled out by the plan, and nothing live to join: a disabled button that
+  // says why. `aria-disabled` rather than `disabled`, because a disabled
+  // button fires no pointer events and the tooltip would never show.
+  if (options === null && !liveCall) {
+    const reason = mode === "video" ? NO_MEETINGS_REASON : NO_CALLS_REASON;
+    return (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              aria-disabled="true"
+              aria-label={`${label} — ${reason}`}
+              className="flex h-7 w-7 shrink-0 cursor-not-allowed items-center justify-center rounded-md text-muted-foreground opacity-50"
+            >
+              <Icon size={13} />
+            </button>
+          }
+        />
+        <TooltipContent side="bottom" sideOffset={4}>
+          {reason}
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
 
   return (
     <Popover.Root
@@ -75,7 +205,7 @@ export function CallMenu({ convId, mode }: { convId: string; mode: CallMode }) {
               render={
                 <button
                   type="button"
-                  aria-label={mode === "video" ? "Start video call" : "Start voice call"}
+                  aria-label={label}
                   className={cn(
                     "flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors",
                     open
@@ -90,7 +220,7 @@ export function CallMenu({ convId, mode }: { convId: string; mode: CallMode }) {
           }
         />
         <TooltipContent side="bottom" sideOffset={4}>
-          {mode === "video" ? "Start video call" : "Start voice call"}
+          {label}
         </TooltipContent>
       </Tooltip>
       <Popover.Portal>
@@ -122,34 +252,24 @@ export function CallMenu({ convId, mode }: { convId: string; mode: CallMode }) {
                   />
                 </>
               ) : (
-                <>
+                (options ?? []).map((option) => (
                   <MenuRow
+                    key={option.key}
                     icon={
-                      pending === "channel" ? (
+                      pending === option.key ? (
                         <Loader2 size={12} className="animate-spin" />
+                      ) : option.guestIcon ? (
+                        <Users size={12} />
                       ) : (
                         <Icon size={12} />
                       )
                     }
-                    label={pending === "channel" ? "Starting…" : `Call channel`}
-                    sub={`Start a ${noun} for members`}
+                    label={pending === option.key ? "Starting…" : option.label}
+                    sub={option.sub}
                     disabled={pending !== null}
-                    onClick={() => void start(false)}
+                    onClick={() => void start(option)}
                   />
-                  <MenuRow
-                    icon={
-                      pending === "guests" ? (
-                        <Loader2 size={12} className="animate-spin" />
-                      ) : (
-                        <Users size={12} />
-                      )
-                    }
-                    label={pending === "guests" ? "Starting…" : "Call with guests"}
-                    sub="Anyone with the link can knock"
-                    disabled={pending !== null}
-                    onClick={() => void start(true)}
-                  />
-                </>
+                ))
               )}
             </div>
           </Popover.Popup>

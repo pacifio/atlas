@@ -149,6 +149,14 @@ export function useSessionComments(
         // so whichever lands second is a no-op replacement.
         setThreads((current) => applyComment(current, posted));
       },
+      // Author only — the server refuses anyone else (`forbidden`), and the
+      // thread only offers it on your own comments. It stamps `editedAt`,
+      // which is what draws the "edited" marker.
+      edit: async (commentId: string, body: string) => {
+        if (!shared) return;
+        const updated = await api.update(remoteProjectId, sessionId, commentId, { body });
+        setThreads((current) => applyComment(current, updated));
+      },
       resolve: async (commentId: string, resolved: boolean) => {
         if (!shared) return;
         const updated = await api.update(remoteProjectId, sessionId, commentId, { resolved });

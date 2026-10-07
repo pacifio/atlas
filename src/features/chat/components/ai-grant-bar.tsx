@@ -38,7 +38,7 @@ const ACTION = COMPOSER_STRIP_ACTION;
 /** Where "Request" goes. The one place that can actually issue a grant. */
 const GRANT_REQUEST_URL = "https://credits.tryatlas.cc/";
 
-export function AiGrantBar() {
+export function AiGrantBar({ turnRunning = false }: { turnRunning?: boolean }) {
   const snapshot = useAuthStore((s) => s.snapshot);
   // `AuthSnapshot` is a discriminated union — the orgs only exist on the
   // signed-in arm, which is also the only arm this bar renders under.
@@ -93,6 +93,9 @@ export function AiGrantBar() {
   }, []);
 
   if (dismissed) return null;
+  // A running turn was admitted before the answer said no; the bar and the
+  // composer lock wait for it to end (`grantLocksComposer` says why).
+  if (turnRunning) return null;
 
   // A local organisation: not a grant that is missing, a link that is. The
   // native agent bills an org the gateway knows, and this one only exists on
@@ -103,11 +106,11 @@ export function AiGrantBar() {
       <div
         data-testid="ai-grant-bar"
         className={STRIP}
-        title="Atlas Agent works with organisations synced to your account"
+        title="Atlas Agent works with organizations synced to your account"
       >
         <span className="min-w-0 truncate">
           <span className="font-semibold text-[var(--foreground)]">
-            {orgName ?? "This organisation"}
+            {orgName ?? "This organization"}
           </span>
           <span className="text-[var(--muted-foreground)]">
             {" "}
@@ -122,8 +125,8 @@ export function AiGrantBar() {
             disabled={syncing}
             title={
               account
-                ? "Create this organisation in your Atlas account"
-                : "Sign in to sync this organisation"
+                ? "Create this organization in your Atlas account"
+                : "Sign in to sync this organization"
             }
             className={cn(ACTION, syncing ? "cursor-default" : "cursor-pointer")}
           >
@@ -150,7 +153,7 @@ export function AiGrantBar() {
     <div data-testid="ai-grant-bar" className={STRIP} title={entitlement.message}>
       <span className="min-w-0 truncate">
         <span className="font-semibold text-[var(--foreground)]">
-          {orgName ?? "This organisation"}
+          {orgName ?? "This organization"}
         </span>
         <span className="text-[var(--muted-foreground)]"> doesn&apos;t have AI grants</span>
       </span>
@@ -170,7 +173,7 @@ export function AiGrantBar() {
         <button
           type="button"
           onClick={onRequest}
-          title="Request AI credits for your organisation"
+          title="Request AI credits for your organization"
           className={cn(ACTION, "cursor-pointer")}
         >
           <MoveUpRight size={11} />

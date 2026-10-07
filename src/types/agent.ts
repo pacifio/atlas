@@ -222,6 +222,12 @@ export interface ChatSession {
    *  the guard against premature "done" under parallel / queued / wake timing.
    *  Absent (or 0) for the native agent, which is treated as current. */
   currentTurnSeq?: number;
+  /** When (ms epoch) this tab's current turn started: stamped once as the
+   *  status enters a busy state (running/waiting) and cleared to null when it
+   *  leaves one. The sidebar's "Working 3m" timer reads this scalar instead of
+   *  scanning messages, so a resume, replay or queued message cannot reset it.
+   *  Maintained centrally by the chat store (`syncTurnStarts`). */
+  turnStartedAt?: number | null;
   /** The current turn's live plan (ACP `plan` / TodoWrite), mirrored here from
    *  the trailing assistant message so the docked plan panel above the composer
    *  can select it with one narrow read instead of scanning `messages` every

@@ -407,7 +407,8 @@ impl Message {
 ///
 /// Recording this costs nothing — ACP supplies it — and it makes "what did the
 /// agent try that didn't work" answerable, which is often the most useful
-/// question about a Session and a facet Entire's UI cannot offer at all.
+/// question about a Session — and one a record of only the final diff cannot
+/// answer at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolStatus {

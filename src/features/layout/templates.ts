@@ -74,7 +74,7 @@ export const LAYOUT_TEMPLATES: LayoutTemplate[] = [
   {
     id: "usage",
     name: "Usage",
-    description: "Organisation token usage and cost.",
+    description: "Organization token usage and cost.",
     panels: {},
     columns: [{ type: "usage", title: "Usage" }],
   },

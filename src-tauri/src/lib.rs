@@ -453,6 +453,7 @@ pub fn run() {
             commands::comms::comms_save_attachment,
             commands::comms::comms_call_recordings,
             commands::comms::comms_start_call,
+            commands::comms::comms_features,
             commands::comms::comms_save_transcript,
             commands::comms::comms_save_recording,
             commands::comms::comms_status,
@@ -504,6 +505,7 @@ pub fn run() {
             commands::auth::auth_cancel_invitation,
             commands::auth::auth_update_member_role,
             commands::auth::auth_remove_member,
+            commands::auth::auth_leave_org,
             commands::auth::auth_refresh,
             commands::auth::auth_delete_org,
             commands::window::window_zoom,
@@ -565,6 +567,7 @@ pub fn run() {
             commands::git::git_checkout,
             commands::git::git_create_branch,
             commands::git::git_blame_file,
+            commands::git_pr::git_repo_pull_requests,
             commands::git::git_graph_signature,
             commands::git_graph::git_graph_build,
             // Extended source-control manager operations.

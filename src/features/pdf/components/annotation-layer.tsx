@@ -6,6 +6,7 @@ import {
   type PdfAnnotation,
   type Point,
 } from "../stores/pdf-annotation-store";
+import { highlightRect, type LineBand } from "../lib/highlight-rect";
 
 interface AnnotationLayerProps {
   pdfPath: string;
@@ -23,7 +24,6 @@ interface Draft {
 }
 
 const HIGHLIGHT_OPACITY = 0.32;
-const MIN_HIGHLIGHT = 0.005; // ignore stray taps
 
 /**
  * SVG annotation overlay for a single rendered PDF page. Geometry is stored
@@ -93,20 +93,45 @@ export function AnnotationLayer({ pdfPath, page, pageW, pageH }: AnnotationLayer
     }
   };
 
+  /** The page's text runs, normalized — read from react-pdf's text layer,
+   *  which sits beside this overlay in the same page wrapper. Only the leaf
+   *  runs: a tagged PDF wraps them in `span.markedContent` containers whose
+   *  box is a whole paragraph, and one of those under the stroke would turn
+   *  a line highlight into a paragraph one. */
+  const textRuns = (): LineBand[] => {
+    const svg = svgRef.current;
+    const pageEl = svg?.closest("[data-page-number]");
+    if (!svg || !pageEl) return [];
+    const r = svg.getBoundingClientRect();
+    if (r.height === 0 || r.width === 0) return [];
+    const runs: LineBand[] = [];
+    for (const span of pageEl.querySelectorAll<HTMLElement>(
+      ".textLayer span:not(.markedContent)",
+    )) {
+      if (!span.textContent?.trim()) continue;
+      const s = span.getBoundingClientRect();
+      if (s.height === 0 || s.width === 0) continue;
+      runs.push({
+        top: (s.top - r.top) / r.height,
+        bottom: (s.bottom - r.top) / r.height,
+        left: (s.left - r.left) / r.width,
+        right: (s.right - r.left) / r.width,
+      });
+    }
+    return runs;
+  };
+
   const onPointerUp = () => {
     if (!draft) return;
-    if (
-      draft.kind === "highlight" &&
-      draft.rect &&
-      draft.rect.w > MIN_HIGHLIGHT &&
-      draft.rect.h > MIN_HIGHLIGHT
-    ) {
+    const rect =
+      draft.kind === "highlight" && draft.rect ? highlightRect(draft.rect, textRuns()) : null;
+    if (rect) {
       add(pdfPath, {
         id: newAnnotationId(),
         kind: "highlight",
         page,
         color,
-        rect: draft.rect,
+        rect,
         createdAt: new Date().toISOString(),
       });
     } else if (draft.kind === "pencil" && draft.points && draft.points.length > 1) {
@@ -130,6 +155,12 @@ export function AnnotationLayer({ pdfPath, page, pageW, pageH }: AnnotationLayer
     (a): a is Extract<PdfAnnotation, { kind: "note" }> => a.kind === "note",
   );
   const selectedNote = notes.find((n) => n.id === selectedId);
+  // While dragging, a flat stroke previews as a nominal line band (the text
+  // snap happens on release) so the stroke is visible as it is drawn.
+  const draftRect =
+    draft?.kind === "highlight" && draft.rect
+      ? (highlightRect(draft.rect, []) ?? draft.rect)
+      : null;
 
   return (
     // `z-panel` (10) sits ABOVE react-pdf's text layer (z-index: 2) so the drawing
@@ -189,12 +220,12 @@ export function AnnotationLayer({ pdfPath, page, pageW, pageH }: AnnotationLayer
         })}
 
         {/* In-progress draft */}
-        {draft?.kind === "highlight" && draft.rect && (
+        {draftRect && (
           <rect
-            x={draft.rect.x * pageW}
-            y={draft.rect.y * pageH}
-            width={draft.rect.w * pageW}
-            height={draft.rect.h * pageH}
+            x={draftRect.x * pageW}
+            y={draftRect.y * pageH}
+            width={draftRect.w * pageW}
+            height={draftRect.h * pageH}
             fill={color}
             opacity={HIGHLIGHT_OPACITY}
           />

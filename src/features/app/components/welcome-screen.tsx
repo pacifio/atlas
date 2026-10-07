@@ -10,6 +10,9 @@ import { Hint } from "@/ui/tooltip";
 
 export function WelcomeScreen() {
   const paletteHint = useActionShortcut("nav.commandPalette")?.label ?? "⌘K";
+  // "Open Folder" is the same pick-a-folder-and-add-it flow as the
+  // `workspace.add` action, so show that action's live chord (hidden if unbound).
+  const openFolderHint = useActionShortcut("workspace.add")?.label;
   const allRecents = useAppStore.use.recentProjects();
   const activeOrgId = useOrgStore.use.activeOrganisationId();
   const projects = useProjectStore.use.projects();
@@ -40,7 +43,7 @@ export function WelcomeScreen() {
         <div className="text-center space-y-2">
           <AtlasIcon size={64} className="mx-auto mb-4 rounded-2xl" />
           <h1 className="text-xl font-semibold text-[var(--foreground)]">Atlas</h1>
-          <p className="text-sm text-[var(--secondary-foreground)]">The second brain IDE</p>
+          <p className="text-sm text-[var(--secondary-foreground)]">Multiplayer AI development</p>
         </div>
 
         {/* Primary action */}
@@ -50,7 +53,11 @@ export function WelcomeScreen() {
         >
           <FolderOpen size={14} className="text-[var(--primary)] shrink-0" />
           <span className="text-sm font-medium text-[var(--foreground)]">Open Folder</span>
-          <span className="text-2xs text-[var(--muted-foreground)] ml-auto font-mono">⌘O</span>
+          {openFolderHint && (
+            <span className="text-2xs text-[var(--muted-foreground)] ml-auto font-mono">
+              {openFolderHint}
+            </span>
+          )}
         </button>
 
         {/* Recent projects */}

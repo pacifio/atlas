@@ -455,7 +455,7 @@ impl EngineSettings {
 
         if self.provider.wire == WireDialect::Chat {
             let Some(catalogue) = catalogue else {
-                anyhow::bail!("the gateway dialect needs a model catalogue and none was resolved");
+                anyhow::bail!("the gateway dialect needs a model catalog and none was resolved");
             };
             // Written before the config is loaded, not after: `model_catalog_json`
             // names a path the loader reads immediately, and a missing file is a
@@ -816,7 +816,7 @@ mod tests {
         let Err(err) = s.build_config(None).await else {
             panic!("the gateway dialect must not load with no catalogue");
         };
-        assert!(err.to_string().contains("catalogue"), "{err:#}");
+        assert!(err.to_string().contains("catalog"), "{err:#}");
         assert!(
             !s.home.path().join("models.json").exists(),
             "and it must not have written an empty file for the engine to trip on",

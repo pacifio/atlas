@@ -41,10 +41,10 @@ skills-lock.json
 !README.md
 !TELEMETRY.md
 !CONTRIBUTING.md
-!ARCHITECTURE.md
 !.github/SECURITY.md
 !.github/CODE_OF_CONDUCT.md
 !CONTEXT.md
+!docs/architecture.md
 !docs/adr/*.md
 !docs/archive/*.md
 !docs/archive/radix-to-base-ui/*.md
