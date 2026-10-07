@@ -90,7 +90,7 @@ fn bfs_terminates_on_cycles_and_caps_rows() {
     let ix = p.built();
     let (hits, _) = ix.related(&q("ping", Relation::Callers, 3)).unwrap();
     assert_eq!(hits.len(), 1, "pong once, not a loop: {hits:?}");
-    assert!(crate::MAX_ROWS >= 1000);
+    const { assert!(crate::MAX_ROWS >= 1000) };
 }
 
 #[test]

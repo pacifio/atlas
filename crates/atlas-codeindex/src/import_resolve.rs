@@ -12,7 +12,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use crate::rust_crates::{join_rel, module_tree, parent_dir, CrateGraph};
+use crate::rust_crates::{join_rel, module_tree, parent_dir, CrateGraph, Libs};
 use crate::universe::{family, Universe, GO, PY, RUST, TS};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -129,8 +129,8 @@ fn py_init_dirs(u: &Universe) -> HashSet<String> {
     // parent's verdict.
     let mut nested: Vec<&str> = py()
         .flat_map(|f| {
-            std::iter::successors(Some(parent_dir(&f.rel)), |d| {
-                (!d.is_empty()).then(|| parent_dir(*d))
+            std::iter::successors(Some(parent_dir(&f.rel)), |&d| {
+                (!d.is_empty()).then(|| parent_dir(d))
             })
         })
         .filter(|d| !d.is_empty())
@@ -305,7 +305,7 @@ impl<'u> ReexportGraph<'u> {
 /// Absolute module path segments for a Rust path used in a file whose module is `module`.
 pub(crate) fn rust_abs(
     u: &Universe,
-    libs: &BTreeSet<String>,
+    libs: &Libs,
     module: &str,
     segs: &[&str],
 ) -> Option<Vec<String>> {
@@ -348,8 +348,11 @@ pub(crate) fn rust_abs(
                 let mut v = owned(&mods);
                 v.extend(owned(segs));
                 Some(v)
-            } else if libs.contains(first) {
-                Some(owned(segs))
+            } else if let Some(lib) = libs.get(first) {
+                // A renamed dependency (`alpha2::x`) is its library's path (`alpha::x`).
+                let mut v = owned(segs);
+                v[0].clone_from(lib);
+                Some(v)
             } else {
                 None
             }
@@ -370,13 +373,7 @@ pub(crate) fn rust_longest_module(
     })
 }
 
-fn rust_target(
-    u: &Universe,
-    libs: &BTreeSet<String>,
-    module: &str,
-    path: &str,
-    local: &str,
-) -> ImportTarget {
+fn rust_target(u: &Universe, libs: &Libs, module: &str, path: &str, local: &str) -> ImportTarget {
     let segs: Vec<&str> = path.split("::").filter(|s| !s.is_empty()).collect();
     let Some(abs) = rust_abs(u, libs, module, &segs) else {
         return ImportTarget::default();

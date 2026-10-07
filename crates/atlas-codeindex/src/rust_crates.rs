@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -15,6 +16,12 @@ use serde::{Deserialize, Serialize};
 use crate::graph_extract::RawMod;
 
 const CARGO_TIMEOUT: Duration = Duration::from_secs(20);
+/// How deep below the project root a workspace's `Cargo.toml` is looked for.
+const MANIFEST_DEPTH: usize = 4;
+
+/// The names a Rust path can start with to reach a workspace library, each
+/// mapped to that library's own name (see [`CrateGraph::lib_names`]).
+pub(crate) type Libs = BTreeMap<String, String>;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct CrateRoot {
@@ -30,13 +37,19 @@ pub struct CrateRoot {
 pub struct CrateGraph {
     /// Sorted: libs first, then by name, then by root file.
     pub roots: Vec<CrateRoot>,
+    /// Renamed dependencies on a workspace library (`alpha2 = { package =
+    /// "alpha" }`): the name paths use (`alpha2`) → the library's (`alpha`).
+    #[serde(default)]
+    pub aliases: BTreeMap<String, String>,
 }
 
 impl CrateGraph {
-    /// Crate roots for every Cargo project at `root` or one directory below it (a Tauri app's
-    /// `src-tauri/`). `cargo metadata` first, manifests as the fallback.
+    /// Crate roots for every Cargo project at `root` or below it (a Tauri app's `src-tauri/`,
+    /// a workspace in `rust/ws/`; see [`top_manifests`]). `cargo metadata` first, manifests
+    /// as the fallback.
     pub fn discover(root: &Path) -> CrateGraph {
         let mut roots = BTreeSet::new();
+        let mut aliases = BTreeMap::new();
         for manifest in top_manifests(root) {
             let graph = cargo_metadata(&manifest)
                 .and_then(|json| CrateGraph::from_metadata_json(&json, root))
@@ -45,8 +58,26 @@ impl CrateGraph {
                     CrateGraph::from_manifests(root, dir)
                 });
             roots.extend(graph.roots);
+            aliases.extend(graph.aliases);
         }
-        CrateGraph::from_roots(roots)
+        CrateGraph::from_roots(roots).with_aliases(aliases)
+    }
+
+    /// Keeps the aliases that name a library of this graph and are not one's
+    /// own name.
+    fn with_aliases(mut self, aliases: BTreeMap<String, String>) -> CrateGraph {
+        let libs: BTreeSet<&str> = self
+            .roots
+            .iter()
+            .filter(|r| r.is_lib)
+            .map(|r| r.name.as_str())
+            .collect();
+        let aliases = aliases
+            .into_iter()
+            .filter(|(alias, lib)| !libs.contains(alias.as_str()) && libs.contains(lib.as_str()))
+            .collect();
+        self.aliases = aliases;
+        self
     }
 
     fn from_roots(roots: impl IntoIterator<Item = CrateRoot>) -> CrateGraph {
@@ -58,7 +89,10 @@ impl CrateGraph {
         roots.sort_by(|a, b| {
             (!a.is_lib, &a.name, &a.root_rel).cmp(&(!b.is_lib, &b.name, &b.root_rel))
         });
-        CrateGraph { roots }
+        CrateGraph {
+            roots,
+            aliases: BTreeMap::new(),
+        }
     }
 
     /// Parse `cargo metadata --format-version 1` output. Targets outside `root` are dropped.
@@ -69,7 +103,16 @@ impl CrateGraph {
         }
         #[derive(Deserialize)]
         struct Package {
+            name: String,
             targets: Vec<Target>,
+            #[serde(default)]
+            dependencies: Vec<Dependency>,
+        }
+        #[derive(Deserialize)]
+        struct Dependency {
+            name: String,
+            #[serde(default)]
+            rename: Option<String>,
         }
         #[derive(Deserialize)]
         struct Target {
@@ -80,24 +123,27 @@ impl CrateGraph {
         let meta: Meta = serde_json::from_str(json).ok()?;
         let canon_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
         let mut roots = Vec::new();
-        for t in meta.packages.into_iter().flat_map(|p| p.targets) {
-            let src = t.src_path.canonicalize().unwrap_or(t.src_path);
-            let Ok(rel) = src.strip_prefix(&canon_root) else {
-                continue;
-            };
-            let is_lib = t.kind.iter().any(|k| {
-                matches!(
-                    k.as_str(),
-                    "lib" | "rlib" | "dylib" | "cdylib" | "staticlib" | "proc-macro"
-                )
-            });
-            roots.push(CrateRoot {
-                name: t.name.replace('-', "_"),
-                root_rel: rel_string(rel),
-                is_lib,
-            });
+        // Package name → its library's name, for renamed dependencies.
+        let mut lib_of: HashMap<String, String> = HashMap::new();
+        let mut renames: Vec<(String, String)> = Vec::new();
+        for p in meta.packages {
+            renames.extend(
+                p.dependencies
+                    .into_iter()
+                    .filter_map(|d| Some((d.rename?, d.name))),
+            );
+            let package = p.name;
+            for t in p.targets {
+                let Some(krate) = target_root(t.name, &t.kind, t.src_path, &canon_root) else {
+                    continue;
+                };
+                if krate.is_lib {
+                    lib_of.insert(package.clone(), krate.name.clone());
+                }
+                roots.push(krate);
+            }
         }
-        Some(CrateGraph::from_roots(roots))
+        Some(CrateGraph::from_roots(roots).with_aliases(aliases_of(renames, &lib_of)))
     }
 
     /// Fallback: read `<dir>/Cargo.toml` (+ workspace members) without cargo.
@@ -106,6 +152,8 @@ impl CrateGraph {
         let Some(top) = read_toml(&dir.join("Cargo.toml")) else {
             return CrateGraph::default();
         };
+        let mut lib_of: HashMap<String, String> = HashMap::new();
+        let mut renames = renamed_dependencies(&top);
         let mut package_dirs: BTreeSet<PathBuf> = BTreeSet::new();
         if top.get("package").is_some() {
             package_dirs.insert(dir.to_path_buf());
@@ -134,6 +182,7 @@ impl CrateGraph {
             else {
                 continue;
             };
+            renames.extend(renamed_dependencies(&manifest));
             let mut add = |name: &str, path: PathBuf, is_lib: bool| {
                 if let Ok(rel) = path.strip_prefix(root) {
                     if path.is_file() {
@@ -154,6 +203,9 @@ impl CrateGraph {
                 .and_then(|l| l.get("path"))
                 .and_then(|p| p.as_str())
                 .unwrap_or("src/lib.rs");
+            if pkg_dir.join(lib_path).is_file() {
+                lib_of.insert(pkg_name.to_string(), lib_name.replace('-', "_"));
+            }
             add(lib_name, pkg_dir.join(lib_path), true);
             let bins = manifest.get("bin").and_then(|b| b.as_array());
             for b in bins.into_iter().flatten() {
@@ -174,32 +226,94 @@ impl CrateGraph {
                 }
             }
         }
-        CrateGraph::from_roots(roots)
+        CrateGraph::from_roots(roots).with_aliases(aliases_of(renames, &lib_of))
     }
 
-    /// Names other crates can use in paths.
-    pub fn lib_names(&self) -> BTreeSet<String> {
-        self.roots
-            .iter()
-            .filter(|r| r.is_lib)
-            .map(|r| r.name.clone())
-            .collect()
+    /// Names other crates can use in paths, each mapped to the library it
+    /// reaches: every library under its own name, and every renamed
+    /// dependency on one under the new name.
+    pub(crate) fn lib_names(&self) -> Libs {
+        let mut libs = self.aliases.clone();
+        for r in self.roots.iter().filter(|r| r.is_lib) {
+            libs.insert(r.name.clone(), r.name.clone());
+        }
+        libs
     }
 }
 
-/// `Cargo.toml` at `root`, else at each direct subdirectory (sorted).
-fn top_manifests(root: &Path) -> Vec<PathBuf> {
-    let top = root.join("Cargo.toml");
-    if top.is_file() {
-        return vec![top];
+/// One `cargo metadata` target as a crate root, or `None` outside `root`.
+fn target_root(name: String, kind: &[String], src: PathBuf, root: &Path) -> Option<CrateRoot> {
+    let src = src.canonicalize().unwrap_or(src);
+    let rel = src.strip_prefix(root).ok()?;
+    let is_lib = kind.iter().any(|k| {
+        matches!(
+            k.as_str(),
+            "lib" | "rlib" | "dylib" | "cdylib" | "staticlib" | "proc-macro"
+        )
+    });
+    Some(CrateRoot {
+        name: name.replace('-', "_"),
+        root_rel: rel_string(rel),
+        is_lib,
+    })
+}
+
+/// `(new name, package)` for each dependency `manifest` renames with
+/// `package = "…"`: in `[dependencies]`, `[dev-dependencies]`,
+/// `[build-dependencies]`, their `[target.….]` forms, and
+/// `[workspace.dependencies]` (which `alpha2 = { workspace = true }` inherits).
+fn renamed_dependencies(manifest: &toml::Table) -> Vec<(String, String)> {
+    const KINDS: [&str; 3] = ["dependencies", "dev-dependencies", "build-dependencies"];
+    let mut scopes: Vec<&toml::Table> = vec![manifest];
+    if let Some(targets) = manifest.get("target").and_then(|t| t.as_table()) {
+        scopes.extend(targets.values().filter_map(|t| t.as_table()));
     }
-    let mut out: Vec<PathBuf> = std::fs::read_dir(root)
+    if let Some(ws) = manifest.get("workspace").and_then(|w| w.as_table()) {
+        scopes.push(ws);
+    }
+    scopes
         .into_iter()
+        .flat_map(|scope| KINDS.iter().filter_map(move |k| scope.get(*k)?.as_table()))
+        .flat_map(|deps| deps.iter())
+        .filter_map(|(new, spec)| Some((new.clone(), spec.get("package")?.as_str()?.to_string())))
+        .collect()
+}
+
+/// Renames of a workspace package, keyed by the new name as paths write it.
+fn aliases_of(
+    renames: Vec<(String, String)>,
+    lib_of: &HashMap<String, String>,
+) -> BTreeMap<String, String> {
+    renames
+        .into_iter()
+        .filter_map(|(new, package)| Some((new.replace('-', "_"), lib_of.get(&package)?.clone())))
+        .collect()
+}
+
+/// The shallowest `Cargo.toml` on each branch of the tree, at most
+/// [`MANIFEST_DEPTH`] levels down (`Cargo.toml` at the root covers the whole
+/// project; a workspace in `rust/ws/` is found too). Ignored and skipped
+/// directories are not entered. Sorted.
+fn top_manifests(root: &Path) -> Vec<PathBuf> {
+    let rules = Arc::new(crate::skip::Rules::load(root));
+    let mut found: Vec<PathBuf> = crate::scan::walker(root, root, rules)
+        .max_depth(Some(MANIFEST_DEPTH))
+        .build()
         .flatten()
-        .flatten()
-        .map(|e| e.path().join("Cargo.toml"))
-        .filter(|p| p.is_file())
+        .filter(|e| e.file_name() == "Cargo.toml" && e.file_type().is_some_and(|t| t.is_file()))
+        .map(ignore::DirEntry::into_path)
         .collect();
+    found.sort_by_key(|p| p.components().count());
+    let mut out: Vec<PathBuf> = Vec::new();
+    for manifest in found {
+        let dir = manifest.parent().unwrap_or(root);
+        if !out
+            .iter()
+            .any(|top| top.parent().is_some_and(|t| dir.starts_with(t)))
+        {
+            out.push(manifest);
+        }
+    }
     out.sort();
     out
 }
@@ -476,6 +590,73 @@ mod tests {
     }
 
     #[test]
+    fn top_manifests_are_the_shallowest_on_each_branch() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        for rel in [
+            "rust/ws/Cargo.toml",
+            "rust/ws/a/Cargo.toml",
+            "tools/x/Cargo.toml",
+            "web/node_modules/y/Cargo.toml",
+        ] {
+            std::fs::create_dir_all(root.join(rel).parent().unwrap()).unwrap();
+            std::fs::write(root.join(rel), "").unwrap();
+        }
+        let rels: Vec<String> = top_manifests(&root)
+            .iter()
+            .map(|p| rel_string(p.strip_prefix(&root).unwrap()))
+            .collect();
+        assert_eq!(rels, ["rust/ws/Cargo.toml", "tools/x/Cargo.toml"]);
+        std::fs::write(root.join("Cargo.toml"), "").unwrap();
+        assert_eq!(top_manifests(&root), [root.join("Cargo.toml")]);
+    }
+
+    #[test]
+    fn renamed_dependencies_alias_their_library() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        write_tree(
+            &root,
+            &[
+                ("Cargo.toml", "[workspace]\nmembers = [\"alpha\", \"beta\"]\n\n[workspace.dependencies]\nalpha-ws = { package = \"alpha\", path = \"alpha\" }\n"),
+                ("alpha/Cargo.toml", "[package]\nname = \"alpha\"\nversion = \"0.1.0\"\n\n[lib]\nname = \"alpha_core\"\n"),
+                ("alpha/src/lib.rs", ""),
+                ("beta/Cargo.toml", "[package]\nname = \"beta\"\nversion = \"0.1.0\"\n\n[dependencies]\nalpha2 = { package = \"alpha\", path = \"../alpha\" }\nserde1 = { package = \"serde\", version = \"1\" }\n"),
+                ("beta/src/lib.rs", ""),
+            ],
+        );
+        let want: Libs = [
+            ("alpha2", "alpha_core"),
+            ("alpha_core", "alpha_core"),
+            ("alpha_ws", "alpha_core"),
+            ("beta", "beta"),
+        ]
+        .into_iter()
+        .map(|(a, b)| (a.to_string(), b.to_string()))
+        .collect();
+        assert_eq!(CrateGraph::from_manifests(&root, &root).lib_names(), want);
+        let json = serde_json::json!({
+            "packages": [
+                { "name": "alpha", "dependencies": [], "targets": [
+                    { "name": "alpha_core", "kind": ["lib"], "src_path": root.join("alpha/src/lib.rs") }
+                ] },
+                { "name": "beta", "dependencies": [
+                    { "name": "alpha", "rename": "alpha2" },
+                    { "name": "serde", "rename": "serde1" }
+                ], "targets": [
+                    { "name": "beta", "kind": ["lib"], "src_path": root.join("beta/src/lib.rs") }
+                ] }
+            ]
+        })
+        .to_string();
+        let g = CrateGraph::from_metadata_json(&json, &root).unwrap();
+        assert_eq!(
+            g.aliases,
+            BTreeMap::from([("alpha2".to_string(), "alpha_core".to_string())])
+        );
+    }
+
+    #[test]
     fn manifest_fallback_reads_workspace_members() {
         let dir = tempfile::tempdir().unwrap();
         write_tree(dir.path(), RUST_WORKSPACE);
@@ -537,6 +718,7 @@ mod tests {
                 root_rel: "c/src/lib.rs".into(),
                 is_lib: true,
             }],
+            ..CrateGraph::default()
         };
         let t = module_tree(&graph, &files, &mods);
         let want: BTreeMap<i64, String> = [

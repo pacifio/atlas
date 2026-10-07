@@ -32,6 +32,9 @@ fn metrics(ranked: &[String], gold: &[String]) -> (f64, f64, f64, f64, Option<us
     (r5, r10, mrr, ndcg, pos)
 }
 
+/// A named retrieval method: question in, ranked file paths out.
+type Method<'a> = (&'a str, Box<dyn Fn(&str) -> Vec<String> + 'a>);
+
 fn files(hits: Vec<atlas_codeindex::ChunkHit>) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for h in hits {
@@ -81,7 +84,7 @@ fn main() {
         .map(|l| serde_json::from_str(l).unwrap())
         .collect();
     let ix = &ix; // closures below borrow the index; `move` copies this reference
-    let mut methods: Vec<(&str, Box<dyn Fn(&str) -> Vec<String> + '_>)> = vec![(
+    let mut methods: Vec<Method<'_>> = vec![(
         "hybrid (no dense)",
         Box::new(|q: &str| {
             files(

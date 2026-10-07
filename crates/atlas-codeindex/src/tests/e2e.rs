@@ -96,6 +96,30 @@ fn go_imports_resolve_through_go_mod() {
     assert!(t.starts_with("pkg/util/"), "{t}");
 }
 
+/// A workspace two levels below the root, and a dependency renamed with `package = …`:
+/// both lost every cross-crate edge to the external-crate rule.
+#[test]
+fn rust_edges_reach_nested_workspaces_and_renamed_dependencies() {
+    let (_d, idx) = build_index(&[
+        ("rust/ws/Cargo.toml", "[workspace]\nmembers = [\"alpha\", \"beta\", \"gamma\"]\n"),
+        ("rust/ws/alpha/Cargo.toml", "[package]\nname = \"alpha\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"),
+        ("rust/ws/alpha/src/lib.rs", "pub fn shared() -> u32 {\n    1\n}\n"),
+        (
+            "rust/ws/beta/Cargo.toml",
+            "[package]\nname = \"beta\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nalpha2 = { package = \"alpha\", path = \"../alpha\" }\n",
+        ),
+        ("rust/ws/beta/src/lib.rs", "pub fn renamed() -> u32 {\n    alpha2::shared()\n}\n"),
+        (
+            "rust/ws/gamma/Cargo.toml",
+            "[package]\nname = \"gamma\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nalpha = { path = \"../alpha\" }\n",
+        ),
+        ("rust/ws/gamma/src/lib.rs", "pub fn plain() -> u32 {\n    alpha::shared()\n}\n"),
+    ]);
+    let e = |s: &str, d: &str| edge(&idx, s, d).map(|(_, _, st)| st);
+    assert_eq!(e("plain", "shared").as_deref(), Some("module_path"));
+    assert_eq!(e("renamed", "shared").as_deref(), Some("module_path"));
+}
+
 #[test]
 fn rust_edges_use_module_paths_receivers_and_reexports() {
     let (_d, idx) = build_index(RUST_WORKSPACE);

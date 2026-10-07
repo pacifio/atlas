@@ -16,7 +16,7 @@ use crate::IndexError;
 
 pub const SCHEMA_VERSION: i64 = 3;
 /// Bump when extraction output changes; a mismatch forces a full build.
-pub const EXTRACTOR_VERSION: &str = "2.1";
+pub const EXTRACTOR_VERSION: &str = "2.2";
 
 const SCHEMA_V1: &str = "
 CREATE TABLE meta(k TEXT PRIMARY KEY, v TEXT NOT NULL);

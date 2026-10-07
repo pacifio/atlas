@@ -7,18 +7,22 @@
 //! `unique_name` 0.75 (×0.5 when not import-reachable) → `suffix_match` 0.55·min(1, 3/n)
 //! (×0.5 when nothing is import-reachable).
 //! Guards: same language family only; `receiver_chain_admits`; weak member calls (`x.f()` on an
-//! untyped receiver) never bind by name alone in Python/JS/TS, and only to methods in Rust/Go;
+//! untyped receiver) never bind by name alone in Python/JS/TS, and in Rust/Go only to an
+//! import-reachable method (an unreachable one is mostly std's: `path.display()`);
 //! value refs bind only through imports, module paths, the same module or a qualified tail;
 //! ties break deterministically (non-test +1000, module-prefix proximity, shallower QN, QN, id).
 //! Never bound: a name imported from outside the project or a Rust path into another crate
 //! (`tokio::spawn`, `use rusqlite::Connection`), which name matching would pin on an
-//! unrelated project symbol; a member call to its own caller (`self.inner.f()` inside `f`);
+//! unrelated project symbol, or a method called on what such a path made
+//! (`reqwest::Client::builder().timeout()`); a member call to its own caller
+//! (`self.inner.f()` inside `f`);
 //! and anything below [`MIN_CONFIDENCE`].
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 use crate::graph_extract::RefKind;
 use crate::import_resolve::{rust_abs, rust_longest_module, ImportTarget, ReexportGraph};
+use crate::rust_crates::Libs;
 use crate::universe::{SymRow, Universe, GO, PY, RUST, TS};
 
 pub(crate) const MAX_CANDIDATES: usize = 256;
@@ -165,7 +169,7 @@ struct Binding {
 pub(crate) struct Resolver<'u> {
     u: &'u Universe,
     reexports: ReexportGraph<'u>,
-    libs: BTreeSet<String>,
+    libs: Libs,
     bindings: HashMap<i64, Vec<Binding>>,
     reach: HashMap<i64, (HashSet<i64>, Vec<String>)>,
     memo: HashMap<(i64, u8, String, String), Option<Resolved>>,
@@ -174,12 +178,8 @@ pub(crate) struct Resolver<'u> {
 }
 
 impl<'u> Resolver<'u> {
-    /// `targets` is aligned with `u.imports`; `libs` = Rust library crate names.
-    pub(crate) fn new(
-        u: &'u Universe,
-        targets: &[ImportTarget],
-        libs: BTreeSet<String>,
-    ) -> Resolver<'u> {
+    /// `targets` is aligned with `u.imports`; `libs` = the names that reach a Rust library.
+    pub(crate) fn new(u: &'u Universe, targets: &[ImportTarget], libs: Libs) -> Resolver<'u> {
         let mut bindings: HashMap<i64, Vec<Binding>> = HashMap::new();
         for (row, t) in u.imports.iter().zip(targets) {
             if row.local_name.is_empty() {
@@ -293,6 +293,9 @@ impl<'u> Resolver<'u> {
         let (segs, qualified) = parse_receiver(receiver);
         let member = !segs.is_empty() && !qualified;
         if fam == RUST && member && RUST_STD_METHODS.contains(&name) {
+            return None;
+        }
+        if fam == RUST && member && self.chains_off_external_path(f, segs[0]) {
             return None;
         }
         let exclude = self.exclude;
@@ -422,6 +425,9 @@ impl<'u> Resolver<'u> {
                 return None;
             }
             let reach = self.reachable(f, i);
+            if member && !reach {
+                return None;
+            }
             return Some(self.pick(f, &pool, if reach { 0.75 } else { 0.375 }, "unique_name"));
         }
         if weak_member_rejects(fam, member, "suffix_match", u, pool[0]) {
@@ -513,6 +519,17 @@ impl<'u> Resolver<'u> {
         !imported
             && rust_abs(self.u, &self.libs, &self.u.file(f).module, segs).is_none()
             && is_external_crate(self.u, &self.libs, first)
+    }
+
+    /// Whether a member call's receiver starts with a value made by a path into another
+    /// crate: `reqwest::Client::builder()` in `reqwest::Client::builder().timeout()`.
+    fn chains_off_external_path(&self, f: i64, receiver_root: &str) -> bool {
+        let path = receiver_root
+            .split(['(', '<', '!'])
+            .next()
+            .unwrap_or(receiver_root);
+        let segs: Vec<&str> = path.split("::").filter(|s| !s.is_empty()).collect();
+        segs.len() >= 2 && self.is_external_path(f, &segs)
     }
 
     fn binding_for(&self, f: i64, segs: &[&str], name: &str) -> Option<(Binding, Vec<String>)> {
@@ -643,10 +660,10 @@ fn kind_ok(kind: RefKind, s: &SymRow) -> bool {
 /// lower-case (a type such as `Self` or `Vec` is not a crate), not `crate`/`self`/`super`,
 /// no library of the workspace, and no module the project declares (an inline `mod tests`
 /// has no module key of its own).
-fn is_external_crate(u: &Universe, libs: &BTreeSet<String>, first: &str) -> bool {
+fn is_external_crate(u: &Universe, libs: &Libs, first: &str) -> bool {
     first.starts_with(|c: char| c.is_ascii_lowercase())
         && !matches!(first, "crate" | "self" | "super")
-        && !libs.contains(first)
+        && !libs.contains_key(first)
         && !u
             .by_name
             .get(first)
@@ -797,7 +814,7 @@ mod tests {
     }
 
     fn resolver(u: &Universe, targets: Vec<ImportTarget>) -> Resolver<'_> {
-        Resolver::new(u, &targets, BTreeSet::new())
+        Resolver::new(u, &targets, Libs::new())
     }
 
     #[test]
@@ -902,6 +919,42 @@ mod tests {
             r.resolve(&call(1, 1, "helper", "tests::")).unwrap().1.dst,
             3
         );
+    }
+
+    /// `reqwest::Client::builder().timeout()` is reqwest's method, not the project's
+    /// `GitCommand::timeout`; nor is an untyped `path.display()` the project's `display`
+    /// when nothing imports it.
+    #[test]
+    fn methods_on_external_values_and_unreachable_names_never_bind() {
+        let u = Universe::from_parts(
+            vec![
+                file(1, "git.rs", "rust", "c::git"),
+                file(2, "fmt.rs", "rust", "c::fmt"),
+            ],
+            vec![
+                sym(1, 1, None, "fn", "caller", "c::git::caller"),
+                sym(10, 1, None, "struct", "GitCommand", "c::git::GitCommand"),
+                sym(
+                    11,
+                    1,
+                    Some(10),
+                    "method",
+                    "timeout",
+                    "c::git::GitCommand::timeout",
+                ),
+                sym(20, 2, None, "struct", "Out", "c::fmt::Out"),
+                sym(21, 2, Some(20), "method", "display", "c::fmt::Out::display"),
+            ],
+            vec![],
+            HashMap::new(),
+        );
+        let mut r = resolver(&u, vec![]);
+        let chained = call(1, 1, "timeout", "reqwest::Client::builder()");
+        assert!(r.resolve(&chained).is_none());
+        // On an untyped local in the same module, the method still binds.
+        let local = r.resolve(&call(1, 1, "timeout", "cmd")).unwrap().1;
+        assert_eq!((local.dst, local.strategy), (11, "same_module"));
+        assert!(r.resolve(&call(1, 1, "display", "path")).is_none());
     }
 
     /// `self.inner.with_reader(f)` inside `fn with_reader` calls the other `with_reader`;
@@ -1100,15 +1153,15 @@ mod tests {
         };
         let (a, b) = (build(false), build(true));
         let da = resolver(&a, vec![])
-            .resolve(&call(1, 1, "go", ""))
-            .unwrap()
-            .1;
+            .cascade(1, RefKind::Call, "", "go")
+            .unwrap();
         let db = resolver(&b, vec![])
-            .resolve(&call(1, 1, "go", ""))
-            .unwrap()
-            .1;
+            .cascade(1, RefKind::Call, "", "go")
+            .unwrap();
         assert_eq!(da, db);
         assert_eq!(da.dst, 60); // shallower QN wins the tie
+        let written = resolver(&a, vec![]).resolve(&call(1, 1, "go", ""));
+        assert!(written.is_none(), "0.55 · 1 · 0.5 is below the floor");
     }
 
     #[test]
