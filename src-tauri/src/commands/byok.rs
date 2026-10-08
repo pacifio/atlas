@@ -57,6 +57,8 @@ use super::shell_profile::{self, ShellKind};
 /// `DEEPINFRA_API_TOKEN`, ElevenLabs historically `XI_API_KEY`) — a user who
 /// exported ANY recognised spelling gets their key imported.
 const ENV_KEY_VARS: &[(&str, &[&str])] = &[
+    ("minimax", &["MINIMAX_API_KEY"]),
+    ("minimax-cn", &["MINIMAX_CN_API_KEY"]),
     ("anthropic", &["ANTHROPIC_API_KEY", "CLAUDE_API_KEY"]),
     ("openai", &["OPENAI_API_KEY", "OPENAI_KEY"]),
     (
@@ -741,6 +743,20 @@ fn probe_shell_vars(vars: &[&str]) -> BTreeMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_minimax_region_keys_are_separate() {
+        for (provider, env) in [
+            ("minimax", "MINIMAX_API_KEY"),
+            ("minimax-cn", "MINIMAX_CN_API_KEY"),
+        ] {
+            let (_, vars) = ENV_KEY_VARS
+                .iter()
+                .find(|(id, _)| *id == provider)
+                .expect("MiniMax region must have a key mapping");
+            assert_eq!(*vars, &[env]);
+        }
+    }
 
     #[test]
     fn test_orcarouter_env_vars() {

@@ -13,6 +13,8 @@
 
 /** Best-first preferred coding models per provider. Also the offline fallback. */
 const PREFERRED: Record<string, string[]> = {
+  minimax: ["MiniMax-M3", "MiniMax-M2.7"],
+  "minimax-cn": ["MiniMax-M3", "MiniMax-M2.7"],
   anthropic: ["claude-opus-4-8", "claude-sonnet-4-6", "claude-opus-4-1", "claude-sonnet-4-5"],
   openai: ["gpt-5.1", "gpt-5", "o4-mini", "gpt-4.1", "gpt-4o"],
   google: ["gemini-3.1-pro-preview", "gemini-2.5-pro", "gemini-2.5-flash"],
