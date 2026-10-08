@@ -20,6 +20,7 @@ import {
   historyKeymap,
   indentMore,
   indentLess,
+  insertNewline,
 } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 
@@ -76,8 +77,8 @@ interface ChatInputProps {
   /** Fires on Cmd/Ctrl+Enter — the submit gesture. Also fires on bare Enter
    *  when `enterToSend` is true. */
   onSubmit?: () => void;
-  /** When true (default), bare Enter submits and Shift+Enter inserts a
-   *  newline — the Slack/Discord/ChatGPT convention. When false, Enter
+  /** When true (default), bare Enter submits. Shift+Enter and Alt+Enter
+   *  always insert a newline. When false, Enter
    *  always inserts a newline and only Cmd/Ctrl+Enter submits (the old
    *  default). Read live via ref so toggling the setting takes effect
    *  without remounting the view. */
@@ -253,6 +254,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     if (!parent) return;
 
     const submitKeymap = keymap.of([
+      { key: "Alt-Enter", run: insertNewline },
       {
         key: "Mod-Enter",
         run: () => {
