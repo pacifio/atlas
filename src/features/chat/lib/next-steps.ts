@@ -31,8 +31,9 @@ const NEXT_STEPS_DIRECTIVE =
   // costs nothing to reject.
   "Ignore it when naming or titling this session — title from the conversation.";
 
-/** Append the directive to an outgoing wire prompt. */
+/** Append the directive to prose, keeping slash commands and their arguments intact. */
 export function appendNextStepsDirective(wire: string): string {
+  if (wire.trimStart().startsWith("/")) return wire;
   return wire + NEXT_STEPS_DIRECTIVE;
 }
 
