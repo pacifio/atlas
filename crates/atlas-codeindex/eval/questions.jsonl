@@ -25,6 +25,6 @@
 {"q":"send a UI action to the window and wait for its reply with a timeout","gold":["src-tauri/src/commands/ui_server/bridge.rs"]}
 {"q":"app configuration defaults and per-project overrides","gold":["src-tauri/src/state/atlas_config.rs"]}
 {"q":"map memory document ids to vector keys with content hashes","gold":["crates/atlas-memory/src/manifest.rs"]}
-{"q":"shared memory sqlite store per git scope","gold":["src-tauri/src/commands/shared_memory.rs"]}
+{"q":"shared memory sqlite store per git scope","gold":["src-tauri/src/commands/shared_memory.rs","crates/atlas-memory/src/record.rs"]}
 {"q":"spawn a pseudo terminal for a shell","gold":["crates/atlas-terminal/src/lib.rs"]}
 {"q":"time out memory retrieval so a tool call never blocks","gold":["src-tauri/src/commands/memory_retrieve.rs"]}

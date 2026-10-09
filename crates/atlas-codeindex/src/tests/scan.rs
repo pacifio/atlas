@@ -41,10 +41,14 @@ fn discover_sorts_prunes_vendor_and_honours_gitignore() {
         .write("README.md", "# not code\n");
     let (kept, skipped) = walk(&p);
     assert_eq!(rels(&kept), ["src/a.rs", "web/b.ts"]);
-    // vendor/ is pruned during the walk, so it is never even listed.
+    // vendor/ is pruned during the walk, but its source files are still
+    // counted as skipped: an index missing a directory must say so.
     assert_eq!(
         skipped,
-        [("api/api.pb.go".to_string(), SkipReason::GeneratedName)]
+        [
+            ("api/api.pb.go".to_string(), SkipReason::GeneratedName),
+            ("vendor/lib/x.go".to_string(), SkipReason::Vendor),
+        ]
     );
 }
 
@@ -58,10 +62,14 @@ fn atlasignore_reinclude_walks_into_vendor() {
         .write("src/main.rs", "fn main() {}\n");
     let (kept, skipped) = walk(&p);
     assert_eq!(rels(&kept), ["src/main.rs", "vendor/ours/a.rs"]);
-    // `experiments/` is pruned unwalked: no re-include reaches into it.
+    // `experiments/` is pruned (no re-include reaches into it), and still
+    // reported.
     assert_eq!(
         skipped,
-        [("vendor/theirs/b.rs".to_string(), SkipReason::Vendor)]
+        [
+            ("experiments/x.rs".to_string(), SkipReason::AtlasIgnore),
+            ("vendor/theirs/b.rs".to_string(), SkipReason::Vendor),
+        ]
     );
 }
 
@@ -142,4 +150,39 @@ fn process_all_keeps_path_order_and_honours_known_hashes() {
     assert!(process_all(&kept, &|_| None, &cancel)
         .iter()
         .all(|o| matches!(o, Outcome::Cancelled)));
+}
+
+#[test]
+fn pruned_dirs_report_their_source_files_but_not_vcs_or_gitignored_ones() {
+    let p = Project::new();
+    p.write("src/a.rs", "pub fn a() {}\n")
+        .write("web/node_modules/pkg/index.js", "module.exports = 1;\n")
+        .write("web/node_modules/pkg/README.md", "# not code\n")
+        .write("third_party/deep/vendor/x.go", "package x\n")
+        .write(".gitignore", "target/\n")
+        .write("target/debug/build.rs", "fn main() {}\n")
+        .write(".git/hooks/pre_commit.py", "x = 0\n");
+    let (kept, skipped) = walk(&p);
+    assert_eq!(rels(&kept), ["src/a.rs"]);
+    // Gitignored dirs were never the index's to skip; `.git` is not code.
+    assert_eq!(
+        skipped,
+        [
+            (
+                "third_party/deep/vendor/x.go".to_string(),
+                SkipReason::Vendor
+            ),
+            (
+                "web/node_modules/pkg/index.js".to_string(),
+                SkipReason::Vendor
+            ),
+        ]
+    );
+    assert_eq!(
+        crate::skip::skipped_by_dir(&skipped),
+        [
+            ("vendor".to_string(), "third_party".to_string(), 1),
+            ("vendor".to_string(), "web/node_modules".to_string(), 1),
+        ]
+    );
 }

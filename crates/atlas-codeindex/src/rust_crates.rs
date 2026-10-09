@@ -467,13 +467,32 @@ pub(crate) fn join_rel(base: &str, tail: &str) -> Option<String> {
 
 /// Module path for every Rust file reachable from a crate root through `mod` declarations.
 /// `files`: rel → file id (Rust files only). `mods`: file id → its `mod x;` declarations.
+#[cfg(test)]
 pub fn module_tree(
     graph: &CrateGraph,
     files: &BTreeMap<String, i64>,
     mods: &HashMap<i64, Vec<RawMod>>,
 ) -> BTreeMap<i64, String> {
+    module_tree_with_aliases(graph, files, mods).0
+}
+
+/// Most alias module keys one project may add (a guard against `mod` cycles).
+const MAX_MODULE_ALIASES: usize = 20_000;
+
+/// Each file's module path through the `mod` tree (the first crate to reach it), plus every
+/// other module path a file is also mounted at: a `tests/support/mod.rs` that each test
+/// crate declares with `mod support;` is `handshake#bin::support` in the map and also
+/// `invariants#bin::support`, `manager#bin::support`, … in the aliases, with its own `mod`
+/// children under each.
+pub fn module_tree_with_aliases(
+    graph: &CrateGraph,
+    files: &BTreeMap<String, i64>,
+    mods: &HashMap<i64, Vec<RawMod>>,
+) -> (BTreeMap<i64, String>, Vec<(String, i64)>) {
     let rel_of: HashMap<i64, &str> = files.iter().map(|(r, id)| (*id, r.as_str())).collect();
     let mut assigned: BTreeMap<i64, String> = BTreeMap::new();
+    let mut aliases: Vec<(String, i64)> = Vec::new();
+    let mut seen_alias: BTreeSet<(i64, String)> = BTreeSet::new();
     let mut queue: VecDeque<(i64, String)> = VecDeque::new();
     for root in &graph.roots {
         if let Some(&id) = files.get(&root.root_rel) {
@@ -527,19 +546,29 @@ pub fn module_tree(
             let Some(child) = candidates.iter().find_map(|c| files.get(c)) else {
                 continue;
             };
-            if assigned.contains_key(child) {
-                continue;
-            }
             let mut child_mod = module.clone();
             for seg in inline.iter().chain(std::iter::once(&m.name.as_str())) {
                 child_mod.push_str("::");
                 child_mod.push_str(seg);
             }
-            assigned.insert(*child, child_mod.clone());
-            queue.push_back((*child, child_mod));
+            match assigned.get(child) {
+                None => {
+                    assigned.insert(*child, child_mod.clone());
+                    queue.push_back((*child, child_mod));
+                }
+                Some(primary) if *primary != child_mod => {
+                    if aliases.len() < MAX_MODULE_ALIASES
+                        && seen_alias.insert((*child, child_mod.clone()))
+                    {
+                        aliases.push((child_mod.clone(), *child));
+                        queue.push_back((*child, child_mod));
+                    }
+                }
+                Some(_) => {}
+            }
         }
     }
-    assigned
+    (assigned, aliases)
 }
 
 #[cfg(test)]

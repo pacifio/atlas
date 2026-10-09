@@ -58,6 +58,31 @@ fn camel_and_snake_parts_match_either_spelling() {
 }
 
 #[test]
+fn exact_count_says_whether_any_hit_is_the_name_asked_for() {
+    let p = search_fixture();
+    let ix = p.built();
+    // Exact name, case-blind name and qualified suffix count, on every page.
+    for (query, offset) in [
+        ("Store", 0),
+        ("Store", 3),
+        ("storeview", 0),
+        ("Store::open", 0),
+    ] {
+        let (_, _, exact) = ix
+            .find_symbol_with_exact(&SymbolQuery { offset, ..q(query) })
+            .unwrap();
+        assert!(exact > 0, "{query} @ {offset}");
+    }
+    // A prefix or word match is not the symbol asked for, however many hits.
+    for query in ["Stor", "cloud client", "StoreFrobnicator"] {
+        let (hits, _, exact) = ix.find_symbol_with_exact(&q(query)).unwrap();
+        assert_eq!(exact, 0, "{query}: {:?}", names(&hits));
+    }
+    let (hits, _, _) = ix.find_symbol_with_exact(&q("Stor")).unwrap();
+    assert!(!hits.is_empty());
+}
+
+#[test]
 fn qualified_name_query_hits_the_method() {
     let p = search_fixture();
     let ix = p.built();

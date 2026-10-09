@@ -324,6 +324,7 @@ fn session_request(http_mcp: bool) -> SessionMcpRequest {
         http_mcp,
         ui_control: false,
         org_access: false,
+        in_process: false,
         cwd: std::path::PathBuf::from("/p"),
         session_id: None,
     }
@@ -331,23 +332,7 @@ fn session_request(http_mcp: bool) -> SessionMcpRequest {
 
 /// Every entry an offer carries, as `(name, url, bearer token)`.
 fn entries(offer: &SessionMcpOffer) -> Vec<(String, String, String)> {
-    offer
-        .servers()
-        .iter()
-        .map(|server| {
-            let acp::McpServer::Http(http) = server else {
-                panic!("HTTP entries only")
-            };
-            let token = http
-                .headers
-                .iter()
-                .find(|h| h.name == "Authorization")
-                .and_then(|h| h.value.strip_prefix("Bearer "))
-                .expect("a bearer token")
-                .to_string();
-            (http.name.clone(), http.url.clone(), token)
-        })
-        .collect()
+    crate::commands::memory_server::offers::offered_entries(offer)
 }
 
 fn names(offer: &SessionMcpOffer) -> Vec<String> {
@@ -399,33 +384,28 @@ async fn with_code_tools_off_the_code_server_is_not_offered() {
     );
 }
 
-/// ADR-0019: an agent without HTTP MCP gets the code server through the
-/// same stdio bridge as memory, on the same token.
+/// ADR-0019, ADR-0020: an ACP agent gets the code server through the same
+/// stdio bridge as memory, on the same token, whether or not it advertised
+/// HTTP MCP.
 #[tokio::test(flavor = "multi_thread")]
-async fn an_agent_without_http_mcp_gets_the_code_server_through_the_bridge() {
+async fn an_acp_agent_gets_the_code_server_through_the_bridge() {
     let host = running_host(enabled(true)).await;
     let offers =
         MemorySessionOffers::new(host, sharing(true)).with_code(CodeOffer::new(enabled(true)));
-    let offer = offers.offer(&session_request(false));
-    let bridged: Vec<(String, String)> = offer
-        .servers()
-        .iter()
-        .map(|server| {
-            let acp::McpServer::Stdio(stdio) = server else {
-                panic!("stdio entries only: {server:?}")
-            };
-            let token = stdio
-                .env
+    for http_mcp in [true, false] {
+        let offer = offers.offer(&session_request(http_mcp));
+        assert!(
+            offer
+                .servers()
                 .iter()
-                .find(|v| v.name == "ATLAS_MCP_TOKEN")
-                .map(|v| v.value.clone())
-                .expect("the token rides the environment");
-            (stdio.name.clone(), token)
-        })
-        .collect();
-    let names: Vec<&str> = bridged.iter().map(|(n, _)| n.as_str()).collect();
-    assert_eq!(names, ["atlas_memory", "atlas_code"]);
-    assert_eq!(bridged[0].1, bridged[1].1, "one token for both");
+                .all(|s| matches!(s, acp::McpServer::Stdio(_))),
+            "stdio entries only: {:?}",
+            offer.servers()
+        );
+        let got = entries(&offer);
+        assert_eq!(names(&offer), ["atlas_memory", "atlas_code"]);
+        assert_eq!(got[0].2, got[1].2, "one token for both");
+    }
 }
 
 #[test]
@@ -434,7 +414,7 @@ fn the_decision_says_whether_the_code_server_is_included_and_why_not() {
     assert_eq!(CodeOfferDecision::decide(true, true, true), Included);
     assert_eq!(
         CodeOfferDecision::decide(false, true, true),
-        Omitted("agent did not advertise mcpCapabilities.http")
+        Omitted("no transport reaches the agent")
     );
     assert_eq!(
         CodeOfferDecision::decide(true, false, true),

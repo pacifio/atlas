@@ -7,7 +7,7 @@
 //! back in path order before anything is written.
 
 use std::path::{Path, PathBuf};
-use std::sync::{mpsc, Arc, OnceLock};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use atlas_search::CancelToken;
@@ -63,10 +63,16 @@ pub(crate) fn mtime_ns(md: &std::fs::Metadata) -> i64 {
         .map_or(0, |d| i64::try_from(d.as_nanos()).unwrap_or(i64::MAX))
 }
 
+/// Directories a walk pruned, with the skip reason their files report.
+type Pruned = Arc<Mutex<Vec<(PathBuf, SkipReason)>>>;
+
 /// Gitignore-respecting walk settings shared by every walk the index does.
 pub(crate) fn walker(dir: &Path, root: &Path, rules: Arc<Rules>) -> WalkBuilder {
+    walker_noting(dir, root, rules, None)
+}
+
+fn base_walker(dir: &Path) -> WalkBuilder {
     let mut b = WalkBuilder::new(dir);
-    let root = root.to_path_buf();
     b.hidden(false)
         .git_ignore(true)
         .git_global(true)
@@ -74,17 +80,103 @@ pub(crate) fn walker(dir: &Path, root: &Path, rules: Arc<Rules>) -> WalkBuilder 
         .ignore(true)
         .parents(true)
         .require_git(false)
-        .follow_links(false)
-        .filter_entry(move |e| {
-            if !e.file_type().is_some_and(|t| t.is_dir()) || e.depth() == 0 {
-                return true;
-            }
-            match e.path().strip_prefix(&root) {
-                Ok(rel) => !rules.prune_dir(&rel_string(rel)),
-                Err(_) => true,
-            }
-        });
+        .follow_links(false);
     b
+}
+
+/// [`walker`], noting each directory it prunes in `pruned` (when given).
+fn walker_noting(
+    dir: &Path,
+    root: &Path,
+    rules: Arc<Rules>,
+    pruned: Option<Pruned>,
+) -> WalkBuilder {
+    let mut b = base_walker(dir);
+    let root = root.to_path_buf();
+    b.filter_entry(move |e| {
+        if !e.file_type().is_some_and(|t| t.is_dir()) || e.depth() == 0 {
+            return true;
+        }
+        let Ok(rel) = e.path().strip_prefix(&root) else {
+            return true;
+        };
+        let rel = rel_string(rel);
+        if !rules.prune_dir(&rel) {
+            return true;
+        }
+        if let (Some(pruned), Some(reason)) = (&pruned, rules.prune_reason(&rel)) {
+            pruned
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push((e.path().to_path_buf(), reason));
+        }
+        false
+    });
+    b
+}
+
+/// Every source file under the pruned directories, with its directory's
+/// reason. Pruning saves reading and parsing them, not knowing they exist:
+/// without these the index would look complete while missing a whole tree.
+/// Only names are looked at (no stat, no read); gitignore still applies.
+fn pruned_files(
+    root: &Path,
+    pruned: Vec<(PathBuf, SkipReason)>,
+    cancel: &CancelToken,
+) -> Vec<(String, SkipReason)> {
+    let Some(((first, _), rest)) = pruned.split_first() else {
+        return Vec::new();
+    };
+    let mut b = base_walker(first);
+    for (dir, _) in rest {
+        b.add(dir);
+    }
+    b.filter_entry(|e| {
+        e.depth() == 0
+            || !e.file_type().is_some_and(|t| t.is_dir())
+            || e.file_name().to_str().is_none_or(skip::counted_dir)
+    });
+    let (tx, rx) = mpsc::channel::<(String, SkipReason)>();
+    let pruned = Arc::new(pruned);
+    b.build_parallel().run(|| {
+        let tx = tx.clone();
+        let pruned = pruned.clone();
+        let cancel = cancel.clone();
+        let root = root.to_path_buf();
+        Box::new(move |entry| {
+            if cancel.is_cancelled() {
+                return WalkState::Quit;
+            }
+            let Ok(entry) = entry else {
+                return WalkState::Continue;
+            };
+            if !entry.file_type().is_some_and(|t| t.is_file()) {
+                return WalkState::Continue;
+            }
+            let path = entry.path();
+            let Ok(rel) = path.strip_prefix(&root).map(rel_string) else {
+                return WalkState::Continue;
+            };
+            if Lang::from_path(&rel).is_none() {
+                return WalkState::Continue;
+            }
+            // The deepest pruned directory holding it (they never nest, but
+            // a walk root given twice must not double-count).
+            if let Some((_, reason)) = pruned
+                .iter()
+                .filter(|(d, _)| path.starts_with(d))
+                .max_by_key(|(d, _)| d.as_os_str().len())
+            {
+                let _ = tx.send((rel, *reason));
+            }
+            WalkState::Continue
+        })
+    });
+    drop(tx);
+    let mut out: Vec<_> = rx.into_iter().collect();
+    out.sort();
+    out.dedup();
+    out
 }
 
 /// Classify one walked or watched file by path and stat.
@@ -111,8 +203,6 @@ pub(crate) fn classify(
     }))
 }
 
-/// Every indexable file under `dir` (the root or a subdirectory), sorted by
-/// path, plus the files skipped by path or size with their reasons.
 /// What a walk saw that is not a source file to index: one it skipped, or a
 /// graph config file (`Cargo.toml`, `tsconfig.json`, …) as a
 /// `rel size mtime_ns` stamp.
@@ -121,8 +211,9 @@ enum Seen {
     Config(String),
 }
 
-/// The indexable files under `dir`, the files skipped and why, and a stamp of
-/// every graph config file met on the way (see [`config_stamp`]).
+/// The indexable files under `dir`, sorted by path; every source file
+/// skipped and why (by path, size, or under a pruned directory); and a stamp
+/// of every graph config file met on the way (see [`config_stamp`]).
 pub(crate) fn discover(
     root: &Path,
     dir: &Path,
@@ -130,41 +221,49 @@ pub(crate) fn discover(
     cancel: &CancelToken,
 ) -> (Vec<Candidate>, Vec<(String, SkipReason)>, Vec<String>) {
     let (tx, rx) = mpsc::channel::<Seen>();
-    walker(dir, root, rules.clone()).build_parallel().run(|| {
-        let tx = tx.clone();
-        let rules = rules.clone();
-        let cancel = cancel.clone();
-        Box::new(move |entry| {
-            if cancel.is_cancelled() {
-                return WalkState::Quit;
-            }
-            let Ok(entry) = entry else {
-                return WalkState::Continue;
-            };
-            if !entry.file_type().is_some_and(|t| t.is_file()) {
-                return WalkState::Continue;
-            }
-            let Ok(md) = entry.metadata() else {
-                return WalkState::Continue;
-            };
-            let is_config = entry
-                .file_name()
-                .to_str()
-                .is_some_and(crate::graph_batch::is_config_file);
-            if is_config {
-                if let Ok(rel) = entry.path().strip_prefix(root) {
-                    let _ = tx.send(Seen::Config(config_line(&rel_string(rel), &md)));
+    let pruned: Pruned = Arc::default();
+    walker_noting(dir, root, rules.clone(), Some(pruned.clone()))
+        .build_parallel()
+        .run(|| {
+            let tx = tx.clone();
+            let rules = rules.clone();
+            let cancel = cancel.clone();
+            Box::new(move |entry| {
+                if cancel.is_cancelled() {
+                    return WalkState::Quit;
                 }
-            }
-            if let Some(found) = classify(root, entry.path(), &md, &rules) {
-                let _ = tx.send(Seen::File(found));
-            }
-            WalkState::Continue
-        })
-    });
+                let Ok(entry) = entry else {
+                    return WalkState::Continue;
+                };
+                if !entry.file_type().is_some_and(|t| t.is_file()) {
+                    return WalkState::Continue;
+                }
+                let Ok(md) = entry.metadata() else {
+                    return WalkState::Continue;
+                };
+                let is_config = entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(crate::graph_batch::is_config_file);
+                if is_config {
+                    if let Ok(rel) = entry.path().strip_prefix(root) {
+                        let _ = tx.send(Seen::Config(config_line(&rel_string(rel), &md)));
+                    }
+                }
+                if let Some(found) = classify(root, entry.path(), &md, &rules) {
+                    let _ = tx.send(Seen::File(found));
+                }
+                WalkState::Continue
+            })
+        });
     drop(tx);
     let mut kept = Vec::new();
-    let mut skipped = Vec::new();
+    let pruned = std::mem::take(
+        &mut *pruned
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+    );
+    let mut skipped = pruned_files(root, pruned, cancel);
     let mut configs = Vec::new();
     for seen in rx {
         match seen {

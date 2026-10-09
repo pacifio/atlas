@@ -3,6 +3,8 @@
 //! `model_dir` is a model downloaded through the app. A code model's directory gets the preset
 //! Atlas loads it with, as the app rewrites it on every load; any other must hold its own
 //! `atlas-embed.json`.
+//! On macOS the model runs on Metal with no extra flags (a target-specific dev-dependency in
+//! this crate's Cargo.toml); elsewhere it embeds on the CPU.
 use std::path::Path;
 
 use atlas_codeindex::{CodeIndex, SemanticQuery};

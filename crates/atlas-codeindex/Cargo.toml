@@ -56,6 +56,14 @@ atlas-embed = { path = "../atlas-embed" }
 scip = "0.10"
 protobuf = "3"
 
+# On macOS the examples embed on the Apple-Silicon GPU, as the app does
+# (`src-tauri/Cargo.toml` turns the same feature on for the same target):
+# on the CPU, eval_retrieval embeds about 2 chunks a second. Additive over the
+# plain dev-dependency above; Linux and Windows builds never see it, and
+# `gpu_device()` falls back to the CPU when Metal fails to start.
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+atlas-embed = { path = "../atlas-embed", features = ["metal"] }
+
 # The workspace lint table is only real for members that opt in —
 # without this stanza it is dead configuration (#60).
 [lints]

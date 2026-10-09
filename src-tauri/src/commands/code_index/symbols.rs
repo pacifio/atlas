@@ -247,16 +247,22 @@ fn find_symbol(scope: &Scope, args: &Value) -> Result<String, String> {
         limit: arg_usize(args, "limit").unwrap_or(20).min(MAX_FIND_LIMIT),
         offset: arg_usize(args, "offset").unwrap_or(0),
     };
-    let (hits, page) = scope
+    let (hits, page, exact) = scope
         .project
         .index
-        .find_symbol(&q)
+        .find_symbol_with_exact(&q)
         .map_err(|e| e.to_string())?;
     if hits.is_empty() {
         return Ok(format!(
             "symbols: 0 for {query:?}. Try fewer words, another spelling, or grep."
         ));
     }
+    // Word and prefix matches look like an answer; say when none is the name.
+    let header = if exact == 0 {
+        format!("no exact match for {query:?}; closest by words:\n")
+    } else {
+        String::new()
+    };
     let rows = hits
         .iter()
         .map(|h| {
@@ -273,7 +279,8 @@ fn find_symbol(scope: &Scope, args: &Value) -> Result<String, String> {
         cols: vec!["symbol", "kind", "loc", "signature"],
         rows,
     };
-    Ok(render(&[table], &page, budget(args)))
+    let budget = budget(args).saturating_sub(header.len());
+    Ok(header + &render(&[table], &page, budget))
 }
 
 /// One row per symbol, names indented under their parent.
@@ -557,6 +564,29 @@ mod tests {
         assert!(!read.contains("app.ts"), "{read}");
         let outline = call(&scope, "outline", &json!({ "path": "../../web/app.ts" })).unwrap_err();
         assert!(outline.contains("outside the session root"), "{outline}");
+    }
+
+    #[test]
+    fn find_symbol_says_when_nothing_is_the_name_asked_for() {
+        let dir = project();
+        let reg = ready(dir.path());
+        let scope = Scope::resolve(&reg, dir.path()).unwrap();
+        let found = call(&scope, "find_symbol", &json!({ "query": "openStor" })).unwrap();
+        assert!(
+            found.starts_with("no exact match for \"openStor\"; closest by words:\nsymbols: "),
+            "{found}"
+        );
+        assert!(found.contains("web/app.ts:1-1"), "{found}");
+        // A real name gets the plain table, even on a later page.
+        for offset in [0, 1] {
+            let found = call(
+                &scope,
+                "find_symbol",
+                &json!({ "query": "Store", "offset": offset }),
+            )
+            .unwrap();
+            assert!(!found.contains("no exact match"), "{found}");
+        }
     }
 
     #[test]

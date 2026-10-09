@@ -614,7 +614,11 @@ enum LifecycleWrite {
 }
 
 impl SharingGatedLifecycle {
-    fn new(app: AppHandle, server: Arc<super::memory_server::MemoryServerHost>) -> Self {
+    fn new(
+        app: AppHandle,
+        server: Arc<super::memory_server::MemoryServerHost>,
+        token_files: Arc<super::memory_bridge::TokenFiles>,
+    ) -> Self {
         let keep_awake = app
             .try_state::<Arc<crate::keep_awake::KeepAwakeManager>>()
             .map(|state| state.inner().clone());
@@ -631,6 +635,8 @@ impl SharingGatedLifecycle {
                             }
                         }
                         LifecycleWrite::Ended { session_id } => {
+                            // Its bridge's token file, dead with its token.
+                            token_files.session_ended(&session_id);
                             // The end-of-session extraction, queued behind the
                             // session's last turn-finished pass.
                             if let Some(ended) = memory.session_ended(&session_id) {
@@ -780,9 +786,21 @@ pub fn install_manager(app: &AppHandle) {
         )));
         let server = Arc::new(super::memory_server::MemoryServerHost::new());
         app.manage(server.clone());
+        // An ACP agent's bridge reads its token from a private file here:
+        // never from its entry, which may land on a command line (ADR-0020).
+        // A bound session's file goes when the session ends; ended launches'
+        // directories are swept once, off the runtime.
+        let token_files = Arc::new(super::memory_bridge::TokenFiles::new(
+            data_dir.join("mcp-bridge"),
+        ));
+        {
+            let token_files = token_files.clone();
+            tauri::async_runtime::spawn_blocking(move || token_files.sweep_stale_launches());
+        }
         host.set_session_lifecycle(Arc::new(SharingGatedLifecycle::new(
             app.clone(),
             server.clone(),
+            token_files.clone(),
         )));
         let gate_app = app.clone();
         let gate: super::memory_server::SharingGate =
@@ -878,7 +896,8 @@ pub fn install_manager(app: &AppHandle) {
                     super::org_server::OrgOffer::new(org_access, session_orgs)
                         .describing_with(org_tools),
                 )
-                .with_code(super::code_server::CodeOffer::new(code_tools)),
+                .with_code(super::code_server::CodeOffer::new(code_tools))
+                .with_token_files(token_files),
         ));
         // `memory_search` also answers from the project's indexed documents.
         let index_app = app.clone();

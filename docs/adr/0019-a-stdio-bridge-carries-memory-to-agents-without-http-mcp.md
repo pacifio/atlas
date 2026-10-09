@@ -1,6 +1,6 @@
 # ADR-0019: A stdio bridge carries memory to agents without HTTP MCP
 
-**Status:** Accepted (2026-10-07). Milestone M4 of `docs/superpowers/plans/2026-10-03-memory-system/`. Amends ADR-0010's "an ACP agent that does not advertise HTTP MCP gets no memory at all".
+**Status:** Accepted (2026-10-07). Milestone M4 of `docs/superpowers/plans/2026-10-03-memory-system/`. Amends ADR-0010's "an ACP agent that does not advertise HTTP MCP gets no memory at all". Amended by ADR-0020: the bridge now carries every ACP agent, and the token moved from `ATLAS_MCP_TOKEN` to a private file, because an adapter may put a stdio entry's `env` on its own command line.
 
 **For agents:** the bridge is `src-tauri/src/commands/memory_bridge.rs`; the offer is `OfferDecision::IncludedViaBridge` in `src-tauri/src/commands/memory_server/offers.rs`; the dispatch is `run_bridge_if_asked` in `src-tauri/src/lib.rs`, called first in `main.rs`.
 

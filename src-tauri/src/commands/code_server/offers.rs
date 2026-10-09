@@ -17,12 +17,13 @@ pub enum CodeOfferDecision {
 }
 
 impl CodeOfferDecision {
-    /// Included for any agent that advertised HTTP MCP, while the user lets
+    /// Included for any agent a transport reaches (`reachable`: HTTP in
+    /// process, the stdio bridge otherwise; ADR-0020), while the user lets
     /// agents use the code tools and the server is running. Not decided by
     /// the shared-memory toggle, nor by which agent it is.
-    pub fn decide(http_mcp: bool, enabled: bool, server_running: bool) -> Self {
-        if !http_mcp {
-            Self::Omitted("agent did not advertise mcpCapabilities.http")
+    pub fn decide(reachable: bool, enabled: bool, server_running: bool) -> Self {
+        if !reachable {
+            Self::Omitted("no transport reaches the agent")
         } else if !enabled {
             Self::Omitted("code tools are off in Settings")
         } else if !server_running {
@@ -54,8 +55,8 @@ impl CodeOffer {
     }
 
     /// Decide for one request; the setting is read only when it can matter.
-    pub fn decide(&self, http_mcp: bool, server_running: bool) -> CodeOfferDecision {
-        let enabled = http_mcp && (self.gate)();
-        CodeOfferDecision::decide(http_mcp, enabled, server_running)
+    pub fn decide(&self, reachable: bool, server_running: bool) -> CodeOfferDecision {
+        let enabled = reachable && (self.gate)();
+        CodeOfferDecision::decide(reachable, enabled, server_running)
     }
 }

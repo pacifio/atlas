@@ -757,6 +757,44 @@ impl RecordStore {
         &self.root
     }
 
+    /// The directories whose files are this scope's: the root and every
+    /// worktree of its repository — the main one and each linked one (read
+    /// from `<common git dir>/worktrees/*/gitdir`, no git process), found the
+    /// same way when the root is itself a linked worktree. Each in its given
+    /// and its canonical spelling.
+    pub fn scope_dirs(&self) -> Vec<PathBuf> {
+        let mut dirs = vec![self.root.clone()];
+        if let Some(common) = git_common_dir(&self.root) {
+            // A non-bare repository's common dir is its main worktree's `.git`.
+            if common.file_name().is_some_and(|n| n == ".git") {
+                if let Some(main) = common.parent() {
+                    dirs.push(main.to_path_buf());
+                }
+            }
+            if let Ok(entries) = std::fs::read_dir(common.join("worktrees")) {
+                for entry in entries.flatten() {
+                    let Ok(gitdir) = std::fs::read_to_string(entry.path().join("gitdir")) else {
+                        continue;
+                    };
+                    // `gitdir` names the worktree's `.git` file.
+                    if let Some(worktree) = Path::new(gitdir.trim()).parent() {
+                        dirs.push(normalize_lexically(worktree));
+                    }
+                }
+            }
+        }
+        let canonical: Vec<PathBuf> = dirs.iter().filter_map(|d| d.canonicalize().ok()).collect();
+        dirs.extend(canonical);
+        dirs.sort();
+        dirs.dedup();
+        dirs
+    }
+
+    /// Whether `path` names a file of this scope (see [`path_in_dirs`]).
+    pub fn in_scope(&self, path: &str) -> bool {
+        path_in_dirs(path, &self.scope_dirs())
+    }
+
     pub(crate) fn conn(&self) -> MutexGuard<'_, Connection> {
         self.conn
             .lock()
@@ -857,6 +895,22 @@ impl RecordStore {
             .optional()?)
     }
 
+    /// Each session's newest event at or after `since`, by session id: when
+    /// it last did anything this scope's log saw. Sessions with no event
+    /// since then are absent.
+    pub fn last_event_by_session(
+        &self,
+        since: i64,
+    ) -> Result<std::collections::HashMap<String, i64>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT session, MAX(ts) FROM events WHERE session <> '' AND ts >= ?1 \
+             GROUP BY session",
+        )?;
+        let rows = stmt.query_map([since], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
     /// Up to `limit` events, newest first.
     pub fn events_newest(&self, limit: usize) -> Result<Vec<EventRow>> {
         let conn = self.conn();
@@ -895,24 +949,88 @@ impl RecordStore {
         Ok(())
     }
 
-    /// The newest handoff note left by any session but `except_session`,
-    /// holding only what memory still trusts (see `live_note`).
+    /// The newest handoff note of any session but `except_session`, holding
+    /// only what memory still trusts (see `live_note`) and only this scope's
+    /// files.
+    ///
+    /// A note is stored when a session's end is recorded, and many sessions
+    /// never get one: one still open in another tab, one cut off by a crash,
+    /// one that ran before notes existed. So when a session without a note
+    /// logged work after the newest stored note ended, its note is built now
+    /// from its events ([`crate::handoff::build_handoff`]), `ended_at` being
+    /// its last event, and that one is handed on instead.
     pub fn last_episode(
         &self,
         except_session: &str,
     ) -> Result<Option<crate::handoff::HandoffNote>> {
-        let conn = self.conn();
-        let note: Option<String> = conn
+        let stored: Option<(String, i64)> = self
+            .conn()
             .query_row(
-                "SELECT note FROM episodes WHERE session <> ?1 ORDER BY ended_at DESC LIMIT 1",
+                "SELECT note, ended_at FROM episodes WHERE session <> ?1 \
+                 ORDER BY ended_at DESC LIMIT 1",
                 [except_session],
-                |r| r.get(0),
+                |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()?;
-        match note {
-            Some(n) => live_note(&conn, &n),
-            None => Ok(None),
+        let since = stored.as_ref().map_or(i64::MIN, |(_, at)| *at);
+        let mut note = match self.unrecorded_handoff(except_session, since)? {
+            Some(built) => Some(built),
+            None => match stored {
+                Some((raw, _)) => live_note(&self.conn(), &raw)?,
+                None => None,
+            },
+        };
+        if let Some(note) = &mut note {
+            let dirs = self.scope_dirs();
+            note.files
+                .retain(|f| path_in_dirs(f.strip_suffix(" (deleted)").unwrap_or(f), &dirs));
         }
+        Ok(note)
+    }
+
+    /// The note of the newest session other than `except_session` that has
+    /// no stored note and logged work (anything but its start and end) after
+    /// `since`, built from its events; `None` when there is none, or when the
+    /// few newest such sessions left nothing to hand on.
+    fn unrecorded_handoff(
+        &self,
+        except_session: &str,
+        since: i64,
+    ) -> Result<Option<crate::handoff::HandoffNote>> {
+        /// How many such sessions are tried, newest first.
+        const TRIED: i64 = 5;
+        let candidates: Vec<(String, String, i64, Option<i64>)> = {
+            let conn = self.conn();
+            let mut stmt = conn.prepare(&format!(
+                "SELECT e.session, MAX(e.agent), MAX(e.ts) AS last, \
+                        (SELECT s.ended_at FROM sessions s WHERE s.session_id = e.session) \
+                 FROM events e {LIVE_EVENTS} \
+                   AND e.session <> '' AND e.session <> ?1 \
+                   AND e.kind NOT IN ('session_start', 'session_end') \
+                   AND e.session NOT IN (SELECT session FROM episodes) \
+                 GROUP BY e.session HAVING last > ?2 \
+                 ORDER BY last DESC LIMIT ?3"
+            ))?;
+            let rows = stmt.query_map(params![except_session, since, TRIED], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+            })?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        for (session, agent, last, ended_at) in candidates {
+            let built = crate::handoff::build_handoff(
+                self,
+                &session,
+                &agent,
+                ended_at.unwrap_or(last).max(last),
+            )?;
+            let Some(note) = live_note(&self.conn(), &serde_json::to_string(&built)?)? else {
+                continue;
+            };
+            if !note.is_empty() {
+                return Ok(Some(note));
+            }
+        }
+        Ok(None)
     }
 
     /// Handoff notes that ended after `since`, oldest first, at most `limit`,
@@ -1859,6 +1977,101 @@ pub struct Source {
     pub at: i64,
     pub title: Option<String>,
     pub commits: Vec<String>,
+}
+
+/// Whether `path` lies in one of `dirs`: a relative path that does not climb
+/// out (`..`) always does; an absolute one (or `~/…`, read from `$HOME`)
+/// only under one of them, compared component by component after `.` and
+/// `..` are resolved, as given and canonicalised. An agent's edits to
+/// another checkout, `/tmp` or `~/.claude` are not this scope's files, and
+/// `<root>/../elsewhere` is not under the root.
+pub fn path_in_dirs(path: &str, dirs: &[PathBuf]) -> bool {
+    let path = path.trim();
+    if path.is_empty() {
+        return false;
+    }
+    let expanded;
+    let p = if let Some(rest) = path.strip_prefix('~') {
+        // `~user/…` names someone else's home: never this scope's.
+        let rest = match rest.strip_prefix(['/', '\\']) {
+            Some(rest) => rest,
+            None if rest.is_empty() => "",
+            None => return false,
+        };
+        let Some(home) = home_dir() else {
+            return false;
+        };
+        expanded = home.join(rest);
+        expanded.as_path()
+    } else {
+        Path::new(path)
+    };
+    let p = normalize_lexically(p);
+    if !p.has_root() {
+        return !p
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir));
+    }
+    let dirs: Vec<PathBuf> = dirs.iter().map(|d| normalize_lexically(d)).collect();
+    if dirs.iter().any(|d| p.starts_with(d)) {
+        return true;
+    }
+    // A symlinked spelling (`/tmp` → `/private/tmp`): the file, else its
+    // directory, canonicalised. A deleted file's directory usually remains.
+    let canonical = p.canonicalize().ok().or_else(|| {
+        let parent = p.parent()?.canonicalize().ok()?;
+        Some(parent.join(p.file_name()?))
+    });
+    canonical.is_some_and(|c| dirs.iter().any(|d| c.starts_with(d)))
+}
+
+/// The user's home directory, from the environment.
+fn home_dir() -> Option<PathBuf> {
+    let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    std::env::var_os(var)
+        .filter(|h| !h.is_empty())
+        .map(PathBuf::from)
+}
+
+/// `path` with `.` dropped and each `..` taking off the component before it,
+/// without touching the filesystem. A `..` with nothing to take off stays
+/// (relative) or is dropped (at the root, where `/..` is `/`).
+fn normalize_lexically(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out: Vec<Component<'_>> = Vec::new();
+    for c in path.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => match out.last() {
+                Some(Component::Normal(_)) => {
+                    out.pop();
+                }
+                Some(Component::RootDir | Component::Prefix(_)) => {}
+                _ => out.push(c),
+            },
+            c => out.push(c),
+        }
+    }
+    out.iter().collect()
+}
+
+/// The repository's common git directory for a checkout at `root`: its
+/// `.git` directory, or — for a linked worktree, whose `.git` is a file
+/// naming `<common>/worktrees/<name>` — the directory that file's
+/// `commondir` points back to. Read from the files, no git process.
+fn git_common_dir(root: &Path) -> Option<PathBuf> {
+    let dot_git = root.join(".git");
+    if dot_git.is_dir() {
+        return Some(dot_git);
+    }
+    let pointer = std::fs::read_to_string(&dot_git).ok()?;
+    let gitdir = pointer.trim().strip_prefix("gitdir:")?.trim();
+    let gitdir = root.join(gitdir);
+    let common = match std::fs::read_to_string(gitdir.join("commondir")) {
+        Ok(common) => gitdir.join(common.trim()),
+        Err(_) => gitdir,
+    };
+    Some(normalize_lexically(&common))
 }
 
 /// A stable reference to the session a memory came from, in the spirit of
@@ -4081,6 +4294,70 @@ fn insert_entry(tx: &Transaction<'_>, e: &NewEntry) -> Result<i64> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    #[test]
+    fn a_path_that_climbs_out_of_the_root_is_not_in_it() {
+        let dirs = [PathBuf::from("/work/repo")];
+        assert!(path_in_dirs("/work/repo/src/a.rs", &dirs));
+        assert!(path_in_dirs("/work/repo/./src/../src/a.rs", &dirs));
+        assert!(!path_in_dirs("/work/repo/../other/x.rs", &dirs));
+        assert!(!path_in_dirs("/work/repo/src/../../other/x.rs", &dirs));
+        assert!(path_in_dirs("src/../lib.rs", &dirs));
+        assert!(!path_in_dirs("src/../../lib.rs", &dirs));
+        // A root spelled with a `..` of its own still contains its files.
+        assert!(path_in_dirs(
+            "/work/repo/a.rs",
+            &[PathBuf::from("/work/x/../repo")]
+        ));
+    }
+
+    #[test]
+    fn a_home_relative_path_is_read_from_home() {
+        let Some(home) = home_dir() else {
+            return;
+        };
+        let inside = home.join("atlas-scope-test-repo");
+        assert!(path_in_dirs(
+            "~/atlas-scope-test-repo/src/a.rs",
+            std::slice::from_ref(&inside)
+        ));
+        let dirs = std::slice::from_ref(&inside);
+        assert!(!path_in_dirs("~/.claude/plans/plan.md", dirs));
+        assert!(!path_in_dirs("~/atlas-scope-test-repo/../x", dirs));
+        assert!(!path_in_dirs(
+            "~someone/atlas-scope-test-repo/a.rs",
+            &[inside]
+        ));
+    }
+
+    /// A linked worktree as the scope root still sees the main worktree and
+    /// the other linked ones.
+    #[test]
+    fn a_linked_worktree_root_finds_its_siblings() {
+        let base = tempfile::TempDir::new().unwrap();
+        let main = base.path().join("main");
+        let (wt_a, wt_b) = (base.path().join("wt-a"), base.path().join("wt-b"));
+        for (name, wt) in [("wt-a", &wt_a), ("wt-b", &wt_b)] {
+            let admin = main.join(".git").join("worktrees").join(name);
+            std::fs::create_dir_all(&admin).unwrap();
+            std::fs::create_dir_all(wt).unwrap();
+            std::fs::write(
+                admin.join("gitdir"),
+                format!("{}\n", wt.join(".git").display()),
+            )
+            .unwrap();
+            std::fs::write(admin.join("commondir"), "../..\n").unwrap();
+            std::fs::write(wt.join(".git"), format!("gitdir: {}\n", admin.display())).unwrap();
+        }
+        let store = RecordStore::open(&wt_a).unwrap();
+        let dirs = store.scope_dirs();
+        for dir in [&main, &wt_a, &wt_b] {
+            assert!(dirs.contains(dir), "{} in {dirs:?}", dir.display());
+        }
+        assert!(store.in_scope(&wt_b.join("src/x.rs").to_string_lossy()));
+        assert!(store.in_scope(&main.join("src/x.rs").to_string_lossy()));
+        assert!(!store.in_scope(&base.path().join("other/x.rs").to_string_lossy()));
+    }
 
     pub(crate) fn temp_root(label: &str) -> PathBuf {
         let dir =

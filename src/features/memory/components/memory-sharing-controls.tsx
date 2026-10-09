@@ -3,7 +3,9 @@
 // Two affordances, kept to the monochrome/hairline house style (see Atlas
 // Design Principles): a Shared toggle pill (white when on) and a settings
 // popover holding the handoff-summarizer mode selector (Raw / Provider /
-// Local-disabled) plus the reused ProviderModelSelector when mode === provider.
+// Local-disabled), the reused ProviderModelSelector when mode === provider,
+// and the "sessions outside Atlas" switch (off by default; inert while Shared
+// is off, since nothing is extracted then).
 
 import { useEffect, useMemo } from "react";
 import { Popover } from "@base-ui/react/popover";
@@ -11,16 +13,26 @@ import { Share2, SlidersHorizontal, FileText, Server, Cpu, Check } from "lucide-
 import { cn } from "@/lib/utils";
 import { Hint } from "@/ui/tooltip";
 import { ProviderModelSelector } from "./provider-pickers";
+import { Toggle } from "@/features/settings/components/settings-controls";
 import { useByokStore } from "@/features/settings/stores/byok-store";
 import { CHAT_PROVIDERS } from "@/features/settings/lib/providers";
 import { useMemorySharingStore } from "../stores/memory-sharing-store";
 import type { SummarizerMode } from "../lib/memory-sharing-api";
-import { EXTRACTION_NOTE, HANDOFF_HINT, RAW_HINT } from "../lib/memory-sharing-copy";
+import {
+  EXTERNAL_SESSIONS_HINT,
+  EXTERNAL_SESSIONS_LABEL,
+  EXTERNAL_SESSIONS_NEEDS_SHARING,
+  EXTRACTION_NOTE,
+  HANDOFF_HINT,
+  RAW_HINT,
+} from "../lib/memory-sharing-copy";
 
 export function MemorySharingControls({ projectPath }: { projectPath: string | null }) {
   const enabled = useMemorySharingStore.use.enabled();
   const pref = useMemorySharingStore.use.pref();
-  const { load, setEnabled, setPref } = useMemorySharingStore.use.actions();
+  const fromExternalSessions = useMemorySharingStore.use.fromExternalSessions();
+  const { load, setEnabled, setFromExternalSessions, setPref } =
+    useMemorySharingStore.use.actions();
 
   const byokKeys = useByokStore.use.keys();
   const byokLoaded = useByokStore.use.loaded();
@@ -70,7 +82,7 @@ export function MemorySharingControls({ projectPath }: { projectPath: string | n
 
       {/* Summarizer settings popover */}
       <Popover.Root>
-        <Hint label="Handoff summarizer settings">
+        <Hint label="Memory sharing settings">
           <Popover.Trigger
             render={
               <button
@@ -135,6 +147,31 @@ export function MemorySharingControls({ projectPath }: { projectPath: string | n
               )}
 
               <p className="mt-2.5 text-xs text-muted-foreground">{EXTRACTION_NOTE}</p>
+
+              <div className="mt-3 border-t border-border pt-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className={cn(!enabled && "opacity-60")}>
+                    <p className="text-xs font-medium text-foreground">{EXTERNAL_SESSIONS_LABEL}</p>
+                    <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
+                      {EXTERNAL_SESSIONS_HINT}
+                    </p>
+                    {!enabled && (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {EXTERNAL_SESSIONS_NEEDS_SHARING}
+                      </p>
+                    )}
+                  </div>
+                  <Toggle
+                    label={EXTERNAL_SESSIONS_LABEL}
+                    checked={fromExternalSessions}
+                    disabled={!enabled}
+                    // The popover is card-coloured: the default off track
+                    // would vanish into it, leaving a floating thumb.
+                    className={cn(!fromExternalSessions && "bg-[var(--atlas-element-hover)]")}
+                    onChange={(on) => void setFromExternalSessions(on)}
+                  />
+                </div>
+              </div>
             </Popover.Popup>
           </Popover.Positioner>
         </Popover.Portal>

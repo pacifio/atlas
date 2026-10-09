@@ -138,13 +138,16 @@ fn status_counts_skips_by_reason() {
     let ix = p.index();
     let stats = ix.full_build(&CancelToken::new(), &|_| {}).unwrap();
     assert_eq!(stats.files, 1);
-    assert_eq!(stats.skipped.len(), 4);
+    assert_eq!(stats.skipped.len(), 5);
+    // The pruned vendor/ counts too: a status that left it out would read
+    // as a complete index.
     assert_eq!(
         ix.status().unwrap().skipped,
         [
             ("binary".to_string(), 1),
             ("generated_header".to_string(), 2),
-            ("generated_name".to_string(), 1)
+            ("generated_name".to_string(), 1),
+            ("vendor".to_string(), 1)
         ]
     );
 }

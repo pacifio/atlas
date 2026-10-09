@@ -34,6 +34,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for (reason, n) in ix.status()?.skipped {
         println!("  skipped {reason}: {n}");
     }
+    for (reason, dir, n) in atlas_codeindex::skipped_by_dir(&stats.skipped) {
+        println!("    {reason} {dir}: {n}");
+    }
 
     let t = Instant::now();
     let st = ix.reconcile(&CancelToken::new())?;
@@ -47,17 +50,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let t = Instant::now();
-    let (hits, page) = ix.find_symbol(&SymbolQuery {
+    let (hits, page, exact) = ix.find_symbol_with_exact(&SymbolQuery {
         query: query.clone(),
         limit: 5,
         ..SymbolQuery::default()
     })?;
     println!(
-        "find_symbol {query:?}: {} of {} in {:?}",
+        "find_symbol {query:?}: {} of {} ({exact} exact) in {:?}",
         hits.len(),
         page.total,
         t.elapsed()
     );
+    if exact == 0 && !hits.is_empty() {
+        println!("  no exact match for {query:?}; closest by words:");
+    }
     for h in hits {
         println!(
             "  {} {} {}:{}-{}",

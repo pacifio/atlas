@@ -68,6 +68,40 @@ fn atlasignore_excludes_and_reincludes() {
     );
 }
 
+/// A `!` line lifts the rule it negates and nothing else: re-including
+/// `vendor/ours/` indexes that tree despite the `vendor` skip, but the
+/// built-in skips still apply inside it.
+#[test]
+fn a_reinclude_lifts_only_the_skip_it_names() {
+    let p = Project::new();
+    p.write(
+        ".atlasignore",
+        "!vendor/ours/\n!keep/node_modules/\n!src/schema.generated.ts\n",
+    );
+    let rules = Rules::load(p.root());
+    assert_eq!(rules.path_verdict("vendor/ours/src/lib.rs"), None);
+    for (rel, why) in [
+        ("vendor/ours/node_modules/x/index.js", SkipReason::Vendor),
+        ("vendor/ours/target/debug/build.rs", SkipReason::Vendor),
+        ("vendor/ours/web/dist/app.js", SkipReason::Vendor),
+        ("vendor/ours/api/v1/api.pb.go", SkipReason::GeneratedName),
+        ("vendor/ours/web/app.min.js", SkipReason::GeneratedName),
+    ] {
+        assert_eq!(rules.path_verdict(rel), Some(why), "{rel}");
+    }
+    // The skipped directories inside a re-included tree are pruned again.
+    assert!(!rules.prune_dir("vendor") && !rules.prune_dir("vendor/ours"));
+    assert!(rules.prune_dir("vendor/ours/node_modules") && rules.prune_dir("vendor/ours/target"));
+    // A re-include naming a skipped directory itself, or a file, lifts that.
+    assert_eq!(rules.path_verdict("keep/node_modules/a.js"), None);
+    assert!(!rules.prune_dir("keep/node_modules"));
+    assert_eq!(rules.path_verdict("src/schema.generated.ts"), None);
+    assert_eq!(
+        rules.path_verdict("src/other.generated.ts"),
+        Some(SkipReason::GeneratedName)
+    );
+}
+
 #[test]
 fn ignore_chain_follows_nested_gitignores_and_info_exclude() {
     let p = Project::new();
@@ -102,4 +136,27 @@ fn a_project_inside_a_repository_honours_ignores_above_it() {
         "info/exclude is anchored at the repository top"
     );
     assert!(!chain.is_ignored("src/main.ts", false));
+}
+
+/// This repository's own `.atlasignore`: the engine under `vendor/` is
+/// first-party code (ADR-0003) and must be indexed, while the generic
+/// `vendor` skip still applies to anything else vendored.
+#[test]
+fn this_repository_indexes_its_vendored_engine() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let rules = Rules::load(&root);
+    assert_eq!(
+        rules.path_verdict("vendor/atlas-engine/app-server-client/src/lib.rs"),
+        None
+    );
+    assert!(!rules.prune_dir("vendor") && !rules.prune_dir("vendor/atlas-engine"));
+    assert_eq!(
+        rules.path_verdict("vendor/other/x.rs"),
+        Some(SkipReason::Vendor)
+    );
+    assert_eq!(
+        rules.path_verdict("vendor/atlas-engine/x/node_modules/y.js"),
+        Some(SkipReason::Vendor)
+    );
+    assert!(rules.prune_dir("vendor/atlas-engine/target"));
 }

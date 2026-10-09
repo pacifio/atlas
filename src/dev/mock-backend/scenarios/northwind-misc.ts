@@ -777,6 +777,7 @@ const EVENT_KIND: Record<MemoryContent["kind"], EventKind> = {
 const entryEdits = new Map<string, { content: string; updatedAt: number }>();
 const forgotten = new Set<string>();
 let sharing = true;
+let fromExternalSessions = false;
 
 function entries(): MemoryEntry[] {
   return memory()
@@ -1447,6 +1448,11 @@ export const northwindMiscCommands: Partial<TypedHandlers<MockResponses>> = {
   memory_sharing_get: (): boolean => sharing,
   memory_sharing_set: ({ enabled }): null => {
     sharing = Boolean(enabled);
+    return null;
+  },
+  memory_from_external_sessions_get: (): boolean => fromExternalSessions,
+  memory_from_external_sessions_set: ({ enabled }): null => {
+    fromExternalSessions = Boolean(enabled);
     return null;
   },
   memory_summarizer_get: (): SummarizerPref => ({ mode: "raw", provider: "", model: "" }),

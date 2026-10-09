@@ -14,6 +14,12 @@
 //! sends a transport the agent did not advertise ([`admissible`]). ACP makes
 //! stdio mandatory for every agent and HTTP/SSE opt-in through
 //! `mcpCapabilities`, and that is the only gate: never the agent's identity.
+//!
+//! Nothing secret may ride an entry handed to an agent in another process
+//! ([`SessionMcpRequest::in_process`]): an ACP adapter is free to put its MCP
+//! configuration on a command line, where any local user's `ps` reads it (the
+//! Claude Agent SDK passes `--mcp-config <json>`, headers and `env` included).
+//! ADR-0020.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -42,6 +48,13 @@ pub struct SessionMcpRequest {
     /// binary is never handed the user's organisation — decided by the
     /// connection, never by which agent it is.
     pub org_access: bool,
+    /// Whether the agent runs **inside the Atlas process**, so an entry it is
+    /// handed never leaves Atlas's memory. An agent in another process (every
+    /// ACP agent) may write its MCP configuration anywhere — a command line,
+    /// a config file — so the host must not put a credential in any of an
+    /// entry's fields: not a header, not an argument, not `env` (ADR-0020).
+    /// A property of the connection, never of which agent it is.
+    pub in_process: bool,
     /// The directory the session runs in.
     pub cwd: PathBuf,
     /// The session being loaded or resumed; `None` for a new session, whose
@@ -360,7 +373,8 @@ pub fn offer_for(
     provider.map_or_else(SessionMcpOffer::none, |p| p.offer(request))
 }
 
-/// `_meta` for a session request carrying `servers`: the Claude Code adapter
+/// `_meta` for a session request carrying `servers` (only ever the host's
+/// offer, never the user's own servers): the Claude Code adapter
 /// passes `_meta.claudeCode.options` to the Agent SDK, whose `allowedTools` rule
 /// `mcp__<server>` runs that server's tools without a permission prompt: the
 /// standing the native agent's servers have (`default_tools_approval_mode =
@@ -372,8 +386,11 @@ pub fn preapproval_meta(servers: &[acp::McpServer], ask_first: &AskFirst) -> Opt
     let rules: Vec<serde_json::Value> = servers
         .iter()
         .filter_map(|server| match server {
-            acp::McpServer::Http(http) if ask_first.tools_on(&http.name).next().is_none() => {
-                Some(format!("mcp__{}", http.name).into())
+            acp::McpServer::Http(acp::McpServerHttp { name, .. })
+            | acp::McpServer::Stdio(acp::McpServerStdio { name, .. })
+                if ask_first.tools_on(name).next().is_none() =>
+            {
+                Some(format!("mcp__{name}").into())
             }
             _ => None,
         })
@@ -414,11 +431,12 @@ mod tests {
     }
 
     /// Claude Code asked before every Atlas tool call (review of #354): the
-    /// offered HTTP servers ride the session request as pre-approved.
+    /// offered servers ride the session request as pre-approved, whichever
+    /// transport carries them (an ACP agent gets the stdio bridge, ADR-0020).
     #[test]
-    fn offered_http_servers_are_preapproved_for_claude_code() {
-        let stdio = acp::McpServer::Stdio(acp::McpServerStdio::new("local", "/bin/true"));
-        let servers = [http("atlas_memory"), http("atlas_code"), stdio];
+    fn offered_servers_are_preapproved_for_claude_code() {
+        let stdio = acp::McpServer::Stdio(acp::McpServerStdio::new("atlas_code", "/bin/atlas"));
+        let servers = [http("atlas_memory"), stdio];
         let meta = preapproval_meta(&servers, &AskFirst::none()).unwrap();
         assert_eq!(
             serde_json::Value::Object(meta),

@@ -412,6 +412,8 @@ fn session_request(ui_control: bool) -> SessionMcpRequest {
         http_mcp: true,
         ui_control,
         org_access: false,
+        // UI control is only ever carried by the in-process connection.
+        in_process: ui_control,
         cwd: std::path::PathBuf::from("/p"),
         session_id: None,
     }
@@ -419,23 +421,7 @@ fn session_request(ui_control: bool) -> SessionMcpRequest {
 
 /// Every entry an offer carries, as `(name, url, bearer token)`.
 fn entries(offer: &SessionMcpOffer) -> Vec<(String, String, String)> {
-    offer
-        .servers()
-        .iter()
-        .map(|server| {
-            let acp::McpServer::Http(http) = server else {
-                panic!("HTTP entries only")
-            };
-            let token = http
-                .headers
-                .iter()
-                .find(|h| h.name == "Authorization")
-                .and_then(|h| h.value.strip_prefix("Bearer "))
-                .expect("a bearer token")
-                .to_string();
-            (http.name.clone(), http.url.clone(), token)
-        })
-        .collect()
+    crate::commands::memory_server::offers::offered_entries(offer)
 }
 
 fn names(offer: &SessionMcpOffer) -> Vec<String> {

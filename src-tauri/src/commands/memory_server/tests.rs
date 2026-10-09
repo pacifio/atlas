@@ -1176,33 +1176,131 @@ async fn running_host(gate: SharingGate) -> Arc<MemoryServerHost> {
     host
 }
 
+/// An ACP agent's request: another process, whatever it advertised.
 fn request(http_mcp: bool, cwd: &str, session: Option<&str>) -> SessionMcpRequest {
     SessionMcpRequest {
         agent_id: atlas_acp_thread::AgentId::new("claude-code"),
         http_mcp,
         ui_control: false,
         org_access: false,
+        in_process: false,
         cwd: std::path::PathBuf::from(cwd),
         session_id: session.map(acp::SessionId::new),
     }
 }
 
-/// The one server an offer carries, as `(name, url, bearer token)`.
-fn offered(offer: &SessionMcpOffer) -> Option<(String, String, String)> {
-    match offer.servers() {
-        [acp::McpServer::Http(http)] => {
-            let token = http
-                .headers
-                .iter()
-                .find(|h| h.name == "Authorization")
-                .and_then(|h| h.value.strip_prefix("Bearer "))
-                .expect("the entry carries a bearer token")
-                .to_string();
-            Some((http.name.clone(), http.url.clone(), token))
-        }
-        [] => None,
-        other => panic!("one server at most: {other:?}"),
+/// The native agent's request: in this process, over HTTP.
+fn in_process_request(cwd: &str) -> SessionMcpRequest {
+    SessionMcpRequest {
+        agent_id: atlas_acp_thread::AgentId::new("atlas-agent"),
+        in_process: true,
+        ..request(true, cwd, None)
     }
+}
+
+/// The one server an offer carries, as `(name, url, bearer token)`: from the
+/// header of an HTTP entry, or from the file a bridged entry names.
+fn offered(offer: &SessionMcpOffer) -> Option<(String, String, String)> {
+    let mut entries = offers::offered_entries(offer);
+    assert!(entries.len() <= 1, "one server at most: {entries:?}");
+    entries.pop()
+}
+
+/// ADR-0020: an agent in another process may put its whole MCP entry on a
+/// command line (the Claude Agent SDK's `--mcp-config <json>`), so no field
+/// of any entry it is offered carries the token — not a header, not the
+/// URL, not an argument, not `env` — whether or not it advertised HTTP MCP.
+/// The token is in the private file the entry names. Only the in-process
+/// agent's entry holds the token itself, in its header.
+#[tokio::test(flavor = "multi_thread")]
+async fn no_entry_offered_to_another_process_carries_the_token() {
+    let host = running_host(always_on()).await;
+    let offers = MemorySessionOffers::new(host.clone(), always_on()).with_code(
+        crate::commands::code_server::CodeOffer::new(Arc::new(|| true)),
+    );
+    for http_mcp in [true, false] {
+        let offer = offers.offer(&request(http_mcp, "/p", None));
+        assert_eq!(
+            offer.servers().len(),
+            2,
+            "memory and code: {:?}",
+            offer.servers()
+        );
+        let mut tokens = Vec::new();
+        for server in offer.servers() {
+            let acp::McpServer::Stdio(stdio) = server else {
+                panic!("http_mcp={http_mcp}: only the stdio bridge leaves the process: {server:?}")
+            };
+            assert!(stdio.env.is_empty(), "nothing in env: {:?}", stdio.env);
+            let file = stdio.args.last().unwrap();
+            let token = crate::commands::memory_bridge::read_token_file(file.as_ref()).unwrap();
+            assert!(host.tokens().grant(&token).is_some(), "a live token");
+            let printed = serde_json::to_string(server).unwrap();
+            assert!(
+                !printed.contains(&token),
+                "http_mcp={http_mcp}: the token is in the entry: {printed}"
+            );
+            tokens.push(token);
+        }
+        assert_eq!(tokens[0], tokens[1], "one token for both servers");
+    }
+
+    let offer = offers.offer(&in_process_request("/p"));
+    let token = host.tokens().grant(&offered_token(&offer));
+    assert!(
+        token.is_some(),
+        "the in-process agent's header token is live"
+    );
+}
+
+/// The token of an offer whose entries are all HTTP.
+fn offered_token(offer: &SessionMcpOffer) -> String {
+    let [acp::McpServer::Http(http), ..] = offer.servers() else {
+        panic!("HTTP for the in-process agent: {:?}", offer.servers())
+    };
+    http.headers[0]
+        .value
+        .strip_prefix("Bearer ")
+        .unwrap()
+        .to_string()
+}
+
+/// An offer released unbound removes its token file with its token.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_bridged_offer_that_never_binds_removes_its_token_file() {
+    let host = running_host(always_on()).await;
+    let offers = MemorySessionOffers::new(host, always_on());
+    let offer = offers.offer(&request(true, "/p", None));
+    let [acp::McpServer::Stdio(stdio)] = offer.servers() else {
+        panic!("{:?}", offer.servers())
+    };
+    let file = std::path::PathBuf::from(stdio.args.last().unwrap());
+    assert!(file.exists());
+    drop(offer);
+    assert!(!file.exists(), "the file goes with the token");
+}
+
+/// A bound offer's token file goes when its session ends, not at some later
+/// offer's sweep.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_bound_sessions_token_file_goes_when_the_session_ends() {
+    let host = running_host(always_on()).await;
+    let files = Arc::new(crate::commands::memory_bridge::TokenFiles::in_temp());
+    let offers = MemorySessionOffers::new(host, always_on()).with_token_files(files.clone());
+    let offer = offers.offer(&request(true, "/p", None));
+    let [acp::McpServer::Stdio(stdio)] = offer.servers() else {
+        panic!("{:?}", offer.servers())
+    };
+    let file = std::path::PathBuf::from(stdio.args.last().unwrap());
+    offer.bind(&acp::SessionId::new("s-bound"));
+    assert!(
+        file.exists(),
+        "a bound session keeps its file while it runs"
+    );
+    files.session_ended("s-other");
+    assert!(file.exists());
+    files.session_ended("s-bound");
+    assert!(!file.exists(), "the file goes with the session");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1254,31 +1352,31 @@ async fn an_http_agent_is_offered_the_server_with_a_token_that_binds_to_its_sess
     let _ = std::fs::remove_dir_all(&project);
 }
 
-/// ADR-0019: an agent without HTTP MCP is handed the server as a stdio
-/// entry, this binary's `mcp-bridge`, with the token in its environment and
-/// never on its command line.
+/// ADR-0019, ADR-0020: an ACP agent is handed the server as a stdio entry,
+/// this binary's `mcp-bridge`, naming a file that holds the token.
 #[tokio::test(flavor = "multi_thread")]
-async fn an_agent_without_http_mcp_is_offered_the_stdio_bridge() {
+async fn an_acp_agent_is_offered_the_stdio_bridge() {
     let host = running_host(always_on()).await;
     let offers = MemorySessionOffers::new(host.clone(), always_on());
     let offer = offers.offer(&request(false, "/p", None));
     let [acp::McpServer::Stdio(stdio)] = offer.servers() else {
         panic!("{:?}", offer.servers())
     };
-    assert_eq!(stdio.name, MEMORY_SERVER_NAME);
-    assert_eq!(stdio.args, [BRIDGE_ARG.to_string(), host.url().unwrap()]);
-    let token = stdio
-        .env
-        .iter()
-        .find(|v| v.name == BRIDGE_TOKEN_ENV)
-        .map(|v| v.value.clone())
-        .expect("the token rides the environment");
-    assert!(!token.is_empty());
-    assert!(
-        stdio.args.iter().all(|a| !a.contains(&token)),
-        "no token in argv"
-    );
+    assert_eq!(stdio.command, std::env::current_exe().unwrap());
+    let (name, url, token) = offered(&offer).unwrap();
+    assert_eq!(name, MEMORY_SERVER_NAME);
+    assert_eq!(Some(url), host.url());
     assert!(host.tokens().grant(&token).is_some(), "a live token");
+}
+
+/// The in-process agent keeps HTTP, its token in the header it reads from
+/// memory.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_in_process_agent_is_offered_the_server_over_http() {
+    let host = running_host(always_on()).await;
+    let offers = MemorySessionOffers::new(host, always_on());
+    let offer = offers.offer(&in_process_request("/p"));
+    assert!(matches!(offer.servers(), [acp::McpServer::Http(_)]));
 }
 
 /// A stdio-only agent's messages reach the loopback server through the
@@ -1376,6 +1474,11 @@ fn each_decision_is_one_log_line_naming_the_agent_its_capability_and_the_outcome
     assert_eq!(
         OfferDecision::decide(false, true, true).log_line("gemini", false),
         "memory tool server offer: agent=gemini http_mcp=false memory_server=included_via_bridge",
+    );
+    // An ACP agent that advertised HTTP is bridged all the same (ADR-0020).
+    assert_eq!(
+        OfferDecision::decide(false, true, true).log_line("claude-code", true),
+        "memory tool server offer: agent=claude-code http_mcp=true memory_server=included_via_bridge",
     );
     assert_eq!(
         OfferDecision::decide(true, false, true).log_line("atlas-agent", true),
@@ -1698,6 +1801,34 @@ async fn the_handoff_carries_what_the_recorded_session_did() {
     let _ = std::fs::remove_dir_all(&p);
 }
 
+/// The description promises a `handoff` field, so it is there even when no
+/// earlier session left a note: `null`, never missing.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_briefing_with_no_earlier_session_carries_a_null_handoff() {
+    let p = temp_project("handoff-none");
+    let memory = ticking_memory();
+    let tokens = Arc::new(MemoryTokens::default());
+    let server = serve(
+        memory.clone(),
+        tokens.clone(),
+        always_on(),
+        Sources::default(),
+    )
+    .await;
+    let b = connect(&server.url(), &tokens.mint("s-only", "codex", &p))
+        .await
+        .unwrap();
+    let (err, brief) = call(&b, "memory_briefing", json!({})).await;
+    assert!(!err, "{brief}");
+    assert!(
+        brief.as_object().unwrap().contains_key("handoff"),
+        "{brief}"
+    );
+    assert!(brief["handoff"].is_null(), "{brief}");
+    b.cancel().await.ok();
+    let _ = std::fs::remove_dir_all(&p);
+}
+
 #[test]
 fn a_long_handoff_is_cut_files_first_and_decisions_last() {
     let note = atlas_memory::handoff::HandoffNote {
@@ -1887,4 +2018,170 @@ async fn memory_why_marks_a_memory_whose_cited_lines_changed_as_stale() {
     );
     a.cancel().await.ok();
     let _ = std::fs::remove_dir_all(&p);
+}
+
+/// A server whose index answers every query with `docs`.
+async fn serve_with_documents(docs: Vec<IndexDoc>) -> (MemoryServer, Arc<MemoryTokens>) {
+    let tokens = Arc::new(MemoryTokens::default());
+    let index: IndexSearch = Arc::new(move |_cwd, _query, limit: usize| {
+        let docs: Vec<IndexDoc> = docs.iter().take(limit).cloned().collect();
+        Box::pin(async move { docs })
+    });
+    let server = serve(
+        ticking_memory(),
+        tokens.clone(),
+        always_on(),
+        Sources {
+            index: Some(index),
+            ..Sources::default()
+        },
+    )
+    .await;
+    (server, tokens)
+}
+
+/// The live miss: one query returned ~4k tokens, two of its documents whole
+/// session transcripts. A document is an excerpt around the passage that
+/// matched, not the transcript's head; the reply stays inside its budget,
+/// and says so when it had to drop results.
+#[tokio::test(flavor = "multi_thread")]
+async fn memory_search_documents_are_excerpts_inside_the_output_budget() {
+    let project = temp_project("doc-budget");
+    let filler = "the agent read some files and ran the tests again. ".repeat(600);
+    let transcript =
+        format!("SESSION HEAD {filler}we built the grep prefilter for large repositories {filler}");
+    let docs: Vec<IndexDoc> = (0..6)
+        .map(|i| IndexDoc {
+            id: Some(format!("claude:session-{i}")),
+            title: format!("session {i}"),
+            source: "claude".to_string(),
+            text: transcript.clone(),
+        })
+        .collect();
+    let (server, tokens) = serve_with_documents(docs).await;
+    let client = connect(&server.url(), &tokens.mint("s1", "claude-code", &project))
+        .await
+        .unwrap();
+
+    let (err, found) = call(
+        &client,
+        "memory_search",
+        json!({ "query": "grep index prefilter large repositories", "limit": 5 }),
+    )
+    .await;
+    assert!(!err, "{found}");
+    let size = found.to_string().len();
+    assert!(size <= 4096 * 4, "{size} bytes over the default budget");
+    let first = &found["documents"][0];
+    let text = first["text"].as_str().unwrap();
+    assert!(
+        text.contains("grep prefilter for large repositories"),
+        "{text}"
+    );
+    assert!(
+        !text.contains("SESSION HEAD"),
+        "the excerpt is the head: {text}"
+    );
+    assert!(text.len() < 2_000, "{} bytes in one excerpt", text.len());
+    assert_eq!(first["excerpt"], true);
+    assert_eq!(first["length"], transcript.len());
+
+    // A smaller budget holds fewer documents, and says it dropped some.
+    let (_, tight) = call(
+        &client,
+        "memory_search",
+        json!({ "query": "grep prefilter", "limit": 6, "max_output_tokens": 1000 }),
+    )
+    .await;
+    assert!(
+        tight.to_string().len() <= 4_000,
+        "{}",
+        tight.to_string().len()
+    );
+    assert_eq!(tight["truncation"], "output_budget", "{tight}");
+    assert!(tight["documents"].as_array().unwrap().len() < 6, "{tight}");
+    client.cancel().await.ok();
+    let _ = std::fs::remove_dir_all(&project);
+}
+
+/// The live miss: a query no memory answers returned a branch fact and two
+/// 413 notes as its top hits, each sharing one incidental word. An entry is
+/// shown only when it carries the query's distinctive terms; when none does,
+/// the result is empty and says so.
+#[tokio::test(flavor = "multi_thread")]
+async fn memory_search_does_not_present_unrelated_entries_as_matches() {
+    let project = temp_project("floor");
+    let tokens = Arc::new(MemoryTokens::default());
+    let server = serve(
+        ticking_memory(),
+        tokens.clone(),
+        always_on(),
+        Sources::default(),
+    )
+    .await;
+    let client = connect(&server.url(), &tokens.mint("s1", "claude-code", &project))
+        .await
+        .unwrap();
+    for content in [
+        "The repository has a local branch named '0.3.4' tracking 'origin/0.3.4'",
+        "prompt_too_large 413 is treated as a recoverable context-overflow signal",
+        "The repository uses bun for the frontend and cargo for the backend",
+        "Every repository change goes through a version branch",
+    ] {
+        call(
+            &client,
+            "memory_remember",
+            json!({ "kind": "fact", "content": content }),
+        )
+        .await;
+    }
+
+    let (err, none) = call(
+        &client,
+        "memory_search",
+        json!({ "query": "grep index prefilter large repositories", "limit": 5 }),
+    )
+    .await;
+    assert!(!err, "{none}");
+    assert_eq!(none["entries"], json!([]), "{none}");
+    assert!(none["note"].is_string(), "{none}");
+
+    let (_, found) = call(
+        &client,
+        "memory_search",
+        json!({ "query": "how is a 413 prompt too large error handled" }),
+    )
+    .await;
+    let contents: Vec<&str> = found["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|e| e["content"].as_str())
+        .collect();
+    assert_eq!(
+        contents,
+        vec!["prompt_too_large 413 is treated as a recoverable context-overflow signal"]
+    );
+    assert!(found.get("note").is_none(), "{found}");
+    client.cancel().await.ok();
+    let _ = std::fs::remove_dir_all(&project);
+}
+
+/// `max_output_tokens` is part of the schema, with the `atlas_code` tools'
+/// bounds, so an agent can see it and ask for less or more.
+#[test]
+fn memory_search_takes_an_output_budget_like_the_code_tools() {
+    let wire = serde_json::to_value(tools_list()).expect("serializes");
+    let search = wire["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "memory_search")
+        .expect("listed");
+    let budget = &search["inputSchema"]["properties"]["max_output_tokens"];
+    assert_eq!(budget["type"], "integer");
+    assert_eq!(budget["minimum"], 1000);
+    assert_eq!(budget["maximum"], 12000);
+    assert!(budget["description"].as_str().unwrap().contains("4096"));
+    assert_eq!(search["inputSchema"]["required"], json!(["query"]));
 }

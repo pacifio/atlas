@@ -5,7 +5,14 @@
 //! paths) → `import_map` 0.95 → `import_map_suffix` 0.85 (incl. glob imports) → `same_module`
 //! 0.90 → candidates by simple name (none if more than 256) → `qualified_suffix` 0.90 →
 //! `unique_name` 0.75 (×0.5 when not import-reachable) → `suffix_match` 0.55·min(1, 3/n)
-//! (×0.5 when nothing is import-reachable).
+//! (×0.5 when nothing is import-reachable). A Rust glob import yields to an item of the
+//! module itself (`use demo::*; fn id()`), and a bare Rust name never binds a method.
+//! Before all of it, a Rust receiver typed by a chain (`~…~…`, see `graph_extract`) binds
+//! `typed_receiver` 0.90: the chain is evaluated through return types, struct fields, `?`,
+//! `.await`, tuple elements and modelled std calls (`unwrap`, `lock`, auto-deref through
+//! `Arc`/`Box`/guards) to a project type, whose impl must have the method (an impl whose
+//! own type resolves elsewhere never counts; one that does not resolve, in another crate,
+//! binds at 0.375); otherwise the receiver falls back to its text.
 //! Guards: same language family only; `receiver_chain_admits`; weak member calls (`x.f()` on an
 //! untyped receiver) never bind by name alone in Python/JS/TS, and in Rust/Go only to an
 //! import-reachable method (an unreachable one is mostly std's: `path.display()`);
@@ -23,6 +30,7 @@ use std::collections::{HashMap, HashSet};
 use crate::graph_extract::RefKind;
 use crate::import_resolve::{rust_abs, rust_longest_module, ImportTarget, ReexportGraph};
 use crate::rust_crates::Libs;
+use crate::rust_types::{self, RType, DEREF_WRAPPERS, FALLIBLE, LOCKS};
 use crate::universe::{SymRow, Universe, GO, PY, RUST, TS};
 
 pub(crate) const MAX_CANDIDATES: usize = 256;
@@ -30,6 +38,15 @@ pub(crate) const MAX_CANDIDATES: usize = 256;
 /// Edges weaker than this are dropped: a name shared by many symbols, or one no import
 /// reaches, is a guess, and a guess at hop 1 would read as a direct caller.
 pub(crate) const MIN_CONFIDENCE: f32 = 0.3;
+
+/// A receiver typed by its chain, bound to that type's own method.
+const TYPED_RECEIVER: f32 = 0.9;
+/// A typed receiver's method found only by its impl's name in another crate (the impl's
+/// type did not resolve): `unique_name`'s unreachable score, a name guess no import backs.
+const CROSS_CRATE_NAME_MATCH: f32 = 0.375;
+/// The cascade's import- and path-backed strategies score at least this; below it a
+/// target is a name guess.
+const FIRM: f32 = 0.85;
 
 pub(crate) const CALLABLE_KINDS: &[&str] =
     &["fn", "function", "method", "constructor", "macro", "func"];
@@ -175,6 +192,8 @@ pub(crate) struct Resolver<'u> {
     memo: HashMap<(i64, u8, String, String), Option<Resolved>>,
     /// A symbol no candidate may be (see [`Resolver::resolve`]).
     exclude: Option<i64>,
+    /// Impl/trait symbol id → the type definition it is for ([`Resolver::parent_type`]).
+    parent_ty: HashMap<i64, Option<i64>>,
 }
 
 impl<'u> Resolver<'u> {
@@ -211,11 +230,15 @@ impl<'u> Resolver<'u> {
             reach: HashMap::new(),
             memo: HashMap::new(),
             exclude: None,
+            parent_ty: HashMap::new(),
         }
     }
 
     /// Resolve one reference to `(src symbol, target)`. `None` = no edge.
     pub(crate) fn resolve(&mut self, r: &RefRow) -> Option<(i64, Resolved)> {
+        if r.kind == RefKind::Field {
+            return None;
+        }
         let (src, receiver) = match r.kind {
             RefKind::Inherit | RefKind::Impl => {
                 let (src_ty, qual) = r
@@ -288,6 +311,15 @@ impl<'u> Resolver<'u> {
     }
 
     fn cascade(&mut self, f: i64, kind: RefKind, receiver: &str, name: &str) -> Option<Resolved> {
+        if let Some(rest) = receiver.strip_prefix('~') {
+            let (chain, fallback) = rest.split_once('~').unwrap_or((rest, ""));
+            if kind == RefKind::Call {
+                if let Some(hit) = self.typed_member(f, chain, name) {
+                    return Some(hit);
+                }
+            }
+            return self.cascade(f, kind, fallback, name);
+        }
         let u = self.u;
         let fam = u.fam_of(f);
         let (segs, qualified) = parse_receiver(receiver);
@@ -299,8 +331,15 @@ impl<'u> Resolver<'u> {
             return None;
         }
         let exclude = self.exclude;
-        let ok =
-            |s: &SymRow| kind_ok(kind, s) && u.fam_of(s.file_id) == fam && Some(s.id) != exclude;
+        // A bare Rust name (`id(1)`) is never an associated fn or method: those take a path
+        // (`Self::id`) or a receiver (`x.id()`).
+        let bare_rust = fam == RUST && segs.is_empty();
+        let ok = |s: &SymRow| {
+            kind_ok(kind, s)
+                && u.fam_of(s.file_id) == fam
+                && Some(s.id) != exclude
+                && !(bare_rust && s.kind == "method")
+        };
         let value = kind == RefKind::Value;
 
         // Rust paths through the real module tree.
@@ -321,6 +360,7 @@ impl<'u> Resolver<'u> {
         }
 
         // S1 import_map / S1b import_map_suffix.
+        let mut glob_hit: Option<Resolved> = None;
         if let Some((b, rest)) = self.binding_for(f, &segs, name) {
             if b.external {
                 return None;
@@ -357,17 +397,10 @@ impl<'u> Resolver<'u> {
                 }
             }
         } else if segs.is_empty() {
-            let globs: Vec<Binding> = self
-                .bindings
-                .get(&f)
-                .map(|v| v.iter().filter(|b| b.glob).cloned().collect())
-                .unwrap_or_default();
-            for b in globs {
-                let (files, need) = self.binding_scope(fam, &b, &[]);
-                let need_refs: Vec<&str> = need.iter().map(String::as_str).collect();
-                let c = self.in_files(&files, name, &ok, &need_refs, true);
-                if !c.is_empty() {
-                    return Some(self.pick(f, &c, 0.85, "import_map_suffix"));
+            if let Some(hit) = self.glob_import(f, fam, name, &ok) {
+                glob_hit = Some(hit);
+                if fam != RUST {
+                    return glob_hit;
                 }
             }
         }
@@ -381,8 +414,18 @@ impl<'u> Resolver<'u> {
                 .filter(|i| admits(u, &segs, *i) && (!member || is_method(u, *i)))
                 .collect();
             if !c.is_empty() {
-                return Some(self.pick(f, &c, 0.90, "same_module"));
+                let local = self.pick(f, &c, 0.90, "same_module");
+                // A Rust item of the module shadows a glob import (`use demo::*; fn id()`);
+                // when both name the same item (`use super::*` in an inline `mod tests`),
+                // the glob is how it got there.
+                return Some(match glob_hit {
+                    Some(g) if g.dst == local.dst => g,
+                    _ => local,
+                });
             }
+        }
+        if glob_hit.is_some() {
+            return glob_hit;
         }
 
         // S3: by simple name.
@@ -445,6 +488,307 @@ impl<'u> Resolver<'u> {
         };
         let conf = 0.55 * (3.0 / pool.len() as f32).min(1.0) * factor;
         Some(self.pick(f, &pool, conf, "suffix_match"))
+    }
+
+    /// S1b through a glob import (`use a::*`, `from a import *`).
+    fn glob_import(
+        &mut self,
+        f: i64,
+        fam: u8,
+        name: &str,
+        ok: &dyn Fn(&SymRow) -> bool,
+    ) -> Option<Resolved> {
+        let globs: Vec<Binding> = self
+            .bindings
+            .get(&f)
+            .map(|v| v.iter().filter(|b| b.glob).cloned().collect())
+            .unwrap_or_default();
+        for b in globs {
+            let (files, need) = self.binding_scope(fam, &b, &[]);
+            let need_refs: Vec<&str> = need.iter().map(String::as_str).collect();
+            let c = self.in_files(&files, name, ok, &need_refs, true);
+            if !c.is_empty() {
+                return Some(self.pick(f, &c, 0.85, "import_map_suffix"));
+            }
+        }
+        None
+    }
+
+    /// `x.name()` on a receiver typed by a chain (see `graph_extract`): the method of the
+    /// type the chain ends at. `None` = the chain does not type, or the type has no such
+    /// project method (a std or trait method); the caller then reads the receiver as text.
+    fn typed_member(&mut self, f: i64, chain: &str, name: &str) -> Option<Resolved> {
+        let (t, home) = self.chain_type(f, chain)?;
+        match self.member(t, home, name)? {
+            Member::Method(i, confidence) => Some(Resolved {
+                dst: self.u.syms[i].id,
+                confidence,
+                strategy: "typed_receiver",
+            }),
+            Member::Std(_) => None,
+        }
+    }
+
+    /// The type a chain evaluates to, with the file its text was written in.
+    fn chain_type(&mut self, f: i64, chain: &str) -> Option<(RType, i64)> {
+        let mut cur: Option<(RType, i64)> = None;
+        for step in chain.split('|') {
+            let mut chars = step.chars();
+            let op = chars.next()?;
+            let arg = chars.as_str();
+            cur = Some(match op {
+                'T' => (rust_types::parse(arg)?, f),
+                'F' => {
+                    let (q, n) = arg.rsplit_once('#')?;
+                    let d = self.cascade(f, RefKind::Call, q, n)?;
+                    self.result_of(*self.u.sym_ix.get(&d.dst)?)?
+                }
+                '.' => {
+                    let (t, home) = cur?;
+                    match self.member(t, home, arg)? {
+                        Member::Std(t) => (t, home),
+                        Member::Method(i, _) => self.result_of(i)?,
+                    }
+                }
+                ':' => {
+                    let (t, home) = cur?;
+                    self.field_type(t, home, arg)?
+                }
+                '?' => {
+                    let (t, home) = cur?;
+                    let t = deref(t);
+                    if !FALLIBLE.contains(&t.name()) {
+                        return None;
+                    }
+                    (t.arg(0)?, home)
+                }
+                '^' => {
+                    let (t, home) = cur?;
+                    // An `async fn`'s declared type is already what `.await` yields.
+                    if t.name() == "Future" || t.name() == "IntoFuture" {
+                        (t.arg(0)?, home)
+                    } else {
+                        (t, home)
+                    }
+                }
+                '#' => {
+                    let (t, home) = cur?;
+                    let t = deref(t);
+                    if !t.is_tuple() {
+                        return None;
+                    }
+                    (t.arg(arg.parse().ok()?)?, home)
+                }
+                _ => return None,
+            });
+        }
+        cur
+    }
+
+    /// What `.name()` on `t` is: a std operation we model (`unwrap`, `lock`, `clone`,
+    /// auto-deref through `Arc`/`Box`/guards), or the type's own method.
+    fn member(&mut self, mut t: RType, home: i64, name: &str) -> Option<Member> {
+        for _ in 0..8 {
+            let n = t.name();
+            let unwrap = matches!(
+                name,
+                "unwrap" | "expect" | "unwrap_or_default" | "unwrap_or" | "unwrap_or_else"
+            );
+            if unwrap && FALLIBLE.contains(&n) {
+                return Some(Member::Std(t.arg(0)?));
+            }
+            if matches!(
+                name,
+                "lock"
+                    | "read"
+                    | "write"
+                    | "try_lock"
+                    | "blocking_lock"
+                    | "blocking_read"
+                    | "blocking_write"
+            ) && LOCKS.contains(&n)
+            {
+                return Some(Member::Std(t.arg(0)?));
+            }
+            if DEREF_WRAPPERS.contains(&n) {
+                t = t.arg(0)?;
+                continue;
+            }
+            if matches!(
+                name,
+                "clone"
+                    | "to_owned"
+                    | "as_ref"
+                    | "as_mut"
+                    | "borrow"
+                    | "borrow_mut"
+                    | "deref"
+                    | "deref_mut"
+            ) || unwrap
+            {
+                // `guard.unwrap()` on a lock's result we already unwrapped, `x.clone()`.
+                return Some(Member::Std(t));
+            }
+            let (t, home) = self.expand_alias(t, home)?;
+            if FALLIBLE.contains(&t.name()) || t.is_tuple() {
+                return None;
+            }
+            return self
+                .method_of(&t, home, name)
+                .map(|(i, c)| Member::Method(i, c));
+        }
+        None
+    }
+
+    /// A project method `name` of type `t` (`t` written in `home`): one whose parent impl or
+    /// trait is for that very type. A parent whose type resolves (from the impl's own file)
+    /// to another definition is never one, however it is named: `Foo` in a crate that has
+    /// a `Foo` of its own is that crate's. A parent whose type does not resolve falls back
+    /// to its name: in the type's own crate at the typed confidence, in another crate at
+    /// [`CROSS_CRATE_NAME_MATCH`].
+    fn method_of(&mut self, t: &RType, home: i64, name: &str) -> Option<(usize, f32)> {
+        let u = self.u;
+        // A type no project symbol answers to (`tempfile::TempDir`, `std::path::Path`) has
+        // none of the project's methods, whatever their parent is named.
+        let ti = self.type_sym(t, home)?;
+        let tid = u.syms[ti].id;
+        let tname = u.syms[ti].name.as_str();
+        let named: Vec<(usize, usize)> = self
+            .by_name(name)
+            .iter()
+            .copied()
+            .filter_map(|i| {
+                let s = &u.syms[i];
+                let pi = *s.parent.and_then(|p| u.sym_ix.get(&p))?;
+                (CALLABLE_KINDS.contains(&s.kind.as_str())
+                    && u.fam_of(s.file_id) == RUST
+                    && Some(s.id) != self.exclude
+                    && u.syms[pi].name == tname)
+                    .then_some((i, pi))
+            })
+            .collect();
+        let mut exact = Vec::new();
+        let mut by_name = Vec::new();
+        for (i, pi) in named {
+            match self.parent_type(pi) {
+                Some(id) if id == tid => exact.push(i),
+                Some(_) => {}
+                None => by_name.push(i),
+            }
+        }
+        let home_crate = crate_key(&u.file(u.syms[ti].file_id).module);
+        let in_home = |i: &usize| crate_key(&u.file(u.syms[*i].file_id).module) == home_crate;
+        // The type's own crate first: its inherent methods shadow another crate's trait
+        // impl of the same name.
+        let (exact_home, exact_other): (Vec<usize>, Vec<usize>) =
+            exact.into_iter().partition(in_home);
+        let (own, other): (Vec<usize>, Vec<usize>) = by_name.into_iter().partition(in_home);
+        let (cands, confidence) = if !exact_home.is_empty() {
+            (exact_home, TYPED_RECEIVER)
+        } else if !exact_other.is_empty() {
+            (exact_other, TYPED_RECEIVER)
+        } else if !own.is_empty() {
+            (own, TYPED_RECEIVER)
+        } else if !other.is_empty() {
+            (other, CROSS_CRATE_NAME_MATCH)
+        } else {
+            return None;
+        };
+        let f = u.syms[cands[0]].file_id;
+        let d = self.pick(f, &cands, confidence, "typed_receiver");
+        Some((*u.sym_ix.get(&d.dst)?, confidence))
+    }
+
+    /// The type definition an impl, trait or type symbol `pi` is for, resolved from its own
+    /// file; `None` when nothing resolves it firmly (a name-only guess is no answer).
+    fn parent_type(&mut self, pi: usize) -> Option<i64> {
+        let p = &self.u.syms[pi];
+        if TYPE_KINDS.contains(&p.kind.as_str()) {
+            return Some(p.id);
+        }
+        if let Some(hit) = self.parent_ty.get(&p.id) {
+            return *hit;
+        }
+        let (id, file, name) = (p.id, p.file_id, p.name.clone());
+        let exclude = self.exclude.take();
+        let res = self
+            .cascade(file, RefKind::Type, "", &name)
+            .filter(|d| d.confidence >= FIRM)
+            .map(|d| d.dst);
+        self.exclude = exclude;
+        self.parent_ty.insert(id, res);
+        res
+    }
+
+    /// The type symbol `t` names, as seen from `home`.
+    fn type_sym(&mut self, t: &RType, home: i64) -> Option<usize> {
+        if t.is_tuple() || t.name().is_empty() {
+            return None;
+        }
+        let d = self.cascade(home, RefKind::Type, &t.qualifier(), t.name())?;
+        self.u.sym_ix.get(&d.dst).copied()
+    }
+
+    /// `type Store = Arc<Inner>;` → `Arc<Inner>`, as many times as it takes (bounded).
+    fn expand_alias(&mut self, mut t: RType, mut home: i64) -> Option<(RType, i64)> {
+        for _ in 0..4 {
+            let Some(i) = self.type_sym(&t, home) else {
+                return Some((t, home));
+            };
+            let s = &self.u.syms[i];
+            if s.kind != "type" && s.kind != "type_alias" {
+                return Some((t, home));
+            }
+            let (_, rhs) = s.sig.split_once('=')?;
+            let next = rust_types::parse(rhs.trim().trim_end_matches(';'))?;
+            if DEREF_WRAPPERS.contains(&next.name()) || LOCKS.contains(&next.name()) {
+                return Some((next, s.file_id));
+            }
+            home = s.file_id;
+            t = next;
+        }
+        Some((t, home))
+    }
+
+    /// The value a call to symbol `i` produces: a struct's constructor makes the struct, a
+    /// fn its declared return type with `Self` read as the impl type.
+    fn result_of(&mut self, i: usize) -> Option<(RType, i64)> {
+        let s = &self.u.syms[i];
+        if CONSTRUCTIBLE_KINDS.contains(&s.kind.as_str()) {
+            return Some((
+                RType {
+                    path: vec![s.name.clone()],
+                    args: Vec::new(),
+                },
+                s.file_id,
+            ));
+        }
+        let ret = rust_types::parse(rust_types::return_type(&s.sig)?)?;
+        let owner = self.owner_name(i);
+        Some((with_self(ret, owner.as_deref()), s.file_id))
+    }
+
+    /// The type a field of `t` holds.
+    fn field_type(&mut self, t: RType, home: i64, field: &str) -> Option<(RType, i64)> {
+        let t = deref(t);
+        if t.is_tuple() {
+            return Some((t.arg(field.parse().ok()?)?, home));
+        }
+        let (t, home) = self.expand_alias(t, home)?;
+        let t = deref(t);
+        let si = self.type_sym(&t, home)?;
+        let s = &self.u.syms[si];
+        let (_, text) = self.u.fields.get(&s.id)?.iter().find(|(n, _)| n == field)?;
+        let ft = rust_types::parse(text)?;
+        Some((with_self(ft, Some(&s.name)), s.file_id))
+    }
+
+    /// The impl or trait a method belongs to, by name.
+    fn owner_name(&self, i: usize) -> Option<String> {
+        let s = &self.u.syms[i];
+        let pi = s.parent.and_then(|p| self.u.sym_ix.get(&p))?;
+        let p = &self.u.syms[*pi];
+        matches!(p.kind.as_str(), "impl" | "trait" | "struct" | "enum").then(|| p.name.clone())
     }
 
     fn by_name(&self, name: &str) -> &'u [usize] {
@@ -633,6 +977,43 @@ impl<'u> Resolver<'u> {
     }
 }
 
+enum Member {
+    /// A std operation's result type.
+    Std(RType),
+    /// A project method (symbol index), with how sure the binding is.
+    Method(usize, f32),
+}
+
+/// Through `Arc`, `Box`, guards and the like to the type a method call sees.
+fn deref(mut t: RType) -> RType {
+    for _ in 0..8 {
+        if !DEREF_WRAPPERS.contains(&t.name()) {
+            break;
+        }
+        match t.arg(0) {
+            Some(inner) => t = inner,
+            None => break,
+        }
+    }
+    t
+}
+
+/// `Self` → the impl type, anywhere in `t`.
+fn with_self(mut t: RType, owner: Option<&str>) -> RType {
+    if let Some(o) = owner {
+        if t.path.len() == 1 && t.path[0] == "Self" {
+            t.path[0] = o.to_string();
+        }
+        t.args = t.args.into_iter().map(|a| with_self(a, owner)).collect();
+    }
+    t
+}
+
+/// The crate part of a module key (`atlas_memory::record` → `atlas_memory`).
+fn crate_key(module: &str) -> &str {
+    module.split("::").next().unwrap_or(module)
+}
+
 /// `""` → no receiver; `"a::B::"` → qualified segments; `"x.y"` → member segments.
 pub(crate) fn parse_receiver(receiver: &str) -> (Vec<&str>, bool) {
     if receiver.is_empty() {
@@ -653,6 +1034,7 @@ fn kind_ok(kind: RefKind, s: &SymRow) -> bool {
         RefKind::Call => CALLABLE_KINDS.contains(&k) || CONSTRUCTIBLE_KINDS.contains(&k),
         RefKind::Value => CALLABLE_KINDS.contains(&k),
         RefKind::Type | RefKind::Inherit | RefKind::Impl => TYPE_KINDS.contains(&k),
+        RefKind::Field => false,
     }
 }
 
@@ -787,6 +1169,7 @@ mod tests {
             qn: qn.into(),
             exported: true,
             is_test: false,
+            sig: String::new(),
         }
     }
 
@@ -1177,6 +1560,61 @@ mod tests {
         assert_eq!(
             r.memo.get(&(1, 0, String::new(), "nothing".to_string())),
             Some(&None)
+        );
+    }
+
+    /// Two crates each define a `Foo`. A receiver typed as alpha's `Foo` binds a method only
+    /// through an impl for alpha's `Foo`: never beta's `impl Foo`, which is for beta's own.
+    #[test]
+    fn a_typed_receiver_binds_its_own_types_impl_not_a_same_named_one_elsewhere() {
+        let u = Universe::from_parts(
+            vec![
+                file(1, "alpha/src/lib.rs", "rust", "alpha"),
+                file(2, "beta/src/lib.rs", "rust", "beta"),
+                file(3, "beta/src/show.rs", "rust", "beta::show"),
+                file(4, "gamma/src/lib.rs", "rust", "gamma"),
+            ],
+            vec![
+                sym(1, 1, None, "fn", "caller", "caller"),
+                sym(10, 1, None, "struct", "Foo", "Foo"),
+                sym(11, 1, None, "impl", "Foo", "Foo"),
+                sym(12, 1, Some(11), "method", "get", "Foo::get"),
+                // beta's own `Foo`, and its inherent `run`.
+                sym(20, 2, None, "struct", "Foo", "Foo"),
+                sym(21, 2, None, "impl", "Foo", "Foo"),
+                sym(22, 2, Some(21), "method", "run", "Foo::run"),
+                // `use alpha::Foo; impl Show for Foo`: a trait impl for alpha's `Foo`.
+                sym(30, 3, None, "impl", "Foo", "Foo"),
+                sym(31, 3, Some(30), "method", "show", "Foo::show"),
+                sym(32, 3, Some(30), "method", "get", "Foo::get"),
+                // An impl whose `Foo` resolves to nothing firm: a name guess.
+                sym(40, 4, None, "impl", "Foo", "Foo"),
+                sym(41, 4, Some(40), "method", "size", "Foo::size"),
+            ],
+            vec![imp(3, "Foo", "alpha", "Foo")],
+            HashMap::new(),
+        );
+        let t = vec![ImportTarget {
+            file: Some(1),
+            module: Some("alpha".into()),
+            symbol: Some("Foo".into()),
+            glob: false,
+        }];
+        let mut r = resolver(&u, t);
+        let got = r.resolve(&call(1, 1, "run", "~TFoo~x"));
+        assert!(got.is_none_or(|(_, d)| d.dst != 22), "{got:?}");
+        let (_, d) = r.resolve(&call(1, 1, "show", "~TFoo~x")).unwrap();
+        assert_eq!(
+            (d.dst, d.strategy, d.confidence),
+            (31, "typed_receiver", 0.9)
+        );
+        // alpha's inherent `get` shadows beta's trait impl of the same name.
+        let (_, d) = r.resolve(&call(3, 31, "get", "~TFoo~x")).unwrap();
+        assert_eq!(d.dst, 12);
+        let (_, d) = r.resolve(&call(1, 1, "size", "~TFoo~x")).unwrap();
+        assert_eq!(
+            (d.dst, d.strategy, d.confidence),
+            (41, "typed_receiver", CROSS_CRATE_NAME_MATCH)
         );
     }
 

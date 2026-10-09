@@ -17,7 +17,9 @@ use std::path::{Path, PathBuf};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::graph_extract::{GraphExtract, RefKind};
-use crate::import_resolve::{compute_modules, resolve_imports, ProjectConfig};
+use crate::import_resolve::{
+    compute_modules, install_module_aliases, resolve_imports, ProjectConfig,
+};
 use crate::importance;
 use crate::resolve::{RefRow, Resolver};
 use crate::rust_crates::CrateGraph;
@@ -129,19 +131,7 @@ impl GraphBatch {
         let Some((fid, module, surface)) = row else {
             return Ok(());
         };
-        let mut names: BTreeMap<String, BTreeSet<(String, String)>> = BTreeMap::new();
-        let mut stmt =
-            conn.prepare("SELECT name, kind, signature FROM symbols WHERE file_id = ?1")?;
-        for row in stmt.query_map([fid], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-            ))
-        })? {
-            let (n, k, s) = row?;
-            names.entry(n).or_default().insert((k, s));
-        }
+        let names = surface_names(conn, fid)?;
         let keys = symbol_keys(conn, fid)?;
         let mut stmt = conn.prepare(
             "SELECT e.ref_id, e.src_symbol_id, e.kind, e.confidence, e.strategy, e.dst_symbol_id
@@ -277,7 +267,7 @@ impl GraphBatch {
     fn resolve_incremental(self, conn: &Connection, root: &Path) -> Result<GraphStats, IndexError> {
         let mut u = Universe::load(conn)?;
         let mut cfg = ProjectConfig::new(root, load_crates(conn, root, false)?);
-        let modules = compute_modules(&u, &cfg);
+        let (modules, aliases) = compute_modules(&u, &cfg);
         let moved = u.files.iter().zip(&modules).any(|(f, m)| {
             let before = if self.written.contains(&f.rel) {
                 self.pre.get(&f.rel).map(|p| p.module.as_str())
@@ -292,6 +282,7 @@ impl GraphBatch {
         }
         write_modules(conn, &u, &modules)?;
         u.set_modules(modules);
+        install_module_aliases(&mut u, &aliases);
         let targets = resolve_imports(&u, &mut cfg);
         // A rewritten file may come back under a new id; importers' rows were SET NULL by the
         // cascade and now point at the same file again — not a binding change.
@@ -351,19 +342,7 @@ impl GraphBatch {
                     r.get(0)
                 })?;
             if surface != pre.surface {
-                let mut now: BTreeMap<String, BTreeSet<(String, String)>> = BTreeMap::new();
-                let mut stmt =
-                    conn.prepare("SELECT name, kind, signature FROM symbols WHERE file_id = ?1")?;
-                for row in stmt.query_map([fid], |r| {
-                    Ok((
-                        r.get::<_, String>(0)?,
-                        r.get::<_, String>(1)?,
-                        r.get::<_, String>(2)?,
-                    ))
-                })? {
-                    let (n, k, s) = row?;
-                    now.entry(n).or_default().insert((k, s));
-                }
+                let now = surface_names(conn, fid)?;
                 for n in pre.names.keys().chain(now.keys()) {
                     if pre.names.get(n) != now.get(n) {
                         names_delta.insert(n.clone());
@@ -409,6 +388,10 @@ impl GraphBatch {
             "WHERE id IN (SELECT value FROM json_each(?1))",
             Some(&json_ids(&redo_refs)),
         )?);
+        // A typed chain (`~…`) reads return types and fields of files it never names.
+        if !names_delta.is_empty() {
+            refs.extend(load_refs(conn, "WHERE receiver LIKE '~%'", None)?);
+        }
         refs.sort_by_key(|r| r.id);
         refs.dedup_by_key(|r| r.id);
 
@@ -439,9 +422,10 @@ pub(crate) fn resolve_all(
 ) -> Result<GraphStats, IndexError> {
     let mut u = Universe::load(conn)?;
     let mut cfg = ProjectConfig::new(root, load_crates(conn, root, refresh_crates)?);
-    let modules = compute_modules(&u, &cfg);
+    let (modules, aliases) = compute_modules(&u, &cfg);
     write_modules(conn, &u, &modules)?;
     u.set_modules(modules);
+    install_module_aliases(&mut u, &aliases);
     let targets = resolve_imports(&u, &mut cfg);
     write_import_targets(conn, &u, &targets, &BTreeSet::new())?;
     conn.execute("DELETE FROM edges", [])?;
@@ -599,8 +583,34 @@ fn symbol_keys(
     Ok(out)
 }
 
+/// Name → `(kind, signature)` of a file's symbols, plus `("field", "name: type")` under each
+/// struct's name: what a change to is a change other files' resolution may see.
+fn surface_names(
+    conn: &Connection,
+    fid: i64,
+) -> Result<BTreeMap<String, BTreeSet<(String, String)>>, IndexError> {
+    let mut names: BTreeMap<String, BTreeSet<(String, String)>> = BTreeMap::new();
+    let mut stmt = conn.prepare(
+        "SELECT name, kind, signature FROM symbols WHERE file_id = ?1
+         UNION ALL
+         SELECT s.name, 'field', r.name || ': ' || r.receiver FROM refs r
+           JOIN symbols s ON s.id = r.src_symbol_id WHERE r.file_id = ?1 AND r.kind = 'field'",
+    )?;
+    for row in stmt.query_map([fid], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, String>(2)?,
+        ))
+    })? {
+        let (n, k, s) = row?;
+        names.entry(n).or_default().insert((k, s));
+    }
+    Ok(names)
+}
+
 /// blake3 over what other files' resolution can see: symbols (qn, kind, signature, exported),
-/// `pub` imports and `mod` declarations.
+/// struct fields, `pub` imports and `mod` declarations.
 fn surface_hash(conn: &Connection, fid: i64) -> Result<Vec<u8>, IndexError> {
     let mut h = blake3::Hasher::new();
     let mut stmt = conn.prepare(
@@ -616,6 +626,20 @@ fn surface_hash(conn: &Connection, fid: i64) -> Result<Vec<u8>, IndexError> {
     })? {
         let (k, qn, sig, exp) = row?;
         h.update(format!("s\t{k}\t{qn}\t{sig}\t{exp}\n").as_bytes());
+    }
+    let mut stmt = conn.prepare(
+        "SELECT s.qualified_name, r.name, r.receiver FROM refs r JOIN symbols s ON s.id = r.src_symbol_id
+         WHERE r.file_id = ?1 AND r.kind = 'field' ORDER BY r.start_byte",
+    )?;
+    for row in stmt.query_map([fid], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, String>(2)?,
+        ))
+    })? {
+        let (owner, n, ty) = row?;
+        h.update(format!("f\t{owner}\t{n}\t{ty}\n").as_bytes());
     }
     let mut stmt = conn.prepare(
         "SELECT local_name, module_path, imported_name FROM imports WHERE file_id = ?1 AND is_pub = 1 ORDER BY local_name, module_path, imported_name",

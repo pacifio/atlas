@@ -103,6 +103,10 @@ async fn an_agent_advertising_http_mcp_gets_the_server_with_its_token_on_session
         !asked[0].org_access,
         "an ACP connection never carries organisation access (ADR-0014), whatever the agent is",
     );
+    assert!(
+        !asked[0].in_process,
+        "an ACP agent is another process, so no credential may ride its entries (ADR-0020)",
+    );
     assert_eq!(asked[0].agent_id.as_str(), "fake-agent");
     assert_eq!(
         asked[0].session_id, None,
@@ -148,6 +152,58 @@ async fn an_agent_without_http_mcp_gets_no_server_entry() {
     assert!(
         !asked[0].http_mcp,
         "the host is told the agent did not advertise HTTP MCP"
+    );
+
+    manager.shutdown();
+    drop(thread);
+}
+
+/// Offers the host's server the way it reaches an ACP agent (ADR-0020): a
+/// stdio bridge whose entry names a token file and holds no secret.
+struct BridgeOffering;
+
+impl SessionMcpServers for BridgeOffering {
+    fn offer(&self, _request: &SessionMcpRequest) -> SessionMcpOffer {
+        let server = acp::McpServer::Stdio(
+            acp::McpServerStdio::new("atlas_memory", "/Applications/Atlas.app/atlas").args(vec![
+                "mcp-bridge".into(),
+                "http://127.0.0.1:4321/mcp".into(),
+                "/private/atlas/mcp-bridge/l/t.token".into(),
+            ]),
+        );
+        SessionMcpOffer::new(vec![server], |_| {})
+    }
+}
+
+/// Stdio is the one transport every ACP agent takes, advertised or not; the
+/// bridge reaches the agent as offered, pre-approved for the Claude Code
+/// adapter like an HTTP entry.
+#[tokio::test]
+async fn a_bridged_server_reaches_an_agent_without_http_mcp_pre_approved() {
+    let Some((manager, pid_file)) =
+        manager_offering_mcp("mcp-new-bridge", json!({}), Arc::new(BridgeOffering))
+    else {
+        eprintln!("skipping: no python3 on this machine");
+        return;
+    };
+    let thread = manager
+        .new_session(custom("fake-agent"), vec![std::env::temp_dir()])
+        .await
+        .expect("a session opens on the real agent");
+
+    let requests = session_requests(&pid_file);
+    assert_eq!(
+        requests[0].1["mcpServers"],
+        json!([{
+            "name": "atlas_memory",
+            "command": "/Applications/Atlas.app/atlas",
+            "args": ["mcp-bridge", "http://127.0.0.1:4321/mcp", "/private/atlas/mcp-bridge/l/t.token"],
+            "env": [],
+        }])
+    );
+    assert_eq!(
+        requests[0].1["_meta"]["claudeCode"]["options"]["allowedTools"],
+        json!(["mcp__atlas_memory"]),
     );
 
     manager.shutdown();

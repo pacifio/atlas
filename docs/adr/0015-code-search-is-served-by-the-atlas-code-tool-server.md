@@ -1,6 +1,6 @@
 # ADR-0015: Code search is served by the `atlas_code` tool server
 
-**Status:** Accepted (2026-10-03). Phase 1 of `docs/superpowers/plans/2026-10-03-codeindex-search/`.
+**Status:** Accepted (2026-10-03). Phase 1 of `docs/superpowers/plans/2026-10-03-codeindex-search/`. Amended by ADR-0020: an ACP agent gets the server through the stdio bridge whatever it advertises; only the in-process native agent gets it over HTTP.
 
 **For agents:** if an agent cannot search code, or searches the wrong place, look at the code tool
 server (`src-tauri/src/commands/code_server/`) and the engine it calls (`crates/atlas-search`),

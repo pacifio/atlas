@@ -9,6 +9,14 @@
 //!     Python `self.x()`, a Go method receiver `r.x()` and a local whose type we saw
 //!     (`let v = Foo::new(); v.x()`) are all rewritten to `"<Type>::"`.
 //!   - `"x.y"`     value receiver: a member call on an expression we could not type.
+//!   - `"~<chain>~<fallback>"` (Rust) a receiver whose type depends on other files: a local
+//!     bound from a call, a field, a method chain or a generic type such as `Arc<Store>`.
+//!     `<chain>` is `|`-joined steps the resolver evaluates (`resolve::Resolver::chain_type`):
+//!     `T<type text>`, `F<qualifier>#<fn>` (a call's result), `.<method>` (a method call's
+//!     result), `:<field>`, `?`, `^` (`.await`) and `#<n>` (tuple element). `<fallback>` is the
+//!     receiver as it would otherwise read, used when the chain cannot be typed.
+//! - field refs (Rust): one per struct field, `name` = the field (`0`, `1`, … for a tuple
+//!   struct), `receiver` = its type text; never an edge, read by receiver typing.
 //! - inherit/impl refs: `receiver = "<src type>\t<qualifier>"`, qualifier encoded as above.
 //! - Imports: see [`RawImport`].
 
@@ -23,6 +31,7 @@ pub enum RefKind {
     Inherit,
     Impl,
     Value,
+    Field,
 }
 
 impl RefKind {
@@ -33,6 +42,7 @@ impl RefKind {
             Self::Inherit => "inherit",
             Self::Impl => "impl",
             Self::Value => "value",
+            Self::Field => "field",
         }
     }
 
@@ -43,6 +53,7 @@ impl RefKind {
             "inherit" => Some(Self::Inherit),
             "impl" => Some(Self::Impl),
             "value" => Some(Self::Value),
+            "field" => Some(Self::Field),
             _ => None,
         }
     }
@@ -306,6 +317,10 @@ const DECL_KINDS: &[&str] = &[
     "type_alias",
 ];
 const MAX_RECEIVER_BYTES: usize = 128;
+/// Longest typed chain kept (`~…~…` receivers, field types); longer ones are not typed.
+const MAX_CHAIN_BYTES: usize = 240;
+/// Most steps in one typed chain.
+const MAX_CHAIN_STEPS: usize = 8;
 
 struct Frame {
     node_id: usize,
@@ -450,9 +465,17 @@ impl<'a> Walker<'a> {
         }
         if recv.kind() == "identifier" {
             if let Some(ty) = self.local_type(t) {
+                if ty.starts_with('~') {
+                    return format!("{ty}~{}", compact(t));
+                }
                 if !ty.is_empty() {
                     return format!("{ty}::");
                 }
+            }
+        }
+        if self.lang == GLang::Rust && recv.kind() != "identifier" {
+            if let Some(chain) = self.rust_chain(recv, 0) {
+                return format!("~{}~{}", chain.join("|"), compact(t));
             }
         }
         compact(t)
@@ -512,6 +535,47 @@ impl<'a> Walker<'a> {
     }
 
     fn bind_pattern(&mut self, pattern: Node, ty: &str) {
+        // `let (a, b) = f()` with a typed chain: each element is `…|#i`;
+        // `let Some(x) = f() else` / `let Ok(x) = …`: `x` is the chain peeled with `?`.
+        if let Some(chain) = ty.strip_prefix('~') {
+            match pattern.kind() {
+                "tuple_pattern" => {
+                    let mut c = pattern.walk();
+                    let kids: Vec<Node> = pattern.named_children(&mut c).collect();
+                    for (i, k) in kids.into_iter().enumerate() {
+                        if let Some(id) = plain_binding(k) {
+                            let name = self.text(id);
+                            self.bind(name, &format!("~{chain}|#{i}"));
+                        } else {
+                            self.bind_pattern(k, "");
+                        }
+                    }
+                    return;
+                }
+                "tuple_struct_pattern" => {
+                    let ctor = pattern
+                        .child_by_field_name("type")
+                        .map(|t| self.text(t))
+                        .unwrap_or("");
+                    let mut c = pattern.walk();
+                    let kids: Vec<Node> = pattern
+                        .named_children(&mut c)
+                        .filter(|k| {
+                            Some(k.id()) != pattern.child_by_field_name("type").map(|t| t.id())
+                        })
+                        .collect();
+                    if let (true, [k]) = (matches!(ctor, "Some" | "Ok"), kids.as_slice()) {
+                        let Some(id) = plain_binding(*k) else {
+                            return self.bind_pattern(*k, "");
+                        };
+                        let name = self.text(id);
+                        self.bind(name, &format!("~{chain}|?"));
+                        return;
+                    }
+                }
+                _ => {}
+            }
+        }
         let mut ids = Vec::new();
         pattern_idents(pattern, &mut ids, 0);
         let single = ids.len() == 1;
@@ -606,11 +670,10 @@ impl<'a> Walker<'a> {
                             "parameter" => {
                                 let ty = p
                                     .child_by_field_name("type")
-                                    .and_then(rust_type_leaf)
-                                    .map(|l| self.text(l))
-                                    .unwrap_or("");
+                                    .map(|t| self.rust_declared_type(t))
+                                    .unwrap_or_default();
                                 if let Some(pat) = p.child_by_field_name("pattern") {
-                                    self.bind_pattern(pat, ty);
+                                    self.bind_pattern(pat, &ty);
                                 }
                             }
                             "identifier" => {
@@ -625,14 +688,45 @@ impl<'a> Walker<'a> {
             }
             "let_declaration" => {
                 let ty = if let Some(t) = n.child_by_field_name("type") {
-                    rust_type_leaf(t).map(|l| self.text(l)).unwrap_or("")
+                    self.rust_declared_type(t)
                 } else {
                     n.child_by_field_name("value")
-                        .map(|v| self.rust_value_type(v))
-                        .unwrap_or("")
+                        .map(|v| {
+                            let plain = self.rust_value_type(v);
+                            if !plain.is_empty() {
+                                return plain.to_string();
+                            }
+                            self.rust_chain(v, 0)
+                                .map(|c| format!("~{}", c.join("|")))
+                                .unwrap_or_default()
+                        })
+                        .unwrap_or_default()
                 };
                 if let Some(pat) = n.child_by_field_name("pattern") {
-                    self.bind_pattern(pat, ty);
+                    self.bind_pattern(pat, &ty);
+                }
+                true
+            }
+            "field_declaration" if in_struct(n) => {
+                if let (Some(name), Some(ty)) =
+                    (n.child_by_field_name("name"), n.child_by_field_name("type"))
+                {
+                    if let Some(t) = chain_text(self.text(ty)) {
+                        let field = self.text(name);
+                        self.emit(RefKind::Field, name, field, t);
+                    }
+                }
+                true
+            }
+            "ordered_field_declaration_list"
+                if n.parent().is_some_and(|p| p.kind() == "struct_item") =>
+            {
+                let mut c = n.walk();
+                let types: Vec<Node> = n.children_by_field_name("type", &mut c).collect();
+                for (i, ty) in types.into_iter().enumerate() {
+                    if let Some(t) = chain_text(self.text(ty)) {
+                        self.emit(RefKind::Field, ty, &i.to_string(), t);
+                    }
                 }
                 true
             }
@@ -682,7 +776,10 @@ impl<'a> Walker<'a> {
                 .map(|p| {
                     let t = self.text(p);
                     let last = t.rsplit("::").next().unwrap_or(t).trim();
-                    if last.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
+                    // `Arc::new(x)` is typed by `x` (see `rust_chain`).
+                    if last.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+                        && !matches!(last, "Arc" | "Rc" | "Box")
+                    {
                         last
                     } else {
                         ""
@@ -696,6 +793,121 @@ impl<'a> Walker<'a> {
                 .unwrap_or(""),
             _ => "",
         }
+    }
+
+    /// A declared type (`let x: T`, a parameter): a plain type's name, or a typed chain
+    /// for a generic one (`Arc<Store>`, `Option<&Item>`), which the resolver unwraps.
+    fn rust_declared_type(&self, t: Node) -> String {
+        let mut inner = t;
+        while inner.kind() == "reference_type" {
+            match inner.child_by_field_name("type") {
+                Some(x) => inner = x,
+                None => break,
+            }
+        }
+        match inner.kind() {
+            "generic_type" | "tuple_type" => chain_text(self.text(inner))
+                .map(|c| format!("~T{c}"))
+                .unwrap_or_default(),
+            _ => rust_type_leaf(inner)
+                .map(|l| self.text(l).to_string())
+                .unwrap_or_default(),
+        }
+    }
+
+    /// The steps that type a Rust expression (see the module docs), or `None` when some
+    /// part of it is not something we follow (a literal, a closure, an index, a macro).
+    fn rust_chain(&self, v: Node, depth: u8) -> Option<Vec<String>> {
+        if depth > MAX_CHAIN_STEPS as u8 {
+            return None;
+        }
+        let mut out = match v.kind() {
+            "self" => vec![format!("T{}", self.owner()?)],
+            "identifier" => {
+                let ty = self.local_type(self.text(v))?;
+                if let Some(chain) = ty.strip_prefix('~') {
+                    chain.split('|').map(str::to_string).collect()
+                } else if ty.is_empty() {
+                    return None;
+                } else {
+                    vec![format!("T{ty}")]
+                }
+            }
+            "parenthesized_expression" | "reference_expression" => {
+                let inner = v.named_child(v.named_child_count().checked_sub(1)? as u32)?;
+                return self.rust_chain(inner, depth + 1);
+            }
+            "try_expression" => {
+                let mut c = self.rust_chain(v.named_child(0)?, depth + 1)?;
+                c.push("?".into());
+                c
+            }
+            "await_expression" => {
+                let mut c = self.rust_chain(v.named_child(0)?, depth + 1)?;
+                c.push("^".into());
+                c
+            }
+            "field_expression" => {
+                let field = v.child_by_field_name("field")?;
+                let mut c = self.rust_chain(v.child_by_field_name("value")?, depth + 1)?;
+                c.push(format!(":{}", self.text(field)));
+                c
+            }
+            "struct_expression" => {
+                let name = v.child_by_field_name("name").and_then(rust_type_leaf)?;
+                vec![format!("T{}", self.text(name))]
+            }
+            "call_expression" => {
+                let mut f = v.child_by_field_name("function")?;
+                if f.kind() == "generic_function" {
+                    f = f.child_by_field_name("function")?;
+                }
+                match f.kind() {
+                    "identifier" => {
+                        let name = self.text(f);
+                        if RUST_SKIP_CALLS.contains(&name) {
+                            return None;
+                        }
+                        vec![format!("F#{name}")]
+                    }
+                    "scoped_identifier" => {
+                        let name = self.text(f.child_by_field_name("name")?);
+                        let path = f.child_by_field_name("path").map(|p| self.text(p));
+                        // `Arc::new(x)`: method calls see `x` through the pointer.
+                        if name == "new" && path.is_some_and(|p| matches!(p, "Arc" | "Rc" | "Box"))
+                        {
+                            let args = v.child_by_field_name("arguments")?;
+                            if args.named_child_count() != 1 {
+                                return None;
+                            }
+                            return self.rust_chain(args.named_child(0)?, depth + 1);
+                        }
+                        let q = path.map(|p| self.qualify_path(p)).unwrap_or_default();
+                        vec![format!("F{q}#{name}")]
+                    }
+                    "field_expression" => {
+                        let field = f.child_by_field_name("field")?;
+                        if field.kind() != "field_identifier" {
+                            return None;
+                        }
+                        let mut c = self.rust_chain(f.child_by_field_name("value")?, depth + 1)?;
+                        c.push(format!(".{}", self.text(field)));
+                        c
+                    }
+                    _ => return None,
+                }
+            }
+            _ => return None,
+        };
+        if out.len() > MAX_CHAIN_STEPS {
+            return None;
+        }
+        let len: usize = out.iter().map(|s| s.len() + 1).sum();
+        if len > MAX_CHAIN_BYTES || out.iter().any(|s| s.contains(['|', '~'])) {
+            return None;
+        }
+        out.shrink_to_fit();
+        Some(out)
     }
 
     fn rust_call(&mut self, f: Node) {
@@ -1781,6 +1993,33 @@ fn strip_generics(s: &str) -> String {
         }
     }
     out
+}
+
+/// The identifier a pattern binds when it is just a name (`x`, `mut x`, `ref x`).
+fn plain_binding(p: Node) -> Option<Node> {
+    match p.kind() {
+        "identifier" => Some(p),
+        "mut_pattern" | "ref_pattern" => {
+            let id = p.named_child(p.named_child_count().checked_sub(1)? as u32)?;
+            (id.kind() == "identifier").then_some(id)
+        }
+        _ => None,
+    }
+}
+
+/// A field of a `struct` (not of an enum variant).
+fn in_struct(field: Node) -> bool {
+    field
+        .parent()
+        .and_then(|l| l.parent())
+        .is_some_and(|p| p.kind() == "struct_item")
+}
+
+/// Type text as a typed chain carries it (whitespace collapsed), or `None` when it is too long
+/// or holds a character the chain encoding reserves.
+fn chain_text(t: &str) -> Option<String> {
+    let t = t.split_whitespace().collect::<Vec<_>>().join(" ");
+    (t.len() <= MAX_CHAIN_BYTES && !t.contains(['|', '~'])).then_some(t)
 }
 
 /// Whitespace-free receiver text, capped at a char boundary.
