@@ -4,6 +4,7 @@ import type { ActionId } from "@/features/keybindings/lib/actions";
 import { useKeybindingsStore } from "@/features/keybindings/stores/keybindings-store";
 import {
   hasActionHandler,
+  notifyActionHandlersChanged,
   registerActionHandlers,
   runAction,
 } from "@/features/keybindings/lib/action-registry";
@@ -52,6 +53,7 @@ export function useActionHotkeys(handlers: Partial<Record<ActionId, () => void>>
   handlersRef.current = handlers;
 
   useEffect(() => registerActionHandlers(() => handlersRef.current), []);
+  useEffect(() => notifyActionHandlersChanged(), [handlers]);
 
   useEffect(() => {
     function handler(e: KeyboardEvent) {

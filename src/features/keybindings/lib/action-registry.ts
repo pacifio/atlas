@@ -24,13 +24,31 @@ export type RunActionResult =
 /** A getter, not a map: the shell's closures are rebuilt every render, and
  *  the newest one is the one that sees current state. */
 let source: (() => ActionHandlers) | null = null;
+const listeners = new Set<() => void>();
+
+/** Observe registration and changes to the ids supplied by the live getter. */
+export function subscribeActionHandlers(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+/** Handler closures can change without the shell registering a new getter. */
+export function notifyActionHandlersChanged(): void {
+  for (const listener of listeners) listener();
+}
 
 /** Make `get`'s handlers the runnable ones; returns the matching unregister,
  *  which leaves a newer registration alone. */
 export function registerActionHandlers(get: () => ActionHandlers): () => void {
   source = get;
+  notifyActionHandlersChanged();
   return () => {
-    if (source === get) source = null;
+    if (source === get) {
+      source = null;
+      notifyActionHandlersChanged();
+    }
   };
 }
 

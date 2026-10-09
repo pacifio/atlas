@@ -32,6 +32,7 @@ import type { AgentDelta } from "@/types/agents";
 import { cycleChatAgent } from "@/features/chat/lib/switch-agent";
 import { FilePicker } from "@/features/file-picker/components/file-picker";
 import { HintOverlay } from "@/features/hint-nav/components/hint-overlay";
+import { NavigationHints } from "@/features/keybindings/components/navigation-hints";
 import { BrowserOverlayWatcher } from "@/features/browser/components/browser-overlay-watcher";
 import {
   fileIndex,
@@ -1411,15 +1412,15 @@ export function App() {
     ...Object.fromEntries(
       Array.from({ length: 9 }, (_, i) => [
         `tabs.focus${i + 1}`,
-        i === 8 ? () => activateTabByIndex(-1) : () => activateTabByIndex(i),
+        () => activateTabByIndex(i === 8 ? -1 : i, !useAppStore.getState().currentProject),
       ]),
     ),
     "tabs.close": () => {
       const current = useLayoutStore.getState().activeTabId;
       if (current) requestCloseTab(current);
     },
-    "tabs.prev": () => cycleTab(-1),
-    "tabs.next": () => cycleTab(1),
+    "tabs.prev": () => cycleTab(-1, !useAppStore.getState().currentProject),
+    "tabs.next": () => cycleTab(1, !useAppStore.getState().currentProject),
     // ── Split view ──
     "split.new": () => addGroup(),
     "split.focusLeft": () => focusAdjacentGroup(-1),
@@ -1502,6 +1503,7 @@ export function App() {
     // a SKIP group: hovering along a facepile shows each name instantly after
     // the first, instead of re-waiting per avatar.
     <TooltipProvider>
+      <NavigationHints />
       <AppContextMenu>
         <div className="h-screen w-screen" onContextMenu={(e) => e.preventDefault()}>
           <AppLayout />
