@@ -41,6 +41,40 @@ export interface ScopedHotkeysOptions {
   handlers: Partial<Record<ActionId, ScopedHandler>>;
 }
 
+const scopedSources = new Set<{ current: ScopedHotkeysOptions }>();
+const scopeListeners = new Set<() => void>();
+
+function scopeIsActive({ rootRef, requireFocusWithin, tabId }: ScopedHotkeysOptions): boolean {
+  if (tabId !== undefined && useLayoutStore.getState().activeTabId !== tabId) return false;
+  if (requireFocusWithin) {
+    const root = rootRef?.current;
+    if (!root || root.offsetParent == null || !root.contains(document.activeElement)) return false;
+  }
+  return true;
+}
+
+/** Read-only ownership for hints. A handler may decline; never invoke it to find out. */
+export function activeScopedActions(): Set<ActionId> {
+  const actions = new Set<ActionId>();
+  for (const source of scopedSources) {
+    if (!scopeIsActive(source.current)) continue;
+    for (const id of Object.keys(source.current.handlers) as ActionId[]) actions.add(id);
+  }
+  return actions;
+}
+
+/** Only a visible hint overlay subscribes to changes in mounted shortcut scopes. */
+export function subscribeScopedHotkeys(listener: () => void): () => void {
+  scopeListeners.add(listener);
+  return () => {
+    scopeListeners.delete(listener);
+  };
+}
+
+function notifyScopes() {
+  for (const listener of scopeListeners) listener();
+}
+
 /**
  * Window-level dispatcher for a feature surface's shortcuts. On a match the
  * event is consumed (`preventDefault` + `stopImmediatePropagation`) unless the
@@ -52,13 +86,11 @@ export function useScopedHotkeys(options: ScopedHotkeysOptions) {
   const capture = options.capture ?? true;
 
   useEffect(() => {
+    scopedSources.add(ref);
+    notifyScopes();
     const onKey = (e: KeyboardEvent) => {
-      const { rootRef, requireFocusWithin, tabId, handlers } = ref.current;
-      if (tabId !== undefined && useLayoutStore.getState().activeTabId !== tabId) return;
-      if (requireFocusWithin) {
-        const root = rootRef?.current;
-        if (!root || root.offsetParent == null || !root.contains(document.activeElement)) return;
-      }
+      const { handlers } = ref.current;
+      if (!scopeIsActive(ref.current)) return;
       for (const id of Object.keys(handlers) as ActionId[]) {
         if (!matchesAction(e, id)) continue;
         const handled = handlers[id]?.(e);
@@ -69,6 +101,12 @@ export function useScopedHotkeys(options: ScopedHotkeysOptions) {
       }
     };
     window.addEventListener("keydown", onKey, { capture });
-    return () => window.removeEventListener("keydown", onKey, { capture });
+    return () => {
+      window.removeEventListener("keydown", onKey, { capture });
+      scopedSources.delete(ref);
+      notifyScopes();
+    };
   }, [capture]);
+
+  useEffect(notifyScopes, [options]);
 }

@@ -32,6 +32,7 @@ import type { AgentDelta } from "@/types/agents";
 import { cycleChatAgent } from "@/features/chat/lib/switch-agent";
 import { FilePicker } from "@/features/file-picker/components/file-picker";
 import { HintOverlay } from "@/features/hint-nav/components/hint-overlay";
+import { NavigationHints } from "@/features/keybindings/components/navigation-hints";
 import { BrowserOverlayWatcher } from "@/features/browser/components/browser-overlay-watcher";
 import {
   fileIndex,
@@ -1502,6 +1503,7 @@ export function App() {
     // a SKIP group: hovering along a facepile shows each name instantly after
     // the first, instead of re-waiting per avatar.
     <TooltipProvider>
+      <NavigationHints />
       <AppContextMenu>
         <div className="h-screen w-screen" onContextMenu={(e) => e.preventDefault()}>
           <AppLayout />

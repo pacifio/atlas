@@ -20,6 +20,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
+import type { ActionId } from "@/features/keybindings/lib/actions";
+import { useNavigationHint } from "@/features/keybindings/lib/use-navigation-hint";
 import { slideGeometry, type SlideGeometry } from "@/ui/slide-geometry";
 import {
   isTooltipWarm,
@@ -39,6 +41,8 @@ export interface DockItem {
   badge?: React.ReactNode;
   /** Overrides `label` for the accessible name where it says more. */
   title?: string;
+  /** The existing panel command represented by this control, when applicable. */
+  navigationAction?: ActionId;
 }
 
 interface Geometry extends SlideGeometry {
@@ -67,6 +71,7 @@ export function TitlebarDock({
   className?: string;
 }) {
   const count = items.length + (trailing ? 1 : 0);
+  const navigationHint = useNavigationHint();
   const buttons = useRef<(HTMLElement | null)[]>([]);
   const labels = useRef<(HTMLDivElement | null)[]>([]);
   /* The strip's own rect is NOT usable as the origin: it is the element being
@@ -155,6 +160,7 @@ export function TitlebarDock({
               buttons.current[index] = el;
             }}
             type="button"
+            {...navigationHint(item.navigationAction ? [item.navigationAction] : [])}
             onClick={item.onClick}
             onMouseEnter={() => onEnter(index)}
             onFocus={() => onEnter(index)}

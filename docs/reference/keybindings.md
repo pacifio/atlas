@@ -96,6 +96,65 @@ the terminal is focused); the editor marks that amber. Two actions in the
 *same* context sharing a chord is a real conflict (red): the first in registry
 order wins.
 
+## Modifier-held navigation hints
+
+Hold Command on macOS or Control on Windows/Linux for 400 ms to see small
+keycaps beside eligible tabs and panel controls. Press a displayed key while
+keeping its modifiers held to run the existing shortcut. Release the primary
+modifier to dismiss the caps immediately. On macOS, holding Control also
+reveals Control-based bindings, such as the VS Code, Cursor and Zed presets'
+tab indices.
+
+The cap shows only the remaining key. Hold Shift or Alt/Option as well to see
+commands requiring those modifiers; for example, Command shows `B` on the
+left-panel control, and Command+Shift shows `B` on the right-panel control.
+The shipped navigation bindings are unchanged:
+
+| Destination | macOS default | Windows/Linux default |
+| --- | --- | --- |
+| Tab 1–8 in the focused pane | Command+1–8 | Control+1–8 |
+| Last tab in that pane | Command+9 | Control+9 |
+| Previous / next tab, wrapping in that pane | Command+Shift+[ / ] | Control+Shift+[ / ] |
+| Project sidebar | Command+Shift+. | Control+Shift+. |
+| Left / right panel | Command+B / Command+Shift+B | Control+B / Control+Shift+B |
+| Adjacent pane, stopping at the edges | Option+; / Option+' | Alt+; / Alt+' |
+
+Numeric caps belong only to the focused pane, and follow its tab order. The
+last tab prefers its index when it has one; `9` remains available even with
+more than nine tabs. Adjacent panes advertise their focus command when a
+custom binding matches the held primary modifier. The default Alt-only pane
+shortcuts remain available independently. Home in a projectless window has
+no tab-index action and therefore no cap.
+
+Previously, navigation shortcuts were discoverable through settings and
+individual labels only. The overlay now reads the same resolved profile and
+registered actions as dispatch: rebinding, unbinding and preset changes take
+effect live. A conflicting global action, an active scoped handler (such as
+a terminal shortcut), or an operating-system reservation suppresses the cap
+for that chord. Scoped handlers can decline an event, but hints conservatively
+omit claimed chords rather than invoking a handler to guess its result.
+There is no new Command/Control+Tab handler or second navigation dispatcher.
+
+The overlay never takes focus, intercepts pointer input or consumes a key
+event. It has no motion, including with reduced motion enabled. The real
+controls retain their accessible names and expose `aria-keyshortcuts`; the
+visual caps are hidden from assistive technology to avoid duplicate labels.
+Hidden, disabled and clipped targets are omitted. Tab caps use the icon area
+to keep titles readable. Positions and eligibility
+are refreshed on layout mutations, scrolling, resizing and focus changes,
+with DOM observation active only while the modifier is held.
+
+Quick presses do not flash an overlay. An unrelated shortcut, pointer press,
+IME composition, open menu/dialog/listbox, shortcut recording, or the separate
+Hint Navigation mode dismisses it until the modifier is released. Losing
+window focus or hiding the document also resets the hold.
+
+The navigation-hints unit and component suites cover platform conventions,
+modifier lifetime, profile changes, scoped dispatch and split-local target
+mapping using the real layout store and hotkey handlers. Browser checks can
+verify layout and dispatch, but do not establish how native macOS menus or
+an embedded browser webview intercept keys; those still need native-window QA.
+
 ## Sharing a profile
 
 **Copy as JSON** (the clipboard icon in Settings → Keybindings) copies the

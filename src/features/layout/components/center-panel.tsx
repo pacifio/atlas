@@ -10,6 +10,11 @@ import {
   Fragment,
 } from "react";
 import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
+import { useNavigationHint } from "@/features/keybindings/lib/use-navigation-hint";
+import {
+  splitNavigationActions,
+  tabNavigationActions,
+} from "@/features/keybindings/lib/navigation-hints";
 import { cn } from "@/lib/utils";
 import { HintGroup, HintItem } from "@/ui/hint-group";
 import { requestCloseTab } from "@/features/chat/lib/close-tab";
@@ -374,6 +379,7 @@ const TabColumn = memo(function TabColumn({
   projectId: string;
 }) {
   const splitNewHint = useActionShortcut("split.new")?.label;
+  const navigationHint = useNavigationHint();
   const splitCloseHint = useActionShortcut("split.close")?.label;
   const tabBarVisible = useLayoutStore.use.tabBarVisible();
   const {
@@ -392,6 +398,7 @@ const TabColumn = memo(function TabColumn({
   const tabs = useMemo(() => tabsAll.filter((t) => GROUP_OF(t) === groupId), [tabsAll, groupId]);
   const activeId = view.activeByGroup[groupId] ?? null;
   const isFocused = isActive && view.focusedGroupId === groupId;
+  const activeIndex = tabs.findIndex((t) => t.id === activeId);
   const canSplit = view.groupOrder.length < 3;
   const canCloseGroup = view.groupOrder.length > 1;
 
@@ -409,6 +416,11 @@ const TabColumn = memo(function TabColumn({
 
   return (
     <div
+      role="group"
+      aria-label={`Pane ${view.groupOrder.indexOf(groupId) + 1}`}
+      {...navigationHint(
+        isActive ? splitNavigationActions(groupId, view.groupOrder, view.focusedGroupId) : [],
+      )}
       className={cn("h-full flex flex-col overflow-hidden bg-background")}
       onMouseDownCapture={() => setFocusedGroup(groupId)}
     >
@@ -455,7 +467,7 @@ const TabColumn = memo(function TabColumn({
           </HintGroup>
 
           <div className="flex items-stretch min-w-0 flex-1 overflow-x-auto hide-scrollbar">
-            {tabs.map((tab) => {
+            {tabs.map((tab, index) => {
               const Icon = tabIcons[tab.type as TabType] ?? MessageSquare;
               // A tab opened from a path carries it in `data.filePath`, so the
               // strip shows the same icon the tree row it came from does.
@@ -467,6 +479,9 @@ const TabColumn = memo(function TabColumn({
                   key={tab.id}
                   role="tab"
                   tabIndex={0}
+                  {...navigationHint(
+                    isFocused ? tabNavigationActions(index, tabs.length, activeIndex) : [],
+                  )}
                   onClick={() => setActiveTab(tab.id)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" || e.key === " ") setActiveTab(tab.id);
@@ -837,6 +852,7 @@ function PersistentPanel({
  * other tab untouched in the store for when a project opens.
  */
 function ProjectlessCenter() {
+  const navigationHint = useNavigationHint();
   const tabs = useLayoutStore.use.tabs();
   const activeByGroup = useLayoutStore.use.activeByGroup();
   const focusedGroupId = useLayoutStore.use.focusedGroupId();
@@ -851,6 +867,8 @@ function ProjectlessCenter() {
   if (allowed.length === 0) return <WelcomeScreen />;
 
   const storeActive = activeByGroup[focusedGroupId] ?? null;
+  const groupTabs = tabs.filter((t) => GROUP_OF(t) === focusedGroupId);
+  const activeIndex = groupTabs.findIndex((t) => t.id === storeActive);
   const active = atHome ? null : (allowed.find((t) => t.id === storeActive) ?? null);
 
   return (
@@ -885,6 +903,11 @@ function ProjectlessCenter() {
               key={tab.id}
               role="tab"
               tabIndex={0}
+              {...navigationHint(
+                !atHome && GROUP_OF(tab) === focusedGroupId
+                  ? tabNavigationActions(groupTabs.indexOf(tab), groupTabs.length, activeIndex)
+                  : [],
+              )}
               onClick={() => {
                 setAtHome(false);
                 setActiveTab(tab.id);
