@@ -1,14 +1,14 @@
 //! Handing the server to sessions.
 //!
 //! Every agent that can take the server is handed it on each session request
-//! ([`MemorySessionOffers`]): an ACP session request carries the server in
-//! `mcpServers` when the agent advertised `mcpCapabilities.http`; an agent
-//! that did not gets it as a stdio server, the Atlas binary's own
-//! `mcp-bridge` forwarding to the loopback server with the token in its
-//! environment (ADR-0019); the native agent gets it as a StreamableHttp
-//! entry in its thread's engine config. The
-//! token is minted for the *request*, before a new session's id exists, and
-//! bound to the id once the agent answers; an offer that never binds is
+//! ([`MemorySessionOffers`]). An agent in another process — every ACP agent,
+//! whatever it advertised — gets it as a stdio server, the Atlas binary's own
+//! `mcp-bridge` forwarding to the loopback server (ADR-0019), with the token
+//! in a private file the entry names, never in the entry itself: an adapter
+//! may put the entry on a command line (ADR-0020). The native agent, in this
+//! process, gets it as a StreamableHttp entry with the token in its header.
+//! The token is minted for the *request*, before a new session's id exists,
+//! and bound to the id once the agent answers; an offer that never binds is
 //! revoked. Each decision is logged, one line per session request.
 
 use std::sync::Arc;
@@ -19,6 +19,7 @@ use atlas_agent_servers::{AskFirst, SessionMcpOffer, SessionMcpRequest, SessionM
 use super::host::{MemoryServerHost, SharingGate};
 use super::MEMORY_SERVER_NAME;
 use crate::commands::code_server::{CodeOffer, CodeOfferDecision, CODE_PATH, CODE_SERVER_NAME};
+use crate::commands::memory_bridge::TokenFiles;
 use crate::commands::org_server::{
     OrgOffer, OrgOfferDecision, EVERY_TIME_TOOLS, ORG_PATH, ORG_SERVER_NAME, OUTWARD_TOOLS,
 };
@@ -27,9 +28,10 @@ use crate::commands::ui_server::{UiOffer, UiOfferDecision, UI_PATH, UI_SERVER_NA
 /// Whether one session request is handed the memory tool server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OfferDecision {
+    /// Included over HTTP: the agent runs in this process.
     Included,
-    /// Included as a stdio server through `atlas mcp-bridge`: the agent did
-    /// not advertise HTTP MCP (ADR-0019).
+    /// Included as a stdio server through `atlas mcp-bridge`: the agent runs
+    /// in another process (ADR-0019, ADR-0020).
     IncludedViaBridge,
     /// Left out, and why.
     Omitted(&'static str),
@@ -51,15 +53,16 @@ impl OfferDecision {
     }
 
     /// Included in a project with shared memory on (the tools would hold
-    /// nothing otherwise), once the server is running: over HTTP for an agent
-    /// that advertised HTTP MCP, else through the stdio bridge. Never decided
-    /// by which agent it is.
-    pub fn decide(http_mcp: bool, sharing_on: bool, server_running: bool) -> Self {
+    /// nothing otherwise), once the server is running: over HTTP when the
+    /// entry may carry the token (`over_http`: an in-process agent that takes
+    /// HTTP), else through the stdio bridge. Never decided by which agent it
+    /// is.
+    pub fn decide(over_http: bool, sharing_on: bool, server_running: bool) -> Self {
         if !sharing_on {
             Self::Omitted("shared memory is off for this project")
         } else if !server_running {
             Self::Omitted("memory tool server is not running")
-        } else if http_mcp {
+        } else if over_http {
             Self::Included
         } else {
             Self::IncludedViaBridge
@@ -69,18 +72,21 @@ impl OfferDecision {
 
 /// The argument that makes the Atlas binary the stdio bridge.
 pub const BRIDGE_ARG: &str = "mcp-bridge";
-/// The environment variable the bridge reads its session token from (never
-/// argv, which other users' `ps` can read).
-pub const BRIDGE_TOKEN_ENV: &str = "ATLAS_MCP_TOKEN";
 
-/// `name` at `url` as a stdio server: `<this binary> mcp-bridge <url>`, the
-/// token in the environment.
-fn bridge_entry(exe: &std::path::Path, name: &str, url: String, token: &str) -> acp::McpServer {
-    acp::McpServer::Stdio(
-        acp::McpServerStdio::new(name, exe.to_path_buf())
-            .args(vec![BRIDGE_ARG.to_string(), url])
-            .env(vec![acp::EnvVariable::new(BRIDGE_TOKEN_ENV, token)]),
-    )
+/// `name` at `url` as a stdio server: `<this binary> mcp-bridge <url> <token
+/// file>`. Nothing in the entry is secret: an adapter may put all of it,
+/// `env` included, on a command line (ADR-0020).
+fn bridge_entry(
+    exe: &std::path::Path,
+    name: &str,
+    url: String,
+    token_file: &std::path::Path,
+) -> acp::McpServer {
+    acp::McpServer::Stdio(acp::McpServerStdio::new(name, exe.to_path_buf()).args(vec![
+        BRIDGE_ARG.to_string(),
+        url,
+        token_file.to_string_lossy().into_owned(),
+    ]))
 }
 
 impl OfferDecision {
@@ -104,9 +110,12 @@ pub struct MemorySessionOffers {
     ui: Option<UiOffer>,
     org: Option<OrgOffer>,
     code: Option<CodeOffer>,
+    token_files: Arc<TokenFiles>,
 }
 
 impl MemorySessionOffers {
+    /// Bridged sessions' token files go to a fresh temporary directory until
+    /// [`with_token_files`](Self::with_token_files) names the app's own.
     pub fn new(host: Arc<MemoryServerHost>, gate: SharingGate) -> Self {
         Self {
             host,
@@ -114,7 +123,15 @@ impl MemorySessionOffers {
             ui: None,
             org: None,
             code: None,
+            token_files: Arc::new(TokenFiles::in_temp()),
         }
+    }
+
+    /// Write bridged sessions' token files with `files` (ADR-0020), shared
+    /// with whatever removes a session's file when the session ends.
+    pub fn with_token_files(mut self, files: Arc<TokenFiles>) -> Self {
+        self.token_files = files;
+        self
     }
 
     /// Also offer the UI tool server, mounted on this host at `/ui`.
@@ -179,21 +196,25 @@ impl SessionMcpServers for MemorySessionOffers {
     fn offer(&self, request: &SessionMcpRequest) -> SessionMcpOffer {
         let cwd = request.cwd.to_string_lossy().into_owned();
         let agent = request.agent_id.as_str().to_string();
-        // An agent without HTTP MCP reaches the servers through this binary
-        // as a stdio bridge (ADR-0019); without a path to it, it gets none.
-        let bridge = if request.http_mcp {
+        // Only an agent in this process may hold the token in its entry: any
+        // other may put the entry on a command line (ADR-0020), so it reaches
+        // the servers through this binary as a stdio bridge (ADR-0019) that
+        // reads the token from a private file. Without a path to the binary,
+        // it gets none.
+        let over_http = request.in_process && request.http_mcp;
+        let bridge = if over_http {
             None
         } else {
             std::env::current_exe().ok()
         };
-        let reachable = request.http_mcp || bridge.is_some();
+        let reachable = over_http || bridge.is_some();
         // The gate reads the sharing file; only asked when it can matter.
         let sharing_on = reachable && (self.gate)(&cwd);
         let url = self.host.url();
         let decision = if reachable {
-            OfferDecision::decide(request.http_mcp, sharing_on, url.is_some())
+            OfferDecision::decide(over_http, sharing_on, url.is_some())
         } else {
-            OfferDecision::Omitted("agent did not advertise mcpCapabilities.http")
+            OfferDecision::Omitted("no transport reaches the agent")
         };
         tracing::info!(
             target: "atlas::memory_server",
@@ -271,11 +292,29 @@ impl SessionMcpServers for MemorySessionOffers {
         // org decision names none otherwise).
         let tokens = self.host.tokens().clone();
         let token = tokens.mint_unbound(&agent, &cwd, scope, ui_included);
+        // A bridged session's entries name one file holding the token.
+        let token_file = match &bridge {
+            Some(_) => match self
+                .token_files
+                .write(&token, |t| tokens.grant(t).is_some())
+            {
+                Ok(path) => Some(path),
+                Err(e) => {
+                    tracing::warn!(
+                        target: "atlas::memory_server",
+                        "no Atlas tool servers for this session: cannot write its token file: {e:#}"
+                    );
+                    tokens.revoke_token(&token);
+                    return SessionMcpOffer::none();
+                }
+            },
+            None => None,
+        };
         let servers = entries
             .into_iter()
-            .map(|(name, url)| match &bridge {
-                Some(exe) => bridge_entry(exe, name, url, &token),
-                None => acp::McpServer::Http(acp::McpServerHttp::new(name, url).headers(vec![
+            .map(|(name, url)| match (&bridge, &token_file) {
+                (Some(exe), Some(file)) => bridge_entry(exe, name, url, file),
+                _ => acp::McpServer::Http(acp::McpServerHttp::new(name, url).headers(vec![
                     acp::HttpHeader::new("Authorization", format!("Bearer {token}")),
                 ])),
             })
@@ -290,10 +329,55 @@ impl SessionMcpServers for MemorySessionOffers {
         } else {
             AskFirst::none()
         };
+        let token_files = self.token_files.clone();
         SessionMcpOffer::new(servers, move |session| match session {
-            Some(id) => tokens.bind(&token, &id.to_string()),
-            None => tokens.revoke_token(&token),
+            Some(id) => {
+                let id = id.to_string();
+                tokens.bind(&token, &id);
+                // Its file goes when the session ends.
+                if let Some(file) = &token_file {
+                    token_files.bind(file, &id);
+                }
+            }
+            None => {
+                tokens.revoke_token(&token);
+                if let Some(file) = &token_file {
+                    token_files.remove(file);
+                }
+            }
         })
         .asking_first(ask_first)
     }
+}
+
+/// Every entry `offer` carries, as `(name, url, bearer token)`: the token
+/// from an HTTP entry's header, or from the file a bridged entry names.
+#[cfg(test)]
+pub fn offered_entries(offer: &SessionMcpOffer) -> Vec<(String, String, String)> {
+    offer
+        .servers()
+        .iter()
+        .map(|server| match server {
+            acp::McpServer::Http(http) => {
+                let token = http
+                    .headers
+                    .iter()
+                    .find(|h| h.name == "Authorization")
+                    .and_then(|h| h.value.strip_prefix("Bearer "))
+                    .expect("a bearer token")
+                    .to_string();
+                (http.name.clone(), http.url.clone(), token)
+            }
+            acp::McpServer::Stdio(stdio) => {
+                let [arg, url, file] = stdio.args.as_slice() else {
+                    panic!("mcp-bridge <url> <token file>: {:?}", stdio.args)
+                };
+                assert_eq!(arg, BRIDGE_ARG);
+                let token = crate::commands::memory_bridge::read_token_file(file.as_ref())
+                    .expect("a readable token file");
+                (stdio.name.clone(), url.clone(), token)
+            }
+            other => panic!("{other:?}"),
+        })
+        .collect()
 }

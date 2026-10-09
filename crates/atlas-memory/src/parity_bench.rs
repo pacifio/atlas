@@ -149,23 +149,26 @@ fn retrieve_is_agent_agnostic_and_well_formed_when_model_available() {
     let root = tmp.path().to_path_buf();
 
     let mut engine = MemoryEngine::open(root);
+    // Indexed text is `title\n\nbody` (`docstore::split_embedded`); a doc
+    // with no body is returned with empty `text`, by design.
     let corpus = vec![
         CorpusDoc {
             id: "d1".into(),
-            text: "Auth: the project uses Better Auth with database-backed sessions.".into(),
+            text: "Auth\n\nThe project uses Better Auth with database-backed sessions.".into(),
             content_hash: "h1".into(),
             corpus: "claude".into(),
         },
         CorpusDoc {
             id: "d2".into(),
-            text: "Indexing: a background MemoryIndexer rebuilds the HNSW off the chat turn."
+            text: "Indexing\n\nA background MemoryIndexer rebuilds the HNSW off the chat turn."
                 .into(),
             content_hash: "h2".into(),
             corpus: "codebase".into(),
         },
         CorpusDoc {
             id: "d3".into(),
-            text: "Retrieval searches usearch HNSW and blends global memory via RRF.".into(),
+            text: "Retrieval\n\nRetrieval searches usearch HNSW and blends global memory via RRF."
+                .into(),
             content_hash: "h3".into(),
             corpus: "codebase".into(),
         },

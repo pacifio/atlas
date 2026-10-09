@@ -27,6 +27,27 @@ pub struct CaptureReader {
 /// One scope's capture stores, opened for reading.
 pub struct ScopeStores(Vec<(PathBuf, Store)>);
 
+/// Which of the recorder's sessions a read takes. The recorder holds the
+/// sessions Atlas hosted (`native`, `acp`) and the ones its importer read off
+/// an agent's own transcript (`external_jsonl`): a terminal session Atlas
+/// never hosted, or a hosted one live capture missed. Extraction reads with
+/// the reach `MemorySharingState::extraction_reach` decides; the local reads
+/// (the briefing's handoff, provenance) take everything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reach {
+    /// Only the sessions Atlas recorded live: never an imported one.
+    Hosted,
+    /// The imported sessions too.
+    WithImported,
+}
+
+impl Reach {
+    /// Whether a session recorded under `source` is within this reach.
+    pub fn admits(self, source: Source) -> bool {
+        self == Self::WithImported || source != Source::ExternalJsonl
+    }
+}
+
 /// A recorded session, with the store and launch directory it lives in.
 pub struct Recorded<'a> {
     pub root: &'a Path,
@@ -55,6 +76,67 @@ impl CaptureReader {
 }
 
 impl ScopeStores {
+    /// The recorded sessions of every agent whose last activity lies in
+    /// `since_ms..=idle_before_ms`, newest first, one per session id. This
+    /// includes the terminal sessions the importer read off disk, which
+    /// Atlas never hosted: the recorder is the only place their conversation
+    /// reaches Atlas. A session with no activity stamp falls back to its row
+    /// clock.
+    pub fn recent_sessions(
+        &self,
+        since_ms: i64,
+        idle_before_ms: i64,
+    ) -> Vec<crate::commands::shared_memory::Writer> {
+        self.session_activity(Reach::WithImported)
+            .into_iter()
+            .filter(|(_, at)| (since_ms..=idle_before_ms).contains(at))
+            .map(|(writer, _)| writer)
+            .collect()
+    }
+
+    /// Every recorded session within `reach` with a native id, once per id,
+    /// with its last activity (the newest of its rows), newest first.
+    pub fn session_activity(
+        &self,
+        reach: Reach,
+    ) -> Vec<(crate::commands::shared_memory::Writer, i64)> {
+        let mut newest: HashMap<String, (i64, String)> = HashMap::new();
+        for (root, store) in &self.0 {
+            for workspace in workspace_ids(root) {
+                for session in store.sessions_for_project(&workspace).unwrap_or_default() {
+                    if session.native_session_id.is_empty() || !reach.admits(session.source) {
+                        continue;
+                    }
+                    let at = session
+                        .last_activity_at
+                        .unwrap_or(session.updated_at)
+                        .timestamp_millis();
+                    let agent = session
+                        .agent
+                        .clone()
+                        .filter(|a| !a.is_empty())
+                        .unwrap_or_else(|| session.source.as_str().to_string());
+                    let slot = newest
+                        .entry(session.native_session_id.clone())
+                        .or_insert((at, agent.clone()));
+                    if at > slot.0 {
+                        *slot = (at, agent);
+                    }
+                }
+            }
+        }
+        let mut rows: Vec<(String, (i64, String))> = newest.into_iter().collect();
+        rows.sort_by(|a, b| b.1 .0.cmp(&a.1 .0).then_with(|| a.0.cmp(&b.0)));
+        rows.into_iter()
+            .map(|(session_id, (at, agent))| {
+                (
+                    crate::commands::shared_memory::Writer { agent, session_id },
+                    at,
+                )
+            })
+            .collect()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
@@ -65,12 +147,20 @@ impl ScopeStores {
     /// imported from its own transcript (`external_jsonl`). At most six
     /// lookups on the unique index per store.
     pub fn find(&self, session_id: &str) -> Option<Recorded<'_>> {
+        self.find_within(session_id, Reach::WithImported)
+    }
+
+    /// [`Self::find`], taking only a session recorded within `reach`.
+    pub fn find_within(&self, session_id: &str, reach: Reach) -> Option<Recorded<'_>> {
         if session_id.is_empty() {
             return None;
         }
         for (root, store) in &self.0 {
             for workspace in workspace_ids(root) {
                 for source in [Source::Native, Source::Acp, Source::ExternalJsonl] {
+                    if !reach.admits(source) {
+                        continue;
+                    }
                     let Ok(Some(row)) = store.session_id_for(&workspace, source, session_id) else {
                         continue;
                     };

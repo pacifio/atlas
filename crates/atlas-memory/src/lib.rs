@@ -23,11 +23,11 @@ pub mod provider;
 pub mod store;
 
 // Step 6 (implemented): docstore (id→display-text side-map) + retrieve (HNSW,
-// with the global blend). `retrieve` only adds an `impl MemoryEngine`, so it is a
-// plain child module (private) — it reaches the engine's private fields as a
-// descendant.
+// with the global blend). `retrieve` adds an `impl MemoryEngine` — a child
+// module, so it reaches the engine's private fields as a descendant — and the
+// query-term relevance floor and excerpt window `memory_search` shares.
 pub mod docstore;
-mod retrieve;
+pub mod retrieve;
 
 // The corpus index behind `MemoryEngine`: documents, BM25 and cached vectors
 // in `corpus.sqlite`, a per-model vector file that heals from the cache.

@@ -8,10 +8,11 @@
 //! - **One bearer token per (session, scope)** ([`tokens`]): minted when a
 //!   session starts, revoked when it ends, checked on every request. The
 //!   token says who is calling and which scope's record to open.
-//! - **Handed to every agent** ([`offers`]): ACP agents that advertise
-//!   `mcpCapabilities.http` over HTTP, the others as a stdio server (this
-//!   binary's `mcp-bridge`, the token in its environment; ADR-0019), and the
-//!   native agent through its thread's engine config.
+//! - **Handed to every agent** ([`offers`]): every ACP agent as a stdio
+//!   server (this binary's `mcp-bridge`, ADR-0019), the token in a private
+//!   file the entry names and never in the entry itself, which an adapter may
+//!   put on a command line (ADR-0020); the native agent over HTTP through its
+//!   thread's engine config.
 //! - **Ten tools** ([`tools`]), read first, write last: `memory_briefing`,
 //!   `memory_changes`, `memory_search`, `memory_get`, `memory_list`,
 //!   `memory_history`, `memory_why`, `memory_remember`, `memory_feedback`,
@@ -29,7 +30,7 @@
 mod bench;
 mod briefing;
 mod host;
-mod offers;
+pub(crate) mod offers;
 #[cfg(test)]
 mod tests;
 mod tokens;
@@ -42,7 +43,7 @@ pub use briefing::{SessionClocks, SessionReads};
 #[allow(unused_imports)]
 pub use host::{MemoryServer, MemoryServerHost, SharingGate, Sources};
 #[allow(unused_imports)]
-pub use offers::{MemorySessionOffers, OfferDecision, BRIDGE_ARG, BRIDGE_TOKEN_ENV};
+pub use offers::{MemorySessionOffers, OfferDecision, BRIDGE_ARG};
 #[allow(unused_imports)]
 pub use tokens::{Grant, MemoryTokens};
 /// How long an agent may cache a `tools/list` answer; the UI tool server

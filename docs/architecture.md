@@ -99,7 +99,7 @@ One Rust module per IPC domain under `src-tauri/src/commands/`. `commands/mod.rs
 | Domain group | Modules |
 |---|---|
 | Agents (ported ACP stack) | agents, agent_host, agent_transcript, agent_analytics, agent_memory, catalog, registry, capture, artifacts_cloud |
-| Agent tool servers | memory_server (ADR-0010), memory_bridge (ADR-0019), ui_server (ADR-0012) |
+| Agent tool servers | memory_server (ADR-0010), memory_bridge (ADR-0019, ADR-0020), ui_server (ADR-0012) |
 | Terminal / browser / fs | terminal, browser, fs |
 | Git | git, git_graph, git_watcher, git_autofetch, gitdiff, git_ops, git_conflicts, git_snapshot, git_stage_ops |
 | GitHub | github |
@@ -184,7 +184,7 @@ The `SessionDelta` shapes those consumers pattern-match live in **`crates/atlas-
 
 ### Atlas's tool servers
 
-Atlas hands agents three in-process MCP services on one loopback listener, behind one bearer token per session: the **memory tool server** (`memory_server/`, `/mcp`, ADR-0010), offered to every agent — over HTTP to one that advertises HTTP MCP, else as a stdio server, the Atlas binary run as `atlas mcp-bridge <url>` with the token in `ATLAS_MCP_TOKEN` (ADR-0019) — the **UI tool server** (`ui_server/`, `/ui`, ADR-0012), offered only to a connection that carries **UI control** — today the in-process native connection — and the **organisation tool server** (below). One offer (`MemorySessionOffers`) decides all three, because the token table holds one token per session. A UI tool call crosses to the window as `atlas:ui-action`; the frontend performs it through the app's own openers (`src/features/ui-actions/`) and answers through `ui_action_respond`, so Rust mirrors no layout or focus state. `tests/ui-actions-contract.test.ts` keeps the tool list and the window's dispatcher in step.
+Atlas hands agents three in-process MCP services on one loopback listener, behind one bearer token per session: the **memory tool server** (`memory_server/`, `/mcp`, ADR-0010), offered to every agent — over HTTP to the in-process native agent, and to every ACP agent, whatever it advertises, as a stdio server: the Atlas binary run as `atlas mcp-bridge <url> <token file>`, the token in a private file and never in the entry, which an adapter may put on its command line (ADR-0019, ADR-0020) — the **UI tool server** (`ui_server/`, `/ui`, ADR-0012), offered only to a connection that carries **UI control** — today the in-process native connection — and the **organisation tool server** (below). One offer (`MemorySessionOffers`) decides all three, because the token table holds one token per session. A UI tool call crosses to the window as `atlas:ui-action`; the frontend performs it through the app's own openers (`src/features/ui-actions/`) and answers through `ui_action_respond`, so Rust mirrors no layout or focus state. `tests/ui-actions-contract.test.ts` keeps the tool list and the window's dispatcher in step.
 
 ### The organisation tool server
 
@@ -275,6 +275,8 @@ Everything else is per-project files under `<project-root>/.atlas/`:
 ├── canvas.json               ReactFlow node/edge state (Canvas / Spaces)
 ├── editor-state.json         open tabs + split-column layout
 ├── project.json              per-project settings
+├── memory-sharing.json       shared-memory switches: enabled (default true), fromExternalSessions (default false)
+├── memory-summarizer.json    handoff summarizer / extraction model choice
 ├── recent-files.json         recent-file list
 └── git-status-cache.json     cached git status
 ```

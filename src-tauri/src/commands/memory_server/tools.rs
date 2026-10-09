@@ -27,6 +27,7 @@ use std::sync::Arc;
 
 use atlas_memory::citation::{Citation, Validity};
 use atlas_memory::record::{Entry, EntryKind, RecordStore, Source};
+use atlas_memory::retrieve::{record_query_terms, QueryTerms};
 use futures::future::BoxFuture;
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::{
@@ -91,6 +92,19 @@ const SEARCH_MAX_LIMIT: usize = 50;
 /// conversation they were meant to inform.
 const INDEX_DEFAULT_LIMIT: usize = 6;
 const INDEX_MAX_LIMIT: usize = 20;
+/// The most of one document `memory_search` returns: the passage around its
+/// match (about 300 tokens), never the whole text. An indexed document can be
+/// a session transcript of half a megabyte.
+/// The relevance floor judges a document on the same passage.
+const DOC_EXCERPT_BYTES: usize = atlas_memory::retrieve::PASSAGE_BYTES;
+/// The least an excerpt is cut to when a tight budget shares itself out
+/// (about 200 tokens: the matching passage with a sentence either side).
+/// Below it, a reply keeps fewer documents and marks the rest `truncation`
+/// rather than returning fragments too short to answer anything.
+const DOC_EXCERPT_MIN_BYTES: usize = 800;
+/// What an empty `memory_search` says, so "nothing found" reads as an answer.
+const NO_MATCH_NOTE: &str =
+    "nothing in shared memory or the project's documents matches this query";
 /// The handoff note's JSON budget in a briefing.
 const HANDOFF_MAX_BYTES: usize = 4096;
 
@@ -239,7 +253,9 @@ pub(super) fn tools() -> Vec<Tool> {
                     "kinds": { "type": "array", "items": { "type": "string", "enum": kind_names(false) },
                                "description": "Only these kinds (default: the durable kinds)." },
                     "limit": { "type": "integer", "minimum": 1, "maximum": SEARCH_MAX_LIMIT,
-                               "description": "At most this many entries (default 10)." }
+                               "description": "At most this many entries (default 10)." },
+                    "max_output_tokens": { "type": "integer", "minimum": 1000, "maximum": 12000,
+                               "description": "Reply budget (default 4096). Documents are excerpts around the match; results past the budget are dropped, with truncation: output_budget." }
                 },
                 "required": ["query"]
             }),
@@ -387,6 +403,7 @@ struct SearchArgs {
     #[serde(default)]
     kinds: Vec<String>,
     limit: Option<usize>,
+    max_output_tokens: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -626,21 +643,65 @@ pub(super) fn capped_handoff(note: &atlas_memory::handoff::HandoffNote, cap: usi
 }
 
 /// `result`'s JSON object with the index's `documents` added.
-fn with_documents(result: CallToolResult, docs: &[IndexDoc]) -> CallToolResult {
-    let parsed = result
-        .content
-        .iter()
-        .find_map(|c| c.as_text().map(|t| t.text.clone()))
-        .and_then(|text| serde_json::from_str::<Value>(&text).ok());
-    let Some(Value::Object(mut object)) = parsed else {
-        return result;
+/// `max_output_tokens` as a byte budget (4 bytes a token), or the default —
+/// the `atlas_code` tools' budget, read the same way.
+fn output_budget(max_output_tokens: Option<usize>) -> usize {
+    max_output_tokens.map_or(atlas_search::DEFAULT_BUDGET_BYTES, |t| {
+        t.clamp(1_000, 12_000) * 4
+    })
+}
+
+/// One indexed document as `memory_search` returns it: the passage around
+/// what `terms` matched when the text is longer than `max_bytes`, marked
+/// `excerpt` with the whole text's `length`.
+fn document_json(d: &IndexDoc, terms: &QueryTerms, max_bytes: usize) -> Value {
+    let text = d.text.trim();
+    match terms.excerpt(text, max_bytes) {
+        Some(cut) => json!({
+            "title": d.title, "source": d.source, "text": cut,
+            "excerpt": true, "length": d.text.len(),
+        }),
+        None => json!({ "title": d.title, "source": d.source, "text": text }),
+    }
+}
+
+/// `memory_search`'s reply inside `budget` bytes: entries first (the
+/// record), then documents (`None`: the index was not searched), each kept
+/// while it fits. A reply that dropped any says `truncation: output_budget`
+/// and how many it `omitted`; an empty one carries [`NO_MATCH_NOTE`].
+fn search_reply(entries: Vec<Value>, documents: Option<Vec<Value>>, budget: usize) -> Value {
+    // `{"entries":[],"documents":[],"truncation":"output_budget","omitted":NN}`
+    // and the commas between items, reserved up front.
+    const FRAME: usize = 96;
+    let mut used = FRAME;
+    let mut omitted = 0usize;
+    let mut fit = |items: Vec<Value>| -> Vec<Value> {
+        let mut kept = Vec::new();
+        for item in items {
+            let size = item.to_string().len() + 1;
+            if omitted == 0 && used + size <= budget {
+                used += size;
+                kept.push(item);
+            } else {
+                omitted += 1;
+            }
+        }
+        kept
     };
-    let documents: Vec<Value> = docs
-        .iter()
-        .map(|d| json!({ "title": d.title, "source": d.source, "text": d.text.trim() }))
-        .collect();
-    object.insert("documents".to_string(), Value::Array(documents));
-    ok_json(Value::Object(object))
+    let entries = fit(entries);
+    let documents = documents.map(&mut fit);
+    let empty = entries.is_empty() && documents.as_ref().is_none_or(Vec::is_empty);
+    let mut reply = json!({ "entries": entries });
+    if let Some(documents) = documents {
+        reply["documents"] = Value::Array(documents);
+    }
+    if omitted > 0 {
+        reply["truncation"] = json!("output_budget");
+        reply["omitted"] = json!(omitted);
+    } else if empty {
+        reply["note"] = json!(NO_MATCH_NOTE);
+    }
+    reply
 }
 
 /// The record entry id behind a `shared:<kind>:<entry id>` corpus id.
@@ -787,18 +848,15 @@ impl MemoryTools {
         );
         let handoff = run_blocking(move || {
             let store = shared_memory::store_for(&cwd).ok()?;
-            let mut note = store.last_episode(&own).ok().flatten()?;
-            // The previous session's facts, read now: its commits may have
-            // landed after it ended.
-            if let Some(found) = reader.stores(&cwd).find(&note.session) {
-                note.apply_facts(memory_capture::session_facts(&found));
-            }
-            Some(note)
+            super::briefing::read_handoff(&store, &own, &reader.stores(&cwd))
         })
         .await;
-        if let Ok(Some(note)) = handoff {
-            value["handoff"] = capped_handoff(&note, HANDOFF_MAX_BYTES);
-        }
+        // Always present, as the tool description promises: `null` when no
+        // earlier session left a note.
+        value["handoff"] = match handoff {
+            Ok(Some(note)) => capped_handoff(&note, HANDOFF_MAX_BYTES),
+            _ => Value::Null,
+        };
         self.clocks.looked(&grant.session_id, briefing.synced_to);
         ok_json(value)
     }
@@ -862,6 +920,14 @@ impl MemoryTools {
 
     /// `memory_search` over the record, plus the index when no kinds narrow
     /// the search to working memory.
+    ///
+    /// Two bounds the live store showed were missing. An entry is shown only
+    /// when it carries the query's distinctive terms ([`QueryTerms`]): RRF
+    /// always ranks something first, so without a floor a query nothing
+    /// answers got a branch fact as its top hit. (Meaning alone still finds a
+    /// memory — through `documents`, where the index admits a hit that stands
+    /// out by meaning.) And the reply has a budget, `max_output_tokens`, with
+    /// every document cut to the passage around its match.
     async fn search(&self, grant: Grant, request: CallToolRequestParams) -> CallToolResult {
         let args: SearchArgs = match args(&request) {
             Ok(a) => a,
@@ -881,14 +947,21 @@ impl MemoryTools {
             .limit
             .unwrap_or(SEARCH_DEFAULT_LIMIT)
             .clamp(1, SEARCH_MAX_LIMIT);
+        let budget = output_budget(args.max_output_tokens);
         let (memory, cwd, query, checks) = (
             self.memory.clone(),
             grant.cwd.clone(),
             args.query.clone(),
             self.sources.clone(),
         );
-        let result = run_blocking(move || {
+        let fallback_terms = QueryTerms::new(&args.query);
+        let (entries, terms) = run_blocking(move || {
+            let terms = shared_memory::store_for(&cwd).map_or_else(
+                |_| QueryTerms::new(&query),
+                |store| record_query_terms(&store, &query),
+            );
             let mut hits = memory.search_hits(&cwd, &query, &kinds, limit);
+            hits.retain(|h| terms.supports(&format!("{} {}", h.entry.key, h.entry.content)));
             let entries: Vec<Entry> = hits.iter().map(|h| h.entry.clone()).collect();
             let checked = check_entries(&checks, &cwd, &entries);
             // A stale memory is still found, after every one that holds.
@@ -909,11 +982,11 @@ impl MemoryTools {
                     v
                 })
                 .collect();
-            json!({ "entries": entries })
+            (entries, terms)
         })
         .await
-        .unwrap_or_else(|_| json!({ "entries": [] }));
-        match (&self.sources.index, args.kinds.is_empty()) {
+        .unwrap_or_else(|_| (Vec::new(), fallback_terms));
+        let documents = match (&self.sources.index, args.kinds.is_empty()) {
             (Some(index), true) => {
                 let limit = args
                     .limit
@@ -933,10 +1006,18 @@ impl MemoryTools {
                 let docs = run_blocking(move || live_shared_docs(&memory, &cwd, docs))
                     .await
                     .unwrap_or(unfiltered);
-                with_documents(ok_json(result), &docs)
+                let excerpt = DOC_EXCERPT_BYTES
+                    .min(budget / (docs.len() + 1))
+                    .max(DOC_EXCERPT_MIN_BYTES);
+                Some(
+                    docs.iter()
+                        .map(|d| document_json(d, &terms, excerpt))
+                        .collect(),
+                )
             }
-            _ => ok_json(result),
-        }
+            _ => None,
+        };
+        ok_json(search_reply(entries, documents, budget))
     }
 }
 

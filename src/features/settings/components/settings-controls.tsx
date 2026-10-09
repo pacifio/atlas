@@ -40,6 +40,8 @@ export function Toggle({
   checked,
   onChange,
   disabled = false,
+  label,
+  className,
 }: {
   defaultChecked?: boolean;
   checked?: boolean;
@@ -47,6 +49,11 @@ export function Toggle({
   /** For a sub-setting whose parent is off — dimmed and inert, but still
    *  showing its own stored value rather than lying about it. */
   disabled?: boolean;
+  /** Accessible name, for a switch whose visible label is not a <label>. */
+  label?: string;
+  /** Last word on the track's classes — e.g. an off track that must show on
+   *  a card-coloured surface, where the default `bg-card` disappears. */
+  className?: string;
 }) {
   const [internal, setInternal] = useState(defaultChecked);
   const isControlled = checked !== undefined;
@@ -66,12 +73,14 @@ export function Toggle({
       onClick={() => apply(!value)}
       role="switch"
       aria-checked={value}
+      aria-label={label}
       disabled={disabled}
       className={cn(
         "relative inline-flex h-5 w-9 shrink-0 items-center",
         "rounded-full border-2 border-transparent transition-colors",
         disabled ? "opacity-40 cursor-not-allowed" : "cursor-pointer",
         value ? "bg-[var(--primary)]" : "bg-[var(--card)]",
+        className,
       )}
     >
       <span

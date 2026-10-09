@@ -169,6 +169,59 @@ impl Extractor {
             .await
     }
 
+    /// Whether this process holds `session_id`'s turns for its end pass
+    /// (a turn of it finished here since it last started).
+    pub fn holds_turns(&self, session_id: &str) -> bool {
+        self.turns.lock().contains_key(session_id)
+    }
+
+    /// The end pass of a session whose turns this process does not hold,
+    /// over its persisted conversation (`turns`, see [`persisted_turns`]).
+    ///
+    /// The end pass normally runs over the turns the turn-finished passes
+    /// kept in memory. Those are gone when the app quits, and quitting is how
+    /// most sessions end: the end is recorded on the way out and its pass, a
+    /// model call, is cut off with the process. A session too short for the
+    /// turn gates then contributes nothing, ever. This pass makes up for it,
+    /// for an end that ran without turns and for every recent session the
+    /// health pass finds that is no longer live. The persisted counters make
+    /// it run once: nothing new since the last pass, no model call.
+    pub async fn catch_up(
+        &self,
+        sharing: &MemorySharingState,
+        cwd: &str,
+        writer: &Writer,
+        turns: Vec<TranscriptTurn>,
+    ) -> usize {
+        if self.holds_turns(&writer.session_id) {
+            return 0; // live here: its own end pass covers it
+        }
+        let Some(route) = self.route(sharing, cwd) else {
+            return 0;
+        };
+        // A long session is read in prompt-sized passes from where the last
+        // pass stopped, not in one pass that would see only its tail; at
+        // most CATCH_UP_PASSES now, the next job carries on.
+        let mut recorded = 0;
+        for _ in 0..CATCH_UP_PASSES {
+            let (ran, stored) = self
+                .run_pass(
+                    route.clone(),
+                    cwd,
+                    writer,
+                    &turns,
+                    Trigger::SessionEnd,
+                    Some(CATCH_UP_CHUNK_CHARS),
+                )
+                .await;
+            recorded += stored;
+            if !ran {
+                break;
+            }
+        }
+        recorded
+    }
+
     /// The model a pass in `cwd` would ask, or `None` when no pass runs there
     /// (sharing off, the reserved local mode, no account and no BYOK choice).
     /// The model passes ask (the dream pass asks it too, with the same
@@ -194,6 +247,24 @@ impl Extractor {
         turns: &[TranscriptTurn],
         trigger: Trigger,
     ) -> usize {
+        self.run_pass(route, cwd, writer, turns, trigger, None)
+            .await
+            .1
+    }
+
+    /// One pass; `(whether it ran, entries recorded)`. With `chunk`, the
+    /// pass reads only the turns from where the last one stopped up to about
+    /// `chunk` characters of text ([`chunk_end`]), so the next pass can read
+    /// on from there.
+    async fn run_pass(
+        &self,
+        route: Route,
+        cwd: &str,
+        writer: &Writer,
+        turns: &[TranscriptTurn],
+        trigger: Trigger,
+        chunk: Option<usize>,
+    ) -> (bool, usize) {
         // The gate counters, from the scope's memory directory (git lookup
         // and file reads: off the async runtime).
         let loaded = {
@@ -210,10 +281,23 @@ impl Extractor {
             Ok(loaded) => loaded,
             Err(e) => {
                 tracing::debug!(target: "atlas::shared_memory", "extraction skipped: {e}");
-                return 0;
+                return (false, 0);
             }
         };
         let passes_before = state.extraction_count;
+        // A chunked pass reads turns whose outside reads are known per turn
+        // (the recorder's), and its prompt holds only the chunk: whether it
+        // read outside content is the chunk's. An unchunked pass judges the
+        // whole conversation.
+        let start = state.last_extracted_turn_index.min(turns.len());
+        let (turns, judged) = match chunk {
+            Some(chars) => {
+                let end = chunk_end(turns, start, chars);
+                (&turns[..end], &turns[start..end])
+            }
+            None => (turns, turns),
+        };
+        let external = judged.iter().any(|t| t.external);
 
         let model = self.model.clone();
         let found = extract::extract(turns, &mut state, trigger, |prompt| async move {
@@ -229,21 +313,23 @@ impl Extractor {
         let found = match found {
             Ok(found) => found,
             Err(e) => {
-                tracing::debug!(target: "atlas::shared_memory", "extraction pass failed: {e:#}");
-                return 0;
+                // Warn, not debug: a pass that keeps failing (the gateway
+                // unreachable, no model for the org) is otherwise invisible,
+                // and memory silently stops growing.
+                tracing::warn!(target: "atlas::shared_memory", "extraction pass failed: {e:#}");
+                return (false, 0);
             }
         };
         if state.extraction_count == passes_before {
-            return 0; // no pass ran (the gates are not met yet): nothing to save
+            return (false, 0); // no pass ran (the gates are not met yet): nothing to save
         }
 
-        let external = turns.iter().any(|t| t.external);
         // Persist the counters and land the entries (SQLite writes: off the
         // async runtime).
         let (memory, cwd, writer) = (self.memory.clone(), cwd.to_string(), writer.clone());
-        tokio::task::spawn_blocking(move || {
+        let recorded = tokio::task::spawn_blocking(move || {
             if let Err(e) = state.save(&memory_dir, &writer.session_id) {
-                tracing::debug!(target: "atlas::shared_memory", "extraction state not saved: {e:#}");
+                tracing::warn!(target: "atlas::shared_memory", "extraction state not saved: {e:#}");
             }
             let mut recorded = 0;
             for entry in found {
@@ -256,13 +342,13 @@ impl Extractor {
                 };
                 match memory.record_extracted(&cwd, &writer, entry.kind, &entry.content, confidence) {
                     Ok(_) => recorded += 1,
-                    Err(e) => tracing::debug!(target: "atlas::shared_memory", "extracted entry not recorded: {e}"),
+                    Err(e) => tracing::warn!(target: "atlas::shared_memory", "extracted entry not recorded: {e}"),
                 }
             }
             recorded
         })
-        .await
-        .unwrap_or(0)
+        .await;
+        (true, recorded.unwrap_or(0))
     }
 }
 
@@ -288,6 +374,252 @@ pub fn transcript_turns(messages: &[atlas_agent_wire::Message]) -> Vec<Transcrip
         .collect()
 }
 
+/// How far back the health pass looks for sessions whose end pass never ran.
+pub const CATCH_UP_WINDOW_MS: i64 = 14 * 24 * 3600 * 1000;
+/// At most this many sessions per health pass.
+pub const CATCH_UP_MAX: usize = 30;
+/// At most this many passes over one session per catch-up job.
+pub const CATCH_UP_PASSES: usize = 3;
+/// About how much text one catch-up pass reads: the prompt's own cap
+/// (`atlas_memory::extract`), which keeps only the newest text beyond it.
+const CATCH_UP_CHUNK_CHARS: usize = 6000;
+
+/// Where a pass that starts at turn `start` and reads about `chars`
+/// characters of text ends (exclusive): past at least one assistant turn
+/// with text, so an end pass over it is due, and never short of `start + 1`.
+fn chunk_end(turns: &[TranscriptTurn], start: usize, chars: usize) -> usize {
+    let start = start.min(turns.len());
+    let (mut used, mut answered) = (0usize, false);
+    for (i, turn) in turns.iter().enumerate().skip(start) {
+        let len = turn.text.trim().len();
+        if used + len > chars && answered {
+            return i;
+        }
+        used += len;
+        answered |= turn.role == "assistant" && len > 0;
+    }
+    turns.len()
+}
+
+/// A session must have been idle this long before a catch-up pass reads it:
+/// one still running — in another Atlas process on the same data directory
+/// (a dev build beside the installed app), or a terminal agent — is read once
+/// it pauses, not mid-run on every scan.
+pub const CATCH_UP_IDLE_MS: i64 = 15 * 60 * 1000;
+
+/// Of `candidates` (each session with its last activity), the ones a
+/// catch-up pass looks at: active within [`CATCH_UP_WINDOW_MS`] of `now`,
+/// idle for [`CATCH_UP_IDLE_MS`], not `live` in this process, newest first,
+/// at most [`CATCH_UP_MAX`]. Whether one has anything new is the extractor's
+/// call (its persisted counters).
+fn pick_catch_up(
+    candidates: Vec<(Writer, i64)>,
+    now: i64,
+    live: &dyn Fn(&str) -> bool,
+) -> Vec<Writer> {
+    let window = (now - CATCH_UP_WINDOW_MS)..=(now - CATCH_UP_IDLE_MS);
+    let mut rows: Vec<_> = candidates
+        .into_iter()
+        .filter(|(w, at)| !w.agent.is_empty() && window.contains(at) && !live(&w.session_id))
+        .collect();
+    rows.sort_by(|a, b| {
+        b.1.cmp(&a.1)
+            .then_with(|| a.0.session_id.cmp(&b.0.session_id))
+    });
+    rows.into_iter()
+        .take(CATCH_UP_MAX)
+        .map(|(w, _)| w)
+        .collect()
+}
+
+/// The sessions of `store` a catch-up pass looks at ([`pick_catch_up`]). A
+/// session's last activity is the newest of its start, its end and its
+/// events in the log, so one still running in another process is left
+/// alone however long ago it started.
+pub fn catch_up_sessions(
+    store: &atlas_memory::record::RecordStore,
+    now: i64,
+    live: &dyn Fn(&str) -> bool,
+) -> Vec<Writer> {
+    let last_event = store
+        .last_event_by_session(now - CATCH_UP_WINDOW_MS)
+        .unwrap_or_default();
+    let candidates = store
+        .sessions()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|s| {
+            let at = [
+                s.started_at,
+                s.ended_at,
+                last_event.get(&s.session_id).copied(),
+            ]
+            .into_iter()
+            .flatten()
+            .max()?;
+            Some((
+                Writer {
+                    agent: s.agent,
+                    session_id: s.session_id,
+                },
+                at,
+            ))
+        })
+        .collect();
+    pick_catch_up(candidates, now, live)
+}
+
+/// The recorded sessions (any agent; the imported terminal ones only when
+/// `reach` admits them, see `MemorySharingState::extraction_reach`) a
+/// catch-up pass looks at ([`pick_catch_up`]), by their recorded activity.
+pub fn recorded_catch_up_sessions(
+    stores: &super::memory_capture::ScopeStores,
+    reach: super::memory_capture::Reach,
+    now: i64,
+    live: &dyn Fn(&str) -> bool,
+) -> Vec<Writer> {
+    pick_catch_up(stores.session_activity(reach), now, live)
+}
+
+/// The recorded and the hosted candidates as one list, each session once
+/// (the recorder's spelling of its agent wins), at most [`CATCH_UP_MAX`].
+pub fn merge_catch_up(recorded: Vec<Writer>, hosted: Vec<Writer>) -> Vec<Writer> {
+    let mut seen = std::collections::HashSet::new();
+    recorded
+        .into_iter()
+        .chain(hosted)
+        .filter(|w| seen.insert(w.session_id.clone()))
+        .take(CATCH_UP_MAX)
+        .collect()
+}
+
+/// A session's conversation as Atlas persisted it, for an end pass that runs
+/// after the live turns are gone; `None` when Atlas recorded none.
+///
+/// The capture recorder is read first ([`recorded_turns`]): it holds every
+/// agent's sessions, including the terminal ones its importer read off disk,
+/// which Atlas never hosted and so has no other record of. Those are read
+/// only when `reach` admits them (`MemorySharingState::extraction_reach`);
+/// otherwise such a session has no conversation here at all. Atlas's own
+/// transcript (`agent_transcript`) is the fallback, looked up under `cwd`,
+/// then in every project directory (the session may have run in a worktree
+/// or a subdirectory of the scope). It keeps text, not tool calls, so
+/// whether that session read outside content is unknown, and the pass is
+/// treated as having read some: its entries are candidates (M0).
+pub fn persisted_turns(
+    config_dir: &std::path::Path,
+    cwd: &str,
+    session_id: &str,
+    reader: &super::memory_capture::CaptureReader,
+    reach: super::memory_capture::Reach,
+) -> Option<Vec<TranscriptTurn>> {
+    use super::agent_transcript as transcripts;
+    let stores = reader.stores(cwd);
+    let found = stores.find_within(session_id, reach);
+    if let Some(turns) = found.as_ref().map(recorded_turns).filter(|t| !t.is_empty()) {
+        return Some(turns);
+    }
+    let stored = transcripts::read(config_dir, cwd, session_id).or_else(|| {
+        let name = format!("{}.json", transcripts::sanitize_id(session_id));
+        std::fs::read_dir(config_dir.join("agent-transcripts"))
+            .ok()?
+            .flatten()
+            .find_map(|dir| transcripts::read_file(&dir.path().join(&name)))
+    })?;
+    let external = match &found {
+        Some(found) => found
+            .store
+            .tool_calls_for_session(&found.session.id)
+            .unwrap_or_default()
+            .iter()
+            .any(recorded_call_is_external),
+        None => true,
+    };
+    let mut turns: Vec<TranscriptTurn> = stored
+        .messages
+        .iter()
+        .map(|m| TranscriptTurn {
+            role: m.role.clone(),
+            text: atlas_agent_transcript::strip_injected_context(&m.content),
+            tool_calls: 0,
+            external: false,
+        })
+        .collect();
+    for turn in &mut turns {
+        turn.external = external;
+    }
+    Some(turns)
+}
+
+/// A recorded session's conversation as the extractor reads it: its text
+/// messages in order (thinking and tool rows left out), Atlas's injected
+/// blocks stripped. A turn's tool calls are counted on its last assistant
+/// message, and every message of a turn that made an outside call (a fetch,
+/// a third-party MCP tool) is marked external.
+pub fn recorded_turns(found: &super::memory_capture::Recorded<'_>) -> Vec<TranscriptTurn> {
+    use atlas_checkpoint::{Mode, Role};
+    let messages = found
+        .store
+        .messages_for_session(&found.session.id)
+        .unwrap_or_default();
+    let calls = found
+        .store
+        .tool_calls_for_session(&found.session.id)
+        .unwrap_or_default();
+    let mut per_turn: HashMap<i64, (usize, bool)> = HashMap::new();
+    for call in &calls {
+        let slot = per_turn.entry(call.turn_seq).or_default();
+        slot.0 += 1;
+        slot.1 |= recorded_call_is_external(call);
+    }
+    let mut turns: Vec<(i64, TranscriptTurn)> = messages
+        .iter()
+        .filter(|m| m.mode == Mode::Text)
+        .filter_map(|m| {
+            let body = found
+                .store
+                .message_body(m)
+                .unwrap_or_else(|_| m.preview.clone());
+            let text = atlas_agent_transcript::strip_injected_context(&body);
+            if text.trim().is_empty() {
+                return None;
+            }
+            let role = match m.role {
+                Role::User => "user",
+                Role::Assistant => "assistant",
+                Role::System => "system",
+            };
+            Some((
+                m.turn_seq,
+                TranscriptTurn {
+                    role: role.to_string(),
+                    text,
+                    tool_calls: 0,
+                    external: per_turn.get(&m.turn_seq).is_some_and(|t| t.1),
+                },
+            ))
+        })
+        .collect();
+    // Each turn's calls, on its last assistant message.
+    let mut counted: std::collections::HashSet<i64> = std::collections::HashSet::new();
+    for (turn_seq, turn) in turns.iter_mut().rev() {
+        if turn.role == "assistant" && counted.insert(*turn_seq) {
+            turn.tool_calls = per_turn.get(turn_seq).map_or(0, |t| t.0);
+        }
+    }
+    turns.into_iter().map(|(_, t)| t).collect()
+}
+
+/// Whether a recorded call read outside content ([`is_external`]).
+fn recorded_call_is_external(call: &atlas_checkpoint::ToolCall) -> bool {
+    call.tool_name == atlas_checkpoint::tools::ToolName::Fetch
+        || is_external_parts(
+            call.tool_name.as_str(),
+            call.title.as_deref(),
+            call.kind.as_deref(),
+        )
+}
+
 /// Atlas's own tool servers: their results are not outside content.
 const OWN_SERVERS: [&str; 4] = ["atlas_memory", "atlas_code", "atlas_ui", "atlas_org"];
 
@@ -296,17 +628,22 @@ const OWN_SERVERS: [&str; 4] = ["atlas_memory", "atlas_code", "atlas_ui", "atlas
 /// are spelled `mcp__<server>__<tool>` by ACP agents and `<server>.<tool>` by
 /// the native agent, in the tool name or the title.
 fn is_external(call: &atlas_agent_wire::ToolCall) -> bool {
-    if call.kind.as_deref() == Some("fetch") {
+    is_external_parts(&call.tool_name, call.title.as_deref(), call.kind.as_deref())
+}
+
+/// [`is_external`] over a call's name, title and ACP kind.
+fn is_external_parts(tool_name: &str, title: Option<&str>, kind: Option<&str>) -> bool {
+    if kind == Some("fetch") {
         return true;
     }
     // The native agent's MCP calls carry kind `other`. A shell command, read
     // or edit whose title starts with a dotted word (`python3.12 -m pytest`,
     // `Cargo.toml`) is not one.
     let dotted = !matches!(
-        call.kind.as_deref(),
+        kind,
         Some("execute" | "read" | "edit" | "search" | "delete" | "move")
     );
-    let mut names = std::iter::once(call.tool_name.as_str()).chain(call.title.as_deref());
+    let mut names = std::iter::once(tool_name).chain(title);
     names.any(|name| {
         let lower = name.to_ascii_lowercase();
         let first = lower
@@ -449,6 +786,7 @@ fn completion_text(body: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::memory_capture::Reach;
     use crate::commands::shared_memory::MemoryChanged;
     use atlas_memory::record::EntryKind;
 
@@ -773,6 +1111,431 @@ mod tests {
                 .all(|e| e.confidence <= atlas_memory::record::CANDIDATE_CONFIDENCE),
             "{entries:?}"
         );
+    }
+
+    /// Most sessions end at quit: the end is recorded on the way out and its
+    /// pass is cut off with the process, so the turns kept for it are gone.
+    /// A short session (below the turn gates) then left nothing, and memory
+    /// stopped growing. The catch-up pass runs it later over the persisted
+    /// conversation, once.
+    #[tokio::test]
+    async fn a_session_whose_end_pass_was_lost_is_caught_up_once() {
+        let h = harness("catch-up", true);
+        // A short session: below the turn gates, its end pass never ran.
+        let recorded = h
+            .extractor
+            .turn_finished(&h.sharing, &h.project, &writer(), session(4))
+            .await;
+        assert_eq!(recorded, 0);
+        // The app quit: the turns held for the end pass die with it.
+        let restarted = Extractor::new(h.memory.clone(), h.model.clone());
+        assert_eq!(
+            restarted
+                .session_ended(&h.sharing, &h.project, &writer())
+                .await,
+            0,
+            "no turns held: the plain end pass has nothing to send"
+        );
+        assert!(!restarted.holds_turns("sess-1"));
+
+        let recorded = restarted
+            .catch_up(&h.sharing, &h.project, &writer(), session(4))
+            .await;
+        assert_eq!(recorded, 4);
+        let decisions = h.memory.list_entries(&h.project, Some(EntryKind::Decision));
+        assert_eq!(decisions.len(), 1);
+        assert_eq!(
+            decisions[0].state,
+            atlas_memory::record::State::Active,
+            "briefed, not a candidate"
+        );
+        assert_eq!(h.model.calls().len(), 1);
+
+        // Nothing new since: the next health pass asks nothing.
+        restarted
+            .catch_up(&h.sharing, &h.project, &writer(), session(4))
+            .await;
+        assert_eq!(h.model.calls().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_session_whose_turns_are_held_here_is_not_caught_up() {
+        let h = harness("catch-up-live", true);
+        h.extractor
+            .turn_finished(&h.sharing, &h.project, &writer(), session(4))
+            .await;
+        assert!(h.extractor.holds_turns("sess-1"));
+        let recorded = h
+            .extractor
+            .catch_up(&h.sharing, &h.project, &writer(), session(4))
+            .await;
+        assert_eq!(recorded, 0);
+        assert!(h.model.calls().is_empty());
+    }
+
+    /// The persisted conversation is text only; whether the session read
+    /// outside content comes from the recorder, and is assumed when the
+    /// recorder never saw the session.
+    #[test]
+    fn the_persisted_conversation_is_read_and_unknown_tools_count_as_outside() {
+        let config =
+            std::env::temp_dir().join(format!("atlas-extract-cfg-{}", uuid::Uuid::new_v4()));
+        let cwd = "/nowhere/project";
+        let dir = super::super::agent_transcript::dir_for(&config, cwd);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("sess-9.json"),
+            serde_json::json!({
+                "id": "sess-9", "plugin_id": "claude-acp", "cwd": cwd,
+                "created_at": "", "updated_at": "",
+                "messages": [
+                    {"role": "user", "content": "use bun", "timestamp": ""},
+                    {"role": "assistant", "content": "Done.", "timestamp": ""}
+                ]
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let reader = super::super::memory_capture::CaptureReader::default();
+        let turns = persisted_turns(&config, cwd, "sess-9", &reader, Reach::Hosted).unwrap();
+        assert_eq!(
+            turns
+                .iter()
+                .map(|t| (t.role.as_str(), t.text.as_str()))
+                .collect::<Vec<_>>(),
+            [("user", "use bun"), ("assistant", "Done.")]
+        );
+        assert!(
+            turns.iter().any(|t| t.external),
+            "no recorder: outside content assumed"
+        );
+        // Found from another project directory too (a worktree's session).
+        let turns =
+            persisted_turns(&config, "/elsewhere", "sess-9", &reader, Reach::Hosted).unwrap();
+        assert_eq!(turns.len(), 2);
+        assert!(persisted_turns(&config, cwd, "missing", &reader, Reach::Hosted).is_none());
+        let _ = std::fs::remove_dir_all(&config);
+    }
+
+    /// Record a session the way the terminal-gap importer files one: under
+    /// `external_jsonl`, every user entry opening a turn.
+    fn import_terminal_session(
+        project: &str,
+        native_id: &str,
+        entries: &[(atlas_checkpoint::Role, &str)],
+        tool: Option<(atlas_checkpoint::tools::ToolName, &str)>,
+    ) {
+        use atlas_checkpoint::model::ProjectMode;
+        use atlas_checkpoint::{Capture, Mode, Role, SessionKey, Source, Store, TurnContent};
+        let mut store = Store::open(atlas_checkpoint::atlas_dir(project)).unwrap();
+        let mut capture = Capture::new(&mut store, ProjectMode::Local);
+        let key = SessionKey {
+            workspace_id: project.to_string(),
+            source: Source::ExternalJsonl,
+            native_session_id: native_id.into(),
+        };
+        let (mut turn, mut row) = (0i64, String::new());
+        for (i, (role, body)) in entries.iter().enumerate() {
+            if *role == Role::User {
+                turn += 1;
+                row = capture
+                    .record_prompt(&key, body, turn, Some("claude-code"), None, Some(project))
+                    .unwrap();
+            } else {
+                capture
+                    .record_turn(
+                        &row,
+                        TurnContent {
+                            turn_seq: turn,
+                            native_message_id: Some(format!("{native_id}-{i}")),
+                            role: *role,
+                            mode: Mode::Text,
+                            body: body.to_string(),
+                            created_at: None,
+                        },
+                    )
+                    .unwrap();
+            }
+        }
+        if let Some((name, kind)) = tool {
+            capture
+                .record_tool_call(
+                    &row,
+                    atlas_checkpoint::ToolCallContent {
+                        turn_seq: turn,
+                        native_call_id: Some("call-1"),
+                        tool_name: name,
+                        title: None,
+                        kind: Some(kind),
+                        status: atlas_checkpoint::ToolStatus::Completed,
+                        locations: &serde_json::json!([]),
+                        arguments: None,
+                        result: None,
+                    },
+                )
+                .unwrap();
+        }
+    }
+
+    /// Most work runs in terminal sessions Atlas never hosts: the recorder
+    /// imports their transcripts, and that is the only conversation Atlas
+    /// has of them. Their end pass reads it.
+    #[test]
+    fn a_terminal_sessions_conversation_is_read_from_the_recorder() {
+        use atlas_checkpoint::tools::ToolName;
+        use atlas_checkpoint::Role;
+        let project = super::super::memory_pack::test_support::scratch_project("terminal");
+        let config = std::path::PathBuf::from(
+            super::super::memory_pack::test_support::scratch_project("no-transcripts"),
+        );
+        import_terminal_session(
+            &project,
+            "cli-1",
+            &[
+                (Role::User, "use bun, never npm"),
+                (Role::Assistant, "Noted: bun it is."),
+                (Role::User, "and run the gates"),
+                (Role::Assistant, "Lint, format and typecheck are green."),
+            ],
+            Some((ToolName::Bash, "execute")),
+        );
+        let reader = super::super::memory_capture::CaptureReader::default();
+        let turns = persisted_turns(&config, &project, "cli-1", &reader, Reach::WithImported)
+            .expect("recorded");
+        assert_eq!(
+            turns
+                .iter()
+                .map(|t| (t.role.as_str(), t.text.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("user", "use bun, never npm"),
+                ("assistant", "Noted: bun it is."),
+                ("user", "and run the gates"),
+                ("assistant", "Lint, format and typecheck are green."),
+            ]
+        );
+        assert_eq!(turns.iter().map(|t| t.tool_calls).sum::<usize>(), 1);
+        assert!(
+            !turns.iter().any(|t| t.external),
+            "a shell call is not outside content"
+        );
+
+        // A web fetch in it makes its entries candidates.
+        import_terminal_session(
+            &project,
+            "cli-2",
+            &[
+                (Role::User, "read the docs"),
+                (Role::Assistant, "Read them."),
+            ],
+            Some((ToolName::Fetch, "fetch")),
+        );
+        let turns =
+            persisted_turns(&config, &project, "cli-2", &reader, Reach::WithImported).unwrap();
+        assert!(turns.iter().any(|t| t.external));
+
+        // And the scan finds both, newest first, and not a live one.
+        let since = chrono::Utc::now().timestamp_millis() - 60_000;
+        let found: Vec<(String, String)> = reader
+            .stores(&project)
+            .recent_sessions(since, i64::MAX)
+            .into_iter()
+            .filter(|w| w.session_id != "live")
+            .map(|w| (w.agent, w.session_id))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                ("claude-code".to_string(), "cli-2".to_string()),
+                ("claude-code".to_string(), "cli-1".to_string())
+            ]
+        );
+        assert!(
+            reader
+                .stores(&project)
+                .recent_sessions(since, since)
+                .is_empty(),
+            "a session active after the idle cutoff is still running"
+        );
+        let _ = std::fs::remove_dir_all(&project);
+        let _ = std::fs::remove_dir_all(&config);
+    }
+
+    /// A terminal session the recorder imported from outside Atlas is read
+    /// for extraction, and so sent to the model, only once the user turned
+    /// `fromExternalSessions` on: with it off the catch-up scan never lists
+    /// it and its conversation is never read.
+    #[tokio::test]
+    async fn an_imported_session_is_extracted_only_when_the_user_allows_it() {
+        use atlas_checkpoint::Role;
+        let h = harness("imported-gate", true);
+        let config = std::path::PathBuf::from(
+            super::super::memory_pack::test_support::scratch_project("imported-gate-cfg"),
+        );
+        import_terminal_session(
+            &h.project,
+            "cli-ext",
+            &[
+                (Role::User, "we decided to use bun, never npm"),
+                (Role::Assistant, "Noted: bun it is."),
+                (Role::User, "and the ledger stays on Postgres"),
+                (Role::Assistant, "Kept it on Postgres."),
+            ],
+            None,
+        );
+        let reader = super::super::memory_capture::CaptureReader::default();
+        let later = chrono::Utc::now().timestamp_millis() + CATCH_UP_IDLE_MS + 60_000;
+        let scan = |reach| -> Vec<String> {
+            recorded_catch_up_sessions(&reader.stores(&h.project), reach, later, &|_| false)
+                .into_iter()
+                .map(|w| w.session_id)
+                .collect()
+        };
+        let imported = Writer {
+            agent: "claude-code".into(),
+            session_id: "cli-ext".into(),
+        };
+
+        // Off (the default): not listed, not read, nothing sent.
+        let reach = h.sharing.extraction_reach(&h.project);
+        assert_eq!(reach, Reach::Hosted);
+        assert!(scan(reach).is_empty(), "an imported session is not scanned");
+        assert!(persisted_turns(&config, &h.project, "cli-ext", &reader, reach).is_none());
+        assert!(h.model.calls().is_empty());
+
+        // On: listed, read and extracted.
+        h.sharing
+            .set_from_external_sessions(&h.project, true)
+            .unwrap();
+        let reach = h.sharing.extraction_reach(&h.project);
+        assert_eq!(reach, Reach::WithImported);
+        assert_eq!(scan(reach), ["cli-ext"]);
+        let turns = persisted_turns(&config, &h.project, "cli-ext", &reader, reach)
+            .expect("the imported conversation is read");
+        assert_eq!(turns.len(), 4);
+        let recorded = h
+            .extractor
+            .catch_up(&h.sharing, &h.project, &imported, turns)
+            .await;
+        assert!(recorded > 0);
+        assert_eq!(h.model.calls().len(), 1);
+        let _ = std::fs::remove_dir_all(&config);
+    }
+
+    /// A long session caught up later is read in prompt-sized passes, not
+    /// one pass over its tail, at most [`CATCH_UP_PASSES`] per job; the
+    /// next job carries on where the last stopped.
+    #[tokio::test]
+    async fn a_long_session_is_caught_up_in_prompt_sized_passes() {
+        let h = harness("catch-up-long", true);
+        // Turn 3 fetched the web: only the pass that reads it proposes.
+        let long: Vec<TranscriptTurn> = (0..200)
+            .map(|i| TranscriptTurn {
+                role: if i % 2 == 0 { "user" } else { "assistant" }.into(),
+                text: format!("turn {i} {}", "x".repeat(300)),
+                tool_calls: 0,
+                external: i == 3,
+            })
+            .collect();
+        h.extractor
+            .catch_up(&h.sharing, &h.project, &writer(), long.clone())
+            .await;
+        assert_eq!(h.model.calls().len(), CATCH_UP_PASSES);
+        let decision = h
+            .memory
+            .list_entries(&h.project, Some(EntryKind::Decision))
+            .pop()
+            .unwrap();
+        assert_eq!(
+            decision.state,
+            atlas_memory::record::State::Active,
+            "a later pass that read no outside content confirms what the first only proposed"
+        );
+        h.extractor
+            .catch_up(&h.sharing, &h.project, &writer(), long.clone())
+            .await;
+        let after_two = h.model.calls().len();
+        assert_eq!(after_two, 2 * CATCH_UP_PASSES);
+        // Drained: 200 turns of ~310 chars is ~62k chars, ~11 passes.
+        for _ in 0..5 {
+            h.extractor
+                .catch_up(&h.sharing, &h.project, &writer(), long.clone())
+                .await;
+        }
+        let total = h.model.calls().len();
+        assert!((10..=13).contains(&total), "{total} passes");
+        h.extractor
+            .catch_up(&h.sharing, &h.project, &writer(), long)
+            .await;
+        assert_eq!(h.model.calls().len(), total, "nothing new: no call");
+    }
+
+    #[test]
+    fn catch_up_looks_at_recent_sessions_that_are_not_live() {
+        let root =
+            std::env::temp_dir().join(format!("atlas-extract-sessions-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let store = atlas_memory::record::open_scope(&root).unwrap();
+        let day = 24 * 3600 * 1000;
+        let now = 100 * day;
+        store
+            .session_started("old", "codex-acp", now - 30 * day)
+            .unwrap();
+        store
+            .session_started("ended", "claude-acp", now - 3 * day)
+            .unwrap();
+        store
+            .session_ended("ended", "claude-acp", now - 2 * day)
+            .unwrap();
+        store
+            .session_started("open", "claude-acp", now - day)
+            .unwrap();
+        store
+            .session_started("live", "claude-acp", now - day / 2)
+            .unwrap();
+        let got: Vec<String> = catch_up_sessions(&store, now, &|id| id == "live")
+            .into_iter()
+            .map(|w| w.session_id)
+            .collect();
+        assert_eq!(got, ["open", "ended"]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A session not live here may be live in another Atlas process on the
+    /// same data directory: one that started, or did anything, within the
+    /// idle cutoff is left for a later scan.
+    #[test]
+    fn catch_up_leaves_a_session_active_elsewhere_alone() {
+        let root = tempfile::TempDir::new().unwrap();
+        let store = atlas_memory::record::open_scope(root.path()).unwrap();
+        let minute = 60 * 1000;
+        let now = 1_000 * 24 * 60 * minute;
+        store
+            .session_started("just-started", "claude-acp", now - 5 * minute)
+            .unwrap();
+        store
+            .session_started("busy", "codex-acp", now - 120 * minute)
+            .unwrap();
+        store
+            .append_event(
+                atlas_memory::record::NewEvent {
+                    agent: "codex-acp".into(),
+                    session_id: "busy".into(),
+                    kind: atlas_memory::record::EventKind::FileChanged,
+                    key: "src/a.rs".into(),
+                    payload: serde_json::json!({}),
+                },
+                now - 2 * minute,
+            )
+            .unwrap();
+        store
+            .session_started("paused", "codex-acp", now - 60 * minute)
+            .unwrap();
+        let got: Vec<String> = catch_up_sessions(&store, now, &|_| false)
+            .into_iter()
+            .map(|w| w.session_id)
+            .collect();
+        assert_eq!(got, ["paused"]);
     }
 
     #[test]

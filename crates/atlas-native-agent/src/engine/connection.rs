@@ -721,6 +721,9 @@ impl EngineConnection {
                 // And, for the same reason, organisation access: it may be
                 // handed the organisation tool server (ADR-0014).
                 org_access: true,
+                // The engine runs in this process and reads the entries from
+                // memory: a header never reaches a command line (ADR-0020).
+                in_process: true,
                 cwd: cwd.to_path_buf(),
                 session_id: session_id.cloned(),
             },

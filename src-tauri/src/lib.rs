@@ -32,19 +32,29 @@ use tauri::Manager;
 // that exercises the decoder rather than by a const that only proves a patch
 // still applies.
 
-/// `atlas mcp-bridge <url>`: run the stdio bridge (ADR-0019) instead of the
-/// app, the session token from `ATLAS_MCP_TOKEN`. Returns whether it ran.
+/// `atlas mcp-bridge <url> <token file>`: run the stdio bridge (ADR-0019)
+/// instead of the app, the session token read from the file (ADR-0020: never
+/// on the command line, never in the environment an agent may print there).
+/// Returns whether it ran.
 pub fn run_bridge_if_asked() -> bool {
-    let mut args = std::env::args().skip(1);
-    if args.next().as_deref() != Some(commands::memory_server::BRIDGE_ARG) {
+    let mut args = std::env::args_os().skip(1);
+    if args.next().and_then(|a| a.into_string().ok()).as_deref()
+        != Some(commands::memory_server::BRIDGE_ARG)
+    {
         return false;
     }
-    let (Some(url), Ok(token)) = (
-        args.next(),
-        std::env::var(commands::memory_server::BRIDGE_TOKEN_ENV),
-    ) else {
-        eprintln!("usage: ATLAS_MCP_TOKEN=... atlas mcp-bridge <url>");
+    let (Some(url), Some(token_file)) =
+        (args.next().and_then(|a| a.into_string().ok()), args.next())
+    else {
+        eprintln!("usage: atlas mcp-bridge <url> <token file>");
         std::process::exit(2);
+    };
+    let token = match commands::memory_bridge::read_token_file(std::path::Path::new(&token_file)) {
+        Ok(token) => token,
+        Err(e) => {
+            eprintln!("mcp-bridge: {e:#}");
+            std::process::exit(1);
+        }
     };
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -922,6 +932,8 @@ pub fn run() {
             commands::memory_policy::memory_policy_update,
             commands::memory_sharing::memory_sharing_get,
             commands::memory_sharing::memory_sharing_set,
+            commands::memory_sharing::memory_from_external_sessions_get,
+            commands::memory_sharing::memory_from_external_sessions_set,
             commands::memory_sharing::memory_summarizer_get,
             commands::memory_sharing::memory_summarizer_set,
             commands::shared_memory::memory_get_state,

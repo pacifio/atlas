@@ -62,6 +62,12 @@ pub fn ingest(envelope: &SessionDeltaEnvelope, store: &SharedMemoryStore) {
             EventKind::Architecture => Some(EntryKind::Architecture),
             _ => None,
         };
+        // A file outside the project (another checkout, `/tmp`, `~/.claude`)
+        // is not this project's change: it would be briefed to every agent
+        // here as if it were.
+        if ev.kind == EventKind::FileChanged && !in_project(&meta.cwd, &ev.key) {
+            continue;
+        }
         let result = match durable {
             Some(kind) => {
                 let text = ev
@@ -83,6 +89,15 @@ pub fn ingest(envelope: &SessionDeltaEnvelope, store: &SharedMemoryStore) {
             tracing::warn!(target: "atlas::shared_memory", "capture failed: {e}");
         }
     }
+}
+
+/// Whether `path` is a file of the project the session at `cwd` works in:
+/// under `cwd` or under its scope (the repository's root and worktrees).
+fn in_project(cwd: &str, path: &str) -> bool {
+    if atlas_memory::record::path_in_dirs(path, &[std::path::PathBuf::from(cwd)]) {
+        return true;
+    }
+    super::shared_memory::store_for(cwd).is_ok_and(|store| store.in_scope(path))
 }
 
 /// One background thread that runs capture jobs in the order they were
@@ -132,12 +147,19 @@ pub fn classify(delta: &SessionDelta, session_id: &str, agent: &str) -> Vec<RawE
             if body.trim().is_empty() {
                 return Vec::new();
             }
+            // A plan whose every item is done is finished: logged as `done`,
+            // it clears the active plan instead of lingering as one.
+            let status = if atlas_memory::handoff::plan_is_finished(&body) {
+                "done"
+            } else {
+                "active"
+            };
             vec![RawEvent {
                 agent: agent.to_string(),
                 session_id: session_id.to_string(),
                 kind: EventKind::PlanSet,
                 key: "plan".to_string(),
-                payload: serde_json::json!({ "text": cap(&body), "status": "active" }),
+                payload: serde_json::json!({ "text": cap(&body), "status": status }),
             }]
         }
 
@@ -347,6 +369,104 @@ mod tests {
         assert_eq!(heard.len(), 1, "{heard:?}");
         assert_eq!(heard[0].root, dir.canonicalize().unwrap().to_string_lossy());
         assert_eq!(heard[0].kinds, vec!["plan".to_string()]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn edit_delta(paths: &[&str]) -> SessionDelta {
+        SessionDelta::ToolCallUpserted {
+            message_id: "m1".into(),
+            tool_call: atlas_agent_wire::ToolCall {
+                id: "call-x".into(),
+                tool_name: "Edit".into(),
+                title: Some("Edit".into()),
+                kind: Some("edit".into()),
+                status: ToolCallStatus::Completed,
+                arguments: serde_json::json!({ "paths": paths }),
+                result: None,
+                locations: paths
+                    .iter()
+                    .map(|p| serde_json::json!({ "path": p }))
+                    .collect(),
+                raw_output: None,
+                content_blocks: vec![],
+            },
+        }
+    }
+
+    fn envelope(delta: SessionDelta) -> SessionDeltaEnvelope {
+        SessionDeltaEnvelope {
+            agent_id: atlas_agent_wire::AgentId::new(),
+            session_id: "s1".into(),
+            delta,
+        }
+    }
+
+    /// A plan whose every item is completed is finished: it is logged as
+    /// `done`, which clears the active plan, rather than lingering as active.
+    #[test]
+    fn a_finished_plan_clears_the_active_plan() {
+        let finished = SessionDelta::PlanUpdated {
+            plan: vec![
+                PlanEntry {
+                    content: "Create branch".into(),
+                    priority: None,
+                    status: "completed".into(),
+                },
+                PlanEntry {
+                    content: "Open PR".into(),
+                    priority: None,
+                    status: "completed".into(),
+                },
+            ],
+        };
+        let evs = classify(&finished, "s1", "claude-acp");
+        assert_eq!(evs[0].payload["status"], "done");
+        assert_eq!(
+            classify(&plan_delta(), "s1", "x")[0].payload["status"],
+            "active"
+        );
+
+        let dir = std::env::temp_dir().join(format!("atlas-delta-plan-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let project = dir.to_string_lossy().to_string();
+        let store = SharedMemoryStore::new();
+        store.register_session("s1", &project, "claude-acp");
+        ingest(&envelope(plan_delta()), &store);
+        assert_eq!(store.list_entries(&project, Some(EntryKind::Plan)).len(), 1);
+        ingest(&envelope(finished), &store);
+        assert!(store
+            .list_entries(&project, Some(EntryKind::Plan))
+            .is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An edit outside the project (another checkout, `/tmp`, `~/.claude`)
+    /// is not recorded into this project's memory.
+    #[test]
+    fn an_edit_outside_the_project_is_not_captured() {
+        let dir = std::env::temp_dir().join(format!("atlas-delta-scope-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let project = dir.to_string_lossy().to_string();
+        let inside = format!("{project}/src/lib.rs");
+        let store = SharedMemoryStore::new();
+        store.register_session("s1", &project, "claude-acp");
+        ingest(
+            &envelope(edit_delta(&[
+                &inside,
+                "src/main.rs",
+                "/tmp/homebrew-cask-pr/Casks/a/atlas-ai.rb",
+                "/Users/someone/Developer/atlas/src/App.tsx",
+                "/Users/someone/.claude/plans/x.md",
+            ])),
+            &store,
+        );
+        let mut keys: Vec<String> = store
+            .list_entries(&project, Some(EntryKind::FileChanged))
+            .into_iter()
+            .map(|e| e.key)
+            .collect();
+        keys.sort();
+        assert_eq!(keys, vec![inside, "src/main.rs".to_string()]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

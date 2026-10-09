@@ -228,13 +228,17 @@ pub(super) fn read_briefing(
     now: i64,
     check: &dyn Fn(&[Entry]) -> Checked,
 ) -> anyhow::Result<Briefing> {
-    let plan = store.list(EntryKind::Plan, 1, Origin::Any)?.pop();
-    let mut files_changed = store.list(
-        EntryKind::FileChanged,
-        EntryKind::FileChanged.cap(),
-        Origin::Any,
-    )?;
+    let plan = store
+        .list(EntryKind::Plan, 1, Origin::Any)?
+        .pop()
+        .filter(is_active_plan);
+    // Only this scope's files, newest first: rows recorded before capture
+    // kept to the scope can name another checkout, `/tmp` or `~/.claude`.
+    let dirs = store.scope_dirs();
+    let mut files_changed = store.list(EntryKind::FileChanged, RANK_POOL, Origin::Any)?;
     files_changed.reverse();
+    files_changed.retain(|e| atlas_memory::record::path_in_dirs(&e.key, &dirs));
+    files_changed.truncate(EntryKind::FileChanged.cap());
     let mut durable = Vec::new();
     for kind in DURABLE_KINDS {
         durable.extend(store.list(kind, RANK_POOL, Origin::Any)?);
@@ -265,6 +269,84 @@ pub(super) fn read_briefing(
         stale_hidden: stale.len(),
         checked,
     })
+}
+
+/// Whether a stored plan is still the active one: its status says so, and
+/// not every item of it is done. Capture keeps only the newest plan, so a
+/// later session's plan has already replaced an older one; what is left to
+/// catch is a plan that ran to completion and was never cleared (capture
+/// used to log every plan as `active`, finished or not).
+pub(super) fn is_active_plan(plan: &Entry) -> bool {
+    (plan.status.is_empty() || plan.status == "active")
+        && !atlas_memory::handoff::plan_is_finished(&plan.content)
+}
+
+/// The handoff a briefing for session `own` carries: what the previous
+/// session of any agent left, with its recorded facts read now (its commits
+/// may have landed after it ended) and only this scope's files.
+///
+/// Memory's own note ([`RecordStore::last_episode`]) covers the sessions
+/// Atlas hosted. The capture recorder also holds the terminal sessions its
+/// importer read off disk, which memory never saw start or end; when one of
+/// those did work after memory's newest note, it is the previous session,
+/// and its note is built from the recorder (and whatever memory logged for
+/// it). Blocking (SQLite, git).
+pub(super) fn read_handoff(
+    store: &RecordStore,
+    own: &str,
+    stores: &crate::commands::memory_capture::ScopeStores,
+) -> Option<atlas_memory::handoff::HandoffNote> {
+    /// How many newer recorded sessions are tried, newest first.
+    const TRIED: usize = 5;
+    let mut note = store.last_episode(own).ok().flatten();
+    let since = note
+        .as_ref()
+        .map_or(i64::MIN, |n| n.ended_at.saturating_add(1));
+    let known = note.as_ref().map(|n| n.session.clone()).unwrap_or_default();
+    let newer = stores
+        .recent_sessions(since, i64::MAX)
+        .into_iter()
+        .filter(|w| w.session_id != own && w.session_id != known)
+        .take(TRIED);
+    for writer in newer {
+        let Some(found) = stores.find(&writer.session_id) else {
+            continue;
+        };
+        let session = &found.session;
+        let ended_at = session
+            .last_activity_at
+            .unwrap_or(session.updated_at)
+            .timestamp_millis();
+        let Ok(mut built) = atlas_memory::handoff::build_handoff(
+            store,
+            &writer.session_id,
+            &writer.agent,
+            ended_at,
+        ) else {
+            continue;
+        };
+        built.started_at = built
+            .started_at
+            .or(Some(session.started_at.timestamp_millis()));
+        let facts = crate::commands::memory_capture::session_facts(&found);
+        let worth = !built.is_empty() || !facts.is_empty();
+        built.apply_facts(facts);
+        if worth {
+            note = Some(built);
+            break;
+        }
+    }
+    let mut note = note?;
+    if note.session != own {
+        if let Some(found) = stores.find(&note.session) {
+            note.apply_facts(crate::commands::memory_capture::session_facts(&found));
+        }
+    }
+    let dirs = store.scope_dirs();
+    note.files.retain(|f| {
+        atlas_memory::record::path_in_dirs(f.strip_suffix(" (deleted)").unwrap_or(f), &dirs)
+    });
+    Some(note)
 }
 
 /// The preferences a briefing leads with, from the stored ones (oldest
@@ -727,6 +809,137 @@ mod briefing_tests {
         assert!(entry_json(&entry(2, "y", 1.0, 1))
             .get("candidate")
             .is_none());
+    }
+
+    fn log(
+        store: &RecordStore,
+        kind: atlas_memory::record::EventKind,
+        key: &str,
+        payload: Value,
+        ts: i64,
+    ) {
+        store
+            .append_event(
+                atlas_memory::record::NewEvent {
+                    agent: "claude-acp".into(),
+                    session_id: "s-old".into(),
+                    kind,
+                    key: key.into(),
+                    payload,
+                },
+                ts,
+            )
+            .unwrap();
+    }
+
+    fn scope(label: &str) -> (std::path::PathBuf, std::sync::Arc<RecordStore>) {
+        let root =
+            std::env::temp_dir().join(format!("atlas-brief-{label}-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let store = open_scope(&root).unwrap();
+        (root, store)
+    }
+
+    /// A plan whose every item is done is not the active plan, even when it
+    /// was stored as `active` (the live store's August plan was).
+    #[test]
+    fn a_finished_plan_is_not_briefed_as_active() {
+        use atlas_memory::record::EventKind;
+        let (root, store) = scope("plan");
+        log(
+            &store,
+            EventKind::PlanSet,
+            "plan",
+            json!({"text": "- [completed] Create branch for issue #177\n- [completed] Commit, push, open PR", "status": "active"}),
+            1,
+        );
+        let b = read_briefing(&store, 2, &|_| Checked::default()).unwrap();
+        assert!(b.plan.is_none(), "{:?}", b.plan);
+
+        log(
+            &store,
+            EventKind::PlanSet,
+            "plan",
+            json!({"text": "- [completed] Read auth\n- [in_progress] Move to EdDSA", "status": "active"}),
+            3,
+        );
+        let b = read_briefing(&store, 4, &|_| Checked::default()).unwrap();
+        assert!(b.plan.unwrap().content.contains("Move to EdDSA"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Files changed in another checkout, `/tmp` or `~/.claude` are not this
+    /// project's, however they got into its store.
+    #[test]
+    fn the_briefing_lists_only_files_under_the_project_root() {
+        use atlas_memory::record::EventKind;
+        let (root, store) = scope("files");
+        let inside = root
+            .canonicalize()
+            .unwrap()
+            .join("src/main.rs")
+            .to_string_lossy()
+            .into_owned();
+        for (i, path) in [
+            inside.as_str(),
+            "/Users/someone/Developer/atlas/src/App.tsx",
+            "/tmp/homebrew-cask-pr/Casks/a/atlas-ai.rb",
+            "/Users/someone/.claude/plans/plan.md",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            log(
+                &store,
+                EventKind::FileChanged,
+                path,
+                json!({"path": path, "summary": "Edit"}),
+                i as i64 + 1,
+            );
+        }
+        let b = read_briefing(&store, 10, &|_| Checked::default()).unwrap();
+        let paths: Vec<&str> = b.files_changed.iter().map(|e| e.key.as_str()).collect();
+        assert_eq!(paths, [inside.as_str()]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The previous session was a terminal one Atlas never hosted: memory
+    /// has no note of it, the recorder has its work. The briefing hands
+    /// that on; a note memory stored later wins.
+    #[test]
+    fn a_terminal_session_the_recorder_saw_is_handed_off() {
+        use crate::commands::memory_capture::test_support::Recording;
+        use crate::commands::memory_capture::CaptureReader;
+        let (root, store) = scope("handoff-recorded");
+        let project = root.to_string_lossy().into_owned();
+        assert!(read_handoff(&store, "own", &CaptureReader::default().stores(&project)).is_none());
+
+        let mut rec = Recording::open_turn(&project, "cli-1", "claude-code", "move auth to EdDSA");
+        rec.write("src/auth.rs", b"pub fn sign() {}\n");
+        rec.close_turn();
+        drop(rec);
+        let stores = CaptureReader::default().stores(&project);
+        let note = read_handoff(&store, "own", &stores).expect("a handoff");
+        assert_eq!(note.session, "cli-1");
+        assert_eq!(note.agent, "claude-code");
+        assert_eq!(note.files, ["src/auth.rs"]);
+        assert_eq!(note.title.as_deref(), Some("move auth to EdDSA"));
+        // A session is not handed its own work.
+        assert!(read_handoff(&store, "cli-1", &stores).is_none());
+
+        // A note memory stored after it is the previous session.
+        store
+            .record_episode(&atlas_memory::handoff::HandoffNote {
+                session: "s-later".into(),
+                agent: "codex-acp".into(),
+                ended_at: chrono::Utc::now().timestamp_millis() + 60_000,
+                decisions: vec!["Keep WAL mode".into()],
+                ..Default::default()
+            })
+            .unwrap();
+        let note = read_handoff(&store, "own", &stores).unwrap();
+        assert_eq!(note.session, "s-later");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// More than a page's worth sharing one timestamp is returned whole,

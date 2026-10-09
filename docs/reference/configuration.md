@@ -542,6 +542,19 @@ schema accepts only `"agent"` or `"off"`.
 - **Session history, transcripts, per-project `.atlas/` state.** File-backed,
   but not a "setting," and out of scope until an explicit ownership design
   says otherwise.
+- **Per-project shared-memory switches.** Consent to share memory is given
+  per repository, so it lives in `<project>/.atlas/memory-sharing.json`, set
+  from the Memory panel (the Shared pill and its settings popover), not here:
+  - `enabled` (default `true`): the project's sessions get the memory tools,
+    their activity is captured, and the extractor runs.
+  - `fromExternalSessions` (default `false`): extraction also reads the
+    coding-agent sessions the capture recorder imported from outside Atlas
+    (a terminal Claude Code session's own transcript), which sends their
+    transcripts to the extraction model (the Atlas model, or your provider
+    key), the same as in-app sessions. Has no effect while `enabled` is
+    `false`. Off, those sessions are never read for extraction; the
+    briefing's handoff note still names their files and commits, read
+    locally.
 - **Any "is a credential configured" presence flag.** Even a boolean is
   security-sensitive derived state; the BYOK UI computes availability at
   runtime from the environment instead of persisting it here.

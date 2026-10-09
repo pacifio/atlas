@@ -58,6 +58,14 @@ pub enum Job {
         cwd: String,
         writer: super::shared_memory::Writer,
     },
+    /// A session that is not live here may never have had its end pass (the
+    /// app quit before it finished): one over its persisted conversation,
+    /// a no-op when nothing is new since its last pass. Queued by the health
+    /// pass ([`super::memory_extract::Extractor::catch_up`]).
+    CatchUpExtraction {
+        cwd: String,
+        writer: super::shared_memory::Writer,
+    },
     /// Offer the repository's high-confidence Facts to global memory
     /// (`atlas_memory::global`): run once when a project opens and after an
     /// extractor pass stores entries.
@@ -119,6 +127,9 @@ pub struct MemoryRegistry {
     overflow: parking_lot::Mutex<Vec<Job>>,
     /// The last health pass per project.
     health: DashMap<String, HealthStatus>,
+    /// When each project's sessions were last scanned for a lost end pass
+    /// ([`queue_catch_up`]).
+    catch_up_scanned: DashMap<String, std::time::Instant>,
 }
 
 impl MemoryRegistry {
@@ -133,6 +144,7 @@ impl MemoryRegistry {
             provider: tokio::sync::Mutex::new(None),
             overflow: parking_lot::Mutex::new(Vec::new()),
             health: DashMap::new(),
+            catch_up_scanned: DashMap::new(),
         }
     }
 
@@ -145,7 +157,9 @@ impl MemoryRegistry {
         match self.job_tx.try_send(job) {
             Ok(()) => {}
             Err(TrySendError::Full(job)) => match job {
-                Job::ExtractSession { .. } | Job::SessionEnded { .. } => {
+                Job::ExtractSession { .. }
+                | Job::SessionEnded { .. }
+                | Job::CatchUpExtraction { .. } => {
                     tracing::warn!(
                         target: "atlas::memory_indexer",
                         "extraction job dropped: queue full"
@@ -463,7 +477,10 @@ impl MemoryIndexer {
         while let Some(job) = rx.recv().await {
             let extraction = matches!(
                 job,
-                Job::ExtractSession { .. } | Job::SessionEnded { .. } | Job::Dream { .. }
+                Job::ExtractSession { .. }
+                    | Job::SessionEnded { .. }
+                    | Job::CatchUpExtraction { .. }
+                    | Job::Dream { .. }
             );
             let (app, registry_for_job) = (app.clone(), registry.clone());
             let work: Work = Box::pin(async move { handle(&app, &registry_for_job, job).await });
@@ -532,12 +549,25 @@ async fn handle(app: &AppHandle, registry: &MemoryRegistry, job: Job) {
             if let Err(e) = index_one(registry, &cwd, &prov).await {
                 tracing::warn!(target: "atlas::memory_indexer", "IndexCorpus {cwd} failed: {e}");
             }
+            // The health pass scans at open; a long-running app scans again
+            // at most every CATCH_UP_RESCAN on the index nudges every
+            // finished turn and file change sends.
+            let due = registry
+                .catch_up_scanned
+                .get(&cwd)
+                .is_none_or(|at| at.elapsed() >= CATCH_UP_RESCAN);
+            if due {
+                queue_catch_up(app, registry, &cwd, chrono::Utc::now().timestamp_millis()).await;
+            }
         }
         Job::ExtractSession { cwd, writer, turns } => {
             extract(app, registry, &cwd, writer, Some(turns)).await;
         }
         Job::SessionEnded { cwd, writer } => {
             extract(app, registry, &cwd, writer, None).await;
+        }
+        Job::CatchUpExtraction { cwd, writer } => {
+            catch_up(app, registry, &cwd, writer).await;
         }
         Job::Compact { cwd } => {
             if let Err(e) = compact_one(registry, &cwd).await {
@@ -685,6 +715,8 @@ async fn health_one(app: &AppHandle, registry: &MemoryRegistry, cwd: &str) -> Re
         recent.into_iter().map(|s| (cwd.to_string(), s)).collect(),
     )
     .await;
+    // Recent sessions that are not live here: an end pass that never ran.
+    queue_catch_up(app, registry, cwd, now).await;
     // The Agent Memory Repo mirror, when the user turned it on: rewritten
     // and committed only when memory changed.
     let mirror = app
@@ -851,8 +883,109 @@ async fn extract(
     let sharing = app.state::<super::memory_sharing::MemorySharingState>();
     let stored = match turns {
         Some(turns) => extractor.turn_finished(&sharing, cwd, &writer, turns).await,
-        None => extractor.session_ended(&sharing, cwd, &writer).await,
+        None => {
+            let held = extractor.holds_turns(&writer.session_id);
+            let stored = extractor.session_ended(&sharing, cwd, &writer).await;
+            if held {
+                stored
+            } else {
+                // No turn of it finished in this process (it was resumed and
+                // closed, or its turns ran before a restart): the end pass
+                // reads what Atlas persisted instead.
+                return catch_up(app, registry, cwd, writer).await;
+            }
+        }
     };
+    reindex_after(registry, cwd, stored);
+}
+
+/// How often a project's sessions are scanned for a lost end pass while the
+/// app runs (besides the scan at open).
+const CATCH_UP_RESCAN: Duration = Duration::from_secs(30 * 60);
+
+/// Queue an end pass for every recent session of `cwd` that is not live in
+/// this process and may never have had one ([`Job::CatchUpExtraction`]; a
+/// no-op for one with nothing new since its last pass).
+///
+/// Two kinds: sessions Atlas hosted whose end pass died with the process
+/// (most sessions end at quit), and sessions Atlas never hosted. The
+/// latter are the terminal ones the capture recorder imports off disk, and
+/// they are most of the work: without this, nothing they decided or learned
+/// reached memory, which grew only from in-app sessions. Reading them sends
+/// their conversation to the extraction model, so they are scanned only when
+/// the user turned that on (`MemorySharingState::extraction_reach`).
+async fn queue_catch_up(app: &AppHandle, registry: &MemoryRegistry, cwd: &str, now: i64) {
+    registry
+        .catch_up_scanned
+        .insert(cwd.to_string(), std::time::Instant::now());
+    let Some(extractor) = app
+        .try_state::<Arc<super::memory_extract::Extractor>>()
+        .map(|e| e.inner().clone())
+    else {
+        return;
+    };
+    let reach = app
+        .state::<super::memory_sharing::MemorySharingState>()
+        .extraction_reach(cwd);
+    let (owned, reader) = (cwd.to_string(), capture_reader(app));
+    let lost = tokio::task::spawn_blocking(move || {
+        let live = |id: &str| extractor.holds_turns(id);
+        let recorded = super::memory_extract::recorded_catch_up_sessions(
+            &reader.stores(&owned),
+            reach,
+            now,
+            &live,
+        );
+        let hosted = super::shared_memory::store_for(&owned)
+            .map(|store| super::memory_extract::catch_up_sessions(&store, now, &live))
+            .unwrap_or_default();
+        super::memory_extract::merge_catch_up(recorded, hosted)
+    })
+    .await
+    .unwrap_or_default();
+    for writer in lost {
+        registry.send_or_remember(Job::CatchUpExtraction {
+            cwd: cwd.to_string(),
+            writer,
+        });
+    }
+}
+
+/// The end pass of a session whose turns this process does not hold, over
+/// its persisted conversation (`memory_extract::persisted_turns`).
+async fn catch_up(
+    app: &AppHandle,
+    registry: &MemoryRegistry,
+    cwd: &str,
+    writer: super::shared_memory::Writer,
+) {
+    let Some(extractor) = app.try_state::<Arc<super::memory_extract::Extractor>>() else {
+        return;
+    };
+    let Some(config_dir) = app
+        .try_state::<Arc<super::agent_transcript::TranscriptState>>()
+        .map(|t| t.config_dir().to_path_buf())
+    else {
+        return;
+    };
+    let reader = capture_reader(app);
+    // Decided when the pass runs, not when it was queued: a session imported
+    // from outside Atlas is not read once the user turned that off.
+    let reach = app
+        .state::<super::memory_sharing::MemorySharingState>()
+        .extraction_reach(cwd);
+    let (owned, session) = (cwd.to_string(), writer.session_id.clone());
+    let turns = tokio::task::spawn_blocking(move || {
+        super::memory_extract::persisted_turns(&config_dir, &owned, &session, &reader, reach)
+    })
+    .await
+    .ok()
+    .flatten();
+    let Some(turns) = turns else {
+        return;
+    };
+    let sharing = app.state::<super::memory_sharing::MemorySharingState>();
+    let stored = extractor.catch_up(&sharing, cwd, &writer, turns).await;
     reindex_after(registry, cwd, stored);
 }
 

@@ -769,6 +769,9 @@ const sharingEnabled = new Map<string, boolean>([
   [ALL_PROJECTS[2].path, false],
 ]);
 
+/** Reading sessions imported from outside Atlas: off by default, as in Rust. */
+const fromExternalSessions = new Map<string, boolean>();
+
 /** The BYOK summariser, so the provider/model picker opens on a selection
  *  rather than on the default `raw` (which hides the picker entirely). */
 const summarizers = new Map<string, SummarizerPref>([
@@ -1284,6 +1287,8 @@ export interface MemoryResponses {
   memory_policy_update: Unit;
   memory_sharing_get: boolean;
   memory_sharing_set: Unit;
+  memory_from_external_sessions_get: boolean;
+  memory_from_external_sessions_set: Unit;
   memory_summarizer_get: SummarizerPref;
   memory_summarizer_set: Unit;
   memory_get_state: SharedState;
@@ -1373,6 +1378,12 @@ export const memoryHandlers: TypedHandlers<MemoryResponses> = {
   memory_sharing_get: ({ projectPath }): boolean => sharingEnabled.get(String(projectPath)) ?? true,
   memory_sharing_set: ({ projectPath, enabled }): null => {
     sharingEnabled.set(String(projectPath), Boolean(enabled));
+    return null;
+  },
+  memory_from_external_sessions_get: ({ projectPath }): boolean =>
+    fromExternalSessions.get(String(projectPath)) ?? false,
+  memory_from_external_sessions_set: ({ projectPath, enabled }): null => {
+    fromExternalSessions.set(String(projectPath), Boolean(enabled));
     return null;
   },
   memory_summarizer_get: ({ projectPath }): SummarizerPref =>

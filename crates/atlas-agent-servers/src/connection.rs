@@ -483,6 +483,9 @@ impl AcpConnection {
                 // Likewise for the organisation: a binary Atlas does not own
                 // is never handed the user's organisation (ADR-0014).
                 org_access: false,
+                // A separate program, free to put its MCP configuration on a
+                // command line: no credential may ride an entry (ADR-0020).
+                in_process: false,
                 cwd: cwd.to_path_buf(),
                 session_id: session_id.cloned(),
             },
