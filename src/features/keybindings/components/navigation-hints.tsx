@@ -5,30 +5,19 @@ import { isMac } from "@/lib/platform";
 import { cn } from "@/lib/utils";
 import { Kbd } from "@/ui/kbd";
 import { isActionId, type ActionId } from "../lib/actions";
-import { runnableActionIds } from "../lib/action-registry";
 import { displayKeys, matchesCombo } from "../lib/combo";
 import {
   bindingForTarget,
-  navigationBindings,
   NAVIGATION_HINT_DELAY,
   NAVIGATION_OVERLAY_ATTR,
   NAVIGATION_TARGET_ATTR,
   type HeldModifiers,
 } from "../lib/navigation-hints";
-import { activeScopedActions, subscribeScopedHotkeys } from "../lib/use-scoped-hotkeys";
+import { liveNavigationBindings, useNavigationBindings } from "../lib/use-navigation-bindings";
 import { useKeybindingsStore } from "../stores/keybindings-store";
 
 function targetActions(el: Element): ActionId[] {
   return (el.getAttribute(NAVIGATION_TARGET_ATTR) ?? "").split(" ").filter(isActionId);
-}
-
-function liveBindings() {
-  return navigationBindings(
-    useKeybindingsStore.getState().resolved,
-    isMac,
-    new Set(runnableActionIds()),
-    activeScopedActions(),
-  );
 }
 
 function hasKeyboardOverlay(): boolean {
@@ -123,7 +112,9 @@ function useHeldModifiers(blocked: boolean) {
           .filter((el) => visibleRect(el) !== null)
           .flatMap(targetActions),
       );
-      if (!liveBindings().some((b) => targets.has(b.actionId) && matchesCombo(e, b.combo)))
+      if (
+        !liveNavigationBindings().some((b) => targets.has(b.actionId) && matchesCombo(e, b.combo))
+      )
         suppress();
     };
     const onKeyUp = (e: KeyboardEvent) => {
@@ -205,7 +196,7 @@ function visibleRect(el: HTMLElement): DOMRect | null {
 
 /** Static, non-interactive caps. All navigation remains in the existing dispatchers. */
 export function NavigationHints() {
-  const resolved = useKeybindingsStore.use.resolved();
+  const bindings = useNavigationBindings();
   const recording = useKeybindingsStore.use.recording();
   const hintNavigationOpen = useHintStore.use.open();
   const blocked = recording || hintNavigationOpen;
@@ -219,7 +210,7 @@ export function NavigationHints() {
     }
     const update = () => {
       if (hasKeyboardOverlay()) return dismiss();
-      const bindings = liveBindings();
+      const bindings = liveNavigationBindings();
       const next: Badge[] = [];
       for (const el of document.querySelectorAll<HTMLElement>("[" + NAVIGATION_TARGET_ATTR + "]")) {
         const binding = bindingForTarget(targetActions(el), bindings, held, isMac);
@@ -273,19 +264,17 @@ export function NavigationHints() {
         "role",
       ],
     });
-    const unsubscribe = subscribeScopedHotkeys(schedule);
     window.addEventListener("scroll", schedule, true);
     window.addEventListener("resize", schedule);
     window.addEventListener("focusin", schedule);
     return () => {
       observer.disconnect();
-      unsubscribe();
       cancelAnimationFrame(raf);
       window.removeEventListener("scroll", schedule, true);
       window.removeEventListener("resize", schedule);
       window.removeEventListener("focusin", schedule);
     };
-  }, [held, blocked, resolved, dismiss]);
+  }, [held, blocked, bindings, dismiss]);
 
   if (!held || blocked || !badges.length) return null;
   return createPortal(

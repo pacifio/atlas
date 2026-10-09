@@ -1,13 +1,11 @@
-import { useMemo } from "react";
 import { isMac } from "@/lib/platform";
 import type { ActionId } from "./actions";
-import { ariaShortcut, navigationBindings, NAVIGATION_TARGET_ATTR } from "./navigation-hints";
-import { useKeybindingsStore } from "../stores/keybindings-store";
+import { ariaShortcut, NAVIGATION_TARGET_ATTR } from "./navigation-hints";
+import { useNavigationBindings } from "./use-navigation-bindings";
 
 /** Metadata on the real control; its accessible name and event handlers stay intact. */
 export function useNavigationHint() {
-  const resolved = useKeybindingsStore.use.resolved();
-  const bindings = useMemo(() => navigationBindings(resolved, isMac), [resolved]);
+  const bindings = useNavigationBindings();
   return (actions: readonly ActionId[]) => {
     const shortcuts = bindings
       .filter((b) => actions.includes(b.actionId))

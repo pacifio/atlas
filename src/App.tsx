@@ -1412,15 +1412,15 @@ export function App() {
     ...Object.fromEntries(
       Array.from({ length: 9 }, (_, i) => [
         `tabs.focus${i + 1}`,
-        i === 8 ? () => activateTabByIndex(-1) : () => activateTabByIndex(i),
+        () => activateTabByIndex(i === 8 ? -1 : i, !useAppStore.getState().currentProject),
       ]),
     ),
     "tabs.close": () => {
       const current = useLayoutStore.getState().activeTabId;
       if (current) requestCloseTab(current);
     },
-    "tabs.prev": () => cycleTab(-1),
-    "tabs.next": () => cycleTab(1),
+    "tabs.prev": () => cycleTab(-1, !useAppStore.getState().currentProject),
+    "tabs.next": () => cycleTab(1, !useAppStore.getState().currentProject),
     // ── Split view ──
     "split.new": () => addGroup(),
     "split.focusLeft": () => focusAdjacentGroup(-1),

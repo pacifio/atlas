@@ -20,7 +20,7 @@ import { HintGroup, HintItem } from "@/ui/hint-group";
 import { requestCloseTab } from "@/features/chat/lib/close-tab";
 import { Menu as DropdownMenu } from "@base-ui/react/menu";
 import { Group, Panel, Separator, useDefaultLayout } from "react-resizable-panels";
-import { useLayoutStore, type Tab, type ProjectView } from "../stores/layout-store";
+import { useLayoutStore, navigationTabs, type Tab, type ProjectView } from "../stores/layout-store";
 import { useProjectStore } from "@/features/projects/stores/project-store";
 import { FileIcon, type FallbackIcon } from "@/features/icon-theme/components/file-icon";
 // Chat is the default landing surface — always loaded so the first paint
@@ -137,7 +137,7 @@ import {
   Frame,
   NotebookText,
 } from "lucide-react";
-import { PROJECTLESS_TYPES, type TabType } from "@/lib/constants";
+import type { TabType } from "@/lib/constants";
 
 // Typed as the icon-theme fallback rather than `React.ElementType`: these are
 // what a tab falls back to when the icon theme has nothing for it, and
@@ -862,13 +862,12 @@ function ProjectlessCenter() {
   // the very tab the user clicked away from.
   const [atHome, setAtHome] = useState(false);
 
-  const allowed = tabs.filter((t) => PROJECTLESS_TYPES.has(t.type));
+  const allowed = navigationTabs(tabs, focusedGroupId, true);
   // Today's behaviour, exactly, until something project-independent opens.
   if (allowed.length === 0) return <WelcomeScreen />;
 
   const storeActive = activeByGroup[focusedGroupId] ?? null;
-  const groupTabs = tabs.filter((t) => GROUP_OF(t) === focusedGroupId);
-  const activeIndex = groupTabs.findIndex((t) => t.id === storeActive);
+  const activeIndex = allowed.findIndex((t) => t.id === storeActive);
   const active = atHome ? null : (allowed.find((t) => t.id === storeActive) ?? null);
 
   return (
@@ -894,7 +893,7 @@ function ProjectlessCenter() {
           <span className="leading-none">Home</span>
         </div>
 
-        {allowed.map((tab) => {
+        {allowed.map((tab, index) => {
           const Icon = tabIcons[tab.type] ?? MessageSquare;
           const tabFilePath = typeof tab.data?.filePath === "string" ? tab.data.filePath : null;
           const isActive = tab.id === active?.id;
@@ -904,9 +903,7 @@ function ProjectlessCenter() {
               role="tab"
               tabIndex={0}
               {...navigationHint(
-                !atHome && GROUP_OF(tab) === focusedGroupId
-                  ? tabNavigationActions(groupTabs.indexOf(tab), groupTabs.length, activeIndex)
-                  : [],
+                !atHome ? tabNavigationActions(index, allowed.length, activeIndex) : [],
               )}
               onClick={() => {
                 setAtHome(false);

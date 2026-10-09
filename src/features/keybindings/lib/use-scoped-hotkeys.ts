@@ -63,7 +63,7 @@ export function activeScopedActions(): Set<ActionId> {
   return actions;
 }
 
-/** Only a visible hint overlay subscribes to changes in mounted shortcut scopes. */
+/** Shortcut labels and overlays observe changes in mounted shortcut scopes. */
 export function subscribeScopedHotkeys(listener: () => void): () => void {
   scopeListeners.add(listener);
   return () => {

@@ -123,13 +123,19 @@ Numeric caps belong only to the focused pane, and follow its tab order. The
 last tab prefers its index when it has one; `9` remains available even with
 more than nine tabs. Adjacent panes advertise their focus command when a
 custom binding matches the held primary modifier. The default Alt-only pane
-shortcuts remain available independently. Home in a projectless window has
+shortcuts remain available independently. Without a project, the single tab
+strip, its numeric hints and its navigation actions all use only the visible
+projectless tabs, including those kept in different saved groups. Hidden
+project-only tabs no longer occupy indices or cycling destinations. Home has
 no tab-index action and therefore no cap.
 
 Previously, navigation shortcuts were discoverable through settings and
 individual labels only. The overlay now reads the same resolved profile and
 registered actions as dispatch: rebinding, unbinding and preset changes take
-effect live. A conflicting global action, an active scoped handler (such as
+effect live. One shared subscription supplies both the visual caps and
+`aria-keyshortcuts`, including late handler registration, unregistration,
+handler-set changes and scope/focus changes while no modifier is held.
+A conflicting global action, an active scoped handler (such as
 a terminal shortcut), or an operating-system reservation suppresses the cap
 for that chord. Scoped handlers can decline an event, but hints conservatively
 omit claimed chords rather than invoking a handler to guess its result.
