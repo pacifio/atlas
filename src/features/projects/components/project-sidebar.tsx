@@ -4,6 +4,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { Menu as DropdownMenu } from "@base-ui/react/menu";
 import { HintGroup, HintItem } from "@/ui/hint-group";
 import { Hint } from "@/ui/tooltip";
+import { Button } from "@/ui/button";
 import { recentsForOrg } from "@/features/app/lib/recent-projects";
 import {
   FolderPlus,
@@ -1005,14 +1006,22 @@ export function ProjectSidebar() {
               label="Chat"
               active={rightMode === "chat"}
               disabled={!orgSynced}
-              title={orgSynced ? undefined : "Sync this organization to use team chat"}
+              hint={
+                orgSynced
+                  ? "Team Chat — Talk with your organization"
+                  : "Sync this organization to use team chat"
+              }
               onClick={() => toggleRightPanelMode("chat")}
             />
             <NavItem
               icon={<Users size={14} />}
               label="Members"
               disabled={!orgSynced}
-              title={orgSynced ? undefined : "Sync this organization to manage members"}
+              hint={
+                orgSynced
+                  ? "Members — Manage your organization’s members"
+                  : "Sync this organization to manage members"
+              }
               onClick={() => setMembersOpen(true)}
             />
 
@@ -1028,7 +1037,11 @@ export function ProjectSidebar() {
                   icon={<Sparkles size={14} />}
                   label="Agents"
                   disabled={!hasProject}
-                  title={hasProject ? undefined : "Open a project to start an agent"}
+                  hint={
+                    hasProject
+                      ? "Agents — Start a coding agent session"
+                      : "Open a project to start an agent"
+                  }
                   // Zero-arg wrapper, NOT a bare reference: openNewAgentChat's
                   // optional parameter would otherwise receive the click event.
                   onClick={() => openNewAgentChat()}
@@ -1037,12 +1050,17 @@ export function ProjectSidebar() {
                   icon={<BookOpen size={14} />}
                   label="Knowledge"
                   disabled={!hasProject}
-                  title={hasProject ? undefined : "Open a project to open its knowledge base"}
+                  hint={
+                    hasProject
+                      ? "Knowledge Base — Open and organize project notes"
+                      : "Open a project to open its knowledge base"
+                  }
                   onClick={openKnowledge}
                 />
                 <NavItem
                   icon={<TerminalSquare size={14} />}
                   label="Terminal"
+                  hint="Terminal — Open a shell in a new tab"
                   onClick={() =>
                     // Mirrors `tabs.newTerminal` in App.tsx: a fresh tab each time.
                     addTab({
@@ -1060,10 +1078,19 @@ export function ProjectSidebar() {
                   label="Source control"
                   active={rightMode === "source-control"}
                   disabled={!hasProject}
-                  title={hasProject ? undefined : "Open a project to see its source control"}
+                  hint={
+                    hasProject
+                      ? "Source Control — Review changes, commits, and GitHub activity"
+                      : "Open a project to see its source control"
+                  }
                   onClick={() => toggleRightPanelMode("source-control")}
                 />
-                <NavItem icon={<BrainCircuit size={14} />} label="Memory" onClick={openMemory} />
+                <NavItem
+                  icon={<BrainCircuit size={14} />}
+                  label="Memory"
+                  hint="Memory — Browse shared agent knowledge"
+                  onClick={openMemory}
+                />
                 {/* Usage is a module, not rail chrome. It was up with the pin
                  *  and collapse-all buttons, which are controls on the SIDEBAR
                  *  ITSELF — Usage opens a tab, like every row here. Same
@@ -1072,6 +1099,7 @@ export function ProjectSidebar() {
                 <NavItem
                   icon={<Gauge size={14} />}
                   label="Usage"
+                  hint="Usage — Review agent activity and token usage"
                   onClick={() =>
                     addTab({
                       id: "usage",
@@ -1086,7 +1114,7 @@ export function ProjectSidebar() {
                 <NavItem
                   icon={<Ellipsis size={14} />}
                   label="More"
-                  title={newTabHint ? `Open a module (${newTabHint})` : "Open a module"}
+                  hint={newTabHint ? `Open a module (${newTabHint})` : "Open a module"}
                   onClick={() => window.dispatchEvent(new CustomEvent("atlas:new-tab-palette"))}
                 />
               </>
@@ -1119,42 +1147,46 @@ function NavItem({
   onClick,
   active,
   disabled,
-  title,
+  hint,
 }: {
   icon: React.ReactNode;
   label: string;
   onClick: () => void;
   active?: boolean;
   disabled?: boolean;
-  title?: string;
+  hint: string;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      title={title}
-      aria-pressed={active}
-      className={cn(
-        "group/nav flex h-7 w-full items-center gap-2.5 rounded-md px-2 text-left text-sm leading-none outline-none transition-colors cursor-pointer",
-        "disabled:cursor-default disabled:opacity-40",
-        active
-          ? "bg-[var(--atlas-element-active)] text-[var(--foreground)]"
-          : "text-[var(--secondary-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]",
-      )}
-    >
-      <span
+    <Hint label={hint} side="right" wrap={false}>
+      <Button
+        variant="ghost"
+        type="button"
+        onClick={onClick}
+        disabled={disabled}
+        focusableWhenDisabled
+        aria-label={label}
+        aria-pressed={active}
         className={cn(
-          "flex shrink-0 items-center justify-center",
+          "group/nav flex h-7 w-full items-center justify-start gap-2.5 rounded-md border-0 px-2 text-left text-sm leading-none outline-none transition-colors cursor-pointer",
+          "data-disabled:cursor-default data-disabled:opacity-40",
           active
-            ? "text-[var(--foreground)]"
-            : "text-[var(--muted-foreground)] group-hover/nav:text-[var(--secondary-foreground)]",
+            ? "bg-[var(--atlas-element-active)] text-[var(--foreground)]"
+            : "text-[var(--secondary-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]",
         )}
       >
-        {icon}
-      </span>
-      <span className="truncate">{label}</span>
-    </button>
+        <span
+          className={cn(
+            "flex shrink-0 items-center justify-center",
+            active
+              ? "text-[var(--foreground)]"
+              : "text-[var(--muted-foreground)] group-hover/nav:text-[var(--secondary-foreground)]",
+          )}
+        >
+          {icon}
+        </span>
+        <span className="truncate">{label}</span>
+      </Button>
+    </Hint>
   );
 }
 

@@ -20,7 +20,7 @@
 // is hovered.
 //
 // Timing (delay, warm window, curves) comes from `tooltip-timing.ts`, shared
-// with the dock and the Radix tooltips. Unlike the dock, the tooltip can open
+// with the Base UI tooltips. The titlebar dock uses this same group. It can open
 // upward for toolbars at the bottom of a panel. Vertical rails are not
 // supported — use `Hint` there.
 
@@ -50,12 +50,11 @@ import {
   prefersReducedMotion,
   slideTransition,
   TOOLTIP_EASE,
+  TOOLTIP_CLOSE_DELAY,
   TOOLTIP_FADE_IN_MS,
   TOOLTIP_OPEN_DELAY,
 } from "@/ui/tooltip-timing";
 
-/** A gap between two items shorter than this does not close the tooltip. */
-const LEAVE_GRACE = 80;
 /** Unmount the strip this long after it hides, unless the group is back in use. */
 const UNMOUNT_AFTER = 500;
 const EDGE_MARGIN = 8;
@@ -69,12 +68,15 @@ interface Item {
 interface GroupApi {
   register: (id: string, item: Item) => void;
   unregister: (id: string) => void;
-  enter: (id: string) => void;
+  enter: (id: string, keyboard?: boolean) => void;
   leave: () => void;
+  blur: () => void;
   hide: () => void;
 }
 
 const GroupContext = createContext<GroupApi | null>(null);
+// Separate from the stable registration API: showing a hint must not unregister its trigger.
+const ActiveHintContext = createContext<string | null>(null);
 
 interface State {
   active: string | null;
@@ -106,6 +108,9 @@ export function HintGroup({
   /** The item a scheduled open is for, and the item currently shown. */
   const pendingId = useRef<string | null>(null);
   const activeId = useRef<string | null>(null);
+  const focusedId = useRef<string | null>(null);
+  const hoveredId = useRef<string | null>(null);
+  const popupHovered = useRef(false);
 
   const clearTimers = () => {
     pendingId.current = null;
@@ -131,6 +136,9 @@ export function HintGroup({
   const hide = useCallback(() => {
     clearTimers();
     activeId.current = null;
+    focusedId.current = null;
+    hoveredId.current = null;
+    popupHovered.current = false;
     setVisible(false);
     setState((s) => (s.visible ? { ...s, visible: false } : s));
     unmountTimer.current = setTimeout(() => setMounted(false), UNMOUNT_AFTER);
@@ -153,7 +161,9 @@ export function HintGroup({
         }
         if (activeId.current === id) hide();
       },
-      enter: (id) => {
+      enter: (id, keyboard = false) => {
+        if (keyboard) focusedId.current = id;
+        else hoveredId.current = id;
         clearTimers();
         setMounted(true);
         const travelling = visibleRef.current;
@@ -163,17 +173,29 @@ export function HintGroup({
           setVisible(true);
           setState({ active: id, visible: true, animate: travelling });
         };
-        if (travelling || isTooltipWarm()) show();
+        if (keyboard || travelling || isTooltipWarm()) show();
         else {
           pendingId.current = id;
           openTimer.current = setTimeout(show, TOOLTIP_OPEN_DELAY);
         }
       },
       leave: () => {
+        hoveredId.current = null;
         pendingId.current = null;
         clearTimeout(openTimer.current);
         clearTimeout(leaveTimer.current);
-        leaveTimer.current = setTimeout(hide, LEAVE_GRACE);
+        if (focusedId.current && activeId.current !== focusedId.current) {
+          const focused = focusedId.current;
+          activeId.current = focused;
+          setState((s) => ({ ...s, active: focused }));
+        }
+        if (!focusedId.current && !popupHovered.current) {
+          leaveTimer.current = setTimeout(hide, TOOLTIP_CLOSE_DELAY);
+        }
+      },
+      blur: () => {
+        focusedId.current = null;
+        if (!hoveredId.current && !popupHovered.current) hide();
       },
       hide,
     }),
@@ -210,13 +232,23 @@ export function HintGroup({
     setGeometry({ ...slide, y, originX: control.left + control.width / 2 });
   }, [state, order, side, mounted]);
 
-  // A tooltip left floating while its row scrolls away would point at nothing.
+  // Escape also works for a pointer-opened hint when focus is elsewhere.
+  // Scrolling/resizing invalidates the measured anchor.
   useEffect(() => {
-    if (!state.visible) return;
+    if (!mounted) return;
     const onScroll = () => hide();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") hide();
+    };
     window.addEventListener("scroll", onScroll, true);
-    return () => window.removeEventListener("scroll", onScroll, true);
-  }, [state.visible, hide]);
+    window.addEventListener("resize", onScroll);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", onScroll);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [mounted, hide]);
 
   const shown = state.visible && geometry !== null;
   // The first reveal grows from the hovered control; travel between items
@@ -225,11 +257,12 @@ export function HintGroup({
 
   return (
     <GroupContext.Provider value={api}>
-      {children}
+      <ActiveHintContext.Provider value={shown ? state.active : null}>
+        {children}
+      </ActiveHintContext.Provider>
       {mounted &&
         createPortal(
           <div
-            aria-hidden
             data-slot="hint-group-tooltip"
             className="pointer-events-none fixed left-0 z-tooltip"
             style={{
@@ -240,8 +273,17 @@ export function HintGroup({
             }}
           >
             <div
+              onMouseEnter={() => {
+                popupHovered.current = true;
+                clearTimeout(leaveTimer.current);
+              }}
+              onMouseLeave={() => {
+                popupHovered.current = false;
+                api.leave();
+              }}
               className={cn(
                 "flex w-max",
+                shown && "pointer-events-auto",
                 "bg-[var(--popover)] text-foreground",
                 "outline outline-1 outline-[var(--border)]",
                 // The menu step, like every other popover in `src/ui`. It was a
@@ -259,6 +301,9 @@ export function HintGroup({
               {order.map(({ id, label }) => (
                 <div
                   key={id}
+                  id={id}
+                  role={shown && state.active === id ? "tooltip" : undefined}
+                  aria-hidden={!shown || state.active !== id}
                   ref={(el) => {
                     labels.current.set(id, el);
                   }}
@@ -290,6 +335,7 @@ export function HintItem({
   children: ReactElement<Record<string, unknown>>;
 }) {
   const api = useContext(GroupContext);
+  const activeHint = useContext(ActiveHintContext);
   const id = useId();
   const ref = useRef<HTMLSpanElement>(null);
 
@@ -302,7 +348,10 @@ export function HintItem({
     return () => api.unregister(id);
   }, [api, id]);
 
-  const control = cloneElement(children, hintTriggerProps(children.props, label));
+  const control = cloneElement(
+    children,
+    hintTriggerProps(children.props, label, activeHint === id ? id : undefined),
+  );
   if (!api) return control;
 
   return (
@@ -313,9 +362,9 @@ export function HintItem({
       onMouseLeave={api.leave}
       onFocus={(e) => {
         // Pointer focus comes with a hover already; only keyboard focus opens.
-        if (isFocusVisible(e.target)) api.enter(id);
+        if (isFocusVisible(e.target)) api.enter(id, true);
       }}
-      onBlur={api.leave}
+      onBlur={api.blur}
       onPointerDown={api.hide}
       onKeyDown={(e) => {
         if (e.key === "Escape") api.hide();
