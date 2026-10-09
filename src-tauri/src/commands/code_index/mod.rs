@@ -48,21 +48,44 @@ pub fn is_index_tool(name: &str) -> bool {
         || semantic_tools::SEMANTIC_TOOLS.contains(&name)
 }
 
+/// The tool error while an empty index is being built.
+const STILL_BUILDING: &str =
+    "the code index is still being built for this project; use grep meanwhile and retry shortly";
+/// The first line of an answer read from rows a full build will replace.
+const REBUILDING_NOTE: &str =
+    "note: the code index is being rebuilt; these results may be outdated\n";
+
 /// Run one code index tool for a session. Blocking (SQLite, file reads,
 /// `git diff`). `Err` is the text of a tool error.
+///
+/// Never waits on the worker: an empty index it is still building is a tool
+/// error, and an answer from rows a full build is about to replace carries
+/// [`REBUILDING_NOTE`]. Watcher edits (`Paths`, `Reconcile`) and vector
+/// syncs get no note: they run all the time and leave the rows current.
 pub fn call_index_tool(
     scope: &Scope,
     registry: &CodeIndexRegistry,
     name: &str,
     args: &serde_json::Value,
 ) -> Result<String, String> {
-    if graph_tools::GRAPH_TOOLS.contains(&name) {
+    let status = scope.project.index.status().map_err(|e| e.to_string())?;
+    if status.files == 0 && scope.project.is_indexing() {
+        return Err(STILL_BUILDING.into());
+    }
+    let rebuilding = scope.project.is_rebuilding();
+    let out = if graph_tools::GRAPH_TOOLS.contains(&name) {
         graph_tools::call(scope, name, args)
     } else if semantic_tools::SEMANTIC_TOOLS.contains(&name) {
         semantic_tools::call(scope, registry, name, args)
     } else {
         symbols::call(scope, name, args)
+    };
+    if !rebuilding {
+        return out;
     }
+    // Errors too: "no symbol named X" from the old rows misleads just the same.
+    out.map(|t| format!("{REBUILDING_NOTE}{t}"))
+        .map_err(|e| format!("{REBUILDING_NOTE}{e}"))
 }
 
 use super::byok::byok_get;
@@ -298,5 +321,144 @@ mod tests {
         let p = summary_user(&doc, &"x".repeat(5000));
         assert!(p.starts_with("File src/a.rs (rust). Defines: fn a."));
         assert!(p.len() < 1700 + 100);
+    }
+
+    fn fixture() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".git")).unwrap();
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(
+            dir.path().join("src/a.rs"),
+            "pub fn alpha() {}\npub fn beta() {\n    alpha();\n}\n",
+        )
+        .unwrap();
+        dir
+    }
+
+    /// Every index tool, with arguments it accepts on the fixture.
+    fn every_tool() -> Vec<(&'static str, serde_json::Value)> {
+        use serde_json::json;
+        let tools = vec![
+            ("find_symbol", json!({ "query": "alpha" })),
+            ("outline", json!({ "path": "src/a.rs" })),
+            ("read_symbol", json!({ "name": "alpha" })),
+            ("related", json!({ "symbol": "alpha" })),
+            ("impact_of_diff", json!({})),
+            ("repo_map", json!({})),
+            ("semantic_search", json!({ "query": "alpha" })),
+            ("task_context", json!({ "task": "change alpha_fn" })),
+        ];
+        let names: Vec<_> = tools.iter().map(|t| t.0).collect();
+        let listed: Vec<_> = index_tool_specs().into_iter().map(|t| t.0).collect();
+        assert_eq!(names, listed, "a new index tool needs a row here");
+        tools
+    }
+
+    fn built(dir: &Path) -> (CodeIndexRegistry, Scope) {
+        let reg = CodeIndexRegistry::new(None);
+        reg.ensure_open(dir)
+            .unwrap()
+            .enqueue_and_wait(Job::Reconcile)
+            .blocking_recv()
+            .unwrap()
+            .unwrap();
+        let scope = Scope::resolve(&reg, dir).unwrap();
+        (reg, scope)
+    }
+
+    fn wait_for(mut cond: impl FnMut() -> bool) {
+        let start = std::time::Instant::now();
+        while !cond() {
+            assert!(
+                start.elapsed() < std::time::Duration::from_secs(10),
+                "timed out"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn every_tool_refuses_an_empty_index_still_being_built() {
+        let dir = fixture();
+        let reg = CodeIndexRegistry::new(None);
+        let gate = reg.hold_jobs();
+        let scope = Scope::resolve(&reg, dir.path()).unwrap(); // queues the first build
+        assert!(scope.project.is_rebuilding());
+        for (name, args) in every_tool() {
+            assert_eq!(
+                call_index_tool(&scope, &reg, name, &args),
+                Err(STILL_BUILDING.to_string()),
+                "{name}"
+            );
+        }
+        drop(gate);
+        wait_for(|| !scope.project.is_busy());
+    }
+
+    #[test]
+    fn a_vector_sync_over_an_empty_index_is_not_a_build() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".git")).unwrap();
+        let (reg, scope) = built(dir.path());
+        let gate = reg.hold_jobs();
+        scope.project.enqueue(Job::Vectors);
+        wait_for(|| scope.project.queue_drained());
+        for (name, args) in every_tool() {
+            let out = call_index_tool(&scope, &reg, name, &args);
+            let text = out.as_ref().unwrap_or_else(|e| e);
+            assert_ne!(text, STILL_BUILDING, "{name}");
+            assert!(!text.starts_with(REBUILDING_NOTE), "{name}: {text}");
+        }
+        drop(gate);
+        wait_for(|| !scope.project.is_busy());
+    }
+
+    #[test]
+    fn answers_from_old_rows_carry_the_rebuild_note() {
+        let dir = fixture();
+        let (reg, scope) = built(dir.path());
+        let gate = reg.hold_jobs();
+        scope.project.enqueue(Job::FullBuild);
+        let check = |when: &str| {
+            for (name, args) in every_tool() {
+                let out = call_index_tool(&scope, &reg, name, &args);
+                let text = out.as_ref().unwrap_or_else(|e| e);
+                assert!(text.starts_with(REBUILDING_NOTE), "{when} {name}: {text}");
+            }
+            let map = call_index_tool(&scope, &reg, "repo_map", &serde_json::json!({})).unwrap();
+            assert!(map.contains("alpha"), "{when}: {map}");
+        };
+        check("queued");
+        wait_for(|| scope.project.queue_drained());
+        assert!(scope.project.is_rebuilding());
+        check("running");
+        drop(gate);
+        wait_for(|| !scope.project.is_busy());
+        let map = call_index_tool(&scope, &reg, "repo_map", &serde_json::json!({})).unwrap();
+        assert!(!map.starts_with(REBUILDING_NOTE), "{map}");
+    }
+
+    #[test]
+    fn edits_and_vector_syncs_in_flight_add_no_note() {
+        let dir = fixture();
+        let (reg, scope) = built(dir.path());
+        for job in [
+            Job::Paths(vec![dir.path().join("src/a.rs")]),
+            Job::Reconcile,
+            Job::Vectors,
+        ] {
+            let gate = reg.hold_jobs();
+            scope.project.enqueue(job.clone());
+            wait_for(|| scope.project.queue_drained());
+            assert!(!scope.project.is_rebuilding(), "{job:?}");
+            for name in ["find_symbol", "related", "repo_map", "semantic_search"] {
+                let args = &every_tool().into_iter().find(|t| t.0 == name).unwrap().1;
+                let out = call_index_tool(&scope, &reg, name, args)
+                    .unwrap_or_else(|e| panic!("{job:?} {name}: {e}"));
+                assert!(!out.starts_with(REBUILDING_NOTE), "{job:?} {name}: {out}");
+            }
+            drop(gate);
+            wait_for(|| !scope.project.is_busy());
+        }
     }
 }

@@ -206,11 +206,6 @@ pub(super) fn arg_usize(args: &Value, key: &str) -> Option<usize> {
 /// Run one symbol tool (blocking: SQLite and file reads). `Err` is the text
 /// of a tool error.
 pub fn call(scope: &Scope, name: &str, args: &Value) -> Result<String, String> {
-    let index = &scope.project.index;
-    let status = index.status().map_err(|e| e.to_string())?;
-    if status.files == 0 && scope.project.is_busy() {
-        return Err("the code index is still being built for this project; use grep meanwhile and retry shortly".into());
-    }
     match name {
         "find_symbol" => find_symbol(scope, args),
         "outline" => outline(scope, args),

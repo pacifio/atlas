@@ -93,6 +93,7 @@ impl Pending {
         self.full || self.reconcile || !self.paths.is_empty() || !self.waiters.is_empty()
     }
 
+    #[cfg(test)]
     fn is_empty(&self) -> bool {
         !self.has_index_work() && !self.vectors
     }
@@ -122,12 +123,37 @@ impl Pending {
     }
 }
 
+/// The kind of job the worker is running.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Running {
+    FullBuild,
+    /// `Paths` or `Reconcile`: keeps the rows current, replaces none wholesale.
+    Update,
+    Vectors,
+}
+
+impl From<&Job> for Running {
+    fn from(job: &Job) -> Self {
+        match job {
+            Job::FullBuild => Self::FullBuild,
+            Job::Paths(_) | Job::Reconcile => Self::Update,
+            Job::Vectors => Self::Vectors,
+        }
+    }
+}
+
 struct Queue {
     pending: Mutex<Pending>,
     wake: Condvar,
     closed: AtomicBool,
     /// The running vector sync's token: a new index job cancels it.
     running_vectors: Mutex<Option<CancelToken>>,
+    /// What the worker is running. Set under the `pending` lock as the job
+    /// is taken, so a job is always visible as queued or as running.
+    running: Mutex<Option<Running>>,
+    /// Tests hold this to keep the worker parked on a job it has taken.
+    #[cfg(test)]
+    gate: Arc<Mutex<()>>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -169,8 +195,29 @@ impl ProjectIndex {
     }
 
     /// A job is running or queued.
+    #[cfg(test)]
     pub fn is_busy(&self) -> bool {
         self.busy.load(Ordering::SeqCst) || !lock(&self.queue.pending).is_empty()
+    }
+
+    /// An index job (not a vector sync) is running or queued: the rows may
+    /// be about to change.
+    pub fn is_indexing(&self) -> bool {
+        let pending = lock(&self.queue.pending);
+        pending.has_index_work() || lock(&self.queue.running).is_some_and(|r| r != Running::Vectors)
+    }
+
+    /// A full build is queued or running. It commits in one transaction, so
+    /// until then readers see the previous build's rows (or none).
+    pub fn is_rebuilding(&self) -> bool {
+        let pending = lock(&self.queue.pending);
+        pending.full || *lock(&self.queue.running) == Some(Running::FullBuild)
+    }
+
+    /// Nothing is queued: the worker has taken the last job and is running it.
+    #[cfg(test)]
+    pub(super) fn queue_drained(&self) -> bool {
+        self.busy.load(Ordering::SeqCst) && lock(&self.queue.pending).is_empty()
     }
 
     pub fn enqueue(&self, job: Job) {
@@ -218,6 +265,8 @@ pub struct CodeIndexRegistry {
     projects: Mutex<HashMap<PathBuf, Arc<ProjectIndex>>>,
     observer: Option<JobObserver>,
     embedder: EmbedderSlot,
+    #[cfg(test)]
+    gate: Arc<Mutex<()>>,
 }
 
 fn key(root: &Path) -> PathBuf {
@@ -243,7 +292,16 @@ impl CodeIndexRegistry {
             projects: Mutex::new(HashMap::new()),
             observer,
             embedder: Arc::new(RwLock::new(None)),
+            #[cfg(test)]
+            gate: Arc::default(),
         }
+    }
+
+    /// Park every worker on the next job it takes until the guard drops, so
+    /// a test can look at a job in flight.
+    #[cfg(test)]
+    pub(super) fn hold_jobs(&self) -> MutexGuard<'_, ()> {
+        lock(&self.gate)
     }
 
     /// Swap the code embedding model (`None`: keyword + symbol search only).
@@ -318,6 +376,9 @@ impl CodeIndexRegistry {
                 wake: Condvar::new(),
                 closed: AtomicBool::new(false),
                 running_vectors: Mutex::new(None),
+                running: Mutex::new(None),
+                #[cfg(test)]
+                gate: self.gate.clone(),
             }),
             busy: Arc::new(AtomicBool::new(false)),
         });
@@ -476,6 +537,8 @@ fn spawn_worker(
         .name("atlas-code-index".into())
         .spawn(move || {
             while let Some((job, waiters)) = next_job(&queue, &busy) {
+                #[cfg(test)]
+                drop(lock(&queue.gate));
                 let label = job.label();
                 let index_job = job != Job::Vectors;
                 let result =
@@ -490,6 +553,7 @@ fn spawn_worker(
                 if index_job && has_embedder && matches!(result, Ok(true)) {
                     lock(&queue.pending).push(Job::Vectors);
                 }
+                *lock(&queue.running) = None;
                 busy.store(false, Ordering::SeqCst);
                 if let Err(e) = &result {
                     tracing::warn!(target: "atlas::code_index", "{label} failed for {opened_as}: {e}");
@@ -512,6 +576,7 @@ fn next_job(queue: &Queue, busy: &AtomicBool) -> Option<(Job, Vec<Waiter>)> {
     loop {
         if let Some(next) = pending.take() {
             busy.store(true, Ordering::SeqCst);
+            *lock(&queue.running) = Some(Running::from(&next.0));
             return Some(next);
         }
         if queue.closed.load(Ordering::SeqCst) {
