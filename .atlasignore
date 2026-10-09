@@ -1,0 +1,7 @@
+# What Atlas's code index (symbols, chunks, embeddings) leaves out beyond
+# .gitignore and its built-in skips. Gitignore syntax; a `!` line re-includes
+# something a built-in rule skipped.
+
+# The engine is first-party code (ADR-0003), not a vendored dependency: index
+# it despite the built-in `vendor/` skip.
+!vendor/atlas-engine/

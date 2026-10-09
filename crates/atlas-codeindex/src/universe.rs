@@ -42,6 +42,9 @@ pub(crate) struct SymRow {
     pub qn: String,
     pub exported: bool,
     pub is_test: bool,
+    /// Header text (`pub fn open() -> io::Result<Self>`): Rust receiver typing reads return
+    /// types and type aliases from it.
+    pub sig: String,
 }
 
 #[derive(Debug, Clone)]
@@ -69,6 +72,8 @@ pub(crate) struct Universe {
     pub by_file_name: HashMap<(i64, String), Vec<usize>>,
     /// (family, module) → file ids, ascending.
     pub by_module: HashMap<(u8, String), Vec<i64>>,
+    /// Rust struct symbol id → its fields `(name, type text)`, in declaration order.
+    pub fields: HashMap<i64, Vec<(String, String)>>,
 }
 
 impl Universe {
@@ -85,7 +90,7 @@ impl Universe {
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         let syms = conn
-            .prepare("SELECT id, file_id, parent_id, kind, name, qualified_name, exported, is_test FROM symbols ORDER BY id")?
+            .prepare("SELECT id, file_id, parent_id, kind, name, qualified_name, exported, is_test, signature FROM symbols ORDER BY id")?
             .query_map([], |r| {
                 Ok(SymRow {
                     id: r.get(0)?,
@@ -96,6 +101,7 @@ impl Universe {
                     qn: r.get(5)?,
                     exported: r.get::<_, i64>(6)? != 0,
                     is_test: r.get::<_, i64>(7)? != 0,
+                    sig: r.get(8)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -133,7 +139,23 @@ impl Universe {
             let (fid, m) = row?;
             mods.entry(fid).or_default().push(m);
         }
-        Ok(Universe::from_parts(files, syms, imports, mods))
+        let mut u = Universe::from_parts(files, syms, imports, mods);
+        let mut stmt = conn.prepare(
+            "SELECT src_symbol_id, name, receiver FROM refs
+             WHERE kind = 'field' AND src_symbol_id IS NOT NULL ORDER BY id",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })?;
+        for row in rows {
+            let (sid, name, ty) = row?;
+            u.fields.entry(sid).or_default().push((name, ty));
+        }
+        Ok(u)
     }
 
     pub(crate) fn from_parts(

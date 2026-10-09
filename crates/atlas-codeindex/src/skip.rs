@@ -135,27 +135,57 @@ impl Rules {
 
     /// Why the file at `rel` (project-relative, `/`-separated) is skipped, or
     /// `None` to index it.
+    ///
+    /// A `!` line lifts only the built-in rule it negates: the skipped
+    /// directories at or above the path it re-includes (`!vendor/ours/` lifts
+    /// `vendor`), and the generated-name rule only when it names the file
+    /// itself. `node_modules`, `target`, generated files and the rest still
+    /// apply inside a re-included tree.
     pub(crate) fn path_verdict(&self, rel: &str) -> Option<SkipReason> {
-        match self.atlasignore.matched_path_or_any_parents(rel, false) {
+        let lifted = match self.atlasignore.matched_path_or_any_parents(rel, false) {
             Match::Ignore(_) => return Some(SkipReason::AtlasIgnore),
-            Match::Whitelist(_) => return None,
-            Match::None => {}
-        }
+            Match::Whitelist(_) => self.reincluded_depth(rel),
+            Match::None => 0,
+        };
         let mut parts = rel.split('/').collect::<Vec<_>>();
         let file = parts.pop().unwrap_or(rel);
-        if parts.iter().any(|d| is_skip_dir(d)) {
+        if parts
+            .iter()
+            .enumerate()
+            .any(|(i, d)| i >= lifted && is_skip_dir(d))
+        {
             return Some(SkipReason::Vendor);
         }
-        if GENERATED_SUFFIXES.iter().any(|s| file.ends_with(s))
-            || file.starts_with("zz_generated")
-            || file.contains(".generated.")
+        if lifted <= parts.len()
+            && (GENERATED_SUFFIXES.iter().any(|s| file.ends_with(s))
+                || file.starts_with("zz_generated")
+                || file.contains(".generated."))
         {
             return Some(SkipReason::GeneratedName);
         }
         None
     }
 
-    /// Whether the walk may skip the directory at `rel` entirely.
+    /// How many leading components of `rel` (a file) the deepest `!` line
+    /// matching it or one of its directories covers: 2 for `vendor/ours/a.rs`
+    /// under `!vendor/ours/`, all of them for a line naming the file.
+    fn reincluded_depth(&self, rel: &str) -> usize {
+        let parts: Vec<&str> = rel.split('/').collect();
+        (1..=parts.len())
+            .rev()
+            .find(|&k| {
+                let prefix = parts[..k].join("/");
+                matches!(
+                    self.atlasignore.matched(&prefix, k < parts.len()),
+                    Match::Whitelist(_)
+                )
+            })
+            .unwrap_or(0)
+    }
+
+    /// Whether the walk may skip the directory at `rel` entirely. A skipped
+    /// directory inside a re-included tree (`vendor/ours/node_modules` under
+    /// `!vendor/ours/`) is pruned: the re-include does not lift its rule.
     pub(crate) fn prune_dir(&self, rel: &str) -> bool {
         let name = rel.rsplit('/').next().unwrap_or(rel);
         let skipped = is_skip_dir(name)
@@ -167,15 +197,67 @@ impl Rules {
     }
 }
 
+/// Version-control directories: pruned, never counted as skipped code.
+const VCS_DIRS: &[&str] = &[".git", ".hg", ".svn"];
+
+impl Rules {
+    /// Why a directory [`Rules::prune_dir`] pruned was skipped, for the
+    /// skipped counts; `None` for version-control and Atlas's own directories,
+    /// which hold no project code.
+    pub(crate) fn prune_reason(&self, rel: &str) -> Option<SkipReason> {
+        let name = rel.rsplit('/').next().unwrap_or(rel);
+        if VCS_DIRS.contains(&name) || atlas_search::is_atlas_dir(name) {
+            return None;
+        }
+        match self.atlasignore.matched_path_or_any_parents(rel, true) {
+            Match::Ignore(_) => Some(SkipReason::AtlasIgnore),
+            _ => Some(SkipReason::Vendor),
+        }
+    }
+}
+
+/// Whether the walk descends into `name` when counting a pruned directory's
+/// files: everything but version-control and Atlas's own directories.
+pub(crate) fn counted_dir(name: &str) -> bool {
+    !VCS_DIRS.contains(&name) && !atlas_search::is_atlas_dir(name)
+}
+
+/// Skipped files grouped as `(reason, directory, count)`, sorted by reason
+/// then directory. A [`SkipReason::Vendor`] file counts under the directory
+/// the built-in rule matched (`web/node_modules`); any other under its
+/// top-level directory (`.` for a file at the root).
+pub fn skipped_by_dir(skipped: &[(String, SkipReason)]) -> Vec<(String, String, usize)> {
+    let mut counts: std::collections::BTreeMap<(&str, String), usize> = Default::default();
+    for (rel, reason) in skipped {
+        let parts: Vec<&str> = rel.split('/').collect();
+        let dirs = &parts[..parts.len().saturating_sub(1)];
+        let dir = match reason {
+            SkipReason::Vendor => dirs
+                .iter()
+                .position(|d| is_skip_dir(d))
+                .map(|i| dirs[..=i].join("/")),
+            _ => None,
+        }
+        .unwrap_or_else(|| dirs.first().map_or(".", |d| d).to_string());
+        *counts.entry((reason.label(), dir)).or_default() += 1;
+    }
+    counts
+        .into_iter()
+        .map(|((r, d), n)| (r.to_string(), d, n))
+        .collect()
+}
+
 /// A built-in skipped directory name: [`SKIP_DIRS`] or Atlas's own.
 fn is_skip_dir(name: &str) -> bool {
     SKIP_DIRS.contains(&name) || atlas_search::is_atlas_dir(name)
 }
 
-/// Whether re-include `pattern` (a `!` line without the `!`) can match a path
-/// under directory `dir`. Gitignore rules: a pattern with no inner `/`
-/// matches at any depth; otherwise it is anchored at the project root and
-/// compared component by component (a glob component or `**` may match).
+/// Whether re-include `pattern` (a `!` line without the `!`) can lift the skip
+/// of directory `dir`: it names `dir` itself or something below it. Gitignore
+/// rules: a pattern with no inner `/` matches at any depth; otherwise it is
+/// anchored at the project root and compared component by component (a glob
+/// component or `**` may match). A pattern that ends above `dir` re-includes
+/// an ancestor, which leaves `dir`'s own skip in force.
 fn may_reach(pattern: &str, dir: &str) -> bool {
     let p = pattern.trim_end_matches('/');
     if !p.contains('/') {
@@ -184,8 +266,10 @@ fn may_reach(pattern: &str, dir: &str) -> bool {
     let mut parts = p.trim_start_matches('/').split('/');
     for d in dir.split('/') {
         match parts.next() {
-            // `dir` lies inside what the pattern names, or `**` spans it.
-            None | Some("**") => return true,
+            // `dir` lies inside what the pattern names: its own skip stands.
+            None => return false,
+            // `**` spans it.
+            Some("**") => return true,
             Some(c) if c == d || c.contains(['*', '?', '[']) => {}
             Some(_) => return false,
         }

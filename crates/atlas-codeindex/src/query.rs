@@ -165,6 +165,17 @@ impl CodeIndex {
         self.find_symbol_where(q, &|_| true)
     }
 
+    /// [`CodeIndex::find_symbol`] plus how many of all the matches (every
+    /// page, after filters) are the name asked for: its exact name or
+    /// qualified name (or a qualified suffix), or the name ignoring case.
+    /// 0 means every hit is a prefix or word match, never the symbol itself.
+    pub fn find_symbol_with_exact(
+        &self,
+        q: &SymbolQuery,
+    ) -> Result<(Vec<SymbolHit>, Page, usize), IndexError> {
+        self.find_symbol_ranked(q, &|_| true)
+    }
+
     /// [`CodeIndex::find_symbol`] keeping only the hits `keep` accepts, filtered
     /// with the query's own filters, before ranking and paging.
     pub(crate) fn find_symbol_where(
@@ -172,6 +183,15 @@ impl CodeIndex {
         q: &SymbolQuery,
         keep: &dyn Fn(&SymbolHit) -> bool,
     ) -> Result<(Vec<SymbolHit>, Page), IndexError> {
+        self.find_symbol_ranked(q, keep)
+            .map(|(hits, page, _)| (hits, page))
+    }
+
+    fn find_symbol_ranked(
+        &self,
+        q: &SymbolQuery,
+        keep: &dyn Fn(&SymbolHit) -> bool,
+    ) -> Result<(Vec<SymbolHit>, Page, usize), IndexError> {
         let query = q.query.trim();
         let Some(expr) = match_expr(query) else {
             return Err(IndexError::Invalid("query has no letters or digits".into()));
@@ -205,6 +225,10 @@ impl CodeIndex {
                 .then(a.id.cmp(&b.id))
         });
         let total = scored.len();
+        let exact = scored
+            .iter()
+            .take_while(|(h, _)| tier(h, query) <= 1)
+            .count();
         let page_hits: Vec<SymbolHit> = scored
             .into_iter()
             .skip(q.offset)
@@ -220,7 +244,7 @@ impl CodeIndex {
             next_offset,
             truncation: next_offset.map(|_| "page_limit"),
         };
-        Ok((page_hits, page))
+        Ok((page_hits, page, exact))
     }
 
     /// Every symbol in one file, in source order (parents before members).

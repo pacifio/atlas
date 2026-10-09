@@ -12,7 +12,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use crate::rust_crates::{join_rel, module_tree, parent_dir, CrateGraph, Libs};
+use crate::rust_crates::{join_rel, module_tree_with_aliases, parent_dir, CrateGraph, Libs};
 use crate::universe::{family, Universe, GO, PY, RUST, TS};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -64,16 +64,23 @@ impl ProjectConfig {
 }
 
 /// `files.module` for every file, aligned with `u.files`.
-pub(crate) fn compute_modules(u: &Universe, cfg: &ProjectConfig) -> Vec<String> {
+/// Each file's module key, plus the extra keys of Rust files mounted by more than one
+/// `mod` declaration (a `tests/support/mod.rs` every test crate declares): install those
+/// with [`install_module_aliases`] once the modules are set.
+pub(crate) fn compute_modules(
+    u: &Universe,
+    cfg: &ProjectConfig,
+) -> (Vec<String>, Vec<(String, i64)>) {
     let rust_files: std::collections::BTreeMap<String, i64> = u
         .files
         .iter()
         .filter(|f| family(&f.lang) == RUST)
         .map(|f| (f.rel.clone(), f.id))
         .collect();
-    let tree = module_tree(&cfg.crates, &rust_files, &u.mods);
+    let (tree, aliases) = module_tree_with_aliases(&cfg.crates, &rust_files, &u.mods);
     let init_dirs = py_init_dirs(u);
-    u.files
+    let modules = u
+        .files
         .iter()
         .map(|f| match family(&f.lang) {
             RUST => tree
@@ -85,7 +92,19 @@ pub(crate) fn compute_modules(u: &Universe, cfg: &ProjectConfig) -> Vec<String> 
             GO => go_module(&f.rel),
             _ => f.rel.clone(),
         })
-        .collect()
+        .collect();
+    (modules, aliases)
+}
+
+/// Make each alias module key list its file too, so paths through it (`support::helper()`,
+/// `use support::helper`) resolve in every crate that mounts the file.
+pub(crate) fn install_module_aliases(u: &mut Universe, aliases: &[(String, i64)]) {
+    for (module, fid) in aliases {
+        let files = u.by_module.entry((RUST, module.clone())).or_default();
+        if let Err(at) = files.binary_search(fid) {
+            files.insert(at, *fid);
+        }
+    }
 }
 
 fn ts_module(rel: &str) -> String {
