@@ -261,9 +261,56 @@ const MODELS: ModelStatus[] = [
     downloaded: false,
     selected: false,
   },
+  // Code search's model: selected (it is the default) but not downloaded, the
+  // state a fresh install is in, so the composer's "Enable semantic search"
+  // pill shows. Downloading it walks the progress events below.
+  {
+    id: "granite-embedding-small-r2",
+    kind: "code_embedding",
+    name: "Granite Embedding Small R2",
+    repo: "ibm-granite/granite-embedding-small-english-r2",
+    files: ["config.json", "tokenizer.json", "model.safetensors"].map((file) => ({
+      repo: "ibm-granite/granite-embedding-small-english-r2",
+      file,
+      dest: file,
+    })),
+    dim: 384,
+    sizeMb: 95,
+    description:
+      "Small, fast code search embeddings (47M, Apache-2.0). Default for semantic code search.",
+    compatible: true,
+    downloaded: false,
+    selected: true,
+  },
 ];
 
 const models: ModelStatus[] = MODELS.map((model) => ({ ...model }));
+
+/** A download that takes a few seconds, so the progress states are visible. */
+function simulateDownload(model: ModelStatus): void {
+  const fileCount = model.files.length;
+  const total = model.sizeMb * 1_000_000;
+  const steps = 12;
+  for (let step = 1; step <= steps; step++) {
+    setTimeout(() => {
+      const done = step / steps;
+      const fileIndex = Math.min(fileCount - 1, Math.floor(done * fileCount));
+      void emit("atlas:model-download:progress", {
+        id: model.id,
+        file: model.files[fileIndex]?.dest ?? "",
+        fileIndex,
+        fileCount,
+        received: Math.round(total * (done * fileCount - fileIndex)),
+        total,
+      });
+      if (step === steps) {
+        model.downloaded = true;
+        void emit("atlas:model-download:done", { id: model.id, success: true, error: null });
+        void emit("atlas:models-changed");
+      }
+    }, step * 300);
+  }
+}
 
 // ── handlers ──────────────────────────────────────────────────────────────
 
@@ -372,8 +419,7 @@ export const miscHandlers: MockHandlers = {
     const model = models.find((candidate) => candidate.id === String(id));
     if (!model) throw new Error(`unknown model ${String(id)}`);
     if (!model.compatible) throw new Error("not enough memory for this model");
-    model.downloaded = true;
-    void emit("atlas:models-changed");
+    simulateDownload(model);
     return null;
   },
   model_remove: ({ id }): null => {
@@ -388,8 +434,11 @@ export const miscHandlers: MockHandlers = {
   model_select: ({ id }): SelectResult => {
     const next = models.find((candidate) => candidate.id === String(id));
     if (!next) throw new Error(`unknown model ${String(id)}`);
-    const previous = models.find((candidate) => candidate.selected);
-    for (const model of models) model.selected = model.id === next.id;
+    const previous = models.find((candidate) => candidate.selected && candidate.kind === next.kind);
+    // Each kind has its own selection, as in Rust.
+    for (const model of models) {
+      if (model.kind === next.kind) model.selected = model.id === next.id;
+    }
     void emit("atlas:models-changed");
     // Changing dimension is what forces the re-index prompt.
     return { needsReindex: previous?.dim !== next.dim };

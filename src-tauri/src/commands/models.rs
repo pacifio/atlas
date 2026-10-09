@@ -202,22 +202,25 @@ pub fn find_entry(id: &str) -> Option<ModelEntry> {
 
 // ── Selection + path resolution (the chokepoints delegate here) ────────────────
 
-/// Root dir holding every downloaded model: `app_data/models/`.
+/// Root dir holding every downloaded model: `app_data/models/`. A pure path
+/// lookup: nothing is created until a download needs the directory.
 pub fn models_root(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app
+    Ok(app
         .path()
         .app_data_dir()
         .map_err(|e| format!("no app data dir: {e}"))?
-        .join("models");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("create models dir: {e}"))?;
-    Ok(dir)
+        .join("models"))
 }
 
-/// On-disk dir for a model id (created lazily).
+/// On-disk dir for a model id. A pure path lookup, like [`models_root`]: an
+/// empty directory left behind by a lookup would read as a broken install, so
+/// only a download ([`model_download`], [`download_files`]) creates it.
 pub fn model_dir_for(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
-    let dir = models_root(app)?.join(id);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("create model dir: {e}"))?;
-    Ok(dir)
+    Ok(model_dir_in(&models_root(app)?, id))
+}
+
+fn model_dir_in(root: &Path, id: &str) -> PathBuf {
+    root.join(id)
 }
 
 /// The memory model to use. A code-only model is never used for memory,
@@ -243,13 +246,16 @@ pub(crate) fn code_model_spec(id: &str) -> Option<atlas_embed::ModelSpec> {
 
 /// Whether every file for `id` exists on disk. Uses the catalog's file list; for an
 /// unknown id (e.g. a legacy/manual dir) falls back to the embedding file triplet.
+/// The directory alone, or the spec written ahead of the weights, is not an install.
 pub fn is_downloaded(app: &AppHandle, id: &str) -> bool {
-    let Ok(dir) = model_dir_for(app, id) else {
-        return false;
-    };
+    model_dir_for(app, id).is_ok_and(|dir| files_present(&dir, id))
+}
+
+fn files_present(dir: &Path, id: &str) -> bool {
+    let present = |f: &str| dir.join(f).is_file();
     match find_entry(id) {
-        Some(e) => e.dest_files().iter().all(|f| dir.join(f).exists()),
-        None => EMBED_FILES.iter().all(|f| dir.join(f).exists()),
+        Some(e) => e.dest_files().into_iter().all(present),
+        None => EMBED_FILES.into_iter().all(present),
     }
 }
 
@@ -280,6 +286,11 @@ pub async fn download_files(
     use futures::StreamExt;
     use tokio::io::AsyncWriteExt;
 
+    // The one place a model's directory comes into being (plus `model_download`,
+    // which writes the spec first).
+    tokio::fs::create_dir_all(dir)
+        .await
+        .map_err(|e| format!("create model dir: {e}"))?;
     let client = reqwest::Client::builder()
         .user_agent("Atlas-IDE")
         .build()
@@ -402,6 +413,9 @@ pub async fn models_list(app: AppHandle) -> Result<Vec<ModelStatus>, String> {
 pub async fn model_download(app: AppHandle, id: String) -> Result<(), String> {
     let entry = find_entry(&id).ok_or_else(|| format!("unknown model '{id}'"))?;
     let dir = model_dir_for(&app, &id)?;
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(|e| format!("create model dir: {e}"))?;
     // A code model's spec goes next to its weights before the download starts
     // (it is not one of `EMBED_FILES`, so it never makes a model count as
     // downloaded on its own).
@@ -446,7 +460,12 @@ pub async fn model_remove(app: AppHandle, id: String) -> Result<(), String> {
         return Err("Can't remove the model that's currently selected.".into());
     }
     let dir = model_dir_for(&app, &id)?;
-    std::fs::remove_dir_all(&dir).map_err(|e| format!("remove {id}: {e}"))?;
+    match std::fs::remove_dir_all(&dir) {
+        Ok(()) => {}
+        // Nothing on disk is already the state removal asks for.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(format!("remove {id}: {e}")),
+    }
     let _ = app.emit("atlas:models-changed", ());
     Ok(())
 }
@@ -576,6 +595,66 @@ mod tests {
         );
         // An id the catalog doesn't know (a manual model dir) is the user's choice; keep it.
         assert_eq!(memory_model_id("my-local-model".into()), "my-local-model");
+    }
+
+    #[test]
+    fn looking_up_a_model_dir_creates_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("models");
+        let dir = model_dir_in(&root, "granite-embedding-small-r2");
+        assert_eq!(dir, root.join("granite-embedding-small-r2"));
+        assert!(
+            !root.exists(),
+            "a path lookup must not create the models root"
+        );
+        // And asking whether it is installed must not create it either.
+        assert!(!files_present(&dir, "granite-embedding-small-r2"));
+        assert!(
+            !dir.exists(),
+            "an installed check must not create the model dir"
+        );
+    }
+
+    #[test]
+    fn an_empty_or_partial_model_dir_is_not_installed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "granite-embedding-small-r2";
+        let dir = model_dir_in(tmp.path(), id);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(!files_present(&dir, id), "an empty dir is not an install");
+
+        // The spec is written before the weights arrive; on its own it is not an install.
+        code_model_spec(id).unwrap().write(&dir).unwrap();
+        std::fs::write(dir.join("config.json"), "{}").unwrap();
+        std::fs::write(dir.join("model.safetensors.part"), "half").unwrap();
+        assert!(
+            !files_present(&dir, id),
+            "a half-finished download is not an install"
+        );
+
+        // A directory where a file belongs is not the file.
+        std::fs::create_dir(dir.join("tokenizer.json")).unwrap();
+        std::fs::write(dir.join("model.safetensors"), "weights").unwrap();
+        assert!(!files_present(&dir, id));
+
+        std::fs::remove_dir(dir.join("tokenizer.json")).unwrap();
+        std::fs::write(dir.join("tokenizer.json"), "{}").unwrap();
+        assert!(
+            files_present(&dir, id),
+            "every model file present is an install"
+        );
+    }
+
+    #[test]
+    fn an_unknown_model_dir_needs_the_embedding_triplet() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = model_dir_in(tmp.path(), "my-local-model");
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(!files_present(&dir, "my-local-model"));
+        for f in EMBED_FILES {
+            std::fs::write(dir.join(f), "x").unwrap();
+        }
+        assert!(files_present(&dir, "my-local-model"));
     }
 
     #[test]

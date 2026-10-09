@@ -13,6 +13,7 @@ import {
   type ModelStatus,
   type DownloadProgress,
 } from "../lib/models-api";
+import { dismiss, readDismissed } from "../lib/code-model-nudge";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 
 interface ModelsState {
@@ -22,6 +23,9 @@ interface ModelsState {
   downloading: Record<string, DownloadProgress>;
   /** model id currently being removed/selected (inline busy). */
   pending: string | null;
+  /** Code models the user waved the composer's download nudge off for. Held
+   *  here, not per pill, so dismissing it in one composer hides it in all. */
+  codeNudgeDismissed: string[];
   actions: {
     init: () => Promise<void>;
     refresh: () => Promise<void>;
@@ -29,6 +33,8 @@ interface ModelsState {
     remove: (id: string) => Promise<void>;
     /** Returns whether a memory re-index is required (embedding switch). */
     select: (id: string) => Promise<boolean>;
+    /** Never suggest downloading code model `id` again (persisted). */
+    dismissCodeNudge: (id: string) => void;
   };
 }
 
@@ -41,6 +47,7 @@ export const useModelsStore = createSelectors(
     loaded: false,
     downloading: {},
     pending: null,
+    codeNudgeDismissed: readDismissed(),
     actions: {
       init: async () => {
         await get().actions.refresh();
@@ -120,6 +127,8 @@ export const useModelsStore = createSelectors(
           set({ pending: null });
         }
       },
+
+      dismissCodeNudge: (id) => set({ codeNudgeDismissed: dismiss(id) }),
     },
   })),
 );

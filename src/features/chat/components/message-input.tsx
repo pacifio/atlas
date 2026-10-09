@@ -76,6 +76,7 @@ import type {
 import { commandRequiresArgs } from "./slash-command-picker";
 import { PlanTasksPill } from "./plan-tasks-pill";
 import { openSettingsSection } from "@/features/settings/lib/open-settings";
+import { CodeModelNudge } from "@/components/code-model-nudge";
 import { ComposerOptionsPill } from "./composer-options-pill";
 import { UsagePill } from "./usage-pill";
 import { composerPillLabelClass } from "./composer-dropup";
@@ -2189,6 +2190,9 @@ export function MessageInput({
                   published catalogue. */}
               {agentType === "atlas-agent" && <EffortPill tabId={tabId} />}
               {agentType === "atlas-agent" && <NativeMemoryPill />}
+              {/* Every agent's semantic_search is keyword-only until the code
+                  model is downloaded; this is where the user can find out. */}
+              {projectPath && <CodeModelNudge labelClassName={composerPillLabelClass("early")} />}
             </div>
             {/* Right side, in this order: the session's usage, the agent's own
                 knobs, then the live
