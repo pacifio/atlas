@@ -120,6 +120,9 @@ pub struct AutoFetchStatus {
     /// right after a successful automatic fetch. `None` everywhere else (a
     /// failure, a manual fetch, the `set_active` snapshot, or no upstream).
     pub behind: Option<u32>,
+    /// How many commits the current branch is ahead of its upstream, measured
+    /// with `behind`. Both non-zero means the branch has diverged.
+    pub ahead: Option<u32>,
     /// The upstream branch's head commit at that same moment — lets the
     /// frontend tell "still behind the same commit" from a new remote head.
     pub remote_head: Option<String>,
@@ -143,6 +146,7 @@ impl Inner {
             last_fetched_at: rec.last_success.map(epoch_ms),
             last_error: rec.last_error,
             behind: None,
+            ahead: None,
             remote_head: None,
         }
     }
@@ -273,9 +277,24 @@ fn fetch(path: &Path) -> Result<(), GitErrorPayload> {
     .map(|_| ())
 }
 
-/// Behind-count and head of the current branch's upstream, or `None` when the
-/// branch has no upstream (git exits 128) or the repo is unreadable.
-fn upstream_position(path: &Path) -> Option<(u32, String)> {
+/// Where the current branch stands against its upstream after a fetch.
+struct UpstreamPosition {
+    ahead: u32,
+    behind: u32,
+    head: String,
+}
+
+/// Parse `rev-list --left-right --count HEAD...@{upstream}`: "<ahead>\t<behind>".
+fn parse_ahead_behind(out: &str) -> Option<(u32, u32)> {
+    let mut parts = out.split_whitespace();
+    let ahead = parts.next()?.parse().ok()?;
+    let behind = parts.next()?.parse().ok()?;
+    Some((ahead, behind))
+}
+
+/// Ahead/behind counts and head of the current branch's upstream, or `None`
+/// when the branch has no upstream (git exits 128) or the repo is unreadable.
+fn upstream_position(path: &Path) -> Option<UpstreamPosition> {
     let read = |args: &[&str]| {
         GitCommand::new(path, args)
             .read_only()
@@ -285,11 +304,18 @@ fn upstream_position(path: &Path) -> Option<(u32, String)> {
             .filter(|o| o.exit_code == 0)
             .map(|o| o.stdout.trim().to_string())
     };
-    let behind = read(&["rev-list", "--count", "HEAD..@{upstream}"])?
-        .parse()
-        .ok()?;
+    let (ahead, behind) = parse_ahead_behind(&read(&[
+        "rev-list",
+        "--left-right",
+        "--count",
+        "HEAD...@{upstream}",
+    ])?)?;
     let head = read(&["rev-parse", "@{upstream}"])?;
-    Some((behind, head))
+    Some(UpstreamPosition {
+        ahead,
+        behind,
+        head,
+    })
 }
 
 /// Fetch `path` in the background if `trigger` makes it due. Returns at once.
@@ -313,9 +339,10 @@ fn maybe_fetch(app: &AppHandle, path: PathBuf, trigger: Trigger) {
         let status = match result {
             Ok(Ok(position)) => {
                 let mut status = state.record_success(&path, SystemTime::now());
-                if let Some((behind, head)) = position {
-                    status.behind = Some(behind);
-                    status.remote_head = Some(head);
+                if let Some(position) = position {
+                    status.behind = Some(position.behind);
+                    status.ahead = Some(position.ahead);
+                    status.remote_head = Some(position.head);
                 }
                 status
             }
@@ -458,5 +485,14 @@ mod tests {
         assert_eq!(ok.last_error, None);
         assert_eq!(ok.last_fetched_at, Some(epoch_ms(at(10))));
         assert_eq!(state.inner.lock().records[path].failures, 0);
+    }
+
+    #[test]
+    fn parses_left_right_counts() {
+        assert_eq!(parse_ahead_behind("3\t1\n"), Some((3, 1)));
+        assert_eq!(parse_ahead_behind("0\t0"), Some((0, 0)));
+        assert_eq!(parse_ahead_behind("3"), None);
+        assert_eq!(parse_ahead_behind(""), None);
+        assert_eq!(parse_ahead_behind("x\t1"), None);
     }
 }

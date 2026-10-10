@@ -1846,7 +1846,13 @@ mod tests {
     fn pull_preference_follows_gits_precedence() {
         use PullPreference::*;
         // (branch.<name>.rebase, pull.rebase, pull.ff) → what a plain pull does.
-        let cases: &[(Option<&str>, Option<&str>, Option<&str>, PullPreference)] = &[
+        type Case<'a> = (
+            Option<&'a str>,
+            Option<&'a str>,
+            Option<&'a str>,
+            PullPreference,
+        );
+        let cases: &[Case] = &[
             (None, None, None, Ask),
             (None, Some("true"), None, Rebase),
             (None, Some("merges"), None, Rebase),

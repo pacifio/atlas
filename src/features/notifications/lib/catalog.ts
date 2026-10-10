@@ -89,6 +89,31 @@ export type NotificationTarget =
   /** One project's git panel (a push / pull / fetch ran there). */
   | { type: "git-panel"; projectId: string; projectName?: string };
 
+/**
+ * A button a notification offers — data only, so events and decisions stay
+ * pure and a banner can carry it across a cold start. The `id` names a
+ * handler registered with `registerNotificationAction`; the same id serves
+ * the toast button and the OS-banner button.
+ */
+export interface NotificationAction {
+  id: string;
+  label: string;
+  /** Rendered as destructive where the surface supports it (OS banners). */
+  destructive?: boolean;
+}
+
+/** Built-in action ids — registered by `deliver.ts`. Feature actions use a
+ *  `<feature>.<verb>` id and are registered by the source that offers them. */
+export const OPEN_ACTION_ID = "open";
+export const RESTART_ACTION_ID = "restart";
+
+/** What a notification offers when its source names no actions: "Open" jumps
+ *  to the target; a staged update restarts into it instead. */
+export function defaultActions(target: NotificationTarget): NotificationAction[] {
+  if (target.type === "app-update") return [{ id: RESTART_ACTION_ID, label: "Restart" }];
+  return [{ id: OPEN_ACTION_ID, label: "Open" }];
+}
+
 /** Targets that live in a chat or terminal tab (and so carry project/org). */
 export type TabTarget = Extract<NotificationTarget, { type: "terminal" | "session" }>;
 export const isTabTarget = (t: NotificationTarget): t is TabTarget =>

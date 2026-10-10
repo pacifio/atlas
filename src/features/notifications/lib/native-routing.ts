@@ -55,7 +55,14 @@ function isTarget(t: unknown): t is NotificationTarget {
  *  button, a malformed or foreign payload). Action buttons are routed by the
  *  features that offer them. */
 export function targetForResponse(r: SystemNotificationResponse): NotificationTarget | null {
-  if (r.actionId !== null || !r.payload) return null;
+  return r.actionId !== null ? null : bannerTarget(r);
+}
+
+/** The target a banner was raised for, whether it was clicked or one of its
+ *  action buttons pressed — what an action handler runs against. Null for a
+ *  malformed or foreign payload. */
+export function bannerTarget(r: SystemNotificationResponse): NotificationTarget | null {
+  if (!r.payload) return null;
   try {
     const parsed: unknown = JSON.parse(r.payload);
     if (typeof parsed !== "object" || parsed === null) return null;

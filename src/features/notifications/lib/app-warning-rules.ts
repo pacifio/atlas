@@ -13,6 +13,7 @@
  *  - config.toml: once per distinct error text; a clean load re-arms it.
  *  - Agent update: every failure speaks (the caller numbers them).
  */
+import { OPEN_ACTION_ID, type NotificationAction } from "./catalog";
 import {
   decideNotification,
   type NotificationDecision,
@@ -92,6 +93,8 @@ export const INITIAL_BEHIND_STATE: BehindWarnState = {
 
 export interface BehindWarning {
   behind: number;
+  /** Local commits the remote lacks; > 0 means the branch has diverged. */
+  ahead: number;
   remoteHead: string;
 }
 
@@ -101,13 +104,14 @@ export function evaluateBehind(
   state: BehindWarnState,
   behind: number,
   remoteHead: string,
+  ahead = 0,
 ): { state: BehindWarnState; warning: BehindWarning | null; resolved: string | null } {
   if (!Number.isFinite(behind) || behind < 0) return { state, warning: null, resolved: null };
   const crossed = state.behind === 0 && behind > 0;
   if (crossed && remoteHead !== state.notifiedHead) {
     return {
       state: { behind, notifiedHead: remoteHead, liveHead: remoteHead },
-      warning: { behind, remoteHead },
+      warning: { behind, ahead: Number.isFinite(ahead) && ahead > 0 ? ahead : 0, remoteHead },
       resolved: null,
     };
   }
@@ -191,22 +195,55 @@ export function decideAutoFetchFailing(
   return decideNotification(event, env, prefs);
 }
 
+/** Opens the project's git panel on the rebase-or-merge prompt. Registered by
+ *  `app-warning-notifier.ts`, which offers it. */
+export const CHOOSE_PULL_ACTION_ID = "git.choose-pull";
+
+/** What a plain pull does on a diverged branch, from git config: the
+ *  `PullPreference` read from `git_pull_preference`. */
+export type DivergedPull = "rebase" | "merge" | "ask";
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+/** Behind only: "Pull to catch up", and Open. Diverged: say so, and — only when
+ *  git config leaves the choice open — offer the rebase-or-merge prompt
+ *  straight from the notification. A saved preference is named instead. */
 export function decideBehind(
   p: ProjectRef,
   branch: string | null,
   w: BehindWarning,
   env: NotificationEnv,
   prefs: NotificationPrefs,
+  pull: DivergedPull = "ask",
 ): NotificationDecision | null {
-  const commits = `${w.behind} new commit${w.behind === 1 ? "" : "s"}`;
-  const event: NotificationEvent = {
-    kind: "git-behind",
-    title: branch ? `${branch} is behind its remote` : "Branch is behind its remote",
-    body: `${commits} on the remote. Pull to catch up.`,
-    subtitle: p.projectActive ? undefined : p.projectName,
-    target: gitTarget(p),
-    dedupeKey: `behind:${p.projectId}:${w.remoteHead}`,
-  };
+  const name = branch ?? "Branch";
+  const diverged = w.ahead > 0;
+  const open: NotificationAction = { id: OPEN_ACTION_ID, label: "Open" };
+  const event: NotificationEvent = diverged
+    ? {
+        kind: "git-behind",
+        title: `${name} has diverged from its remote`,
+        body:
+          `${plural(w.ahead, "local commit")} and ${plural(w.behind, "commit")} on the remote. ` +
+          (pull === "ask"
+            ? "Choose whether to rebase or merge."
+            : `Pulling will ${pull}, per your git config.`),
+        subtitle: p.projectActive ? undefined : p.projectName,
+        target: gitTarget(p),
+        dedupeKey: `behind:${p.projectId}:${w.remoteHead}`,
+        actions:
+          pull === "ask"
+            ? [{ id: CHOOSE_PULL_ACTION_ID, label: "Rebase or merge…" }, open]
+            : [open],
+      }
+    : {
+        kind: "git-behind",
+        title: branch ? `${branch} is behind its remote` : "Branch is behind its remote",
+        body: `${plural(w.behind, "new commit")} on the remote. Pull to catch up.`,
+        subtitle: p.projectActive ? undefined : p.projectName,
+        target: gitTarget(p),
+        dedupeKey: `behind:${p.projectId}:${w.remoteHead}`,
+      };
   return decideNotification(event, env, prefs);
 }
 
