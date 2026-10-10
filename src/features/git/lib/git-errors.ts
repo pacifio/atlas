@@ -7,6 +7,7 @@ export type GitErrorCode =
   | "remote-not-found"
   | "network-error"
   | "non-fast-forward"
+  | "history-rewritten"
   | "force-push-rejected"
   | "protected-branch"
   | "push-rejected"
@@ -53,6 +54,7 @@ export function isGitError(e: unknown): e is GitErrorPayload {
 const DIALOG_CODES: ReadonlySet<GitErrorCode> = new Set([
   "auth-failed",
   "non-fast-forward",
+  "history-rewritten",
   "force-push-rejected",
   "protected-branch",
   "push-rejected",
@@ -68,6 +70,7 @@ const INFO_CODES: ReadonlySet<GitErrorCode> = new Set(["nothing-to-commit", "no-
 const TITLES: Partial<Record<GitErrorCode, string>> = {
   "auth-failed": "Authentication failed",
   "non-fast-forward": "Push rejected — pull first",
+  "history-rewritten": "Push rejected — history was rewritten",
   "force-push-rejected": "Force push rejected",
   "protected-branch": "Branch is protected",
   "push-rejected": "Push rejected",

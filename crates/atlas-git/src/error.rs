@@ -22,7 +22,13 @@ pub enum GitErrorCode {
     NetworkError,
     /// Push rejected because the remote is ahead — pull first.
     NonFastForward,
-    /// `--force-with-lease` rejected (stale info).
+    /// Push rejected because local history was rewritten (rebased, amended):
+    /// every commit only the remote has has an equivalent here, so pulling
+    /// would bring the old copies back and a force-push is the fix. Never
+    /// produced by [`classify`] — the caller inspects the repository.
+    HistoryRewritten,
+    /// `--force-with-lease` rejected (stale info), or `--force-if-includes`
+    /// rejected (remote ref updated since checkout).
     ForcePushRejected,
     /// Remote-side policy: protected branch / required review / GH hooks.
     ProtectedBranch,
@@ -122,6 +128,9 @@ fn patterns() -> &'static [Pattern] {
             p(r"GH013|push declined due to repository rule violations", GitErrorCode::PushRejected),
             p(r"exceeds GitHub's file size limit", GitErrorCode::PushRejected),
             p(r"\(stale info\)", GitErrorCode::ForcePushRejected),
+            // `--force-if-includes`: the remote tip was fetched but never part
+            // of this branch (a background fetch brought it in unseen).
+            p(r"\(remote ref updated since checkout\)", GitErrorCode::ForcePushRejected),
             p(
                 r"Updates were rejected because the (tip of your current branch is behind|remote contains work)",
                 GitErrorCode::NonFastForward,
@@ -277,9 +286,16 @@ pub fn friendly_message(code: GitErrorCode, files: &[String], hint: Option<&str>
         GitErrorCode::NonFastForward => {
             "The remote has commits you don't have yet. Pull before pushing.".into()
         }
+        GitErrorCode::HistoryRewritten => {
+            "Your commits were rewritten (rebased or amended) after they were pushed, so the \
+             remote still has the old copies. Pulling would bring those back; force-push to \
+             replace them."
+                .into()
+        }
         GitErrorCode::ForcePushRejected => {
-            "The force push was rejected — the remote branch moved since you last fetched. \
-             Fetch and review before forcing again."
+            "The force push was rejected — the remote branch has commits this branch never \
+             had, so forcing would discard someone else's work. Pull and review before \
+             forcing again."
                 .into()
         }
         GitErrorCode::ProtectedBranch => {
@@ -419,6 +435,9 @@ mod tests {
         let stale =
             " ! [rejected]        main -> main (stale info)\nerror: failed to push some refs\n";
         assert_eq!(classify(stale, ""), GitErrorCode::ForcePushRejected);
+
+        let not_included = " ! [rejected]        main -> main (remote ref updated since checkout)\nerror: failed to push some refs\nhint: Updates were rejected because the tip of the remote-tracking branch has\n";
+        assert_eq!(classify(not_included, ""), GitErrorCode::ForcePushRejected);
 
         let protected =
             "remote: error: GH006: Protected branch update failed for refs/heads/main.\n";

@@ -547,9 +547,47 @@ pub async fn git_push(
     tokio::task::spawn_blocking(move || {
         let args = push_args(force_with_lease, follow_tags, remote.as_deref());
         run_remote_op(&app, &path, "push", op_id, &args)
+            .map_err(|e| explain_rejection(&path, e, &[]))
     })
     .await
     .map_err(join_err)?
+}
+
+/// A non-fast-forward rejection is one of two things, and they want opposite
+/// fixes: the remote has work you don't (pull), or you rewrote commits you
+/// had already pushed (force-push — pulling would merge the old copies back
+/// in). Recode the second as `HistoryRewritten`. `envs` is for the tests.
+fn explain_rejection(path: &str, e: GitErrorPayload, envs: &[(&str, &str)]) -> GitErrorPayload {
+    // "(fetch first)" means the remote tip is not even here: unknown work.
+    if e.code != GitErrorCode::NonFastForward
+        || !e.raw_stderr.contains("(non-fast-forward)")
+        || !history_rewritten(path, envs)
+    {
+        return e;
+    }
+    GitErrorPayload {
+        code: GitErrorCode::HistoryRewritten,
+        message: atlas_git::error::friendly_message(GitErrorCode::HistoryRewritten, &[], None),
+        ..e
+    }
+}
+
+/// The upstream has commits HEAD lacks, and every one of them has a
+/// patch-equivalent commit on HEAD (`--cherry-pick`): the divergence is our
+/// own commits, rewritten. A stale `@{upstream}` can only make this say yes
+/// wrongly when the remote moved since — and `--force-with-lease` then
+/// refuses, so the force-push it leads to stays safe.
+fn history_rewritten(path: &str, envs: &[(&str, &str)]) -> bool {
+    let count = |extra: &[&str]| {
+        let mut args = vec!["rev-list", "--count", "--right-only"];
+        args.extend_from_slice(extra);
+        args.push("HEAD...@{upstream}");
+        read_value(path, &args, envs).and_then(|n| n.parse::<u32>().ok())
+    };
+    matches!(
+        (count(&[]), count(&["--cherry-pick"])),
+        (Some(behind), Some(0)) if behind > 0
+    )
 }
 
 /// `git push` arguments for [`git_push`]. No refspec: git pushes the current
@@ -558,7 +596,11 @@ pub async fn git_push(
 fn push_args(force_with_lease: bool, follow_tags: bool, remote: Option<&str>) -> Vec<&str> {
     let mut args = vec!["push", "--progress"];
     if force_with_lease {
-        args.push("--force-with-lease");
+        // The lease alone compares against the remote-tracking ref, which
+        // background auto-fetch moves without the user seeing it — so a
+        // teammate's commit fetched a minute ago would pass. `--force-if-includes`
+        // also requires that tip to have been part of this branch (its reflog).
+        args.extend(["--force-with-lease", "--force-if-includes"]);
     }
     if follow_tags {
         args.push("--follow-tags");
@@ -1722,6 +1764,7 @@ mod tests {
                 "push",
                 "--progress",
                 "--force-with-lease",
+                "--force-if-includes",
                 "--follow-tags",
                 "upstream"
             ]
@@ -1787,10 +1830,11 @@ mod tests {
     }
 
     /// The remote moved on: a plain push is rejected as non-fast-forward, a
-    /// lease against the stale remote-tracking ref is rejected as stale, and
-    /// the lease succeeds once the tracking ref has been fetched.
+    /// lease against the stale remote-tracking ref is rejected as stale, a
+    /// fetch alone does not make forcing safe, and forcing succeeds once
+    /// their commit has been part of this branch.
     #[test]
-    fn a_diverged_push_is_rejected_until_forced_with_a_fresh_lease() {
+    fn a_diverged_push_is_forced_only_over_commits_this_branch_has_seen() {
         let dir = Scratch::new();
         let (repo, remote) = published(&dir.0);
 
@@ -1819,7 +1863,25 @@ mod tests {
             "a stale lease must not overwrite"
         );
 
+        // Fetched but never integrated — what background auto-fetch leaves
+        // behind. The lease alone would now pass; `--force-if-includes` holds.
         repo.git(&["fetch", "-q", "origin"]);
+        let err = hermetic(&repo.path, &push_args(true, false, None)).unwrap_err();
+        assert_eq!(
+            err.code,
+            GitErrorCode::ForcePushRejected,
+            "{}",
+            err.raw_stderr
+        );
+        assert_eq!(
+            remote_main(&remote),
+            theirs,
+            "an unseen fetch must not overwrite"
+        );
+
+        // Once their commit has been part of this branch, forcing is a choice.
+        repo.git(&["merge", "-q", "-X", "ours", "origin/main", "-m", "merge"]);
+        repo.git(&["reset", "-q", "--hard", &ours]);
         hermetic(&repo.path, &push_args(true, false, None)).unwrap();
         assert_eq!(remote_main(&remote), ours);
     }
@@ -1888,6 +1950,46 @@ mod tests {
         other.git(&["push", "-q", "origin", "HEAD:main"]);
         repo.commit("ours.txt", "ours\n", "ours");
         (repo, theirs)
+    }
+
+    /// A push after amending a pushed commit is `HistoryRewritten`; a push
+    /// behind someone else's new commit stays `NonFastForward`; and the
+    /// force-push the first one offers then goes through.
+    #[test]
+    fn a_rejected_push_tells_a_rewrite_from_new_remote_work() {
+        let dir = Scratch::new();
+        let (repo, _) = published(&dir.0);
+        repo.commit("b.txt", "b\n", "second");
+        repo.git(&["push", "-q"]);
+        repo.git(&["commit", "-q", "--amend", "-m", "second, reworded"]);
+        let push = |repo: &Repo, force| {
+            hermetic(&repo.path, &push_args(force, false, None))
+                .map_err(|e| explain_rejection(&repo.path, e, HERMETIC_ENV))
+        };
+        let rewritten = push(&repo, false).unwrap_err();
+        assert_eq!(
+            rewritten.code,
+            GitErrorCode::HistoryRewritten,
+            "{}",
+            rewritten.raw_stderr
+        );
+        push(&repo, true).expect("force-with-lease after a rewrite");
+
+        let dir = Scratch::new();
+        let (repo, _) = diverged(&dir.0);
+        repo.git(&["fetch", "-q"]);
+        assert_eq!(
+            push(&repo, false).unwrap_err().code,
+            GitErrorCode::NonFastForward
+        );
+
+        // Not fetched: the remote's tip is unknown here ("fetch first").
+        let dir = Scratch::new();
+        let (repo, _) = diverged(&dir.0);
+        assert_eq!(
+            push(&repo, false).unwrap_err().code,
+            GitErrorCode::NonFastForward
+        );
     }
 
     fn contains(repo: &Repo, commit: &str) -> bool {
