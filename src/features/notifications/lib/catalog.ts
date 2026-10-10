@@ -100,6 +100,20 @@ export interface NotificationAction {
   label: string;
   /** Rendered as destructive where the surface supports it (OS banners). */
   destructive?: boolean;
+  /** What the handler needs beyond the target (which agent to update, say).
+   *  Strings only: it is persisted with center items and rides in the OS
+   *  banner's payload, so a press after a cold start still has it. */
+  args?: NotificationActionArgs;
+}
+
+export type NotificationActionArgs = Record<string, string>;
+
+/** `args` if it is a flat string record, else undefined — read back from
+ *  storage and banner payloads, which outlive the code that wrote them. */
+export function cleanActionArgs(args: unknown): NotificationActionArgs | undefined {
+  if (typeof args !== "object" || args === null || Array.isArray(args)) return undefined;
+  const entries = Object.entries(args).filter(([, v]) => typeof v === "string");
+  return entries.length ? Object.fromEntries(entries) : undefined;
 }
 
 /** Built-in action ids — registered by `deliver.ts`. Feature actions use a

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { NotificationTarget } from "./catalog";
-import { bannerTarget, encodeBannerPayload, targetForResponse } from "./native-routing";
+import {
+  bannerActionArgs,
+  bannerTarget,
+  encodeBannerPayload,
+  targetForResponse,
+} from "./native-routing";
 
 const click = (payload: string | null, actionId: string | null = null) => ({
   tag: "t",
@@ -75,5 +80,34 @@ describe("bannerTarget", () => {
     expect(bannerTarget(click(null, "x"))).toBeNull();
     expect(bannerTarget(click("{", "x"))).toBeNull();
     expect(bannerTarget(click('{"target":{"type":"nope"}}', "x"))).toBeNull();
+  });
+});
+
+describe("bannerActionArgs", () => {
+  const target: NotificationTarget = { type: "settings", section: "agents" };
+  const payload = encodeBannerPayload(target, undefined, [
+    { id: "agents.retry-update", label: "Retry", args: { pluginId: "cursor" } },
+    { id: "open", label: "Open" },
+  ]);
+
+  it("returns the pressed button's args", () => {
+    expect(bannerActionArgs(click(payload, "agents.retry-update"))).toEqual({ pluginId: "cursor" });
+    expect(bannerTarget(click(payload, "agents.retry-update"))).toEqual(target);
+  });
+
+  it("is undefined for a plain click, a button without args, or a bad payload", () => {
+    expect(bannerActionArgs(click(payload))).toBeUndefined();
+    expect(bannerActionArgs(click(payload, "open"))).toBeUndefined();
+    expect(bannerActionArgs(click("{", "x"))).toBeUndefined();
+    expect(bannerActionArgs(click('{"args":{"x":{"a":1}}}', "x"))).toBeUndefined();
+  });
+
+  it("leaves the payload without args when no action has any", () => {
+    expect(
+      JSON.parse(encodeBannerPayload(target, undefined, [{ id: "open", label: "Open" }])),
+    ).toEqual({
+      v: 1,
+      target,
+    });
   });
 });

@@ -14,3 +14,10 @@ export async function isDiverged(path: string): Promise<boolean> {
   const snap = await invoke<GitSnapshotWire | null>("git_snapshot", { path });
   return !!snap?.isRepo && snap.ahead > 0 && snap.behind > 0;
 }
+
+/** Fetch `path`'s remotes now. A success resets the auto-fetch backoff and
+ *  emits `atlas:git-autofetch`, which resolves an auto-fetch warning. Rejects
+ *  with the `GitErrorPayload` on failure. */
+export async function fetchRemote(path: string): Promise<void> {
+  await invoke("git_fetch", { path, opId: null });
+}

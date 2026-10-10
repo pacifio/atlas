@@ -3,6 +3,8 @@ import {
   AUTOFETCH_FAIL_THRESHOLD,
   configErrorDedupeKey,
   decideAgentUpdateFailed,
+  RETRY_AGENT_UPDATE_ACTION_ID,
+  RETRY_FETCH_ACTION_ID,
   decideAutoFetchFailing,
   CHOOSE_PULL_ACTION_ID,
   decideBehind,
@@ -228,6 +230,15 @@ describe("decisions", () => {
     expect(other.subtitle).toBe("Atlas");
   });
 
+  it("auto-fetch: offers Retry first, then Open", () => {
+    const w = { episode: 1, failures: 3, error: "Authentication failed" };
+    const d = decideAutoFetchFailing(project, w, env(), {})!;
+    expect(d.actions).toEqual([
+      { id: RETRY_FETCH_ACTION_ID, label: "Retry" },
+      { id: "open", label: "Open" },
+    ]);
+  });
+
   it("behind: keyed by the remote head, pluralises, offers only Open", () => {
     const d = decideBehind(project, "main", { behind: 1, ahead: 0, remoteHead: "abc" }, env(), {})!;
     expect(d.title).toBe("main is behind its remote");
@@ -277,6 +288,10 @@ describe("decisions", () => {
     expect(d.title).toBe("Cursor couldn't update to v1.2.0");
     expect(d.body).toBe("EACCES");
     expect(d.target).toEqual({ type: "settings", section: "agents" });
+    expect(d.actions).toEqual([
+      { id: RETRY_AGENT_UPDATE_ACTION_ID, label: "Retry", args: { pluginId: "cursor" } },
+      { id: "open", label: "Open settings" },
+    ]);
     expect(d.dedupeKey).not.toBe(
       decideAgentUpdateFailed(
         { pluginId: "cursor", name: "Cursor", version: "1.2.0", error: "EACCES", seq: 2 },

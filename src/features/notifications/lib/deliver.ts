@@ -46,7 +46,12 @@ import {
   type NotificationTarget,
 } from "./catalog";
 import type { NotificationDecision } from "./decide";
-import { bannerTarget, encodeBannerPayload, permissionForResponse } from "./native-routing";
+import {
+  bannerActionArgs,
+  bannerTarget,
+  encodeBannerPayload,
+  permissionForResponse,
+} from "./native-routing";
 import { registerNotificationAction, runNotificationAction } from "./notification-actions";
 import type { SystemNotificationAction } from "./notifier-api";
 import { answerPermissionFromBanner } from "./permission-actions";
@@ -109,14 +114,20 @@ setNativeResponseHandler((response) => {
     return;
   }
   const target = bannerTarget(response);
-  if (target) void runNotificationAction(response.actionId ?? OPEN_ACTION_ID, { target });
+  if (!target) return;
+  void runNotificationAction(response.actionId ?? OPEN_ACTION_ID, {
+    target,
+    args: bannerActionArgs(response),
+  });
 });
 
 /** Banner buttons: a permission request's own, else the decision's actions
  *  minus "Open" — a plain click on the banner already opens. */
 function bannerActions(d: NotificationDecision): SystemNotificationAction[] | undefined {
   if (d.native.actions) return d.native.actions;
-  const actions = d.actions.filter((a) => a.id !== OPEN_ACTION_ID);
+  const actions = d.actions
+    .filter((a) => a.id !== OPEN_ACTION_ID)
+    .map(({ id, label, destructive }) => ({ id, label, destructive }));
   return actions.length ? actions : undefined;
 }
 
@@ -130,6 +141,7 @@ function toastButtons(d: NotificationDecision) {
           kind: d.kind,
           target: d.target,
           dedupeKey: d.dedupeKey,
+          args: a.args,
         }),
     };
   return { action: button(d.actions[0]), cancel: button(d.actions[1]) };
@@ -175,7 +187,7 @@ async function showBanner(d: NotificationDecision, agentType: string | undefined
     urgency: d.tier === "needs-you" ? "high" : "normal",
     // Cut to the backend's capabilities by `showNativeNotification`.
     actions: bannerActions(d),
-    payload: encodeBannerPayload(d.target, d.native.permission),
+    payload: encodeBannerPayload(d.target, d.native.permission, d.actions),
   });
 }
 

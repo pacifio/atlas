@@ -5,7 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { logEvent } from "@/features/log/lib/log";
 import type { GitErrorPayload } from "../lib/git-errors";
-import { pullPreference } from "../lib/git-pull-api";
+import { pullPreference } from "../lib/git-remote-api";
 
 /** Background-fetch outcome for one project (`atlas:git-autofetch`). */
 /** Mirror of `PullStrategy` in `commands/git_ops.rs`: how a pull reconciles a

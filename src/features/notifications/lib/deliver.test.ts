@@ -124,6 +124,36 @@ describe("deliverNotification", () => {
     expect(h.showNative.mock.calls[1][0].actions).toBeUndefined();
   });
 
+  it("hands an action's args to its handler from the toast", async () => {
+    const retry = vi.fn();
+    const off = registerNotificationAction("agents.retry-update", retry);
+    deliverNotification(
+      decision({
+        actions: [{ id: "agents.retry-update", label: "Retry", args: { pluginId: "cursor" } }],
+      }),
+    );
+    h.toast.mock.calls[0][1].action.onClick();
+    await flush();
+    expect(retry).toHaveBeenCalledWith(expect.objectContaining({ args: { pluginId: "cursor" } }));
+    off();
+  });
+
+  it("carries action args in the banner payload, not on its buttons", () => {
+    deliverNotification(
+      decision({
+        actions: [
+          { id: "agents.retry-update", label: "Retry", args: { pluginId: "cursor" } },
+          { id: "open", label: "Open" },
+        ],
+      }),
+    );
+    const req = h.showNative.mock.calls[0][0];
+    expect(req.actions).toEqual([
+      { id: "agents.retry-update", label: "Retry", destructive: undefined },
+    ]);
+    expect(JSON.parse(req.payload).args).toEqual({ "agents.retry-update": { pluginId: "cursor" } });
+  });
+
   it("gives the center item every action but Open (the card itself opens)", () => {
     deliverNotification(decision());
     expect(h.add.mock.calls[0][0].actions).toEqual([

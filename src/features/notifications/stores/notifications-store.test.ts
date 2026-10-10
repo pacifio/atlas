@@ -211,6 +211,18 @@ describe("item actions", () => {
     expect(cleanActions("nope")).toBeUndefined();
   });
 
+  it("cleanActions keeps an action's string args and drops anything else in them", () => {
+    expect(
+      cleanActions([
+        { id: "agents.retry-update", label: "Retry", args: { pluginId: "cursor", n: 1 } },
+        { id: "b", label: "B", args: "nope" },
+      ]),
+    ).toEqual([
+      { id: "agents.retry-update", label: "Retry", args: { pluginId: "cursor" } },
+      { id: "b", label: "B" },
+    ]);
+  });
+
   it("resolving an item marks it read and drops its actions; reading it does not", () => {
     addGit([{ id: "git.choose-pull", label: "Rebase or merge…" }]);
     const { actions } = useNotificationsStore.getState();

@@ -6,8 +6,14 @@
  * state machines live in `app-warning-rules.ts`; this file holds their state
  * and performs. Nothing here throws.
  */
+import { toast } from "sonner";
+import {
+  hydrateAgentRegistry,
+  useAgentRegistryStore,
+} from "@/features/agents/stores/agent-registry-store";
 import { onAutoFetch } from "@/features/git/lib/auto-fetch-events";
-import { isDiverged, pullPreference } from "@/features/git/lib/git-pull-api";
+import { handleGitError } from "@/features/git/lib/git-errors";
+import { fetchRemote, isDiverged, pullPreference } from "@/features/git/lib/git-remote-api";
 import { openGitPanel } from "@/features/git/lib/open-git-panel";
 import { useGitStore } from "@/features/git/stores/git-store";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
@@ -33,6 +39,8 @@ import {
   INITIAL_AUTOFETCH_STATE,
   INITIAL_BEHIND_STATE,
   INITIAL_CONFIG_STATE,
+  RETRY_AGENT_UPDATE_ACTION_ID,
+  RETRY_FETCH_ACTION_ID,
   type AutoFetchWarnState,
   type BehindWarnState,
   type ConfigWarnState,
@@ -77,6 +85,9 @@ function projectFor(path: string): (ProjectRef & { path: string }) | null {
   };
 }
 
+const projectPath = (projectId: string) =>
+  useProjectStore.getState().projects.find((p) => p.id === projectId)?.path;
+
 function gitPanelShowing(p: ProjectRef): boolean {
   const rp = useLayoutStore.getState().rightPanel;
   return (
@@ -102,9 +113,32 @@ registerNotificationAction(
   {
     stillApplies: ({ target }) => {
       if (target.type !== "git-panel") return false;
-      const path = useProjectStore.getState().projects.find((p) => p.id === target.projectId)?.path;
+      const path = projectPath(target.projectId);
       return path ? isDiverged(path) : false;
     },
+  },
+);
+
+// "Retry" on an auto-fetch warning: fetch now. A success resolves the warning
+// (Rust reports it as an auto-fetch outcome); a failure says why, the way the
+// Fetch button does.
+registerNotificationAction(
+  RETRY_FETCH_ACTION_ID,
+  async ({ target }) => {
+    if (target.type !== "git-panel") return;
+    const path = projectPath(target.projectId);
+    if (!path) return;
+    const id = toast.loading(`Fetching ${target.projectName}…`);
+    try {
+      await fetchRemote(path);
+      toast.success(`Fetched ${target.projectName}`, { id });
+    } catch (e) {
+      toast.dismiss(id);
+      handleGitError(e);
+    }
+  },
+  {
+    stillApplies: ({ target }) => target.type === "git-panel" && !!projectPath(target.projectId),
   },
 );
 
@@ -216,6 +250,38 @@ function noteConfig(error: string | null): void {
 // --- Agent updates --------------------------------------------------------
 
 let updateSeq = 0;
+
+/** The registry's entry for `pluginId`, reading the registry first if this
+ *  run has not (a banner pressed after a cold start). */
+async function registryEntry(pluginId: string) {
+  if (!useAgentRegistryStore.getState().hydrated) await hydrateAgentRegistry();
+  return useAgentRegistryStore.getState().registryEntries.find((e) => e.id === pluginId);
+}
+
+// "Retry" on a failed agent update: update again, to whatever version the
+// registry offers now — only while the agent is installed, still behind, and
+// not already updating (the background pass may have got there first).
+registerNotificationAction(
+  RETRY_AGENT_UPDATE_ACTION_ID,
+  async ({ args }) => {
+    const entry = args?.pluginId ? await registryEntry(args.pluginId) : undefined;
+    if (!entry) return;
+    // Lazy: agent-update imports this module to report failures.
+    const { updateAgent } = await import("@/features/agents/lib/agent-update");
+    await updateAgent(entry.id, entry.name, entry.version);
+  },
+  {
+    stillApplies: async ({ args }) => {
+      if (!args?.pluginId) return false;
+      const entry = await registryEntry(args.pluginId);
+      return (
+        !!entry?.installed &&
+        entry.updateAvailable &&
+        !useAgentRegistryStore.getState().updatePhases[args.pluginId]
+      );
+    },
+  },
+);
 
 /** An agent update failed (background install or the Update button). */
 export function notifyAgentUpdateFailed(f: {

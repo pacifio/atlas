@@ -189,7 +189,7 @@ function CardActions({ n, onRun }: { n: AppNotification; onRun: () => void }) {
           onClick={(e) => {
             e.stopPropagation();
             onRun();
-            void runNotificationAction(a.id, { kind: n.kind, target });
+            void runNotificationAction(a.id, { kind: n.kind, target, args: a.args });
           }}
           onKeyDown={(e) => e.stopPropagation()}
           className="h-6 px-2 rounded-md border border-border text-2xs font-medium text-foreground bg-[var(--card)] hover:bg-element-active transition-colors"
