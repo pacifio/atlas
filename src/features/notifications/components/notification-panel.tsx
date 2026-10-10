@@ -145,7 +145,8 @@ function NotificationCard({ n }: { n: AppNotification }) {
         <div className="flex items-center gap-2">
           {!n.read && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--primary)]" />}
           <span className="truncate text-sm font-medium text-foreground">{n.title}</span>
-          <span className="ml-auto shrink-0 text-3xs text-muted-foreground tabular-nums">
+          {/* Gives way to the Dismiss button, which takes its place on hover. */}
+          <span className="ml-auto shrink-0 text-3xs text-muted-foreground tabular-nums transition-opacity group-hover:opacity-0 group-has-[[data-dismiss]:focus-visible]:opacity-0">
             {timeAgo(n.timestamp, { suffix: true })}
           </span>
         </div>
@@ -160,11 +161,13 @@ function NotificationCard({ n }: { n: AppNotification }) {
       <Hint label="Dismiss">
         <button
           type="button"
+          data-dismiss
+          aria-label="Dismiss"
           onClick={(e) => {
             e.stopPropagation();
             dismiss(n.id);
           }}
-          className="absolute right-1.5 top-1.5 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 grid h-5 w-5 place-items-center rounded-md text-muted-foreground hover:text-foreground hover:bg-element-active transition-opacity"
+          className="absolute right-2 top-2.5 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 grid h-5 w-5 place-items-center rounded-md text-muted-foreground hover:text-foreground hover:bg-element-active transition-opacity"
         >
           <X size={11} />
         </button>
