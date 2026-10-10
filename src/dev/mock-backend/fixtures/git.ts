@@ -37,6 +37,7 @@ import type {
   GitSnapshotWire,
   InProgress,
   MergePreview,
+  PullPreference,
   RemoteInfo,
   StashEntry,
 } from "@/features/git/stores/git-store";
@@ -1051,6 +1052,7 @@ export interface GitResponses {
   git_commit_v2: Unread;
   git_push: Unread;
   git_pull: Unread;
+  git_pull_preference: PullPreference;
   git_fetch: Unread;
   git_publish_branch: Unread;
   git_checkout: Unread;
@@ -1413,16 +1415,32 @@ export const gitHandlers: TypedHandlers<GitResponses> = {
       return `To ${remotes[0]?.url ?? "origin"}\n   ${shortSha(HEAD().sha)}..${shortSha(HEAD().sha)}  ${branch.name} -> ${branch.name}\n`;
     }),
 
-  git_pull: ({ rebase, opId }) =>
+  // A fresh install: no `pull.rebase`, so a diverged pull asks.
+  git_pull_preference: (): PullPreference => "ask",
+
+  git_pull: ({ strategy = "default", opId }) =>
     runOp("pull", opId, FETCH_STEPS, (): string => {
       const branch = currentBranch();
       if (!branch.upstream) {
         throw fail("no-upstream", `There is no tracking information for the current branch.`);
       }
       if (branch.behind === 0) return "Already up to date.\n";
+      // Diverged with no strategy: what real git does when `pull.rebase` is
+      // unset — the panel asks up front, so this is the fallback path.
+      if (strategy === "default" && branch.ahead > 0) {
+        throw fail(
+          "divergent-branches",
+          "Your branch and the remote both have new commits. Choose whether to rebase your commits on top of the remote's or merge the two.",
+          {
+            rawStderr:
+              "hint: You have divergent branches and need to specify how to reconcile them.\nfatal: Need to specify how to reconcile divergent branches.\n",
+            command: "git pull --progress",
+          },
+        );
+      }
       const incoming = branch.behind;
       branch.behind = 0;
-      if (rebase || branch.ahead === 0) {
+      if (strategy === "rebase" || branch.ahead === 0) {
         // Fast-forward / rebase: the upstream commit just lands on the lane,
         // and the remote ref sits on it with ours.
         const pulled = addCommit({

@@ -7,6 +7,19 @@ import { logEvent } from "@/features/log/lib/log";
 import type { GitErrorPayload } from "../lib/git-errors";
 
 /** Background-fetch outcome for one project (`atlas:git-autofetch`). */
+/** Mirror of `PullStrategy` in `commands/git_ops.rs`: how a pull reconciles a
+ *  branch that diverged from its upstream. `default` defers to git config. */
+export type PullStrategy = "default" | "rebase" | "merge";
+
+/** Mirror of `PullPreference`: what a plain pull does on a diverged branch
+ *  given git config — `ask` when git would refuse (nothing set, or
+ *  `pull.ff=only`). */
+export type PullPreference = "rebase" | "merge" | "ask";
+
+/** Why the rebase-or-merge choice is open: the branch is known to have
+ *  diverged before pulling, or a pull just failed with `divergent-branches`. */
+export type PullChoice = { kind: "diverged" } | { kind: "failed"; error: GitErrorPayload };
+
 export interface AutoFetchStatus {
   project: string;
   /** Epoch ms of the last successful fetch this session. */
@@ -310,6 +323,8 @@ interface GitState {
   activeOp: ActiveGitOp | null;
   /** Typed git error currently shown in the error dialog. */
   errorDialog: GitErrorPayload | null;
+  /** Open rebase-or-merge prompt for a diverged pull, if any. */
+  pullChoice: PullChoice | null;
   /** Background-fetch status per project path. */
   autoFetch: Record<string, AutoFetchStatus>;
 }
@@ -327,6 +342,8 @@ interface GitActions {
     refreshStatusNow: (path?: string) => Promise<void>;
     showErrorDialog: (payload: GitErrorPayload) => void;
     dismissErrorDialog: () => void;
+    showPullChoice: (choice: PullChoice) => void;
+    dismissPullChoice: () => void;
     loadLog: (path: string) => Promise<void>;
     loadDiff: () => Promise<void>;
     listBranches: () => Promise<void>;
@@ -366,7 +383,9 @@ interface GitActions {
     /** Tell the auto-fetch scheduler which project this window shows (null:
      *  none). Fetches it if due and seeds its status. */
     setAutoFetchProject: (path: string | null) => Promise<void>;
-    pull: (rebase: boolean) => Promise<void>;
+    pull: (strategy?: PullStrategy) => Promise<void>;
+    /** Read git config to predict a plain pull on a diverged branch. */
+    pullPreference: () => Promise<PullPreference>;
     push: (forceWithLease?: boolean, followTags?: boolean) => Promise<void>;
     publishBranch: () => Promise<void>;
     remoteAdd: (name: string, url: string) => Promise<void>;
@@ -410,6 +429,7 @@ export const useGitStore = createSelectors(
         inProgress: null,
         activeOp: null,
         errorDialog: null,
+        pullChoice: null,
         autoFetch: {},
         actions: {
           loadStatus: async (path) => {
@@ -464,6 +484,14 @@ export const useGitStore = createSelectors(
           dismissErrorDialog: () =>
             set((s) => {
               s.errorDialog = null;
+            }),
+          showPullChoice: (choice) =>
+            set((s) => {
+              s.pullChoice = choice;
+            }),
+          dismissPullChoice: () =>
+            set((s) => {
+              s.pullChoice = null;
             }),
           loadLog: async (path) => {
             try {
@@ -710,10 +738,18 @@ export const useGitStore = createSelectors(
               s.autoFetch[status.project] = status;
             });
           },
-          pull: async (rebase) => {
+          pull: async (strategy = "default") => {
             const p = repo();
             if (!p) return;
-            await invoke("git_pull", { path: p, rebase, remote: null, opId: newOpId() });
+            await invoke("git_pull", { path: p, strategy, remote: null, opId: newOpId() });
+          },
+          pullPreference: async () => {
+            const p = repo();
+            if (!p) return "ask";
+            // An unanswered read (old backend, mock) falls back to asking.
+            return (
+              (await invoke<PullPreference | null>("git_pull_preference", { path: p })) ?? "ask"
+            );
           },
           push: async (forceWithLease = false, followTags = false) => {
             const p = repo();

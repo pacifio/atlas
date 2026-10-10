@@ -32,6 +32,9 @@ pub enum GitErrorCode {
     RebaseConflicts,
     /// `refusing to merge unrelated histories`.
     UnrelatedHistories,
+    /// Pull on a branch that has diverged from its upstream with no strategy
+    /// to reconcile: no `pull.rebase` config (or `pull.ff=only`) and no flag.
+    DivergentBranches,
     /// Checkout/merge/pull would clobber local edits; `files` lists them.
     LocalChangesOverwritten,
     /// Operation needs a clean tree ("commit or stash them").
@@ -160,6 +163,12 @@ fn patterns() -> &'static [Pattern] {
             p(
                 r"refusing to merge unrelated histories",
                 GitErrorCode::UnrelatedHistories,
+            ),
+            // No `pull.rebase` set → "need to specify"; `pull.ff=only` →
+            // "not possible to fast-forward". Same situation, two wordings.
+            p(
+                r"Need to specify how to reconcile divergent branches|fatal: Not possible to fast-forward, aborting",
+                GitErrorCode::DivergentBranches,
             ),
             p(
                 r"Your local changes to the following files would be overwritten",
@@ -290,6 +299,11 @@ pub fn friendly_message(code: GitErrorCode, files: &[String], hint: Option<&str>
         GitErrorCode::UnrelatedHistories => {
             "These branches have unrelated histories and can't be merged.".into()
         }
+        GitErrorCode::DivergentBranches => {
+            "Your branch and the remote both have new commits. Choose whether to rebase your \
+             commits on top of the remote's or merge the two."
+                .into()
+        }
         GitErrorCode::LocalChangesOverwritten => {
             let n = files.len();
             if n == 0 {
@@ -409,6 +423,15 @@ mod tests {
         let protected =
             "remote: error: GH006: Protected branch update failed for refs/heads/main.\n";
         assert_eq!(classify(protected, ""), GitErrorCode::ProtectedBranch);
+    }
+
+    #[test]
+    fn classifies_divergent_pull_in_both_wordings() {
+        let unset = "hint: You have divergent branches and need to specify how to reconcile them.\nhint: You can do so by running one of the following commands sometime before\nhint: your next pull:\nhint:\nhint:   git config pull.rebase false  # merge\nfatal: Need to specify how to reconcile divergent branches.\n";
+        assert_eq!(classify(unset, ""), GitErrorCode::DivergentBranches);
+
+        let ff_only = "hint: Diverging branches can't be fast-forwarded, you need to either:\nhint:\nhint: \tgit merge --no-ff\nhint:\nhint: or:\nhint:\nhint: \tgit rebase\nfatal: Not possible to fast-forward, aborting.\n";
+        assert_eq!(classify(ff_only, ""), GitErrorCode::DivergentBranches);
     }
 
     #[test]
