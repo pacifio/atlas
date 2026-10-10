@@ -22,14 +22,18 @@ import {
   type ResolvedEvent,
 } from "./resolve-rules";
 
-function applyClearPlan(plan: ClearPlan): void {
+/** `resolved`: the thing itself is settled (not merely looked at), so the
+ *  matching center items also lose their action buttons. */
+function applyClearPlan(plan: ClearPlan, resolved: boolean): void {
   if (isEmptyPlan(plan)) return;
   for (const id of plan.toastIds) toast.dismiss(id);
   for (const tag of plan.tags) removeNativeNotification(tag);
   for (const group of plan.groups) removeNativeNotificationGroup(group);
   const store = useNotificationsStore.getState();
   if (plan.markRead.length > 0) {
-    store.actions.markReadWhere((i) => matchesScope(i, plan.markRead));
+    const match = (i: Parameters<typeof matchesScope>[0]) => matchesScope(i, plan.markRead);
+    if (resolved) store.actions.resolveWhere(match);
+    else store.actions.markReadWhere(match);
   }
   setDockBadge(useNotificationsStore.getState().items.filter((i) => !i.read).length);
 }
@@ -37,7 +41,7 @@ function applyClearPlan(plan: ClearPlan): void {
 /** A notification no longer applies. Never throws. */
 export function clearResolved(e: ResolvedEvent): void {
   try {
-    applyClearPlan(planResolved(e, nativeCapabilities()));
+    applyClearPlan(planResolved(e, nativeCapabilities()), true);
   } catch (err) {
     console.warn("notification clear failed:", err);
   }
@@ -46,7 +50,7 @@ export function clearResolved(e: ResolvedEvent): void {
 /** The user brought a thread, terminal or conversation on screen. Never throws. */
 export function clearOpened(src: OpenedSource): void {
   try {
-    applyClearPlan(planOpened(src, nativeCapabilities()));
+    applyClearPlan(planOpened(src, nativeCapabilities()), false);
   } catch (err) {
     console.warn("notification clear failed:", err);
   }

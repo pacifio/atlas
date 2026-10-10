@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { NotificationTarget } from "./catalog";
-import { encodeBannerPayload, targetForResponse } from "./native-routing";
+import { bannerTarget, encodeBannerPayload, targetForResponse } from "./native-routing";
 
 const click = (payload: string | null, actionId: string | null = null) => ({
   tag: "t",
@@ -58,5 +58,22 @@ describe("targetForResponse", () => {
     expect(targetForResponse(click('{"target":{"type":"git-panel"}}'))).toBeNull();
     expect(targetForResponse(click('{"target":{"type":"settings","section":"x"}}'))).toBeNull();
     expect(targetForResponse(click('{"target":{"type":"agent-sign-in"}}'))).toBeNull();
+  });
+});
+
+describe("bannerTarget", () => {
+  it("returns the target for an action button too — what its handler runs against", () => {
+    const target: NotificationTarget = { type: "git-panel", projectId: "p1" };
+    const payload = encodeBannerPayload(target);
+    expect(bannerTarget(click(payload, "git.choose-pull"))).toEqual(target);
+    expect(bannerTarget(click(payload))).toEqual(target);
+    // A plain click still routes through targetForResponse; a button does not.
+    expect(targetForResponse(click(payload, "git.choose-pull"))).toBeNull();
+  });
+
+  it("is null for a missing, malformed or foreign payload", () => {
+    expect(bannerTarget(click(null, "x"))).toBeNull();
+    expect(bannerTarget(click("{", "x"))).toBeNull();
+    expect(bannerTarget(click('{"target":{"type":"nope"}}', "x"))).toBeNull();
   });
 });

@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { logEvent } from "@/features/log/lib/log";
 import type { GitErrorPayload } from "../lib/git-errors";
+import { pullPreference } from "../lib/git-pull-api";
 
 /** Background-fetch outcome for one project (`atlas:git-autofetch`). */
 /** Mirror of `PullStrategy` in `commands/git_ops.rs`: how a pull reconciles a
@@ -29,6 +30,8 @@ export interface AutoFetchStatus {
   /** Commits the current branch is behind its upstream, measured right after
    *  a successful automatic fetch; absent on every other status. */
   behind?: number | null;
+  /** Commits it is ahead, measured with `behind`. Both > 0: diverged. */
+  ahead?: number | null;
   /** The upstream head at that moment (see `behind`). */
   remoteHead?: string | null;
 }
@@ -745,11 +748,7 @@ export const useGitStore = createSelectors(
           },
           pullPreference: async () => {
             const p = repo();
-            if (!p) return "ask";
-            // An unanswered read (old backend, mock) falls back to asking.
-            return (
-              (await invoke<PullPreference | null>("git_pull_preference", { path: p })) ?? "ask"
-            );
+            return p ? pullPreference(p) : "ask";
           },
           push: async (forceWithLease = false, followTags = false) => {
             const p = repo();

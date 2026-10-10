@@ -4,6 +4,7 @@ import {
   configErrorDedupeKey,
   decideAgentUpdateFailed,
   decideAutoFetchFailing,
+  CHOOSE_PULL_ACTION_ID,
   decideBehind,
   decideConfigError,
   evaluateAutoFetch,
@@ -89,6 +90,19 @@ function feedBehind(obs: [number, string][]) {
 }
 
 describe("evaluateBehind", () => {
+  it("carries the ahead count into the warning, clamped to >= 0", () => {
+    let state = evaluateBehind(INITIAL_BEHIND_STATE, 0, "a").state;
+    expect(evaluateBehind(state, 1, "b", 3).warning).toEqual({
+      behind: 1,
+      ahead: 3,
+      remoteHead: "b",
+    });
+    state = evaluateBehind(INITIAL_BEHIND_STATE, 0, "a").state;
+    expect(evaluateBehind(state, 1, "b", -2).warning?.ahead).toBe(0);
+    state = evaluateBehind(INITIAL_BEHIND_STATE, 0, "a").state;
+    expect(evaluateBehind(state, 1, "b").warning?.ahead).toBe(0);
+  });
+
   it("seeds silently on the first observation, even when already behind", () => {
     expect(feedBehind([[3, "a"]])).toEqual([null]);
   });
@@ -214,15 +228,36 @@ describe("decisions", () => {
     expect(other.subtitle).toBe("Atlas");
   });
 
-  it("behind: keyed by the remote head, pluralises", () => {
-    const d = decideBehind(project, "main", { behind: 1, remoteHead: "abc" }, env(), {})!;
+  it("behind: keyed by the remote head, pluralises, offers only Open", () => {
+    const d = decideBehind(project, "main", { behind: 1, ahead: 0, remoteHead: "abc" }, env(), {})!;
     expect(d.title).toBe("main is behind its remote");
     expect(d.body).toContain("1 new commit on");
     expect(d.dedupeKey).toBe("behind:p1:abc");
     expect(d.target.type).toBe("git-panel");
-    expect(decideBehind(project, null, { behind: 4, remoteHead: "x" }, env(), {})!.body).toContain(
-      "4 new commits",
+    expect(d.actions).toEqual([{ id: "open", label: "Open" }]);
+    expect(
+      decideBehind(project, null, { behind: 4, ahead: 0, remoteHead: "x" }, env(), {})!.body,
+    ).toContain("4 new commits");
+  });
+
+  it("diverged with no saved preference: says so and offers the choice first", () => {
+    const w = { behind: 1, ahead: 3, remoteHead: "abc" };
+    const d = decideBehind(project, "main", w, env(), {}, "ask")!;
+    expect(d.title).toBe("main has diverged from its remote");
+    expect(d.body).toBe(
+      "3 local commits and 1 commit on the remote. Choose whether to rebase or merge.",
     );
+    expect(d.actions.map((a) => a.id)).toEqual([CHOOSE_PULL_ACTION_ID, "open"]);
+    expect(d.dedupeKey).toBe("behind:p1:abc");
+  });
+
+  it("diverged with a saved preference: names it and offers no choice", () => {
+    const w = { behind: 2, ahead: 1, remoteHead: "abc" };
+    const d = decideBehind(project, "main", w, env(), {}, "rebase")!;
+    expect(d.body).toBe(
+      "1 local commit and 2 commits on the remote. Pulling will rebase, per your git config.",
+    );
+    expect(d.actions).toEqual([{ id: "open", label: "Open" }]);
   });
 
   it("config error: opens the file, key follows the error text", () => {

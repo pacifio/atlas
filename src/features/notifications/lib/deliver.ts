@@ -1,11 +1,15 @@
 /**
  * The one delivery step — every side effect of a notification happens here:
- * the in-app center, the toast (with its "Open" jump), the OS banner, the dock
- * badge and the sound. Input is a `NotificationDecision` from the pure
+ * the in-app center, the toast (with its action buttons), the OS banner, the
+ * dock badge and the sound. Input is a `NotificationDecision` from the pure
  * `decideNotification`; nothing here decides whether to speak, only how.
  *
  * Each dedupe key is delivered once (bounded memory), so a source that
  * re-emits the same occurrence cannot double-announce.
+ *
+ * Channels are independent: each runs in isolation, so one that throws or
+ * rejects (a store write, the OS notifier) is logged and the rest still fire.
+ * Buttons are `decision.actions`, run through `runNotificationAction`.
  */
 import { toast } from "sonner";
 import { jumpToSession } from "@/features/chat/lib/tab-project";
@@ -35,62 +39,113 @@ import {
   isTabTarget,
   notificationTag,
   notificationToastId,
+  OPEN_ACTION_ID,
+  RESTART_ACTION_ID,
+  type NotificationAction,
+  type NotificationChannel,
   type NotificationTarget,
 } from "./catalog";
 import type { NotificationDecision } from "./decide";
-import { encodeBannerPayload, targetForResponse } from "./native-routing";
+import { bannerTarget, encodeBannerPayload, permissionForResponse } from "./native-routing";
+import { registerNotificationAction, runNotificationAction } from "./notification-actions";
+import type { SystemNotificationAction } from "./notifier-api";
 import { answerPermissionFromBanner } from "./permission-actions";
 
 const announced = new Set<string>();
 const ANNOUNCED_CAP = 500;
 
-/** Bring a notification's target into view, across projects. */
-export function openNotificationTarget(t: NotificationTarget): void {
+/** Bring a notification's target into view, across projects. Resolves once
+ *  the jump settles; never rejects. */
+export async function openNotificationTarget(t: NotificationTarget): Promise<void> {
+  try {
+    await jumpTo(t);
+  } catch (err) {
+    console.warn(`[notifications] opening a ${t.type} target failed:`, err);
+  }
+}
+
+function jumpTo(t: NotificationTarget): unknown {
   switch (t.type) {
     case "terminal":
-      void jumpToTerminal({ tabId: t.tabId, terminalId: t.terminalId, projectId: t.projectId });
-      return;
+      return jumpToTerminal({ tabId: t.tabId, terminalId: t.terminalId, projectId: t.projectId });
     case "session":
-      void jumpToSession(t.tabId);
-      return;
+      return jumpToSession(t.tabId);
     case "atlas-sign-in":
-      void useAuthStore.getState().actions.beginSignIn();
-      return;
+      return useAuthStore.getState().actions.beginSignIn();
     case "agent-sign-in":
-      promptSignIn(t.agentType);
-      return;
+      return promptSignIn(t.agentType);
     case "chat-conversation":
-      commsActions().openConversation(t.convId);
-      return;
+      return commsActions().openConversation(t.convId);
     case "app-update":
-      openUpdatePrompt();
-      return;
+      return openUpdatePrompt();
     case "settings":
-      openSettingsSection(t.section);
-      return;
+      return openSettingsSection(t.section);
     case "git-panel":
-      void openGitPanel(t.projectId);
-      return;
+      return openGitPanel(t.projectId);
     case "config-file":
-      void openConfigFile().catch((err) => console.warn("open config.toml failed:", err));
-      return;
+      return openConfigFile();
+    default: {
+      // A new target type must say where "Open" goes — this fails to compile
+      // until it does.
+      const unhandled: never = t;
+      throw new Error(`no route for target ${JSON.stringify(unhandled)}`);
+    }
   }
 }
 
 export { notificationToastId };
 
+registerNotificationAction(OPEN_ACTION_ID, ({ target }) => openNotificationTarget(target));
+registerNotificationAction(RESTART_ACTION_ID, () => restartToUpdate());
+
 // A click on an OS banner opens its exact source (thread tab or terminal pane),
 // across projects. Registered at module load so a click that launched the app
-// is routed as soon as the notifier flushes it. Permission action buttons
-// answer the request in place; other actions have no owner yet and are ignored.
+// is routed as soon as the notifier flushes it. A permission banner's buttons
+// answer the request in place; every other button runs its registered action
+// against the banner's target.
 setNativeResponseHandler((response) => {
-  if (response.actionId !== null) {
+  if (response.actionId !== null && permissionForResponse(response)) {
     answerPermissionFromBanner(response);
     return;
   }
-  const target = targetForResponse(response);
-  if (target) openNotificationTarget(target);
+  const target = bannerTarget(response);
+  if (target) void runNotificationAction(response.actionId ?? OPEN_ACTION_ID, { target });
 });
+
+/** Banner buttons: a permission request's own, else the decision's actions
+ *  minus "Open" — a plain click on the banner already opens. */
+function bannerActions(d: NotificationDecision): SystemNotificationAction[] | undefined {
+  if (d.native.actions) return d.native.actions;
+  const actions = d.actions.filter((a) => a.id !== OPEN_ACTION_ID);
+  return actions.length ? actions : undefined;
+}
+
+/** The toast's two buttons: sonner's `action` (primary) and `cancel`. */
+function toastButtons(d: NotificationDecision) {
+  const button = (a: NotificationAction | undefined) =>
+    a && {
+      label: a.label,
+      onClick: () =>
+        void runNotificationAction(a.id, {
+          kind: d.kind,
+          target: d.target,
+          dedupeKey: d.dedupeKey,
+        }),
+    };
+  return { action: button(d.actions[0]), cancel: button(d.actions[1]) };
+}
+
+/** Run one channel; a throw or rejection is logged and stays in this channel. */
+function attempt(channel: NotificationChannel, d: NotificationDecision, run: () => unknown): void {
+  const fail = (err: unknown) =>
+    console.warn(`[notifications] ${channel} failed for ${d.kind} (${d.dedupeKey}):`, err);
+  try {
+    const result = run();
+    if (result instanceof Promise) result.catch(fail);
+  } catch (err) {
+    fail(err);
+  }
+}
 
 /** The agent a notification is about, for its leading icon. Resolved here from
  *  the target so every agent kind carries it without per-rule plumbing. */
@@ -119,7 +174,7 @@ async function showBanner(d: NotificationDecision, agentType: string | undefined
     sound: d.native.sound,
     urgency: d.tier === "needs-you" ? "high" : "normal",
     // Cut to the backend's capabilities by `showNativeNotification`.
-    actions: d.native.actions,
+    actions: bannerActions(d),
     payload: encodeBannerPayload(d.target, d.native.permission),
   });
 }
@@ -136,46 +191,50 @@ export function deliverNotification(d: NotificationDecision): boolean {
   const t = d.target;
   const agentType = catalogEntry(d.kind).source === "agent" ? agentTypeOf(t) : undefined;
   if (d.channels.center) {
-    useNotificationsStore.getState().actions.add({
-      kind: d.kind,
-      source: catalogEntry(d.kind).source,
-      title: d.title,
-      body: d.body,
-      tabId: isTabTarget(t) ? t.tabId : undefined,
-      terminalId: t.type === "terminal" ? t.terminalId : undefined,
-      sessionId: t.type === "session" ? t.sessionId : undefined,
-      projectId: isTabTarget(t) ? t.projectId : undefined,
-      agentType,
-      orgId: isTabTarget(t) || t.type === "chat-conversation" ? t.orgId : undefined,
-      // App-level targets have no tab to jump to; the panel opens the target.
-      target: isTabTarget(t) ? undefined : t,
-    });
+    attempt("center", d, () =>
+      useNotificationsStore.getState().actions.add({
+        kind: d.kind,
+        source: catalogEntry(d.kind).source,
+        title: d.title,
+        body: d.body,
+        tabId: isTabTarget(t) ? t.tabId : undefined,
+        terminalId: t.type === "terminal" ? t.terminalId : undefined,
+        sessionId: t.type === "session" ? t.sessionId : undefined,
+        projectId: isTabTarget(t) ? t.projectId : undefined,
+        agentType,
+        orgId: isTabTarget(t) || t.type === "chat-conversation" ? t.orgId : undefined,
+        // App-level targets have no tab to jump to; the panel opens the target.
+        target: isTabTarget(t) ? undefined : t,
+        // The card itself opens; it keeps the rest until resolved.
+        actions: d.actions.filter((a) => a.id !== OPEN_ACTION_ID),
+      }),
+    );
   }
   // Re-checked at delivery: the badge is for a window in the background now.
   if (d.channels.badge && !isWindowFocused()) {
-    const unread = useNotificationsStore.getState().items.filter((i) => !i.read).length;
-    setDockBadge(unread);
+    attempt("badge", d, () => {
+      const unread = useNotificationsStore.getState().items.filter((i) => !i.read).length;
+      return setDockBadge(unread);
+    });
   }
   if (d.channels.toast) {
-    const opts = {
-      id: notificationToastId(t, d.dedupeKey),
-      description: d.body,
-      duration: d.toast.durationMs,
-      icon: notificationToastIcon(d.kind, agentType),
-      // A staged update's toast restarts into it; the click target is the prompt.
-      action:
-        t.type === "app-update"
-          ? { label: "Restart", onClick: restartToUpdate }
-          : { label: "Open", onClick: () => openNotificationTarget(t) },
-    };
-    if (d.toast.variant === "error") toast.error(d.title, opts);
-    else if (d.toast.variant === "success") toast.success(d.title, opts);
-    else toast(d.title, opts);
+    attempt("toast", d, () => {
+      const opts = {
+        id: notificationToastId(t, d.dedupeKey),
+        description: d.body,
+        duration: d.toast.durationMs,
+        icon: notificationToastIcon(d.kind, agentType),
+        ...toastButtons(d),
+      };
+      if (d.toast.variant === "error") toast.error(d.title, opts);
+      else if (d.toast.variant === "success") toast.success(d.title, opts);
+      else toast(d.title, opts);
+    });
   }
   if (d.channels.native) {
-    void showBanner(d, agentType);
+    attempt("native", d, () => showBanner(d, agentType));
   } else if (d.channels.sound) {
-    playChime();
+    attempt("sound", d, () => playChime());
   }
   return true;
 }

@@ -1540,6 +1540,13 @@ export function App() {
             color: "var(--foreground)",
             fontSize: "var(--text-sm)",
           },
+          // A notification's second action rides sonner's `cancel` slot, whose
+          // stock colours are light-theme only (near-black text on a dark card).
+          cancelButtonStyle: {
+            background: "transparent",
+            border: "1px solid var(--border)",
+            color: "var(--secondary-foreground)",
+          },
         }}
       />
     </TooltipProvider>

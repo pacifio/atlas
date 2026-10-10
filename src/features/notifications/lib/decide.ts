@@ -16,7 +16,9 @@
  */
 import {
   catalogEntry,
+  defaultActions,
   isTabTarget,
+  type NotificationAction,
   type NotificationChannel,
   type NotificationKind,
   type NotificationTarget,
@@ -39,6 +41,8 @@ export interface NotificationEvent {
   dedupeKey: string;
   /** A permission request: what the banner's Allow once / Deny need. */
   permission?: PermissionBannerInfo;
+  /** Buttons to offer, most important first. Omitted → `defaultActions`. */
+  actions?: NotificationAction[];
 }
 
 export interface NotificationEnv {
@@ -76,6 +80,9 @@ export interface NotificationDecision {
   dedupeKey: string;
   groupKey: string;
   channels: Record<NotificationChannel, boolean>;
+  /** Resolved buttons, most important first. The toast shows the first two;
+   *  the OS banner shows all but "Open" (a plain click already opens). */
+  actions: NotificationAction[];
   toast: { variant: ToastVariant; durationMs: number };
   /** OS banner content; `sound` is set only when the sound channel fires. */
   native: {
@@ -161,6 +168,7 @@ export function decideNotification(
       badge: entry.channels.badge && center && !env.windowFocused,
       sound,
     },
+    actions: event.actions?.length ? event.actions : defaultActions(event.target),
     toast: entry.toast,
     subtitle: event.subtitle,
     native: {

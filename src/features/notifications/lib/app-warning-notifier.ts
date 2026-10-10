@@ -7,6 +7,8 @@
  * and performs. Nothing here throws.
  */
 import { onAutoFetch } from "@/features/git/lib/auto-fetch-events";
+import { isDiverged, pullPreference } from "@/features/git/lib/git-pull-api";
+import { openGitPanel } from "@/features/git/lib/open-git-panel";
 import { useGitStore } from "@/features/git/stores/git-store";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useProjectStore } from "@/features/projects/stores/project-store";
@@ -19,6 +21,7 @@ import { useSettingsNav } from "@/features/settings/stores/settings-nav-store";
 import { useSettingsStore } from "@/features/settings/stores/settings-store";
 import { isWindowFocused, lastInteraction } from "@/lib/window-focus";
 import {
+  CHOOSE_PULL_ACTION_ID,
   decideAgentUpdateFailed,
   decideAutoFetchFailing,
   decideBehind,
@@ -37,6 +40,7 @@ import {
 } from "./app-warning-rules";
 import { computeAway, type NotificationEnv } from "./decide";
 import { deliverNotification } from "./deliver";
+import { registerNotificationAction } from "./notification-actions";
 import { prefsFromSettings } from "./prefs";
 import { clearResolved } from "./resolve";
 
@@ -85,10 +89,30 @@ function gitPanelShowing(p: ProjectRef): boolean {
 const autoFetchState = new Map<string, AutoFetchWarnState>();
 const behindState = new Map<string, BehindWarnState>();
 
+// "Rebase or merge…" on a diverged-branch notification: bring the project's
+// git panel up with the same prompt its Pull button opens — if the branch is
+// still diverged when pressed (a pull elsewhere may have settled it).
+registerNotificationAction(
+  CHOOSE_PULL_ACTION_ID,
+  async ({ target }) => {
+    if (target.type !== "git-panel") return;
+    await openGitPanel(target.projectId);
+    useGitStore.getState().actions.showPullChoice({ kind: "diverged" });
+  },
+  {
+    stillApplies: ({ target }) => {
+      if (target.type !== "git-panel") return false;
+      const path = useProjectStore.getState().projects.find((p) => p.id === target.projectId)?.path;
+      return path ? isDiverged(path) : false;
+    },
+  },
+);
+
 function onAutoFetchStatus(status: {
   project: string;
   lastError: string | null;
   behind?: number | null;
+  ahead?: number | null;
   remoteHead?: string | null;
 }): void {
   try {
@@ -124,19 +148,29 @@ function onAutoFetchStatus(status: {
         behindState.get(p.path) ?? INITIAL_BEHIND_STATE,
         status.behind,
         status.remoteHead,
+        status.ahead ?? 0,
       );
       behindState.set(p.path, behind.state);
       if (behind.warning) {
         const git = useGitStore.getState();
         const branch = git.repoPath === p.path ? git.branch : null;
-        const d = decideBehind(
-          p,
-          branch,
-          behind.warning,
-          envFor(gitPanelShowing(p), p.projectActive),
-          prefs(),
-        );
-        if (d) deliverNotification(d);
+        const warning = behind.warning;
+        // Diverged: what a plain pull does depends on git config, so read it
+        // before choosing the copy and whether to offer the choice.
+        const pull = warning.ahead > 0 ? pullPreference(p.path) : Promise.resolve("ask" as const);
+        void pull
+          .catch(() => "ask" as const)
+          .then((preference) => {
+            const d = decideBehind(
+              p,
+              branch,
+              warning,
+              envFor(gitPanelShowing(p), p.projectActive),
+              prefs(),
+              preference,
+            );
+            if (d) deliverNotification(d);
+          });
       }
       if (behind.resolved !== null) {
         // Caught up: the "behind its remote" warning no longer applies.

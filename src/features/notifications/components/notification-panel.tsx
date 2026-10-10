@@ -7,7 +7,9 @@ import { jumpToSession } from "@/features/chat/lib/tab-project";
 import { jumpToTerminal } from "@/features/terminal/lib/jump-to-terminal";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
 import { NotificationLeadingIcon } from "./notification-leading-icon";
+import type { NotificationTarget } from "../lib/catalog";
 import { openNotificationTarget } from "../lib/deliver";
+import { hasNotificationAction, runNotificationAction } from "../lib/notification-actions";
 import {
   useNotificationsStore,
   visibleItems,
@@ -152,6 +154,7 @@ function NotificationCard({ n }: { n: AppNotification }) {
             {n.body}
           </p>
         )}
+        <CardActions n={n} onRun={close} />
       </div>
 
       <Hint label="Dismiss">
@@ -168,6 +171,47 @@ function NotificationCard({ n }: { n: AppNotification }) {
       </Hint>
     </div>
   );
+}
+
+/** An item's buttons beyond "Open" — only while it still applies (not
+ *  resolved) and a handler is registered for each. */
+function CardActions({ n, onRun }: { n: AppNotification; onRun: () => void }) {
+  const target = targetOf(n);
+  const actions =
+    n.resolved || !target ? [] : (n.actions ?? []).filter((a) => hasNotificationAction(a.id));
+  if (!target || actions.length === 0) return null;
+  return (
+    <div className="mt-2 flex flex-wrap gap-1.5">
+      {actions.map((a) => (
+        <button
+          key={a.id}
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onRun();
+            void runNotificationAction(a.id, { kind: n.kind, target });
+          }}
+          onKeyDown={(e) => e.stopPropagation()}
+          className="h-6 px-2 rounded-md border border-border text-2xs font-medium text-foreground bg-[var(--card)] hover:bg-element-active transition-colors"
+        >
+          {a.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** The full target an item's actions run against: its app-level target, or
+ *  the terminal / session it was raised from. */
+function targetOf(n: AppNotification): NotificationTarget | null {
+  if (n.target) return n.target;
+  if (n.source === "terminal" && n.tabId && n.terminalId) {
+    return { type: "terminal", tabId: n.tabId, terminalId: n.terminalId, projectId: n.projectId };
+  }
+  if (n.source === "agent" && n.tabId) {
+    return { type: "session", tabId: n.tabId, sessionId: n.sessionId, projectId: n.projectId };
+  }
+  return null;
 }
 
 /** Best-effort: bring the originating chat, terminal or sign-in surface into view. */
