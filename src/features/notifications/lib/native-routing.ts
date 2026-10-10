@@ -7,15 +7,47 @@
  * the app (no in-memory state) can still route to the exact thread tab or
  * terminal pane, in any project.
  */
-import { isNotificationSettingsSection, type NotificationTarget } from "./catalog";
+import {
+  cleanActionArgs,
+  isNotificationSettingsSection,
+  type NotificationAction,
+  type NotificationActionArgs,
+  type NotificationTarget,
+} from "./catalog";
 import type { PermissionRef } from "./permission-actions-rules";
 import type { SystemNotificationResponse } from "./notifier-api";
 
+/** `actions`: the banner's buttons — the `args` of those that carry any are
+ *  stored by action id, for `bannerActionArgs` to hand back on a press. */
 export function encodeBannerPayload(
   target: NotificationTarget,
   permission?: PermissionRef,
+  actions: NotificationAction[] = [],
 ): string {
-  return JSON.stringify({ v: 1, target, ...(permission ? { permission } : {}) });
+  const args = Object.fromEntries(actions.filter((a) => a.args).map((a) => [a.id, a.args]));
+  return JSON.stringify({
+    v: 1,
+    target,
+    ...(permission ? { permission } : {}),
+    ...(Object.keys(args).length ? { args } : {}),
+  });
+}
+
+/** The `args` of the banner button that was pressed, or undefined (a plain
+ *  click, a button without args, a malformed payload). */
+export function bannerActionArgs(
+  r: SystemNotificationResponse,
+): NotificationActionArgs | undefined {
+  if (r.actionId === null || !r.payload) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(r.payload);
+    if (typeof parsed !== "object" || parsed === null) return undefined;
+    const byId = (parsed as { args?: unknown }).args;
+    if (typeof byId !== "object" || byId === null) return undefined;
+    return cleanActionArgs((byId as Record<string, unknown>)[r.actionId]);
+  } catch {
+    return undefined;
+  }
 }
 
 /** The permission request an action button on a banner answers, or null. */

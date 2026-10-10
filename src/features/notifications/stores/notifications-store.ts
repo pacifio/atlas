@@ -8,6 +8,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { createSelectors } from "@/lib/create-selectors";
 import {
+  cleanActionArgs,
   isNotificationKind,
   isNotificationSettingsSection,
   OPEN_ACTION_ID,
@@ -135,7 +136,10 @@ export function cleanActions(actions: unknown): NotificationAction[] | undefined
         typeof a.label === "string" &&
         !!a.label,
     )
-    .map((a) => ({ id: a.id, label: a.label }))
+    .map((a) => {
+      const args = cleanActionArgs(a.args);
+      return args ? { id: a.id, label: a.label, args } : { id: a.id, label: a.label };
+    })
     .slice(0, MAX_ACTIONS);
   return kept.length ? kept : undefined;
 }

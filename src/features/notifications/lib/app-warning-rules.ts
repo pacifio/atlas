@@ -12,6 +12,8 @@
  *    When the count returns to 0 the warning it raised is resolved.
  *  - config.toml: once per distinct error text; a clean load re-arms it.
  *  - Agent update: every failure speaks (the caller numbers them).
+ *
+ * Auto-fetch and agent-update failures offer Retry beside Open.
  */
 import { OPEN_ACTION_ID, type NotificationAction } from "./catalog";
 import {
@@ -178,6 +180,9 @@ export interface ProjectRef {
 const gitTarget = (p: ProjectRef) =>
   ({ type: "git-panel", projectId: p.projectId, projectName: p.projectName }) as const;
 
+/** Fetches the project now. Registered by `app-warning-notifier.ts`. */
+export const RETRY_FETCH_ACTION_ID = "git.retry-fetch";
+
 export function decideAutoFetchFailing(
   p: ProjectRef,
   w: AutoFetchWarning,
@@ -191,6 +196,10 @@ export function decideAutoFetchFailing(
     subtitle: p.projectActive ? undefined : p.projectName,
     target: gitTarget(p),
     dedupeKey: `autofetch:${p.projectId}:${w.episode}`,
+    actions: [
+      { id: RETRY_FETCH_ACTION_ID, label: "Retry" },
+      { id: OPEN_ACTION_ID, label: "Open" },
+    ],
   };
   return decideNotification(event, env, prefs);
 }
@@ -274,6 +283,10 @@ export interface AgentUpdateFailure {
   seq: number;
 }
 
+/** Runs the agent's update again, to the registry's current version.
+ *  Registered by `app-warning-notifier.ts`; `args.pluginId` names the agent. */
+export const RETRY_AGENT_UPDATE_ACTION_ID = "agents.retry-update";
+
 export function decideAgentUpdateFailed(
   f: AgentUpdateFailure,
   env: NotificationEnv,
@@ -285,6 +298,10 @@ export function decideAgentUpdateFailed(
     body: trimError(f.error) || "The install did not complete. It will retry next time.",
     target: { type: "settings", section: "agents" },
     dedupeKey: `agent-update:${f.pluginId}:${f.version}:${f.seq}`,
+    actions: [
+      { id: RETRY_AGENT_UPDATE_ACTION_ID, label: "Retry", args: { pluginId: f.pluginId } },
+      { id: OPEN_ACTION_ID, label: "Open settings" },
+    ],
   };
   return decideNotification(event, env, prefs);
 }

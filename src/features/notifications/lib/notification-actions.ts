@@ -15,12 +15,19 @@
  * depends on state registers `stillApplies`; when that says no — or cannot
  * tell — the target is opened instead of acting on a stale premise.
  */
-import { OPEN_ACTION_ID, type NotificationKind, type NotificationTarget } from "./catalog";
+import {
+  OPEN_ACTION_ID,
+  type NotificationActionArgs,
+  type NotificationKind,
+  type NotificationTarget,
+} from "./catalog";
 
 export interface NotificationActionContext {
   kind?: NotificationKind;
   target: NotificationTarget;
   dedupeKey?: string;
+  /** The pressed action's own `args`, from whichever surface it was on. */
+  args?: NotificationActionArgs;
 }
 
 export type NotificationActionHandler = (ctx: NotificationActionContext) => void | Promise<void>;
