@@ -667,7 +667,7 @@ export function FileTree() {
               onCollapseAll={collapseAll}
               onExpandAll={expandAllLoaded}
             />
-            <HintItem label="Open folder">
+            <HintItem label="Open folder — Choose a project for File Explorer">
               <button
                 onClick={handlePickFolder}
                 className="p-1 rounded hover:bg-element-hover text-muted-foreground hover:text-secondary-foreground transition-colors"
@@ -849,7 +849,7 @@ function FoldExpandButton({
 }) {
   const anyExpanded = useMemo(() => hasAnyExpanded(tree), [tree]);
   return (
-    <HintItem label={anyExpanded ? "Collapse all" : "Expand all"}>
+    <HintItem label={anyExpanded ? "Collapse all folders" : "Expand all folders"}>
       <button
         onClick={anyExpanded ? onCollapseAll : onExpandAll}
         className="p-1 rounded hover:bg-element-hover text-muted-foreground hover:text-secondary-foreground transition-colors"

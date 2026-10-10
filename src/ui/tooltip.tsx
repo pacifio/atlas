@@ -6,6 +6,7 @@ import {
   isTooltipWarm,
   markTooltipClosed,
   markTooltipOpen,
+  TOOLTIP_CLOSE_DELAY,
   TOOLTIP_OPEN_DELAY,
   TOOLTIP_WARM_WINDOW,
 } from "@/ui/tooltip-timing";
@@ -49,11 +50,16 @@ interface TimingContext {
   cancelPending: () => void;
   /** True while `tooltip-timing.ts` — not Base UI — owns the open delay. */
   managed: boolean;
+  open: boolean;
+  contentId?: string;
+  setContentId: (id: string | undefined) => void;
 }
 const Timing = React.createContext<TimingContext>({
   instant: false,
   cancelPending: () => {},
   managed: false,
+  open: false,
+  setContentId: () => {},
 });
 
 type TooltipProps = Omit<TooltipPrimitive.Root.Props, "onOpenChange"> & {
@@ -82,6 +88,7 @@ function Tooltip({ open: openProp, defaultOpen, onOpenChange, delay, ...props }:
   const controlled = openProp !== undefined;
   const [open, setOpen] = React.useState(defaultOpen ?? false);
   const [instant, setInstant] = React.useState(false);
+  const [contentId, setContentId] = React.useState<string>();
   const openRef = React.useRef(open);
   openRef.current = open;
   const timer = React.useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -100,6 +107,7 @@ function Tooltip({ open: openProp, defaultOpen, onOpenChange, delay, ...props }:
       clearTimeout(timer.current);
       if (!next) {
         if (openRef.current) markTooltipClosed();
+        openRef.current = false;
         setOpen(false);
         onOpenChange?.(false, eventDetails);
         return;
@@ -107,28 +115,39 @@ function Tooltip({ open: openProp, defaultOpen, onOpenChange, delay, ...props }:
       if (openRef.current) return;
       const show = (warm: boolean) => {
         markTooltipOpen();
+        openRef.current = true;
         setInstant(warm);
         setOpen(true);
         onOpenChange?.(true, eventDetails);
       };
       const wait = delay ?? TOOLTIP_OPEN_DELAY;
-      if (isTooltipWarm() || wait === 0) show(isTooltipWarm());
-      else timer.current = setTimeout(() => show(false), wait);
+      if (eventDetails?.reason === "trigger-focus" || isTooltipWarm() || wait === 0) {
+        show(isTooltipWarm());
+      } else timer.current = setTimeout(() => show(false), wait);
     },
     [delay, onOpenChange],
   );
 
   const cancelPending = React.useCallback(() => clearTimeout(timer.current), []);
   const timing = React.useMemo(
-    () => ({ instant, cancelPending, managed: true }),
-    [instant, cancelPending],
+    () => ({
+      instant,
+      cancelPending,
+      managed: !controlled,
+      open: openProp ?? open,
+      contentId,
+      setContentId,
+    }),
+    [instant, cancelPending, controlled, openProp, open, contentId],
   );
 
-  const root = controlled ? (
-    <TooltipPrimitive.Root open={openProp} onOpenChange={onOpenChange} {...props} />
-  ) : (
+  const root = (
     <Timing.Provider value={timing}>
-      <TooltipPrimitive.Root open={open} onOpenChange={handleOpenChange} {...props} />
+      <TooltipPrimitive.Root
+        open={openProp ?? open}
+        onOpenChange={controlled ? onOpenChange : handleOpenChange}
+        {...props}
+      />
     </Timing.Provider>
   );
   return React.useContext(HasProvider) ? root : <TooltipProvider>{root}</TooltipProvider>;
@@ -147,13 +166,26 @@ function TooltipTrigger({
   onBlur,
   onPointerDown,
   delay,
+  closeDelay = TOOLTIP_CLOSE_DELAY,
   ...props
 }: TooltipPrimitive.Trigger.Props) {
-  const { cancelPending, managed } = React.useContext(Timing);
+  const { cancelPending, managed, open, contentId } = React.useContext(Timing);
+  const element = React.isValidElement<TriggerProps>(props.render) ? props.render : null;
+  const describedBy =
+    [
+      ...new Set(
+        [
+          props["aria-describedby"],
+          element?.props["aria-describedby"],
+          open ? contentId : undefined,
+        ].flatMap((id) => id?.split(/\s+/) ?? []),
+      ),
+    ].join(" ") || undefined;
   return (
     <TooltipPrimitive.Trigger
       data-slot="tooltip-trigger"
       delay={managed ? 0 : delay}
+      closeDelay={closeDelay}
       onPointerLeave={(e) => {
         cancelPending();
         onPointerLeave?.(e);
@@ -167,6 +199,10 @@ function TooltipTrigger({
         onPointerDown?.(e);
       }}
       {...props}
+      render={
+        element ? React.cloneElement(element, { "aria-describedby": describedBy }) : props.render
+      }
+      aria-describedby={describedBy}
     />
   );
 }
@@ -208,6 +244,7 @@ function arrowStyle(side: string): React.CSSProperties {
  * positioning would silently stop working.
  */
 function TooltipContent({
+  id: idProp,
   className,
   side = "top",
   sideOffset = 0,
@@ -217,7 +254,13 @@ function TooltipContent({
   ...props
 }: TooltipPrimitive.Popup.Props &
   Pick<TooltipPrimitive.Positioner.Props, "align" | "alignOffset" | "side" | "sideOffset">) {
-  const { instant } = React.useContext(Timing);
+  const { instant, open, setContentId } = React.useContext(Timing);
+  const generatedId = React.useId();
+  const id = idProp ?? generatedId;
+  React.useLayoutEffect(() => {
+    setContentId(id);
+    return () => setContentId(undefined);
+  }, [id, setContentId]);
   return (
     <TooltipPrimitive.Portal>
       <TooltipPrimitive.Positioner
@@ -228,6 +271,9 @@ function TooltipContent({
         className="isolate z-tooltip"
       >
         <TooltipPrimitive.Popup
+          id={id}
+          role="tooltip"
+          aria-hidden={!open}
           data-slot="tooltip-content"
           style={
             {
@@ -261,6 +307,7 @@ function TooltipContent({
 type TriggerProps = Record<string, unknown> & {
   "aria-label"?: string;
   "aria-labelledby"?: string;
+  "aria-describedby"?: string;
   disabled?: boolean;
 };
 
@@ -275,18 +322,24 @@ export function isFocusVisible(el: EventTarget) {
 
 /**
  * Props for the element a hint wraps. The tooltip does not name its trigger
- * (Base UI only adds `aria-describedby` while it is open), so a string label
+ * (`TooltipTrigger` adds `aria-describedby` while it is open), so a string label
  * becomes the `aria-label` unless the element already has a name. The native
  * `title` is dropped: it would open a second, unstyled tooltip on top.
  *
  * A `title` set on an inner element (e.g. a button inside a menu trigger's
  * `render`) is out of reach here — remove it at the source.
  */
-export function hintTriggerProps(props: TriggerProps, label: React.ReactNode) {
+export function hintTriggerProps(
+  props: TriggerProps,
+  label: React.ReactNode,
+  descriptionId?: string,
+) {
   const named = props["aria-label"] !== undefined || props["aria-labelledby"] !== undefined;
   return {
     title: undefined,
     "aria-label": named || typeof label !== "string" ? props["aria-label"] : label,
+    "aria-describedby":
+      [props["aria-describedby"], descriptionId].filter(Boolean).join(" ") || undefined,
   };
 }
 
@@ -330,20 +383,38 @@ function Hint({
         so the programmatic focus a dialog gives its first control no longer
         needs the `openOnKeyboardFocusOnly` guard the Radix wrapper carried.
       */}
-      <TooltipTrigger
-        render={
-          shouldWrap ? (
-            <span className="inline-flex [&>:disabled]:pointer-events-none">{trigger}</span>
-          ) : (
-            trigger
-          )
-        }
-      />
+      <HintTarget trigger={trigger} wrap={shouldWrap} />
       <TooltipContent side={side} align={align} sideOffset={sideOffset}>
         {label}
         {shortcut != null && <span className="ml-1.5 text-muted-foreground">{shortcut}</span>}
       </TooltipContent>
     </Tooltip>
+  );
+}
+
+/** A disabled-capable wrapper must describe the real button as well as the hover target. */
+function HintTarget({
+  trigger,
+  wrap,
+}: {
+  trigger: React.ReactElement<TriggerProps>;
+  wrap: boolean;
+}) {
+  const { open, contentId } = React.useContext(Timing);
+  const described = React.cloneElement(
+    trigger,
+    hintTriggerProps(trigger.props, undefined, open ? contentId : undefined),
+  );
+  return (
+    <TooltipTrigger
+      render={
+        wrap ? (
+          <span className="inline-flex [&>:disabled]:pointer-events-none">{described}</span>
+        ) : (
+          described
+        )
+      }
+    />
   );
 }
 
