@@ -11,14 +11,19 @@ import { copyText } from "@/lib/clipboard";
  * rejections, lock files…). Leads with the typed error's human message; the
  * raw git output sits below in monospace — GitHub Desktop's split between
  * "what happened" and "what git actually said".
+ *
+ * A push rejected because the user rewrote commits they had pushed
+ * (`history-rewritten`) offers the fix in place: a force push, which the
+ * backend runs with `--force-with-lease --force-if-includes`.
  */
-export function GitErrorDialog() {
+export function GitErrorDialog({ onForcePush }: { onForcePush?: () => void }) {
   const payload = useGitStore.use.errorDialog();
   const actions = useGitStore.use.actions();
   // Feedback for the copy button — without it a clipboard failure and a
   // success were indistinguishable (both looked like "nothing happened").
   const [copied, setCopied] = useState(false);
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const canForcePush = payload?.code === "history-rewritten" && !!onForcePush;
   const onCopy = (text: string) => {
     void copyText(text).then((ok) => {
       if (!ok) return;
@@ -84,15 +89,26 @@ export function GitErrorDialog() {
                       {copied ? "Copied" : "Copy output"}
                     </button>
                   )}
+                  {canForcePush && (
+                    <button
+                      onClick={() => actions.dismissErrorDialog()}
+                      className="px-3 h-7 rounded text-xs text-secondary-foreground hover:bg-element-hover transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  )}
                   <button
-                    onClick={() => actions.dismissErrorDialog()}
+                    onClick={() => {
+                      actions.dismissErrorDialog();
+                      if (canForcePush) onForcePush();
+                    }}
                     // `text-primary-foreground`, never the literal white utility: `--primary`
                     // IS white in this theme, so a white label on it renders an
                     // empty button. Every other filled accent button in the app
                     // pairs the fill with the inverse token for this reason.
                     className="px-3 h-7 rounded text-xs font-medium text-primary-foreground bg-primary hover:opacity-90 transition-colors"
                   >
-                    Dismiss
+                    {canForcePush ? "Force push" : "Dismiss"}
                   </button>
                 </div>
               </div>

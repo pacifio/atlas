@@ -4,6 +4,12 @@
 import type { Scenario } from "../types";
 import { commsIncomingMessage } from "../fixtures/comms";
 import {
+  gitPullAsks,
+  gitPullPrefersMerge,
+  gitPullPrefersRebase,
+  gitRewritePushedCommits,
+} from "../fixtures/git";
+import {
   requestPermission,
   requestPermissionLongArgs,
   requestPermissionPlan,
@@ -48,9 +54,17 @@ const all: Scenario[] = [
   {
     name: "default",
     description: "Every surface, populated. The one to review a theme against.",
-    // The only thing the default scenario cannot show by sitting still: a
-    // message arriving while you are looking at something else.
-    actions: { commsIncomingMessage, ...permissionActions },
+    // What the default scenario cannot show by sitting still: a message
+    // arriving while you are looking at something else, and git state only a
+    // terminal or git config could produce.
+    actions: {
+      commsIncomingMessage,
+      ...permissionActions,
+      gitPullPrefersRebase,
+      gitPullPrefersMerge,
+      gitPullAsks,
+      gitRewritePushedCommits,
+    },
   },
   chatTools,
   chatComments,

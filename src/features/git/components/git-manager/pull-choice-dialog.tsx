@@ -6,8 +6,9 @@ const OPTIONS: { strategy: Exclude<PullStrategy, "default">; label: string; deta
   {
     strategy: "rebase",
     label: "Rebase",
-    detail:
-      "Replay your commits on top of the remote's. Keeps history linear; if you already pushed them, the next push needs a force-push.",
+    // Not "you'll need to force-push": a rebase pull replays only commits the
+    // upstream lacks, so pushed ones are never rewritten by it.
+    detail: "Replay your unpushed commits on top of the remote's. Keeps history linear.",
   },
   {
     strategy: "merge",

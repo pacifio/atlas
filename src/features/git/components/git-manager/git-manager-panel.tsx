@@ -160,7 +160,7 @@ export function GitManagerPanel() {
       </div>
 
       <MergeBranchDialog open={mergeOpen} onOpenChange={setMergeOpen} />
-      <GitErrorDialog />
+      <GitErrorDialog onForcePush={() => run("push", () => actions.push(true))} />
       <PullChoiceDialog onChoose={(strategy) => run("pull", () => actions.pull(strategy))} />
     </div>
   );

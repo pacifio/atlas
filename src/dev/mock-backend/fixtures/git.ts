@@ -1076,6 +1076,44 @@ export interface GitResponses {
   git_remote_remove: Unread;
 }
 
+// ── console actions ──────────────────────────────────────────────────────
+// Real git state the fake cannot reach by clicking: a saved `pull.rebase`,
+// and pushed commits rewritten by a rebase in a terminal.
+
+/** What `git_pull_preference` answers; "ask" is a fresh install. */
+let pullPreference: PullPreference = "ask";
+/** The remote still has old copies of commits HEAD has rewritten. */
+let pushedCommitsRewritten = false;
+
+/** As if `pull.rebase=true`: a diverged pull rebases without asking. */
+export function gitPullPrefersRebase(): string {
+  pullPreference = "rebase";
+  return "pull.rebase=true — a diverged pull rebases without asking";
+}
+
+/** As if `pull.rebase=false`: a diverged pull merges without asking. */
+export function gitPullPrefersMerge(): string {
+  pullPreference = "merge";
+  return "pull.rebase=false — a diverged pull merges without asking";
+}
+
+/** No saved preference (the default): a diverged pull asks. */
+export function gitPullAsks(): string {
+  pullPreference = "ask";
+  return "no pull.rebase — a diverged pull asks";
+}
+
+/** As if the current branch's pushed commits were rebased elsewhere: the
+ *  next plain push is rejected as `history-rewritten`, a force push lands. */
+export function gitRewritePushedCommits(): string {
+  const branch = currentBranch();
+  pushedCommitsRewritten = true;
+  branch.behind = Math.max(branch.behind, 2);
+  branch.ahead = Math.max(branch.ahead, 2);
+  notifyChanged();
+  return `${branch.name}: pushed commits rewritten — Push to see the rejection`;
+}
+
 export const gitHandlers: TypedHandlers<GitResponses> = {
   // ── watcher ─────────────────────────────────────────────────────────────
   git_watch_start: () => null,
@@ -1395,6 +1433,23 @@ export const gitHandlers: TypedHandlers<GitResponses> = {
           hint: `git push --set-upstream origin ${branch.name}`,
         });
       }
+      // `gitRewritePushedCommits`: what Rust's `explain_rejection` reports
+      // when every remote-only commit is one of ours, rewritten.
+      if (pushedCommitsRewritten && !forceWithLease) {
+        throw fail(
+          "history-rewritten",
+          "Your commits were rewritten (rebased or amended) after they were pushed, so the remote still has the old copies. Pulling would bring those back; force-push to replace them.",
+          {
+            rawStderr: ` ! [rejected]        ${branch.name} -> ${branch.name} (non-fast-forward)\nerror: failed to push some refs to '${remotes[0]?.url ?? "origin"}'`,
+            command: "git push --progress",
+            exitCode: 1,
+          },
+        );
+      }
+      if (pushedCommitsRewritten) {
+        pushedCommitsRewritten = false;
+        branch.behind = 0;
+      }
       if (branch.behind > 0 && !forceWithLease) {
         throw fail(
           "non-fast-forward",
@@ -1415,8 +1470,9 @@ export const gitHandlers: TypedHandlers<GitResponses> = {
       return `To ${remotes[0]?.url ?? "origin"}\n   ${shortSha(HEAD().sha)}..${shortSha(HEAD().sha)}  ${branch.name} -> ${branch.name}\n`;
     }),
 
-  // A fresh install: no `pull.rebase`, so a diverged pull asks.
-  git_pull_preference: (): PullPreference => "ask",
+  // A fresh install: no `pull.rebase`, so a diverged pull asks. The
+  // `gitPullPrefers*` console actions stand in for a saved preference.
+  git_pull_preference: (): PullPreference => pullPreference,
 
   git_pull: ({ strategy = "default", opId }) =>
     runOp("pull", opId, FETCH_STEPS, (): string => {
@@ -1425,6 +1481,8 @@ export const gitHandlers: TypedHandlers<GitResponses> = {
         throw fail("no-upstream", `There is no tracking information for the current branch.`);
       }
       if (branch.behind === 0) return "Already up to date.\n";
+      // A plain pull follows the saved preference, as git does.
+      if (strategy === "default" && pullPreference !== "ask") strategy = pullPreference;
       // Diverged with no strategy: what real git does when `pull.rebase` is
       // unset — the panel asks up front, so this is the fallback path.
       if (strategy === "default" && branch.ahead > 0) {
