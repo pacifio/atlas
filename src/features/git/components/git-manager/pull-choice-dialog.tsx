@@ -64,7 +64,7 @@ export function PullChoiceDialog({ onChoose }: { onChoose: (strategy: PullStrate
                     className="text-left px-2.5 py-2 rounded hover:bg-element-hover transition-colors"
                   >
                     <div className="text-xs font-medium text-foreground">{o.label}</div>
-                    <div className="text-2xs text-muted-foreground mt-0.5">{o.detail}</div>
+                    <div className="text-2xs text-secondary-foreground mt-0.5">{o.detail}</div>
                   </button>
                 ))}
               </div>
