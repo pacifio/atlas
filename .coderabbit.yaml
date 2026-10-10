@@ -1,0 +1,207 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+#
+# CodeRabbit reviews every pull request, from a fork or from this repo.
+#
+# Without this file CodeRabbit ran on its defaults, and its default only
+# auto-reviews PRs whose base is the repository's default branch. Atlas's PRs
+# almost never target `main`: work lands on a version branch (`0.4.1`, …) and
+# the merge of that branch into `main` is the release (CONTRIBUTING.md,
+# "Branching model"). So every contributor PR got "Review skipped — auto
+# reviews are disabled on base/target branches other than the default branch"
+# unless someone commented `@coderabbitai review` by hand.
+#
+# Reference: https://docs.coderabbit.ai/reference/configuration
+
+language: en-US
+early_access: false
+
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  review_status: true
+  commit_status: true
+  poem: false
+  sequence_diagrams: true
+  changed_files_summary: true
+  abort_on_close: true
+
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    drafts: false
+    # Patterns are unanchored regexes, matched in addition to the default
+    # branch. `.*` covers the numbered version branches and the one-off
+    # branches PRs sometimes stack on (`0.3.0-strip`, `0.3.1-windows-first-run`),
+    # so no PR depends on its base matching a naming scheme to get reviewed.
+    base_branches:
+      - ".*"
+
+  pre_merge_checks:
+    # The 80% docstring threshold failed nearly every PR. The house style puts
+    # comments where the code needs a reason, not on every function, so the
+    # check reported noise rather than a gap.
+    docstrings:
+      mode: "off"
+
+  # Generated output: reviewing it duplicates the review of whatever generated
+  # it, and CI already checks each one against its generator.
+  path_filters:
+    - "!**/Cargo.lock"
+    - "!bun.lock"
+    - "!src-tauri/gen/**"
+    - "!src-tauri/icons/**"
+    - "!crates/atlas-icon-theme/vendor/**"
+    # scripts/generate-theme-keys.mjs writes these; its drift check compares
+    # them byte for byte. docs/reference/theme-keys.md is only partly
+    # generated, so it stays reviewed.
+    - "!src/features/theme/theme-key-registry.ts"
+    - "!crates/atlas-theme/theme-keys.txt"
+    - "!crates/atlas-theme/schema/theme-v1.json"
+    # The engine's protocol and hook schemas, regenerated and compared by
+    # their own tests (vendor/atlas-engine/ATLAS-CHANGES.md).
+    - "!vendor/atlas-engine/app-server-protocol/schema/**"
+    - "!vendor/atlas-engine/hooks/schema/**"
+
+  path_instructions:
+    - path: "**"
+      instructions: |
+        Atlas is a Tauri desktop app: a React UI in `src/`, Tauri commands in
+        `src-tauri/`, and standalone Rust crates in `crates/`. Most features
+        cross all three layers; see docs/architecture.md. Domain terms are
+        defined in CONTEXT.md and lasting decisions in docs/adr/ — flag a
+        change that contradicts an ADR rather than one that merely differs
+        from common practice.
+
+        Every per-agent behavior is decided by the capabilities the agent
+        advertised at ACP `initialize`. Flag any branch on an agent's identity
+        (its id or name) to decide behavior: no ACP agent gets special
+        treatment.
+
+        Stored identifiers called out as storage keys in CONTEXT.md (the
+        `workspace*` names, the `"atlas-agent"` agent id) must not be renamed
+        in passing; renaming one is a data migration.
+
+        Lint, formatting, typecheck, tests and clippy all run in CI, so do not
+        comment on what those tools already enforce. Spend the review on
+        behavior: races, error paths, state that outlives what owns it, and
+        whether new behavior has a test (a bug fix should have one that fails
+        without it).
+
+    - path: "src/**"
+      instructions: |
+        Frontend conventions (CONTRIBUTING.md, "New features"): feature code
+        lives under `src/features/<feature>/`; Zustand stores are wrapped in
+        `createSelectors` (src/lib/create-selectors.ts); Tailwind classes are
+        composed through `cn()` (src/lib/utils.ts). Flag new code that
+        bypasses these without a stated reason.
+
+        Any Tauri `invoke()` or `listen()` the UI starts calling should have a
+        typed answer in the dev fake backend (`src/dev/mock-backend/`, its
+        scenarios), typed with the frontend's own API types.
+
+    - path: "src/dev/**"
+      instructions: |
+        Dev-only fake backend for `bun run dev`. It must never be reachable
+        from a production build or from inside the Tauri window.
+
+    - path: "src-tauri/**"
+      instructions: |
+        IPC verbs are grouped by domain into a single
+        `src-tauri/src/commands/<domain>.rs`. A Rust return-type change must
+        be matched by the TypeScript type the frontend uses for it. Watch
+        for blocking work on async command handlers and for panics
+        (`unwrap`/`expect`) on input that comes from the frontend, an agent
+        process or the filesystem.
+
+        Changes to `capabilities/` or `tauri*.conf.json` widen or narrow what
+        the webview may do; call out any widening explicitly.
+
+    - path: "{src-tauri,crates}/**/*.rs"
+      instructions: |
+        Atlas's own directories are derived from the build's bundle
+        identifier through `atlas_profile::dir_name()`, `dir_in(root)` and
+        `config_dir_name()`. Flag a literal `".atlas"`, `".atlas-dev"` or
+        `"atlas"` used as a directory name.
+
+    - path: "crates/**"
+      instructions: |
+        Each crate is a standalone package with its own Cargo.lock, not a
+        workspace member. A new dependency needs discussion before it lands
+        (CONTRIBUTING.md); flag heavy ones and ones that duplicate something
+        a crate already depends on.
+
+    - path: "vendor/atlas-engine/**"
+      instructions: |
+        A hard fork of an Apache-2.0 upstream that Atlas maintains
+        (ADR-0003, ADR-0011). Apache-2.0 §4(b): every source file Atlas
+        modifies must carry the "Modified by Atlas" notice on its first line,
+        or be listed in vendor/atlas-engine/ATLAS-CHANGES.md if it cannot
+        carry one. Flag a modified file that has neither. Review only the
+        diff; do not suggest restyling upstream code.
+
+    - path: "**/*{telemetry,posthog,analytics}*"
+      instructions: |
+        Telemetry changes need TELEMETRY.md updated to match and must be
+        called out in the PR description. Flag any new property that could
+        carry file contents, paths, prompts or other user data.
+
+    - path: ".github/workflows/**"
+      instructions: |
+        CI runs on pull requests from forks. Flag `pull_request_target`,
+        secrets exposed to fork-triggered jobs, untrusted PR text interpolated
+        into `run:` steps, and third-party actions not pinned to a commit SHA.
+
+    - path: "{docs,landing}/**"
+      instructions: |
+        Review for accuracy against the code it describes, not prose style.
+
+  tools:
+    # The repo lints with oxlint and clippy. CodeRabbit skips either one on
+    # its own when it sees it already running in a workflow, so enabling them
+    # costs nothing. Biome is off because oxlint does not run while Biome is
+    # on, and ESLint is off so a second linter's opinions do not contradict
+    # oxlint's.
+    clippy:
+      enabled: true
+    oxc:
+      enabled: true
+    biome:
+      enabled: false
+    eslint:
+      enabled: false
+    shellcheck:
+      enabled: true
+    actionlint:
+      enabled: true
+    gitleaks:
+      enabled: true
+    markdownlint:
+      enabled: true
+    yamllint:
+      enabled: true
+    github-checks:
+      enabled: true
+      timeout_ms: 90000
+
+chat:
+  auto_reply: true
+
+knowledge_base:
+  opt_out: false
+  # CLAUDE.md and AGENTS.md are read by default; these patterns add to them.
+  # A guideline file only governs its own directory and below, so only
+  # root-level files belong here: docs/adr/** would apply to docs/ alone. The
+  # `**` path instruction points the review at the ADRs instead.
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "CONTRIBUTING.md"
+      - "CONTEXT.md"
+      - "TELEMETRY.md"
+  learnings:
+    scope: auto
+  issues:
+    scope: auto
+  pull_requests:
+    scope: auto
