@@ -13,6 +13,7 @@ export type GitErrorCode =
   | "merge-conflicts"
   | "rebase-conflicts"
   | "unrelated-histories"
+  | "divergent-branches"
   | "local-changes-overwritten"
   | "uncommitted-changes"
   | "nothing-to-commit"
@@ -89,6 +90,11 @@ export function gitErrorTitle(payload: GitErrorPayload): string {
 export function handleGitError(e: unknown): void {
   if (!isGitError(e)) {
     toast.error(String(e));
+    return;
+  }
+  // Not a dead end: the fix is a choice between two pulls, so ask for it.
+  if (e.code === "divergent-branches") {
+    useGitStore.getState().actions.showPullChoice({ kind: "failed", error: e });
     return;
   }
   if (INFO_CODES.has(e.code)) {

@@ -10,7 +10,7 @@
 //! stream their output as `atlas:git:op` events (see [`git_commit_v2`]).
 
 use atlas_git::{GitCommand, GitErrorCode, GitErrorPayload};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -415,22 +415,120 @@ pub async fn git_fetch(
     .map_err(join_err)?
 }
 
+/// How `git pull` reconciles a branch that has diverged from its upstream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PullStrategy {
+    /// No flag — git's config decides (`pull.rebase` / `pull.ff`). Fails with
+    /// `DivergentBranches` when the branch diverged and nothing is configured.
+    #[default]
+    Default,
+    /// `--rebase`: replay local commits on top of the upstream's.
+    Rebase,
+    /// `--no-rebase`: merge the upstream in. Overrides `pull.ff=only` too.
+    Merge,
+}
+
+fn pull_args(strategy: PullStrategy, remote: Option<&str>) -> Vec<&str> {
+    let mut args = vec!["pull", "--progress"];
+    match strategy {
+        PullStrategy::Default => {}
+        PullStrategy::Rebase => args.push("--rebase"),
+        PullStrategy::Merge => args.push("--no-rebase"),
+    }
+    if let Some(r) = remote {
+        args.push(r);
+    }
+    args
+}
+
+/// What a plain `git pull` would do on a diverged branch, given git config.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PullPreference {
+    /// Config says rebase: a plain pull reconciles on its own.
+    Rebase,
+    /// Config says merge: a plain pull reconciles on its own.
+    Merge,
+    /// Nothing configured, or `pull.ff=only`: a plain pull would refuse, so
+    /// the user has to choose.
+    Ask,
+}
+
+/// git's own precedence, checked against git 2.54: `pull.ff=only` refuses
+/// a diverged pull even when a rebase setting exists; otherwise
+/// `branch.<name>.rebase` beats `pull.rebase` (false merges, any other value
+/// — true, merges, interactive — rebases); otherwise any other `pull.ff`
+/// value merges; otherwise git refuses.
+fn resolve_pull_preference(
+    branch_rebase: Option<&str>,
+    pull_rebase: Option<&str>,
+    pull_ff: Option<&str>,
+) -> PullPreference {
+    let ff = pull_ff.map(str::to_ascii_lowercase);
+    if ff.as_deref() == Some("only") {
+        return PullPreference::Ask;
+    }
+    if let Some(rebase) = branch_rebase.or(pull_rebase) {
+        return match rebase.to_ascii_lowercase().as_str() {
+            "false" | "no" | "off" | "0" | "" => PullPreference::Merge,
+            _ => PullPreference::Rebase,
+        };
+    }
+    if ff.is_some() {
+        return PullPreference::Merge;
+    }
+    PullPreference::Ask
+}
+
+/// `git <args>` with `envs` applied, keeping stdout when it exits 0. Exit 1
+/// is "unset" for `config --get` and "detached" for `symbolic-ref --quiet`.
+fn read_value(path: &str, args: &[&str], envs: &[(&str, &str)]) -> Option<String> {
+    let mut cmd = GitCommand::new(path, args)
+        .read_only()
+        .success_codes(&[0, 1]);
+    for (k, v) in envs {
+        cmd = cmd.env(k, v);
+    }
+    cmd.run()
+        .ok()
+        .filter(|o| o.exit_code == 0)
+        .map(|o| o.stdout.trim().to_string())
+}
+
+/// The effective (repo → global → system) config behind a plain pull.
+/// `envs` exists for the tests, which must not read the developer's config.
+fn pull_preference(path: &str, envs: &[(&str, &str)]) -> PullPreference {
+    let get = |key: &str| read_value(path, &["config", "--get", key], envs);
+    let branch_rebase = read_value(path, &["symbolic-ref", "--quiet", "--short", "HEAD"], envs)
+        .filter(|b| !b.is_empty())
+        .and_then(|b| get(&format!("branch.{b}.rebase")));
+    resolve_pull_preference(
+        branch_rebase.as_deref(),
+        get("pull.rebase").as_deref(),
+        get("pull.ff").as_deref(),
+    )
+}
+
+/// Read before pulling a diverged branch, so Atlas only asks "rebase or
+/// merge?" when git itself would refuse — never over a saved preference.
+#[tauri::command]
+pub async fn git_pull_preference(path: String) -> Result<PullPreference, GitErrorPayload> {
+    tokio::task::spawn_blocking(move || Ok(pull_preference(&path, &[])))
+        .await
+        .map_err(join_err)?
+}
+
 #[tauri::command]
 pub async fn git_pull(
     path: String,
-    rebase: bool,
+    strategy: Option<PullStrategy>,
     remote: Option<String>,
     op_id: Option<String>,
     app: AppHandle,
 ) -> Result<String, GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
-        let mut args = vec!["pull", "--progress"];
-        if rebase {
-            args.push("--rebase");
-        }
-        if let Some(r) = remote.as_deref() {
-            args.push(r);
-        }
+        let args = pull_args(strategy.unwrap_or_default(), remote.as_deref());
         run_remote_op(&app, &path, "pull", op_id, &args)
     })
     .await
@@ -1724,5 +1822,126 @@ mod tests {
         repo.git(&["fetch", "-q", "origin"]);
         hermetic(&repo.path, &push_args(true, false, None)).unwrap();
         assert_eq!(remote_main(&remote), ours);
+    }
+
+    // ── pull ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn pull_args_map_each_strategy_to_its_flag() {
+        assert_eq!(
+            pull_args(PullStrategy::Default, None),
+            ["pull", "--progress"]
+        );
+        assert_eq!(
+            pull_args(PullStrategy::Rebase, None),
+            ["pull", "--progress", "--rebase"]
+        );
+        assert_eq!(
+            pull_args(PullStrategy::Merge, Some("upstream")),
+            ["pull", "--progress", "--no-rebase", "upstream"]
+        );
+    }
+
+    #[test]
+    fn pull_preference_follows_gits_precedence() {
+        use PullPreference::*;
+        // (branch.<name>.rebase, pull.rebase, pull.ff) → what a plain pull does.
+        let cases: &[(Option<&str>, Option<&str>, Option<&str>, PullPreference)] = &[
+            (None, None, None, Ask),
+            (None, Some("true"), None, Rebase),
+            (None, Some("merges"), None, Rebase),
+            (None, Some("interactive"), None, Rebase),
+            (None, Some("false"), None, Merge),
+            (None, Some("no"), None, Merge),
+            (Some("true"), Some("false"), None, Rebase),
+            (Some("false"), Some("true"), None, Merge),
+            (None, None, Some("true"), Merge),
+            (None, None, Some("false"), Merge),
+            (None, None, Some("only"), Ask),
+            (None, Some("true"), Some("only"), Ask),
+            (Some("true"), None, Some("only"), Ask),
+        ];
+        for &(branch, pull, ff, want) in cases {
+            assert_eq!(
+                resolve_pull_preference(branch, pull, ff),
+                want,
+                "branch.rebase={branch:?} pull.rebase={pull:?} pull.ff={ff:?}"
+            );
+        }
+    }
+
+    /// `repo` and the remote each gain a commit on `main` (different files,
+    /// so reconciling never conflicts). Returns the remote's new commit.
+    fn diverged(dir: &Path) -> (Repo, String) {
+        let (repo, remote) = published(dir);
+        let other = Repo::init(&dir.join("other"));
+        other.git(&["remote", "add", "origin", &remote]);
+        other.git(&["fetch", "-q", "origin"]);
+        other.git(&["reset", "-q", "--hard", "origin/main"]);
+        let theirs = other.commit("theirs.txt", "theirs\n", "theirs");
+        other.git(&["push", "-q", "origin", "HEAD:main"]);
+        repo.commit("ours.txt", "ours\n", "ours");
+        (repo, theirs)
+    }
+
+    fn contains(repo: &Repo, commit: &str) -> bool {
+        hermetic(&repo.path, &["merge-base", "--is-ancestor", commit, "HEAD"]).is_ok()
+    }
+
+    /// The preference Atlas reads agrees with what a plain pull then does:
+    /// `ask` exactly when git refuses, a strategy exactly when it reconciles.
+    #[test]
+    fn pull_preference_predicts_a_plain_pull() {
+        let configs: &[&[(&str, &str)]] = &[
+            &[],
+            &[("pull.rebase", "true")],
+            &[("pull.rebase", "false")],
+            &[("pull.ff", "only")],
+            &[("pull.ff", "only"), ("pull.rebase", "true")],
+            &[("pull.rebase", "false"), ("branch.main.rebase", "true")],
+        ];
+        for config in configs {
+            let dir = Scratch::new();
+            let (repo, _) = diverged(&dir.0);
+            for (k, v) in *config {
+                repo.git(&["config", k, v]);
+            }
+            let preference = pull_preference(&repo.path, HERMETIC_ENV);
+            let pulled = hermetic(&repo.path, &pull_args(PullStrategy::Default, None));
+            assert_eq!(
+                preference == PullPreference::Ask,
+                pulled.is_err(),
+                "{config:?}: preference {preference:?}, pull {:?}",
+                pulled.err().map(|e| e.raw_stderr)
+            );
+        }
+    }
+
+    /// Both of git's wordings — no `pull.rebase` set, and `pull.ff=only` —
+    /// classify as `DivergentBranches`, and both strategies then succeed.
+    #[test]
+    fn a_diverged_pull_needs_a_strategy_and_either_one_reconciles() {
+        for ff_only in [false, true] {
+            for strategy in [PullStrategy::Rebase, PullStrategy::Merge] {
+                let dir = Scratch::new();
+                let (repo, theirs) = diverged(&dir.0);
+                if ff_only {
+                    repo.git(&["config", "pull.ff", "only"]);
+                }
+
+                let err =
+                    hermetic(&repo.path, &pull_args(PullStrategy::Default, None)).unwrap_err();
+                assert_eq!(
+                    err.code,
+                    GitErrorCode::DivergentBranches,
+                    "ff_only={ff_only}: {}",
+                    err.raw_stderr
+                );
+
+                hermetic(&repo.path, &pull_args(strategy, None))
+                    .unwrap_or_else(|e| panic!("{strategy:?} ff_only={ff_only}: {}", e.raw_stderr));
+                assert!(contains(&repo, &theirs), "{strategy:?} ff_only={ff_only}");
+            }
+        }
     }
 }

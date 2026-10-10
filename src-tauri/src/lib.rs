@@ -688,6 +688,7 @@ pub fn run() {
             commands::git_ops::git_fetch,
             commands::git_autofetch::git_autofetch_set_active,
             commands::git_ops::git_pull,
+            commands::git_ops::git_pull_preference,
             commands::git_ops::git_push,
             commands::git_ops::git_publish_branch,
             commands::git_ops::git_remotes,

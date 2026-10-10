@@ -9,6 +9,7 @@ import { gitErrorText, notifyGitRemoteOp } from "@/features/notifications/lib/ou
 import { BranchSwitcher } from "./branch-switcher";
 import { MergeBranchDialog } from "./merge-branch-dialog";
 import { GitErrorDialog } from "./git-error-dialog";
+import { PullChoiceDialog } from "./pull-choice-dialog";
 import { ChangesView } from "./changes-view";
 import { HistoryView } from "./history-view";
 import { StashesView } from "./stashes-view";
@@ -56,6 +57,19 @@ export function GitManagerPanel() {
     }
   };
 
+  // Diverged: a plain pull reconciles only if git config names a strategy.
+  // Honour a saved one; ask up front only where git itself would refuse.
+  const onPull = async () => {
+    if (ahead > 0 && behind > 0) {
+      const preference = await actions.pullPreference().catch(() => "ask" as const);
+      if (preference === "ask") {
+        actions.showPullChoice({ kind: "diverged" });
+        return;
+      }
+    }
+    await run("pull", () => actions.pull());
+  };
+
   if (!isRepo) {
     return (
       <div className="px-3 py-8 text-center text-xs text-muted-foreground">
@@ -99,9 +113,9 @@ export function GitManagerPanel() {
             {hasUpstream ? (
               <>
                 <ToolbarBtn
-                  onClick={() => run("pull", () => actions.pull(false))}
+                  onClick={() => void onPull()}
                   busy={busy === "pull"}
-                  title="Pull"
+                  title={ahead > 0 && behind > 0 ? "Pull (branch has diverged)" : "Pull"}
                   icon={<ArrowDown size={12} />}
                   badge={behind > 0 ? behind : undefined}
                 />
@@ -147,6 +161,7 @@ export function GitManagerPanel() {
 
       <MergeBranchDialog open={mergeOpen} onOpenChange={setMergeOpen} />
       <GitErrorDialog />
+      <PullChoiceDialog onChoose={(strategy) => run("pull", () => actions.pull(strategy))} />
     </div>
   );
 }
