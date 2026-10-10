@@ -1,8 +1,8 @@
 //! Tauri adapters over [`crate::auth::AuthCore`].
 //!
 //! Thin by design: translate arguments, spawn the poll task, emit events. Every
-//! decision worth testing lives in `crate::auth`, which is why there are no
-//! tests here — this layer holds no logic of its own.
+//! decision worth testing lives in `crate::auth`, except for the asset-scope
+//! avatar grant path validation which is tested below.
 //!
 //! Events emitted to the frontend:
 //!   `atlas:auth-changed`    — the full [`AuthSnapshot`], on every transition
@@ -36,6 +36,7 @@ const SESSION_ENDED: &str = "Your Atlas session ended. Sign in again to reconnec
 /// Managed handle to the auth core.
 pub struct AuthState {
     core: Arc<AuthCore>,
+    config_dir: std::path::PathBuf,
 }
 
 impl AuthState {
@@ -43,14 +44,104 @@ impl AuthState {
         Self {
             core: Arc::new(AuthCore::new(
                 auth_base(),
-                config_dir,
+                config_dir.clone(),
                 reqwest::Client::new(),
             )),
+            config_dir,
         }
     }
 
     pub fn core(&self) -> Arc<AuthCore> {
         Arc::clone(&self.core)
+    }
+
+    fn config_dir(&self) -> &std::path::Path {
+        &self.config_dir
+    }
+}
+
+/// Validate and canonicalize a cached avatar path before granting asset protocol access.
+///
+/// Ensures the path is:
+/// - Absolute
+/// - Named with the expected avatar prefix (`avatar-`)
+/// - Has an allowed image extension (png, jpg, jpeg, webp, gif)
+/// - Resolves to an existing regular file
+fn resolve_avatar_grant_path(
+    path: &str,
+    allowed_dir: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    let p = std::path::Path::new(path);
+    if !p.is_absolute() {
+        return None;
+    }
+    let file_name = p.file_name()?.to_str()?;
+    if !file_name.starts_with("avatar-") {
+        return None;
+    }
+    let ext = p.extension()?.to_str()?.to_ascii_lowercase();
+    if !matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "webp" | "gif") {
+        return None;
+    }
+    // A symlink named `avatar-*.png` could point anywhere — auth tokens,
+    // session state. Canonicalize, then require the *target* to be a regular
+    // file directly inside the avatar cache dir, with an avatar-shaped name
+    // and an image extension. Both sides are canonicalized so symlinked
+    // parents on either side (e.g. /var → /private/var) can't skew the check.
+    let canonical_dir = dunce::canonicalize(allowed_dir).ok()?;
+    let canonical = dunce::canonicalize(p).ok()?;
+    if canonical.parent() != Some(canonical_dir.as_path()) {
+        return None;
+    }
+    let resolved_name = canonical.file_name()?.to_str()?;
+    if !resolved_name.starts_with("avatar-") {
+        return None;
+    }
+    let resolved_ext = canonical.extension()?.to_str()?.to_ascii_lowercase();
+    if !matches!(
+        resolved_ext.as_str(),
+        "png" | "jpg" | "jpeg" | "webp" | "gif"
+    ) {
+        return None;
+    }
+    if !canonical.is_file() {
+        return None;
+    }
+    Some(canonical)
+}
+
+/// Grant the asset protocol read access to a specific cached avatar file.
+///
+/// On Linux, cached avatars are written to `app_config_dir()` (`~/.config/dev.atlas.ide/avatar-<hash>.<ext>`).
+/// Because Tauri's Unix glob matcher uses `requireLiteralLeadingDot: true`, `$HOME/**` ignores
+/// hidden dot directories such as `~/.config`.
+/// Explicitly granting the single file via `allow_file` allows the webview to serve the avatar
+/// without broadening scope to the entire config directory (which holds auth tokens and session state).
+fn grant_avatar_file(app: &AppHandle, path: &str) {
+    let Some(state) = app.try_state::<AuthState>() else {
+        return;
+    };
+    if let Some(canonical) = resolve_avatar_grant_path(path, state.config_dir()) {
+        let _ = app.asset_protocol_scope().allow_file(&canonical);
+    }
+}
+
+fn grant_avatar_for_snapshot(app: &AppHandle, snapshot: &AuthSnapshot) {
+    if let AuthSnapshot::SignedIn {
+        user: Some(user), ..
+    } = snapshot
+    {
+        if let Some(ref path) = user.avatar_path {
+            grant_avatar_file(app, path);
+        }
+    }
+}
+
+fn grant_member_avatars(app: &AppHandle, members: &[OrgMember]) {
+    for member in members {
+        if let Some(ref path) = member.avatar_path {
+            grant_avatar_file(app, path);
+        }
     }
 }
 
@@ -60,6 +151,7 @@ impl AuthState {
 /// because of that: a signed-in relaunch is covered for free, and no future
 /// transition can forget to update who events are attributed to.
 fn broadcast(app: &AppHandle, snapshot: AuthSnapshot) {
+    grant_avatar_for_snapshot(app, &snapshot);
     sync_identity(
         app,
         &snapshot,
@@ -143,8 +235,10 @@ fn telemetry(app: &AppHandle) -> Arc<TelemetryClient> {
 
 /// Current account state. Carries no credential — see [`AuthSnapshot`].
 #[tauri::command]
-pub fn auth_snapshot(state: State<'_, AuthState>) -> AuthSnapshot {
-    state.core().snapshot()
+pub fn auth_snapshot(app: AppHandle, state: State<'_, AuthState>) -> AuthSnapshot {
+    let snapshot = state.core().snapshot();
+    grant_avatar_for_snapshot(&app, &snapshot);
+    snapshot
 }
 
 /// Begin (or resume) sign-in.
@@ -383,17 +477,18 @@ pub async fn auth_delete_org(
 // `user_message_denied`. As everywhere in this module, only a real 401 inside
 // `AuthCore` clears the credential; nothing below ever touches it.
 
-/// The org's members. Read-only: no `AppHandle`, and it broadcasts nothing.
+/// The org's members. Grants asset scope for cached member avatars; broadcasts nothing.
 #[tauri::command]
 pub async fn auth_list_members(
+    app: AppHandle,
     org_id: String,
     state: State<'_, AuthState>,
 ) -> Result<Vec<OrgMember>, String> {
-    state
-        .core()
-        .list_members(&org_id)
-        .await
-        .map_err(|e| e.user_message_denied("You don't have access to this organization's members."))
+    let members = state.core().list_members(&org_id).await.map_err(|e| {
+        e.user_message_denied("You don't have access to this organization's members.")
+    })?;
+    grant_member_avatars(&app, &members);
+    Ok(members)
 }
 
 /// Pending + past invitations. Admin-scoped server-side, so a non-admin's call
@@ -538,4 +633,69 @@ pub fn restore_on_launch(app: &AppHandle) {
             );
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_avatar_grant_path_validates_path() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_dir = temp_dir.path();
+        let valid_file = temp_dir.path().join("avatar-1234abcd5678ef01.png");
+        std::fs::write(&valid_file, b"png data").unwrap();
+
+        // Valid cached avatar
+        let resolved = resolve_avatar_grant_path(valid_file.to_str().unwrap(), cache_dir);
+        assert!(resolved.is_some());
+        assert_eq!(resolved.unwrap(), dunce::canonicalize(&valid_file).unwrap());
+
+        // Relative path rejected
+        assert!(resolve_avatar_grant_path("avatar-1234.png", cache_dir).is_none());
+
+        // Missing file rejected
+        let missing = temp_dir.path().join("avatar-missing.png");
+        assert!(resolve_avatar_grant_path(missing.to_str().unwrap(), cache_dir).is_none());
+
+        // Wrong filename prefix rejected
+        let non_avatar = temp_dir.path().join("photo-1234.png");
+        std::fs::write(&non_avatar, b"png").unwrap();
+        assert!(resolve_avatar_grant_path(non_avatar.to_str().unwrap(), cache_dir).is_none());
+
+        // Disallowed extension rejected
+        let non_image = temp_dir.path().join("avatar-session.json");
+        std::fs::write(&non_image, b"{}").unwrap();
+        assert!(resolve_avatar_grant_path(non_image.to_str().unwrap(), cache_dir).is_none());
+
+        // Directory rejected
+        let dir = temp_dir.path().join("avatar-dir.png");
+        std::fs::create_dir(&dir).unwrap();
+        assert!(resolve_avatar_grant_path(dir.to_str().unwrap(), cache_dir).is_none());
+
+        // Path outside the cache dir rejected even with an avatar-shaped name
+        let outside_dir = tempfile::tempdir().unwrap();
+        let outside = outside_dir.path().join("avatar-e1060a0e8bfc7d4e.png");
+        std::fs::write(&outside, b"png").unwrap();
+        assert!(resolve_avatar_grant_path(outside.to_str().unwrap(), cache_dir).is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_avatar_grant_path_rejects_symlink_escape() {
+        let cache_dir = tempfile::tempdir().unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        let secret = elsewhere.path().join("auth.json");
+        std::fs::write(&secret, b"{}").unwrap();
+        let link = cache_dir.path().join("avatar-evil.png");
+        std::os::unix::fs::symlink(&secret, &link).unwrap();
+        assert!(resolve_avatar_grant_path(link.to_str().unwrap(), cache_dir.path()).is_none());
+
+        // Symlink to a non-avatar name inside the cache dir is also rejected
+        let other = cache_dir.path().join("session.json");
+        std::fs::write(&other, b"{}").unwrap();
+        let link2 = cache_dir.path().join("avatar-link2.png");
+        std::os::unix::fs::symlink(&other, &link2).unwrap();
+        assert!(resolve_avatar_grant_path(link2.to_str().unwrap(), cache_dir.path()).is_none());
+    }
 }
