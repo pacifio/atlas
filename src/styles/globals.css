@@ -2612,3 +2612,24 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/* Two-button toasts (a notification's actions ride sonner's `action` and
+   `cancel` slots) put the buttons on their own row. Sonner lays the icon,
+   text and buttons out in one flex row, so two buttons took ~150px and left
+   the title and body a narrow column that wrapped every few words. Here the
+   text claims the whole first row beside the icon and the buttons wrap below
+   it, right-aligned: sonner gives every button an auto start margin
+   (`--toast-button-margin-start`), which on a row of their own splits the
+   free space between them, so only the first (`cancel`) keeps it. One button
+   is narrow enough to stay inline. Same (0,4,0)+ prefix as the description
+   rule above, for the same import-order reason. */
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"]:has([data-cancel]) {
+  flex-wrap: wrap;
+  row-gap: 10px;
+}
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"]:has([data-cancel]) [data-content] {
+  flex-basis: calc(100% - 32px);
+}
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"]:has([data-cancel]) [data-action] {
+  margin-left: 0;
+}
