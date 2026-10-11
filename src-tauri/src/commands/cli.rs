@@ -30,6 +30,49 @@ use tauri::State;
 
 const HELPER_TEMPLATE: &str = include_str!("../../bin/atlas-cli.sh");
 
+/// Flags handled before the raw binary boots the GUI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EarlyCliFlag {
+    Version,
+    Help,
+}
+
+/// Match only the first argument after the program name, like the shell helper.
+pub fn early_cli_flag(args: &[String]) -> Option<EarlyCliFlag> {
+    match args.first().map(String::as_str) {
+        Some("--version" | "-v") => Some(EarlyCliFlag::Version),
+        Some("--help" | "-h") => Some(EarlyCliFlag::Help),
+        _ => None,
+    }
+}
+
+/// Usage for the raw binary, mirroring the shell helper's supported flags.
+pub const CLI_HELP: &str = "Usage:
+  atlas              open Atlas
+  atlas <path>       open <path> in Atlas
+  atlas --version    print the IDE version
+  atlas --help       this message
+
+The folder you pass must exist and be readable.
+";
+
+/// Print version or help and exit successfully before Tauri starts.
+/// Returns false when the first argument isn't an early CLI flag.
+pub fn handle_early_cli_flags() -> bool {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match early_cli_flag(&args) {
+        Some(EarlyCliFlag::Version) => {
+            println!("atlas {}", env!("CARGO_PKG_VERSION"));
+            std::process::exit(0);
+        }
+        Some(EarlyCliFlag::Help) => {
+            print!("{CLI_HELP}");
+            std::process::exit(0);
+        }
+        None => false,
+    }
+}
+
 /// Per-process state holding a path the CLI helper passed on argv at
 /// launch (e.g. `atlas ~/Desktop/foo` → `~/Desktop/foo`). Consumed
 /// exactly once by `cli_take_initial_project_path` — after that the
@@ -419,4 +462,39 @@ pub async fn cli_install_helper() -> Result<CliStatus, String> {
         path.display()
     );
     cli_status().await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{early_cli_flag, EarlyCliFlag};
+
+    #[test]
+    fn early_cli_flag_matches_supported_first_args() {
+        for (flag, expected) in [
+            ("--version", EarlyCliFlag::Version),
+            ("-v", EarlyCliFlag::Version),
+            ("--help", EarlyCliFlag::Help),
+            ("-h", EarlyCliFlag::Help),
+        ] {
+            assert_eq!(early_cli_flag(&[flag.to_string()]), Some(expected));
+            assert_eq!(
+                early_cli_flag(&[flag.to_string(), ".".to_string()]),
+                Some(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn early_cli_flag_ignores_other_args() {
+        assert_eq!(early_cli_flag(&[]), None);
+        for args in [
+            vec!["."],
+            vec![".", "--version"],
+            vec!["--frobnicate"],
+            vec!["--version=x"],
+        ] {
+            let args: Vec<String> = args.into_iter().map(String::from).collect();
+            assert_eq!(early_cli_flag(&args), None);
+        }
+    }
 }
