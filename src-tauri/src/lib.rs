@@ -87,6 +87,8 @@ pub fn run() {
     // Parse argv for an initial project path BEFORE tauri::Builder starts
     // so the webview boot path can read it via `cli_take_initial_project_path`.
     // Triggered by the `atlas <path>` shell helper at ~/.local/bin/atlas.
+    // Handle raw binary version/help flags before Tauri boots (#371).
+    commands::cli::handle_early_cli_flags();
     let initial_project = commands::cli::parse_initial_project();
 
     let builder = tauri::Builder::default();
