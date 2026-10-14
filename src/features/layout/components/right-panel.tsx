@@ -4,6 +4,7 @@ import { useLayoutStore } from "../stores/layout-store";
 import { PanelSkeleton } from "@/components/panel-skeleton";
 import { GitCommit, GitCompare } from "lucide-react";
 import { GithubIcon } from "@/components/github-icon";
+import { Hint } from "@/ui/tooltip";
 
 // All three right-panel sub-panels are lazy so they don't run their first
 // invokes / vendor parses during the boot-cascade window. The user lands
@@ -37,9 +38,27 @@ const CommsPanel = lazy(() =>
   })),
 );
 const sections = [
-  { id: "changes" as const, label: "Source Control", icon: GitCompare },
-  { id: "git-graph" as const, label: "Commit", icon: GitCommit },
-  { id: "github" as const, label: "GitHub", icon: GithubIcon },
+  {
+    id: "changes" as const,
+    label: "Source Control",
+    name: "Source Control",
+    hint: "Source Control — Review changes and create commits",
+    icon: GitCompare,
+  },
+  {
+    id: "git-graph" as const,
+    label: "Commit",
+    name: "Git Graph / Commit History",
+    hint: "Git Graph / Commit History — Explore branches and commits",
+    icon: GitCommit,
+  },
+  {
+    id: "github" as const,
+    label: "GitHub",
+    name: "GitHub",
+    hint: "GitHub — Browse pull requests and issues",
+    icon: GithubIcon,
+  },
 ];
 
 export function RightPanel() {
@@ -59,19 +78,22 @@ export function RightPanel() {
     <div className="atlas-vibrant-panel h-full flex flex-col bg-[var(--card)]">
       <div className="flex items-center border-b border-border px-1 h-[29px] shrink-0 gap-0.5 overflow-x-auto hide-scrollbar">
         {sections.map((s) => (
-          <button
-            key={s.id}
-            onClick={() => setRightSection(s.id)}
-            className={cn(
-              "flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium transition-colors cursor-pointer shrink-0 whitespace-nowrap",
-              activeSection === s.id
-                ? "text-foreground bg-element-selected"
-                : "text-muted-foreground hover:text-secondary-foreground hover:bg-element-hover",
-            )}
-          >
-            <s.icon size={12} />
-            {s.label}
-          </button>
+          <Hint key={s.id} label={s.hint}>
+            <button
+              aria-label={s.name}
+              aria-pressed={activeSection === s.id}
+              onClick={() => setRightSection(s.id)}
+              className={cn(
+                "flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium transition-colors cursor-pointer shrink-0 whitespace-nowrap",
+                activeSection === s.id
+                  ? "text-foreground bg-element-selected"
+                  : "text-muted-foreground hover:text-secondary-foreground hover:bg-element-hover",
+              )}
+            >
+              <s.icon size={12} aria-hidden />
+              {s.label}
+            </button>
+          </Hint>
         ))}
       </div>
 

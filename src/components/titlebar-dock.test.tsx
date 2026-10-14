@@ -2,7 +2,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 
-import { resetTooltipTiming, TOOLTIP_OPEN_DELAY, TOOLTIP_WARM_WINDOW } from "@/ui/tooltip-timing";
+import {
+  resetTooltipTiming,
+  TOOLTIP_CLOSE_DELAY,
+  TOOLTIP_OPEN_DELAY,
+  TOOLTIP_WARM_WINDOW,
+} from "@/ui/tooltip-timing";
 import { TitlebarDock, type DockItem } from "./titlebar-dock";
 
 /**
@@ -25,22 +30,18 @@ const items: DockItem[] = [
 ];
 
 /**
- * Lay the dock out: labels 40/60/80 (total 180) on an anchor starting at 100.
+ * Lay the dock out: labels 40/60/80 (total 180) in a viewport-anchored portal.
  *
- * The anchor is measured, NOT the strip. That distinction is the bug this
- * suite exists to hold: the strip is the element being translated, so reading
- * its rect as the origin folds the previous offset into the next one and every
- * hover drifts further. The anchor here is given a FIXED rect while the strip
- * deliberately gets none, so any code that measures the strip reads zeros and
- * fails loudly.
+ * The strip is never measured as the origin: it is the element being translated,
+ * so that would fold the previous offset into every subsequent hover.
  */
 function layout(container: HTMLElement, iconCentres = [120, 200, 280]) {
-  const strip = container.querySelector("[style*='clip-path']") as HTMLElement;
-  measure(strip.parentElement!, { left: 100, width: 180 });
+  const buttons = [...container.querySelectorAll("button")];
+  fireEvent.mouseEnter(buttons[0]);
+  const strip = document.querySelector("[data-slot='hint-group-tooltip'] > div") as HTMLElement;
   const labels = [...strip.children];
   [40, 60, 80].forEach((width, i) => measure(labels[i], { left: 0, width }));
-  const buttons = [...container.querySelectorAll("button")];
-  buttons.forEach((b, i) => measure(b, { left: iconCentres[i] - 12, width: 24 }));
+  buttons.forEach((b, i) => measure(b.parentElement!, { left: iconCentres[i] - 12, width: 24 }));
   return { strip, buttons };
 }
 
@@ -80,9 +81,8 @@ describe("TitlebarDock", () => {
   });
 
   it("is invisible until something is hovered", () => {
-    const { container } = render(<TitlebarDock items={items} />);
-    const strip = container.querySelector("[style*='clip-path']") as HTMLElement;
-    expect(strip.style.opacity).toBe("0");
+    render(<TitlebarDock items={items} />);
+    expect(document.querySelector("[data-slot='hint-group-tooltip']")).toBeNull();
   });
 
   it("clips away every label but the hovered one", () => {
@@ -107,8 +107,8 @@ describe("TitlebarDock", () => {
     const { strip, buttons } = layout(container);
 
     hover(buttons[1]);
-    // strip left 100 + 40 before + half of 60 = 170; icon centre 200.
-    expect(translateX(strip)).toBe(30);
+    // 40 before + half of 60 = 70; icon centre 200.
+    expect(translateX(strip)).toBe(130);
   });
 
   it("pulls the tooltip back inside the window at the right edge", () => {
@@ -118,11 +118,11 @@ describe("TitlebarDock", () => {
 
     hover(buttons[2]);
     const centre = window.innerWidth - 10;
-    const unclamped = centre - (100 + 40 + 60 + 40);
+    const unclamped = centre - (40 + 60 + 40);
     const overflow = centre + 40 - (window.innerWidth - 8);
     expect(translateX(strip)).toBe(unclamped - overflow);
     // Which is to say: its right edge lands exactly on the margin.
-    expect(100 + 100 + translateX(strip) + 80).toBe(window.innerWidth - 8);
+    expect(100 + translateX(strip) + 80).toBe(window.innerWidth - 8);
   });
 
   it("materialises in place on first hover, then animates between items", () => {
@@ -145,7 +145,8 @@ describe("TitlebarDock", () => {
     hover(buttons[1]);
     const held = strip.style.transform;
 
-    fireEvent.mouseLeave(container.firstElementChild as HTMLElement);
+    fireEvent.mouseLeave(buttons[1]);
+    act(() => vi.advanceTimersByTime(TOOLTIP_CLOSE_DELAY));
     expect(strip.style.opacity).toBe("0");
     expect(strip.style.transform).toBe(held);
   });
@@ -153,21 +154,21 @@ describe("TitlebarDock", () => {
   it("stays silent when nothing can be measured", () => {
     // The zero-rect case: a hidden titlebar, or a hover before layout. Better
     // to show no tooltip than one stacked at the origin.
-    const { container } = render(<TitlebarDock items={items} />);
-    const strip = container.querySelector("[style*='clip-path']") as HTMLElement;
+    render(<TitlebarDock items={items} />);
     hover(screen.getAllByRole("button")[1]);
+    const strip = document.querySelector("[data-slot='hint-group-tooltip'] > div") as HTMLElement;
     expect(strip.style.opacity).toBe("0");
   });
 
   it("hosts a trailing control and gives it a tooltip of its own", () => {
-    const { container } = render(
+    render(
       <TitlebarDock
         items={items}
         trailing={{ label: "Account", node: <button aria-label="Account" /> }}
       />,
     );
-    const strip = container.querySelector("[style*='clip-path']") as HTMLElement;
-    measure(strip.parentElement!, { left: 100, width: 230 });
+    fireEvent.mouseEnter(screen.getByLabelText("Account"));
+    const strip = document.querySelector("[data-slot='hint-group-tooltip'] > div") as HTMLElement;
     // Four labels now: the trailing one is part of the strip's arithmetic.
     const labels = [...strip.children];
     expect(labels).toHaveLength(4);
@@ -207,7 +208,7 @@ describe("TitlebarDock", () => {
     const { container } = render(<TitlebarDock items={items} />);
     const { strip, buttons } = layout(container);
     fireEvent.mouseEnter(buttons[0]);
-    fireEvent.mouseLeave(container.firstElementChild as HTMLElement);
+    fireEvent.mouseLeave(buttons[0]);
     act(() => vi.advanceTimersByTime(TOOLTIP_OPEN_DELAY * 2));
     expect(strip.style.opacity).toBe("0");
   });
@@ -215,15 +216,15 @@ describe("TitlebarDock", () => {
   it("opens instantly right after a tooltip closed, then waits again once cold", () => {
     const { container } = render(<TitlebarDock items={items} />);
     const { strip, buttons } = layout(container);
-    const dock = container.firstElementChild as HTMLElement;
     hover(buttons[0]);
-    fireEvent.mouseLeave(dock);
+    fireEvent.mouseLeave(buttons[0]);
+    act(() => vi.advanceTimersByTime(TOOLTIP_CLOSE_DELAY));
 
     fireEvent.mouseEnter(buttons[1]);
     expect(strip.style.opacity).toBe("1");
-    fireEvent.mouseLeave(dock);
+    fireEvent.mouseLeave(buttons[1]);
 
-    act(() => vi.advanceTimersByTime(TOOLTIP_WARM_WINDOW + 1));
+    act(() => vi.advanceTimersByTime(TOOLTIP_CLOSE_DELAY + TOOLTIP_WARM_WINDOW + 1));
     fireEvent.mouseEnter(buttons[2]);
     expect(strip.style.opacity).toBe("0");
   });
@@ -262,7 +263,8 @@ describe("the dock's sliding label strip", () => {
         trailing={{ label: "Account and settings", node: <button>a</button> }}
       />,
     );
-    const anchor = container.querySelector(".pointer-events-none") as HTMLElement;
+    fireEvent.mouseEnter(container.querySelector("button")!);
+    const anchor = document.querySelector("[data-slot='hint-group-tooltip']") as HTMLElement;
 
     expect(anchor).not.toBeNull();
     expect(anchor.className).toContain("fixed");
@@ -270,6 +272,7 @@ describe("the dock's sliding label strip", () => {
     // `top: 100%` cannot reach the pill from a viewport-anchored box; the
     // measured value takes its place.
     expect(anchor.className).not.toContain("top-full");
+    expect(anchor.parentElement).toBe(document.body);
     expect(anchor.style.top).toBe("0px");
   });
 });

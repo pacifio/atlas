@@ -61,8 +61,7 @@ export function CommandPalette({
     toggleChatSidebar,
     toggleTabBar,
     toggleZenMode,
-    setLeftSection,
-    setRightSection,
+    revealRightSection,
     addGroup,
     focusAdjacentGroup,
     closeGroup,
@@ -102,13 +101,8 @@ export function CommandPalette({
     });
 
   // Reveal the sidebar (toggle it on if hidden) then switch its active section.
-  const showLeft = (section: "files" | "knowledge") => {
+  const showFiles = () => {
     if (!useLayoutStore.getState().leftPanel.visible) toggleLeftPanel();
-    setLeftSection(section);
-  };
-  const showRight = (section: "changes" | "github" | "git-graph") => {
-    if (!useLayoutStore.getState().rightPanel.visible) toggleRightPanel();
-    setRightSection(section);
   };
 
   const commands = useMemo<Command[]>(
@@ -288,28 +282,28 @@ export function CommandPalette({
         label: "Show File Explorer",
         icon: PanelLeft,
         category: "View",
-        action: () => showLeft("files"),
+        action: showFiles,
       },
       {
         id: "view-knowledge",
-        label: "Show Knowledge Sidebar",
+        label: "Show Knowledge Base",
         icon: Brain,
         category: "View",
-        action: () => showLeft("knowledge"),
+        action: () => openTab("knowledge", "Knowledge"),
       },
       {
         id: "view-changes",
         label: "Show Source Control",
         icon: PanelRight,
         category: "View",
-        action: () => showRight("changes"),
+        action: () => revealRightSection("changes"),
       },
       {
         id: "view-git-graph",
-        label: "Show Git Graph",
+        label: "Show Git Graph / Commit History",
         icon: GitBranch,
         category: "View",
-        action: () => showRight("git-graph"),
+        action: () => revealRightSection("git-graph"),
       },
 
       // ── App ──
@@ -338,8 +332,7 @@ export function CommandPalette({
       toggleChatSidebar,
       toggleTabBar,
       toggleZenMode,
-      setLeftSection,
-      setRightSection,
+      revealRightSection,
       addGroup,
       focusAdjacentGroup,
       closeGroup,

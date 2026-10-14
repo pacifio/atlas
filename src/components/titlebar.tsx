@@ -513,12 +513,16 @@ function ProjectToggle() {
 }
 
 function LeftPanelToggle() {
+  const shortcut = useActionShortcut("panels.left")?.label;
   const leftPanel = useLayoutStore.use.leftPanel();
   const { toggleLeftPanel } = useLayoutStore.use.actions();
+  const label = leftPanel.visible ? "Hide File Explorer" : "Show File Explorer";
 
   return (
-    <HintItem label={leftPanel.visible ? "Hide left panel" : "Show left panel"}>
+    <HintItem label={shortcut ? `${label} (${shortcut})` : label}>
       <button
+        aria-label={label}
+        aria-expanded={leftPanel.visible}
         onClick={toggleLeftPanel}
         className="flex items-center justify-center w-6 h-6 rounded text-muted-foreground hover:text-secondary-foreground hover:bg-element-hover transition-all duration-150"
       >
@@ -662,13 +666,17 @@ function useNotificationItem(): DockItem {
 }
 
 function useRightPanelItem(): DockItem {
+  const shortcut = useActionShortcut("panels.right")?.label;
   const rightPanel = useLayoutStore.use.rightPanel();
   const { toggleRightPanel } = useLayoutStore.use.actions();
+  const showing = rightPanel.visible && rightPanel.mode === "source-control";
+  const label = showing ? "Hide Source Control" : "Show Source Control";
 
   return {
-    label: rightPanel.visible ? "Hide right panel" : "Show right panel",
+    label: shortcut ? `${label} (${shortcut})` : label,
+    title: label,
     onClick: toggleRightPanel,
-    icon: <PanelRight size={12} className={rightPanel.visible ? "" : "opacity-40"} />,
+    icon: <PanelRight size={12} className={showing ? "" : "opacity-40"} />,
   };
 }
 
