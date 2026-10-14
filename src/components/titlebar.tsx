@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { RailGlyph } from "@/ui/animated-icon";
 import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
+import { useNavigationHint } from "@/features/keybindings/lib/use-navigation-hint";
 import { Popover } from "@base-ui/react/popover";
 import { useAppStore } from "@/features/app/stores/app-store";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
@@ -483,6 +484,7 @@ function DevModePill() {
 }
 
 function ProjectToggle() {
+  const navigationHint = useNavigationHint();
   const hint = useActionShortcut("workspace.toggleSidebar")?.label;
   const suffix = hint ? ` (${hint})` : "";
   const sidebarOpen = useProjectStore.use.sidebarOpen();
@@ -494,6 +496,7 @@ function ProjectToggle() {
   return (
     <HintItem label={sidebarOpen ? `Hide projects${suffix}` : `Show projects${suffix}`}>
       <button
+        {...navigationHint(["workspace.toggleSidebar"])}
         onClick={toggleSidebar}
         className={cn(
           "relative flex items-center justify-center w-6 h-6 rounded hover:bg-element-hover transition-all duration-150",
@@ -513,12 +516,14 @@ function ProjectToggle() {
 }
 
 function LeftPanelToggle() {
+  const navigationHint = useNavigationHint();
   const leftPanel = useLayoutStore.use.leftPanel();
   const { toggleLeftPanel } = useLayoutStore.use.actions();
 
   return (
     <HintItem label={leftPanel.visible ? "Hide left panel" : "Show left panel"}>
       <button
+        {...navigationHint(["panels.left"])}
         onClick={toggleLeftPanel}
         className="flex items-center justify-center w-6 h-6 rounded text-muted-foreground hover:text-secondary-foreground hover:bg-element-hover transition-all duration-150"
       >
@@ -667,6 +672,7 @@ function useRightPanelItem(): DockItem {
 
   return {
     label: rightPanel.visible ? "Hide right panel" : "Show right panel",
+    navigationAction: "panels.right",
     onClick: toggleRightPanel,
     icon: <PanelRight size={12} className={rightPanel.visible ? "" : "opacity-40"} />,
   };
