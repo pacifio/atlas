@@ -252,27 +252,45 @@ export function FeedbackPanel() {
 
           <div className="flex items-center gap-2 px-3.5 py-2 border-t border-border-subtle">
             {signedIn && user ? (
-              <button
-                type="button"
-                onClick={() => a.setAnonymous(!anonymous)}
-                title={
+              <Hint
+                label={
                   anonymous ? "Send with your Atlas account instead" : "Send anonymously instead"
                 }
-                className="inline-flex min-w-0 items-center gap-1.5 text-2xs text-muted-foreground hover:text-secondary-foreground transition-colors cursor-pointer"
               >
-                {/* The face is the point: at a glance you can tell whether this
-                    report will be attributable to you. Anonymous swaps it for a
-                    shield rather than dropping the slot, so the row doesn't
-                    reflow as you toggle. */}
-                {anonymous ? (
-                  <EyeOff size={11} strokeWidth={1.75} className="shrink-0" />
-                ) : (
-                  <AccountAvatar user={user} size={13} />
-                )}
-                <span className="truncate">
-                  {anonymous ? "Sending anonymously" : `Sending as ${displayName}`}
-                </span>
-              </button>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={anonymous}
+                  // A FIXED name, not the visible text: the label below changes
+                  // between states, so letting it double as the accessible name
+                  // made a screen reader read "Sending as Jane, switch, off" —
+                  // a state contradicting its own name. This names what the
+                  // switch controls; `aria-checked` says where it stands.
+                  aria-label="Send anonymously"
+                  onClick={() => a.setAnonymous(!anonymous)}
+                  // The row used to read as static text: a colour-only hover
+                  // that only showed once the pointer was already there, plus a
+                  // native `title` that arrived ~1s late. Padding + a rounded
+                  // hover fill make it look like the control it is, without
+                  // changing the gutter (the negative margin cancels the
+                  // padding) or the row height (the Send button is taller).
+                  // The focus ring is the app-wide `:focus-visible` one.
+                  className="inline-flex min-w-0 items-center gap-1.5 -mx-1.5 rounded-md px-1.5 py-0.5 text-2xs text-muted-foreground hover:text-secondary-foreground hover:bg-element-hover transition-colors cursor-pointer"
+                >
+                  {/* The face is the point: at a glance you can tell whether this
+                      report will be attributable to you. Anonymous swaps it for a
+                      shield rather than dropping the slot, so the row doesn't
+                      reflow as you toggle. */}
+                  {anonymous ? (
+                    <EyeOff size={11} strokeWidth={1.75} className="shrink-0" />
+                  ) : (
+                    <AccountAvatar user={user} size={13} />
+                  )}
+                  <span className="truncate">
+                    {anonymous ? "Sending anonymously" : `Sending as ${displayName}`}
+                  </span>
+                </button>
+              </Hint>
             ) : (
               <span className="inline-flex items-center gap-1.5 text-2xs text-disabled">
                 <EyeOff size={11} strokeWidth={1.75} className="shrink-0" />
