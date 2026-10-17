@@ -385,7 +385,9 @@ export class LineEmulator {
       case "f": {
         // Row is addressed within the hot window (the "screen" this emulator
         // knows about).
-        const [r, c] = body.split(";").map((x) => parseInt(x, 10));
+        // CSI H / CSI <row> H omit the column entirely. Destructuring then
+        // yields undefined (not NaN), so default it before cursor arithmetic.
+        const [r = 1, c = 1] = body.split(";").map((x) => parseInt(x, 10));
         this.row = Math.max(0, (Number.isNaN(r) ? 1 : r) - 1);
         this.col = Math.max(0, (Number.isNaN(c) ? 1 : c) - 1);
         this.rowAt(this.row);
