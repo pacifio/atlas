@@ -13,6 +13,8 @@
 
 /** Best-first preferred coding models per provider. Also the offline fallback. */
 const PREFERRED: Record<string, string[]> = {
+  minimax: ["MiniMax-M3.1-Flash", "MiniMax-M3"],
+  "minimax-cn": ["MiniMax-M3.1-Flash", "MiniMax-M3"],
   anthropic: ["claude-opus-4-8", "claude-sonnet-4-6", "claude-opus-4-1", "claude-sonnet-4-5"],
   openai: ["gpt-5.1", "gpt-5", "o4-mini", "gpt-4.1", "gpt-4o"],
   google: ["gemini-3.1-pro-preview", "gemini-2.5-pro", "gemini-2.5-flash"],
@@ -28,7 +30,13 @@ const PREFERRED: Record<string, string[]> = {
   fireworks: ["accounts/fireworks/models/qwen3-coder-480b-a35b-instruct"],
   deepinfra: ["Qwen/Qwen3-Coder-480B-A35B-Instruct", "deepseek-ai/DeepSeek-V3"],
   cerebras: ["qwen-3-coder-480b", "llama-3.3-70b"],
-  openrouter: ["anthropic/claude-sonnet-4.6", "google/gemini-3.1-pro", "qwen/qwen3-coder"],
+  openrouter: [
+    "anthropic/claude-sonnet-4.6",
+    "google/gemini-3.1-pro",
+    "qwen/qwen3-coder",
+    "minimax/minimax-m3.1-flash:free",
+    "minimax/minimax-m3",
+  ],
   perplexity: ["sonar-reasoning-pro", "sonar-pro"],
   cohere: ["command-a-03-2025"],
   empero: ["glm-5.3-flash"],
@@ -76,6 +84,13 @@ function isCodingModel(id: string): boolean {
 export function curateModels(provider: string, liveIds: string[]): string[] {
   const preferred = PREFERRED[provider] ?? [];
 
+  // Discovery may still advertise legacy models. This only curates the picker;
+  // explicit saved model IDs remain valid inputs to the request path.
+  if (provider === "minimax" || provider === "minimax-cn") return [...preferred];
+  if (provider === "openrouter") {
+    liveIds = liveIds.filter((id) => !id.startsWith("minimax/") || preferred.includes(id));
+  }
+
   if (liveIds.length === 0) {
     return preferred.length > 0 ? preferred : [];
   }
@@ -118,7 +133,21 @@ export function isPreferredModel(provider: string, id: string): boolean {
 }
 
 /** The default model to select for a provider given its curated list. */
-export function defaultModelFor(provider: string, curated: string[]): string | null {
+export function defaultModelFor(
+  provider: string,
+  curated: string[],
+  savedModel?: string,
+): string | null {
+  // A filtered recommendation is not a migration of an explicit selection.
+  if (
+    savedModel &&
+    (curated.includes(savedModel) ||
+      provider === "minimax" ||
+      provider === "minimax-cn" ||
+      (provider === "openrouter" && savedModel.startsWith("minimax/")))
+  ) {
+    return savedModel;
+  }
   const preferred = PREFERRED[provider] ?? [];
   // Prefer the first available preferred model, else the first curated one.
   const firstPreferred = preferred.find((id) => curated.includes(id));

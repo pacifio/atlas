@@ -43,6 +43,8 @@ pub(super) enum ApiKind {
 /// module) for the one-shot handoff summarizer.
 pub(super) fn provider_endpoint(provider: &str) -> Option<(ApiKind, &'static str)> {
     Some(match provider {
+        "minimax" => (ApiKind::OpenAi, "https://api.minimax.io/v1"),
+        "minimax-cn" => (ApiKind::OpenAi, "https://api.minimaxi.com/v1"),
         "openai" => (ApiKind::OpenAi, "https://api.openai.com/v1"),
         "anthropic" => (ApiKind::Anthropic, ""),
         "google" => (ApiKind::Google, ""),
@@ -320,6 +322,20 @@ pub async fn modelchat_stream(
     }
 }
 
+// Keep the production client construction shared with HTTP-boundary tests.
+fn openai_agent(
+    base: &str,
+    key: &str,
+    model: &str,
+) -> Result<rig_core::agent::Agent<openai::completion::CompletionModel>, String> {
+    let client = openai::CompletionsClient::builder()
+        .api_key(key)
+        .base_url(base)
+        .build()
+        .map_err(|e| e.to_string())?;
+    Ok(client.agent(model).build())
+}
+
 async fn run_stream(
     app: &AppHandle,
     stream_id: &str,
@@ -336,12 +352,7 @@ async fn run_stream(
 
     match api {
         ApiKind::OpenAi => {
-            let client = openai::CompletionsClient::builder()
-                .api_key(&key)
-                .base_url(base)
-                .build()
-                .map_err(|e| e.to_string())?;
-            let agent = client.agent(model).build();
+            let agent = openai_agent(base, &key, model)?;
             let mut stream = agent.stream_chat(prompt, history).await;
             drain(&mut stream, app, stream_id, cancel).await
         }
@@ -379,6 +390,7 @@ pub struct ModelInfo {
 
 fn fallback_models(provider: &str) -> Vec<&'static str> {
     match provider {
+        "minimax" | "minimax-cn" => vec!["MiniMax-M3.1-Flash", "MiniMax-M3"],
         "perplexity" => vec![
             "sonar",
             "sonar-pro",
@@ -498,6 +510,133 @@ async fn fetch_anthropic_models(base: &str, key: &str) -> Result<Vec<String>, St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_minimax_regions() {
+        for (provider, endpoint) in [
+            ("minimax", "https://api.minimax.io/v1"),
+            ("minimax-cn", "https://api.minimaxi.com/v1"),
+        ] {
+            assert_eq!(
+                provider_endpoint(provider),
+                Some((ApiKind::OpenAi, endpoint))
+            );
+            assert_eq!(
+                fallback_models(provider),
+                vec!["MiniMax-M3.1-Flash", "MiniMax-M3"]
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_minimax_stream_request_preserves_model_and_history() {
+        use axum::{extract::State, http::Uri, routing::post, Json, Router};
+
+        let requests = Arc::new(Mutex::new(Vec::<(String, Value)>::new()));
+        let router = Router::new()
+            .route(
+                "/{*path}",
+                post(
+                    |State(requests): State<Arc<Mutex<Vec<(String, Value)>>>>,
+                     uri: Uri,
+                     Json(body): Json<Value>| async move {
+                        requests.lock().push((uri.path().to_string(), body));
+                        (
+                            [("content-type", "text/event-stream")],
+                            "data: {\"id\":\"test\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"test\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":null}]}\n\ndata: [DONE]\n\n",
+                        )
+                    },
+                ),
+            )
+            .with_state(requests.clone());
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+
+        for provider in ["minimax", "minimax-cn", "openrouter"] {
+            let (api, endpoint) = provider_endpoint(provider).unwrap();
+            assert_eq!(api, ApiKind::OpenAi);
+            let path = url::Url::parse(endpoint).unwrap().path().to_string();
+            let base = format!("http://{addr}{path}");
+            let models = if provider == "openrouter" {
+                vec![
+                    "minimax/minimax-m3.1-flash:free",
+                    "minimax/minimax-m3",
+                    "minimax/minimax-m2.7",
+                ]
+            } else {
+                vec![
+                    fallback_models(provider)[0],
+                    "MiniMax-M3",
+                    "MiniMax-M2.7",
+                    "my-custom-model",
+                ]
+            };
+            for model in models {
+                let messages = vec![
+                    ChatMsg {
+                        role: "user".into(),
+                        content: "earlier question".into(),
+                        images: vec![],
+                    },
+                    ChatMsg {
+                        role: "assistant".into(),
+                        content: "earlier answer".into(),
+                        images: vec![],
+                    },
+                    ChatMsg {
+                        role: "user".into(),
+                        content: "inspect this".into(),
+                        images: vec![ImageData {
+                            mime: "image/png".into(),
+                            data: "aW1hZ2U=".into(),
+                        }],
+                    },
+                ];
+                let (prompt, history) = split_messages(&messages).unwrap();
+                let agent = openai_agent(&base, "offline-test-key", model).unwrap();
+                let mut stream = agent.stream_chat(prompt, history).await;
+                tokio::time::timeout(Duration::from_secs(5), async {
+                    while let Some(item) = stream.next().await {
+                        item.expect("mock streaming response");
+                    }
+                })
+                .await
+                .expect("request must complete");
+                let (request_path, body) = requests.lock().pop().expect("captured HTTP request");
+                assert_eq!(request_path, format!("{path}/chat/completions"));
+                assert_eq!(body["model"], model);
+                assert_eq!(body["stream"], true);
+                assert_eq!(body["messages"].as_array().unwrap().len(), 3);
+                assert_eq!(body["messages"][0]["role"], "user");
+                assert!(body["messages"][0]["content"]
+                    .to_string()
+                    .contains("earlier question"));
+                assert_eq!(body["messages"][1]["role"], "assistant");
+                assert!(body["messages"][1]["content"]
+                    .to_string()
+                    .contains("earlier answer"));
+                assert_eq!(body["messages"][2]["content"][0]["text"], "inspect this");
+                assert_eq!(
+                    body["messages"][2]["content"][1]["image_url"]["url"],
+                    "data:image/png;base64,aW1hZ2U="
+                );
+                for field in [
+                    "thinking",
+                    "reasoning_effort",
+                    "reasoning_split",
+                    "service_tier",
+                    "store",
+                    "previous_response_id",
+                ] {
+                    assert!(body.get(field).is_none(), "unexpected {field}: {body}");
+                }
+            }
+        }
+        server.abort();
+    }
 
     #[test]
     fn test_orcarouter_endpoint() {
