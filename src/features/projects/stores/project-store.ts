@@ -576,8 +576,13 @@ export const useProjectStore = createSelectors(
         }));
 
         if (isActive) {
-          // Switch to the most-recently-active remaining project, or clear.
-          const next = [...remaining].sort((a, b) =>
+          // Switch to the most-recently-active remaining project IN THIS ORG,
+          // or clear. Unscoped, closing an org's last project opened another
+          // org's — invisible in this org's switcher, so it could not be
+          // closed from here either (same strict rule as `org-scope.ts`).
+          const orgId = useOrgStore.getState().activeOrganisationId;
+          const inOrg = orgId == null ? [] : remaining.filter((w) => w.orgId === orgId);
+          const next = [...inOrg].sort((a, b) =>
             (b.lastActiveAt ?? "").localeCompare(a.lastActiveAt ?? ""),
           )[0];
           if (next) {

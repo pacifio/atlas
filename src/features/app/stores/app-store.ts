@@ -425,7 +425,14 @@ export const useAppStore = createSelectors(
         // flight (the `switching` guard), so auto-switching here would swallow
         // the CLI switch and strand the user on the persisted project. The
         // caller switches to the CLI project instead.
-        const active = activeProjectId && projects.find((w) => w.id === activeProjectId);
+        //
+        // Only a project of the active org: state saved before `closeProject`
+        // was org-scoped can pair one org with another org's project, which
+        // that org's switcher never shows.
+        const orgId = useOrgStore.getState().activeOrganisationId;
+        const active =
+          activeProjectId &&
+          projects.find((w) => w.id === activeProjectId && orgId != null && w.orgId === orgId);
         if (active && !opts?.skipActiveSwitch) {
           maybeEnsureAtlasGitignore(active.path, useSettingsStore.getState().settings);
           void useProjectStore.getState().actions.switchTo(active.id);
