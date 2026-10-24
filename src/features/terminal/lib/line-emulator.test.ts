@@ -70,6 +70,21 @@ describe("erase in display (ESC[J)", () => {
 });
 
 describe("LineEmulator", () => {
+  it.each(["H", "f", "1H", "1f", ";H", ";f"])(
+    "defaults the omitted cursor column in CSI %s before a PowerShell redraw",
+    (position) => {
+      // ConPTY emits cursor-home without parameters. Redraw a materialised
+      // row, then erase it, as PowerShell does while refreshing its prompt.
+      const stream = `old\rnew\x1b[${position}\x1b[Kready`;
+      expect(render(stream)).toBe("ready");
+      for (const seed of [1, 7, 42]) {
+        const emu = new LineEmulator({ hotRows: 64, maxLines: 100 });
+        for (const chunk of chunks(stream, seed)) emu.push(chunk);
+        expect(text(emu)).toBe("ready");
+      }
+    },
+  );
+
   it("matches a one-shot render for every corpus entry, in random chunk splits", () => {
     for (const s of CORPUS) {
       const expected = render(s);
