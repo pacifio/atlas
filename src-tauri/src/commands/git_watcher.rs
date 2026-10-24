@@ -17,6 +17,9 @@
 //! Watching all of `.git/` would surface every blob write inside
 //! `.git/objects/…` during `git add` / `git commit` — huge noise for
 //! zero signal. The above cover every state change the UI cares about.
+//!
+//! Reads are filtered out (see [`is_git_change`]): on Linux the frontend's
+//! own refresh reads these files, and reacting to that is a loop.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -201,7 +204,11 @@ pub async fn git_watch_start(
                 Duration::from_millis(200),
                 None,
                 move |result: notify_debouncer_full::DebounceEventResult| match result {
-                    Ok(_events) => {
+                    Ok(events) => {
+                        // A batch of nothing but reads changed nothing.
+                        if !events.iter().any(|e| is_git_change(&e.event)) {
+                            return;
+                        }
                         // Flush the refs cache first — by the time
                         // listeners (mention_search, git-store) see
                         // the event, a fresh compute would be cheap
@@ -299,6 +306,30 @@ pub fn git_watch_stop(workspace_id: String, state: State<'_, GitWatcherState>) {
     state.watchers.write().remove(&workspace_id);
 }
 
+/// Whether a filesystem event under the watched git metadata can mean the
+/// repository changed.
+///
+/// Reads are not changes. On Linux inotify reports every `open` and `close`
+/// (macOS FSEvents reports neither), and every `git status` / `git log` /
+/// `git diff` / `git blame` the frontend runs on `atlas:git-changed` opens
+/// `HEAD`, `index` and refs. Without this filter each refresh fired the
+/// watcher again, which refreshed again — a git process storm that never
+/// settled (#368). Same rule, and the same loop, as `atlas-theme`'s
+/// `is_theme_change`.
+///
+/// Closing a file opened for writing still counts. A write always comes with
+/// a modify event too, so this is belt and braces, and nothing that only reads
+/// produces it.
+fn is_git_change(event: &notify::Event) -> bool {
+    use notify::event::{AccessKind, AccessMode};
+    use notify::EventKind;
+    match event.kind {
+        EventKind::Access(AccessKind::Close(AccessMode::Write)) => true,
+        EventKind::Access(_) => false,
+        _ => true,
+    }
+}
+
 /// Where a repository's git metadata actually lives.
 struct GitDirs {
     /// The repository's own gitdir: `.git/` for an ordinary checkout, or the
@@ -368,4 +399,56 @@ pub fn emit_synthetic_change(app: &AppHandle, project_path: &Path) {
             project: project_path.to_string_lossy().into_owned(),
         },
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use notify::event::{
+        AccessKind, AccessMode, CreateKind, DataChange, ModifyKind, RemoveKind, RenameMode,
+    };
+    use notify::{Event, EventKind};
+
+    fn event(kind: EventKind) -> Event {
+        Event::new(kind).add_path(PathBuf::from("/repo/.git/index"))
+    }
+
+    /// What `git status` does to the watched files on Linux: open, read,
+    /// close. None of it may reach the frontend, or its refresh re-fires the
+    /// watcher forever (#368).
+    #[test]
+    fn reads_are_not_git_changes() {
+        for kind in [
+            AccessKind::Open(AccessMode::Read),
+            AccessKind::Open(AccessMode::Any),
+            AccessKind::Close(AccessMode::Read),
+            AccessKind::Read,
+            AccessKind::Any,
+        ] {
+            assert!(
+                !is_git_change(&event(EventKind::Access(kind))),
+                "{kind:?} must not count as a change"
+            );
+        }
+    }
+
+    /// What commits, checkouts, staging and fetches do: git writes a
+    /// `.lock` file and renames it into place, or rewrites or deletes refs.
+    #[test]
+    fn writes_are_git_changes() {
+        for kind in [
+            EventKind::Create(CreateKind::File),
+            EventKind::Modify(ModifyKind::Data(DataChange::Content)),
+            EventKind::Modify(ModifyKind::Name(RenameMode::To)),
+            EventKind::Modify(ModifyKind::Any),
+            EventKind::Remove(RemoveKind::File),
+            EventKind::Access(AccessKind::Close(AccessMode::Write)),
+            EventKind::Any,
+        ] {
+            assert!(
+                is_git_change(&event(kind)),
+                "{kind:?} must count as a change"
+            );
+        }
+    }
 }
