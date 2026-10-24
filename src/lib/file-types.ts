@@ -1,11 +1,11 @@
 /**
  * Classify a file path by its extension to decide which tab handler should
- * own it: the text editor (CodeMirror), the media viewer (img/video/audio),
+ * own it: the file view, the media viewer (img/video/audio),
  * or the unsupported-file fallback ("open in Finder").
  *
  * Anything not explicitly listed here falls through to "unsupported" — that's
  * intentional. We'd rather say "can't open this" up front than dump random
- * binary bytes into CodeMirror.
+ * binary bytes into the file view.
  */
 
 export type FileKind =
@@ -18,8 +18,8 @@ export type FileKind =
   | "notebook"
   | "unsupported";
 
-// Extensions the CodeMirror editor handles (or can usefully attempt — even
-// without a language extension, plaintext display is fine).
+// Extensions the file view handles (or can usefully attempt — even
+// without a grammar, plaintext display is fine).
 const TEXT_EXTS = new Set([
   // Code
   "ts",
@@ -130,7 +130,7 @@ const AUDIO_EXTS = new Set(["mp3", "wav", "flac", "aac", "ogg", "oga", "opus", "
 const PDF_EXTS = new Set(["pdf"]);
 
 // Jupyter notebooks are JSON but need cell-aware rendering (markdown/code
-// cells + outputs), not raw JSON in CodeMirror, so they get their own kind.
+// cells + outputs), not raw JSON in the file view, so they get their own kind.
 const NOTEBOOK_EXTS = new Set(["ipynb"]);
 
 // SVG is both renderable (it's an image) AND text (copyable source), so it gets

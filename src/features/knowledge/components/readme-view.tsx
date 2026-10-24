@@ -1,26 +1,59 @@
-import { memo } from "react";
-import ReactMarkdown from "react-markdown";
+import { memo, useMemo } from "react";
+import ReactMarkdown, { type Options } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import rehypeRaw from "rehype-raw";
+import rehypeSanitize from "rehype-sanitize";
+import { PREVIEW_SANITIZE_SCHEMA } from "@/lib/markdown-sanitize";
+import { rehypeFileChips } from "@/lib/file-chip-hast";
+import { openFileChipUnder, useFileChipHost } from "@/lib/file-chip-host";
 import "@/styles/hljs.css";
 
 interface Props {
   source: string;
+  /** The repository the README belongs to: file paths in it become chips
+   *  that open in Atlas's viewer, inside this folder only. */
+  root?: string | null;
 }
+
+const REMARK_PLUGINS: NonNullable<Options["remarkPlugins"]> = [remarkGfm];
 
 /**
  * Read-only README viewer for the KB repo section. The shared `<Markdown>`
  * helper is tuned for chat bubbles; this one renders long-form docs at
  * doc-scale and via `rehype-raw` allows the raw HTML (`<h1 align="...">`,
  * `<details>`, `<img>`, …) that most GitHub READMEs depend on.
+ *
+ * The raw HTML goes through the same allowlist as the markdown preview
+ * (`markdown-sanitize.ts`): a cloned repo's README is not trusted code.
+ *
+ * File chips are drawn after the raw HTML is parsed. Raw HTML could write a
+ * span that looks like one, but a click re-resolves the path inside `root`
+ * (`openUntrustedPathLink`), so a look-alike opens nothing the real chip
+ * could not.
  */
-export const ReadmeView = memo(function ReadmeView({ source }: Props) {
+export const ReadmeView = memo(function ReadmeView({ source, root }: Props) {
+  const rehypePlugins = useMemo<NonNullable<Options["rehypePlugins"]>>(
+    () => [
+      rehypeRaw,
+      [rehypeSanitize, PREVIEW_SANITIZE_SCHEMA],
+      [rehypeFileChips, root ? { root, label: "basename", folders: false } : null],
+      rehypeHighlight,
+    ],
+    [root],
+  );
+  const open = useMemo(() => (root ? openFileChipUnder(root) : null), [root]);
+  const host = useFileChipHost(open);
   return (
-    <div className="atlas-readme text-md leading-relaxed text-[var(--foreground)] break-words select-text">
+    <div
+      ref={host.ref}
+      onClick={host.onClick}
+      onKeyDown={host.onKeyDown}
+      className="text-md leading-relaxed text-[var(--foreground)] break-words select-text"
+    >
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeRaw, rehypeHighlight]}
+        remarkPlugins={REMARK_PLUGINS}
+        rehypePlugins={rehypePlugins}
         components={{
           h1: (p) => (
             <h1 className="text-2xl font-bold tracking-tight mt-8 mb-3 pb-2 border-b border-[var(--border)]">

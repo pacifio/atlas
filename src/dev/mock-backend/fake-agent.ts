@@ -16,6 +16,7 @@ import type {
 import type { Subagent } from "@/types/agent";
 import type { TypedHandlers, Unit } from "./types";
 import { text, tool, tools } from "./fixtures/chat";
+import { pasteAsText } from "@/features/chat/lib/pasted-text";
 import {
   askUserQuestionMulti,
   askUserQuestionSingle,
@@ -38,6 +39,22 @@ interface FakeSession {
 }
 
 const sessions = new Map<string, FakeSession>();
+
+/** The fake agents advertise no `promptCapabilities.embeddedContext` — the
+ *  case every agent must be served in, so it is the one a browser review
+ *  sees. A large paste therefore reaches them the way Rust sends it to such
+ *  an agent: as a fenced text block after the prose. */
+export const FAKE_AGENT_EMBEDDED_CONTEXT = false;
+
+/** What a fake agent receives for one send: the prose, then each paste in
+ *  the form its capabilities allow. */
+export function receivedText(prose: string, pastes: { id: string; text: string }[]): string {
+  if (pastes.length === 0) return prose;
+  const blocks = pastes.map((p) =>
+    FAKE_AGENT_EMBEDDED_CONTEXT ? `[embedded atlas://paste/${p.id}]` : pasteAsText(p),
+  );
+  return [prose, ...blocks].join("\n\n");
+}
 let seq = 0;
 
 /** What a new session replays once it is bound. Set by a scenario. */
@@ -206,6 +223,96 @@ export async function playTranscript(
 }
 
 /**
+ * Play whole turns the way a live session delivers them, so each one ends
+ * with what only a live turn leaves behind: its files summary, frozen at
+ * `turn_finished` from the tool calls the turn upserted.
+ *
+ * `playTranscript` appends messages and nothing else, which is right for a
+ * seed but leaves every turn without its changed-files card. Each turn here
+ * opens with a `running` status carrying its own `turn_seq`, upserts every
+ * tool call it holds, and closes with `turn_finished` for the same seq. A
+ * turn is a user message and the assistant messages that answer it.
+ */
+export async function playTurns(turns: SessionMessage[][], sessionId?: string): Promise<void> {
+  if (!latest(sessionId)) {
+    console.warn("[mock-backend] playTurns: no session bound yet");
+    return;
+  }
+  for (const turn of turns) {
+    const answer = turn.findIndex((m) => m.role === "assistant");
+    const prompt = turn.find((m) => m.role === "user");
+    const last = turn[turn.length - 1];
+    await appendWithTools(answer < 0 ? turn : turn.slice(0, answer), sessionId);
+    const seqOfTurn = await openTurn(sessionId);
+    if (answer >= 0) await appendWithTools(turn.slice(answer), sessionId);
+    const endedAt = Date.parse(last.timestamp);
+    await closeTurn(
+      seqOfTurn,
+      {
+        startedAt: prompt ? Date.parse(prompt.timestamp) : endedAt,
+        endedAt,
+        workedMs: last.worked_ms,
+        stopReason: last.stop_reason,
+      },
+      sessionId,
+    );
+  }
+}
+
+let turnSeq = 0;
+
+/** Open a live turn: `running` with a fresh `turn_seq`, which is what starts
+ *  the store's per-turn files scratch. Returns the seq to close it with. */
+export async function openTurn(sessionId?: string): Promise<number> {
+  const s = latest(sessionId);
+  const seqOfTurn = ++turnSeq;
+  if (s) await sendDelta({ kind: "status", ...at(s), status: "running", turn_seq: seqOfTurn });
+  return seqOfTurn;
+}
+
+/** Close the turn `openTurn` opened, timed from `startedAt` to `endedAt`. */
+export async function closeTurn(
+  seqOfTurn: number,
+  timing: { startedAt: number; endedAt: number; workedMs?: number; stopReason?: string },
+  sessionId?: string,
+): Promise<void> {
+  const s = latest(sessionId);
+  if (!s) return;
+  await sendDelta({
+    kind: "turn_finished",
+    ...at(s),
+    stop_reason: timing.stopReason ?? "end_turn",
+    turn_seq: seqOfTurn,
+    started_at_ms: timing.startedAt,
+    ended_at_ms: timing.endedAt,
+    worked_ms: timing.workedMs ?? Math.max(0, timing.endedAt - timing.startedAt),
+  });
+  await sendDelta({ kind: "status", ...at(s), status: "idle", turn_seq: seqOfTurn });
+}
+
+/** Append messages and upsert every tool call they carry: what a live turn
+ *  sends, and what the store counts a turn's files from. */
+export async function appendWithTools(
+  messages: SessionMessage[],
+  sessionId?: string,
+): Promise<void> {
+  const s = latest(sessionId);
+  if (!s) return;
+  for (const message of messages) {
+    s.messages.push(message);
+    await sendDelta({ kind: "message_appended", ...at(s), message });
+    for (const toolCall of message.tool_calls) {
+      await sendDelta({
+        kind: "tool_call_upserted",
+        ...at(s),
+        message_id: message.id,
+        tool_call: toolCall,
+      });
+    }
+  }
+}
+
+/**
  * Stream one assistant message into a session word by word, the way a real
  * turn arrives: an empty message, then `text_chunk` (or `thinking_chunk`)
  * deltas. The held copy is kept whole so a snapshot re-read agrees.
@@ -309,11 +416,78 @@ export function setStatus(
 /** End the turn the way the real projector does — a `turn_finished` terminal,
  *  not a bare status flip. The store only freezes turn-end state (the turn's
  *  "Worked for" time, its files footer, next-step chips) on the terminal, so a
- *  mock that just went idle never showed any of it. */
-export function finishTurn(sessionId?: string): Promise<void> {
+ *  mock that just went idle never showed any of it.
+ *
+ *  Timed from the turn's prompt to now, which is the span Rust reports; the
+ *  held snapshot gets the same figure on its last message, so a re-read says
+ *  what the live turn said. */
+export function finishTurn(sessionId?: string, stopReason = "end_turn"): Promise<void> {
   const s = latest(sessionId);
   if (!s) return Promise.resolve();
-  return sendDelta({ kind: "turn_finished", ...at(s), stop_reason: "end_turn", turn_seq: 0 });
+  const prompt = [...s.messages].reverse().find((m) => m.role === "user");
+  const started = prompt ? Date.parse(prompt.timestamp) : Number.NaN;
+  const ended = Date.now();
+  const worked = Math.max(0, ended - started);
+  const timing = Number.isFinite(started)
+    ? { started_at_ms: started, ended_at_ms: ended, worked_ms: worked }
+    : {};
+  const last = s.messages[s.messages.length - 1];
+  if (last?.role === "assistant") {
+    if (Number.isFinite(started)) last.worked_ms = worked;
+    last.stop_reason = stopReason;
+  }
+  return sendDelta({
+    kind: "turn_finished",
+    ...at(s),
+    stop_reason: stopReason,
+    turn_seq: 0,
+    ...timing,
+  });
+}
+
+// ── The computer sleeping mid-turn ───────────────────────────────────────
+//
+// Rust's `sleep_watch.rs` notices the machine slept under a running turn and
+// sends `slept_mid_turn` before the turn's terminal. A browser cannot sleep on
+// cue, so these replay that sequence: half a reply, the notice, a few seconds
+// of the turn still going after the wake (the composer's "Woke after" pill is
+// only on screen then), then the turn ending — cleanly, or with the transport
+// error a dropped stream reports.
+
+/** How long the turn keeps going after the wake, so the pill can be seen. */
+const AFTER_WAKE_MS = 3_000;
+
+/** A reply cut off by sleep that the agent still finished
+ *  (`__atlasMock.actions.sleepMidTurn`). */
+export async function sleepMidTurn(): Promise<void> {
+  const s = latest();
+  if (!s) return;
+  await setStatus("running");
+  await streamText("Here is the migration plan. First, add the new column with a default of ");
+  await sendDelta({ kind: "slept_mid_turn", ...at(s), turn_seq: 0, slept_secs: 1260 });
+  await new Promise((r) => setTimeout(r, AFTER_WAKE_MS));
+  await streamText("null, then backfill it in batches.");
+  await finishTurn();
+  await setStatus("idle");
+}
+
+/** A turn that failed on waking (`__atlasMock.actions.sleepMidTurnFailed`). */
+export async function sleepMidTurnFailed(): Promise<void> {
+  const s = latest();
+  if (!s) return;
+  await setStatus("running");
+  await streamText("Reading the test suite to see which fixtures depend on the old");
+  await sendDelta({ kind: "slept_mid_turn", ...at(s), turn_seq: 0, slept_secs: 3400 });
+  await new Promise((r) => setTimeout(r, AFTER_WAKE_MS));
+  // The projector's order: the error status, then the failure itself.
+  await setStatus("error");
+  await sendDelta({
+    kind: "turn_failed",
+    ...at(s),
+    error: "error decoding response body",
+    turn_seq: 0,
+    error_kind: "transient",
+  });
 }
 
 // ── Permission requests ──────────────────────────────────────────────────
@@ -590,15 +764,17 @@ export const agentHandlers: TypedHandlers<AgentResponses> = {
     void resolvePermission(agentId, sessionId, requestId, decision);
     return null;
   },
-  // Echo the prompt back so the composer loop is exercisable.
-  agents_send: async ({ key, text }) => {
+  // Echo the prompt back so the composer loop is exercisable — the prompt as
+  // the agent would receive it, large pastes included.
+  agents_send: async ({ key, text: sent, pastedTexts }) => {
     const s = sessions.get(key.session_id);
     if (!s) return null;
+    const text = receivedText(String(sent), (pastedTexts ?? []) as { id: string; text: string }[]);
     const handled = promptHandler?.({
       sessionId: s.key.session_id,
       pluginId: s.pluginId,
       cwd: s.cwd,
-      text: String(text),
+      text,
     });
     if (handled) return null;
     const now = () => new Date().toISOString();

@@ -119,7 +119,12 @@ export const BlockTerminal = memo(function BlockTerminal({
     () =>
       terminalSessions.acquire(terminalKey, {
         tabId,
-        cwd: useAppStore.getState().currentProject?.path ?? "~",
+        // A tab with its own directory (a session's terminal drawer) starts
+        // there; a terminal tab follows the project.
+        cwd:
+          useTerminalStore.getState().cwds[tabId] ??
+          useAppStore.getState().currentProject?.path ??
+          "~",
       }),
     [terminalKey, tabId],
   );

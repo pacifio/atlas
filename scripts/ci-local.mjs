@@ -639,7 +639,7 @@ async function main(argv) {
   for (const r of results) {
     const status = r.skipped ? "skip" : r.failed ? "FAIL" : "ok  ";
     console.log(
-      `  ${status}  ${r.job.padEnd(32)} ${String(r.secs).padStart(5)}s${r.failed ? `  (${r.failed})` : ""}`,
+      `  ${status}  ${r.job.padEnd(32)} ${String(r.secs).padStart(5)}s${r.failed || r.why ? `  (${r.failed || r.why})` : ""}`,
     );
   }
   const failures = results.filter((r) => r.failed).length;

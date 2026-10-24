@@ -6,7 +6,7 @@ import { create } from "zustand";
  * Named rather than left as `string` because the callers that navigate here
  * (the sidebar's Skills button, the account menu) live nowhere near the panel:
  * a typo would compile, open Settings, and silently land on nothing. The
- * sidebar in `settings-panel.tsx` is typed against this, and every page of the
+ * sidebar in `settings-screen.tsx` is typed against this, and every page of the
  * settings registry (`SETTINGS_PAGES`) must be one of these — a type check in
  * `settings-sections.ts` fails the build otherwise. The agent-facing `ui_open`
  * tool offers the same list (`ui-actions-contract.test.ts`).
@@ -18,29 +18,32 @@ export const SETTINGS_SECTIONS = [
   "memory",
   "notifications",
   "source-control",
+  "pull-requests",
   "privacy",
   "keybindings",
   "updates",
   "agents",
   "skills",
-  "providers",
-  "models",
   "layouts",
   "about",
 ] as const;
 
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 
-/** Cross-component signal to open the Settings tab on a specific section.
- *  Set `goTo(section)` before/after opening the (singleton, persistent) settings
- *  tab; `SettingsPanel` consumes it so the switch works whether the tab is
- *  freshly opened or already mounted on another section. */
+/** Whether the Settings screen is up, and cross-component signals to it.
+ *  Settings is not a tab: it takes over the whole window and
+ *  `Back` returns to the workspace exactly as it was (`SettingsScreen`).
+ *  `goTo(section)` reaches the screen whether it is opening fresh or is already
+ *  showing another section. */
 interface SettingsNavState {
+  /** The Settings screen covers the window. */
+  open: boolean;
+  setOpen: (open: boolean) => void;
   section: SettingsSection | null;
   /** A row to scroll to and flash once its section renders (a setting key, or
    *  a row's own anchor). Consumed by the row that owns it. */
   anchor: string | null;
-  /** The section the mounted panel is showing right now (null: no panel) —
+  /** The section the screen is showing right now (null: not open) —
    *  what lets a notification know the user is already looking at its subject. */
   shown: string | null;
   /** Which settings the pages edit: `null` for every project (the global
@@ -54,6 +57,8 @@ interface SettingsNavState {
 }
 
 export const useSettingsNav = create<SettingsNavState>((set) => ({
+  open: false,
+  setOpen: (open) => set({ open }),
   section: null,
   anchor: null,
   shown: null,

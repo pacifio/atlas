@@ -233,8 +233,8 @@ const MessageRow = memo(function MessageRow({
           // counterpart to fall back on, and the badge is the whole point.
           <div className="flex min-w-0 items-baseline gap-1.5" title={presented.title ?? undefined}>
             <span className="truncate text-sm font-semibold text-foreground">{presented.name}</span>
-            <Badge variant="outline" size="sm" className="self-center uppercase tracking-wider">
-              App
+            <Badge variant="outline" size="sm" className="self-center">
+              <span className="uppercase tracking-wider">App</span>
             </Badge>
             {presented.via && (
               <span className="min-w-0 truncate text-2xs text-muted-foreground">

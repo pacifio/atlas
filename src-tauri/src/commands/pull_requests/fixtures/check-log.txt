@@ -1,0 +1,52 @@
+﻿2026-10-23T17:18:13.7987888Z Current runner version: '2.338.0'
+2026-10-23T17:18:13.8008511Z ##[group]Runner Image Provisioner
+2026-10-23T17:18:13.8009146Z Hosted Compute Agent
+2026-10-23T17:18:13.8009611Z Version: 20261012.601
+2026-10-23T17:18:13.8010002Z Commit: f3dc54e1fb89da6852db922499a0233137369e1d
+2026-10-23T17:18:13.8010479Z Build Date: 2026-10-12T17:48:21Z
+2026-10-23T17:18:13.8011037Z Worker ID: {8dea09fe-24ce-46c5-bf72-74ca0b0b2790}
+2026-10-23T17:18:13.8011826Z Region: centralus
+2026-10-23T17:18:13.8012222Z Cloud: Azure
+2026-10-23T17:18:13.8012555Z ##[endgroup]
+2026-10-23T17:18:13.8013623Z ##[group]Operating System
+2026-10-23T17:18:13.8013995Z Ubuntu
+2026-10-23T17:18:13.8014338Z 24.04.5
+2026-10-23T17:18:13.8014706Z LTS
+2026-10-23T17:18:13.8015022Z ##[endgroup]
+2026-10-23T17:18:13.8015383Z ##[group]Runner Image
+2026-10-23T17:18:13.8015774Z Image: ubuntu-24.04
+2026-10-23T17:18:13.8016155Z Version: 20261012.334.1
+2026-10-23T17:18:13.8016986Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20261012.334/images/ubuntu/Ubuntu2404-Readme.md
+2026-10-23T17:18:13.8017903Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20261012.334
+2026-10-23T17:18:13.8018480Z ##[endgroup]
+2026-10-23T17:18:13.8019216Z ##[group]GITHUB_TOKEN Permissions
+2026-10-23T17:18:13.8020894Z Issues: write
+2026-10-23T17:18:13.8021332Z Metadata: read
+2026-10-23T17:18:13.8021735Z ##[endgroup]
+2026-10-23T17:18:13.8023356Z Secret source: Actions
+2026-10-23T17:18:13.8023974Z Cache mode: read
+2026-10-23T17:18:13.8024419Z Prepare workflow directory
+2026-10-23T17:18:13.8295675Z Prepare all required actions
+2026-10-23T17:18:13.8370991Z Uses: desktop/gh-cli-and-desktop-shared-workflows/.github/workflows/triage-close-suspected-spam.yml@df758d511475056e61d6d3a123621a854f10c646
+2026-10-23T17:18:13.8374324Z ##[group] Inputs
+2026-10-23T17:18:13.8374843Z   spam_label: suspected-spam
+2026-10-23T17:18:13.8375259Z ##[endgroup]
+2026-10-23T17:18:13.8375768Z Complete job name: close-suspected-spam / close-suspected-spam
+2026-10-23T17:18:13.9420166Z ##[group]Run cat << 'EOF' | gh issue comment "$ISSUE_URL" --body-file -
+2026-10-23T17:18:13.9421431Z [36;1mcat << 'EOF' | gh issue comment "$ISSUE_URL" --body-file -[0m
+2026-10-23T17:18:13.9422408Z [36;1mThank you for taking the time to create this issue.[0m
+2026-10-23T17:18:13.9423140Z [36;1m[0m
+2026-10-23T17:18:13.9424209Z [36;1mWe've reviewed this issue and suspect it as potentially inauthentic or spam-like content. As a result, we're closing this issue.[0m
+2026-10-23T17:18:13.9425308Z [36;1m[0m
+2026-10-23T17:18:13.9426218Z [36;1m**If this was closed by mistake**, please don't hesitate to reach out to us by commenting on this issue with additional context.[0m
+2026-10-23T17:18:13.9427641Z [36;1m[0m
+2026-10-23T17:18:13.9428408Z [36;1mWe appreciate your understanding and apologize if this action was taken in error.[0m
+2026-10-23T17:18:13.9429389Z [36;1mEOF[0m
+2026-10-23T17:18:14.0642684Z shell: /usr/bin/bash -e {0}
+2026-10-23T17:18:14.0643202Z env:
+2026-10-23T17:18:14.0645457Z   GH_TOKEN: ***
+2026-10-23T17:18:14.0645768Z   ISSUE_URL: https://github.com/cli/cli/issues/14802
+2026-10-23T17:18:14.0646120Z ##[endgroup]
+2026-10-23T17:18:17.2165565Z GraphQL: Something went wrong while executing your query on 2026-10-23T17:18:17Z. Please include `5838:10CBC3:1E92F48:633A39E:6ADB96D6` when reporting this issue.
+2026-10-23T17:18:17.2182384Z ##[error]Process completed with exit code 1.
+2026-10-23T17:18:17.2299094Z Cleaning up orphan processes

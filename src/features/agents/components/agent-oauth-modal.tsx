@@ -494,7 +494,7 @@ function AgentOAuthModal({
       }}
     >
       <Dialog.Portal>
-        {!docked && <DialogOverlay className="backdrop-blur-sm" />}
+        {!docked && <DialogOverlay blur />}
         {docked ? (
           <Dialog.Popup
             // Never take the keyboard: the terminal behind this is what the

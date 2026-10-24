@@ -70,6 +70,51 @@
 //! confirmation is never persisted. Before the ledger these were that
 //! branch's linear V4 and V5.
 //!
+//! `threads_settlement` adds `settled_at` and `unsettled_at`, both nullable:
+//! a session can be settled (moved to the sidebar's Settled shelf) and
+//! un-settled again. Every existing row reads `NULL` for both — active, and
+//! never un-settled — which is what it was.
+//!
+//! `threads_lifecycle` adds the rest of a session's lifecycle — `pinned_at`,
+//! `pin_order`, `snoozed_until`, `snoozed_at`, `last_snooze_wake_at`,
+//! `last_viewed_at` and `last_turn_completed_at`, all nullable — and retires
+//! archiving, which Settled replaced. Every archived row is settled, at its
+//! `updated_at` (the store never recorded an archive time; `updated_at` is
+//! what it always stood in for one with, and it is the last-activity time the
+//! idle sweep settles at too), and its `archived` flag is cleared.
+//!
+//! The `archived` column itself stays in the table, and nothing in this build
+//! reads or writes it. Dropping it would be a non-additive change: an older
+//! build at this epoch names it in every upsert, so dropping it means bumping
+//! [`SCHEMA_EPOCH`], and a bumped epoch makes the installed app refuse the
+//! database a dev build opened — the empty sidebar the ledger exists to
+//! prevent. A row an older build archives afterwards reads as active here,
+//! which is the one cost, and a harmless one.
+//!
+//! `threads_attached_projects` adds `attached_projects`, nullable: the
+//! projects attached to a session besides its own folder, as one JSON array
+//! (path, display name, access, when, and how it was attached). `NULL` is
+//! "nothing attached", which is what every existing row is, so no row is
+//! rewritten. An older build at this epoch names its columns in every upsert
+//! and so leaves the column alone; a session it writes keeps its attachments.
+//!
+//! `session_forks` records lineage: which session a branched session ("Branch
+//! from here") was forked from, as a child → parent pair of agent session
+//! ids. A plain table; older builds never read it.
+//!
+//! `threads_pull_requests` adds `pull_requests`, nullable: the pull requests
+//! linked to a session, as one JSON array (repository, number, URL, how it
+//! was linked, and the host's last reported state). `NULL` is "none linked",
+//! which is what every existing row is, so no row is rewritten and the epoch
+//! stays. An older build at this epoch names its columns in every upsert and
+//! so leaves the column alone.
+//!
+//! `threads_unpinned_at` adds `unpinned_at`, nullable: when the session was
+//! last unpinned, which restarts its idle clock for the sweep. `NULL` is
+//! "never unpinned", what every existing row is, so no row is rewritten and
+//! the epoch stays. An older build at this epoch names its columns in every
+//! upsert and so leaves the column alone.
+//!
 //! Every migration first leaves a copy behind (`Db::open`, via
 //! [`needs_migration`]), so no build is ever the only holder of a history.
 
@@ -123,6 +168,34 @@ const MIGRATIONS: &[Migration] = &[
     Migration {
         name: "session_aliases",
         apply: |conn| Ok(conn.execute_batch(SESSION_ALIASES)?),
+    },
+    Migration {
+        name: "threads_settlement",
+        apply: add_settlement_columns,
+    },
+    Migration {
+        name: "threads_lifecycle",
+        apply: add_lifecycle_columns,
+    },
+    Migration {
+        name: "threads_model",
+        apply: add_model_column,
+    },
+    Migration {
+        name: "threads_attached_projects",
+        apply: add_attached_projects_column,
+    },
+    Migration {
+        name: "session_forks",
+        apply: |conn| Ok(conn.execute_batch(SESSION_FORKS)?),
+    },
+    Migration {
+        name: "threads_pull_requests",
+        apply: add_pull_requests_column,
+    },
+    Migration {
+        name: "threads_unpinned_at",
+        apply: add_unpinned_at_column,
     },
 ];
 
@@ -248,6 +321,99 @@ fn add_branch_column(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// `model`, the model the latest turn ran on, added only when absent — the
+/// same guard as [`add_branch_column`]. Existing rows read `NULL`: unknown,
+/// never back-filled with a guess.
+fn add_model_column(conn: &Connection) -> Result<()> {
+    if !has_column(conn, "threads", "model")? {
+        conn.execute_batch("ALTER TABLE threads ADD COLUMN model TEXT;")?;
+    }
+    Ok(())
+}
+
+/// `settled_at` and `unsettled_at`, each added only when absent — the same
+/// guard as [`add_branch_column`], for the same reason.
+fn add_settlement_columns(conn: &Connection) -> Result<()> {
+    for column in ["settled_at", "unsettled_at"] {
+        if !has_column(conn, "threads", column)? {
+            conn.execute_batch(&format!("ALTER TABLE threads ADD COLUMN {column} TEXT;"))?;
+        }
+    }
+    Ok(())
+}
+
+/// The lifecycle columns this build reads and writes beyond settling.
+pub(crate) const LIFECYCLE_COLUMNS: [&str; 7] = [
+    "pinned_at",
+    "pin_order",
+    "snoozed_until",
+    "snoozed_at",
+    "last_snooze_wake_at",
+    "last_viewed_at",
+    "last_turn_completed_at",
+];
+
+/// The lifecycle columns, each added only when absent, then archived rows
+/// moved to Settled. The data step is idempotent: after it no row has
+/// `archived = 1`, and a row already settled keeps its own time.
+fn add_lifecycle_columns(conn: &Connection) -> Result<()> {
+    for column in LIFECYCLE_COLUMNS {
+        if !has_column(conn, "threads", column)? {
+            conn.execute_batch(&format!("ALTER TABLE threads ADD COLUMN {column} TEXT;"))?;
+        }
+    }
+    conn.execute_batch(ARCHIVED_TO_SETTLED)?;
+    Ok(())
+}
+
+/// `pull_requests`, added only when absent — the same guard as
+/// [`add_branch_column`]. A shape change only: every existing row reads
+/// `NULL`, nothing linked, and none is rewritten.
+fn add_pull_requests_column(conn: &Connection) -> Result<()> {
+    if !has_column(conn, "threads", "pull_requests")? {
+        conn.execute_batch("ALTER TABLE threads ADD COLUMN pull_requests TEXT;")?;
+    }
+    Ok(())
+}
+
+/// `unpinned_at`, added only when absent — the same guard as
+/// [`add_branch_column`]. Existing rows read `NULL`: never unpinned.
+fn add_unpinned_at_column(conn: &Connection) -> Result<()> {
+    if !has_column(conn, "threads", "unpinned_at")? {
+        conn.execute_batch("ALTER TABLE threads ADD COLUMN unpinned_at TEXT;")?;
+    }
+    Ok(())
+}
+
+/// `attached_projects`, added only when absent — the same guard as
+/// [`add_branch_column`]. A shape change only: every existing row reads
+/// `NULL`, nothing attached, and none is rewritten.
+fn add_attached_projects_column(conn: &Connection) -> Result<()> {
+    if !has_column(conn, "threads", "attached_projects")? {
+        conn.execute_batch("ALTER TABLE threads ADD COLUMN attached_projects TEXT;")?;
+    }
+    Ok(())
+}
+
+/// Archive is retired: every archived row becomes a settled one. See the
+/// module docs for why `updated_at` is its settled time and why the column
+/// stays.
+const ARCHIVED_TO_SETTLED: &str = "
+UPDATE threads SET settled_at = COALESCE(settled_at, updated_at), archived = 0
+    WHERE archived <> 0;
+";
+
+fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+    Ok(conn
+        .query_row(
+            "SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2",
+            [table, column],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some())
+}
+
 /// The whole store.
 ///
 /// `title` is `NOT NULL` with `''` standing for "no title". Every other absent
@@ -328,6 +494,21 @@ CREATE TABLE IF NOT EXISTS session_aliases(
     alias_id         TEXT PRIMARY KEY,
     owner_session_id TEXT NOT NULL,
     at               TEXT NOT NULL
+) STRICT;
+";
+
+/// Which session each branched session came from, child → parent.
+///
+/// Keyed by agent session ids, like `session_aliases`, and for the same
+/// reason: a fork is recorded the moment the agent answers with the child's
+/// id, before Atlas has written a row for it, and the child's row is found
+/// through its session id once it has one. A plain table, so it rides the
+/// ledger as an additive migration.
+const SESSION_FORKS: &str = "
+CREATE TABLE IF NOT EXISTS session_forks(
+    child_session_id  TEXT PRIMARY KEY,
+    parent_session_id TEXT NOT NULL,
+    at                TEXT NOT NULL
 ) STRICT;
 ";
 
@@ -458,12 +639,16 @@ mod tests {
                 &PathList::new(&[PathBuf::from("/work/b"), PathBuf::from("/work/a")]),
                 "folder order survives"
             );
-            assert!(!sent.archived);
+            assert!(!sent.is_settled());
 
             let archived = &threads[1];
             assert_eq!(archived.agent_id.as_str(), "claude-code");
             assert_eq!(archived.title, None);
-            assert!(archived.archived);
+            assert_eq!(
+                archived.settled_at,
+                Some(archived.updated_at),
+                "the archived row is settled now, at its last activity"
+            );
 
             assert!(!store.has_backfilled(&agent));
             store.mark_backfilled(&agent);
@@ -649,6 +834,205 @@ mod tests {
             .query_row("SELECT COUNT(branch) FROM threads", [], |r| r.get(0))
             .unwrap();
         assert_eq!(with_branch, 3, "the branches already recorded survive");
+    }
+
+    /// A database from before settling gains both columns, every row reading
+    /// `NULL` — active, never un-settled — and the store decodes them so.
+    #[test]
+    fn a_database_before_settlement_gains_two_null_columns() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("threads.db");
+        seed_v1(&path);
+        {
+            let conn = Connection::open(&path).unwrap();
+            migrate(&conn).unwrap();
+            conn.execute_batch(
+                "ALTER TABLE threads DROP COLUMN settled_at;
+                 ALTER TABLE threads DROP COLUMN unsettled_at;
+                 DELETE FROM schema_migrations WHERE name = 'threads_settlement';",
+            )
+            .unwrap();
+        }
+        {
+            let conn = Connection::open(&path).unwrap();
+            assert!(needs_migration(&conn).unwrap());
+            migrate(&conn).unwrap();
+            assert_eq!(ledger(&conn), known_names());
+            let (rows, settled, unsettled): (i64, i64, i64) = conn
+                .query_row(
+                    "SELECT COUNT(*), COUNT(settled_at), COUNT(unsettled_at) FROM threads",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
+                .unwrap();
+            assert_eq!((rows, settled, unsettled), (3, 0, 0));
+            // Re-running the step on a database that has the columns is a no-op.
+            add_settlement_columns(&conn).unwrap();
+        }
+        let store = ThreadMetadataStore::open(&path).unwrap();
+        assert!(store
+            .threads()
+            .iter()
+            .all(|t| t.settled_at.is_none() && t.unsettled_at.is_none()));
+    }
+
+    /// A database from before attached projects gains the column with every
+    /// row `NULL` — nothing attached — at the same epoch, and no row is
+    /// rewritten. The store decodes them as empty lists.
+    #[test]
+    fn a_database_before_attached_projects_gains_a_null_column_at_the_same_epoch() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("threads.db");
+        seed_v1(&path);
+        {
+            let conn = Connection::open(&path).unwrap();
+            migrate(&conn).unwrap();
+            conn.execute_batch(
+                "ALTER TABLE threads DROP COLUMN attached_projects;
+                 DELETE FROM schema_migrations WHERE name = 'threads_attached_projects';",
+            )
+            .unwrap();
+        }
+        {
+            let conn = Connection::open(&path).unwrap();
+            assert!(needs_migration(&conn).unwrap());
+            migrate(&conn).unwrap();
+            assert_eq!(version_of(&conn), SCHEMA_EPOCH);
+            assert_eq!(ledger(&conn), known_names());
+            let (rows, attached): (i64, i64) = conn
+                .query_row(
+                    "SELECT COUNT(*), COUNT(attached_projects) FROM threads",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .unwrap();
+            assert_eq!((rows, attached), (3, 0));
+            add_attached_projects_column(&conn).unwrap();
+        }
+        let store = ThreadMetadataStore::open(&path).unwrap();
+        assert!(store
+            .threads()
+            .iter()
+            .all(|t| t.attached_projects.is_empty()));
+    }
+
+    /// A database from before linked pull requests gains the column with
+    /// every row `NULL` at the same epoch, and no row is rewritten. The store
+    /// decodes them as empty lists.
+    #[test]
+    fn a_database_before_pull_request_links_gains_a_null_column_at_the_same_epoch() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("threads.db");
+        seed_v1(&path);
+        {
+            let conn = Connection::open(&path).unwrap();
+            migrate(&conn).unwrap();
+            conn.execute_batch(
+                "ALTER TABLE threads DROP COLUMN pull_requests;
+                 DELETE FROM schema_migrations WHERE name = 'threads_pull_requests';",
+            )
+            .unwrap();
+        }
+        {
+            let conn = Connection::open(&path).unwrap();
+            assert!(needs_migration(&conn).unwrap());
+            migrate(&conn).unwrap();
+            assert_eq!(version_of(&conn), SCHEMA_EPOCH);
+            assert_eq!(ledger(&conn), known_names());
+            let (rows, linked): (i64, i64) = conn
+                .query_row(
+                    "SELECT COUNT(*), COUNT(pull_requests) FROM threads",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .unwrap();
+            assert_eq!((rows, linked), (3, 0));
+            add_pull_requests_column(&conn).unwrap();
+        }
+        let store = ThreadMetadataStore::open(&path).unwrap();
+        assert!(store.threads().iter().all(|t| t.pull_requests.is_empty()));
+    }
+
+    /// Archive is retired: the lifecycle migration settles every archived row
+    /// at its `updated_at`, keeps an already-settled row's own time, clears
+    /// the flag, and adds the lifecycle columns empty. Running it again
+    /// changes nothing.
+    #[test]
+    fn the_lifecycle_migration_moves_archived_rows_to_settled() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("threads.db");
+        seed_v1(&path);
+        let earlier_settle = "2026-04-01T00:00:00+00:00";
+        {
+            let conn = Connection::open(&path).unwrap();
+            migrate(&conn).unwrap();
+            // Back to the state before the lifecycle migration: the flag set
+            // again on two rows, one of them already settled, and the
+            // lifecycle columns gone.
+            for column in LIFECYCLE_COLUMNS {
+                conn.execute_batch(&format!("ALTER TABLE threads DROP COLUMN {column};"))
+                    .unwrap();
+            }
+            conn.execute_batch("DELETE FROM schema_migrations WHERE name = 'threads_lifecycle';")
+                .unwrap();
+            conn.execute(
+                "UPDATE threads SET archived = 1 WHERE thread_id = ?1",
+                [SENT.as_slice()],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE threads SET archived = 1, settled_at = ?2 WHERE thread_id = ?1",
+                rusqlite::params![ARCHIVED.as_slice(), earlier_settle],
+            )
+            .unwrap();
+        }
+        {
+            let conn = Connection::open(&path).unwrap();
+            assert!(needs_migration(&conn).unwrap());
+            migrate(&conn).unwrap();
+            assert_eq!(ledger(&conn), known_names());
+            let still_archived: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM threads WHERE archived <> 0",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(still_archived, 0, "no row is archived any more");
+            let settled_of = |id: [u8; 16]| -> Option<String> {
+                conn.query_row(
+                    "SELECT settled_at FROM threads WHERE thread_id = ?1",
+                    [id.as_slice()],
+                    |r| r.get(0),
+                )
+                .unwrap()
+            };
+            assert_eq!(
+                settled_of(SENT).as_deref(),
+                Some("2026-05-02T00:00:00+00:00"),
+                "settled at its updated_at"
+            );
+            assert_eq!(
+                settled_of(ARCHIVED).as_deref(),
+                Some(earlier_settle),
+                "an already-settled row keeps its own time"
+            );
+            assert_eq!(settled_of(DRAFT), None, "an unarchived row is untouched");
+            // Idempotent: a second application is a no-op.
+            add_lifecycle_columns(&conn).unwrap();
+            assert_eq!(
+                settled_of(SENT).as_deref(),
+                Some("2026-05-02T00:00:00+00:00")
+            );
+        }
+        let store = ThreadMetadataStore::open(&path).unwrap();
+        for thread in store.threads() {
+            assert!(thread.is_settled());
+            assert!(thread.pinned_at.is_none() && thread.pin_order.is_none());
+            assert!(thread.snoozed_until.is_none() && thread.last_viewed_at.is_none());
+            assert!(thread.last_turn_completed_at.is_none());
+            assert!(!thread.is_unread(), "a migrated row is never unread");
+        }
     }
 
     /// A newer build at the same epoch recorded a migration this one has never

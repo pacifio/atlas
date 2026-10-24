@@ -7,12 +7,11 @@
 //! We watch four things specifically (NOT all of `.git/`):
 //!   - `.git/HEAD`          — checkout / commit moves the symbolic ref
 //!   - `.git/packed-refs`   — `git pack-refs` rewrites; rare but
-//!                            necessary
+//!     necessary
 //!   - `.git/refs/`         — every branch / tag / remote update lives
-//!                            here as a loose ref file
+//!     here as a loose ref file
 //!   - `.git/index`         — `git add` / `git reset` (stage / unstage)
-//!                            — changes the working-tree status the
-//!                            Changes panel renders
+//!     changes the working-tree status the Changes panel renders
 //!
 //! Watching all of `.git/` would surface every blob write inside
 //! `.git/objects/…` during `git add` / `git commit` — huge noise for
@@ -63,7 +62,7 @@ impl GitWatcherState {
     }
 
     /// Return a cached `GitRefs` snapshot for `project_path`. Computes
-    /// + populates the cache on first call (~80 ms — three `git`
+    /// and populates the cache on first call (~80 ms — three `git`
     /// shell-outs) and on every call after a watcher-driven
     /// invalidation. Cached reads are sub-microsecond, which is the
     /// difference between the @-mention picker feeling instant and

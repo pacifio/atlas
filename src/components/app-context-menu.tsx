@@ -1,5 +1,6 @@
 import { ContextMenu } from "@base-ui/react/context-menu";
 import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
+import { openSettingsSection } from "@/features/settings/lib/open-settings";
 import type { ActionId } from "@/features/keybindings/lib/actions";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useAppStore } from "@/features/app/stores/app-store";
@@ -25,7 +26,7 @@ export function AppContextMenu({ children }: { children: React.ReactElement }) {
               <>
                 <MenuItem
                   icon={<MessageSquare size={12} />}
-                  label="New Chat"
+                  label="New Session"
                   actionId="tabs.newChat"
                   onClick={() => openNewAgentChat()}
                 />
@@ -78,16 +79,7 @@ export function AppContextMenu({ children }: { children: React.ReactElement }) {
                 icon={<Settings size={12} />}
                 label="Settings"
                 actionId="app.settings"
-                onClick={() =>
-                  addTab({
-                    id: "settings",
-                    type: "settings",
-                    title: "Settings",
-                    closable: true,
-                    dirty: false,
-                    data: {},
-                  })
-                }
+                onClick={() => openSettingsSection()}
               />
             )}
           </ContextMenu.Popup>

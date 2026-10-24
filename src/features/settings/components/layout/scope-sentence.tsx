@@ -8,7 +8,7 @@
  * scope is shared by every page that has one, and starts on All projects.
  */
 
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 import { Select, type SelectOption } from "@/ui/select";
 import { useProjectStore } from "@/features/projects/stores/project-store";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
@@ -18,7 +18,16 @@ import { useLoadProjectSettings } from "../../lib/use-scoped-setting";
 
 const ALL = "__all__";
 
-export function ScopeSentence() {
+export function ScopeSentence({
+  lead = "Applying settings for",
+  note,
+}: {
+  /** The words before the picker. */
+  lead?: string;
+  /** Replaces the settings-file caption under a project, for a page whose
+   *  scope means something else (Skills: where a skill is installed). */
+  note?: ReactNode;
+} = {}) {
   const scope = useSettingsNav((s) => s.scope);
   const setScope = useSettingsNav((s) => s.setScope);
   const projects = useProjectStore.use.projects();
@@ -40,17 +49,18 @@ export function ScopeSentence() {
   return (
     <div className="flex flex-col gap-1 pt-2">
       <div className="flex items-center gap-1.5 text-xs text-secondary-foreground">
-        <span>Applying settings for</span>
+        <span>{lead}</span>
         <Select
           size="sm"
           variant="ghost"
           value={scope ?? ALL}
           options={options}
-          aria-label="Apply settings to"
+          aria-label={lead}
           onValueChange={(next) => setScope(next === ALL ? null : next)}
         />
       </div>
-      {scope && (
+      {scope && note !== undefined && <p className="caption">{note}</p>}
+      {scope && note === undefined && (
         <p className="caption">
           {info?.error
             ? `This project's settings file isn't applied: ${info.error}`

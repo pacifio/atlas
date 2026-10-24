@@ -64,6 +64,8 @@ import { computeAway, type NotificationDecision, type NotificationEnv } from "./
 import { deliverNotification, notificationToastId, openNotificationTarget } from "./deliver";
 import { toast } from "sonner";
 import { clearResolved } from "./resolve";
+import { openTabForSession, resolveHistorySession } from "./open-session-target";
+import { resumeAgentFor } from "@/features/chat/lib/sidebar-agents";
 import type { NotificationKind } from "./catalog";
 
 /** Banners of finishes within this window of the first merge into one. */
@@ -232,11 +234,12 @@ function toNotifyEvent(env: AgentDelta, session: ChatSession): AgentNotifyEvent 
   }
 }
 
-function envFor(tabId: string, projectId: string | undefined): NotificationEnv {
+/** `tabId` null: no tab shows the source, so it is never the one in view. */
+function envFor(tabId: string | null, projectId: string | undefined): NotificationEnv {
   const windowFocused = isWindowFocused();
   const sinceInputMs = Date.now() - lastInteraction();
   return {
-    targetVisible: useLayoutStore.getState().activeTabId === tabId,
+    targetVisible: tabId !== null && useLayoutStore.getState().activeTabId === tabId,
     windowFocused,
     sinceInputMs,
     projectActive: !projectId || projectId === useProjectStore.getState().activeProjectId,
@@ -319,6 +322,69 @@ export function notifyAgentEvent(env: AgentDelta): void {
   } catch (err) {
     console.warn("agent notifier failed:", err);
   }
+}
+
+/** A pull request watch wake, as `atlas:session-prompt-injected` carries it. */
+export interface PullRequestWake {
+  /** The ACP session the wake went to. */
+  sessionId: string;
+  threadId: string;
+  summary: string;
+  /** RFC 3339; makes the dedupe key unique per wake. */
+  at: string;
+}
+
+/** Atlas woke a session's agent about a watched pull request. Notifies
+ *  unless that session is the one in view: through its tab when one shows it,
+ *  otherwise from its history row, and the click resumes it there. Its
+ *  turn's own finish notifies as any turn's does. */
+export async function notifyPullRequestWatch(wake: PullRequestWake): Promise<void> {
+  try {
+    const event: AgentNotifyEvent = {
+      type: "pull_request_watch",
+      summary: wake.summary,
+      nonce: wake.at,
+    };
+    const settings = useSettingsStore.getState().settings;
+    if (!settings.notificationsEnabled) return;
+    const tabId = openTabForSession(wake.sessionId);
+    const found = tabId ? useChatStore.getState().sessions[tabId] : undefined;
+    let decision: NotificationDecision | null;
+    if (tabId && found) {
+      const { ctx, projectId } = buildCtx(tabId, found, wake.sessionId);
+      ctx.threadId = wake.threadId || undefined;
+      decision = decideAgentNotification(event, ctx, envFor(tabId, projectId), settings);
+    } else {
+      const ctx = await historyCtx(wake);
+      // No tab shows it, so it is not the one in view.
+      decision = decideAgentNotification(event, ctx, envFor(null, ctx.projectId), settings);
+    }
+    if (decision) deliverNotification(decision);
+  } catch (err) {
+    console.warn("pull request watch notification failed:", err);
+  }
+}
+
+/** The context of a session no tab shows, from its history row. A session
+ *  history does not list (yet) still notifies, under the bare agent name. */
+async function historyCtx(wake: PullRequestWake): Promise<AgentCtx> {
+  const base: AgentCtx = {
+    tabId: "",
+    sessionId: wake.sessionId,
+    threadId: wake.threadId || undefined,
+  };
+  const resolved = await resolveHistorySession(wake.threadId, wake.sessionId).catch(() => null);
+  if (!resolved) return base;
+  const { row, project } = resolved;
+  return {
+    ...base,
+    threadId: row.threadId,
+    sessionTitle: row.title || undefined,
+    agentName: agentMeta(resumeAgentFor(row.agentId)).label,
+    projectId: project?.id,
+    projectName: project?.name,
+    orgId: project?.orgId,
+  };
 }
 
 /** An agent refused to bind or run for want of sign-in, outside a turn failure

@@ -19,6 +19,7 @@ import { isActionId } from "./actions";
 import { parseCombo } from "./combo";
 import { isPresetId } from "./presets";
 import type { KeybindingProfile } from "./types";
+import { parseWhen } from "./when";
 
 export const PROFILE_TRANSFER_VERSION = 1;
 
@@ -27,6 +28,7 @@ export interface ProfileTransfer {
   name: string;
   basedOn?: string;
   bindings: KeybindingProfile["bindings"];
+  when?: Record<string, string>;
 }
 
 export function exportProfile(profile: KeybindingProfile): string {
@@ -36,17 +38,20 @@ export function exportProfile(profile: KeybindingProfile): string {
     ...(profile.basedOn ? { basedOn: profile.basedOn } : {}),
     // Sorted so two exports of the same profile are byte-identical and a diff
     // between two people's keymaps is readable.
-    bindings: Object.fromEntries(
-      Object.entries(profile.bindings).sort(([a], [b]) => a.localeCompare(b)),
-    ),
+    bindings: sorted(profile.bindings),
+    ...(profile.when && Object.keys(profile.when).length ? { when: sorted(profile.when) } : {}),
   };
   return `${JSON.stringify(doc, null, 2)}\n`;
+}
+
+function sorted<T>(record: Record<string, T>): Record<string, T> {
+  return Object.fromEntries(Object.entries(record).sort(([a], [b]) => a.localeCompare(b)));
 }
 
 export type ImportResult =
   | {
       ok: true;
-      profile: Pick<KeybindingProfile, "name" | "basedOn" | "bindings">;
+      profile: Pick<KeybindingProfile, "name" | "basedOn" | "bindings" | "when">;
       /** Kept, but this build can't run them — worth telling the user. */
       unknownActionIds: string[];
       unknownPresetId: string | null;
@@ -101,10 +106,32 @@ export function importProfile(text: string): ImportResult {
     bindings[actionId] = value as string[];
   }
 
+  const rawWhen = doc.when ?? {};
+  if (typeof rawWhen !== "object" || rawWhen === null || Array.isArray(rawWhen)) {
+    return { ok: false, error: "`when` must be an object" };
+  }
+  const when: Record<string, string> = {};
+  for (const [actionId, value] of Object.entries(rawWhen)) {
+    if (typeof value !== "string" || (value.trim() && !parseWhen(value))) {
+      return {
+        ok: false,
+        error: `\`${actionId}\`: \`${String(value)}\` isn't a condition Atlas can read`,
+      };
+    }
+    when[actionId] = value.trim();
+  }
+
   return {
     ok: true,
-    profile: { name, ...(basedOn ? { basedOn } : {}), bindings },
-    unknownActionIds: Object.keys(bindings).filter((k) => !isActionId(k)),
+    profile: {
+      name,
+      ...(basedOn ? { basedOn } : {}),
+      bindings,
+      ...(Object.keys(when).length ? { when } : {}),
+    },
+    unknownActionIds: [...new Set([...Object.keys(bindings), ...Object.keys(when)])].filter(
+      (k) => !isActionId(k),
+    ),
     unknownPresetId: basedOn && !isPresetId(basedOn) ? basedOn : null,
   };
 }

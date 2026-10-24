@@ -72,7 +72,8 @@ pub(super) fn tools() -> Vec<Tool> {
             "ui_open",
             "Open something in the active project and make it the active tab. file: optional 1-based line/column/endLine/endColumn. \
              diff: git diff of `path`. tab: a plain tab type. thread: a chat by session id. space_page: a conversation's Space \
-             on pageId. Paths may be relative to your cwd.",
+             on pageId. Paths may be relative to your cwd. Timeline, Usage, Knowledge, the knowledge graph, Memory and \
+             Spaces are destinations: they take the window over the columns, one at a time (ui_state.destination).",
             json!({
                 "type": "object",
                 "properties": {
@@ -85,8 +86,8 @@ pub(super) fn tools() -> Vec<Tool> {
                     "repoPath": { "type": "string" },
                     "staged": { "type": "boolean" },
                     "commit": { "type": "string" },
-                    "section": { "type": "string", "enum": ["general", "appearance", "chat", "memory", "notifications", "source-control", "privacy", "keybindings", "updates", "agents", "skills", "providers", "models", "layouts", "about"] },
-                    "type": { "type": "string", "enum": ["canvas", "browser", "tasks", "knowledge", "knowledge-graph", "memory", "settings", "log", "usage", "artifacts"] },
+                    "section": { "type": "string", "enum": ["general", "appearance", "chat", "memory", "notifications", "source-control", "pull-requests", "privacy", "keybindings", "updates", "agents", "skills", "layouts", "about"] },
+                    "type": { "type": "string", "enum": ["canvas", "browser", "tasks", "knowledge", "knowledge-graph", "memory", "log", "usage", "artifacts"] },
                     "sessionId": { "type": "string" },
                     "agent": { "type": "string" },
                     "url": { "type": "string" },
@@ -99,18 +100,18 @@ pub(super) fn tools() -> Vec<Tool> {
         ),
         tool(
             "ui_focus",
-            "Activate a tab, show/hide a panel (omit visible to toggle), pick a side panel section or the right panel's mode, \
-             focus a split column by its index in ui_state.groups, or reveal a path in the explorer.",
+            "Activate a tab, show/hide a panel (omit visible to toggle; files, team_chat and source_control are surface tabs), \
+             pick a section (side source_control: changes/github/git-graph), \
+             focus a split column by its index in ui_state.groups, or reveal a path in the Files surface (target explorer).",
             json!({
                 "type": "object",
                 "properties": {
-                    "target": { "type": "string", "enum": ["tab", "panel", "section", "right_mode", "group", "explorer"] },
+                    "target": { "type": "string", "enum": ["tab", "panel", "section", "group", "explorer"] },
                     "id": { "type": "string" },
-                    "name": { "type": "string", "enum": ["left", "right", "chat_sidebar", "terminal", "timeline_sidebar", "tab_bar"] },
+                    "name": { "type": "string", "enum": ["files", "team_chat", "source_control", "chat_sidebar", "terminal", "timeline_sidebar"] },
                     "visible": { "type": "boolean" },
-                    "side": { "type": "string", "enum": ["left", "right"] },
-                    "section": { "type": "string", "enum": ["files", "knowledge", "changes", "github", "git-graph"] },
-                    "mode": { "type": "string", "enum": ["source-control", "chat"] },
+                    "side": { "type": "string", "enum": ["source_control"] },
+                    "section": { "type": "string", "enum": ["changes", "github", "git-graph"] },
                     "index": { "type": "integer" },
                     "path": { "type": "string" }
                 },

@@ -31,6 +31,12 @@ function entry(e: Entry): AgentCatalogEntry {
     supportsModes: true,
     supportsModels: true,
     transcript: "none",
+    enabled: true,
+    displayName: null,
+    launch: { command: null, args: [], variables: [] },
+    hiddenModels: [],
+    modelOrder: [],
+    customModels: [],
     login: null,
     iconDataUrl: null,
     helpUrl: null,
@@ -112,6 +118,11 @@ describe("switchableAgentIds", () => {
     expect(switchableAgentIds()).toEqual(["atlas-agent"]);
   });
 
+  it("leaves out an agent the user turned off in Settings", () => {
+    setCatalog([NATIVE, { id: "claude-acp", name: "Claude Code", enabled: false }]);
+    expect(switchableAgentIds()).toEqual(["atlas-agent"]);
+  });
+
   it("names the native agent alone before the catalog hydrates", () => {
     // Boot paths call this before any catalog exists; it must not go empty,
     // and it must not guess at an ACP agent the user may not have.
@@ -120,6 +131,17 @@ describe("switchableAgentIds", () => {
 });
 
 describe("agentMeta", () => {
+  it("labels an agent with the name the user gave it", () => {
+    setCatalog([
+      NATIVE,
+      { id: "claude-acp", name: "Claude Code", displayName: "Claude (work)" },
+      { id: "acme", name: "Acme", displayName: "Acme staging" },
+    ]);
+    // Both paths: a first-party identity and an external one.
+    expect(agentMeta("claude-acp").label).toBe("Claude (work)");
+    expect(agentMeta("acme").label).toBe("Acme staging");
+  });
+
   it("reports source and availability once the catalog has landed", () => {
     setCatalog(AFTER_INSTALLS);
     expect(agentMeta("claude-acp").source).toBe("npx");

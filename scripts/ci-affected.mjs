@@ -137,6 +137,7 @@ export const NON_RUST = [
   "docs/",
   "landing/",
   "public/",
+  "patches/",
   "scripts/",
   ".husky/",
   ".design-sync/",

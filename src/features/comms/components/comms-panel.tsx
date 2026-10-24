@@ -18,13 +18,13 @@ import { conversationTitle, memberName } from "../lib/derive";
 import type { ChatConversation, OrgMemberProfile } from "../types";
 
 /**
- * Team chat, in the right panel slot (⌘⇧C).
+ * Team chat, a surface tab (⌘⇧C, ADR-0024).
  *
- * Conversations open as TABS in the header rather than replacing one another,
- * because chat here is org-scoped and someone watching #atlas-desktop while
- * answering a DM is the ordinary case, not the exception. The tab strip mirrors
- * the source-control panel's 29px header band so the two occupants of the slot
- * are visually interchangeable.
+ * Conversations open as tabs in a bar of their own rather than replacing one
+ * another, because chat here is org-scoped and someone watching
+ * #atlas-desktop while answering a DM is the ordinary case, not the
+ * exception. The bar sits under the column's tab strip; the window's
+ * controls are the column header's, not this panel's.
  */
 export function CommsPanel() {
   const conversations = useCommsStore.use.conversations();
@@ -132,7 +132,7 @@ export function CommsPanel() {
     // an empty 29px strip labelled "Team Chat" only repeats what the panel
     // already is. The placeholder gets the whole surface.
     return (
-      <div className="atlas-vibrant-panel flex h-full flex-col bg-[var(--sidebar)] pt-1.5">
+      <div className="flex h-full flex-col bg-background">
         <CommsSurface>
           <CommsNotConnected org={activeOrg} />
         </CommsSurface>
@@ -150,13 +150,7 @@ export function CommsPanel() {
   if (conversations.length === 0 && connection.state !== "open") {
     const terminal = connection.state === "unavailable";
     return (
-      <div className="atlas-vibrant-panel flex h-full flex-col bg-[var(--sidebar)]">
-        <div className="flex h-[38px] shrink-0 items-center pl-2">
-          <div className="flex h-[26px] items-center gap-1.5 rounded-lg bg-[var(--atlas-element-selected)] pl-2.5 pr-2.5 text-sm font-medium text-foreground select-none">
-            <MessagesSquare size={11} className="shrink-0 opacity-70" />
-            Chats
-          </div>
-        </div>
+      <div className="flex h-full flex-col bg-background">
         <CommsSurface>
           {terminal ? (
             <CommsConnecting
@@ -173,60 +167,54 @@ export function CommsPanel() {
   }
 
   return (
-    <div className="atlas-vibrant-panel flex h-full flex-col bg-[var(--sidebar)]">
-      {/* The header lives on the BACKDROP, not the card — that separation is
-          the whole depth trick. Taller than the old 29px band so the tabs
-          breathe like the reference. */}
-      <div className="flex h-[38px] shrink-0 items-center gap-1 pl-2">
-        <div
-          className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto hide-scrollbar"
-          // A gradient overlay in the backdrop colour never quite matched it —
-          // the vibrant grain composites on top of the token, so the patch
-          // read as its own rectangle. A mask fades the CONTENT instead, and
-          // whatever is behind it shows through exactly.
-          style={{
-            maskImage: "linear-gradient(to right, black, black calc(100% - 28px), transparent)",
-            WebkitMaskImage:
-              "linear-gradient(to right, black, black calc(100% - 28px), transparent)",
-          }}
-        >
-          {tabs.map((tab) => (
-            <TabButton
-              key={tab.id}
-              conv={tab.convId ? (convById.get(tab.convId) ?? null) : null}
-              members={members}
-              me={me}
-              active={tab.id === activeTabId}
-              read={tab.convId ? readBy.get(tab.convId) : undefined}
-              onSelect={() => actions.setActiveTab(tab.id)}
-              onClose={() => actions.closeTab(tab.id)}
-            />
-          ))}
-        </div>
+    <div className="flex h-full flex-col bg-background">
+      {/* Only with two or more open: one view needs no tabs of its own under
+          the column's "Team chat" tab, and a conversation's header already
+          leads back home. ⌘-click a conversation to open a second. */}
+      {tabs.length > 1 && (
+        <ConversationBar>
+          <div
+            className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto hide-scrollbar"
+            // A gradient overlay in the backdrop colour never quite matched it —
+            // the vibrant grain composites on top of the token, so the patch
+            // read as its own rectangle. A mask fades the CONTENT instead, and
+            // whatever is behind it shows through exactly.
+            style={{
+              maskImage: "linear-gradient(to right, black, black calc(100% - 28px), transparent)",
+              WebkitMaskImage:
+                "linear-gradient(to right, black, black calc(100% - 28px), transparent)",
+            }}
+          >
+            {tabs.map((tab) => (
+              <TabButton
+                key={tab.id}
+                conv={tab.convId ? (convById.get(tab.convId) ?? null) : null}
+                members={members}
+                me={me}
+                active={tab.id === activeTabId}
+                read={tab.convId ? readBy.get(tab.convId) : undefined}
+                onSelect={() => actions.setActiveTab(tab.id)}
+                onClose={() => actions.closeTab(tab.id)}
+              />
+            ))}
+          </div>
 
-        {/* The project sidebar's add-project button, verbatim. */}
-        <div className="flex shrink-0 items-center pr-1.5">
-          <Hint label="New tab">
-            <button
-              type="button"
-              onClick={() => actions.newTab()}
-              className="flex h-6 w-6 items-center justify-center rounded-full border border-[var(--border)] text-[var(--secondary-foreground)] transition-colors hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] outline-none cursor-pointer"
-            >
-              <Plus size={14} />
-            </button>
-          </Hint>
-        </div>
-      </div>
+          {/* The project sidebar's add-project button, verbatim. */}
+          <div className="flex shrink-0 items-center pr-1.5">
+            <Hint label="New tab">
+              <button
+                type="button"
+                onClick={() => actions.newTab()}
+                className="flex h-6 w-6 items-center justify-center rounded-full border border-[var(--border)] text-[var(--secondary-foreground)] transition-colors hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] outline-none cursor-pointer"
+              >
+                <Plus size={14} />
+              </button>
+            </Hint>
+          </div>
+        </ConversationBar>
+      )}
 
-      {/* `overflow-hidden` so a view can never paint outside the panel, and the
-          transition is OPACITY ONLY. A transform here was the bug: this panel
-          carries `atlas-vibrant-panel`, whose grain overlay blends with
-          `mix-blend-mode: soft-light`, and translating a descendant across it
-          made WKWebView re-composite the blended layer every frame — which it
-          did wrong, flashing black and clipping the view mid-slide. The house
-          rule from the notification panel is that blur and animation belong on
-          ONE element; the honest way to keep a transition here is to move no
-          geometry at all. */}
+      {/* `overflow-hidden` so a view can never paint outside the panel. */}
       <CommsSurface>
         <div className="relative flex min-h-0 flex-1 overflow-hidden">
           {activeConv ? (
@@ -244,20 +232,19 @@ export function CommsPanel() {
   );
 }
 
-/**
- * The interface card: a rounded near-black surface floating on the panel's
- * warm backdrop, inset on the sides and bottom. The depth is the point — a
- * hairline ring plus a soft drop shadow, no blur and no transform, so it
- * lives safely inside `atlas-vibrant-panel`.
- */
+/** The open conversations, as tabs, under the column's own tab strip. */
+function ConversationBar({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex h-9 shrink-0 items-center gap-1 border-b border-[var(--border)] pl-1.5">
+      {children}
+    </div>
+  );
+}
+
+/** The conversation's surface, flat under the conversation bar. */
 function CommsSurface({ children }: { children: React.ReactNode }) {
   return (
-    <div
-      // Pure black on the panel's own near-black background leaves a drop
-      // shadow almost nothing to darken, so the hairline ring carries the
-      // edge; the shadow just softens it.
-      className="mx-1.5 mb-1.5 flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl bg-[var(--background)] ring-1 ring-[var(--atlas-element-active)] shadow-sm"
-    >
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--background)]">
       {children}
     </div>
   );

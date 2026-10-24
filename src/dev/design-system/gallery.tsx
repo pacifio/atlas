@@ -867,6 +867,13 @@ function PrimitiveSection() {
             <Kbd size="sm">K</Kbd>
           </div>
         </Row>
+        <Row name={`variant="soft"`}>
+          <div className="flex items-center gap-3">
+            <Kbd variant="soft">↑↓</Kbd>
+            <Kbd variant="soft">Enter</Kbd>
+            <Kbd variant="soft">Esc</Kbd>
+          </div>
+        </Row>
       </Section>
     </>
   );
@@ -1050,13 +1057,13 @@ function OverlaySection() {
       >
         <Row name="right-click target">
           <ContextMenu>
-            <ContextMenuTrigger
-              render={
-                <div className="flex h-24 w-full max-w-md items-center justify-center rounded-md border border-dashed border-border bg-background">
-                  <span className="caption">Right-click anywhere in here</span>
-                </div>
-              }
-            />
+            {/* The trigger is the hit area and takes layout only; the dashed
+                drop zone is drawn by the plain element inside it. */}
+            <ContextMenuTrigger render={<div className="flex h-24 w-full max-w-md" />}>
+              <div className="flex flex-1 items-center justify-center rounded-md border border-dashed border-border bg-background">
+                <span className="caption">Right-click anywhere in here</span>
+              </div>
+            </ContextMenuTrigger>
             <ContextMenuContent>
               <ContextMenuGroup>
                 <ContextMenuLabel>Group label</ContextMenuLabel>

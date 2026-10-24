@@ -32,6 +32,7 @@ import type { OrgDirectory } from "@/features/organisations/lib/use-org-director
 import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/time-ago";
 import { Hint } from "@/ui/tooltip";
+import { IconButton } from "@/ui/icon-button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -354,16 +355,8 @@ function FilterMenu({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        aria-label="Filter comments"
-        className={cn(
-          "flex size-6 shrink-0 cursor-pointer items-center justify-center rounded transition-colors hover:bg-[var(--atlas-element-hover)]",
-          active
-            ? "bg-[var(--atlas-element-active)] text-[var(--foreground)]"
-            : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]",
-        )}
-      >
-        <Filter size={13} />
-      </DropdownMenuTrigger>
+        render={<IconButton icon={Filter} label="Filter comments" size="sm" active={active} />}
+      />
       <DropdownMenuContent align="end" className="min-w-[200px]">
         <DropdownMenuItem onClick={() => setFilters((f) => ({ ...f, sort: "newest" }))}>
           <Tick on={filters.sort === "newest"} />

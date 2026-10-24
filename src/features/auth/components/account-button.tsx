@@ -1,6 +1,6 @@
 import { CircleUser, Loader2 } from "lucide-react";
 
-import type { ComponentProps } from "react";
+import type { ComponentProps, ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 import { Hint } from "@/ui/tooltip";
@@ -19,7 +19,18 @@ import { AccountMenu } from "./account-menu";
  * Signed out or mid-grant it is a plain button that starts (or reopens)
  * sign-in — the menu has nothing to say in either state.
  */
-export function AccountButton({ compact = false }: { compact?: boolean } = {}) {
+export function AccountButton({
+  compact = false,
+  menuSide = "bottom",
+  menuExtra,
+}: {
+  compact?: boolean;
+  /** Which way the account menu opens: down from the window bar, up from the
+   *  sidebar footer. */
+  menuSide?: "top" | "bottom";
+  /** Rows folded into the account menu after Privacy. */
+  menuExtra?: ReactNode;
+} = {}) {
   const snapshot = useAuthStore.use.snapshot();
   const starting = useAuthStore.use.starting();
   const { beginSignIn, closeDialog } = useAuthStore.use.actions();
@@ -47,21 +58,21 @@ export function AccountButton({ compact = false }: { compact?: boolean } = {}) {
 
   // In the dock the pill's sliding label already names this control, so only
   // the standalone button carries a tooltip of its own.
-  const Button = compact ? "button" : HintedButton;
+  const Control = compact ? "button" : HintedButton;
 
   const button = (
     // Only the connecting state keeps a click of its own. In the other two the
     // click is Radix's to handle, and one that also ran would fight the trigger
     // it is wrapped in.
-    <Button
+    <Control
       onClick={connecting ? toggleDialog : undefined}
       aria-label={title}
       className={cn(
         "relative flex items-center justify-center transition-all duration-150",
-        // Inside the titlebar dock the avatar is one of a row of 20px controls
-        // and the pill supplies the surrounding shape, so it loses two pixels
-        // and its own square corners.
-        compact ? "size-5 rounded-full" : "w-6 h-6 rounded",
+        // The same 24px square as every other control in the bar, docked or
+        // not — the bar reads as one toolbar only if nothing in it is a
+        // different size.
+        "size-6 rounded-md",
         // A `<button>` still gets the arrow by default, and this one carries no
         // label or border — the pointer is most of what says it is pressable.
         // Matches the title bar's project-name button beside it.
@@ -72,17 +83,17 @@ export function AccountButton({ compact = false }: { compact?: boolean } = {}) {
       )}
     >
       {starting || connecting ? (
-        <Loader2 size={compact ? 12 : 14} className="animate-spin" />
+        <Loader2 size={14} className="animate-spin" />
       ) : user ? (
-        <AccountAvatar user={user} size={compact ? 16 : 18} />
+        <AccountAvatar user={user} size={18} />
       ) : (
-        <CircleUser size={compact ? 12 : 14} />
+        <CircleUser size={14} />
       )}
-    </Button>
+    </Control>
   );
 
-  // The menu opens signed out as well as signed in. Settings, Keybindings,
-  // Themes, Skills and Layouts live behind this avatar and are not account
+  // The menu opens signed out as well as signed in. Settings, Privacy, the
+  // theme and the interface size live behind this avatar and are not account
   // features — gating them on having an account contradicts the rule that
   // authentication is additive and nothing becomes gated. Signing in is simply
   // the first item when there is no account yet.
@@ -91,7 +102,11 @@ export function AccountButton({ compact = false }: { compact?: boolean } = {}) {
   // running, the only thing the user wants is the dialog they closed, and
   // putting that behind a menu adds a step to a state that lasts seconds.
   if (snapshot.status === "connecting") return button;
-  return <AccountMenu account={snapshot}>{button}</AccountMenu>;
+  return (
+    <AccountMenu account={snapshot} side={menuSide} extra={menuExtra}>
+      {button}
+    </AccountMenu>
+  );
 }
 
 /**

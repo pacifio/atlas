@@ -46,7 +46,6 @@ const PLAIN_TABS: Record<string, string> = {
   knowledge: "Knowledge",
   "knowledge-graph": "Knowledge Graph",
   memory: "Memory",
-  settings: "Settings",
   log: "Logs",
   usage: "Usage",
   artifacts: "Timeline",
@@ -54,8 +53,9 @@ const PLAIN_TABS: Record<string, string> = {
 
 const layout = () => useLayoutStore.getState();
 
-/** Open a one-per-column tab and return the id it ended up with (an existing
- *  tab in the focused column wins over the id asked for). */
+/** Open a one-per-column tab, or a destination (ADR-0024), and return the id
+ *  it ended up with (an existing tab in the focused column wins over the id
+ *  asked for). */
 function openPlainTab(type: string, data: Record<string, unknown> = {}): string {
   layout().actions.addTab({
     id: type,
@@ -65,7 +65,9 @@ function openPlainTab(type: string, data: Record<string, unknown> = {}): string 
     dirty: false,
     data,
   });
-  return layout().activeTabId ?? type;
+  const { destination, destinationShown, activeTabId } = layout();
+  if (destinationShown && destination?.type === type) return destination.id;
+  return activeTabId ?? type;
 }
 
 export async function performOpen(request: UiActionRequest): Promise<unknown> {
@@ -97,8 +99,10 @@ export async function performOpen(request: UiActionRequest): Promise<unknown> {
       return { tabId: layout().activeTabId, repoPath, file };
     }
     case "settings": {
-      openSettingsSection(a.optOneOf("section", SETTINGS_SECTIONS) ?? "general");
-      return { tabId: layout().activeTabId };
+      // Settings covers the window rather than opening as a tab.
+      const section = a.optOneOf("section", SETTINGS_SECTIONS) ?? "general";
+      openSettingsSection(section);
+      return { section };
     }
     case "tab": {
       const type = a.str("type");

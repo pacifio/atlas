@@ -23,6 +23,9 @@ export interface SegmentedOption<T extends string> {
   value: T;
   label: string;
   icon?: React.ReactNode;
+  /** Draw only the icon; the label stays the option's accessible name and
+   *  its tooltip. For a toolbar's icon pair (a diff's layout). */
+  iconOnly?: boolean;
 }
 
 export interface SegmentedProps<T extends string> {
@@ -101,6 +104,8 @@ export function Segmented<T extends string>({
             type="button"
             role="radio"
             aria-checked={active}
+            aria-label={option.iconOnly ? option.label : undefined}
+            title={option.iconOnly ? option.label : undefined}
             tabIndex={active ? 0 : -1}
             disabled={disabled}
             onClick={() => {
@@ -111,7 +116,14 @@ export function Segmented<T extends string>({
               "relative shrink-0 cursor-pointer rounded-full font-medium whitespace-nowrap outline-none",
               "transition-colors duration-fast ease-out-strong",
               "disabled:cursor-not-allowed",
-              size === "sm" ? "h-control-xs px-2 text-2xs" : "h-control-sm px-2.5 text-xs",
+              size === "sm" ? "h-control-xs text-2xs" : "h-control-sm text-xs",
+              option.iconOnly
+                ? size === "sm"
+                  ? "px-1"
+                  : "px-1.5"
+                : size === "sm"
+                  ? "px-2"
+                  : "px-2.5",
               active ? "text-foreground" : "text-muted-foreground hover:text-foreground",
             )}
           >
@@ -124,7 +136,7 @@ export function Segmented<T extends string>({
             )}
             <span className="relative flex items-center gap-1.5">
               {option.icon}
-              {option.label}
+              {!option.iconOnly && option.label}
             </span>
           </button>
         );

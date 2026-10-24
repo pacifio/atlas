@@ -432,6 +432,9 @@ mod tests {
             &SessionDelta::TurnFinished {
                 stop_reason: "end_turn".into(),
                 turn_seq: 0,
+                started_at_ms: None,
+                ended_at_ms: None,
+                worked_ms: None,
             },
         );
         assert!(m.has_guard());

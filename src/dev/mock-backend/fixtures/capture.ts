@@ -464,7 +464,7 @@ export const captureHandlers: TypedHandlers<CaptureResponses> = {
   // section at all, rather than a row of zeroes.
   capture_session_summary: ({ projectPath, sessionId }): SessionSummary | null =>
     projectFor(projectPath).binding ? sessionSummary(String(sessionId)) : null,
-  // The record's file list for the thread overview — empty, like Rust, when
+  // The record's file list for the Details card's Changes section — empty, like Rust, when
   // capture is off. Two with counts (edit-shaped calls, which leave a patch)
   // and one without (a shell edit, attributed by watching the tree).
   capture_session_files: ({ projectPath }): SessionFile[] =>

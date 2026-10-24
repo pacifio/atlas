@@ -148,6 +148,10 @@ pub struct AcpConnection {
     session_mcp: Option<Arc<dyn SessionMcpServers>>,
     /// `true` once the child has exited; see [`AgentConnection::exited`].
     exited: tokio::sync::watch::Receiver<bool>,
+    /// The inbound dispatch queue, held weakly so the connection does not
+    /// keep the drain alive: a `session/load` replay ends on it, behind the
+    /// replay's own frames (`handlers::enqueue_barrier`).
+    dispatch_tx: tokio::sync::mpsc::WeakUnboundedSender<handlers::DispatchWork>,
     _io_task: tokio::task::JoinHandle<()>,
     _stderr_task: tokio::task::JoinHandle<()>,
     _wait_task: tokio::task::JoinHandle<()>,
@@ -255,7 +259,10 @@ impl AcpConnection {
             request_elicitations: request_elicitations.clone(),
         };
         let (connection_tx, connection_rx) = futures::channel::oneshot::channel();
-        let connection_future = connect_client_future(client_name, transport, ctx, connection_tx);
+        let dispatch_tx = handlers::spawn_dispatch_queue(ctx);
+        let weak_dispatch_tx = dispatch_tx.downgrade();
+        let connection_future =
+            connect_client_future(client_name, transport, dispatch_tx, connection_tx);
         let io_task = tokio::spawn(async move {
             if let Err(err) = connection_future.await {
                 tracing::error!("ACP connection error: {err}");
@@ -405,6 +412,7 @@ impl AcpConnection {
             debug_log,
             session_mcp: None,
             exited,
+            dispatch_tx: weak_dispatch_tx,
             _io_task: io_task,
             _stderr_task: stderr_task,
             _wait_task: wait_task,
@@ -534,6 +542,10 @@ impl AcpConnection {
         session_id: acp::SessionId,
         work_dirs: Vec<PathBuf>,
         title: Option<Arc<str>>,
+        // `session/load` replays the stored conversation as updates;
+        // `session/resume` does not. What a replay appends carries no real
+        // time (ACP has none per message), so the thread marks it.
+        replays_history: bool,
         rpc_call: impl FnOnce(
             ConnectionTo<Agent>,
             acp::SessionId,
@@ -558,6 +570,16 @@ impl AcpConnection {
         let (mcp_offer, mcp_servers) = self.mcp_offer(&directories.cwd, Some(&session_id));
         let meta = session_mcp::preapproval_meta(&mcp_servers, mcp_offer.ask_first());
         let thread = self.new_thread(session_id.clone(), work_dirs, title);
+        // The replay ends once the load has answered AND the frames the agent
+        // sent before that answer have been applied: they can still be queued
+        // on the dispatch task when the answer resolves, so the end is queued
+        // behind them (below). A prompt or a new turn also ends it.
+        if replays_history {
+            thread
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .begin_replay();
+        }
 
         self.sessions.pending_begin(session_id.clone());
         self.sessions.insert(
@@ -605,6 +627,25 @@ impl AcpConnection {
             return Err(anyhow!("session was closed before load completed"));
         }
         mcp_offer.bind(&session_id);
+
+        if replays_history {
+            // Every frame the agent sent before its answer was parsed, and so
+            // queued, before the answer resolved: a barrier queued now runs
+            // after the last of them.
+            let weak = Arc::downgrade(&thread);
+            let end = move || {
+                if let Some(thread) = weak.upgrade() {
+                    thread
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .end_replay();
+                }
+            };
+            match self.dispatch_tx.upgrade() {
+                Some(dispatch_tx) => handlers::enqueue_barrier(&dispatch_tx, end),
+                None => end(),
+            }
+        }
 
         Ok(thread)
     }
@@ -772,10 +813,9 @@ async fn wait_for_exit(
 fn connect_client_future(
     name: &'static str,
     transport: impl agent_client_protocol::ConnectTo<Client> + 'static,
-    ctx: ClientContext,
+    dispatch_tx: handlers::DispatchTx,
     connection_tx: futures::channel::oneshot::Sender<ConnectionTo<Agent>>,
 ) -> impl std::future::Future<Output = std::result::Result<(), acp::Error>> {
-    let dispatch_tx = handlers::spawn_dispatch_queue(ctx);
     macro_rules! on_request {
         ($handler:path) => {{
             let dispatch_tx = dispatch_tx.clone();
@@ -1070,6 +1110,7 @@ impl AgentConnection for AcpConnection {
                     session_id,
                     work_dirs,
                     title,
+                    true,
                     |conn, id, dirs, mcp_servers, meta| {
                         async move {
                             let mut request = acp::LoadSessionRequest::new(id, dirs.cwd);
@@ -1118,6 +1159,7 @@ impl AgentConnection for AcpConnection {
                     session_id,
                     work_dirs,
                     title,
+                    false,
                     |conn, id, dirs, mcp_servers, meta| {
                         async move {
                             let mut request = acp::ResumeSessionRequest::new(id, dirs.cwd);

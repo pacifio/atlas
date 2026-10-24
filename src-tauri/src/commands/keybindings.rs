@@ -47,6 +47,10 @@ pub struct Profile {
     /// BTreeMap so the file is written in a stable order.
     #[serde(default)]
     pub bindings: BTreeMap<String, Option<Vec<String>>>,
+    /// action id → the `when` expression that replaces its condition ("" =
+    /// always). The renderer parses and evaluates it; Rust checks its syntax.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub when: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -75,6 +79,7 @@ fn default_profile() -> Profile {
         built_in: true,
         based_on: None,
         bindings: BTreeMap::new(),
+        when: BTreeMap::new(),
     }
 }
 
@@ -129,9 +134,10 @@ fn normalize(file: &mut KeybindingsFile) -> Vec<String> {
             warnings.push("built-in Default profile was missing; restored".to_string());
             default_profile()
         });
-    if !default.bindings.is_empty() {
+    if !default.bindings.is_empty() || !default.when.is_empty() {
         warnings.push("built-in Default profile had overrides; they were dropped".to_string());
         default.bindings.clear();
+        default.when.clear();
     }
     if default.based_on.take().is_some() {
         warnings.push("built-in Default profile had a preset; it was dropped".to_string());
@@ -192,6 +198,104 @@ fn is_plausible_combo(s: &str) -> bool {
     keys == 1
 }
 
+/// The renderer's `parseWhen` (`keybindings/lib/when.ts`), as a yes/no:
+/// identifiers joined by `!`, `&&`, `||` and parentheses. Empty is valid
+/// ("always").
+fn is_valid_when(s: &str) -> bool {
+    #[derive(PartialEq)]
+    enum Tok {
+        Id,
+        Not,
+        And,
+        Or,
+        Open,
+        Close,
+    }
+    let bytes = s.as_bytes();
+    let mut toks = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if c.is_ascii_whitespace() {
+            i += 1;
+        } else if s[i..].starts_with("&&") {
+            toks.push(Tok::And);
+            i += 2;
+        } else if s[i..].starts_with("||") {
+            toks.push(Tok::Or);
+            i += 2;
+        } else if c == b'!' {
+            toks.push(Tok::Not);
+            i += 1;
+        } else if c == b'(' {
+            toks.push(Tok::Open);
+            i += 1;
+        } else if c == b')' {
+            toks.push(Tok::Close);
+            i += 1;
+        } else if c.is_ascii_alphabetic() || c == b'_' {
+            i += 1;
+            while i < bytes.len()
+                && (bytes[i].is_ascii_alphanumeric() || matches!(bytes[i], b'_' | b'.' | b'-'))
+            {
+                i += 1;
+            }
+            toks.push(Tok::Id);
+        } else {
+            return false;
+        }
+    }
+    if toks.is_empty() {
+        return true;
+    }
+    // Grammar: or := and ('||' and)*; and := unary ('&&' unary)*;
+    // unary := '!'* primary; primary := id | '(' or ')'.
+    fn or(t: &[Tok], i: &mut usize, depth: usize) -> bool {
+        and(t, i, depth) && {
+            while t.get(*i) == Some(&Tok::Or) {
+                *i += 1;
+                if !and(t, i, depth) {
+                    return false;
+                }
+            }
+            true
+        }
+    }
+    fn and(t: &[Tok], i: &mut usize, depth: usize) -> bool {
+        unary(t, i, depth) && {
+            while t.get(*i) == Some(&Tok::And) {
+                *i += 1;
+                if !unary(t, i, depth) {
+                    return false;
+                }
+            }
+            true
+        }
+    }
+    fn unary(t: &[Tok], i: &mut usize, depth: usize) -> bool {
+        while t.get(*i) == Some(&Tok::Not) {
+            *i += 1;
+        }
+        match t.get(*i) {
+            Some(Tok::Id) => {
+                *i += 1;
+                true
+            }
+            Some(Tok::Open) if depth < 32 => {
+                *i += 1;
+                if !or(t, i, depth + 1) || t.get(*i) != Some(&Tok::Close) {
+                    return false;
+                }
+                *i += 1;
+                true
+            }
+            _ => false,
+        }
+    }
+    let mut i = 0;
+    or(&toks, &mut i, 0) && i == toks.len()
+}
+
 fn validate(file: &KeybindingsFile) -> Result<(), String> {
     let mut ids = HashSet::new();
     for p in &file.profiles {
@@ -220,6 +324,20 @@ fn validate(file: &KeybindingsFile) -> Result<(), String> {
                         ));
                     }
                 }
+            }
+        }
+        for (action, expr) in &p.when {
+            if action.trim().is_empty() {
+                return Err(format!(
+                    "profile `{}` sets a condition on an empty action id",
+                    p.id
+                ));
+            }
+            if !is_valid_when(expr) {
+                return Err(format!(
+                    "profile `{}`: `{expr}` is not a valid condition for `{action}`",
+                    p.id
+                ));
             }
         }
     }
@@ -355,6 +473,7 @@ mod tests {
             name: id.to_string(),
             built_in: false,
             based_on: None,
+            when: BTreeMap::new(),
             bindings: bindings
                 .iter()
                 .map(|(k, v)| {
@@ -411,8 +530,10 @@ mod tests {
 
     #[test]
     fn normalize_resets_a_dangling_active_profile() {
-        let mut file = KeybindingsFile::default();
-        file.active_profile_id = "ghost".into();
+        let mut file = KeybindingsFile {
+            active_profile_id: "ghost".into(),
+            ..Default::default()
+        };
         normalize(&mut file);
         assert_eq!(file.active_profile_id, DEFAULT_PROFILE_ID);
     }
@@ -523,5 +644,46 @@ mod tests {
         let warnings = normalize(&mut file);
         assert_eq!(file.profiles[0].based_on, None);
         assert!(warnings.iter().any(|w| w.contains("preset")));
+    }
+
+    #[test]
+    fn when_syntax() {
+        for ok in [
+            "",
+            "terminalFocus",
+            "!terminalFocus",
+            "chatFocus && !inputFocus",
+            "(a || b) && !(c && d)",
+            "!!a",
+        ] {
+            assert!(is_valid_when(ok), "{ok}");
+        }
+        for bad in ["&&", "a &&", "(a", "a)", "a b", "a & b", "1a", "!", "()"] {
+            assert!(!is_valid_when(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn when_round_trips_is_omitted_when_empty_and_is_validated() {
+        let mut file = KeybindingsFile::default();
+        let mut p = profile("mine", &[]);
+        p.when
+            .insert("nav.commandPalette".into(), "!terminalFocus".into());
+        file.profiles.push(p);
+        let json = serde_json::to_string_pretty(&file).unwrap();
+        assert!(json.contains("\"when\""));
+        assert_eq!(
+            json.matches("\"when\"").count(),
+            1,
+            "empty maps are omitted"
+        );
+        let back: KeybindingsFile = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, file);
+        assert!(validate(&file).is_ok());
+
+        file.profiles[1]
+            .when
+            .insert("tabs.close".into(), "a &&".into());
+        assert!(validate(&file).is_err());
     }
 }

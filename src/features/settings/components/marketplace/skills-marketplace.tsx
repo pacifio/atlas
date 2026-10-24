@@ -1,7 +1,6 @@
-// Settings → Skills → Discover. The skills.sh registry browser, styled as a
-// dense monochrome data table (same essence as Settings → API Keys): a sticky
-// header, full-width flex rows, fixed columns. Row click opens a centered modal
-// with the lazily-fetched description + components and an Install action.
+// Settings → Skills → Discover. The skills.sh registry: the most installed
+// skills, or a live search, one row each with Install. A name opens a dialog
+// with the description fetched from the repo.
 //
 // DATA NOTE: the registry `search` API returns only { id, name, installs,
 // source } and 400s on an empty query — no time-series, trending feed, or
@@ -10,17 +9,28 @@
 // fetched lazily on open.
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { Boxes, Check, Copy, Download, Loader2, Search, X } from "lucide-react";
+import { Boxes, Check, Copy, Download } from "lucide-react";
 import { GithubIcon } from "@/components/github-icon";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
 
-import { cn } from "@/lib/utils";
+import { copyText } from "@/lib/clipboard";
+import { Badge } from "@/ui/badge";
+import { Button } from "@/ui/button";
+import { Icon } from "@/ui/icon";
 import { Hint } from "@/ui/tooltip";
+import { AtlasLoader } from "@/components/atlas-loader";
 import { packs as packsApi } from "@/features/packs/lib/packs-api";
 import { skills as skillsApi } from "@/features/skills/lib/skills-api";
 import { SKILLS_CHANGED_EVENT } from "@/features/skills/lib/skills-events";
-import { SkillModalShell, SkillDescriptions, ModalAction } from "./skill-modal";
+import { SkillDescriptions, SkillDialog } from "./skill-modal";
+import {
+  SettingsGroup,
+  SettingsNote,
+  SettingsRow,
+  SettingsSection,
+} from "../layout/settings-layout";
+import { SettingsSearch } from "../layout/settings-search";
 import { TrendSparkline } from "@/components/trend-sparkline";
 import { installTrend } from "@/features/packs/lib/install-trends";
 import type { ComponentKind, Pack, PackSearchHit, Scope } from "@/features/packs/lib/types";
@@ -95,20 +105,8 @@ const KIND_LABEL: Record<ComponentKind, string> = {
   script: "script",
 };
 
-// Shared column widths (header + rows line up). Skill grows; the rest fixed.
-// Shared column widths (header + rows line up). SOURCE takes the slack, not the
-// skill name: names are short slugs ("video-edit") while sources are full
-// `owner/repo` paths that were truncating at 200px, so the growing column
-// belongs to the one with something to show.
-const COL = {
-  rank: "w-[34px] shrink-0",
-  skill: "w-[220px] shrink-0",
-  source: "flex-1 min-w-[200px]",
-  installs: "w-[110px] shrink-0",
-  trend: "w-[84px] shrink-0",
-  action: "w-[96px] shrink-0",
-} as const;
-const TABLE_MIN_W = 34 + 220 + 200 + 110 + 84 + 96;
+const PAGE_SIZE = 20;
+const COMPACT = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
 
 export function SkillsMarketplace({
   scope,
@@ -123,7 +121,6 @@ export function SkillsMarketplace({
   const [results, setResults] = useState<PackSearchHit[]>([]);
   const [popular, setPopular] = useState<PackSearchHit[]>(() => loadPopularCache() ?? []);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   // Re-render whenever the module-level install registry changes.
   useSyncExternalStore(
     (cb) => {
@@ -204,7 +201,7 @@ export function SkillsMarketplace({
       void packsApi
         .search(q)
         .then((r) => setResults(r.sort((a, b) => b.installs - a.installs)))
-        .catch((e) => setError(String(e)))
+        .catch((e) => toast.error(String(e)))
         .finally(() => setLoading(false));
     }, 220);
     return () => {
@@ -219,126 +216,88 @@ export function SkillsMarketplace({
     [scope, effectiveProject],
   );
 
+  const [limit, setLimit] = useState(PAGE_SIZE);
+  useEffect(() => setLimit(PAGE_SIZE), [query]);
+  const more = Math.min(PAGE_SIZE, rows.length - limit);
+
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      {/* Search — full-width flush bar (mixed into the content), like the
-          GitHub panel's search. */}
-      <div className="flex h-[32px] shrink-0 items-center gap-1.5 border-b border-border bg-background px-3">
-        <Search size={11} className="shrink-0 text-muted-foreground" />
-        <input
+    <SettingsSection
+      title="Discover"
+      description="Skills from the skills.sh registry, most installed first."
+    >
+      <div className="flex">
+        <SettingsSearch
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search the skills registry…"
-          spellCheck={false}
-          className="min-w-0 flex-1 bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground"
+          onValueChange={setQuery}
+          label="Search the skills registry"
+          placeholder="Search the skills registry"
+          trailing={loading && <AtlasLoader size={11} />}
         />
-        {loading && <Loader2 size={11} className="animate-spin text-muted-foreground" />}
-        {query && (
-          <Hint label="Clear search">
-            <button
-              type="button"
-              onClick={() => setQuery("")}
-              className="shrink-0 text-muted-foreground hover:text-foreground cursor-pointer"
-            >
-              <X size={11} />
-            </button>
-          </Hint>
-        )}
       </div>
-
-      {error && (
-        <div className="mx-3 mb-2 rounded-md border border-error/30 bg-error/10 px-3 py-2 text-xs text-error">
-          {error}
-        </div>
-      )}
-
-      {/* Table */}
-      <div className="min-h-0 flex-1 overflow-auto hide-scrollbar">
-        <div style={{ minWidth: TABLE_MIN_W }}>
-          {/* sticky header */}
-          <div className="sticky top-0 z-10 flex items-center h-[28px] border-b border-border bg-background px-3 text-2xs uppercase tracking-wider text-muted-foreground">
-            <span className={cn(COL.rank, "text-right pr-2")}>#</span>
-            <span className={COL.skill}>{query.trim() ? "Results" : "Popular"}</span>
-            <span className={COL.source}>Source</span>
-            <span className={cn(COL.installs, "text-right")}>Installs</span>
-            <span className={cn(COL.trend, "text-right")}>Trend</span>
-            <span className={COL.action} />
-          </div>
-
-          {rows.length === 0 ? (
-            <div className="grid h-[180px] place-items-center text-xs text-muted-foreground">
-              {loading
-                ? "Searching…"
-                : query.trim()
-                  ? "No skills match your search."
-                  : "Search the registry to discover skills."}
-            </div>
-          ) : (
-            rows.map((hit, i) => {
-              const isInstalled = isHitInstalled(hit);
-              const installing = installingIds.has(hit.id);
-              return (
-                <div
-                  key={hit.id}
-                  role="button"
-                  tabIndex={0}
+      <SettingsGroup>
+        {rows.length === 0 ? (
+          <SettingsNote>
+            {loading
+              ? "Searching…"
+              : query.trim()
+                ? `No skill matches “${query.trim()}”.`
+                : "Search the registry to find skills."}
+          </SettingsNote>
+        ) : (
+          rows.slice(0, limit).map((hit) => (
+            <SettingsRow
+              key={hit.id}
+              title={
+                <button
+                  type="button"
                   onClick={() => setSelected(hit)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") setSelected(hit);
-                  }}
-                  className="flex w-full cursor-pointer items-center h-[40px] border-b border-border-subtle px-3 text-left transition-colors hover:bg-element-hover"
+                  className="text-left hover:underline"
                 >
-                  <span
-                    className={cn(
-                      COL.rank,
-                      "text-right pr-2 font-mono text-xs tabular-nums text-muted-foreground",
-                    )}
-                  >
-                    {i + 1}
-                  </span>
-                  <span className={cn(COL.skill, "truncate text-sm text-foreground")}>
-                    {hit.name}
-                  </span>
-                  <span
-                    className={cn(COL.source, "truncate font-mono text-2xs text-muted-foreground")}
-                  >
-                    {hit.source}
-                  </span>
-                  <span
-                    className={cn(
-                      COL.installs,
-                      "text-right font-mono text-xs tabular-nums text-secondary-foreground",
-                    )}
-                  >
-                    {hit.installs.toLocaleString()}
-                  </span>
-                  {/* Aesthetic, not analytic: no value labels, no hover
-                      readout — the shape reads as momentum and the exact number
-                      is already in the Installs column beside it. */}
-                  <span className={cn(COL.trend, "flex justify-end pr-2")}>
+                  {hit.name}
+                </button>
+              }
+              description={<span className="font-mono">{hit.source}</span>}
+              control={
+                <>
+                  {/* Aesthetic, not analytic: the shape reads as momentum and
+                      the number beside it is the exact count. */}
+                  <span className="flex items-center gap-2 text-2xs text-muted-foreground tabular-nums">
                     <TrendSparkline
                       points={installTrend(hit.id, hit.installs).points}
-                      width={64}
-                      height={20}
+                      width={48}
+                      height={16}
                       label="Installs over the last 6 months"
                     />
+                    <Hint label={`${hit.installs.toLocaleString()} installs`}>
+                      <span tabIndex={0} className="w-10 text-right">
+                        {COMPACT.format(hit.installs)}
+                      </span>
+                    </Hint>
                   </span>
-                  <span className={cn(COL.action, "flex justify-end")}>
-                    <InstallButton
-                      installed={isInstalled}
-                      installing={installing}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        install(hit);
-                      }}
-                    />
-                  </span>
-                </div>
-              );
-            })
-          )}
-        </div>
-      </div>
+                  <InstallButton
+                    name={hit.name}
+                    installed={isHitInstalled(hit)}
+                    installing={installingIds.has(hit.id)}
+                    onClick={() => install(hit)}
+                  />
+                </>
+              }
+            />
+          ))
+        )}
+        {more > 0 && (
+          <div className="p-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="w-full"
+              onClick={() => setLimit((l) => l + PAGE_SIZE)}
+            >
+              Show {more} more
+            </Button>
+          </div>
+        )}
+      </SettingsGroup>
 
       <SkillDetailModal
         hit={selected}
@@ -347,42 +306,52 @@ export function SkillsMarketplace({
         onInstall={() => selected && install(selected)}
         onClose={() => setSelected(null)}
       />
-    </div>
+    </SettingsSection>
   );
 }
 
-/** Subtle outlined monochrome install control — no accent fill. */
 function InstallButton({
+  name,
   installed,
   installing,
   onClick,
 }: {
+  name: string;
   installed: boolean;
   installing: boolean;
-  onClick: (e: React.MouseEvent) => void;
+  onClick: () => void;
 }) {
   if (installed) {
     return (
-      <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-        <Check size={12} /> Added
-      </span>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="w-20"
+        disabled
+        aria-label={`${name} is installed`}
+      >
+        <Icon icon={Check} size="xs" />
+        Installed
+      </Button>
     );
   }
   return (
-    <button
-      type="button"
+    <Button
+      variant="outline"
+      size="sm"
+      className="w-20"
       disabled={installing}
+      aria-label={`Install ${name}`}
       onClick={onClick}
-      className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-secondary-foreground transition-colors hover:bg-element-hover hover:text-foreground disabled:opacity-50"
     >
-      {installing ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
+      {installing ? <AtlasLoader size={11} /> : <Icon icon={Download} size="xs" />}
       Install
-    </button>
+    </Button>
   );
 }
 
-/** Centered modal: lazily fetches the repo preview (description + components)
- *  the registry search lacks, and offers Install. */
+/** Lazily fetches the repo preview (description and components) that the
+ *  registry search lacks, and offers Install. */
 function SkillDetailModal({
   hit,
   installed,
@@ -427,10 +396,8 @@ function SkillDetailModal({
     };
   }, [hit]);
 
-  // Packs rarely carry a manifest description, but the skills inside them do —
-  // so surface the contained skills + their descriptions (single-skill repos
-  // collapse to one entry = "just render their description"). Non-skill kinds
-  // (commands/agents/rules) stay as count chips.
+  // Packs rarely carry a manifest description, but the skills inside them do,
+  // so the dialog lists those; other kinds (commands, agents, rules) are counts.
   const skillComponents = useMemo(
     () => (preview?.components ?? []).filter((c) => c.kind === "skill"),
     [preview],
@@ -442,13 +409,7 @@ function SkillDetailModal({
     return [...m.entries()];
   }, [preview]);
 
-  const modalSkills = useMemo(
-    () => skillComponents.map((c) => ({ name: c.name, description: c.description })),
-    [skillComponents],
-  );
-
   const githubUrl = hit ? `https://github.com/${hit.source}` : "";
-
   const copyMarkdown = () => {
     if (!hit) return;
     const lines = [`# ${hit.name}`, ""];
@@ -459,73 +420,66 @@ function SkillDetailModal({
       lines.push("");
     }
     lines.push(`Source: ${githubUrl}`);
-    void navigator.clipboard.writeText(lines.join("\n"));
+    void copyText(lines.join("\n"));
   };
 
   return (
-    <SkillModalShell
+    <SkillDialog
       open={!!hit}
       onClose={onClose}
       title={hit?.name ?? ""}
       subtitle={hit ? `${hit.source} · ${hit.installs.toLocaleString()} installs` : undefined}
-      actions={
-        <div className="flex flex-col gap-2">
-          <ModalAction
-            icon={installed ? Check : Download}
-            label={installed ? "Installed" : "Install"}
-            variant="primary"
-            busy={installing}
-            disabled={installed}
-            onClick={onInstall}
-          />
-          <ModalAction icon={Copy} label="Copy as markdown" onClick={copyMarkdown} />
-          {hit && (
-            <ModalAction
-              icon={GithubIcon}
-              label="View on GitHub"
-              onClick={() => void openUrl(githubUrl)}
-            />
-          )}
-        </div>
+      footer={
+        <>
+          <Button variant="ghost" onClick={copyMarkdown}>
+            <Icon icon={Copy} size="xs" />
+            Copy as Markdown
+          </Button>
+          <Button variant="ghost" onClick={() => void openUrl(githubUrl)}>
+            <GithubIcon size={12} />
+            GitHub
+          </Button>
+          <Button disabled={installed || installing} onClick={onInstall}>
+            {installing ? (
+              <AtlasLoader size={11} />
+            ) : (
+              <Icon icon={installed ? Check : Download} size="xs" />
+            )}
+            {installed ? "Installed" : "Install"}
+          </Button>
+        </>
       }
     >
       {loading ? (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 size={13} className="animate-spin" /> Loading details…
-        </div>
+        <p className="caption">Loading details…</p>
       ) : preview ? (
         <>
           {preview.manifest?.description && (
-            <p className="mb-3 text-base leading-relaxed text-secondary-foreground">
-              {preview.manifest.description}
-            </p>
+            <p className="text-sm text-secondary-foreground">{preview.manifest.description}</p>
           )}
-          {modalSkills.length > 0 && <SkillDescriptions skills={modalSkills} />}
+          {skillComponents.length > 0 && (
+            <SkillDescriptions
+              skills={skillComponents.map((c) => ({ name: c.name, description: c.description }))}
+            />
+          )}
           {otherCounts.length > 0 && (
-            <div className="mt-4 flex flex-wrap gap-1.5">
+            <div className="flex flex-wrap gap-1.5">
               {otherCounts.map(([kind, n]) => (
-                <span
-                  key={kind}
-                  className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2 py-0.5 text-2xs text-muted-foreground"
-                >
-                  <Boxes size={10} />
+                <Badge key={kind} variant="outline">
+                  <Icon icon={Boxes} size="xs" />
                   {n} {KIND_LABEL[kind]}
                   {n > 1 ? "s" : ""}
-                </span>
+                </Badge>
               ))}
             </div>
           )}
           {!preview.manifest?.description &&
-            modalSkills.length === 0 &&
-            otherCounts.length === 0 && (
-              <div className="text-sm text-muted-foreground">No additional details published.</div>
-            )}
+            skillComponents.length === 0 &&
+            otherCounts.length === 0 && <p className="caption">No details published.</p>}
         </>
       ) : (
-        <div className="text-sm text-muted-foreground">
-          Couldn’t load details — you can still install.
-        </div>
+        <p className="caption">Couldn't load the details. You can still install it.</p>
       )}
-    </SkillModalShell>
+    </SkillDialog>
   );
 }

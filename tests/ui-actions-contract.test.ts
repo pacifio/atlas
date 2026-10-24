@@ -126,10 +126,9 @@ const REVIEWED_AGENT_COMMANDS = [
   "panels.right",
   "panels.teamChat",
   "panels.terminal",
-  "panels.agentSidebar",
-  "panels.tabBar",
   "panels.knowledge",
   "panels.zen",
+  "tabs.openSurface",
   "tabs.newChat",
   "tabs.newTerminal",
   "tabs.newUntitled",
@@ -149,6 +148,9 @@ const REVIEWED_AGENT_COMMANDS = [
   "split.focusRight",
   // Moves the column's tabs to its neighbour; closes nothing.
   "split.close",
+  // Moves the open session to the Settled shelf; it stays listed, and the
+  // same command (or Undo) brings it back. Refused mid-turn by the backend.
+  "chat.settleSession",
   "view.zoomIn",
   "view.zoomOut",
   "view.zoomReset",

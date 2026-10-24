@@ -70,6 +70,12 @@ function entry(e: Partial<AgentCatalogEntry> & Pick<AgentCatalogEntry, "id">): A
     source: "installed",
     installed: true,
     resolvedPath: null,
+    enabled: true,
+    displayName: null,
+    launch: { command: null, args: [], variables: [] },
+    hiddenModels: [],
+    modelOrder: [],
+    customModels: [],
     ...e,
   } as AgentCatalogEntry;
 }
@@ -168,6 +174,23 @@ describe("signature", () => {
     expect(
       await signatureFor([entry({ id: "cursor", source: "installed", installed: true })]),
     ).not.toBe(detected);
+  });
+
+  it("changes when the user configures an agent", async () => {
+    // Settings → Agents writes these, and the picker, labels and the editor
+    // all have to hear it.
+    const base = await signatureFor([entry({ id: "cursor" })]);
+    const configured = [
+      { enabled: false },
+      { displayName: "Work Cursor" },
+      { hiddenModels: ["gpt-4"] },
+      { modelOrder: ["gpt-5", "gpt-4"] },
+      { customModels: [{ id: "gpt-x", name: "GPT X" }] },
+      { launch: { command: null, args: ["--fast"], variables: [] } },
+    ];
+    for (const over of configured) {
+      expect(await signatureFor([entry({ id: "cursor", ...over })])).not.toBe(base);
+    }
   });
 });
 

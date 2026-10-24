@@ -1,7 +1,7 @@
 //! Reading and surgically editing `export VAR=...` lines in a user's shell
 //! profile.
 //!
-//! Atlas no longer stores API keys. Settings ▸ API Keys is a view onto the
+//! Atlas no longer stores API keys. Settings ▸ Agents ▸ Provider keys is a view onto the
 //! user's shell environment, and this module is the only thing that writes to
 //! it. That makes these files the one place Atlas modifies **outside its own
 //! data dirs and the user's project**, so the rules here are deliberately

@@ -9,6 +9,7 @@ import {
   SettingsSection,
 } from "../layout/settings-layout";
 import { SettingSelect, SettingSwitch } from "../layout/setting-controls";
+import { PreferredEditorSelect } from "@/features/external-editor/components/preferred-editor-select";
 
 const TIME_FORMATS = [
   { value: "system", label: "System" },
@@ -76,6 +77,7 @@ export function GeneralPage() {
             setting="showHiddenFiles"
             control={<SettingSwitch setting="showHiddenFiles" />}
           />
+          <SettingsRow setting="preferredEditor" control={<PreferredEditorSelect />} />
         </SettingsGroup>
       </SettingsSection>
 

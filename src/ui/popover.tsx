@@ -42,9 +42,19 @@ function PopoverContent({
   alignOffset = 0,
   side = "bottom",
   sideOffset = 4,
+  surface = "default",
   ...props
 }: PopoverPrimitive.Popup.Props &
-  Pick<PopoverPrimitive.Positioner.Props, "align" | "alignOffset" | "side" | "sideOffset">) {
+  Pick<PopoverPrimitive.Positioner.Props, "align" | "alignOffset" | "side" | "sideOffset"> & {
+    /**
+     * `tinted` is the two-surface recipe the agent/model picker and org
+     * switcher use: the popup is the foreground at 4% over the background (the
+     * popover token is a grey slab beside an inset card) under the raised-rung
+     * shadow, and the controls sit in an inset card on the app's own
+     * background inside it.
+     */
+    surface?: "default" | "tinted";
+  }) {
   return (
     <PopoverPrimitive.Portal>
       <PopoverPrimitive.Positioner
@@ -57,8 +67,11 @@ function PopoverContent({
         <PopoverPrimitive.Popup
           data-slot="popover-content"
           className={cn(
-            "max-h-(--available-height) w-72 overflow-hidden rounded-lg p-2.5",
-            "bg-popover border border-border text-foreground shadow-md",
+            "max-h-(--available-height) w-72 overflow-hidden rounded-lg",
+            surface === "tinted"
+              ? "bg-[color-mix(in_srgb,var(--foreground)_4%,var(--background))] p-1.5 shadow-sm"
+              : "bg-popover p-2.5 shadow-md",
+            "border border-border text-foreground",
             "text-sm outline-none",
             "origin-[var(--transform-origin)] animate-scale-in",
             className,

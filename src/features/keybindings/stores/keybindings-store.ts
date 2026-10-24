@@ -58,12 +58,21 @@ interface KeybindingsState {
     setBinding: (actionId: ActionId, combos: string[]) => void;
     addBinding: (actionId: ActionId, combo: string) => void;
     removeBinding: (actionId: ActionId, combo?: string) => void;
+    /** Replace an action's `when` ("" = always), or restore its own with
+     *  null. */
+    setWhen: (actionId: ActionId, expression: string | null) => void;
+    /** Drop the action's chord override only, keeping any `when`. */
+    resetChords: (actionId: ActionId) => void;
+    /** Undo every override of the action: chords and `when`. */
     resetBinding: (actionId: ActionId) => void;
     removeUnknown: (actionId: string) => void;
   };
 }
 
 const SAVE_DEBOUNCE_MS = 150;
+
+/** What the profile an edit to the built-in Default forks into is called. */
+const FORK_NAME = "My keybindings";
 
 function activeProfile(file: KeybindingsFile): KeybindingProfile | undefined {
   return file.profiles.find((p) => p.id === file.activeProfileId);
@@ -83,6 +92,21 @@ function uniqueName(file: KeybindingsFile, base: string): string {
   let n = 2;
   while (names.has(`${base} ${n}`)) n++;
   return `${base} ${n}`;
+}
+
+function isEmpty(when: Record<string, string> | undefined): boolean {
+  return !when || Object.keys(when).length === 0;
+}
+
+function withoutWhen(p: KeybindingProfile): KeybindingProfile {
+  const { when: _drop, ...rest } = p;
+  return rest;
+}
+
+/** `p` with `when` set, or without the key when there is nothing in it, so a
+ *  profile that never touched a condition stays byte-identical on disk. */
+function withWhen(p: KeybindingProfile, when: Record<string, string>): KeybindingProfile {
+  return isEmpty(when) ? withoutWhen(p) : { ...p, when };
 }
 
 export const useKeybindingsStore = createSelectors(
@@ -124,11 +148,35 @@ export const useKeybindingsStore = createSelectors(
       }, SAVE_DEBOUNCE_MS);
     };
 
-    /** Apply `fn` to the active profile unless it is the locked built-in. */
+    /**
+     * Apply `fn` to the active profile. The built-in Default never changes:
+     * editing it forks it into "My keybindings" first and makes that the
+     * active profile, so the first rebind just works instead of asking the
+     * user to duplicate something they never knew existed.
+     */
     const editActive = (fn: (p: KeybindingProfile) => KeybindingProfile) => {
       const file = get().file;
       const current = activeProfile(file);
-      if (!current || current.builtIn) return;
+      if (!current) return;
+      if (current.builtIn) {
+        const id = newProfileId(file);
+        const fork = fn({
+          id,
+          name: uniqueName(file, FORK_NAME),
+          ...(current.basedOn ? { basedOn: current.basedOn } : {}),
+          bindings: { ...current.bindings },
+        });
+        // Nothing changed (a reset on Default, say): no fork.
+        if (
+          fork.basedOn === current.basedOn &&
+          JSON.stringify(fork.bindings) === JSON.stringify(current.bindings) &&
+          isEmpty(fork.when)
+        ) {
+          return;
+        }
+        commit({ ...file, activeProfileId: id, profiles: [...file.profiles, fork] });
+        return;
+      }
       commit({
         ...file,
         profiles: file.profiles.map((p) => (p.id === current.id ? fn(p) : p)),
@@ -138,7 +186,7 @@ export const useKeybindingsStore = createSelectors(
     const createFromPreset = (presetId: PresetId): string => {
       const file = get().file;
       const reusable = file.profiles.find(
-        (p) => p.basedOn === presetId && Object.keys(p.bindings).length === 0,
+        (p) => p.basedOn === presetId && Object.keys(p.bindings).length === 0 && isEmpty(p.when),
       );
       if (reusable) {
         if (file.activeProfileId !== reusable.id) commit({ ...file, activeProfileId: reusable.id });
@@ -226,14 +274,20 @@ export const useKeybindingsStore = createSelectors(
         setProfilePreset: (id, presetId) => {
           const file = get().file;
           const target = file.profiles.find((p) => p.id === id);
-          if (!target || target.builtIn || (target.basedOn ?? null) === presetId) return;
+          if (!target || (target.basedOn ?? null) === presetId) return;
+          const withPreset = (p: KeybindingProfile): KeybindingProfile => {
+            const { basedOn: _drop, ...rest } = p;
+            return presetId ? { ...rest, basedOn: presetId } : rest;
+          };
+          // The built-in can only be changed by forking it, and only the
+          // active one is forked — a fork becomes the active profile.
+          if (target.builtIn) {
+            if (file.activeProfileId === id) editActive(withPreset);
+            return;
+          }
           commit({
             ...file,
-            profiles: file.profiles.map((p) => {
-              if (p.id !== id) return p;
-              const { basedOn: _drop, ...rest } = p;
-              return presetId ? { ...rest, basedOn: presetId } : rest;
-            }),
+            profiles: file.profiles.map((p) => (p.id === id ? withPreset(p) : p)),
           });
         },
         importProfile: (text) => {
@@ -277,6 +331,7 @@ export const useKeybindingsStore = createSelectors(
                 name: uniqueName(file, name?.trim() || `${source.name} copy`),
                 ...(source.basedOn ? { basedOn: source.basedOn } : {}),
                 bindings: { ...source.bindings },
+                ...(isEmpty(source.when) ? {} : { when: { ...source.when } }),
               },
             ],
           });
@@ -310,7 +365,9 @@ export const useKeybindingsStore = createSelectors(
           if (!target || target.builtIn) return;
           commit({
             ...file,
-            profiles: file.profiles.map((p) => (p.id === id ? { ...p, bindings: {} } : p)),
+            profiles: file.profiles.map((p) =>
+              p.id === id ? withoutWhen({ ...p, bindings: {} }) : p,
+            ),
           });
         },
         setBinding: (actionId, combos) =>
@@ -327,8 +384,30 @@ export const useKeybindingsStore = createSelectors(
             const next = base.filter((c) => c !== combo);
             return next.length ? next : null;
           }),
-        resetBinding: (actionId) => withBinding(actionId, () => undefined),
-        removeUnknown: (actionId) => withBinding(actionId, () => undefined),
+        setWhen: (actionId, expression) =>
+          editActive((p) => {
+            const when = { ...p.when };
+            if (expression === null) delete when[actionId];
+            else when[actionId] = expression.trim();
+            return withWhen(p, when);
+          }),
+        resetChords: (actionId) => withBinding(actionId, () => undefined),
+        resetBinding: (actionId) =>
+          editActive((p) => {
+            const bindings = { ...p.bindings };
+            const when = { ...p.when };
+            delete bindings[actionId];
+            delete when[actionId];
+            return withWhen({ ...p, bindings }, when);
+          }),
+        removeUnknown: (actionId) =>
+          editActive((p) => {
+            const bindings = { ...p.bindings };
+            const when = { ...p.when };
+            delete bindings[actionId];
+            delete when[actionId];
+            return withWhen({ ...p, bindings }, when);
+          }),
       },
     };
   }),

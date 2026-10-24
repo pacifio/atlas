@@ -1,48 +1,86 @@
-import { useState, useEffect, useRef, useCallback } from "react";
 import {
-  EditorView,
-  keymap,
-  lineNumbers,
-  highlightActiveLine,
-  drawSelection,
-} from "@codemirror/view";
-import { EditorState, Compartment, Transaction } from "@codemirror/state";
-import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
-import { bracketMatching, foldGutter, indentOnInput } from "@codemirror/language";
-import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
-import { editorThemeExtensions } from "../themes/build-cm-theme";
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
+import { listen } from "@tauri-apps/api/event";
+import { toast } from "sonner";
+import { Code2, Eye, RefreshCw, Table2, WrapText } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { useEditorStore } from "../stores/editor-store";
 import { useAppStore } from "@/features/app/stores/app-store";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import { ChevronRight, RefreshCw } from "lucide-react";
 import { logEvent } from "@/features/log/lib/log";
-import { diffGutter, applyDiffStatus } from "../lib/diff-gutter";
 import { gitDiffLineStatus } from "@/features/git/lib/git-diff-api";
-import { blameInline, applyBlame } from "../lib/blame-inline";
-import { loadLanguageExtension } from "../lib/languages";
-import { applyReveal } from "../lib/reveal";
-import { registerEditorView } from "../lib/editor-views";
 import { gitBlameFile } from "@/features/git/lib/git-blame-api";
 import { MarkdownFile } from "@/lib/markdown-fileviewer";
 import { openFileAs } from "@/lib/open-file";
-import { cn } from "@/lib/utils";
-import { useSettingsStore } from "@/features/settings/stores/settings-store";
-import { projectSettingNow, useProjectSetting } from "@/features/settings/lib/use-scoped-setting";
+import { Button } from "@/ui/button";
+import { useProjectSetting } from "@/features/settings/lib/use-scoped-setting";
+import { useWordWrap } from "@/features/settings/lib/use-word-wrap";
+import { OpenInEditorButton } from "@/features/external-editor/components/open-in-editor-button";
+import { FileIcon } from "@/features/icon-theme/components/file-icon";
+import { useScopedHotkeys } from "@/features/keybindings/lib/use-scoped-hotkeys";
+import { useFileTabFrame } from "@/features/explorer/lib/file-tab-frame-context";
+import { openInProject } from "@/features/explorer/lib/open-in-project";
+import { revealFiles } from "@/features/layout/lib/files-surface";
+import { BLAME_PART_COLOR } from "../lib/blame";
+import { registerEditorView } from "../lib/editor-views";
+import { FileDecorations } from "../lib/file-decorations";
+import { filePreviewDelimiter } from "../lib/delimited-preview";
+import { relativeToRoot, retainedBreadcrumbTrail } from "../lib/file-path";
+import { registerFileSaver } from "../lib/dirty-close";
+import {
+  FileTooLargeError,
+  MAX_OPEN_BYTES,
+  fileMtimeMs,
+  readFileForTab,
+  writeFileContent,
+} from "../lib/editor-fs-api";
+import {
+  readRenderedPreference,
+  renderedModeOf,
+  renderedToggleLabel,
+  writeRenderedPreference,
+} from "../lib/file-preview-mode";
+import { useFileSaveCoordinator } from "../lib/use-file-save-coordinator";
+import { CodeFileView, type CodeFileViewHandle } from "./code-file-view";
+import { DelimitedTablePreview } from "./delimited-table-preview";
+import { FileBreadcrumbsRow, type FileBreadcrumbsProps } from "./file-breadcrumbs";
+import { FileFindBar } from "./file-find-bar";
+import { HtmlPreview } from "./html-preview";
+import {
+  FILE_SURFACE_SUBHEADER_CLASS,
+  FileSurfaceAction,
+  FileSurfaceFailure,
+  FileSurfaceLoading,
+  FileSurfaceNotice,
+  FileTreeToggle,
+} from "./file-surface-chrome";
+import { FILE_DOCK_RESERVE } from "@/features/explorer/lib/file-tabs";
+import { useAgentChatTarget } from "@/features/chat/lib/send-to-agent";
+import { useFileReviewComments } from "../lib/use-file-review-comments";
 
-const TOOLBAR_HEIGHT = 32;
-const DIRTY_CHECK_DEBOUNCE = 300; // ms — only check dirty state, not sync content
+/**
+ * A file tab: the file's text in the code view (`code-file-view.tsx`),
+ * editable in place, or — for markdown, CSV/TSV and HTML — rendered, with a
+ * toggle between the two.
+ *
+ * This panel owns the file's I/O: reading it, saving it on ⌘S, and noticing
+ * when it changed on disk. The document itself is the code view's editor's;
+ * the panel asks it for the text when it needs it, and is told only when the
+ * file starts or stops differing from disk, so typing never re-renders it.
+ */
+
 /** Coalescing window for watcher-driven disk reconciliation (see below). */
 const REVALIDATE_DEBOUNCE_MS = 150;
 
-// Theme colours are live-swappable through a compartment; the resolved theme
-// is shared with the rest of Atlas rather than selected independently.
-const themeCompartment = new Compartment();
-
-// Inline git blame — live-toggleable via a Compartment so flipping the
-// `gitBlameInline` setting doesn't rebuild the view (buffer/undo survive).
-const blameCompartment = new Compartment();
+/** Past this size a file opens read-only and unhighlighted: editing and
+ *  tokenizing tens of megabytes of text is not what this view is for. */
+export const LARGE_FILE_CHARS = 8 * 1024 * 1024;
 
 interface EditorPanelProps {
   tabId: string;
@@ -50,120 +88,170 @@ interface EditorPanelProps {
   containerHeight: number;
 }
 
+const relativeTo = relativeToRoot;
+
+/** Why a save failed, for the toast: the command's own message, trimmed. */
+function saveFailureMessage(err: unknown): string {
+  const text = err instanceof Error ? err.message : String(err);
+  return text.length > 300 ? `${text.slice(0, 300)}…` : text;
+}
+
 export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelProps) {
   const path = filePath ?? "";
   const isUntitled = path.startsWith("untitled:");
   const buffer = useEditorStore((s) => s.buffers[path]);
-  const { openBuffer, setDirty, markSaved, reloadBuffer, markExternallyChanged } =
-    useEditorStore.use.actions();
+  const pendingReveal = useEditorStore((s) => s.pendingReveals[path]);
+  const {
+    openBuffer,
+    setDirty,
+    markSaved,
+    reloadBuffer,
+    markExternallyChanged,
+    consumeReveal,
+    requestReveal,
+  } = useEditorStore.use.actions();
   const projectPath = useAppStore.use.currentProject()?.path ?? "";
   const layoutActions = useLayoutStore.use.actions();
-  const containerRef = useRef<HTMLDivElement>(null);
-  const viewRef = useRef<EditorView | null>(null);
-  const onSaveRef = useRef<() => void>(() => {});
-  const refreshGutterRef = useRef<() => void>(() => {});
-  const refreshBlameRef = useRef<() => void>(() => {});
-  const dirtyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const viewRef = useRef<CodeFileViewHandle | null>(null);
+  const [decorations] = useState(() => new FileDecorations());
+  const [loadError, setLoadError] = useState<string | null>(null);
+  // Set when the file is over `MAX_OPEN_BYTES`: it is never read.
+  const [tooLargeBytes, setTooLargeBytes] = useState<number | null>(null);
+  // Bumped when the document is replaced from disk; the code view takes the
+  // buffer's contents as a new document only then.
+  const [docVersion, setDocVersion] = useState(0);
 
-  const [renderMode, setRenderMode] = useState<"editor" | "preview">("editor");
-  // Bumped when a view is built, so a reveal that arrived before the view
-  // existed (a file opened at a line) is applied the moment it does.
-  const [viewGen, setViewGen] = useState(0);
-  const unregisterViewRef = useRef<(() => void) | null>(null);
-  const pendingReveal = useEditorStore((s) => s.pendingReveals[path]);
-  const consumeReveal = useEditorStore.use.actions().consumeReveal;
-  const resolvedFileType = (
-    buffer?.language ??
-    path.split(".").pop()?.toLowerCase() ??
-    ""
-  ).toLowerCase();
-  const isMarkdownFile = resolvedFileType === "markdown";
-  // Preview is a markdown-only concept. Deriving (not just gating the toggle)
-  // matters twice over: a stale "preview" renderMode from a previous markdown
-  // file must not blank the editor for the next file, and the preview pane
-  // must never MOUNT for other file types — react-markdown with rehypeRaw
-  // parses arbitrary source text as HTML, and any literal `<input ref={…}>`
-  // in a .tsx file is a fatal React error (string refs), which is exactly how
-  // opening files used to crash the app.
-  const effectiveMode = isMarkdownFile ? renderMode : "editor";
-  // A tab can be reused for another file; each file starts in the editor.
-  useEffect(() => {
-    setRenderMode("editor");
-  }, [path]);
+  const relPath = relativeTo(path, projectPath);
+  const { wrap: wordWrap, toggle: toggleWordWrap } = useWordWrap();
 
-  // Load file content from disk — unless this is an untitled scratch
-  // buffer (Cmd+N), in which case we seed an empty buffer in-memory
-  // and skip the IPC. The synthetic `untitled:<ts>` key keeps each
-  // unsaved tab's buffer separate in the store.
+  // ── Breadcrumbs ──
+  // Rooted at the tab's own project (the frame's), then the active one; a
+  // file outside both is crumbed from the filesystem root.
+  const frame = useFileTabFrame();
+  const projectName = useAppStore.use.currentProject()?.name ?? "";
+  const crumbTarget = (() => {
+    if (!path || isUntitled) return null;
+    const root = frame?.root ?? (relPath !== null ? projectPath : null);
+    const rel = root ? relativeTo(path, root) : null;
+    if (!root || rel === null) {
+      return { root: null, projectName: "", trail: path, current: path };
+    }
+    const name = (frame?.root ? frame.projectName : null) ?? projectName;
+    const folder = frame?.root === root ? frame.crumbFolder : null;
+    const current = folder ?? rel;
+    return {
+      root,
+      projectName: name || root.split("/").pop() || root,
+      trail: retainedBreadcrumbTrail(rel, current),
+      current,
+    };
+  })();
+  const navigateCrumb = (crumbPath: string) => {
+    if (!crumbTarget) return;
+    if (crumbTarget.root === null) {
+      // Outside the project there is no tree to walk: show the folder where
+      // the system keeps it.
+      void import("@tauri-apps/plugin-opener").then(({ revealItemInDir }) =>
+        revealItemInDir(crumbPath).catch(() => {}),
+      );
+      return;
+    }
+    if (frame?.root === crumbTarget.root) {
+      if (crumbPath === crumbTarget.trail) frame.revealFile();
+      else frame.revealFolder(crumbPath);
+      return;
+    }
+    revealFiles(crumbPath ? `${crumbTarget.root}/${crumbPath}` : crumbTarget.root);
+  };
+  const gitBlameInline = useProjectSetting(projectPath, "gitBlameInline");
+
+  // ── Load ──
   useEffect(() => {
     if (!path || buffer) return;
     if (isUntitled) {
       openBuffer(path, "");
       return;
     }
+    let live = true;
+    setLoadError(null);
+    setTooLargeBytes(null);
     void (async () => {
       try {
-        const content = await invoke<string>("read_file_content", { path });
-        const mtime = await invoke<number>("file_mtime_ms", { path }).catch(() => 0);
-        openBuffer(path, content, mtime);
-      } catch {
-        openBuffer(path, `// Failed to read: ${path}`);
+        const content = await readFileForTab(path);
+        const mtime = await fileMtimeMs(path);
+        if (live) openBuffer(path, content, mtime);
+      } catch (err) {
+        if (!live) return;
+        if (err instanceof FileTooLargeError) setTooLargeBytes(err.bytes);
+        else setLoadError(String(err));
       }
     })();
+    return () => {
+      live = false;
+    };
   }, [path, buffer, openBuffer, isUntitled]);
 
-  // Save: read content directly from CodeMirror, not from store.
-  // Untitled buffers open the OS save dialog first; on commit we
-  // write the file, replace the untitled tab with a real-path tab,
-  // and migrate the buffer key so the new tab picks up the content
-  // immediately without a disk round-trip.
-  const handleSave = useCallback(async () => {
-    const view = viewRef.current;
-    if (!view) return;
-    const content = view.state.doc.toString();
-    if (isUntitled) {
+  // ── Change bars and blame ──
+  const refreshDiffGutter = useCallback(() => {
+    if (isUntitled || !relPath) return;
+    void gitDiffLineStatus(projectPath, relPath, false)
+      .then((status) => decorations.setStatus(status))
+      .catch(() => {});
+  }, [decorations, projectPath, relPath, isUntitled]);
+
+  // Blame is computed against the file on disk, so it is not fetched while
+  // the buffer is dirty (line numbers would misalign): the decorations keep
+  // the last snapshot, shifted through the edits, edited lines uncommitted.
+  const refreshBlame = useCallback(() => {
+    if (isUntitled || !relPath || !gitBlameInline) return;
+    if (useEditorStore.getState().buffers[path]?.dirty) return;
+    void gitBlameFile(projectPath, relPath)
+      .then((lines) => decorations.setBlame(lines))
+      .catch(() => {});
+  }, [decorations, path, projectPath, relPath, isUntitled, gitBlameInline]);
+
+  useEffect(() => {
+    if (!gitBlameInline) decorations.setBlame(null);
+  }, [decorations, gitBlameInline]);
+
+  // ── Save ──
+  const persistedMtime = useRef(0);
+  const markClean = useCallback(
+    (dirty: boolean) => {
+      setDirty(path, dirty);
+      layoutActions.setTabDirty(tabId, dirty);
+    },
+    [setDirty, layoutActions, path, tabId],
+  );
+  const save = useFileSaveCoordinator({
+    path,
+    // Null until the file has been read: the session seeds itself from the
+    // text once it lands, so "clean" means the file, not "".
+    baseline: buffer ? buffer.originalContent : null,
+    persist: async (content) => {
       try {
-        const { save: saveDialog } = await import("@tauri-apps/plugin-dialog");
-        const chosen = await saveDialog({
-          defaultPath: projectPath || undefined,
-          title: "Save File",
-        });
-        if (!chosen) return; // user cancelled
-        const newPath = chosen as string;
-        await invoke("write_file_content", { path: newPath, content });
-        const mtime = await invoke<number>("file_mtime_ms", { path: newPath }).catch(() => 0);
-        // Carry the freshly-saved content over to the new buffer key.
-        openBuffer(newPath, content, mtime);
-        markSaved(newPath, content, mtime);
-        // Swap the tab in place: close untitled, open real-path tab
-        // with the same activation behavior addTab gives.
-        layoutActions.closeTab(tabId);
-        openFileAs(newPath, "text");
-        logEvent({
-          source: "editor",
-          kind: "save",
-          summary: newPath.split("/").pop() ?? newPath,
-          payload: { path: newPath, bytes: content.length },
-        });
+        await writeFileContent(path, content);
+        persistedMtime.current = await fileMtimeMs(path);
+        return true;
       } catch (err) {
-        console.error("Save-as failed:", err);
+        toast.error(`Couldn't save ${path.split(/[\\/]/).pop() || path}`, {
+          description: saveFailureMessage(err),
+        });
+        return false;
       }
-      return;
-    }
-    try {
-      await invoke("write_file_content", { path, content });
-      const mtime = await invoke<number>("file_mtime_ms", { path }).catch(() => 0);
-      markSaved(path, content, mtime);
+    },
+    onPendingChange: markClean,
+    onConfirmed: (content) => {
+      markSaved(path, content, persistedMtime.current);
       logEvent({
         source: "editor",
         kind: "save",
         summary: path.split("/").pop() ?? path,
         payload: { path, bytes: content.length },
       });
-      // A save mutates the working tree — refresh git status/dots + diff
-      // right now instead of waiting for the project fs watcher (FSEvents
-      // latency + fileindex 150 ms + git-store debounce). Lazy-imported to
-      // keep the editor decoupled from the git store.
+      // A save mutates the working tree: refresh git status and the diff now
+      // instead of waiting for the watcher. Lazy, to keep the editor
+      // decoupled from the git store.
       void import("@/features/git/stores/git-store").then(({ useGitStore }) => {
         const git = useGitStore.getState();
         if (git.repoPath) {
@@ -171,421 +259,456 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
           void git.actions.loadDiff();
         }
       });
-      // Repaint this editor's diff gutter against the just-saved content.
-      refreshGutterRef.current();
-      // Buffer and disk agree again — refresh the inline blame snapshot.
-      refreshBlameRef.current();
+      refreshDiffGutter();
+      refreshBlame();
+    },
+  });
+
+  // Untitled buffers open the OS save dialog first; on commit the file is
+  // written, the untitled tab is replaced by a real-path one, and the buffer
+  // moves to the new key so that tab opens without a disk round trip.
+  const saveAs = useCallback(async (): Promise<boolean> => {
+    const content = viewRef.current?.getText();
+    if (content === undefined) return false;
+    try {
+      const { save: saveDialog } = await import("@tauri-apps/plugin-dialog");
+      const chosen = await saveDialog({
+        defaultPath: projectPath || undefined,
+        title: "Save File",
+      });
+      if (!chosen) return false;
+      const newPath = chosen as string;
+      await writeFileContent(newPath, content);
+      const mtime = await fileMtimeMs(newPath);
+      openBuffer(newPath, content, mtime);
+      markSaved(newPath, content, mtime);
+      layoutActions.closeTab(tabId);
+      openFileAs(newPath, "text");
+      logEvent({
+        source: "editor",
+        kind: "save",
+        summary: newPath.split("/").pop() ?? newPath,
+        payload: { path: newPath, bytes: content.length },
+      });
+      return true;
     } catch (err) {
-      console.error("Save failed:", err);
+      toast.error("Couldn't save the file", { description: saveFailureMessage(err) });
+      return false;
     }
-  }, [path, markSaved, isUntitled, projectPath, openBuffer, layoutActions, tabId]);
+  }, [projectPath, openBuffer, markSaved, layoutActions, tabId]);
 
-  onSaveRef.current = handleSave;
+  const handleSave = useCallback(
+    (): Promise<boolean> => (isUntitled ? saveAs() : save.flush()),
+    [isUntitled, saveAs, save],
+  );
+  // The close prompt's "Save" writes through here (`dirty-close.ts`).
+  const handleSaveRef = useRef(handleSave);
+  handleSaveRef.current = handleSave;
+  useEffect(() => registerFileSaver(tabId, () => handleSaveRef.current()), [tabId]);
 
-  // Fetch this file's git diff vs HEAD and paint the gutter (added/changed/
-  // deleted bars). No-op for untitled scratch buffers or files outside the repo.
-  const refreshDiffGutter = useCallback(() => {
-    const view = viewRef.current;
-    if (!view || isUntitled || !projectPath) return;
-    if (!path.startsWith(projectPath + "/")) return;
-    const rel = path.slice(projectPath.length + 1);
-    void gitDiffLineStatus(projectPath, rel, false)
-      .then((status) => {
-        if (viewRef.current) applyDiffStatus(viewRef.current, status);
-      })
-      .catch(() => {});
-  }, [path, projectPath, isUntitled]);
-  refreshGutterRef.current = refreshDiffGutter;
+  // ── External changes ──
+  const replaceDocument = useCallback(
+    (content: string, mtime: number) => {
+      reloadBuffer(path, content, mtime);
+      save.reset(content);
+      setDocVersion((v) => v + 1);
+      refreshDiffGutter();
+      refreshBlame();
+    },
+    [path, reloadBuffer, save, refreshDiffGutter, refreshBlame],
+  );
 
-  // Fetch this file's per-line blame and hand it to the inline-blame
-  // extension. Blame is computed against the file on disk, so we skip the
-  // fetch while the buffer is dirty (line numbers would misalign) — the
-  // extension keeps showing the last snapshot, degrading edited lines to
-  // "Uncommitted changes" on its own. No-op for untitled buffers, files
-  // outside the project, or when the setting is off.
-  const refreshBlame = useCallback(() => {
-    const view = viewRef.current;
-    if (!view || isUntitled || !projectPath) return;
-    if (!projectSettingNow(projectPath, "gitBlameInline")) return;
-    if (!path.startsWith(projectPath + "/")) return;
-    if (useEditorStore.getState().buffers[path]?.dirty) return;
-    const rel = path.slice(projectPath.length + 1);
-    void gitBlameFile(projectPath, rel)
-      .then((lines) => {
-        // Ignore late results after the view was destroyed or swapped.
-        if (viewRef.current === view) applyBlame(view, lines);
-      })
-      .catch(() => {});
-  }, [path, projectPath, isUntitled]);
-  refreshBlameRef.current = refreshBlame;
-
-  // Re-seed the live CodeMirror view from a string without polluting undo
-  // history (external reload, not a user edit).
-  const replaceViewDoc = useCallback((content: string) => {
-    const view = viewRef.current;
-    if (!view) return;
-    if (view.state.doc.toString() === content) return;
-    view.dispatch({
-      changes: { from: 0, to: view.state.doc.length, insert: content },
-      annotations: Transaction.addToHistory.of(false),
-    });
-  }, []);
-
-  // Reconcile this buffer with disk when the file may have changed externally
-  // (agent/CLI edits). mtime-gated so unchanged files cost one cheap IPC. When
-  // the buffer is clean we reload silently; when it has unsaved edits we only
-  // flag it (`externallyChanged`) so the user can reload via the toolbar.
+  // Reconcile with disk when the file may have changed externally (agent or
+  // CLI edits). mtime-gated so an unchanged file costs one cheap IPC. A clean
+  // buffer reloads silently; one with unsaved edits is only flagged, so the
+  // user can reload from the header.
   const revalidate = useCallback(async () => {
     if (!path || isUntitled) return;
     const buf = useEditorStore.getState().buffers[path];
     if (!buf) return;
-    const mtime = await invoke<number>("file_mtime_ms", { path }).catch(() => 0);
+    const mtime = await fileMtimeMs(path);
     if (!mtime || mtime <= buf.diskMtimeMs) return;
     let content: string;
     try {
-      content = await invoke<string>("read_file_content", { path });
+      content = await readFileForTab(path);
     } catch {
       return;
     }
-    // Re-read the buffer: it may have changed (dirty/gone) during the awaits.
+    // Re-read: the buffer may have changed (dirty, gone) during the awaits.
     const cur = useEditorStore.getState().buffers[path];
     if (!cur) return;
-    const liveDoc = viewRef.current?.state.doc.toString() ?? cur.originalContent;
+    const liveDoc = viewRef.current?.getText() ?? cur.originalContent;
     if (content === liveDoc) {
-      // Content matches what's shown (e.g. our own save) — just record mtime.
+      // Matches what's shown (our own save, say): just record the mtime. The
+      // store now reads clean, so the save session must too, or its next
+      // edit (already "pending") never re-marks the buffer dirty and the next
+      // external write replaces unsaved typing.
       reloadBuffer(path, content, mtime);
+      save.reset(content);
       return;
     }
     if (cur.dirty) {
       markExternallyChanged(path, mtime);
       return;
     }
-    reloadBuffer(path, content, mtime);
-    replaceViewDoc(content);
-    refreshDiffGutter();
-    refreshBlameRef.current();
-  }, [path, isUntitled, reloadBuffer, markExternallyChanged, replaceViewDoc, refreshDiffGutter]);
+    replaceDocument(content, mtime);
+  }, [path, isUntitled, reloadBuffer, save, markExternallyChanged, replaceDocument]);
   const revalidateRef = useRef(revalidate);
   revalidateRef.current = revalidate;
 
-  // User-initiated reload from the "changed on disk" toolbar affordance —
-  // discards unsaved edits (the user explicitly chose disk).
+  // The user chose disk from the "changed on disk" pill: unsaved edits go.
   const forceReload = useCallback(async () => {
     if (!path || isUntitled) return;
     let content: string;
     try {
-      content = await invoke<string>("read_file_content", { path });
+      content = await readFileForTab(path);
     } catch {
       return;
     }
-    const mtime = await invoke<number>("file_mtime_ms", { path }).catch(() => 0);
-    reloadBuffer(path, content, mtime);
-    replaceViewDoc(content);
-    refreshDiffGutter();
-    refreshBlameRef.current();
-  }, [path, isUntitled, reloadBuffer, replaceViewDoc, refreshDiffGutter]);
+    const mtime = await fileMtimeMs(path);
+    replaceDocument(content, mtime);
+  }, [path, isUntitled, replaceDocument]);
 
-  // Repaint the gutter when the working tree changes elsewhere (commits,
-  // stage/unstage, external edits) — same event the git store listens to.
+  // Repaint bars and blame when the working tree changes elsewhere (commits,
+  // stage/unstage, external edits) — the event the git store listens to.
   useEffect(() => {
     const un = listen("atlas:git-changed", () => {
       refreshDiffGutter();
       refreshBlame();
     });
     return () => {
-      un.then((u) => u());
+      void un.then((u) => u());
     };
   }, [refreshDiffGutter, refreshBlame]);
 
-  // Reconcile with disk on the signals that indicate an external edit:
-  //  • buffer mount (fixes close-then-reopen showing a stale cached buffer),
-  //  • the recursive working-tree watcher (`atlas:explorer:changed`) for live
-  //    updates while the tab is open,
-  //  • native window focus regain (`atlas:window-active`) — the reported flow
-  //    of editing in the Claude Code CLI and switching back to Atlas.
+  // Reconcile with disk on the signals of an external edit: the buffer
+  // mounting (a close-then-reopen must not show a stale cached buffer), the
+  // working-tree watcher while the tab is open, and the window regaining
+  // focus (editing in a CLI and switching back).
+  const hasBuffer = !!buffer;
   useEffect(() => {
-    if (!buffer || isUntitled) return;
+    if (!hasBuffer || isUntitled) return;
     void revalidateRef.current();
-    // Coalesce the watcher's bursts. `atlas:explorer:changed` fires per
-    // debounced fs batch over the whole working tree, and EVERY open editor
-    // tab stays mounted and listening — so an agent writing a dozen files used
-    // to cost a `file_mtime_ms` round trip per file per tab, none of which the
-    // mtime gate inside `revalidate` can prevent because it runs after the
-    // call. One trailing revalidate per quiet window answers the same question.
+    // Every open file tab stays mounted and listening, and the watcher fires
+    // per batch over the whole tree; one trailing revalidate per quiet window
+    // answers the same question as one per event.
     let timer: ReturnType<typeof setTimeout> | undefined;
     const soon = () => {
       clearTimeout(timer);
       timer = setTimeout(() => void revalidateRef.current(), REVALIDATE_DEBOUNCE_MS);
     };
     const un = listen("atlas:explorer:changed", soon);
-    // Focus regain is a single discrete event, and the user is looking right
-    // now — reconcile immediately rather than a beat later.
     const onActive = () => void revalidateRef.current();
     window.addEventListener("atlas:window-active", onActive);
     return () => {
       clearTimeout(timer);
-      un.then((u) => u());
+      void un.then((u) => u());
       window.removeEventListener("atlas:window-active", onActive);
     };
-  }, [path, !!buffer, isUntitled]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [path, hasBuffer, isUntitled]);
 
-  // Re-paint when inputs settle (e.g. the project path resolves AFTER the view
-  // was created, or the buffer swaps). The in-view-creation call covers the
-  // common case; this covers the late-projectPath race.
+  // Paint once the inputs settle (the project path can resolve after mount).
   useEffect(() => {
+    if (!hasBuffer) return;
     refreshDiffGutter();
     refreshBlame();
-  }, [refreshDiffGutter, refreshBlame, buffer]);
+  }, [hasBuffer, refreshDiffGutter, refreshBlame]);
 
-  // Create/destroy CodeMirror view
+  // ── Rendered or source ──
+  const renderedMode = isUntitled ? null : renderedModeOf(path);
+  const [renderedPreferred, setRenderedPreferred] = useState(() =>
+    renderedMode ? readRenderedPreference(renderedMode) : false,
+  );
+  // A reveal is a line in the source, so a pending one shows the source.
+  const rendered = renderedMode !== null && renderedPreferred && !pendingReveal;
+  // The code view mounts on first need and then stays, hidden while the
+  // rendered view shows, so its document and undo history survive a toggle.
+  const [sourceMounted, setSourceMounted] = useState(!rendered);
+  if (!rendered && !sourceMounted) setSourceMounted(true);
+  // What the rendered view shows: the live document at the moment it was
+  // asked for, or the file as read.
+  const [renderedText, setRenderedText] = useState<string | null>(null);
+  const toggleRendered = () => {
+    if (!renderedMode) return;
+    const next = !rendered;
+    if (next) setRenderedText(viewRef.current?.getText() ?? null);
+    setRenderedPreferred(next);
+    writeRenderedPreference(renderedMode, next);
+  };
   useEffect(() => {
-    if (!buffer || !containerRef.current) return;
+    setRenderedText(null);
+  }, [docVersion]);
 
-    // Seed from the freshest store content — a disk revalidation may have
-    // reloaded the buffer between mount and this (async) view creation.
-    const originalContent =
-      useEditorStore.getState().buffers[path]?.originalContent ?? buffer.originalContent;
-    let cancelled = false;
+  // ── Keys, position, layout ──
+  const [plainFind, setPlainFind] = useState({ open: false, focus: 0 });
+  useScopedHotkeys({
+    tabId,
+    handlers: {
+      "editor.save": () => {
+        void handleSave();
+      },
+      "editor.find": () => {
+        if (rendered) return false;
+        const view = viewRef.current;
+        if (view?.canFind()) {
+          // Focus inside the editor: its own ⌘F opens the panel.
+          if (document.activeElement?.closest?.("[data-file-view]")) return false;
+          return view.openFind();
+        }
+        // No editor to search in (read-only, or not attached yet): search
+        // the plain text instead.
+        setPlainFind((f) => ({ open: true, focus: f.focus + 1 }));
+        return true;
+      },
+    },
+  });
 
-    (async () => {
-      const langExt = await loadLanguageExtension(buffer.language);
-      if (cancelled) return;
+  useEffect(() => registerEditorView(tabId, () => viewRef.current?.position()), [tabId]);
 
-      const view = new EditorView({
-        doc: originalContent,
-        extensions: [
-          themeCompartment.of(editorThemeExtensions()),
-          langExt,
-          lineNumbers(),
-          diffGutter(),
-          blameCompartment.of(
-            projectSettingNow(projectPath, "gitBlameInline") ? blameInline() : [],
-          ),
-          highlightActiveLine(),
-          drawSelection(),
-          bracketMatching(),
-          foldGutter(),
-          indentOnInput(),
-          history(),
-          highlightSelectionMatches(),
-          keymap.of([
-            {
-              key: "Mod-s",
-              run: () => {
-                onSaveRef.current();
-                return true;
-              },
-            },
-            indentWithTab,
-            ...defaultKeymap,
-            ...historyKeymap,
-            ...searchKeymap,
-          ]),
-          // Debounced dirty check — never sync full content to store on keystroke
-          EditorView.updateListener.of((update) => {
-            if (update.docChanged) {
-              if (dirtyTimerRef.current) clearTimeout(dirtyTimerRef.current);
-              dirtyTimerRef.current = setTimeout(() => {
-                const current = update.view.state.doc.toString();
-                const orig = useEditorStore.getState().buffers[path]?.originalContent ?? "";
-                setDirty(path, current !== orig);
-              }, DIRTY_CHECK_DEBOUNCE);
-            }
-          }),
-          EditorState.tabSize.of(2),
-        ],
-        parent: containerRef.current!,
-      });
+  // The gutter's `+` on a line (or a dragged range): a comment on those
+  // lines for the session, quoting them, as the diff's line comments do. The
+  // path it names is root-relative when the file is in the project. The
+  // session is the one `sendToAgentChat` writes to; with none open the
+  // gutter offers nothing.
+  const commentRoot = frame?.root ?? (relPath !== null ? projectPath : null);
+  const comments = useFileReviewComments({
+    chatTabId: useAgentChatTarget(),
+    absPath: path,
+    filePath: (commentRoot ? relativeTo(path, commentRoot) : null) ?? path,
+    getContents: () => viewRef.current?.getText() ?? buffer?.originalContent ?? "",
+  });
 
-      if (cancelled) {
-        view.destroy();
-        return;
+  useEffect(() => {
+    decorations.setLayout(wordWrap, gitBlameInline);
+  }, [decorations, wordWrap, gitBlameInline]);
+
+  const name = path.split("/").pop() ?? path;
+  const crumbs: FileBreadcrumbsProps | null = crumbTarget
+    ? {
+        root: crumbTarget.root,
+        projectName: crumbTarget.projectName,
+        relativePath: crumbTarget.current,
+        trail: crumbTarget.trail,
+        onNavigate: navigateCrumb,
+        onOpenFile: (abs) => void openInProject(abs),
+        identity: frame?.titled === false ? { path, dirty: buffer?.dirty ?? false } : null,
       }
+    : null;
 
-      viewRef.current = view;
-      // A revalidation that landed while the view was being built updates only
-      // the store; sync the view to it now (idempotent — no-op when equal).
-      const latest = useEditorStore.getState().buffers[path]?.originalContent;
-      if (latest !== undefined) replaceViewDoc(latest);
-      refreshDiffGutter();
-      refreshBlameRef.current();
-      unregisterViewRef.current = registerEditorView(tabId, view);
-      setViewGen((g) => g + 1);
-    })();
-
-    return () => {
-      cancelled = true;
-      if (dirtyTimerRef.current) clearTimeout(dirtyTimerRef.current);
-      unregisterViewRef.current?.();
-      unregisterViewRef.current = null;
-      if (viewRef.current) {
-        viewRef.current.destroy();
-        viewRef.current = null;
-      }
-    };
-  }, [path, !!buffer]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Apply a pending reveal ("open at line") once the view exists. Editor tabs
-  // stay mounted while hidden, so a reveal on an open tab lands at once; one
-  // for a file still loading waits for `viewGen`. Markdown preview hides the
-  // view, so it switches to the editor first and applies on the next render.
-  useEffect(() => {
-    const view = viewRef.current;
-    if (!pendingReveal || !view) return;
-    if (effectiveMode !== "editor") {
-      setRenderMode("editor");
-      return;
-    }
-    applyReveal(view, pendingReveal);
-    consumeReveal(path, pendingReveal.nonce);
-  }, [pendingReveal, viewGen, effectiveMode, path, consumeReveal]);
-
-  // Live-reskin the editor when the persisted theme changes — reconfigure the
-  // theme compartment in place so the buffer/undo history survive.
-  const themeLight = useSettingsStore.use.settings().themeLight;
-  const themeDark = useSettingsStore.use.settings().themeDark;
-  useEffect(() => {
-    const refreshTheme = () => {
-      const view = viewRef.current;
-      if (!view) return;
-      view.dispatch({ effects: themeCompartment.reconfigure(editorThemeExtensions()) });
-    };
-    refreshTheme();
-    window.addEventListener("atlas:theme-applied", refreshTheme);
-    return () => window.removeEventListener("atlas:theme-applied", refreshTheme);
-  }, [themeLight, themeDark]);
-
-  // Live-toggle inline blame: reconfigure the compartment in place; turning it
-  // on also fetches a fresh snapshot (the extension starts empty).
-  // Per project: a project's `.atlas/config.toml` can turn it off for itself.
-  const gitBlameInline = useProjectSetting(projectPath, "gitBlameInline");
-  useEffect(() => {
-    const view = viewRef.current;
-    if (!view) return;
-    view.dispatch({
-      effects: blameCompartment.reconfigure(gitBlameInline ? blameInline() : []),
-    });
-    if (gitBlameInline) refreshBlameRef.current();
-  }, [gitBlameInline]);
-
-  if (!buffer) {
-    return (
-      <div className="h-full flex items-center justify-center text-muted-foreground text-sm">
-        Loading...
-      </div>
-    );
-  }
-
-  const editorHeight =
-    containerHeight > TOOLBAR_HEIGHT ? containerHeight - TOOLBAR_HEIGHT : window.innerHeight - 140;
-
-  return (
+  // The header band runs the column's full width, over the project tree the
+  // column docks beside the file; the body under it leaves the tree its room
+  // (`FILE_DOCK_RESERVE`, see `file-tab-frame.tsx`). It is there in every
+  // state, loading and failed included, so the band never jumps.
+  const header = (
     <div
-      className="bg-background"
-      style={{ height: containerHeight || "100%", overflow: "hidden" }}
+      className={cn(
+        "flex items-center gap-2 overflow-hidden bg-background px-3",
+        FILE_SURFACE_SUBHEADER_CLASS,
+      )}
+      data-surface-subheader
     >
-      {/* Breadcrumb toolbar */}
-      <div
-        className="flex items-center px-3 border-b border-border bg-background overflow-hidden"
-        style={{ height: TOOLBAR_HEIGHT }}
-      >
-        <Breadcrumbs filePath={path} projectPath={projectPath} />
-        {buffer.dirty && <span className="w-1.5 h-1.5 rounded-full bg-primary shrink-0 ml-2" />}
-        {/* Right-hand controls. `ml-auto` on the group (rather than on whichever
-            child happens to be present) keeps them pinned right no matter which
-            of them render — the reload pill is conditional, and hanging the
-            margin off it meant the layout changed shape when a file went stale
-            on disk. */}
-        <div className="ml-auto flex items-center gap-2 pl-2">
-          {buffer.externallyChanged && (
-            <button
-              type="button"
-              onClick={() => void forceReload()}
-              title="This file changed on disk. Reload discards your unsaved edits."
-              className="inline-flex items-center gap-1 h-control-xs px-2 rounded-full border border-border bg-card text-2xs font-medium text-secondary-foreground hover:text-foreground hover:bg-element-hover transition-colors shrink-0"
-            >
-              <RefreshCw size={10} /> Disk changed · Reload
-            </button>
-          )}
-          {isMarkdownFile && (
-            <div className="inline-flex items-center h-control-xs rounded-full border border-border bg-card p-[2px] text-2xs font-medium shrink-0">
-              <button
-                type="button"
-                onClick={() => setRenderMode("editor")}
-                className={cn(
-                  "px-2 h-full rounded-full transition-colors",
-                  renderMode === "editor"
-                    ? "bg-element-hover text-foreground"
-                    : "text-secondary-foreground hover:text-foreground",
-                )}
-              >
-                Edit
-              </button>
-              <button
-                type="button"
-                onClick={() => setRenderMode("preview")}
-                className={cn(
-                  "px-2 h-full rounded-full transition-colors",
-                  renderMode === "preview"
-                    ? "bg-element-hover text-foreground"
-                    : "text-secondary-foreground hover:text-foreground",
-                )}
-              >
-                Preview
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* CodeMirror container */}
-      <div style={{ height: editorHeight, overflow: "hidden" }}>
-        <div
-          ref={containerRef}
-          style={{
-            display: effectiveMode === "editor" ? "block" : "none",
-            height: editorHeight,
-            overflow: "hidden",
-          }}
+      {crumbs ? (
+        <FileBreadcrumbsRow {...crumbs} className="shrink" />
+      ) : (
+        <UntitledName
+          name={name}
+          identity={frame?.titled === false ? { path, dirty: buffer?.dirty ?? false } : null}
         />
-        {/* Mounted on demand, not display:none — a hidden mount would still
-            markdown-parse every non-markdown buffer on open (see above). */}
-        {effectiveMode === "preview" && (
-          <div style={{ height: editorHeight }} className="overflow-auto bg-background px-4 py-3">
-            {buffer && (
-              <MarkdownFile trusted={true} docPath={path} className="max-w-none">
-                {buffer.originalContent}
-              </MarkdownFile>
-            )}
-          </div>
+      )}
+      {buffer && !rendered && <HeaderBlame decorations={decorations} />}
+      {/* `ml-auto` on the group, not on whichever child happens to render,
+          keeps the controls pinned right whichever of them are present. */}
+      <div className="ml-auto flex items-center gap-1 pl-2">
+        {buffer?.externallyChanged && (
+          <Button
+            variant="outline"
+            size="xs"
+            onClick={() => void forceReload()}
+            title="This file changed on disk. Reload discards your unsaved edits."
+          >
+            <RefreshCw size={10} aria-hidden /> Disk changed · Reload
+          </Button>
         )}
+        {!isUntitled && (
+          <OpenInEditorButton
+            compact
+            path={path}
+            position={() => {
+              if (rendered) return undefined;
+              const at = viewRef.current?.position();
+              return at ? { line: at.cursor.line, column: at.cursor.col } : undefined;
+            }}
+          />
+        )}
+        {buffer && renderedMode && (
+          <FileSurfaceAction
+            label={renderedToggleLabel(renderedMode, rendered)}
+            icon={rendered ? Code2 : renderedMode === "table" ? Table2 : Eye}
+            pressed={rendered}
+            onPress={toggleRendered}
+          />
+        )}
+        {buffer && !rendered && (
+          <FileSurfaceAction
+            label={wordWrap ? "Disable word wrap" : "Enable word wrap"}
+            icon={WrapText}
+            pressed={wordWrap}
+            onPress={toggleWordWrap}
+          />
+        )}
+        <FileTreeToggle />
       </div>
     </div>
+  );
+  const shell = (body: ReactNode) => (
+    <div
+      className="flex flex-col overflow-hidden bg-background"
+      style={{ height: containerHeight || "100%" }}
+    >
+      {header}
+      <div
+        className="flex min-h-0 flex-1 flex-col overflow-hidden"
+        style={{ marginRight: FILE_DOCK_RESERVE }}
+      >
+        {body}
+      </div>
+    </div>
+  );
+
+  if (tooLargeBytes !== null) {
+    return shell(
+      <FileSurfaceFailure
+        message={`This file is too large to open here (${formatMegabytes(tooLargeBytes)}; the limit is ${formatMegabytes(MAX_OPEN_BYTES)}). Open it in your editor instead.`}
+        detail={path}
+        action={<OpenInEditorButton path={path} />}
+      />,
+    );
+  }
+  if (loadError) {
+    return shell(
+      <FileSurfaceFailure
+        message="This file can't be shown as text. It may be binary, or it couldn't be read."
+        detail={path}
+        action={
+          <Button variant="outline" size="xs" onClick={() => setLoadError(null)}>
+            Try again
+          </Button>
+        }
+      />,
+    );
+  }
+  if (!buffer) return shell(<FileSurfaceLoading />);
+
+  const large = buffer.originalContent.length > LARGE_FILE_CHARS;
+  const delimiter = renderedMode === "table" ? filePreviewDelimiter({ name: path }) : null;
+  const shownText = renderedText ?? buffer.originalContent;
+
+  return shell(
+    <>
+      {large && !rendered && (
+        <FileSurfaceNotice>
+          {`Large file (${formatMegabytes(buffer.originalContent.length)}): shown read-only, without highlighting.`}
+        </FileSurfaceNotice>
+      )}
+      {sourceMounted && (
+        <div className={rendered ? "hidden" : "relative flex min-h-0 flex-1"}>
+          {plainFind.open && !rendered && (
+            <FileFindBar
+              focusRequest={plainFind.focus}
+              getText={() => viewRef.current?.getText() ?? buffer.originalContent}
+              startLine={() => viewRef.current?.position()?.cursor.line ?? 1}
+              onGo={(m) =>
+                requestReveal(path, {
+                  line: m.line,
+                  column: m.column,
+                  endLine: m.line,
+                  endColumn: m.endColumn,
+                })
+              }
+              onClose={() => setPlainFind((f) => ({ ...f, open: false }))}
+            />
+          )}
+          <CodeFileView
+            key={path}
+            handleRef={viewRef}
+            name={path}
+            contents={buffer.originalContent}
+            version={docVersion}
+            wordWrap={wordWrap}
+            readOnly={large}
+            decorations={decorations}
+            reveal={pendingReveal}
+            onRevealed={(nonce) => consumeReveal(path, nonce)}
+            onChange={(content) => save.change(content)}
+            comments={isUntitled ? null : comments}
+          />
+        </div>
+      )}
+      {rendered && renderedMode === "markdown" && (
+        <div className="min-h-0 flex-1 overflow-auto px-6 py-5">
+          <MarkdownFile
+            trusted
+            docPath={path}
+            projectRoot={frame?.root ?? (projectPath || null)}
+            className="mx-auto max-w-4xl"
+          >
+            {shownText}
+          </MarkdownFile>
+        </div>
+      )}
+      {rendered && renderedMode === "table" && delimiter && (
+        <DelimitedTablePreview name={name} text={shownText} delimiter={delimiter} />
+      )}
+      {rendered && renderedMode === "html" && <HtmlPreview html={shownText} title={name} />}
+    </>,
   );
 }
 
-function Breadcrumbs({ filePath, projectPath }: { filePath: string; projectPath: string }) {
-  const relative =
-    projectPath && filePath.startsWith(projectPath)
-      ? filePath.slice(projectPath.length + 1)
-      : filePath;
-  const segments = relative.split("/").filter(Boolean);
-
+/** The cursor line's blame beside the breadcrumbs, for a wrapping view: it
+ *  takes what the crumbs leave and truncates first. Subscribes on its own, so a cursor
+ *  move repaints this and nothing else. */
+function HeaderBlame({ decorations }: { decorations: FileDecorations }) {
+  const parts = useSyncExternalStore(decorations.subscribe, decorations.headerBlame);
+  if (!parts) return null;
+  const label = parts.map((p) => p.text).join("");
   return (
-    <div className="flex items-center min-w-0 overflow-hidden">
-      {segments.map((segment, i) => {
-        const isLast = i === segments.length - 1;
-        return (
-          <span key={i} className="flex items-center shrink-0">
-            {i > 0 && <ChevronRight size={10} className="text-muted-foreground mx-0.5 shrink-0" />}
-            <span
-              className={`text-xs font-mono ${isLast ? "text-foreground" : "text-muted-foreground"}`}
-            >
-              {segment}
-            </span>
-          </span>
-        );
-      })}
-    </div>
+    <span
+      className="ml-1 min-w-0 flex-1 basis-0 truncate text-xs italic opacity-80 select-none"
+      title={label}
+    >
+      {parts.map((part, i) => (
+        <span key={i} style={{ color: BLAME_PART_COLOR[part.kind] }}>
+          {part.text}
+        </span>
+      ))}
+    </span>
   );
+}
+
+/** An untitled buffer has no path to crumb: its name alone, and where no
+ *  tab names it, its icon and unsaved dot too. */
+function UntitledName({
+  name,
+  identity,
+}: {
+  name: string;
+  identity: { path: string; dirty: boolean } | null;
+}) {
+  return (
+    <span className="flex min-w-0 items-center gap-1.5 text-xs">
+      {identity && <FileIcon path={identity.path} size={14} className="shrink-0" />}
+      <span className="truncate px-0.5 font-medium text-foreground">{name}</span>
+      {identity?.dirty && (
+        <span
+          className="size-1.5 shrink-0 rounded-full bg-primary"
+          role="img"
+          aria-label="Unsaved changes"
+        />
+      )}
+    </span>
+  );
+}
+
+function formatMegabytes(bytes: number): string {
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }

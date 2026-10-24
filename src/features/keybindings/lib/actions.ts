@@ -9,8 +9,9 @@
  * the same scope share a chord (first wins — allowed, but flagged as a
  * conflict in the editor).
  *
- * NOT in the registry (fixed, not user-rebindable): the CodeMirror keymap
- * (`editor-panel.tsx`), Tiptap's editing shortcuts, xterm's copy/paste handler,
+ * NOT in the registry (fixed, not user-rebindable): the file view editor's
+ * own keymap (undo, indent, find next…; `@pierre/diffs`), Tiptap's editing
+ * shortcuts, xterm's copy/paste handler,
  * the terminal readline keys (`terminal-keymap.ts`), the native menu bar's
  * AppKit items (Copy, Paste, Hide, Quit…), arrow-key navigation inside
  * palettes/lists, and the Escape-to-close handlers.
@@ -24,10 +25,13 @@ export type When =
   | "global"
   | "terminalFocus"
   | "chatFocus"
+  | "editorFocus"
   | "knowledgePanel"
   | "knowledgeFocus"
   | "pdfFocus"
   | "canvasFocus"
+  | "diffFocus"
+  | "pullRequestFocus"
   | "modelPicker";
 
 export type ActionCategory =
@@ -37,11 +41,13 @@ export type ActionCategory =
   | "Tabs"
   | "Splits"
   | "View"
-  | "Chat"
+  | "Session"
+  | "File"
   | "Terminal"
   | "Knowledge"
   | "PDF"
-  | "Canvas";
+  | "Canvas"
+  | "Review";
 
 export interface ActionDef {
   id: string;
@@ -57,10 +63,13 @@ export const WHEN_LABELS: Record<When, string> = {
   global: "",
   terminalFocus: "terminalFocus",
   chatFocus: "chatFocus",
+  editorFocus: "editorFocus",
   knowledgePanel: "knowledgeOpen",
   knowledgeFocus: "knowledgeFocus",
   pdfFocus: "pdfFocus",
   canvasFocus: "canvasFocus",
+  diffFocus: "diffFocus",
+  pullRequestFocus: "pullRequestFocus",
   modelPicker: "modelPickerOpen",
 };
 
@@ -69,7 +78,7 @@ export const WHEN_LABELS: Record<When, string> = {
 const modelPickerJump = (n: number): ActionDef => ({
   id: `modelPicker.jump${n}`,
   title: `Pick model ${n}`,
-  category: "Chat",
+  category: "Session",
   when: "modelPicker",
   defaults: [`cmd+${n}`],
 });
@@ -96,10 +105,11 @@ export const ACTIONS = [
   },
   {
     id: "workspace.toggleSidebar",
-    title: "Toggle project sidebar",
+    title: "Toggle sidebar",
     category: "Project",
     when: "global",
-    defaults: ["cmd+shift+."],
+    // ⌘⌥J was the session sidebar's; the sessions live in this one now.
+    defaults: ["cmd+shift+.", "cmd+alt+j"],
   },
   {
     id: "app.settings",
@@ -161,15 +171,17 @@ export const ACTIONS = [
   },
   // ── Panels ──
   {
+    // The id predates the Files surface (it toggled the left file panel); it
+    // is kept so a user's rebinding of ⌘B still applies. Same as `panels.right`.
     id: "panels.left",
-    title: "Toggle left panel",
+    title: "Toggle Files",
     category: "Panels",
     when: "global",
     defaults: ["cmd+b"],
   },
   {
     id: "panels.right",
-    title: "Toggle right panel (Source Control)",
+    title: "Toggle source control",
     category: "Panels",
     when: "global",
     defaults: ["cmd+shift+b"],
@@ -189,20 +201,6 @@ export const ACTIONS = [
     defaults: ["cmd+j"],
   },
   {
-    id: "panels.agentSidebar",
-    title: "Toggle agent sidebar",
-    category: "Panels",
-    when: "global",
-    defaults: ["cmd+alt+j"],
-  },
-  {
-    id: "panels.tabBar",
-    title: "Toggle tab bar",
-    category: "Panels",
-    when: "global",
-    defaults: ["cmd+alt+t"],
-  },
-  {
     id: "panels.knowledge",
     title: "Open Knowledge",
     category: "Panels",
@@ -211,12 +209,22 @@ export const ACTIONS = [
   },
   { id: "panels.zen", title: "Zen mode", category: "Panels", when: "global", defaults: ["alt+z"] },
   // ── Tabs ──
+  // ⌘T opens a surface rather than one fixed kind of tab —
+  // a pane beside a single column, or the focused column's `+` menu once the
+  // window is split — and a bare letter then picks (⌘T A is a new agent).
   {
-    id: "tabs.newChat",
-    title: "New agent chat",
+    id: "tabs.openSurface",
+    title: "Open a surface",
     category: "Tabs",
     when: "global",
     defaults: ["cmd+t"],
+  },
+  {
+    id: "tabs.newChat",
+    title: "New session",
+    category: "Tabs",
+    when: "global",
+    defaults: [],
   },
   {
     id: "tabs.newTerminal",
@@ -297,42 +305,51 @@ export const ACTIONS = [
   {
     id: "chat.cycleAgent",
     title: "Cycle coding agent",
-    category: "Chat",
+    category: "Session",
     when: "global",
     defaults: ["alt+/"],
   },
   {
+    // ⌘⌥S: ⌘⇧S is the model picker's pin, and while the picker is open it
+    // would shadow this one.
+    id: "chat.settleSession",
+    title: "Settle or un-settle the open session",
+    category: "Session",
+    when: "global",
+    defaults: ["cmd+alt+s"],
+  },
+  {
     id: "chat.cyclePermissionMode",
     title: "Cycle permission mode",
-    category: "Chat",
+    category: "Session",
     when: "chatFocus",
     defaults: ["shift+tab"],
   },
   {
     id: "chat.find",
-    title: "Find in chat",
-    category: "Chat",
+    title: "Find in session",
+    category: "Session",
     when: "chatFocus",
     defaults: ["cmd+f"],
   },
   {
     id: "chat.toggleModelPicker",
     title: "Open model picker",
-    category: "Chat",
+    category: "Session",
     when: "chatFocus",
     defaults: ["cmd+shift+m"],
   },
   {
     id: "modelPicker.previousProvider",
     title: "Previous agent in model picker",
-    category: "Chat",
+    category: "Session",
     when: "modelPicker",
     defaults: ["cmd+shift+up"],
   },
   {
     id: "modelPicker.nextProvider",
     title: "Next agent in model picker",
-    category: "Chat",
+    category: "Session",
     when: "modelPicker",
     defaults: ["cmd+shift+down"],
   },
@@ -340,7 +357,7 @@ export const ACTIONS = [
     // ⌘⇧S: "stick" (pin). Unbound anywhere else, and the reference ships no default.
     id: "modelPicker.toggleFavorite",
     title: "Pin or unpin the highlighted model",
-    category: "Chat",
+    category: "Session",
     when: "modelPicker",
     defaults: ["cmd+shift+s"],
   },
@@ -452,6 +469,49 @@ export const ACTIONS = [
     when: "terminalFocus",
     defaults: ["cmd+f"],
   },
+  // ── File ──
+  {
+    id: "editor.save",
+    title: "Save file",
+    category: "File",
+    when: "editorFocus",
+    defaults: ["cmd+s"],
+  },
+  {
+    // The file's own find and replace: the editor's panel, over the whole
+    // document rather than the rows on screen.
+    id: "editor.find",
+    title: "Find in file",
+    category: "File",
+    when: "editorFocus",
+    defaults: ["cmd+f"],
+  },
+  // ── Review ──
+  {
+    // The review diff's own find: matches across every changed file, folded
+    // ones included. Its tab, not the session beside it, owns ⌘F.
+    id: "diff.find",
+    title: "Find in diff",
+    category: "Review",
+    when: "diffFocus",
+    defaults: ["cmd+f"],
+  },
+  {
+    // A pull request tab's ⋯ menu shows both. ⇧⌘C is team chat everywhere
+    // else; a pull request tab shadows it while it is the active tab.
+    id: "pullRequest.copyLink",
+    title: "Copy pull request link",
+    category: "Review",
+    when: "pullRequestFocus",
+    defaults: ["cmd+shift+c"],
+  },
+  {
+    id: "pullRequest.copyNumber",
+    title: "Copy pull request number",
+    category: "Review",
+    when: "pullRequestFocus",
+    defaults: ["cmd+shift+k"],
+  },
   // ── Knowledge ──
   {
     id: "kb.toggleSidebar",
@@ -524,9 +584,11 @@ export const CATEGORY_ORDER: readonly ActionCategory[] = [
   "Tabs",
   "Splits",
   "View",
-  "Chat",
+  "Session",
+  "File",
   "Terminal",
   "Knowledge",
   "PDF",
   "Canvas",
+  "Review",
 ];

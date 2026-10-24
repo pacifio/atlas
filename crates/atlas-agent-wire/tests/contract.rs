@@ -80,8 +80,18 @@ fn expected() -> BTreeMap<String, BTreeSet<String>> {
             &["request_id", "tool_call", "options"],
         ),
         ("permission_resolved", &["request_id"]),
-        ("turn_finished", &["stop_reason", "turn_seq"]),
+        (
+            "turn_finished",
+            &[
+                "stop_reason",
+                "turn_seq",
+                "started_at_ms",
+                "ended_at_ms",
+                "worked_ms",
+            ],
+        ),
         ("turn_failed", &["error", "turn_seq", "error_kind"]),
+        ("slept_mid_turn", &["turn_seq", "slept_secs"]),
         ("agent_disconnected", &["reason"]),
     ]
     .into_iter()
@@ -127,6 +137,7 @@ fn contract_kind(delta: &SessionDelta) -> &'static str {
         SessionDelta::PermissionResolved { .. } => "permission_resolved",
         SessionDelta::TurnFinished { .. } => "turn_finished",
         SessionDelta::TurnFailed { .. } => "turn_failed",
+        SessionDelta::SleptMidTurn { .. } => "slept_mid_turn",
         SessionDelta::AgentDisconnected { .. } => "agent_disconnected",
     }
 }
@@ -288,11 +299,18 @@ fn samples() -> Vec<SessionDelta> {
         SessionDelta::TurnFinished {
             stop_reason: "end_turn".into(),
             turn_seq: 3,
+            started_at_ms: Some(1_700_000_000_000),
+            ended_at_ms: Some(1_700_000_252_000),
+            worked_ms: Some(251_400),
         },
         SessionDelta::TurnFailed {
             error: "boom".into(),
             turn_seq: 3,
             error_kind: Some("transient".into()),
+        },
+        SessionDelta::SleptMidTurn {
+            turn_seq: 3,
+            slept_secs: 600,
         },
         SessionDelta::AgentDisconnected {
             reason: "process died".into(),
@@ -313,6 +331,11 @@ fn sample_message() -> Message {
         images: Vec::new(),
         // Fixed, not `now()`: the golden pins the serialized timestamp.
         timestamp: "2026-01-02T03:04:05Z".parse().unwrap(),
+        // Set, so the golden pins the key; `optional_fields_are_omitted…`
+        // pins its absence when false.
+        timestamp_approximate: true,
+        worked_ms: Some(252_000),
+        stop_reason: Some("cancelled".into()),
     }
 }
 
@@ -333,6 +356,8 @@ fn sample_tool_call() -> ToolCall {
             new_text: "new".into(),
         }],
         parent_tool_call_id: Some("call-parent".into()),
+        started_at_ms: Some(1_700_000_000_000),
+        ended_at_ms: Some(1_700_000_001_500),
     }
 }
 
@@ -372,6 +397,8 @@ fn golden() -> BTreeMap<&'static str, serde_json::Value> {
             { "type": "diff", "path": "src/main.rs", "oldText": "old", "newText": "new" }
         ],
         "parent_tool_call_id": "call-parent",
+        "started_at_ms": 1_700_000_000_000_i64,
+        "ended_at_ms": 1_700_000_001_500_i64,
     });
     BTreeMap::from([
         (
@@ -392,6 +419,9 @@ fn golden() -> BTreeMap<&'static str, serde_json::Value> {
                     "plan": [],
                     "model": "anthropic/claude",
                     "timestamp": "2026-01-02T03:04:05Z",
+                    "timestamp_approximate": true,
+                    "worked_ms": 252_000,
+                    "stop_reason": "cancelled",
                 },
             }),
         ),
@@ -536,7 +566,14 @@ fn golden() -> BTreeMap<&'static str, serde_json::Value> {
         ),
         (
             "turn_finished",
-            json!({ "kind": "turn_finished", "stop_reason": "end_turn", "turn_seq": 3 }),
+            json!({
+                "kind": "turn_finished",
+                "stop_reason": "end_turn",
+                "turn_seq": 3,
+                "started_at_ms": 1_700_000_000_000_i64,
+                "ended_at_ms": 1_700_000_252_000_i64,
+                "worked_ms": 251_400,
+            }),
         ),
         (
             "turn_failed",
@@ -546,6 +583,10 @@ fn golden() -> BTreeMap<&'static str, serde_json::Value> {
                 "turn_seq": 3,
                 "error_kind": "transient",
             }),
+        ),
+        (
+            "slept_mid_turn",
+            json!({ "kind": "slept_mid_turn", "turn_seq": 3, "slept_secs": 600 }),
         ),
         (
             "agent_disconnected",
@@ -689,12 +730,38 @@ fn optional_fields_are_omitted_rather_than_null() {
     .unwrap();
     assert!(value.get("error_kind").is_none());
 
+    let value = serde_json::to_value(SessionDelta::TurnFinished {
+        stop_reason: "end_turn".into(),
+        turn_seq: 0,
+        started_at_ms: None,
+        ended_at_ms: None,
+        worked_ms: None,
+    })
+    .unwrap();
+    assert!(value.get("started_at_ms").is_none());
+    assert!(value.get("ended_at_ms").is_none());
+    assert!(value.get("worked_ms").is_none());
+
+    let mut message = sample_message();
+    message.worked_ms = None;
+    message.stop_reason = None;
+    message.timestamp_approximate = false;
+    let value = serde_json::to_value(&message).unwrap();
+    assert!(value.get("worked_ms").is_none());
+    assert!(value.get("stop_reason").is_none());
+    // A timed message (every live one) serializes exactly as before the flag.
+    assert!(value.get("timestamp_approximate").is_none());
+
     let mut tool_call = sample_tool_call();
     tool_call.raw_output = None;
     tool_call.content_blocks = Vec::new();
+    tool_call.started_at_ms = None;
+    tool_call.ended_at_ms = None;
     let value = serde_json::to_value(&tool_call).unwrap();
     assert!(value.get("raw_output").is_none());
     assert!(value.get("content_blocks").is_none());
+    assert!(value.get("started_at_ms").is_none());
+    assert!(value.get("ended_at_ms").is_none());
 }
 
 #[test]

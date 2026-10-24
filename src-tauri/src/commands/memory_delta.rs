@@ -298,6 +298,8 @@ mod tests {
                 raw_output: None,
                 content_blocks: vec![],
                 parent_tool_call_id: None,
+                started_at_ms: None,
+                ended_at_ms: None,
             },
         }
     }
@@ -391,6 +393,8 @@ mod tests {
                 raw_output: None,
                 content_blocks: vec![],
                 parent_tool_call_id: None,
+                started_at_ms: None,
+                ended_at_ms: None,
             },
         }
     }
@@ -550,6 +554,9 @@ mod tests {
             plan: None,
             model: None,
             images: vec![],
+            timestamp_approximate: false,
+            worked_ms: None,
+            stop_reason: None,
             timestamp: chrono::Utc::now(),
         }
     }

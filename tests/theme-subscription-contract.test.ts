@@ -94,7 +94,7 @@ const EXEMPT: Record<string, string> = {
   "src/features/theme/theme-values.ts":
     "It IS the reader, and the subscription machinery — `onThemeApplied` and `useThemeVersion` are defined here.",
   "src/features/editor/themes/build-cm-theme.ts":
-    "A pure builder: it turns a `ResolvedTheme` into CodeMirror extensions and holds nothing. Its two callers (`editor-panel.tsx`, `draft-editor.tsx`) subscribe and re-run it, which is the only place a subscription could do any good.",
+    "A pure builder: it turns a `ResolvedTheme` into CodeMirror extensions and holds nothing. Its caller (`draft-editor.tsx`) subscribes and re-runs it, which is the only place a subscription could do any good.",
   "src/features/terminal/lib/terminal-theme.ts":
     "A pure builder for xterm's `ITheme`. `terminal-session.ts` subscribes once for every session and calls this from `retheme()`.",
   "src/components/graph-palette.ts":
@@ -222,7 +222,6 @@ describe("theme subscription contract", () => {
         "src/features/memory/components/memory-graph-canvas.tsx",
       ],
       "src/features/editor/themes/build-cm-theme.ts": [
-        "src/features/editor/components/editor-panel.tsx",
         "src/features/comms/components/draft-editor.tsx",
       ],
     };

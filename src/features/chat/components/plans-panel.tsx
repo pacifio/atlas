@@ -184,7 +184,9 @@ export function PlansPanel({ onClose }: PlansPanelProps) {
                   {/* Expanded plan markdown */}
                   {isOpen && (
                     <div className="pl-[18px] mt-2 rounded-md border border-[var(--atlas-border-subtle)] bg-[var(--background)] px-3 py-2 max-h-[420px] overflow-auto">
-                      <Markdown className="text-sm">{p.plan}</Markdown>
+                      <Markdown className="text-sm" fileRoot={projectPath}>
+                        {p.plan}
+                      </Markdown>
                     </div>
                   )}
                 </div>

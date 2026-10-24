@@ -13,7 +13,7 @@ vi.mock("@/features/layout/stores/layout-store", () => ({
 }));
 vi.mock("@/features/projects/stores/project-store", () => ({
   useProjectStore: {
-    getState: () => ({ projects: [], groups: [], activeProjectId: null, actions: {} }),
+    getState: () => ({ projects: [], activeProjectId: null, actions: {} }),
   },
 }));
 vi.mock("@/features/organisations/stores/org-store", () => ({

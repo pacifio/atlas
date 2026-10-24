@@ -31,7 +31,7 @@ export function primeMarkdown(): void {
  * Shared Markdown renderer used by the chat assistant bubbles and the canvas
  * note cards/inspector. Styled overrides match the Atlas design tokens.
  */
-export const Markdown = memo(function Markdown({ children, className }: MarkdownProps) {
+export const Markdown = memo(function Markdown({ children, className, fileRoot }: MarkdownProps) {
   return (
     <Suspense
       fallback={
@@ -47,7 +47,9 @@ export const Markdown = memo(function Markdown({ children, className }: Markdown
         </div>
       }
     >
-      <MarkdownImpl className={className}>{children}</MarkdownImpl>
+      <MarkdownImpl className={className} fileRoot={fileRoot}>
+        {children}
+      </MarkdownImpl>
     </Suspense>
   );
 });

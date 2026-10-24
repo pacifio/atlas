@@ -114,8 +114,18 @@
   --control-md: 26px;
   --control-lg: 32px;
   /* Named layout constants — not controls, so they are not on the scale. */
-  --titlebar-height: 30px;
-  --tab-strip-height: 36px;
+  /* The one bar: every column's header (file tree, each split column, the
+     destination screen, the project rail's top band) is this tall, so together they
+     read as one strip broken only by the column borders. The macOS traffic
+     lights are centred in it via `trafficLightPosition` in
+     `src-tauri/tauri.conf.json`, whose `y` is NOT the buttons' top: the
+     titlebar container is made `16 + y` tall and the 16pt buttons sit 6pt
+     above its bottom, so their centre is `y + 2`pt down. Centring in this
+     bar means `y = 40 / 2 - 2 = 18`; change the height, change `y`. Those
+     lights ignore the interface zoom, so the bar divides it back out
+     (`--ui-zoom`, set by `applyUiScale`) and stays 40pt on screen at any
+     zoom. */
+  --titlebar-height: calc(40px / var(--ui-zoom, 1));
 
   /* Motion (decision 29). Four durations; the three easings live in the
      `--ease-*` theme namespace in globals.css and are the only curves allowed.

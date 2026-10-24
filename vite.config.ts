@@ -41,8 +41,8 @@ export default defineConfig(() => ({
         "node_modules/decode-named-character-reference/index.js",
       ),
     },
-    // Dedupe CodeMirror + Lezer. The lang packages (lang-json, lang-rust, …)
-    // are lazy-imported as separate chunks and each transitively imports
+    // Dedupe CodeMirror + Lezer (the team-chat draft editor). lang-markdown and
+    // the grammars it nests (html, css, javascript) each transitively import
     // @codemirror/{state,view,language} and @lezer/{common,highlight,lr};
     // without dedup Rollup can ship two copies, and facets/extensions from
     // one copy are invisible to an EditorView built from the other.
@@ -57,7 +57,6 @@ export default defineConfig(() => ({
       "@codemirror/view",
       "@codemirror/language",
       "@codemirror/commands",
-      "@codemirror/search",
       "@codemirror/autocomplete",
       "@lezer/common",
       "@lezer/highlight",
@@ -83,7 +82,6 @@ export default defineConfig(() => ({
       "@codemirror/language",
       "@codemirror/commands",
       "@codemirror/autocomplete",
-      "@codemirror/search",
       "@lezer/common",
       "@lezer/highlight",
       "@lezer/lr",
@@ -215,11 +213,10 @@ export default defineConfig(() => ({
                   id.includes("/node_modules/scheduler/")),
             },
             // `@codemirror/lang-*` is deliberately absent from every group, so
-            // each grammar keeps its own chunk. They are dynamically imported
-            // per-language in editor/lib/languages.ts; capturing them here
-            // collapses all 13 lazy boundaries into one chunk, so opening a
-            // JSON file would load every grammar. `@lezer/{common,highlight,lr}`
-            // are core runtime, not grammars, and stay with the editor chunk.
+            // the grammars ride with the team-chat draft editor that imports
+            // them rather than with the core runtime every CodeMirror consumer
+            // loads. `@lezer/{common,highlight,lr}` are core runtime, not
+            // grammars, and stay in this chunk.
             {
               name: "vendor-codemirror",
               priority: 80,
@@ -257,8 +254,36 @@ export default defineConfig(() => ({
                 (id.includes("react-markdown") ||
                   id.includes("remark-") ||
                   id.includes("rehype-") ||
-                  id.includes("shiki") ||
                   id.includes("highlight.js")),
+            },
+            // The diff viewer: `@pierre/diffs` and Shiki's core, reached only
+            // through the lazy diff panel. BELOW vendor-markdown on purpose: the
+            // two share hast utilities (`hast-util-to-html` and its tree), and
+            // a group captures its modules' dependencies, so at a higher
+            // priority this chunk took them and the eagerly-loaded markdown
+            // chunk then imported it, preloading the whole viewer at startup.
+            //
+            // Grammars, themes and the Oniguruma WASM are deliberately NOT in
+            // it. Shiki imports each grammar dynamically, so each keeps its own
+            // chunk and a TypeScript diff loads TypeScript alone; capturing them
+            // here would collapse ~300 lazy boundaries into one multi-MB chunk
+            // fetched on first open. The WASM is loaded by the workers, which
+            // Vite bundles separately (`?worker`), so it never enters this one.
+            {
+              name: "vendor-diffs",
+              priority: 55,
+              test: (id) =>
+                !id.endsWith(".css") &&
+                id.includes("node_modules") &&
+                (id.includes("/@pierre/diffs/") ||
+                  id.includes("/@pierre/theming/") ||
+                  id.includes("/shiki/") ||
+                  id.includes("/@shikijs/")) &&
+                !id.includes("/@shikijs/langs/") &&
+                !id.includes("/@shikijs/themes/") &&
+                !id.includes("/shiki/dist/langs") &&
+                !id.includes("/shiki/dist/themes") &&
+                !/wasm/i.test(id),
             },
             {
               name: "vendor-base-ui",
@@ -352,8 +377,6 @@ export default defineConfig(() => ({
         "./src/styles/globals.css",
         "./src/features/layout/components/app-layout.tsx",
         "./src/features/layout/components/center-panel.tsx",
-        "./src/features/layout/components/left-panel.tsx",
-        "./src/features/layout/components/right-panel.tsx",
         "./src/features/layout/stores/layout-store.ts",
         "./src/features/app/stores/app-store.ts",
         "./src/features/app/components/welcome-screen.tsx",
@@ -363,7 +386,7 @@ export default defineConfig(() => ({
         "./src/features/chat/stores/chat-store.ts",
         "./src/features/chat/lib/agents-api.ts",
         "./src/components/titlebar.tsx",
-        "./src/components/command-palette.tsx",
+        "./src/features/command-palette/components/command-palette.tsx",
         "./src/components/atlas-icon.tsx",
       ],
     },

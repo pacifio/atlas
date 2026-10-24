@@ -23,19 +23,32 @@ const kbdVariants = cva(
   ],
   {
     variants: {
+      // `inverse` is a cap sitting on a primary-filled control (the ↵ on a
+      // dialog's default action): the background colour, at low alpha for the
+      // fill and edge, so it reads on whatever the primary token is.
+      variant: {
+        default: "",
+        inverse: "border-background/20 bg-background/10 text-background",
+        // `soft` is a borderless filled cap in the foreground colour, for a
+        // legend of keys beside their labels (the command palette's footer:
+        // "↑ ↓ Navigate · Enter Select · Esc Close").
+        soft: "border-transparent bg-element-active text-foreground",
+      },
       size: {
         xs: "h-control-xs min-w-(--control-xs) text-2xs",
         sm: "h-control-sm min-w-(--control-sm) text-xs",
       },
     },
-    defaultVariants: { size: "xs" },
+    defaultVariants: { variant: "default", size: "xs" },
   },
 );
 
 export interface KbdProps extends React.ComponentProps<"kbd">, VariantProps<typeof kbdVariants> {}
 
-function Kbd({ className, size, ...props }: KbdProps) {
-  return <kbd data-slot="kbd" className={cn(kbdVariants({ size }), className)} {...props} />;
+function Kbd({ className, variant, size, ...props }: KbdProps) {
+  return (
+    <kbd data-slot="kbd" className={cn(kbdVariants({ variant, size }), className)} {...props} />
+  );
 }
 
 function KbdGroup({ className, ...props }: React.ComponentProps<"div">) {

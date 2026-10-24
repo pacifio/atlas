@@ -53,7 +53,7 @@ const NODE_MODULES = path.join(REPO_ROOT, "node_modules");
 const VITE_CONFIG = path.join(REPO_ROOT, "vite.config.ts");
 
 /**
- * The nine CodeMirror/Lezer entries `vite.config.ts` dedupes, as declared
+ * The CodeMirror/Lezer (and pdfjs) entries `vite.config.ts` dedupes, as declared
  * there. Read rather than copied: the list and this guard must not drift, and
  * the assertion below is what says so.
  */
@@ -62,7 +62,6 @@ const EXPECTED_DEDUPE = [
   "@codemirror/view",
   "@codemirror/language",
   "@codemirror/commands",
-  "@codemirror/search",
   "@codemirror/autocomplete",
   "@lezer/common",
   "@lezer/highlight",

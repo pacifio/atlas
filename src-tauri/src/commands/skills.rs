@@ -1957,7 +1957,6 @@ fn reconcile(root: &Path, scope: &str, home: &Path) -> Result<ReconcileView, Str
 
         let mut cells: Vec<ProjectionCell> = Vec::new();
         for def in TOOL_REGISTRY.iter() {
-            let detected = tool_detected(root, def);
             let link = tool_link_path(root, def, scope, name);
             let entry_meta = link.symlink_metadata().ok();
             let is_symlink = entry_meta
@@ -1990,13 +1989,7 @@ fn reconcile(root: &Path, scope: &str, home: &Path) -> Result<ReconcileView, Str
                 }
             } else if entry_meta.is_none() {
                 // Nothing on disk for this tool.
-                if !detected {
-                    ("absent".to_string(), None)
-                } else if managed {
-                    ("absent".to_string(), None)
-                } else {
-                    ("absent".to_string(), None)
-                }
+                ("absent".to_string(), None)
             } else {
                 ("absent".to_string(), None)
             };
@@ -5455,7 +5448,7 @@ mod tests {
         unproject_pack(&root, "demo-pack", "codex").unwrap();
         let body = fs::read_to_string(root.join("AGENTS.md")).unwrap_or_default();
         assert!(!body.contains("atlas-pack:demo-pack:style"));
-        assert!(read_pack_proj(&root).projections.get("demo-pack").is_none());
+        assert!(!read_pack_proj(&root).projections.contains_key("demo-pack"));
 
         fs::remove_dir_all(&root).ok();
         fs::remove_dir_all(&src).ok();

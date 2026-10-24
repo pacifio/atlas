@@ -3,7 +3,7 @@
 // by a live turn with a command still streaming output.
 
 import type { Scenario } from "../types";
-import { lines, text, thinking, tool, tools, user, t } from "../fixtures/chat";
+import { ended, lines, text, thinking, tool, tools, user, t } from "../fixtures/chat";
 import {
   appendToolOutput,
   finishTurn,
@@ -41,10 +41,10 @@ const settledTurn = [
   tools(
     [
       tool.delegate("Find every Button call site"),
-      tool.search("Button"),
+      tool.search("Button", { took: 1.4 }),
       tool.read("src/components/button.tsx"),
       tool.read("src/components/header.tsx"),
-      tool.run("ls src/components", { result: "button.tsx\nheader.tsx\n" }),
+      tool.run("ls src/components", { result: "button.tsx\nheader.tsx\n", took: 0.6 }),
     ],
     t(4),
   ),
@@ -59,20 +59,25 @@ const settledTurn = [
   tools(
     [
       tool.run("bun run test src/components", {
+        took: 6,
         status: "failed",
         result:
           "FAIL src/components/button.test.tsx\n  ✕ renders disabled (4 ms)\n\n  Expected: true\n  Received: undefined\n\nTests: 1 failed, 3 passed",
       }),
       tool.edit("src/components/button.test.tsx", lines(24, "// test"), lines(26, "// test")),
       tool.run("bun run test src/components", {
+        took: 5.2,
         result: "PASS src/components/button.test.tsx\n\nTests: 4 passed",
       }),
     ],
     t(20),
   ),
-  text(
-    "Done. `Button` now accepts `disabled`, sets `aria-disabled` to match, and the four component tests pass.",
-    t(41),
+  ended(
+    text(
+      "Done. `Button` now accepts `disabled`, sets `aria-disabled` to match, and the four component tests pass.",
+      t(41),
+    ),
+    41,
   ),
 ];
 
@@ -170,6 +175,8 @@ async function liveTurn(): Promise<void> {
   await setStatus("running");
 
   const running = tool.run("bun run test", { id: "tc-live", status: "running" });
+  // Stamped against the real clock, as Rust stamps a call at first sight.
+  running.started_at_ms = Date.now();
   const message = tools([running], t(63));
   await playTranscript([message]);
 
@@ -187,6 +194,7 @@ async function liveTurn(): Promise<void> {
   finishLive = async () => {
     await upsertToolCall(message.id, {
       ...running,
+      ended_at_ms: Date.now(),
       status: "completed",
       result: output.join("") + "\nTests: 24 passed",
     });

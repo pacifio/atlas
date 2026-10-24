@@ -24,7 +24,7 @@ import {
   SettingsRow,
   SettingsSection,
 } from "../layout/settings-layout";
-import { SettingSelect, SettingSlider } from "../layout/setting-controls";
+import { SettingSelect, SettingSlider, SettingSwitch } from "../layout/setting-controls";
 import { setInterfaceContrast } from "@/features/theme/apply-theme";
 import { repaintTheme } from "@/features/theme/stores/theme-store";
 import { ColourSchemeSection } from "../appearance/colour-scheme-section";
@@ -99,6 +99,12 @@ export function AppearancePage() {
             setting="chatWidth"
             control={<SettingSelect setting="chatWidth" options={CHAT_WIDTHS} />}
           />
+          <SettingsRow setting="showTurnRail" control={<SettingSwitch setting="showTurnRail" />} />
+          <SettingsRow
+            setting="wordWrap"
+            description="In file tabs and diffs. The wrap button in a file's or the review diff's header flips this too. A session's code blocks have their own setting, under Sessions."
+            control={<SettingSwitch setting="wordWrap" />}
+          />
           <SettingsRow
             setting="diffPalette"
             control={<SettingSelect setting="diffPalette" options={DIFF_PALETTES} />}
@@ -142,7 +148,7 @@ function ZoomControl() {
           size="sm"
           variant="outline"
           label="Zoom out"
-          className="rounded-full"
+          shape="round"
           disabled={uiScale <= MIN_SCALE}
           onClick={() => setScale(uiScale - SCALE_STEP)}
         />
@@ -163,7 +169,7 @@ function ZoomControl() {
           size="sm"
           variant="outline"
           label="Zoom in"
-          className="rounded-full"
+          shape="round"
           disabled={uiScale >= MAX_SCALE}
           onClick={() => setScale(uiScale + SCALE_STEP)}
         />

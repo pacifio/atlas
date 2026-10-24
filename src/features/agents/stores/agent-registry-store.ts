@@ -69,7 +69,16 @@ function signatureOf(entries: AcpRegistryEntry[], catalog: AgentCatalogEntry[]):
   // same binary to the same place must not re-render every agent surface.
   // `installed` is in here because it is what the agent picker is keyed off —
   // an agent joins it on install and leaves on uninstall.
-  const c = catalog.map((s) => `${s.id}:${s.source}:${s.installed ? 1 : 0}`).join(",");
+  // What the user configured is in here too: turning an agent off takes it
+  // out of the picker, and renaming one renames it everywhere.
+  const c = catalog
+    .map(
+      (s) =>
+        `${s.id}:${s.source}:${s.installed ? 1 : 0}:${s.enabled ? 1 : 0}:${s.displayName ?? ""}:` +
+        `${s.hiddenModels.join("+")}:${s.modelOrder.join("+")}:` +
+        `${JSON.stringify(s.customModels)}:${JSON.stringify(s.launch)}`,
+    )
+    .join(",");
   return `${e}|${c}`;
 }
 

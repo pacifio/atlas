@@ -276,6 +276,19 @@ pub enum SidebarSort {
     Created,
 }
 
+/// The merge method a pull request's Merge button starts on. `Last` reuses
+/// whatever was picked most recently on this device; the others name one.
+/// A method the repository does not allow falls back to one it does.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PullRequestMergeMethod {
+    #[default]
+    Last,
+    Merge,
+    Squash,
+    Rebase,
+}
+
 /// User-facing toggles surfaced in Settings → General. Moved out of
 /// `state.json`'s `AppState.settings` (issue #64) into its own validated,
 /// human-editable `config.toml`.
@@ -305,6 +318,12 @@ pub struct AppSettings {
     /// users who want a cleaner tree can turn it off.
     #[serde(default = "default_true")]
     pub show_hidden_files: bool,
+    /// The external editor "Open in <editor>" uses: an editor id from
+    /// `commands::external_editor`, `"system"` for the OS's own app, or empty
+    /// for the first editor detected. Files outside the project go to the
+    /// system app unless this names an editor.
+    #[serde(default)]
+    pub preferred_editor: String,
     /// Global interface zoom (1.0 == 100%). Applied via the native WebView zoom
     /// on the frontend (⌘+/⌘-/⌘0); persisted so it survives relaunch.
     #[serde(default = "default_ui_scale")]
@@ -477,8 +496,8 @@ pub struct AppSettings {
     /// Models starred in the composer's model picker, as `agentType:modelId`. Unknown entries are ignored.
     #[serde(default)]
     pub favorite_models: Vec<String>,
-    /// Ask before deleting a chat from the sidebar or history. Archiving never
-    /// asks: it can be undone. Default ON.
+    /// Ask before deleting a session from the sidebar or history. Settling
+    /// never asks: it can be undone. Default ON.
     #[serde(default = "default_true")]
     pub confirm_delete_chat: bool,
     /// Ask before quitting while an agent is mid-turn. A second Quit while
@@ -492,12 +511,16 @@ pub struct AppSettings {
     /// Chat column width.
     #[serde(default)]
     pub chat_width: ChatWidth,
-    /// Wrap long lines in chat code blocks; off scrolls them sideways.
+    /// Wrap long lines in file views and diffs; off scrolls them sideways.
     #[serde(default = "default_true")]
-    pub chat_code_wrap: bool,
+    pub word_wrap: bool,
     /// Session sidebar order.
     #[serde(default)]
     pub sidebar_sort: SidebarSort,
+    /// Days a session may sit idle before it is settled on its own; 0 turns
+    /// auto-settling off.
+    #[serde(default = "default_auto_settle_after_days")]
+    pub auto_settle_after_days: u32,
     /// 12- or 24-hour clock, or the system's.
     #[serde(default)]
     pub time_format: TimeFormat,
@@ -526,8 +549,9 @@ pub struct AppSettings {
     /// diff can be staged, since a patch without whitespace no longer applies.
     #[serde(default)]
     pub diff_ignore_whitespace: bool,
-    /// Multi-file diffs open with every file collapsed.
-    #[serde(default)]
+    /// Diffs open with every file collapsed to its header. Default ON: the
+    /// review diff opens as a list of its files, each expanded on a click.
+    #[serde(default = "default_true")]
     pub diff_files_collapsed: bool,
     /// Diff colours.
     #[serde(default)]
@@ -535,7 +559,51 @@ pub struct AppSettings {
     /// Contrast of borders and secondary text, in percent of the theme's own.
     #[serde(default = "default_interface_contrast")]
     pub interface_contrast: u32,
+    /// The turn rail: one tick per turn down the left edge of a session's
+    /// transcript, with a preview on hover and a jump on click. Purely visual,
+    /// so default ON.
+    #[serde(default = "default_true")]
+    pub show_turn_rail: bool,
+    /// A session whose linked pull request merges is settled, when the merge
+    /// came after the user's last interaction with it; a closed pull request
+    /// always settles its session. Read by the pull request watch (Rust).
+    #[serde(default = "default_true")]
+    pub auto_settle_on_merge: bool,
+    /// Idle auto-settling (`auto_settle_after_days`) leaves a session with a
+    /// linked pull request alone.
+    #[serde(default = "default_true")]
+    pub auto_settle_keep_pull_requests: bool,
+    /// A watched pull request may wake its session's agent with an update
+    /// (checks, reviews, conflicts). Off: watches still track, never prompt.
+    #[serde(default = "default_true")]
+    pub pull_request_watch_wakes: bool,
+    /// A pull request link in a session opens in Atlas's pull request tab
+    /// when it belongs to the session's repository; off opens the browser.
+    #[serde(default = "default_true")]
+    pub pull_request_links_open_in_app: bool,
+    /// The merge method a pull request starts on. Per project.
+    #[serde(default)]
+    pub pull_request_merge_method: PullRequestMergeMethod,
+    /// Strip agent credit trailers (`Co-Authored-By: Claude …`, "Generated
+    /// with …") from merge and squash messages. Per project. Default OFF.
+    #[serde(default)]
+    pub remove_agent_credits_on_merge: bool,
+    /// The pull request Guide tab and its agent-written review tours.
+    #[serde(default = "default_true")]
+    pub pull_request_guide_enabled: bool,
+    /// The agent that writes guides; empty uses `default_agent`.
+    #[serde(default)]
+    pub pull_request_guide_agent: String,
+    /// The model the guide's agent runs on; empty is the agent's own default.
+    #[serde(default)]
+    pub pull_request_guide_model: String,
+    /// The user's preferences for guides, appended to the guide prompt.
+    #[serde(default)]
+    pub pull_request_guide_instructions: String,
 }
+
+/// The longest `pullRequestGuideInstructions` accepted, in bytes.
+pub const MAX_GUIDE_INSTRUCTIONS: usize = 4_000;
 
 pub const MIN_INTERFACE_CONTRAST: u32 = 50;
 pub const MAX_INTERFACE_CONTRAST: u32 = 200;
@@ -580,6 +648,15 @@ pub fn default_ui_scale() -> f32 {
     1.0
 }
 
+pub const DEFAULT_AUTO_SETTLE_AFTER_DAYS: u32 = 3;
+/// 0 is "off": the idle sweep skips its pass.
+pub const MIN_AUTO_SETTLE_AFTER_DAYS: u32 = 0;
+pub const MAX_AUTO_SETTLE_AFTER_DAYS: u32 = 90;
+
+pub fn default_auto_settle_after_days() -> u32 {
+    DEFAULT_AUTO_SETTLE_AFTER_DAYS
+}
+
 pub fn default_terminal_notify_min_duration_ms() -> u32 {
     10_000
 }
@@ -590,6 +667,7 @@ impl Default for AppSettings {
             auto_add_atlas_gitignore: true,
             enable_atlas_logs: true,
             show_hidden_files: true,
+            preferred_editor: String::new(),
             ui_scale: default_ui_scale(),
             share_telemetry: true,
             link_telemetry_to_account: true,
@@ -635,8 +713,9 @@ impl Default for AppSettings {
             confirm_quit_while_running: true,
             default_agent: default_agent(),
             chat_width: ChatWidth::default(),
-            chat_code_wrap: true,
+            word_wrap: true,
             sidebar_sort: SidebarSort::default(),
+            auto_settle_after_days: DEFAULT_AUTO_SETTLE_AFTER_DAYS,
             time_format: TimeFormat::default(),
             ui_font_family: String::new(),
             code_font_family: String::new(),
@@ -645,9 +724,20 @@ impl Default for AppSettings {
             editor_font_size: DEFAULT_FONT_SIZE,
             terminal_font_size: DEFAULT_FONT_SIZE,
             diff_ignore_whitespace: false,
-            diff_files_collapsed: false,
+            diff_files_collapsed: true,
             diff_palette: DiffPalette::default(),
             interface_contrast: default_interface_contrast(),
+            show_turn_rail: true,
+            auto_settle_on_merge: true,
+            auto_settle_keep_pull_requests: true,
+            pull_request_watch_wakes: true,
+            pull_request_links_open_in_app: true,
+            pull_request_merge_method: PullRequestMergeMethod::default(),
+            remove_agent_credits_on_merge: false,
+            pull_request_guide_enabled: true,
+            pull_request_guide_agent: String::new(),
+            pull_request_guide_model: String::new(),
+            pull_request_guide_instructions: String::new(),
         }
     }
 }
@@ -774,6 +864,17 @@ pub fn validate(settings: &AppSettings) -> Result<(), ValidationIssue> {
             });
         }
     }
+    if !(MIN_AUTO_SETTLE_AFTER_DAYS..=MAX_AUTO_SETTLE_AFTER_DAYS)
+        .contains(&settings.auto_settle_after_days)
+    {
+        return Err(ValidationIssue {
+            key: "autoSettleAfterDays",
+            message: format!(
+                "must be between {MIN_AUTO_SETTLE_AFTER_DAYS} and {MAX_AUTO_SETTLE_AFTER_DAYS}, got {}",
+                settings.auto_settle_after_days
+            ),
+        });
+    }
     if !(MIN_INTERFACE_CONTRAST..=MAX_INTERFACE_CONTRAST).contains(&settings.interface_contrast) {
         return Err(ValidationIssue {
             key: "interfaceContrast",
@@ -805,11 +906,50 @@ pub fn validate(settings: &AppSettings) -> Result<(), ValidationIssue> {
             message: "must not be empty; use \"atlas-agent\" for Atlas Agent".to_string(),
         });
     }
+    // An editor id is matched against the detected list, never run; anything
+    // but a plain id cannot match one, so it is a typo worth reporting.
+    if settings.preferred_editor.len() > 64
+        || !settings
+            .preferred_editor
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-')
+    {
+        return Err(ValidationIssue {
+            key: "preferredEditor",
+            message: "must be an editor id such as \"vscode\", \"system\", or empty".to_string(),
+        });
+    }
     // Names a file (`icons/app-icons/<id>.icns`); same reasoning as `iconTheme`.
     if !crate::app_icon::is_valid_id(&settings.app_icon) {
         return Err(ValidationIssue {
             key: "appIcon",
             message: "must be a plain id: letters, digits, dash or underscore".to_string(),
+        });
+    }
+    // Compared against installed agent ids, never run.
+    if settings.pull_request_guide_agent.len() > 64
+        || settings
+            .pull_request_guide_agent
+            .chars()
+            .any(|c| !(c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')))
+    {
+        return Err(ValidationIssue {
+            key: "pullRequestGuideAgent",
+            message: "must be an agent id such as \"claude-code\", or empty".to_string(),
+        });
+    }
+    if settings.pull_request_guide_model.len() > 200
+        || settings.pull_request_guide_model.contains(char::is_control)
+    {
+        return Err(ValidationIssue {
+            key: "pullRequestGuideModel",
+            message: "must be a model id on one line, at most 200 characters, or empty".to_string(),
+        });
+    }
+    if settings.pull_request_guide_instructions.len() > MAX_GUIDE_INSTRUCTIONS {
+        return Err(ValidationIssue {
+            key: "pullRequestGuideInstructions",
+            message: format!("must be at most {MAX_GUIDE_INSTRUCTIONS} bytes"),
         });
     }
     Ok(())
@@ -1041,6 +1181,7 @@ pub struct SettingsPatch {
     pub auto_add_atlas_gitignore: Option<bool>,
     pub enable_atlas_logs: Option<bool>,
     pub show_hidden_files: Option<bool>,
+    pub preferred_editor: Option<String>,
     pub ui_scale: Option<f32>,
     pub share_telemetry: Option<bool>,
     pub link_telemetry_to_account: Option<bool>,
@@ -1087,8 +1228,9 @@ pub struct SettingsPatch {
     pub confirm_quit_while_running: Option<bool>,
     pub default_agent: Option<String>,
     pub chat_width: Option<ChatWidth>,
-    pub chat_code_wrap: Option<bool>,
+    pub word_wrap: Option<bool>,
     pub sidebar_sort: Option<SidebarSort>,
+    pub auto_settle_after_days: Option<u32>,
     pub time_format: Option<TimeFormat>,
     pub ui_font_family: Option<String>,
     pub code_font_family: Option<String>,
@@ -1100,6 +1242,17 @@ pub struct SettingsPatch {
     pub diff_files_collapsed: Option<bool>,
     pub diff_palette: Option<DiffPalette>,
     pub interface_contrast: Option<u32>,
+    pub show_turn_rail: Option<bool>,
+    pub auto_settle_on_merge: Option<bool>,
+    pub auto_settle_keep_pull_requests: Option<bool>,
+    pub pull_request_watch_wakes: Option<bool>,
+    pub pull_request_links_open_in_app: Option<bool>,
+    pub pull_request_merge_method: Option<PullRequestMergeMethod>,
+    pub remove_agent_credits_on_merge: Option<bool>,
+    pub pull_request_guide_enabled: Option<bool>,
+    pub pull_request_guide_agent: Option<String>,
+    pub pull_request_guide_model: Option<String>,
+    pub pull_request_guide_instructions: Option<String>,
 }
 
 impl SettingsPatch {
@@ -1112,6 +1265,9 @@ impl SettingsPatch {
         }
         if let Some(v) = self.show_hidden_files {
             settings.show_hidden_files = v;
+        }
+        if let Some(v) = &self.preferred_editor {
+            settings.preferred_editor = v.clone();
         }
         if let Some(v) = self.ui_scale {
             settings.ui_scale = v;
@@ -1248,8 +1404,9 @@ impl SettingsPatch {
             confirm_quit_while_running,
             default_agent,
             chat_width,
-            chat_code_wrap,
+            word_wrap,
             sidebar_sort,
+            auto_settle_after_days,
             time_format,
             ui_font_family,
             code_font_family,
@@ -1261,6 +1418,17 @@ impl SettingsPatch {
             diff_files_collapsed,
             diff_palette,
             interface_contrast,
+            show_turn_rail,
+            auto_settle_on_merge,
+            auto_settle_keep_pull_requests,
+            pull_request_watch_wakes,
+            pull_request_links_open_in_app,
+            pull_request_merge_method,
+            remove_agent_credits_on_merge,
+            pull_request_guide_enabled,
+            pull_request_guide_agent,
+            pull_request_guide_model,
+            pull_request_guide_instructions,
         );
     }
 
@@ -1313,9 +1481,16 @@ impl SettingsPatch {
         set_bool!(notify_permission_actions, "notifyPermissionActions");
         set_bool!(confirm_delete_chat, "confirmDeleteChat");
         set_bool!(confirm_quit_while_running, "confirmQuitWhileRunning");
-        set_bool!(chat_code_wrap, "chatCodeWrap");
+        set_bool!(word_wrap, "wordWrap");
         set_bool!(diff_ignore_whitespace, "diffIgnoreWhitespace");
         set_bool!(diff_files_collapsed, "diffFilesCollapsed");
+        set_bool!(show_turn_rail, "showTurnRail");
+        set_bool!(auto_settle_on_merge, "autoSettleOnMerge");
+        set_bool!(auto_settle_keep_pull_requests, "autoSettleKeepPullRequests");
+        set_bool!(pull_request_watch_wakes, "pullRequestWatchWakes");
+        set_bool!(pull_request_links_open_in_app, "pullRequestLinksOpenInApp");
+        set_bool!(remove_agent_credits_on_merge, "removeAgentCreditsOnMerge");
+        set_bool!(pull_request_guide_enabled, "pullRequestGuideEnabled");
         macro_rules! set_str {
             ($field:ident, $key:literal) => {
                 if let Some(v) = &self.$field {
@@ -1323,11 +1498,18 @@ impl SettingsPatch {
                 }
             };
         }
+        set_str!(preferred_editor, "preferredEditor");
         set_str!(default_agent, "defaultAgent");
         set_str!(ui_font_family, "uiFontFamily");
         set_str!(code_font_family, "codeFontFamily");
         set_str!(composer_font_family, "composerFontFamily");
         set_str!(terminal_font_family, "terminalFontFamily");
+        set_str!(pull_request_guide_agent, "pullRequestGuideAgent");
+        set_str!(pull_request_guide_model, "pullRequestGuideModel");
+        set_str!(
+            pull_request_guide_instructions,
+            "pullRequestGuideInstructions"
+        );
         // Enums are written as the exact string serde reads back.
         macro_rules! set_enum {
             ($field:ident, $key:literal) => {
@@ -1340,11 +1522,15 @@ impl SettingsPatch {
         set_enum!(sidebar_sort, "sidebarSort");
         set_enum!(time_format, "timeFormat");
         set_enum!(diff_palette, "diffPalette");
+        set_enum!(pull_request_merge_method, "pullRequestMergeMethod");
         if let Some(v) = self.interface_contrast {
             table["interfaceContrast"] = toml_edit::value(i64::from(v));
         }
         if let Some(v) = self.editor_font_size {
             table["editorFontSize"] = toml_edit::value(i64::from(v));
+        }
+        if let Some(v) = self.auto_settle_after_days {
+            table["autoSettleAfterDays"] = toml_edit::value(i64::from(v));
         }
         if let Some(v) = self.terminal_font_size {
             table["terminalFontSize"] = toml_edit::value(i64::from(v));
@@ -2102,6 +2288,72 @@ mod tests {
         assert!(validate(&AppSettings::default()).is_ok());
     }
 
+    /// 0 is "off", not out of range; past 90 is.
+    #[test]
+    fn auto_settle_after_days_takes_zero_for_off() {
+        let off = AppSettings {
+            auto_settle_after_days: 0,
+            ..AppSettings::default()
+        };
+        assert!(validate(&off).is_ok());
+        let too_long = AppSettings {
+            auto_settle_after_days: MAX_AUTO_SETTLE_AFTER_DAYS + 1,
+            ..AppSettings::default()
+        };
+        assert_eq!(validate(&too_long).unwrap_err().key, "autoSettleAfterDays");
+    }
+
+    #[test]
+    fn pull_request_guide_settings_are_bounded() {
+        let ok = AppSettings {
+            pull_request_guide_agent: "claude-code".to_string(),
+            pull_request_guide_model: "claude-opus-4".to_string(),
+            pull_request_guide_instructions: "Contracts first.\nSkip tests.".to_string(),
+            ..AppSettings::default()
+        };
+        assert!(validate(&ok).is_ok());
+        let bad_agent = AppSettings {
+            pull_request_guide_agent: "../claude".to_string(),
+            ..AppSettings::default()
+        };
+        assert_eq!(
+            validate(&bad_agent).unwrap_err().key,
+            "pullRequestGuideAgent"
+        );
+        let two_lines = AppSettings {
+            pull_request_guide_model: "opus\nsonnet".to_string(),
+            ..AppSettings::default()
+        };
+        assert_eq!(
+            validate(&two_lines).unwrap_err().key,
+            "pullRequestGuideModel"
+        );
+        let long = AppSettings {
+            pull_request_guide_instructions: "x".repeat(MAX_GUIDE_INSTRUCTIONS + 1),
+            ..AppSettings::default()
+        };
+        assert_eq!(
+            validate(&long).unwrap_err().key,
+            "pullRequestGuideInstructions"
+        );
+    }
+
+    /// The pull request keys C1's watch reads default to on, and a file
+    /// written before they existed reads as on.
+    #[test]
+    fn pull_request_watch_keys_default_on_for_an_old_file() {
+        let (_dir, path) = tmp_config_path();
+        let mgr =
+            ConfigManager::from_raw(path, "schemaVersion = 1\n[settings]\nenterToSend = false\n")
+                .expect("loads");
+        let s = mgr.effective();
+        assert!(s.auto_settle_on_merge);
+        assert!(s.auto_settle_keep_pull_requests);
+        assert!(s.pull_request_watch_wakes);
+        assert!(!s.remove_agent_credits_on_merge);
+        assert_eq!(s.pull_request_merge_method, PullRequestMergeMethod::Last);
+    }
+
     /// ADR-0012: on unless the user switched it off, and a file that predates
     /// the key reads as on.
     #[test]
@@ -2163,6 +2415,34 @@ mod tests {
         )
         .unwrap();
         assert!(!mgr.effective().agent_code_tools);
+    }
+
+    /// Files and diffs wrap unless the user switched it off; a file that
+    /// predates the key reads as on, and the wrap buttons' patch turns it off.
+    #[test]
+    fn word_wrap_is_on_by_default_and_patched_off() {
+        assert!(AppSettings::default().word_wrap);
+        let (_dir, path) = tmp_config_path();
+        let mgr = ConfigManager::from_raw(
+            path,
+            "schemaVersion = 1\n\n[settings]\nenterToSend = false\n",
+        )
+        .unwrap();
+        assert!(mgr.effective().word_wrap);
+
+        let (_dir, path) = tmp_config_path();
+        let mgr =
+            ConfigManager::from_raw(path, "schemaVersion = 1\n\n[settings]\nwordWrap = false\n")
+                .unwrap();
+        assert!(!mgr.effective().word_wrap);
+
+        let patch: SettingsPatch = serde_json::from_str(r#"{ "wordWrap": false }"#).unwrap();
+        let mut settings = AppSettings::default();
+        patch.apply_to(&mut settings);
+        assert!(!settings.word_wrap);
+        let mut document = document_for(&AppSettings::default());
+        patch.write_into(&mut document);
+        assert_eq!(document["settings"]["wordWrap"].as_bool(), Some(false));
     }
 
     #[test]
@@ -2388,6 +2668,7 @@ someFutureKey = \"left alone\"
             auto_add_atlas_gitignore: Some(!defaults.auto_add_atlas_gitignore),
             enable_atlas_logs: Some(!defaults.enable_atlas_logs),
             show_hidden_files: Some(!defaults.show_hidden_files),
+            preferred_editor: Some("zed".to_string()),
             ui_scale: Some(1.5),
             share_telemetry: Some(!defaults.share_telemetry),
             link_telemetry_to_account: Some(!defaults.link_telemetry_to_account),
@@ -2443,8 +2724,9 @@ someFutureKey = \"left alone\"
             confirm_quit_while_running: Some(!defaults.confirm_quit_while_running),
             default_agent: Some("claude-code".to_string()),
             chat_width: Some(ChatWidth::Wide),
-            chat_code_wrap: Some(!defaults.chat_code_wrap),
+            word_wrap: Some(!defaults.word_wrap),
             sidebar_sort: Some(SidebarSort::Created),
+            auto_settle_after_days: Some(7),
             time_format: Some(TimeFormat::TwentyFourHour),
             ui_font_family: Some("Inter, sans-serif".to_string()),
             code_font_family: Some("JetBrains Mono".to_string()),
@@ -2456,6 +2738,17 @@ someFutureKey = \"left alone\"
             diff_files_collapsed: Some(!defaults.diff_files_collapsed),
             diff_palette: Some(DiffPalette::BlueOrange),
             interface_contrast: Some(150),
+            show_turn_rail: Some(!defaults.show_turn_rail),
+            auto_settle_on_merge: Some(!defaults.auto_settle_on_merge),
+            auto_settle_keep_pull_requests: Some(!defaults.auto_settle_keep_pull_requests),
+            pull_request_watch_wakes: Some(!defaults.pull_request_watch_wakes),
+            pull_request_links_open_in_app: Some(!defaults.pull_request_links_open_in_app),
+            pull_request_merge_method: Some(PullRequestMergeMethod::Squash),
+            remove_agent_credits_on_merge: Some(!defaults.remove_agent_credits_on_merge),
+            pull_request_guide_enabled: Some(!defaults.pull_request_guide_enabled),
+            pull_request_guide_agent: Some("claude-code".to_string()),
+            pull_request_guide_model: Some("opus".to_string()),
+            pull_request_guide_instructions: Some("Show contracts first.\nSkip tests.".to_string()),
         };
         let mut expected = defaults.clone();
         patch.apply_to(&mut expected);

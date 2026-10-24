@@ -479,21 +479,97 @@ describe("applyAgentDelta: turn terminals", () => {
     expect(session().inflightToolIds).toBeUndefined();
   });
 
-  it("turn_finished stamps the turn's wall time, from the user's message, on its last message", () => {
+  it("turn_finished puts Rust's wall time and stop reason on the turn's last message", () => {
     boundTab();
-    const sentAt = Date.parse(messages()[0].timestamp);
-    const now = vi.spyOn(Date, "now").mockReturnValue(sentAt + 457_000);
-    try {
-      apply(
-        d("status", { status: "running", turn_seq: 1 }),
-        d("text_chunk", { message_id: "m", delta: "Done." }),
-        d("turn_finished", { stop_reason: "end_turn", turn_seq: 1 }),
-      );
-    } finally {
-      now.mockRestore();
-    }
+    apply(
+      d("status", { status: "running", turn_seq: 1 }),
+      d("text_chunk", { message_id: "m", delta: "Done." }),
+      d("turn_finished", {
+        stop_reason: "cancelled",
+        turn_seq: 1,
+        started_at_ms: 1_000,
+        ended_at_ms: 458_000,
+        worked_ms: 457_000,
+      }),
+    );
     expect(messages()[0].role).toBe("user");
-    expect(last()).toMatchObject({ role: "assistant", workedMs: 457_000 });
+    expect(last()).toMatchObject({
+      role: "assistant",
+      workedMs: 457_000,
+      stopReason: "cancelled",
+    });
+  });
+
+  it("takes the monotonic figure, not the wall-clock span a sleep stretched", () => {
+    boundTab();
+    apply(
+      d("text_chunk", { message_id: "m", delta: "Done." }),
+      d("turn_finished", {
+        stop_reason: "end_turn",
+        turn_seq: 1,
+        started_at_ms: 1_000,
+        // Ten minutes of wall clock, most of it asleep …
+        ended_at_ms: 601_000,
+        // … and five seconds of work.
+        worked_ms: 5_000,
+      }),
+    );
+    expect(last().workedMs).toBe(5_000);
+  });
+
+  it("does not stamp a message from before the turn started (a rewind left it last)", () => {
+    boundTab();
+    apply(
+      d("text_chunk", { message_id: "m", delta: "Earlier reply." }),
+      d("turn_finished", {
+        stop_reason: "end_turn",
+        turn_seq: 1,
+        started_at_ms: 1_000,
+        ended_at_ms: 2_000,
+        worked_ms: 1_000,
+      }),
+    );
+    expect(last().workedMs).toBe(1_000);
+    // The `/undo` turn: it starts after that reply, says nothing of its own,
+    // and the rewind leaves the earlier reply as the trailing message.
+    const later = Date.parse(last().timestamp) + 60_000;
+    apply(
+      d("turn_finished", {
+        stop_reason: "end_turn",
+        turn_seq: 2,
+        started_at_ms: later,
+        ended_at_ms: later + 9_000,
+        worked_ms: 9_000,
+      }),
+    );
+    expect(last()).toMatchObject({ workedMs: 1_000, stopReason: "end_turn" });
+  });
+
+  it("ignores a late duplicate terminal that would relabel a finished turn", () => {
+    boundTab();
+    apply(
+      d("text_chunk", { message_id: "m", delta: "Done." }),
+      d("turn_finished", {
+        stop_reason: "end_turn",
+        turn_seq: 1,
+        started_at_ms: 1_000,
+        ended_at_ms: 2_000,
+        worked_ms: 1_000,
+      }),
+      // No turn behind it: Rust never saw one open.
+      d("turn_finished", { stop_reason: "cancelled", turn_seq: 1 }),
+    );
+    expect(last()).toMatchObject({ workedMs: 1_000, stopReason: "end_turn" });
+  });
+
+  it("turn_finished without times leaves the turn untimed rather than guessing", () => {
+    boundTab();
+    apply(
+      d("text_chunk", { message_id: "m", delta: "Done." }),
+      d("turn_finished", { stop_reason: "end_turn", turn_seq: 1 }),
+    );
+    expect(last().workedMs).toBeUndefined();
+    expect(last().stopReason).toBe("end_turn");
   });
 
   it("turn_finished(cancelled) marks unfinished tool calls failed", () => {
@@ -652,6 +728,79 @@ describe("applyAgentDelta: turn terminals", () => {
     expect(paths).toEqual(["/tmp/project/loc.ts", "/tmp/project/p.ts"]);
   });
 
+  it("the native engine's patch counts every file it names, each by its own hunks", () => {
+    boundTab();
+    const nativeEdit = (patch: string) =>
+      d("tool_call_upserted", {
+        message_id: "t",
+        tool_call: wireTool("tc1", {
+          tool_name: "Edit /tmp/project/a.rs (+1 more)",
+          kind: "edit",
+          status: "completed",
+          arguments: { paths: ["/tmp/project/a.rs", "/tmp/project/b.rs"], patch },
+        }),
+      });
+    apply(d("status", { status: "running", turn_seq: 1 }), nativeEdit(""));
+    const revision = session().toolRevision;
+    apply(nativeEdit("@@ -1 +1,2 @@\n x\n+y\n\nnew file\n"));
+    // Each sighting replaces the call's files rather than adding to them.
+    expect(Object.values(session().turnScratch!.tools)).toEqual([
+      { path: "/tmp/project/a.rs", kind: "edit", added: 1, removed: 0, created: false },
+      { path: "/tmp/project/b.rs", kind: "edit", added: 1, removed: 0, created: true },
+    ]);
+    // Any upsert moves the revision a view of the session's edits listens to.
+    expect(session().toolRevision).toBe((revision ?? 0) + 1);
+  });
+
+  it("a file edited, then renamed, in one turn is one file where it went", () => {
+    boundTab();
+    const hunks = "@@ -1 +1 @@\n-c\n+d\n";
+    apply(
+      d("status", { status: "running", turn_seq: 1 }),
+      d("tool_call_upserted", {
+        message_id: "t",
+        tool_call: wireTool("tc1", {
+          tool_name: "Edit /tmp/project/c.rs",
+          kind: "edit",
+          status: "completed",
+          arguments: { paths: ["/tmp/project/c.rs"], patch: "@@ -1 +1 @@\n-a\n+b\n" },
+        }),
+      }),
+      d("tool_call_upserted", {
+        message_id: "t",
+        tool_call: wireTool("tc2", {
+          tool_name: "Edit /tmp/project/c.rs",
+          kind: "edit",
+          status: "completed",
+          arguments: {
+            paths: ["/tmp/project/c.rs"],
+            patch: `${hunks}\n\nMoved to: /tmp/project/d.rs`,
+            changes: [
+              {
+                path: "/tmp/project/c.rs",
+                kind: "rename",
+                lines: [0, 4],
+                movePath: "/tmp/project/d.rs",
+              },
+            ],
+          },
+        }),
+      }),
+      d("text_chunk", { message_id: "m", delta: "Renamed." }),
+      d("turn_finished", { stop_reason: "end_turn", turn_seq: 1 }),
+    );
+    expect(last().turnSummary?.files).toEqual([
+      {
+        path: "/tmp/project/d.rs",
+        kind: "edit",
+        added: 2,
+        removed: 2,
+        created: false,
+        movedFrom: "/tmp/project/c.rs",
+      },
+    ]);
+  });
+
   it("turn_failed fails live tool calls, says what went wrong, and errors the session", () => {
     boundTab();
     apply(
@@ -780,11 +929,34 @@ describe("applyAgentDelta: a whole turn, in wire order", () => {
     expect(messages()[3].toolCalls[0].result).toBe("a.ts\nb.ts\n");
   });
 
-  // `startedAt` is the only field on a tool call the wire does not carry — the
-  // session-delta wire carries no start time today, so the store stamps
-  // one. The live elapsed figure on a running block is read from it, which
-  // makes "stamped once, never restarted" the invariant worth pinning.
-  it("stamps a tool call's start on first sight and keeps it across updates", () => {
+  it("takes a tool call's times from the wire", () => {
+    boundTab();
+    apply(
+      d("tool_call_upserted", {
+        message_id: "t",
+        tool_call: wireTool("tc1", { started_at_ms: 5_000 }),
+      }),
+    );
+    expect(last().toolCalls[0]).toMatchObject({ startedAt: 5_000 });
+    expect(last().toolCalls[0].endedAt).toBeUndefined();
+    apply(
+      d("tool_call_upserted", {
+        message_id: "t",
+        tool_call: wireTool("tc1", {
+          status: "completed",
+          started_at_ms: 5_000,
+          ended_at_ms: 9_000,
+        }),
+      }),
+    );
+    expect(last().toolCalls[0]).toMatchObject({ startedAt: 5_000, endedAt: 9_000 });
+  });
+
+  // A call the wire sent without a start (an older build, a mock) is stamped
+  // at first sight. The live elapsed figure on a running block is read from
+  // it, which makes "stamped once, never restarted" the invariant worth
+  // pinning.
+  it("stamps a tool call's start on first sight when the wire has none, and keeps it", () => {
     boundTab();
     const before = Date.now();
     apply(d("tool_call_upserted", { message_id: "t", tool_call: wireTool("tc1") }));
@@ -801,5 +973,181 @@ describe("applyAgentDelta: a whole turn, in wire order", () => {
       }),
     );
     expect(last().toolCalls[0]).toMatchObject({ status: "completed", startedAt });
+  });
+});
+
+describe("applyAgentDelta: slept_mid_turn", () => {
+  // Rust names a turn the computer slept through (`src-tauri/src/sleep_watch.rs`)
+  // ahead of that turn's terminal. While the turn runs it is live session state
+  // (the composer pill); when the turn ends it is frozen onto the turn's last
+  // message as an `interruption` record — never text in the transcript, which
+  // would read as the agent speaking.
+
+  it("is live while the turn runs, then a record on the reply it cut into", () => {
+    boundTab();
+    apply(
+      d("status", { status: "running", turn_seq: 1 }),
+      d("text_chunk", { message_id: "a", delta: "half a rep" }),
+      d("slept_mid_turn", { turn_seq: 1, slept_secs: 900 }),
+    );
+    expect(session().sleptMidTurn).toMatchObject({ turnSeq: 1, sleptSecs: 900 });
+    // Nothing in the transcript yet, and later text still joins the reply.
+    apply(d("text_chunk", { message_id: "a", delta: "ly" }));
+    expect(messages()).toHaveLength(2);
+    expect(last().content).toBe("half a reply");
+
+    apply(
+      d("turn_finished", { stop_reason: "end_turn", turn_seq: 1 }),
+      d("status", { status: "idle", turn_seq: 1 }),
+    );
+    expect(messages()).toHaveLength(2);
+    expect(last()).toMatchObject({
+      content: "half a reply",
+      interruption: { cause: "sleep", sleptSecs: 900, outcome: "finished" },
+    });
+    expect(session().sleptMidTurn).toBeUndefined();
+  });
+
+  it("a stopped turn records that it was stopped", () => {
+    boundTab();
+    apply(
+      d("status", { status: "running", turn_seq: 1 }),
+      d("text_chunk", { message_id: "a", delta: "partial" }),
+      d("slept_mid_turn", { turn_seq: 1, slept_secs: 60 }),
+      d("turn_finished", { stop_reason: "cancelled", turn_seq: 1 }),
+    );
+    expect(last().interruption?.outcome).toBe("stopped");
+  });
+
+  it("a failure on waking becomes the record, with the agent's error folded in", () => {
+    boundTab();
+    apply(
+      d("status", { status: "running", turn_seq: 1 }),
+      d("text_chunk", { message_id: "a", delta: "partial" }),
+      d("slept_mid_turn", { turn_seq: 1, slept_secs: 600 }),
+      // The projector sends the error status before the failure itself.
+      d("status", { status: "error", turn_seq: 1 }),
+      d("turn_failed", { error: "error decoding response body", turn_seq: 1 }),
+    );
+    // No bare "Error:" line: the record carries the error.
+    expect(messages().some((m) => m.content.startsWith("Error:"))).toBe(false);
+    expect(last()).toMatchObject({
+      content: "partial",
+      interruption: { outcome: "failed", error: "error decoding response body" },
+    });
+    expect(session().status).toBe("error");
+  });
+
+  it("a sleep between the error status and the failure still folds the error in", () => {
+    boundTab();
+    apply(
+      d("status", { status: "running", turn_seq: 1 }),
+      d("text_chunk", { message_id: "a", delta: "partial" }),
+      d("status", { status: "error", turn_seq: 1 }),
+      d("slept_mid_turn", { turn_seq: 1, slept_secs: 600 }),
+      d("turn_failed", { error: "error decoding response body", turn_seq: 1 }),
+    );
+    expect(messages().some((m) => m.content.startsWith("Error:"))).toBe(false);
+    expect(last()).toMatchObject({
+      content: "partial",
+      interruption: { outcome: "failed", error: "error decoding response body" },
+    });
+  });
+
+  it("a sleep that arrives after the failure replaces its error line", () => {
+    boundTab();
+    apply(
+      d("status", { status: "running", turn_seq: 1 }),
+      d("text_chunk", { message_id: "a", delta: "partial" }),
+      d("turn_failed", { error: "error decoding response body", turn_seq: 1 }),
+      d("status", { status: "error", turn_seq: 1 }),
+      d("slept_mid_turn", { turn_seq: 1, slept_secs: 600 }),
+    );
+    expect(messages().some((m) => m.content.startsWith("Error:"))).toBe(false);
+    expect(last()).toMatchObject({
+      content: "partial",
+      interruption: { outcome: "failed", error: "error decoding response body" },
+    });
+  });
+
+  it("a turn cut off before any output gets an empty message to hold the record", () => {
+    boundTab();
+    apply(
+      d("status", { status: "running", turn_seq: 1 }),
+      d("slept_mid_turn", { turn_seq: 1, slept_secs: 600 }),
+      d("turn_failed", { error: "connection reset", turn_seq: 1 }),
+    );
+    expect(last()).toMatchObject({
+      role: "assistant",
+      content: "",
+      interruption: { outcome: "failed" },
+    });
+  });
+
+  it("records a sleep that arrives after the turn ended straight onto it", () => {
+    boundTab();
+    apply(
+      d("status", { status: "running", turn_seq: 1 }),
+      d("text_chunk", { message_id: "a", delta: "done" }),
+      d("turn_finished", { stop_reason: "end_turn", turn_seq: 1 }),
+      d("status", { status: "idle", turn_seq: 1 }),
+      d("slept_mid_turn", { turn_seq: 1, slept_secs: 60 }),
+    );
+    expect(last()).toMatchObject({ content: "done", interruption: { outcome: "finished" } });
+    expect(session().sleptMidTurn).toBeUndefined();
+  });
+
+  it("drops a sleep for a superseded turn", () => {
+    boundTab();
+    apply(
+      d("status", { status: "running", turn_seq: 2 }),
+      d("slept_mid_turn", { turn_seq: 1, slept_secs: 60 }),
+    );
+    expect(session().sleptMidTurn).toBeUndefined();
+    expect(messages()).toHaveLength(1);
+  });
+
+  it("a held sleep does not outlive its turn into the next one", () => {
+    boundTab();
+    apply(
+      d("status", { status: "running", turn_seq: 1 }),
+      d("slept_mid_turn", { turn_seq: 1, slept_secs: 60 }),
+      // A bare terminal with no turn_finished / turn_failed behind it.
+      d("status", { status: "idle", turn_seq: 1 }),
+    );
+    useChatStore.getState().actions.addMessage(TAB, "user", "next");
+    apply(
+      d("status", { status: "running", turn_seq: 2 }),
+      d("text_chunk", { message_id: "b", delta: "fresh" }),
+      d("turn_finished", { stop_reason: "end_turn", turn_seq: 2 }),
+    );
+    expect(messages().some((m) => m.interruption)).toBe(false);
+  });
+
+  it("a late sleep after the next prompt was sent records nothing", () => {
+    boundTab();
+    apply(
+      d("status", { status: "running", turn_seq: 1 }),
+      d("text_chunk", { message_id: "a", delta: "done" }),
+      d("turn_finished", { stop_reason: "end_turn", turn_seq: 1 }),
+      d("status", { status: "idle", turn_seq: 1 }),
+    );
+    // Sent before turn 2's running status arrives.
+    useChatStore.getState().actions.addMessage(TAB, "user", "next");
+    apply(d("slept_mid_turn", { turn_seq: 1, slept_secs: 60 }));
+    expect(last()).toMatchObject({ role: "user", content: "next" });
+    expect(messages().some((m) => m.interruption)).toBe(false);
+    expect(session().sleptMidTurn).toBeUndefined();
+  });
+
+  it("an agent dying after the sleep still records it", () => {
+    boundTab();
+    apply(
+      d("status", { status: "running", turn_seq: 1 }),
+      d("text_chunk", { message_id: "a", delta: "partial" }),
+      d("slept_mid_turn", { turn_seq: 1, slept_secs: 60 }),
+      d("agent_disconnected", { reason: "process died" }),
+    );
+    expect(last().interruption?.outcome).toBe("disconnected");
   });
 });

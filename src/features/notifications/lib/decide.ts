@@ -119,6 +119,7 @@ const TARGET_LABEL: Record<NotificationTarget["type"], string> = {
   settings: "Atlas",
   "git-panel": "Git",
   "config-file": "Atlas",
+  "pull-request": "Pull request",
 };
 
 /** Agent, app and Chat copy is already banner-shaped (title, subtitle, body); the OS shows

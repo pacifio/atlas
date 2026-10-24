@@ -4474,6 +4474,8 @@ mod diff_path_tests {
             raw_output: None,
             content_blocks: blocks,
             parent_tool_call_id: None,
+            started_at_ms: None,
+            ended_at_ms: None,
         }
     }
 
@@ -4519,6 +4521,8 @@ mod diff_path_tests {
             raw_output: None,
             content_blocks: Vec::new(),
             parent_tool_call_id: None,
+            started_at_ms: None,
+            ended_at_ms: None,
         }
     }
 

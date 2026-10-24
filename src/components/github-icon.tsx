@@ -6,8 +6,8 @@ import { cn } from "@/lib/utils";
  *
  * lucide-react 1.x removed every brand icon, `Github` among them. The eight
  * call sites that used it want a lucide-shaped component: `size` in pixels,
- * `strokeWidth`, `className`, and — at three of them (`ModalAction`,
- * `StatusRow`, `RightPanel`'s section list) — the ability to be passed *as a
+ * `strokeWidth`, `className`, and — at two of them (`StatusRow`,
+ * `RightPanel`'s section list) — the ability to be passed *as a
  * value* into a prop typed `LucideIcon` / `typeof GitBranch`. That type is a
  * `ForwardRefExoticComponent`, which a plain function component is not
  * assignable to, hence `forwardRef`.

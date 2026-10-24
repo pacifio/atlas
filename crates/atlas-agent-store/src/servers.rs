@@ -41,6 +41,7 @@ use crate::node::{
 };
 use crate::npm_tree::{install_state, InstallState, NpmPlatform};
 use crate::registry::{current_platform_key, RegistryTargetConfig};
+use crate::secrets::SecretEnv;
 
 /// The environment an agent inherits from the project it is opened in.
 ///
@@ -103,6 +104,7 @@ pub struct LocalCustomAgent {
     pub(crate) command: AgentServerCommand,
     pub(crate) project_env: Arc<dyn ProjectEnvironment>,
     pub(crate) byok_env: HashMap<String, String>,
+    pub(crate) secret_env: SecretEnv,
 }
 
 impl ExternalAgentServer for LocalCustomAgent {
@@ -114,10 +116,13 @@ impl ExternalAgentServer for LocalCustomAgent {
         let mut command = self.command.clone();
         let project_env = self.project_env.project_env();
         let byok_env = self.byok_env.clone();
+        let secret_env = self.secret_env.clone();
         Box::pin(async move {
             // A custom entry's own env is the "settings" layer — it is the most
             // specific thing the user said about this agent.
-            let settings_env = command.env.take().unwrap_or_default();
+            let settings_env = secret_env
+                .layer_over(command.env.take().unwrap_or_default())
+                .await;
             command.env = Some(layered_env(
                 project_env.await,
                 &HashMap::new(),
@@ -140,7 +145,11 @@ pub struct LocalRegistryArchiveAgent {
     pub(crate) installation_dir: PathBuf,
     pub(crate) version: Arc<str>,
     pub(crate) targets: HashMap<String, RegistryTargetConfig>,
+    /// The user's arguments, after the distribution's own.
+    pub(crate) settings_args: Vec<String>,
     pub(crate) settings_env: HashMap<String, String>,
+    /// Sensitive values, layered over `settings_env` at launch.
+    pub(crate) secret_env: SecretEnv,
     pub(crate) byok_env: HashMap<String, String>,
     pub(crate) loading_status: Option<watch::Sender<Option<String>>>,
 }
@@ -183,7 +192,9 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
         let installation_dir = self.installation_dir.clone();
         let version = self.version.clone();
         let targets = self.targets.clone();
+        let settings_args = self.settings_args.clone();
         let settings_env = self.settings_env.clone();
+        let secret_env = self.secret_env.clone();
         let byok_env = self.byok_env.clone();
         let loading_status = self.loading_status.clone();
 
@@ -203,6 +214,7 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
                     )
                 })?;
 
+                let settings_env = secret_env.layer_over(settings_env).await;
                 let env = layered_env(
                     project_env.await,
                     &target.env,
@@ -241,6 +253,7 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
                 });
 
                 let mut args = target.args.clone();
+                args.extend(settings_args);
                 args.extend(extra_args);
 
                 Ok(AgentServerCommand {
@@ -414,7 +427,11 @@ pub struct LocalRegistryNpxAgent {
     pub(crate) package: String,
     pub(crate) args: Vec<String>,
     pub(crate) distribution_env: HashMap<String, String>,
+    /// The user's arguments, after the distribution's own.
+    pub(crate) settings_args: Vec<String>,
     pub(crate) settings_env: HashMap<String, String>,
+    /// Sensitive values, layered over `settings_env` at launch.
+    pub(crate) secret_env: SecretEnv,
     pub(crate) byok_env: HashMap<String, String>,
     pub(crate) loading_status: Option<watch::Sender<Option<String>>>,
 }
@@ -467,8 +484,10 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
         let version = self.version.clone();
         let package = self.package.clone();
         let args = self.args.clone();
+        let settings_args = self.settings_args.clone();
         let distribution_env = self.distribution_env.clone();
         let settings_env = self.settings_env.clone();
+        let secret_env = self.secret_env.clone();
         let byok_env = self.byok_env.clone();
         let loading_status = self.loading_status.clone();
 
@@ -512,6 +531,7 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
                 // own, and the point of this layer is that ours wins.
                 let mut base = project_env.await;
                 base.extend(npm_command_env(&node_binary));
+                let settings_env = secret_env.layer_over(settings_env).await;
                 let env = layered_env(base, &distribution_env, extra_env, &byok_env, &settings_env);
 
                 // The agent's own Node launch, plain at the boundary like npm's:
@@ -521,6 +541,7 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
                     .to_string_lossy()
                     .into_owned()];
                 command_args.extend(args);
+                command_args.extend(settings_args);
                 command_args.extend(extra_args);
 
                 Ok(AgentServerCommand {

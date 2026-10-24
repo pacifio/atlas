@@ -1,24 +1,15 @@
 import { toast } from "sonner";
 import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
 import { cn } from "@/lib/utils";
-import { Switch } from "@/ui/switch";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { LAYOUT_TEMPLATES, type LayoutTemplate } from "@/features/layout/templates";
 import { LayoutThumbnail } from "@/features/layout/components/layout-thumbnail";
-import {
-  SettingsGroup,
-  SettingsPage,
-  SettingsRow,
-  SettingsSection,
-} from "./layout/settings-layout";
+import { SettingsPage, SettingsSection } from "./layout/settings-layout";
 
 /** Settings → Layouts: the same predefined templates the ⌘⌥L switcher offers,
  *  applied with a click. */
 export function LayoutsSettings() {
   const switcherHint = useActionShortcut("nav.layoutSwitcher")?.label ?? "⌘⌥L";
-  const tabBarHint = useActionShortcut("panels.tabBar")?.label ?? "⌘⌥T";
-  const tabBarVisible = useLayoutStore.use.tabBarVisible();
-  const { setTabBarVisible } = useLayoutStore.use.actions();
   const apply = (t: LayoutTemplate) => {
     useLayoutStore.getState().actions.applyLayoutTemplate(t);
     toast.success(`Applied “${t.name}” layout`);
@@ -29,23 +20,6 @@ export function LayoutsSettings() {
       title="Layouts"
       description={`Rearrange panels and tabs into a ready-made project. ${switcherHint} switches layouts from anywhere.`}
     >
-      <SettingsSection title="Tabs">
-        <SettingsGroup>
-          <SettingsRow
-            anchor="tab-bar"
-            title="Show tab bar"
-            description={`The strip of tabs above each column. ${tabBarHint} toggles it too; the choice is remembered across restarts.`}
-            control={
-              <Switch
-                checked={tabBarVisible}
-                onCheckedChange={setTabBarVisible}
-                aria-label="Show tab bar"
-              />
-            }
-          />
-        </SettingsGroup>
-      </SettingsSection>
-
       <SettingsSection title="Templates">
         <div className="grid grid-cols-2 gap-3">
           {LAYOUT_TEMPLATES.map((t) => (

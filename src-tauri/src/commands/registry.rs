@@ -352,10 +352,27 @@ pub async fn acp_registry_uninstall(
 ) -> Result<(), String> {
     let host = app.state::<Arc<AgentHost>>().inner().clone();
     let mut settings = host.store().settings();
-    if settings.0.remove(&agent_id).is_none() {
+    let Some(removed) = settings.0.remove(&agent_id) else {
         return Ok(());
-    }
+    };
     persist(&host, &app_data_dir(&app), settings).await?;
+
+    // Its sensitive variables go with it: a reinstall starts clean, and the
+    // keychain keeps nothing for an agent that is gone.
+    let secrets = removed.secret_env().to_vec();
+    let agent = agent_id.clone();
+    // Every one, even after a failure: one stuck item mustn't keep the rest.
+    let failures = tauri::async_runtime::spawn_blocking(move || {
+        secrets
+            .iter()
+            .filter_map(|name| super::agent_secrets::delete(&agent, name).err())
+            .collect::<Vec<_>>()
+    })
+    .await
+    .unwrap_or_else(|e| vec![e.to_string()]);
+    for e in failures {
+        tracing::warn!(target: "atlas::agents", agent = %agent_id, "{e}");
+    }
 
     // A connection to an agent that is no longer installed must not survive the
     // uninstall — the next spawn would otherwise reach a process the user
@@ -412,7 +429,7 @@ pub fn acp_registry_metadata(
 /// Disk first: the store rebuild is what makes the agent spawnable, and an
 /// agent that is spawnable now but gone after a restart is worse than one that
 /// failed to install at all.
-async fn persist(
+pub(crate) async fn persist(
     host: &Arc<AgentHost>,
     data_dir: &std::path::Path,
     settings: atlas_agent_store::AllAgentServersSettings,

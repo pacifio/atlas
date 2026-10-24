@@ -45,8 +45,8 @@ export type PackComponentKind = "command" | "agent" | "rule";
 /**
  * An invokable component (command/agent/rule) shipped by an installed pack.
  * Mirrors the Rust `PackComponentMeta` (serde camelCase). Surfaced in the
- * My Skills list and the `#<kind>:` mention rail. Read-only — projection of
- * these into tools is managed from the Packs tab.
+ * Installed list and the `#<kind>:` mention rail. Read-only — projection of
+ * these into tools is managed from the pack's dialog.
  */
 export interface PackComponentMeta {
   pack: string;

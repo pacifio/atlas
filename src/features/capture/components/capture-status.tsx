@@ -10,24 +10,18 @@ import type { Binding, CaptureHealth } from "../types";
 import { cn } from "@/lib/utils";
 
 /**
- * The recording dot: a small green pulse while capture is live.
+ * The recording dot: green while capture is live.
  *
- * Green and *moving* is the whole signal — a static coloured dot in a titlebar
- * reads as a status LED nobody looks at twice, and the point of this one is to
- * be noticed once and then ignored. The pulse is a second ring behind the dot
- * rather than an opacity animation on the dot itself, so the core stays at full
- * strength and only the halo breathes; a fading dot looks like a rendering bug.
+ * A steady dot, not a pulsing one: capture is often on for hours, and a
+ * blinking light in the bar for all of that time pulls the eye every time it
+ * moves. Green means capturing; it is there to be checked, not to call out.
  *
  * The wrapper is a fixed-size grid cell, which is what keeps it on the text
- * baseline's centre line: sizing the ring off the dot made the flex line box
- * taller than the dot and pushed it visibly off-centre.
+ * baseline's centre line.
  */
 export function CaptureDot({
-  live,
   tone = "success",
 }: {
-  /** Pulsing only while capture is actually running. */
-  live: boolean;
   tone?: "success" | "warning" | "error" | "idle";
 }) {
   const color =
@@ -41,12 +35,6 @@ export function CaptureDot({
 
   return (
     <span className="relative grid size-[10px] shrink-0 place-items-center" aria-hidden>
-      {live && (
-        <span
-          className="absolute size-[10px] animate-ping rounded-full opacity-40"
-          style={{ backgroundColor: color, animationDuration: "1.8s" }}
-        />
-      )}
       <span className="relative size-[5px] rounded-full" style={{ backgroundColor: color }} />
     </span>
   );
@@ -75,7 +63,7 @@ export function StatusDot({
 
   return (
     <span className={cn("flex items-center", tone === "idle" && "opacity-70")}>
-      <CaptureDot live={!!binding?.enabled && tone === "success"} tone={tone} />
+      <CaptureDot tone={tone} />
     </span>
   );
 }

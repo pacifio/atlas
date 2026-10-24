@@ -10,8 +10,8 @@
 // not re-render a single transcript row. Panel state lives in its own store and
 // rows only ever write to it imperatively.
 //
-// Diffs are NOT here. A turn's changes open `GitDiffModal` — the real
-// side-by-side viewer at full-window size. Two code panes plus a gutter do not
+// Diffs are NOT here. A turn's changes open in the review panel beside the
+// session, in the turn's own scope (`openTurnDiff`). Two code panes plus a gutter do not
 // fit in a 460px column, so every attempt to host a diff here ended either with
 // clipped lines or with the whole box scrolling sideways.
 

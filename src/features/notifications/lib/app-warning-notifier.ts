@@ -51,6 +51,7 @@ import { deliverNotification } from "./deliver";
 import { registerNotificationAction } from "./notification-actions";
 import { prefsFromSettings } from "./prefs";
 import { clearResolved } from "./resolve";
+import { sourceControlShown } from "@/features/layout/lib/source-control";
 
 function envFor(targetVisible: boolean, projectActive = true): NotificationEnv {
   const windowFocused = isWindowFocused();
@@ -66,11 +67,9 @@ function envFor(targetVisible: boolean, projectActive = true): NotificationEnv {
 
 const prefs = () => prefsFromSettings(useSettingsStore.getState().settings);
 
+/** `shown` is set only while the Settings screen is up (`SettingsScreen`). */
 function settingsShows(section: string): boolean {
-  if (useSettingsNav.getState().shown !== section) return false;
-  const layout = useLayoutStore.getState();
-  const shown = [layout.activeTabId, ...Object.values(layout.activeByGroup)];
-  return shown.some((id) => id && layout.tabs.find((t) => t.id === id)?.type === "settings");
+  return useSettingsNav.getState().shown === section;
 }
 
 function projectFor(path: string): (ProjectRef & { path: string }) | null {
@@ -89,9 +88,9 @@ const projectPath = (projectId: string) =>
   useProjectStore.getState().projects.find((p) => p.id === projectId)?.path;
 
 function gitPanelShowing(p: ProjectRef): boolean {
-  const rp = useLayoutStore.getState().rightPanel;
+  const layout = useLayoutStore.getState();
   return (
-    p.projectActive && rp.visible && rp.mode === "source-control" && rp.activeSection === "changes"
+    p.projectActive && sourceControlShown(layout) && layout.sourceControl.section === "changes"
   );
 }
 

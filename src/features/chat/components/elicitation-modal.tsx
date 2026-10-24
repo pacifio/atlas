@@ -88,7 +88,7 @@ export function ElicitationModal({
   return (
     <Dialog.Root open onOpenChange={(o) => !o && void respond("cancel")}>
       <Dialog.Portal>
-        <DialogOverlay className="backdrop-blur-sm" />
+        <DialogOverlay blur />
         <Dialog.Popup
           className={cn(
             "fixed left-1/2 top-[24%] z-modal -translate-x-1/2",

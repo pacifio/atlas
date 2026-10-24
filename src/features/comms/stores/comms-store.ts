@@ -174,6 +174,9 @@ interface CommsState {
 
     /** Navigate the ACTIVE tab to a conversation (creates a tab if none). */
     openConversation: (convId: string) => void;
+    /** Open a conversation in a tab of its own (⌘-click), keeping the
+     *  current one. */
+    openConversationInNewTab: (convId: string) => void;
     /** Navigate the active tab back to the home view. */
     goHome: () => void;
     /** A fresh view, starting at home. */
@@ -589,6 +592,12 @@ export const useCommsStore = createSelectors(
           panelOpen: true,
         }));
         releaseIfUnshown(leaving, tabs);
+        loadConversation(convId, set);
+      },
+
+      openConversationInNewTab: (convId) => {
+        const tab = { id: `tab_${uid()}`, convId };
+        set((s) => ({ tabs: [...s.tabs, tab], activeTabId: tab.id, panelOpen: true }));
         loadConversation(convId, set);
       },
 
@@ -1116,6 +1125,9 @@ function closeOrgScopedTabs(): void {
   const layout = useLayoutStore.getState();
   for (const tab of layout.tabs) {
     if (ORG_SCOPED_TYPES.has(tab.type)) layout.actions.closeTab(tab.id);
+  }
+  if (layout.destination && ORG_SCOPED_TYPES.has(layout.destination.type)) {
+    layout.actions.closeTab(layout.destination.id);
   }
   // The spaces metadata cache is org-scoped too — page trees and authors
   // for the outgoing org's conversations must not survive into the next.

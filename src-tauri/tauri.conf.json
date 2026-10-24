@@ -22,13 +22,9 @@
         "transparent": false,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
+        "trafficLightPosition": { "x": 16, "y": 18 },
         "acceptFirstMouse": true,
-        "backgroundColor": [
-          0,
-          0,
-          0,
-          255
-        ]
+        "backgroundColor": [0, 0, 0, 255]
       }
     ],
     "security": {
@@ -37,9 +33,7 @@
       "assetProtocol": {
         "enable": true,
         "scope": {
-          "allow": [
-            "$HOME/**"
-          ],
+          "allow": ["$HOME/**"],
           "deny": []
         }
       },
@@ -49,10 +43,7 @@
   "plugins": {},
   "bundle": {
     "active": true,
-    "targets": [
-      "app",
-      "dmg"
-    ],
+    "targets": ["app", "dmg"],
     "resources": {
       "resources/nvm.sh": "resources/nvm.sh",
       "licenses/Atlas-LICENSE.txt": "licenses/Atlas-LICENSE.txt",

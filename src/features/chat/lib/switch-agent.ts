@@ -1,5 +1,5 @@
 import { toast } from "sonner";
-import { useChatStore } from "@/features/chat/stores/chat-store";
+import { UNTITLED_SESSION, useChatStore } from "@/features/chat/stores/chat-store";
 import { useSettingsStore } from "@/features/settings/stores/settings-store";
 import {
   NATIVE_AGENT,
@@ -18,6 +18,7 @@ import {
   type TurnEnd,
 } from "./remember";
 import { projectPathForTab } from "./tab-project";
+import { trustedMentionPaths } from "./picked-mentions";
 
 /** The window event a handoff fires; the composer of `tabId` inserts the
  *  previous conversation as a past-session chip. */
@@ -124,7 +125,7 @@ export function switchAgentForTab(
       return;
     }
     if (behavior === "handoff" && sess?.acpSessionId) {
-      const title = sess.title && sess.title !== "New Chat" ? sess.title : "Previous session";
+      const title = sess.title && sess.title !== UNTITLED_SESSION ? sess.title : "Previous session";
       handoff = {
         kind: "past_session",
         id: sess.acpSessionId,
@@ -156,14 +157,20 @@ export function switchAgentForTab(
     // Same shape as the composer's first-while-starting send: bubble first,
     // title from the text, status running, prompt held on the session.
     const { actions } = useChatStore.getState();
-    actions.addMessage(tabId, "user", held.content, held.attachments);
+    actions.addMessage(
+      tabId,
+      "user",
+      held.content,
+      held.attachments,
+      trustedMentionPaths(held.mentions),
+    );
     actions.setSessionTitle(
       tabId,
       held.content.slice(0, 40) + (held.content.length > 40 ? "..." : ""),
     );
     actions.updateSessionStatus(tabId, "running");
     actions.setPendingSend(tabId, held);
-    for (const text of restTyped) actions.enqueueMessage(tabId, text);
+    for (const text of restTyped) actions.enqueueMessage(tabId, text, []);
   }
   if (handoff && firstTyped !== undefined) {
     toast(
@@ -349,7 +356,7 @@ async function rememberThenSwitch(
       model: pending.model,
     });
     if (stillOn(tabId, from)) {
-      for (const text of typed) useChatStore.getState().actions.enqueueMessage(tabId, text);
+      for (const text of typed) useChatStore.getState().actions.enqueueMessage(tabId, text, []);
     }
   } finally {
     pendingSwitches.delete(tabId);

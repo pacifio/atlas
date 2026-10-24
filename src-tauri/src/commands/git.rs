@@ -489,62 +489,6 @@ pub async fn git_diff_all(path: String) -> Result<String, String> {
     .map_err(|e| e.to_string())?
 }
 
-/// Uncommitted changes (working tree against HEAD) to just `files`, as one
-/// unified diff — for "what is this thread's change right now".
-///
-/// Paths are relative to `path`, and so is the output (`--relative`), so a
-/// Project opened in a subdirectory of its repository reads back its own
-/// spelling of each path. Untracked files — ones the thread created and nobody
-/// has staged — are invisible to `git diff HEAD`, so each gets a `--no-index`
-/// diff against `/dev/null` (which exits 1 on a difference, by design).
-#[tauri::command]
-pub async fn git_diff_paths(
-    path: String,
-    files: Vec<String>,
-    ignore_whitespace: Option<bool>,
-) -> Result<String, String> {
-    if files.is_empty() {
-        return Ok(String::new());
-    }
-    tokio::task::spawn_blocking(move || {
-        // `-w`: `diffIgnoreWhitespace`; this diff is only read, never staged.
-        let ws: &[&str] = if ignore_whitespace.unwrap_or(false) {
-            &["-w"]
-        } else {
-            &[]
-        };
-        let tracked = git_read()
-            .args(["diff", "HEAD", "--relative"])
-            .args(ws)
-            .arg("--")
-            .args(&files)
-            .current_dir(&path)
-            .output()
-            .map_err(|e| e.to_string())?;
-        let mut out = String::from_utf8_lossy(&tracked.stdout).into_owned();
-
-        let untracked = git_read()
-            .args(["ls-files", "--others", "--exclude-standard", "--"])
-            .args(&files)
-            .current_dir(&path)
-            .output()
-            .map_err(|e| e.to_string())?;
-        for file in String::from_utf8_lossy(&untracked.stdout).lines() {
-            let Ok(created) = git_read()
-                .args(["diff", "--no-index", "--", "/dev/null", file])
-                .current_dir(&path)
-                .output()
-            else {
-                continue;
-            };
-            out.push_str(&String::from_utf8_lossy(&created.stdout));
-        }
-        Ok(out)
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
 #[tauri::command]
 pub async fn git_diff_file(path: String, file: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
@@ -615,20 +559,68 @@ pub async fn git_list_branches(path: String) -> Result<Vec<GitBranch>, String> {
     .map_err(|e| e.to_string())?
 }
 
+/// Refuse a branch name git would read as an option. `git check-ref-format`
+/// refuses one too, but only after git has already parsed it as a flag.
+fn branch_arg(branch: &str) -> Result<&str, GitErrorPayload> {
+    if branch.is_empty() || branch.starts_with('-') {
+        return Err(GitErrorPayload::internal(format!(
+            "'{branch}' is not a branch name."
+        )));
+    }
+    Ok(branch)
+}
+
+/// `git checkout <branch> --`: the trailing `--` pins `branch` as a revision,
+/// so a name that is also a file is never read as a path to restore.
+fn checkout(path: &str, branch: &str) -> Result<(), GitErrorPayload> {
+    GitCommand::new(path, &["checkout", branch_arg(branch)?, "--"]).run()?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn git_checkout(path: String, branch: String) -> Result<(), GitErrorPayload> {
-    tokio::task::spawn_blocking(move || {
-        GitCommand::new(&path, &["checkout", &branch]).run()?;
-        Ok(())
-    })
-    .await
-    .map_err(join_err)?
+    tokio::task::spawn_blocking(move || checkout(&path, &branch))
+        .await
+        .map_err(join_err)?
+}
+
+/// Switch `path` to `branch` only if its working tree is clean (untracked
+/// files count): the check and the switch run back to back in one blocking
+/// task, so nothing the UI read earlier can have gone stale in between. A
+/// dirty tree is refused with `uncommitted-changes` and left alone. For
+/// starting a session on another session's branch, where the checkout may be
+/// shared with an agent Atlas does not run.
+#[tauri::command]
+pub async fn git_switch_if_clean(path: String, branch: String) -> Result<(), GitErrorPayload> {
+    tokio::task::spawn_blocking(move || switch_if_clean(&path, &branch))
+        .await
+        .map_err(join_err)?
+}
+
+fn switch_if_clean(path: &str, branch: &str) -> Result<(), GitErrorPayload> {
+    let branch = branch_arg(branch)?;
+    let status = GitCommand::new(path, &["status", "--porcelain", "--untracked-files=normal"])
+        .read_only()
+        .run()?;
+    if !status.stdout.trim().is_empty() {
+        let code = atlas_git::GitErrorCode::UncommittedChanges;
+        return Err(GitErrorPayload {
+            code,
+            message: atlas_git::error::friendly_message(code, &[], None),
+            raw_stderr: String::new(),
+            command: "git status --porcelain".into(),
+            exit_code: None,
+            files: Vec::new(),
+            hint: None,
+        });
+    }
+    checkout(path, branch)
 }
 
 #[tauri::command]
 pub async fn git_create_branch(path: String, name: String) -> Result<(), GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
-        GitCommand::new(&path, &["checkout", "-b", &name]).run()?;
+        GitCommand::new(&path, &["checkout", "-b", branch_arg(&name)?]).run()?;
         Ok(())
     })
     .await
@@ -748,6 +740,52 @@ mod tests {
             .status()
             .expect("git is on PATH");
         assert!(status.success(), "git {args:?} failed");
+    }
+
+    fn head(repo: &Path) -> String {
+        let out = atlas_process::command("git")
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    }
+
+    /// Starting a session on another session's branch: the switch happens
+    /// only on a clean tree, untracked files included, and a name that is
+    /// also a file, or that looks like an option, is never misread.
+    #[test]
+    fn switch_if_clean_refuses_a_dirty_tree_and_reads_the_branch_safely() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        git(root, &["init", "-q", "-b", "main"]);
+        fs::write(root.join("f"), "a").unwrap();
+        // A file named like the branch: plain `git checkout feature` with
+        // a pathspec reading would restore it rather than switch.
+        fs::write(root.join("feature"), "a file").unwrap();
+        git(root, &["add", "-A"]);
+        git(root, &["commit", "-qm", "init"]);
+        git(root, &["branch", "feature"]);
+        let path = root.to_string_lossy().into_owned();
+
+        fs::write(root.join("untracked"), "x").unwrap();
+        let err = switch_if_clean(&path, "feature").unwrap_err();
+        assert_eq!(err.code, atlas_git::GitErrorCode::UncommittedChanges);
+        assert_eq!(head(root), "main", "left alone");
+        fs::remove_file(root.join("untracked")).unwrap();
+
+        fs::write(root.join("f"), "edited").unwrap();
+        assert!(switch_if_clean(&path, "feature").is_err());
+        assert_eq!(head(root), "main");
+        git(root, &["checkout", "-q", "--", "f"]);
+
+        for bad in ["-f", "--orphan=x", ""] {
+            assert!(switch_if_clean(&path, bad).is_err(), "{bad:?} refused");
+            assert_eq!(head(root), "main");
+        }
+
+        switch_if_clean(&path, "feature").unwrap();
+        assert_eq!(head(root), "feature");
     }
 
     /// `git_log` is branch-scoped unless a caller opts in. The Source-Control

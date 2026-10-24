@@ -39,6 +39,34 @@ export interface AgentLoginSpec {
   args: string[];
 }
 
+/** How the user set an external agent to launch: its entry in the installed
+ *  agents map. The registry decides the rest. */
+export interface AgentLaunch {
+  /** The executable, for an agent the user added by hand or from their PATH.
+   *  `null` for a registry install, whose command the registry index names. */
+  command: string | null;
+  /** Arguments after the command. For a registry install, appended to the
+   *  ones the registry gives. */
+  args: string[];
+  /** Extra environment for the agent's process, over the inherited one:
+   *  plain variables, then sensitive ones, each sorted by name. */
+  variables: AgentVariable[];
+}
+
+/** One environment variable. A sensitive one's value lives in the OS keychain
+ *  and never reaches the webview: `value` is always `null` for it here. */
+export interface AgentVariable {
+  name: string;
+  value: string | null;
+  sensitive: boolean;
+}
+
+/** A model the user added by id, which the agent didn't advertise. */
+export interface CustomModel {
+  id: string;
+  name?: string | null;
+}
+
 export interface AgentCatalogEntry {
   /** Plugin/spec id — what every agent command takes. */
   id: string;
@@ -70,6 +98,19 @@ export interface AgentCatalogEntry {
   supportsModes: boolean;
   supportsModels: boolean;
   transcript: AgentTranscript;
+  /** Off: still listed in Settings, but out of the agent picker and never
+   *  started. Always true for the native agent. */
+  enabled: boolean;
+  /** The user's name for it, shown in place of `name`. */
+  displayName: string | null;
+  /** `null` for the native agent, which runs in-process. */
+  launch: AgentLaunch | null;
+  /** Model ids the user hid from the model picker. */
+  hiddenModels: string[];
+  /** The order the user put its models in; the rest follow in the agent's. */
+  modelOrder: string[];
+  /** Models the user added by id. Always empty for the native agent. */
+  customModels: CustomModel[];
   login: AgentLoginSpec | null;
   iconDataUrl: string | null;
   helpUrl: string | null;

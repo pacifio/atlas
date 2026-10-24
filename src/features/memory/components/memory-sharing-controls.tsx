@@ -13,7 +13,7 @@ import { Share2, SlidersHorizontal, FileText, Server, Cpu, Check } from "lucide-
 import { cn } from "@/lib/utils";
 import { Hint } from "@/ui/tooltip";
 import { ProviderModelSelector } from "./provider-pickers";
-import { Toggle } from "@/features/settings/components/settings-controls";
+import { Switch } from "@/ui/switch";
 import { useByokStore } from "@/features/settings/stores/byok-store";
 import { CHAT_PROVIDERS } from "@/features/settings/lib/providers";
 import { useMemorySharingStore } from "../stores/memory-sharing-store";
@@ -161,14 +161,11 @@ export function MemorySharingControls({ projectPath }: { projectPath: string | n
                       </p>
                     )}
                   </div>
-                  <Toggle
-                    label={EXTERNAL_SESSIONS_LABEL}
+                  <Switch
+                    aria-label={EXTERNAL_SESSIONS_LABEL}
                     checked={fromExternalSessions}
                     disabled={!enabled}
-                    // The popover is card-coloured: the default off track
-                    // would vanish into it, leaving a floating thumb.
-                    className={cn(!fromExternalSessions && "bg-[var(--atlas-element-hover)]")}
-                    onChange={(on) => void setFromExternalSessions(on)}
+                    onCheckedChange={(on) => void setFromExternalSessions(on)}
                   />
                 </div>
               </div>

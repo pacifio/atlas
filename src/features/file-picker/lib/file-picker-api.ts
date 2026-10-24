@@ -48,6 +48,28 @@ export const fileIndex = {
     }),
 };
 
+/** Project roots whose index this session has asked the backend to open. */
+const openedFor = new Set<string>();
+
+/**
+ * Search one named project's index, not the active one's: the file tree
+ * beside a background project's file tab searches that project. The first
+ * search per project opens its index (`fileindex_open_project` is idempotent
+ * for a resident one and only walks when there is none).
+ */
+export async function searchProjectFiles(
+  workspaceId: string,
+  projectPath: string,
+  query: string,
+  limit: number,
+): Promise<FileMatch[]> {
+  if (!openedFor.has(projectPath)) {
+    await invoke<number>("fileindex_open_project", { path: projectPath, workspaceId });
+    openedFor.add(projectPath);
+  }
+  return invoke<FileMatch[]>("fileindex_search", { query, limit, workspaceId });
+}
+
 const FAIL_STATUS: FileIndexStatus = { indexed: false, count: 0, root: null };
 
 // One in-flight (re)index shared across all callers (Cmd+P, the @-mention
@@ -119,12 +141,14 @@ export async function ensureFileIndex(
 /** Forget every confirmed root — the project (window-level) closed. */
 export function markFileIndexClosed(): void {
   confirmedRoots.clear();
+  openedFor.clear();
 }
 
 /** Forget ONE root — its project's resident Rust index was torn down
  *  (project close / LRU eviction), so the fast path must not vouch for it. */
 export function markFileIndexClosedFor(path: string): void {
   confirmedRoots.delete(path);
+  openedFor.delete(path);
 }
 
 // ── Frontend cache of the file list ─────────────────────────────────────────

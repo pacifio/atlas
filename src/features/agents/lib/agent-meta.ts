@@ -98,7 +98,7 @@ export function agentMeta(agentTypeOrPluginId: string | null | undefined): Agent
     return {
       pluginId: PLUGIN_ID_BY_AGENT[firstParty],
       agentType: firstParty,
-      label: AGENT_LABEL[firstParty],
+      label: catalog?.displayName ?? AGENT_LABEL[firstParty],
       firstPartyIcon: firstParty,
       iconDataUrl: null,
       external: false,
@@ -113,7 +113,7 @@ export function agentMeta(agentTypeOrPluginId: string | null | undefined): Agent
     agentType: id,
     // Catalog first (it already merged manifest + install + discovery), then
     // the registry listing, then a last-resort prettified id.
-    label: catalog?.name ?? entry?.name ?? prettifyId(id),
+    label: catalog?.displayName ?? catalog?.name ?? entry?.name ?? prettifyId(id),
     firstPartyIcon: null,
     iconDataUrl: catalog?.iconDataUrl ?? entry?.iconDataUrl ?? null,
     external: true,
@@ -166,12 +166,14 @@ function prettifyId(id: string): string {
  *  picker, the memory dropdown and the background pre-warm all read it, so
  *  they cannot disagree about what is installed. Excluded by construction:
  *  the native agent (it is not a Marketplace agent), an agent merely detected
- *  on `PATH` (an offer to install, never a spawn candidate), and one whose
- *  install resolves to nothing runnable. */
+ *  on `PATH` (an offer to install, never a spawn candidate), one the user
+ *  turned off in Settings, and one whose install resolves to nothing runnable. */
 export function installedExternals(): AgentCatalogEntry[] {
   return useAgentRegistryStore
     .getState()
-    .catalog.filter((e) => e.kind !== "native" && e.installed && e.source !== "unavailable");
+    .catalog.filter(
+      (e) => e.kind !== "native" && e.installed && e.enabled && e.source !== "unavailable",
+    );
 }
 
 /** The agents the user can switch between: the native agent, then everything

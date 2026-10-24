@@ -9,7 +9,7 @@ type WireMessage = ReturnType<typeof snapshotMessageToWire>;
 
 /**
  * Session resume, shared by every "open a past chat" path
- * (`session-sidebar.handleOpenAgent`, `openAgentSession`).
+ * (`openThread` in `open-thread.ts`, `openAgentSession`).
  *
  * **One paint, after the session is loaded** — the view is not built until
  * `session/load` resolves, and the thread accumulates replayed entries

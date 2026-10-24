@@ -73,7 +73,7 @@ function Option({
   children: ReactNode;
 }) {
   return (
-    <DropdownMenuItem onClick={onSelect} className="gap-2">
+    <DropdownMenuItem onClick={onSelect}>
       <span className="min-w-0 flex-1 truncate">{children}</span>
       {count !== undefined && (
         <span className="shrink-0 tabular-nums text-2xs text-muted-foreground">{count}</span>

@@ -74,16 +74,6 @@ function sameBoard(a: BoardSession[], b: BoardSession[]): boolean {
 /** The chat half of the split. Wide enough for a code block in an answer. */
 const CHAT_WIDTH = 420;
 
-/**
- * The card's inset from the tab's edges, in px.
- *
- * Measured against the project rail's card rather than chosen: side by side
- * with the switcher, 6px read as a visibly wider gutter on the Timeline. The
- * divider and the header row are both positioned against this constant, so the
- * three cannot drift apart.
- */
-const CARD_INSET = 4;
-
 /** Mirrors `BOARD_LIMIT` in `capture.rs` — how many rows one board read returns. */
 const BOARD_LIMIT = 500;
 
@@ -668,37 +658,18 @@ export function ArtifactsPanel() {
   );
 
   return (
-    // The tab is chrome; the two scrollers are content sitting in it. That is
-    // the whole reason for the colour step and the rounded tops — a header that
-    // shares its background with the list under it needs a rule to separate
-    // them, and a curve says it better than a line.
-    <div className="flex h-full min-h-0 flex-col bg-[var(--card)]">
+    <div className="flex h-full min-h-0 flex-col bg-[var(--background)]">
       {error && (
         <p className="shrink-0 bg-[var(--atlas-status-error-background)] px-4 py-1.5 text-xs text-[var(--atlas-status-error-foreground)]">
           {error}
         </p>
       )}
 
-      {/* One card, inset on every side.
-       *
-       * The same recipe as the project rail and team chat: a near-black
-       * surface floating on the tab's own colour, its edge carried by a
-       * hairline ring with a soft shadow behind it. Inset on ALL four sides —
-       * it used to have no top margin, so its rounded top corners were cut
-       * off against the tab strip and the card read as a broken box rather
-       * than a floating one.
-       *
-       * There is no chrome bar above it any more. A breadcrumb that existed
-       * only while a Session was open appeared the instant you clicked a row,
-       * shoving the whole card down 32px with no transition — and it said the
-       * title that is already the first thing in the reader beside it. */}
+      {/* Flat, edge to edge. This was a rounded card inset 4px on a lighter
+          frame — a panel inside the column's own. The column border is the
+          edge; the board and the reader are separated by the dock's own rule. */}
       <div className="relative flex min-h-0 flex-1 flex-col">
-        <div
-          // On a near-black panel a shadow has almost nothing to darken, so
-          // the ring carries the edge and the shadow only lifts the card.
-          className="relative flex min-h-0 flex-1 overflow-hidden rounded-lg bg-background shadow-lg ring-1 ring-border"
-          style={{ margin: CARD_INSET }}
-        >
+        <div className="relative flex min-h-0 flex-1 overflow-hidden bg-background">
           {/* `flex`, not just `flex-1`: the board is a column that sizes
               itself with `flex-1 min-h-0` so its list scrolls inside a bounded
               height. In a non-flex parent that chain never resolves, the

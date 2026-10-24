@@ -1,120 +1,60 @@
-import { forwardRef, useState } from "react";
-import { CopyGlyph } from "@/ui/animated-icon";
-import { Eye, EyeOff } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { HintGroup, HintItem } from "@/ui/hint-group";
+import { useState } from "react";
+import { Input, type InputProps } from "@/ui/input";
 
 /**
- * SecretInput — a masked text field with reveal + copy affordances. Modular
- * primitive: used by the BYOK provider panel today, but kept generic so any
- * "enter / inspect a secret" surface can reuse it.
+ * A masked field for a secret that is already stored somewhere else.
  *
- * Controlled like a normal input via `value`/`onChange`. `onSubmit` fires on
- * Enter. `copyable` enables the inline copy button (copies the current value).
+ * It never holds the stored value: the field is always the replacement draft,
+ * and `configured` only changes the placeholder to say one exists. A draft is
+ * handed to `onCommit` on Enter or when the field loses focus, then cleared;
+ * Escape drops it. An empty draft commits nothing, so tabbing through a row
+ * can't erase a key.
  */
 export interface SecretInputProps extends Omit<
-  React.InputHTMLAttributes<HTMLInputElement>,
-  "type" | "onSubmit"
+  InputProps,
+  "type" | "value" | "defaultValue" | "onChange" | "autoComplete"
 > {
-  value: string;
-  onValueChange?: (next: string) => void;
-  onSubmit?: () => void;
-  copyable?: boolean;
-  /** Start revealed (default: masked). */
-  defaultRevealed?: boolean;
+  configured?: boolean;
+  onCommit: (value: string) => void;
 }
 
-export const SecretInput = forwardRef<HTMLInputElement, SecretInputProps>(function SecretInput(
-  {
-    value,
-    onValueChange,
-    onSubmit,
-    copyable = false,
-    defaultRevealed = false,
-    className,
-    onChange,
-    onKeyDown,
-    ...rest
-  },
-  ref,
-) {
-  const [revealed, setRevealed] = useState(defaultRevealed);
-  const [copied, setCopied] = useState(false);
-
-  const copy = async () => {
+export function SecretInput({
+  configured = false,
+  placeholder,
+  onCommit,
+  onBlur,
+  onKeyDown,
+  ...props
+}: SecretInputProps) {
+  const [draft, setDraft] = useState("");
+  const commit = () => {
+    const value = draft.trim();
     if (!value) return;
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1200);
-    } catch {
-      /* clipboard blocked — silently ignore */
-    }
+    setDraft("");
+    onCommit(value);
   };
-
   return (
-    <HintGroup>
-      <div
-        className={cn(
-          "group flex items-center gap-1 rounded-md border border-border bg-card",
-          "px-2 h-8 transition-colors focus-within:border-primary",
-          className,
-        )}
-      >
-        <input
-          ref={ref}
-          type={revealed ? "text" : "password"}
-          value={value}
-          spellCheck={false}
-          autoCapitalize="off"
-          autoCorrect="off"
-          autoComplete="off"
-          className={cn(
-            "flex-1 min-w-0 bg-transparent outline-none text-xs",
-            "text-foreground placeholder:text-muted-foreground font-mono",
-          )}
-          onChange={(e) => {
-            onValueChange?.(e.target.value);
-            onChange?.(e);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") onSubmit?.();
-            onKeyDown?.(e);
-          }}
-          {...rest}
-        />
-        {copyable && (
-          <IconBtn label={copied ? "Copied" : "Copy"} onClick={() => void copy()}>
-            <CopyGlyph copied={copied} size="md" />
-          </IconBtn>
-        )}
-        <IconBtn label={revealed ? "Hide" : "Reveal"} onClick={() => setRevealed((r) => !r)}>
-          {revealed ? <EyeOff size={13} /> : <Eye size={13} />}
-        </IconBtn>
-      </div>
-    </HintGroup>
-  );
-});
-
-function IconBtn({
-  label,
-  onClick,
-  children,
-}: {
-  label: string;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <HintItem label={label} className="shrink-0">
-      <button
-        type="button"
-        tabIndex={-1}
-        onClick={onClick}
-        className="shrink-0 grid place-items-center h-6 w-6 rounded text-muted-foreground hover:text-foreground hover:bg-element-hover transition-colors"
-      >
-        {children}
-      </button>
-    </HintItem>
+    <Input
+      {...props}
+      type="password"
+      autoComplete="off"
+      spellCheck={false}
+      value={draft}
+      placeholder={configured ? "Stored. Type to replace" : (placeholder ?? "Not set")}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={(event) => {
+        commit();
+        onBlur?.(event);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") commit();
+        if (event.key === "Escape" && draft) {
+          event.preventDefault();
+          event.stopPropagation();
+          setDraft("");
+        }
+        onKeyDown?.(event);
+      }}
+    />
   );
 }

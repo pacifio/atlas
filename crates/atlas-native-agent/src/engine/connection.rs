@@ -45,6 +45,7 @@ use anyhow::Result;
 use atlas_acp_thread::{
     AcpThread, AcpThreadHandle, AgentConnection, AgentId, AgentModelId, AgentModelInfo,
     AgentModelList, AgentModelSelector, AgentSessionModes, AgentSessionRewind, AuthorizationKind,
+    SessionRoots,
 };
 use atlas_agent_servers::{SessionMcpOffer, SessionMcpRequest, SessionMcpServers, ThreadEventSink};
 use atlas_engine_app_server_client::InProcessAppServerClient;
@@ -368,6 +369,10 @@ pub struct EngineConnection {
     /// in principle produce the same pair. The mode the user picked is Atlas's
     /// fact to remember.
     session_modes: Arc<Mutex<HashMap<acp::SessionId, acp::SessionModeId>>>,
+    /// Sessions whose roots changed while a turn was running, so the change
+    /// could not be applied then. The next prompt applies it before its turn
+    /// starts (see [`EngineConnection::update_session_roots`]).
+    roots_pending: Arc<Mutex<std::collections::HashSet<acp::SessionId>>>,
     default_mode: Option<acp::SessionModeId>,
     /// Decides the MCP servers each thread is handed (the memory tool
     /// server), projected into the thread's config overrides.
@@ -511,6 +516,7 @@ impl EngineConnection {
             _pump: Arc::new(PumpHandle(pump)),
             runtime: Arc::new(runtime),
             session_modes: Arc::new(Mutex::new(HashMap::new())),
+            roots_pending: Arc::default(),
             default_mode,
             session_mcp,
         }))
@@ -583,7 +589,8 @@ impl EngineConnection {
         session_id: &acp::SessionId,
         mode: &acp::SessionModeId,
     ) -> Result<()> {
-        let (approval_policy, sandbox_policy) = modes::engine_policy(&mode.0);
+        let writable = extra_writable_roots(&self.sessions, session_id);
+        let (approval_policy, sandbox_policy) = modes::engine_policy_with_roots(&mode.0, &writable);
         let _: v2::ThreadSettingsUpdateResponse = self
             .call(|request_id| ClientRequest::ThreadSettingsUpdate {
                 request_id,
@@ -1635,6 +1642,50 @@ impl AgentConnection for EngineConnection {
         true
     }
 
+    /// The engine's sandbox is a per-thread setting (`thread/settings/update`),
+    /// so an open session's writable roots can change; the engine applies it
+    /// from the next turn.
+    fn supports_live_session_roots(&self) -> bool {
+        true
+    }
+
+    /// Record the roots on the session's thread, then re-send its sandbox:
+    /// its current mode, with the read-write attached projects as extra
+    /// writable roots. Read-only projects need no sandbox change — the
+    /// engine reads the whole disk in every mode — and stay out of the
+    /// writable set.
+    ///
+    /// A running turn keeps the sandbox it started with, so a change that
+    /// lands mid-turn is applied before the next turn starts instead
+    /// ([`ConnectionHandle::apply_pending_roots`]).
+    fn update_session_roots(
+        &self,
+        session_id: &acp::SessionId,
+        roots: SessionRoots,
+    ) -> BoxFuture<'static, Result<()>> {
+        let Some(thread) = self.sessions.thread(session_id) else {
+            return async { Err(anyhow!("no such session")) }.boxed();
+        };
+        thread
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .set_attached_roots(roots);
+        let handle = self.clone_handle();
+        let session_id = session_id.clone();
+        async move {
+            if handle.turns.is_busy(&session_id.to_string()) {
+                handle
+                    .roots_pending
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .insert(session_id);
+                return Ok(());
+            }
+            handle.apply_roots(&session_id).await
+        }
+        .boxed()
+    }
+
     fn supports_session_history(&self) -> bool {
         true
     }
@@ -2100,7 +2151,13 @@ impl AgentConnection for EngineConnection {
 
         let request_ids = self.request_ids.clone();
         let sessions = self.sessions.clone();
+        let roots = self.clone_handle();
         async move {
+            // Attached projects changed during the last turn: the sandbox
+            // this turn starts with has to carry them.
+            roots
+                .apply_pending_roots(&acp::SessionId::new(thread_id.as_str()))
+                .await;
             // A turn lists whichever MCP servers are up when it starts, so a
             // first prompt sent before the host's servers finish starting
             // went out without their tools — and the memory tools are the
@@ -3721,6 +3778,29 @@ struct ConnectionHandle {
     session_modes: Arc<Mutex<HashMap<acp::SessionId, acp::SessionModeId>>>,
     /// For the in-flight-turn check in `set_mode` (#61).
     turns: Arc<TurnWaiters>,
+    /// To read a session's writable roots off its thread, so a mode switch
+    /// keeps the session's read-write attached projects writable.
+    sessions: Arc<EngineSessions>,
+    roots_pending: Arc<Mutex<std::collections::HashSet<acp::SessionId>>>,
+}
+
+/// The writable roots a session has beyond its cwd (which the engine always
+/// treats as writable under workspace-write): the further folders it was
+/// opened with and its read-write attached projects, as its thread grants
+/// them (`AcpThread::writable_roots`). Empty for a session with no thread.
+fn extra_writable_roots(sessions: &EngineSessions, session_id: &acp::SessionId) -> Vec<PathBuf> {
+    sessions
+        .thread(session_id)
+        .map(|thread| {
+            thread
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .writable_roots()
+                .into_iter()
+                .skip(1)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// What a rewind needs, and no more: the request channel to reach the engine
@@ -3770,12 +3850,13 @@ impl RewindHandle {
     /// rollback ran lands here too. Everything past a rollback known to have
     /// succeeded is an `Err`, so the only ambiguity left is this one.
     ///
-    /// Only the FLATTENED text survives. `ContentBlock::to_text` returns a
-    /// resource link as a bare URI and joins mixed blocks without the newlines
-    /// the original input carried (`thread.rs:99` vs `sink.rs:351`), so a turn
-    /// whose prompt mixed prose and `@`-mentions does not round-trip verbatim.
-    /// Attachments are not reconstructed at all — the thread stores what was
-    /// sent, not the composer state that produced it.
+    /// Only the FLATTENED text survives: the blocks the turn sent, a blank line
+    /// between each (`UserMessage::prompt_text`). A resource link comes back as
+    /// its bare URI, so a turn whose prompt mixed prose and `@`-mentions does
+    /// not round-trip verbatim; a large paste rode as a text block and comes
+    /// back whole, set apart from the prose. Attachments are not reconstructed
+    /// at all — the thread stores what was sent, not the composer state that
+    /// produced it.
     async fn rewind_last_turn(&self, session_id: &acp::SessionId) -> Result<Option<String>> {
         // Ask before trimming. The engine refusing (nothing to drop) has to
         // leave the transcript exactly as it was, so nothing local moves until
@@ -3823,7 +3904,7 @@ impl RewindHandle {
                 .rev()
                 .find_map(|(ix, entry)| match entry {
                     atlas_acp_thread::AgentThreadEntry::UserMessage(msg) => {
-                        Some((ix, msg.content.to_text().to_string()))
+                        Some((ix, msg.prompt_text()))
                     }
                     _ => None,
                 });
@@ -3856,11 +3937,57 @@ impl EngineConnection {
             request_ids: self.request_ids.clone(),
             session_modes: self.session_modes.clone(),
             turns: self.turns.clone(),
+            sessions: self.sessions.clone(),
+            roots_pending: self.roots_pending.clone(),
         }
     }
 }
 
 impl ConnectionHandle {
+    /// The mode the session is in, or the default.
+    fn mode_of(&self, session_id: &acp::SessionId) -> acp::SessionModeId {
+        self.session_modes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(session_id)
+            .cloned()
+            .unwrap_or_else(|| acp::SessionModeId::new(modes::DEFAULT_MODE_ID))
+    }
+
+    /// Re-send the session's sandbox for its current mode and current
+    /// writable roots. The engine applies thread settings from the next turn
+    /// on; a running turn keeps the context it started with.
+    async fn apply_roots(&self, session_id: &acp::SessionId) -> Result<()> {
+        let mode = self.mode_of(session_id);
+        let writable = extra_writable_roots(&self.sessions, session_id);
+        let (approval_policy, sandbox_policy) = modes::engine_policy_with_roots(&mode.0, &writable);
+        self.update_settings(session_id, |params| {
+            params.approval_policy = Some(approval_policy);
+            params.sandbox_policy = Some(sandbox_policy);
+        })
+        .await
+    }
+
+    /// Apply a roots change that arrived while a turn was running, if there
+    /// is one for this session. Called before a turn starts. A failure is
+    /// logged and the turn goes ahead on the roots it had: refusing the turn
+    /// over a widening that did not land would punish the user for nothing.
+    async fn apply_pending_roots(&self, session_id: &acp::SessionId) {
+        let pending = self
+            .roots_pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(session_id);
+        if pending {
+            if let Err(e) = self.apply_roots(session_id).await {
+                tracing::warn!(
+                    target: "atlas_native_agent::engine",
+                    session = %session_id,
+                    "attached project roots not applied before the turn: {e}"
+                );
+            }
+        }
+    }
     async fn update_settings(
         &self,
         session_id: &acp::SessionId,
@@ -3922,7 +4049,9 @@ impl AgentSessionModes for EngineSessionModes {
                      the permissions it started with. Stop the turn first."
                 ));
             }
-            let (approval_policy, sandbox_policy) = modes::engine_policy(&mode.0);
+            let writable = extra_writable_roots(&connection.sessions, &session_id);
+            let (approval_policy, sandbox_policy) =
+                modes::engine_policy_with_roots(&mode.0, &writable);
             connection
                 .update_settings(&session_id, |params| {
                     params.approval_policy = Some(approval_policy);

@@ -3,7 +3,6 @@ import { RailGlyph } from "@/ui/animated-icon";
 import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
 import { Popover } from "@base-ui/react/popover";
 import { useAppStore } from "@/features/app/stores/app-store";
-import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useProjectStore } from "@/features/projects/stores/project-store";
 import {
   useNotificationsStore,
@@ -15,18 +14,7 @@ import {
   anyTerminalNeedsAttention,
 } from "@/features/terminal/lib/terminal-notifier";
 import { useChatStore } from "@/features/chat/stores/chat-store";
-import {
-  PanelRight,
-  Bell,
-  Layers,
-  ArrowDownToLine,
-  Loader2,
-  Hammer,
-  Minus,
-  Square,
-  Copy,
-  X,
-} from "lucide-react";
+import { Bell, ArrowDownToLine, Hammer, Loader2, Minus, Square, Copy, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppProfile } from "@/lib/app-profile";
 import { HintGroup, HintItem } from "@/ui/hint-group";
@@ -38,57 +26,222 @@ import type { Window as TauriWindow } from "@tauri-apps/api/window";
 import { useUpdaterStore } from "@/features/updater/stores/updater-store";
 import { updater } from "@/features/updater/lib/updater-api";
 import { AccountButton } from "@/features/auth/components/account-button";
+import { HelpSubmenu } from "./help-submenu";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
 import { CapturePopover } from "@/features/capture/components/capture-popover";
 import { StatusDot } from "@/features/capture/components/capture-status";
 import type { Binding, CaptureHealth } from "@/features/capture/types";
 import { activeProjectId } from "@/features/projects/lib/active-project";
-import { useActiveOrgProjects } from "@/features/projects/lib/org-scope";
 import { useFullscreen } from "@/hooks/use-fullscreen";
 import { isDev } from "@/lib/env";
 import { isLinux, isMac, isWindows } from "@/lib/platform";
 import { MenuBar } from "@/features/menu/components/menu-bar";
+import { OrgSwitcher } from "@/features/organisations/components/org-switcher";
+import { BreadcrumbButton } from "./breadcrumb-button";
+import { OPEN_CAPTURE_EVENT } from "@/features/session-context/lib/open-capture";
+import { RightPanelToggle } from "@/features/layout/components/right-panel-toggle";
 
 /**
- * A handle on the native window, for dragging and zooming.
+ * The native window, for dragging and zooming. Resolved once per module and
+ * shared by every header: each column now draws its own slice of the bar, and
+ * a per-header dynamic import would race the first drag.
  *
- * Fullscreen is **not** tracked here: it used to be, with its own copy of the
- * `onResized` + `await isFullscreen()` dance that `useFullscreen` already had.
- * Two copies of that logic is how the titlebar and the sidebar came to disagree
- * about where the traffic lights were, and the race that made it stick is
- * written up in `use-fullscreen.ts`.
+ * Fullscreen is **not** tracked here: `useFullscreen` owns that, and two copies
+ * of its `onResized` + `await isFullscreen()` dance is how the titlebar and the
+ * sidebar came to disagree about where the traffic lights were (the race is
+ * written up in `use-fullscreen.ts`).
  */
-function useTauriWindow() {
-  const windowRef = useRef<TauriWindow | null>(null);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const { getCurrentWindow } = await import("@tauri-apps/api/window");
-        windowRef.current = getCurrentWindow();
-      } catch {
-        // not in Tauri context
-      }
-    })();
-  }, []);
-
-  return { windowRef };
+let nativeWindow: TauriWindow | null = null;
+if (isTauri()) {
+  void import("@tauri-apps/api/window")
+    .then((m) => {
+      nativeWindow = m.getCurrentWindow();
+    })
+    .catch(() => {});
 }
 
+/** True when a press on `target` belongs to the window, not to a control. A
+ *  tab is a control here: dragging a tab must never drag the window. */
+function isWindowSurface(target: EventTarget | null) {
+  const el = target as HTMLElement | null;
+  return !el?.closest(
+    "button, a, input, select, textarea, [role='menuitem'], [role='tab'], [data-no-window-drag]",
+  );
+}
+
+/**
+ * Window dragging and double-click-to-zoom for any stretch of the bar.
+ *
+ * Manual, not `data-tauri-drag-region` (that CSS hook doesn't work in this
+ * app). Calling `startDragging()` straight from mousedown hands the event
+ * stream to the OS drag session and swallows the double-click, so the drag
+ * only begins once the pointer moves past a small threshold; a stationary
+ * click or double-click flows through to `onDoubleClick`.
+ *
+ * Double-click is AppKit's zoom on macOS — Tauri's `toggleMaximize()` doesn't
+ * map to it, so a native `performZoom:` command does — and maximize on Windows
+ * and Linux, which is the convention there.
+ */
+export function useWindowDrag() {
+  const onMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0 || !isWindowSurface(e.target)) return;
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const onMove = (ev: MouseEvent) => {
+      if (Math.hypot(ev.clientX - startX, ev.clientY - startY) > 4) {
+        cleanup();
+        void nativeWindow?.startDragging();
+      }
+    };
+    const cleanup = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", cleanup);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", cleanup);
+  };
+  const onDoubleClick = (e: React.MouseEvent) => {
+    if (!isWindowSurface(e.target)) return;
+    if (isMac) void invoke("window_zoom").catch(() => {});
+    else void nativeWindow?.toggleMaximize();
+  };
+  return { onMouseDown, onDoubleClick };
+}
+
+/**
+ * One column's slice of the bar.
+ *
+ * Atlas has no full-width titlebar. Each column — every split column, the
+ * project rail — draws its own header at `h-titlebar` with no bottom rule, so
+ * side by side they read as one strip, broken only by the full-height column
+ * borders running through it. The window's own controls then have to live in
+ * whichever column is at the window's edge: `leading` (traffic-light inset,
+ * the project rail toggle, the `org / project` label) goes in the leftmost
+ * header and `trailing` (update, notifications, account, and the
+ * Windows/Linux window buttons) in the rightmost. See `columnChrome` for which
+ * column that is.
+ *
+ * Every stretch of it drags the window.
+ */
+export function PaneHeader({
+  leading,
+  breadcrumb,
+  trailing,
+  size = "bar",
+  className,
+  children,
+}: {
+  leading?: boolean;
+  /** Whether `org / project` shows: inside the leading cluster when `leading`
+   *  (default on), or alone at the start of the header when not. */
+  breadcrumb?: boolean;
+  trailing?: boolean;
+  /** `bar` is a slice of the window's bar; `strip` a shorter tab strip that
+   *  sits under a separate top bar. */
+  size?: "bar" | "strip";
+  className?: string;
+  children?: React.ReactNode;
+}) {
+  const drag = useWindowDrag();
+  return (
+    <div
+      {...drag}
+      className={cn(
+        "relative flex min-w-0 shrink-0 select-none items-center gap-1",
+        size === "bar" ? "h-titlebar" : "h-9",
+        !leading && "pl-2",
+        !trailing && "pr-2",
+        className,
+      )}
+    >
+      {leading ? (
+        <TopbarLeading breadcrumb={breadcrumb ?? true} />
+      ) : (
+        breadcrumb && <ProjectBreadcrumb />
+      )}
+      {children}
+      {trailing && <TopbarTrailing />}
+    </div>
+  );
+}
+
+/**
+ * The window's top bar: the leading cluster (traffic-light inset, the project
+ * rail toggle, `org / project`), and the
+ * trailing dock (update, notifications, account, and the
+ * Windows/Linux window buttons). Every stretch of it drags the window.
+ */
 export function Titlebar() {
+  const drag = useWindowDrag();
+  return (
+    <div
+      {...drag}
+      className="relative z-titlebar flex h-titlebar shrink-0 select-none items-center border-b border-border bg-background"
+    >
+      <TopbarLeading />
+      <TopbarTrailing />
+    </div>
+  );
+}
+
+/**
+ * The bar's left end: room for the traffic lights, then the sidebar toggle
+ * and the `org / project` label.
+ *
+ * The 78pt inset is the traffic lights (`trafficLightPosition.x` 16 + three
+ * buttons) plus a gap — divided by the interface zoom, like the bar's height,
+ * because the lights do not scale with it. Vertically the lights are centred
+ * by `trafficLightPosition.y` = bar height / 2 − 2 (see `--titlebar-height` in
+ * `tokens.css`), re-applied after launch and title changes by
+ * `commands::window::apply_traffic_light_inset`. It is dropped while the sidebar is open — the sidebar
+ * then sits under the lights and carries that gap itself — and in fullscreen,
+ * which hides the lights. Only macOS has them on the left; Windows and Linux get
+ * the menu bar here and `WindowControls` at the other end.
+ */
+function TopbarLeading({ breadcrumb = true }: { breadcrumb?: boolean }) {
+  const isFullscreen = useFullscreen();
+  const sidebarOpen = useProjectStore.use.sidebarOpen();
+  const inset = isMac && !isFullscreen && !sidebarOpen;
+
+  return (
+    <div
+      className={cn(
+        "flex min-w-0 shrink items-center gap-1",
+        inset ? "pl-[calc(78px/var(--ui-zoom,1))]" : "pl-2",
+      )}
+    >
+      {/* An open sidebar owns the corner then, and carries the badge. */}
+      {!sidebarOpen && <DevBadge className="mr-1" />}
+      {/* Windows and Linux: the menus macOS shows in the system menu bar. */}
+      {!isMac && <MenuBar className="mr-1" />}
+      {/* One sidebar toggle: the project rail's. The project tree is the
+          Files surface (⌘B, the View menu, the palette). */}
+      <HintGroup>
+        <SidebarToggle />
+      </HintGroup>
+      {breadcrumb && <ProjectBreadcrumb />}
+    </div>
+  );
+}
+
+/**
+ * `org / project`, named from the stores. Part of the leading cluster, at the
+ * head of the first split column.
+ */
+export function ProjectBreadcrumb() {
   const currentProject = useAppStore.use.currentProject();
   // The label name is read from the PROJECT store (matched by path), not from
   // `currentProject.name`. `currentProject` only re-syncs after a slow Rust
   // AppState round-trip, so a project rename took ~3-4s to show here; the
   // project store mutates synchronously on rename, so this updates instantly.
   const projects = useProjectStore.use.projects();
-  // Owning organisation, for the `org / project` pill. Read live so an org
-  // switch or rename re-labels immediately.
+  // Owning organisation, read live so an org switch or rename re-labels
+  // immediately.
   const organisations = useOrgStore.use.organisations();
   const activeOrganisationId = useOrgStore.use.activeOrganisationId();
   const orgName = organisations.find((o) => o.id === activeOrganisationId)?.name ?? null;
   // Same path can be a project in several orgs — prefer the ACTIVE org's
-  // twin so a rename in another org never re-labels this titlebar.
+  // twin so a rename in another org never re-labels this bar.
   // With no project open the label is the product: `Atlas`, or `Atlas Dev`
   // for a dev-profile build, so the two windows can be told apart.
   const { productName } = useAppProfile();
@@ -100,98 +253,40 @@ export function Titlebar() {
     (currentProject ? projects.find((w) => w.path === currentProject.path)?.name : undefined) ??
     currentProject?.name ??
     productName;
-  const { windowRef } = useTauriWindow();
-  // The same hook the project sidebar reads, so the two cannot disagree about
-  // whether the traffic lights are on screen.
-  const isFullscreen = useFullscreen();
-  // The titlebar reserves 72px for the OS window controls (traffic lights),
-  // EXCEPT when the sidebar is DOCKED (pinned + open): the docked column then
-  // sits under the lights and carries that gap itself, so the titlebar reclaims
-  // the space. Fullscreen hides the lights entirely. (Unpinned overlay mode
-  // doesn't occupy flow width, so it never affects this.) Only macOS has
-  // traffic lights on the left; Windows and Linux get `WindowControls` on the right.
-  const sidebarPinned = useProjectStore.use.sidebarPinned();
-  const sidebarOpen = useProjectStore.use.sidebarOpen();
-  const dockedSidebar = sidebarPinned && sidebarOpen;
+  return <ProjectLabel name={displayName} orgName={orgName} path={currentProject?.path} />;
+}
 
-  const isTitlebarSurface = (target: EventTarget | null) => {
-    const el = target as HTMLElement | null;
-    return !el?.closest("button, a, input, select, textarea, [role='menuitem']");
-  };
-
-  // Drag the window manually (the `data-tauri-drag-region` CSS hook
-  // doesn't work in this app — see memory). Calling `startDragging()`
-  // straight from mousedown hands the event stream to the OS drag
-  // session and swallows the double-click, so instead we only begin the
-  // drag once the pointer actually moves past a small threshold. A
-  // stationary click / double-click then flows through to onDoubleClick.
-  const handleDrag = (e: React.MouseEvent) => {
-    if (e.button !== 0 || !isTitlebarSurface(e.target)) return;
-    const startX = e.clientX;
-    const startY = e.clientY;
-    const onMove = (ev: MouseEvent) => {
-      if (Math.hypot(ev.clientX - startX, ev.clientY - startY) > 4) {
-        cleanup();
-        void windowRef.current?.startDragging();
-      }
-    };
-    const cleanup = () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", cleanup);
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", cleanup);
-  };
-
-  // macOS double-click-to-zoom. Tauri's `toggleMaximize()` doesn't map to
-  // AppKit's zoom, so we call a native `performZoom:` command instead. It does
-  // map to maximize on Windows and Linux, which is the convention there.
-  const handleDoubleClick = (e: React.MouseEvent) => {
-    if (!isTitlebarSurface(e.target)) return;
-    if (isMac) void invoke("window_zoom").catch(() => {});
-    else void windowRef.current?.toggleMaximize();
-  };
-
+/**
+ * The bar's right end, the window's group: the dock while it has something to
+ * say, then the right panel toggle while a project is open, then the account,
+ * always. It is the one place the avatar lives (the sidebar footer has none).
+ * The account sits outside the `currentProject` guard on purpose: a fresh
+ * install has no project open, and sign-in must be reachable from that empty
+ * state.
+ *
+ * This group never moves: it is drawn by whichever header is at the window's
+ * right edge, so the panel toggle and the avatar keep their places whether
+ * the panel is shown or not. A gap, nothing louder, sets it apart from the
+ * session's own controls (`SessionHeaderControls`), which come and go with
+ * the tab.
+ */
+function TopbarTrailing() {
+  const currentProject = useAppStore.use.currentProject();
   return (
     <div
-      onMouseDown={handleDrag}
-      onDoubleClick={handleDoubleClick}
+      data-window-controls
       className={cn(
-        "relative z-titlebar flex h-titlebar select-none items-center bg-[var(--background)] border-b border-border",
-        isWindows || isLinux ? "pr-0" : "pr-3",
-        isFullscreen || dockedSidebar || !isMac ? "pl-3" : "pl-[72px]",
+        "ml-auto flex shrink-0 items-center gap-1 pl-3",
+        !(isWindows || isLinux) && "pr-2",
       )}
     >
-      <div className="flex h-titlebar min-w-0 flex-1 items-center gap-1.5">
-        {/* Windows and Linux: the menus macOS shows in the system menu bar. */}
-        {!isMac && <MenuBar className="mr-1" />}
-        <HintGroup>
-          <ProjectToggle />
-          {currentProject && <LeftPanelToggle />}
-        </HintGroup>
-        {/* `org / project` pill — click to copy the project path. */}
-        <ProjectLabel name={displayName} orgName={orgName} path={currentProject?.path} />
-      </div>
-
-      {/* Dev-mode flag — centered in the titlebar, outside both flex groups.
-          It's a build/runtime indicator, not project-dependent, and it takes
-          no pointer events so window dragging works straight through it. */}
-      <DevModePill />
-
-      {/* The account button sits OUTSIDE the `currentProject` guard on purpose:
-          a fresh install has no project open, and sign-in must be reachable
-          from that empty state rather than hidden behind opening a folder. */}
-      {/* One dock, account included. Without a project there are no app-level
-          actions to gather, so the account stands alone as it always has —
-          signing in has to be reachable from an empty window. */}
+      {currentProject ? <ActionDock /> : null}
       {currentProject ? (
-        <ActionDock />
-      ) : (
-        <div className="flex items-center">
-          <AccountButton />
-        </div>
-      )}
-
+        <HintGroup>
+          <RightPanelToggle />
+        </HintGroup>
+      ) : null}
+      <AccountButton menuExtra={<HelpSubmenu />} />
       {(isWindows || isLinux) && <WindowControls />}
     </div>
   );
@@ -203,7 +298,7 @@ export function Titlebar() {
  * titlebar is the only chrome, whereas macOS keeps its native traffic lights in
  * the overlay title bar.
  */
-function WindowControls() {
+export function WindowControls() {
   const windowRef = useRef<TauriWindow | null>(null);
   const [isMaximized, setIsMaximized] = useState(false);
 
@@ -228,11 +323,11 @@ function WindowControls() {
   }, []);
 
   const button =
-    "flex h-[29px] w-[46px] items-center justify-center text-muted-foreground transition-colors duration-100";
+    "flex h-titlebar w-[46px] items-center justify-center text-muted-foreground transition-colors duration-100";
 
   return (
     <HintGroup>
-      <div className="ml-2 flex h-[29px] items-center self-start">
+      <div className="ml-2 flex h-titlebar items-center">
         <HintItem label="Minimize">
           <button
             onClick={() => void windowRef.current?.minimize()}
@@ -271,20 +366,18 @@ function WindowControls() {
  * The titlebar's action dock.
  *
  * A component rather than three inlined hook calls so the hooks' subscriptions
- * — updater phase, notification counts, right-panel visibility — re-render
+ * — updater phase, notification counts — re-render
  * this and nothing else. Put them in `Titlebar` itself and every notification
  * would re-render the project label and the org switcher beside it.
  */
 function ActionDock() {
   const update = useUpdateItem();
   const notifications = useNotificationItem();
-  const rightPanel = useRightPanelItem();
-  return (
-    <TitlebarDock
-      items={[update, notifications, rightPanel]}
-      trailing={{ label: "Account and settings", node: <AccountButton compact /> }}
-    />
-  );
+  // The bar's resting state is layout controls only. Update and notifications
+  // step in only while they have something to say; the bell lives
+  // permanently in the sidebar's footer.
+  const items = [update, notifications].filter((i): i is DockItem => i !== null);
+  return <TitlebarDock items={items} />;
 }
 
 /**
@@ -341,52 +434,51 @@ function ProjectLabel({
     return () => void unlisten.then((stop) => stop());
   }, [captureOpen, readCapture]);
 
-  // Command palette + ⌘⌥C both open this popover from outside the component
-  // tree, since `captureOpen` is local state — see `atlas:open-capture`.
+  // ⌘⌥C and the palette open capture in the session's Details card; with no
+  // session in the main column they land here (`openCapture`). Every mounted
+  // project draws a label, and the background ones are `display:none`: only
+  // the one on screen opens, or a popover would anchor to a hidden button.
+  const rootRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const onOpenCapture = () => setCaptureOpen(true);
-    window.addEventListener("atlas:open-capture", onOpenCapture);
-    return () => window.removeEventListener("atlas:open-capture", onOpenCapture);
-  }, []);
+    const onOpenCapture = () => {
+      if (path && rootRef.current?.offsetParent) setCaptureOpen(true);
+    };
+    window.addEventListener(OPEN_CAPTURE_EVENT, onOpenCapture);
+    return () => window.removeEventListener(OPEN_CAPTURE_EVENT, onOpenCapture);
+  }, [path]);
 
   return (
-    <div className="relative min-w-0">
-      {/* Pill: `org / project`. The org segment is de-emphasised so the project
-          — the thing that changes most — still reads as the primary label.
-
-          Clicking it opens capture setup. Capture is per project, and this is
-          the one control in the app that always names the project it would
-          apply to — which the Timeline board, spanning every project, cannot. */}
-      <Popover.Root open={captureOpen} onOpenChange={setCaptureOpen}>
-        <Popover.Trigger
-          render={
-            <button
-              // `leading-none` is what actually centres the capture dot: with the
-              // inherited line-height the label spans set a taller line box than
-              // the dot, and `items-center` centred the dot against *that* — which
-              // is why it sat visibly high.
-              className="group flex h-[19px] max-w-[320px] min-w-0 cursor-pointer items-center gap-1 rounded-full border border-border-subtle bg-card px-2 text-xs leading-none font-medium transition-colors hover:bg-element-hover"
-              title={health?.summary ?? "Session capture"}
-              aria-label={health?.summary ?? "Session capture"}
-            >
-              {orgName && (
-                <>
-                  <span className="min-w-0 shrink truncate text-[var(--muted-foreground)]">
-                    {orgName}
-                  </span>
-                  <span className="shrink-0 text-[var(--muted-foreground)] opacity-50">/</span>
-                </>
-              )}
-              <span className="min-w-0 truncate text-[var(--secondary-foreground)] transition-colors group-hover:text-[var(--foreground)]">
+    <div ref={rootRef} className="relative flex min-w-0 shrink items-center">
+      {/* Breadcrumb: `org / project`, two controls. The org opens the org
+          switcher — the same menu as the rail's org row. The project opens
+          capture setup: capture is per project, and this is the one control in
+          the app that always names the project it would apply to — which the
+          Timeline board, spanning every project, cannot. Each segment carries
+          its own chevron so the bar's text reads as something you can press. */}
+      {orgName && (
+        <>
+          <OrgSwitcher />
+          <span className="shrink-0 px-0.5 text-sm text-muted-foreground opacity-60">/</span>
+        </>
+      )}
+      {!path ? (
+        <span className="min-w-0 truncate px-1.5 text-sm text-foreground">{name}</span>
+      ) : (
+        <Popover.Root open={captureOpen} onOpenChange={setCaptureOpen}>
+          <Popover.Trigger
+            render={
+              <BreadcrumbButton
+                className="max-w-[240px] text-foreground"
+                title={health?.summary ?? "Session capture"}
+                aria-label={health?.summary ?? "Session capture"}
+                // Only once capture is on. An always-present grey dot on every
+                // project reads as a defect indicator rather than a state.
+                trailing={binding?.enabled && <StatusDot binding={binding} health={health} />}
+              >
                 {name}
-              </span>
-              {/* Only once capture is on. An always-present grey dot on every
-                project reads as a defect indicator rather than a state. */}
-              {binding?.enabled && <StatusDot binding={binding} health={health} />}
-            </button>
-          }
-        />
-        {path && (
+              </BreadcrumbButton>
+            }
+          />
           <Popover.Portal>
             <Popover.Positioner className="z-popover" side="bottom" align="start" sideOffset={6}>
               <Popover.Popup
@@ -406,8 +498,8 @@ function ProjectLabel({
               </Popover.Popup>
             </Popover.Positioner>
           </Popover.Portal>
-        )}
-      </Popover.Root>
+        </Popover.Root>
+      )}
     </div>
   );
 }
@@ -436,96 +528,61 @@ function ProjectLabel({
  * Deliberately outside the theme: this capsule exists to say "you are not
  * looking at a release build", and a badge that took on the colours of
  * whatever theme is active would say it more quietly the better the theme
- * fits. It is also dev-only — `DevModePill` returns null in a release build —
+ * fits. It is also dev-only — `DevBadge` returns null in a release build —
  * so nothing a user sees depends on any of it.
  */
 // ratchet-allow: the dev-build badge is meant to look alien to the theme.
-const DEV_PILL_FILL = "linear-gradient(to bottom, #3b82f6, #2563eb)";
-const DEV_PILL_GLOW =
-  // ratchet-allow: the glow belongs to the dev-badge blue above it.
-  "0 1px 5px 0 rgba(37,99,235,0.35), 0 1px 0 0 rgba(255,255,255,0.25) inset, 0 -2px 6px 0 rgba(37,99,235,0.5) inset";
-const DEV_PILL_CROWN =
-  // ratchet-allow: the crown highlight on that same capsule, not app chrome.
-  "linear-gradient(180deg, rgba(255,255,255,0.25) 0%, rgba(255,255,255,0) 80%, transparent 100%)";
-const DEV_PILL_RIM =
-  // ratchet-allow: the rim on that same capsule, sized to the blue underneath.
-  "0 0 0 1px rgba(255,255,255,0.10) inset, 0 1px 0 0 rgba(255,255,255,0.18) inset";
+// ratchet-allow: the dev-build marker is out-of-band — it must look the same in
+// every theme — and wears the cream of the Atlas mark (`assets/atlas-icon.svg`).
+const DEV_PILL_CREAM = "#FFFFE2";
+// ratchet-allow: ink on that fixed cream; a theme foreground could be pale on it.
+const DEV_PILL_INK = "#1A1A14";
 
-function DevModePill() {
+/**
+ * The dev-build badge. It sits in flow, right of the macOS traffic lights, in
+ * whichever bar owns the window's top-left corner: the project rail's band
+ * when the rail is docked, else the workspace bar's leading cluster (and the
+ * settings sidebar's band on that screen). It used to float, centred on the
+ * session, and so moved every time a column opened, closed or resized, and
+ * landed on whatever the bar held there. Here it is always in the same place
+ * and the bar makes room for it.
+ */
+export function DevBadge({ className }: { className?: string }) {
   if (!isDev || !isTauri()) return null;
   return (
-    // Dead-center of the titlebar, independent of how the left/right icon
-    // groups grow. `pointer-events-none` keeps the strip fully draggable —
-    // it's an indicator, not a control (which also retires its old divider).
-    <div className="pointer-events-none absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-1/2">
-      <div
-        // ratchet-allow: the label on the dev-build capsule, whose fill is the
-        // fixed blue above — it is an out-of-band marker that must look the same
-        // in every theme, which is the whole point of it.
-        className="relative flex h-5 shrink-0 items-center gap-1 overflow-hidden rounded-full px-2 text-xs leading-none font-medium text-white"
-        style={{ background: DEV_PILL_FILL, boxShadow: DEV_PILL_GLOW }}
-      >
-        {/* Crown highlight — the light source. Blurred so its lower edge melts
-          into the body instead of banding across the glyphs. */}
-        <span
-          aria-hidden
-          className="pointer-events-none absolute left-1/2 top-0 z-0 h-2/5 w-4/5 -translate-x-1/2 rounded-t-full"
-          style={{ background: DEV_PILL_CROWN, filter: "blur(1px)" }}
-        />
-        {/* Rim — keeps the capsule's edge legible against the black titlebar. */}
-        <span
-          aria-hidden
-          className="pointer-events-none absolute inset-0 z-0 rounded-full"
-          style={{ boxShadow: DEV_PILL_RIM }}
-        />
-        <Hammer size={11} className="relative z-10" />
-        <span className="relative z-10">Dev Mode</span>
-      </div>
-    </div>
+    <span
+      // An indicator, not a control: no pointer events, so the bar under it
+      // still drags the window.
+      className={cn(
+        "pointer-events-none flex h-5 shrink-0 items-center gap-1 rounded-full px-2 text-xs leading-none font-medium",
+        className,
+      )}
+      style={{ backgroundColor: DEV_PILL_CREAM, color: DEV_PILL_INK }}
+    >
+      <Hammer size={11} />
+      Dev
+    </span>
   );
 }
 
-function ProjectToggle() {
+function SidebarToggle() {
   const hint = useActionShortcut("workspace.toggleSidebar")?.label;
-  const suffix = hint ? ` (${hint})` : "";
   const sidebarOpen = useProjectStore.use.sidebarOpen();
   const { toggleSidebar } = useProjectStore.use.actions();
-  // Badge counts only the active org's projects (matches what the sidebar
-  // it toggles will actually show).
-  const count = useActiveOrgProjects().length;
+  const label = sidebarOpen ? "Hide sidebar" : "Show sidebar";
 
   return (
-    <HintItem label={sidebarOpen ? `Hide projects${suffix}` : `Show projects${suffix}`}>
+    <HintItem label={hint ? `${label} (${hint})` : label}>
       <button
         onClick={toggleSidebar}
+        aria-label={label}
+        aria-pressed={sidebarOpen}
         className={cn(
-          "relative flex items-center justify-center w-6 h-6 rounded hover:bg-element-hover transition-all duration-150",
+          "flex size-6 items-center justify-center rounded-md transition-colors duration-150 hover:bg-element-hover",
           sidebarOpen ? "text-foreground" : "text-muted-foreground hover:text-secondary-foreground",
         )}
-        aria-label={sidebarOpen ? "Hide projects" : "Show projects"}
       >
-        <Layers size={14} />
-        {count > 1 && (
-          <span className="absolute -bottom-0.5 -right-0.5 text-3xs font-mono text-foreground">
-            {count}
-          </span>
-        )}
-      </button>
-    </HintItem>
-  );
-}
-
-function LeftPanelToggle() {
-  const leftPanel = useLayoutStore.use.leftPanel();
-  const { toggleLeftPanel } = useLayoutStore.use.actions();
-
-  return (
-    <HintItem label={leftPanel.visible ? "Hide left panel" : "Show left panel"}>
-      <button
-        onClick={toggleLeftPanel}
-        className="flex items-center justify-center w-6 h-6 rounded text-muted-foreground hover:text-secondary-foreground hover:bg-element-hover transition-all duration-150"
-      >
-        <RailGlyph open={leftPanel.visible} size="md" />
+        <RailGlyph open={sidebarOpen} size="md" />
       </button>
     </HintItem>
   );
@@ -537,7 +594,7 @@ function ArcProgress({ value }: { value: number }) {
   const c = 2 * Math.PI * r;
   const off = c * (1 - Math.max(0, Math.min(1, value)));
   return (
-    <svg width={12} height={12} viewBox="0 0 16 16" className="-rotate-90">
+    <svg width={14} height={14} viewBox="0 0 16 16" className="-rotate-90">
       <circle
         cx="8"
         cy="8"
@@ -563,13 +620,14 @@ function ArcProgress({ value }: { value: number }) {
 }
 
 /**
- * Titlebar auto-update indicator. Idle → a down-arrow that triggers a manual
- * "check for updates". While the backend checks → spinner. While the update
+ * Titlebar auto-update indicator, shown only while there is something to see
+ * (idle, it is null — "Check for updates" lives in the app menu and Settings ›
+ * Updates). While the backend checks → spinner. While the update
  * downloads in the background → an arc showing progress. Once staged and ready
  * → a badge dot; clicking reopens the "Restart to update" prompt. All state is
  * driven by the `atlas:update-*` events → updater store (fully non-blocking).
  */
-function useUpdateItem(): DockItem {
+function useUpdateItem(): DockItem | null {
   const checking = useUpdaterStore.use.checking();
   const phase = useUpdaterStore.use.phase();
   const progress = useUpdaterStore.use.progress();
@@ -596,6 +654,8 @@ function useUpdateItem(): DockItem {
       );
   };
 
+  if (!checking && !downloading && !ready) return null;
+
   const label = checking
     ? "Checking for updates…"
     : downloading
@@ -611,21 +671,23 @@ function useUpdateItem(): DockItem {
     onClick,
     disabled: checking || downloading,
     icon: checking ? (
-      <Loader2 size={12} className="animate-spin" />
+      <Loader2 size={14} className="animate-spin" />
     ) : downloading ? (
       progress != null ? (
         <ArcProgress value={progress} />
       ) : (
-        <Loader2 size={12} className="animate-spin" />
+        <Loader2 size={14} className="animate-spin" />
       )
     ) : (
-      <ArrowDownToLine size={12} />
+      <ArrowDownToLine size={14} />
     ),
     badge: ready ? <DockBadge className="bg-[var(--primary)]" /> : undefined,
   };
 }
 
-function useNotificationItem(): DockItem {
+/** Notifications in the bar only while something is unread or waiting on you;
+ *  the sidebar footer has the bell at all times. */
+function useNotificationItem(): DockItem | null {
   const { toggle } = useNotificationsStore.use.actions();
   const activeOrgId = useOrgStore.use.activeOrganisationId();
   // Select PRIMITIVES (booleans) — returning a filtered array from the selector
@@ -642,47 +704,36 @@ function useNotificationItem(): DockItem {
   );
   const terminalAttention = useTerminalAttention(anyTerminalNeedsAttention);
   const needsAttention = chatAttention || terminalAttention;
+  if (!unread && !needsAttention) return null;
 
   return {
     label: "Notifications",
     onClick: () => toggle(activeOrgId),
-    icon: <Bell size={12} />,
-    badge:
-      unread || needsAttention ? (
-        <DockBadge
-          // Priority: error > needs-attention (green) > plain unread.
-          className={cn(
-            hasError
-              ? "bg-[var(--atlas-status-error-foreground)]"
-              : needsAttention
-                ? "bg-[var(--atlas-status-success-foreground)] animate-pulse"
-                : "bg-foreground",
-          )}
-          label={needsAttention ? "Something needs your attention" : "Unread notifications"}
-        />
-      ) : undefined,
+    icon: <Bell size={14} />,
+    badge: (
+      <DockBadge
+        // Priority: error > needs-attention (green) > plain unread.
+        className={cn(
+          hasError
+            ? "bg-[var(--atlas-status-error-foreground)]"
+            : needsAttention
+              ? "bg-[var(--atlas-status-success-foreground)] animate-pulse"
+              : "bg-foreground",
+        )}
+        label={needsAttention ? "Something needs your attention" : "Unread notifications"}
+      />
+    ),
   };
 }
 
-function useRightPanelItem(): DockItem {
-  const rightPanel = useLayoutStore.use.rightPanel();
-  const { toggleRightPanel } = useLayoutStore.use.actions();
-
-  return {
-    label: rightPanel.visible ? "Hide right panel" : "Show right panel",
-    onClick: toggleRightPanel,
-    icon: <PanelRight size={12} className={rightPanel.visible ? "" : "opacity-40"} />,
-  };
-}
-
-/** The dock's corner dot. Its ring matches the dock fill, not the titlebar —
- *  the badge now sits on the pill, not on the window. */
+/** The dock's corner dot, ringed in the bar's own colour so it reads as cut
+ *  out of the button rather than stuck on it. */
 function DockBadge({ className, label }: { className?: string; label?: string }) {
   return (
     <span
       className={cn(
         "pointer-events-none absolute right-[3px] top-[3px] size-[6px] rounded-full",
-        "ring-1 ring-[var(--card)]",
+        "ring-1 ring-[var(--background)]",
         className,
       )}
       aria-label={label}

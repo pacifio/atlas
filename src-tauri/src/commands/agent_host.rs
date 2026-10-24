@@ -50,12 +50,16 @@ use atlas_agent_wire::{
 };
 use atlas_native_agent::ATLAS_AGENT_ID;
 use atlas_thread_metadata::{
-    affects_thread_metadata, collect_all_sessions, importable_threads, PathList, ThreadFilter,
-    ThreadId, ThreadMetadata, ThreadMetadataStore, ThreadRecorder, ThreadSnapshot,
+    affects_thread_metadata, collect_all_sessions, importable_threads, AttachSource,
+    AttachedProject, MarkUnread, PathList, ProjectAccess, ThreadId, ThreadMetadata,
+    ThreadMetadataStore, ThreadRecorder, ThreadSnapshot,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+mod wake;
+pub use wake::PendingWake;
 
 // ── The IPC wire shapes ─────────────────────────────────────────────────────
 //
@@ -329,16 +333,15 @@ struct SyncBackoff {
 /// a terminal is picked up by the next alt-tab back.
 const SYNC_DEBOUNCE: std::time::Duration = std::time::Duration::from_secs(30);
 
-/// How recent an agent-listed session must be to land in the sidebar rather
-/// than History.
-const SYNC_UNARCHIVE_DAYS: i64 = 7;
+/// How recent an agent-listed session must be to land active rather than on
+/// the Settled shelf.
+const SYNC_ACTIVE_DAYS: i64 = 7;
 
-/// The recency window of ADR-0001 amendment Rule 5, as an instant: activity at
-/// or after it lands a session in the sidebar (and brings an archived one
-/// back); anything older stays in History. The project sync and the session
-/// watcher both ask this, so they cannot disagree about what "recent" is.
-pub(crate) fn sync_unarchive_cutoff(now: DateTime<Utc>) -> DateTime<Utc> {
-    now - chrono::Duration::days(SYNC_UNARCHIVE_DAYS)
+/// The recency window of ADR-0001 amendment Rule 5, as an instant: a session
+/// the project sync lists with activity at or after it lands active; anything
+/// older lands settled.
+pub(crate) fn sync_active_cutoff(now: DateTime<Utc>) -> DateTime<Utc> {
+    now - chrono::Duration::days(SYNC_ACTIVE_DAYS)
 }
 
 /// How long after one of Atlas's own turns ends a write to that session's
@@ -469,7 +472,17 @@ pub struct AgentHost {
     lifecycle: Mutex<Option<Arc<dyn SessionLifecycle>>>,
     /// What each session is offered in its MCP server list.
     session_mcp: Arc<SessionMcpSlot>,
+    /// Project access requests on screen, by (session, folder): each one's
+    /// answer, once there is one. A second request for the same folder
+    /// waits on the card already up instead of raising another.
+    access_requests: Mutex<HashMap<(String, PathBuf), AccessAnswer>>,
+    /// Prompts Atlas sends on its own (a pull request watch's wake), held
+    /// until their session's turn ends ([`AgentHost::wake`]).
+    wakes: wake::Wakes,
 }
+
+/// Where an access request's answer arrives.
+type AccessAnswer = tokio::sync::watch::Receiver<Option<AccessRequestOutcome>>;
 
 /// Which branch probe is the newest for each session (see
 /// [`AgentHost::refresh_branch`]).
@@ -622,6 +635,8 @@ impl AgentHost {
             },
             lifecycle: Mutex::new(None),
             session_mcp,
+            access_requests: Mutex::new(HashMap::new()),
+            wakes: wake::Wakes::default(),
         });
         // Weak, and installed after the host exists: the observer needs the
         // host to name the agent a session belongs to, and a strong reference
@@ -684,6 +699,11 @@ impl AgentHost {
 
     pub fn registry(&self) -> &Arc<AgentRegistryStore> {
         &self.registry
+    }
+
+    /// Atlas's config directory, where the native agent's own settings live.
+    pub fn config_dir(&self) -> &Path {
+        &self.config_dir
     }
 
     // `native_sessions` and `native_delete_session` are gone with the previous native
@@ -752,13 +772,32 @@ impl AgentHost {
     /// always available because it is in-process, and any other id must appear
     /// in the installed map. Nothing is downloaded, discovered or guessed here.
     pub fn agent_for(&self, plugin_id: &str) -> Result<Agent> {
+        let agent = self.installed_agent(plugin_id)?;
+        // Turned off in Settings → Agents: still installed, never started.
+        if self
+            .store
+            .settings()
+            .get(plugin_id)
+            .is_some_and(|entry| !entry.enabled())
+        {
+            return Err(HostError::new(
+                format!("{plugin_id} is turned off. Turn it on in Settings → Agents."),
+                ErrorClass::Fatal,
+            ));
+        }
+        Ok(agent)
+    }
+
+    /// [`Self::agent_for`] without the on/off check: for what stops, inspects
+    /// or restarts an agent, which a turned-off one still needs.
+    fn installed_agent(&self, plugin_id: &str) -> Result<Agent> {
         if plugin_id == ATLAS_AGENT_ID {
             return Ok(Agent::Native);
         }
         let id = atlas_acp_thread::AgentId::new(plugin_id);
         if self.store.entry(&id).is_none() {
             return Err(HostError::new(
-                format!("{plugin_id} is not installed. Install it from the Agent Marketplace."),
+                format!("{plugin_id} is not installed. Add it in Settings → Agents."),
                 ErrorClass::Fatal,
             ));
         }
@@ -887,7 +926,7 @@ impl AgentHost {
     /// false until the agent has been connected at least once. The catalog
     /// documents that; the frontend falls back to other fields in that window.
     pub fn capabilities(&self, plugin_id: &str) -> PluginCapabilities {
-        let Ok(agent) = self.agent_for(plugin_id) else {
+        let Ok(agent) = self.installed_agent(plugin_id) else {
             return PluginCapabilities::default();
         };
         let Some(connection) = self.connected(&agent) else {
@@ -959,7 +998,7 @@ impl AgentHost {
     /// "cancel" button only has the plugin id it asked for. Works whether the
     /// connection is up, still connecting, or already gone.
     pub fn kill_plugin(&self, plugin_id: &str) -> Result<()> {
-        let agent = self.agent_for(plugin_id)?;
+        let agent = self.installed_agent(plugin_id)?;
         self.kill_agent(plugin_id, &agent);
         Ok(())
     }
@@ -973,7 +1012,7 @@ impl AgentHost {
     /// Whether any open session on `plugin_id` has a turn running. `false` for
     /// an agent that is not installed.
     pub fn agent_turn_running(&self, plugin_id: &str) -> bool {
-        let Ok(agent) = self.agent_for(plugin_id) else {
+        let Ok(agent) = self.installed_agent(plugin_id) else {
             return false;
         };
         let sessions: Vec<String> = lock(&self.sessions)
@@ -998,11 +1037,21 @@ impl AgentHost {
     /// session nothing knew any more — its next message failed with "unknown
     /// session id".
     pub fn restart_for_update(&self, plugin_id: &str, version: &str) -> Result<()> {
-        let agent = self.agent_for(plugin_id)?;
+        let agent = self.installed_agent(plugin_id)?;
         self.disconnect_chats(
             &agent,
             &format!("updated to v{version}; the next message reconnects"),
         );
+        self.kill_agent(plugin_id, &agent);
+        Ok(())
+    }
+
+    /// Stop an agent that was just turned off in Settings → Agents: its open
+    /// chats are told why, and its process ends. Turning it back on lets the
+    /// next message reconnect.
+    pub fn turn_off(&self, plugin_id: &str) -> Result<()> {
+        let agent = self.installed_agent(plugin_id)?;
+        self.disconnect_chats(&agent, "turned off in Settings → Agents");
         self.kill_agent(plugin_id, &agent);
         Ok(())
     }
@@ -1244,12 +1293,29 @@ impl AgentHost {
             return Ok(key);
         }
         let acp_id = acp::SessionId::new(session_id.as_str());
+        // The row's attached projects, when it has a row: the same roots a
+        // resume from the sidebar opens with.
+        let row = self
+            .history()
+            .and_then(|history| history.store().thread_for_session(&acp_id));
+        let attached = row
+            .as_ref()
+            .map(|row| row.attached_projects.clone())
+            .unwrap_or_default();
+        let mut work_dirs = vec![cwd.clone()];
+        if let Some(row) = row.as_ref() {
+            work_dirs.extend(Self::attached_work_dirs(row));
+        }
         let thread = self
             .manager
-            .load_session(record.agent.clone(), acp_id, vec![cwd.clone()], None)
+            .load_session(record.agent.clone(), acp_id, work_dirs, None)
             .await
             .map_err(HostError::from)?;
+        lock_thread(&thread).set_attached_roots(session_roots(&attached));
         self.bind(agent_id, &record, cwd, thread);
+        if !attached.is_empty() {
+            self.apply_session_roots(&session_id, &attached).await;
+        }
         Ok(key)
     }
 
@@ -1367,6 +1433,15 @@ impl AgentHost {
     }
 
     // ---- session reads ---------------------------------------------------
+
+    /// Whether the session's agent advertised
+    /// `promptCapabilities.embeddedContext` at initialize — the send path's
+    /// choice between an embedded resource and a text block for a paste.
+    pub fn prompt_embedded_context(&self, key: &SessionKey) -> Result<bool> {
+        let handle = self.thread(&key.session_id)?;
+        let embedded = lock_thread(&handle).prompt_capabilities().embedded_context;
+        Ok(embedded)
+    }
 
     fn thread(&self, session_id: &str) -> Result<AcpThreadHandle> {
         self.manager
@@ -1558,8 +1633,9 @@ impl AgentHost {
         };
         // Every turn start, not only the bind: the user may have switched
         // branches since the session opened, and the row should name the
-        // branch the latest work ran on.
+        // branch the latest work ran on. The model likewise.
         self.refresh_branch(&session_id, &cwd);
+        self.refresh_model(&session_id);
         // Before the turn opens, so the `status: running` that `begin_turn`
         // emits already carries this turn's identity.
         self.projector.set_turn_seq(&session_id, turn_seq);
@@ -1574,6 +1650,8 @@ impl AgentHost {
             // Every way out of the turn ends it, a superseded one included:
             // each send counted itself in, so each counts itself out.
             this.end_atlas_turn(&session_key);
+            // A wake held for this turn goes out once the session is idle.
+            this.drain_wakes_later(&session_key);
             if let Err(e) = sent {
                 // A send that was superseded reports back late, and its failure
                 // belongs to a turn that is already over. Announcing it anyway
@@ -1592,6 +1670,10 @@ impl AgentHost {
                 }
                 let message = format!("{e:#}");
                 let class = classify_message(&message);
+                // A failure is a raised hand: a snoozed session wakes for it.
+                if let Some(history) = this.history() {
+                    history.note_failure(&session_id, Utc::now());
+                }
                 this.projector.note_turn_failed(
                     &session_id,
                     message,
@@ -1765,6 +1847,46 @@ impl AgentHost {
         });
     }
 
+    /// Read the model the session is on from its agent and record it on the
+    /// history row, for the sidebar's hover card.
+    ///
+    /// Fire-and-forget, like [`Self::refresh_branch`]: the selector is async
+    /// and may do work, and neither a send nor a model pick may wait on it.
+    /// An agent with no model selection, or one that answers nothing, writes
+    /// nothing — the row keeps the last model Atlas saw.
+    fn refresh_model(&self, session_id: &acp::SessionId) {
+        let Some(history) = self.history().cloned() else {
+            return;
+        };
+        let Ok(handle) = self.thread(session_id.0.as_ref()) else {
+            return;
+        };
+        let connection = lock_thread(&handle).connection().clone();
+        let Some(selector) = connection.model_selector(session_id) else {
+            return;
+        };
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let session_id = session_id.clone();
+        runtime.spawn(async move {
+            let Ok(model) = selector.selected_model().await else {
+                return;
+            };
+            let id = model.id.as_str();
+            // The native runtime names a session with no BYOK provider "/".
+            if id.is_empty() || id == "/" {
+                return;
+            }
+            let label: Arc<str> = if model.name.trim().is_empty() {
+                Arc::from(id)
+            } else {
+                model.name.clone()
+            };
+            history.note_model(&session_id, label);
+        });
+    }
+
     /// Whether `turn_seq` is still the turn this session is running.
     ///
     /// A session that has since been dropped counts as not current: there is
@@ -1779,6 +1901,32 @@ impl AgentHost {
         self.manager
             .cancel(&acp::SessionId::new(key.session_id.as_str()));
         Ok(())
+    }
+
+    /// The user pressed Stop: cancel the turn, drop any wake held for the
+    /// session, and end its pull request watches, so nothing Atlas sends on
+    /// its own starts the agent straight back up. The order matters: the held
+    /// wakes go first, so the cancelled turn's end finds none to send.
+    pub fn stop(&self, key: &SessionKey) -> Result<()> {
+        self.forget_wakes(&key.session_id);
+        if let Some(history) = self.history() {
+            if let Some(thread_id) =
+                history.thread_for(&acp::SessionId::new(key.session_id.as_str()))
+            {
+                history.store().end_pull_request_watches(thread_id);
+            }
+        }
+        self.cancel(key)
+    }
+
+    /// Cancel the turn without the user asking it to stop: the tab closed,
+    /// the project is going away, a guide run was cancelled. Held wakes are
+    /// dropped so the cancelled turn does not hand straight over to one, but
+    /// the session's watches stay on — a watch outlives its tab, and the next
+    /// thing it hears opens the session again.
+    pub fn interrupt(&self, key: &SessionKey) -> Result<()> {
+        self.forget_wakes(&key.session_id);
+        self.cancel(key)
     }
 
     // ---- per-session settings -------------------------------------------
@@ -1814,6 +1962,7 @@ impl AgentHost {
         }
         // The thread has no event for this, so the host announces it.
         self.projector.note_model_changed(&session_id, model_id);
+        self.refresh_model(&session_id);
         Ok(())
     }
 
@@ -1891,6 +2040,13 @@ impl AgentHost {
             .fork_thread(&session_id)
             .await
             .map_err(|e| HostError::classified(e.to_string()))?;
+        // Lineage: the branch remembers where it came from, so the session
+        // context overlay can show the parent and the forks.
+        if let Some(history) = self.history() {
+            history
+                .store()
+                .record_session_fork(&acp::SessionId::new(forked.as_str()), &session_id);
+        }
         Ok(Some(forked))
     }
 
@@ -2121,12 +2277,14 @@ impl AgentHost {
     ///
     /// One action: the agent is started if it is not running, the
     /// session is reopened through whichever of `session/load` /
-    /// `session/resume` the agent advertised, and the row is unarchived. A row
+    /// `session/resume` the agent advertised. Opening moves the session
+    /// between no lifecycle states — a settled one stays settled until the
+    /// user sends — and marking it viewed is the frontend's, on focus. A row
     /// whose thread never got a session id is a draft, and opens as a new
     /// conversation.
     ///
-    /// A failure leaves the row exactly as it was, archived flag included:
-    /// nothing here runs before the session is open. Atlas never deletes a
+    /// A failure leaves the row exactly as it was: nothing here writes it
+    /// before the session is open. Atlas never deletes a
     /// history row because an agent could not reopen it — the user's record is
     /// theirs to remove.
     ///
@@ -2145,7 +2303,6 @@ impl AgentHost {
         // reopening would be a second session for one conversation.
         if let Some(session_id) = thread.session_id.clone() {
             if lock(&self.sessions).contains_key(session_id.0.as_ref()) {
-                history.store().unarchive(thread_id);
                 return Ok(ResumedThread {
                     key: SessionKey {
                         agent_id: self.handle_for(&self.agent_for(thread.agent_id.as_str())?),
@@ -2158,8 +2315,14 @@ impl AgentHost {
 
         let agent = self.spawn(thread.agent_id.as_str()).await?;
         let record = self.record_for(agent.agent_id)?;
-        let work_dirs = thread.folder_paths().paths().to_vec();
+        let mut work_dirs = thread.folder_paths().paths().to_vec();
         let cwd = work_dirs.first().cloned().unwrap_or_default();
+        // The session's read-write attached projects open with it as further
+        // working directories: an ACP agent's `additionalDirectories`, the
+        // engine's writable roots. Read-only ones reach Atlas's own grants
+        // below and the agent through the prompt, never as a directory it
+        // may edit.
+        work_dirs.extend(Self::attached_work_dirs(&thread));
 
         let (opened, resumed_without_history) = match thread.session_id.clone() {
             // A draft: there is no stored conversation to reopen, so this is a
@@ -2201,11 +2364,14 @@ impl AgentHost {
             }
         };
 
+        // Before `bind`, whose history write reads the thread's own folders:
+        // the attached projects must already be known as attached.
+        lock_thread(&opened).set_attached_roots(session_roots(&thread.attached_projects));
         let init = self.bind(agent.agent_id, &record, cwd, opened);
-        // After the session is open, and after `bind` — the live feed preserves
-        // whatever `archived` it finds, so unarchiving first would be undone by
-        // the row it writes (`agent_panel.rs:4382-4386` unarchives on open).
-        history.store().unarchive(thread_id);
+        if !thread.attached_projects.is_empty() {
+            self.apply_session_roots(&init.key.session_id, &thread.attached_projects)
+                .await;
+        }
         Ok(ResumedThread {
             key: init.key,
             resumed_without_history,
@@ -2224,7 +2390,7 @@ impl AgentHost {
     /// now, and its next message puts it back under the same thread id — the
     /// live feed keeps its binding on purpose. That is the honest
     /// behaviour: history records conversations, and this one has not
-    /// finished. Archive is the action for "out of my way but keep it".
+    /// finished. Settle is the action for "out of my way but keep it".
     ///
     /// Deleting a session that is **live elsewhere** (Rule 7 — another
     /// process, typically `claude` in a terminal, is writing it now) is
@@ -2352,22 +2518,16 @@ impl AgentHost {
             .collect())
     }
 
-    /// Every thread, archived or not, newest-started first — the history view.
+    /// Every thread, newest-started first — the history view.
     pub fn thread_history(
         &self,
-        archived_only: bool,
         modified: &HashMap<String, DateTime<Utc>>,
     ) -> Result<Vec<ThreadRow>> {
         let live = self.live_context(modified);
-        let filter = if archived_only {
-            ThreadFilter::ArchivedOnly
-        } else {
-            ThreadFilter::All
-        };
         Ok(self
             .history_or_err()?
             .store()
-            .history(filter)
+            .history()
             .iter()
             .map(|t| thread_row(t, &live))
             .collect())
@@ -2382,13 +2542,597 @@ impl AgentHost {
             modified,
             activity: self.atlas_activity(),
             now: Utc::now(),
+            forks: self
+                .history()
+                .map(|history| {
+                    history
+                        .store()
+                        .session_forks()
+                        .into_iter()
+                        .map(|(child, parent)| (child.to_string(), parent.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default(),
         }
     }
 
-    /// Take a thread out of the active list, keeping it in history.
-    pub fn archive_thread(&self, thread_id: ThreadId) -> Result<()> {
-        self.history_or_err()?.store().archive(thread_id);
+    /// Move a session to the sidebar's Settled shelf.
+    ///
+    /// Refused while a turn is running there — in Atlas, or in another
+    /// process — or the agent is waiting on the user: a session that is
+    /// mid-work is not done, and settling it would hide the very thing about
+    /// to need attention. Also refused just after a user send: the send
+    /// records the interaction before the turn is counted in, and the store
+    /// re-checks that under its lock, so a settle racing a send cannot slip
+    /// through the gap.
+    ///
+    /// `activity_in` answers, for one of the row's folders, the file times
+    /// that are evidence of another process ([`ActivityIn`]). It is asked for
+    /// this row's own folders, not whichever project the sidebar has open:
+    /// a row from another project is live or not by its own transcripts. A
+    /// folder with no answer is no evidence either way; by hand, the user's
+    /// word stands.
+    ///
+    /// Answers whether the session moved; `false` when it was already settled
+    /// or no longer exists.
+    pub fn settle_thread(&self, thread_id: ThreadId, activity_in: ActivityIn<'_>) -> Result<bool> {
+        let history = self.history_or_err()?;
+        let Some(thread) = history.store().thread(thread_id) else {
+            return Ok(false);
+        };
+        if let Some(session_id) = thread.session_id.as_ref() {
+            let id = session_id.0.as_ref();
+            let activity = self.atlas_activity();
+            let modified = thread
+                .folder_paths()
+                .paths()
+                .iter()
+                .filter_map(|folder| activity_in(folder))
+                .filter_map(|times| times.get(id).copied())
+                .max();
+            if history.store().sent_to_recently(thread_id)
+                || self.session_is_busy(id, &activity)
+                || live_elsewhere(modified, activity.get(id), Utc::now())
+            {
+                return Err(HostError::new(
+                    "This session is still running; settle it once the turn ends.",
+                    ErrorClass::Fatal,
+                ));
+            }
+        }
+        Ok(history.store().settle(thread_id))
+    }
+
+    /// Take a session back off the Settled shelf. Answers whether it was on
+    /// it.
+    pub fn unsettle_thread(&self, thread_id: ThreadId) -> Result<bool> {
+        Ok(self.history_or_err()?.store().unsettle(thread_id))
+    }
+
+    /// Pin a session, placed among the pinned by `order_key` (minted by the
+    /// frontend). Brings a settled or snoozed one back. Answers whether
+    /// anything changed.
+    pub fn pin_thread(&self, thread_id: ThreadId, order_key: Option<String>) -> Result<bool> {
+        Ok(self
+            .history_or_err()?
+            .store()
+            .pin(thread_id, order_key.map(Arc::from)))
+    }
+
+    pub fn unpin_thread(&self, thread_id: ThreadId) -> Result<bool> {
+        Ok(self.history_or_err()?.store().unpin(thread_id))
+    }
+
+    /// Move a pinned session to `order_key`. `false` for one not pinned.
+    pub fn reorder_pinned_thread(&self, thread_id: ThreadId, order_key: String) -> Result<bool> {
+        Ok(self
+            .history_or_err()?
+            .store()
+            .reorder_pin(thread_id, Arc::from(order_key)))
+    }
+
+    /// Snooze a session until `until`.
+    ///
+    /// Refused while the session has a pending request — a permission or a
+    /// question the user has not answered: snoozing would hide the very thing
+    /// waiting on them, and it would wake straight away regardless. Refused
+    /// too for a time not in the future. Answers whether it snoozed (`false`
+    /// for a session that no longer exists).
+    pub fn snooze_thread(&self, thread_id: ThreadId, until: DateTime<Utc>) -> Result<bool> {
+        let history = self.history_or_err()?;
+        let Some(thread) = history.store().thread(thread_id) else {
+            return Ok(false);
+        };
+        if until <= Utc::now() {
+            return Err(HostError::new(
+                "Pick a time in the future to snooze until.",
+                ErrorClass::Fatal,
+            ));
+        }
+        if thread
+            .session_id
+            .as_ref()
+            .is_some_and(|id| self.session_has_pending_request(id.0.as_ref()))
+        {
+            return Err(HostError::new(
+                "This session is waiting for you; answer it before snoozing.",
+                ErrorClass::Fatal,
+            ));
+        }
+        Ok(history.store().snooze(thread_id, until))
+    }
+
+    /// The user renamed the session. An empty name clears the rename, so the
+    /// agent's own title shows again.
+    pub fn rename_thread(&self, thread_id: ThreadId, title: &str) -> Result<()> {
+        self.history_or_err()?
+            .store()
+            .set_title_override(thread_id, title.trim().to_owned());
         Ok(())
+    }
+
+    /// Wake a snoozed session by hand. Answers whether it was snoozed.
+    pub fn wake_thread(&self, thread_id: ThreadId) -> Result<bool> {
+        Ok(self.history_or_err()?.store().wake(thread_id))
+    }
+
+    /// Undo a snooze the user just set, leaving no "woke" mark. Answers
+    /// whether it was snoozed.
+    pub fn unsnooze_thread(&self, thread_id: ThreadId) -> Result<bool> {
+        Ok(self.history_or_err()?.store().unsnooze(thread_id))
+    }
+
+    /// The user opened or focused the session the tab `session_id` runs.
+    /// Answers whether a row was marked (a draft has none).
+    pub fn mark_session_viewed(&self, session_id: &str) -> Result<bool> {
+        Ok(self
+            .history_or_err()?
+            .note_viewed(&acp::SessionId::new(session_id), Utc::now()))
+    }
+
+    /// Make a session read as unread again. Refused for one with no
+    /// completed turn — there is nothing to be unread.
+    pub fn mark_thread_unread(&self, thread_id: ThreadId) -> Result<bool> {
+        match self.history_or_err()?.store().mark_unread(thread_id) {
+            MarkUnread::Marked => Ok(true),
+            MarkUnread::AlreadyUnread | MarkUnread::Missing => Ok(false),
+            MarkUnread::NoCompletedTurn => Err(HostError::new(
+                "This session has no finished turn to mark unread.",
+                ErrorClass::Fatal,
+            )),
+        }
+    }
+
+    // ---- attached projects -----------------------------------------------
+
+    /// The history row a live session writes to. A draft is found through
+    /// its binding: its session id is never persisted.
+    fn row_for_session(&self, session_id: &str) -> Result<ThreadId> {
+        self.history_or_err()?
+            .thread_for(&acp::SessionId::new(session_id))
+            .ok_or_else(|| HostError::new("This session has no history row.", ErrorClass::Fatal))
+    }
+
+    /// The projects attached to the session the tab `session_id` runs.
+    pub fn session_projects(&self, session_id: &str) -> Result<Vec<AttachedProject>> {
+        let thread_id = self.row_for_session(session_id)?;
+        Ok(self.history_or_err()?.store().attached_projects(thread_id))
+    }
+
+    /// Attach `project` to the session, then hand the session its new roots.
+    /// Already attached is not an error: nothing changes, and the change
+    /// reports `changed: false`.
+    pub async fn attach_session_project(
+        &self,
+        session_id: &str,
+        project: AttachedProject,
+    ) -> Result<SessionProjectsChange> {
+        let thread_id = self.row_for_session(session_id)?;
+        let changed = self
+            .history_or_err()?
+            .store()
+            .attach_project(thread_id, project);
+        self.projects_changed(session_id, thread_id, changed).await
+    }
+
+    /// Detach the project at `path` from the session.
+    pub async fn detach_session_project(
+        &self,
+        session_id: &str,
+        path: &Path,
+    ) -> Result<SessionProjectsChange> {
+        let thread_id = self.row_for_session(session_id)?;
+        let changed = self
+            .history_or_err()?
+            .store()
+            .detach_project(thread_id, path);
+        self.projects_changed(session_id, thread_id, changed).await
+    }
+
+    /// Change what the agent may do in the project at `path`.
+    pub async fn set_session_project_access(
+        &self,
+        session_id: &str,
+        path: &Path,
+        access: ProjectAccess,
+    ) -> Result<SessionProjectsChange> {
+        let thread_id = self.row_for_session(session_id)?;
+        let changed = self
+            .history_or_err()?
+            .store()
+            .set_project_access(thread_id, path, access);
+        self.projects_changed(session_id, thread_id, changed).await
+    }
+
+    async fn projects_changed(
+        &self,
+        session_id: &str,
+        thread_id: ThreadId,
+        changed: bool,
+    ) -> Result<SessionProjectsChange> {
+        let projects = self.history_or_err()?.store().attached_projects(thread_id);
+        let applied_live = if changed {
+            self.apply_session_roots(session_id, &projects).await
+        } else {
+            self.live_roots_supported(session_id)
+        };
+        Ok(SessionProjectsChange {
+            projects: projects.iter().map(AttachedProjectWire::from).collect(),
+            changed,
+            applied_live,
+        })
+    }
+
+    /// Whether the session's agent can change an open session's roots — the
+    /// capability the UI reads to say "from the next turn" or "when this
+    /// session is resumed". `false` for a session that is not open.
+    pub fn live_roots_supported(&self, session_id: &str) -> bool {
+        self.thread(session_id)
+            .map(|handle| {
+                lock_thread(&handle)
+                    .connection()
+                    .supports_live_session_roots()
+            })
+            .unwrap_or(false)
+    }
+
+    /// Hand an open session the roots its attached projects call for.
+    ///
+    /// Two halves. Atlas's own grants first, on the thread: the client-side
+    /// `fs/*` handlers read and write through them, for every agent. Then the
+    /// agent's sandbox, where the connection can change it on a live session
+    /// (the native engine can; ACP has no request for it). Answers whether
+    /// the agent's half landed. Bounded (ADR-0008): a wedged engine leaves
+    /// the attachment recorded and reported as not applied, rather than
+    /// parking the command.
+    async fn apply_session_roots(&self, session_id: &str, projects: &[AttachedProject]) -> bool {
+        let Ok(handle) = self.thread(session_id) else {
+            return false;
+        };
+        let roots = session_roots(projects);
+        let connection = {
+            let mut thread = lock_thread(&handle);
+            thread.set_attached_roots(roots.clone());
+            thread.connection().clone()
+        };
+        if !connection.supports_live_session_roots() {
+            return false;
+        }
+        let update = connection.update_session_roots(&acp::SessionId::new(session_id), roots);
+        match tokio::time::timeout(ROOTS_UPDATE_TIMEOUT, update).await {
+            Ok(Ok(())) => true,
+            Ok(Err(e)) => {
+                tracing::warn!(session_id, "attached project roots not applied: {e}");
+                false
+            }
+            Err(_) => {
+                tracing::warn!(session_id, "attached project roots timed out");
+                false
+            }
+        }
+    }
+
+    /// The read-write attached projects of a row, as extra working
+    /// directories to open its session with — how they reach an ACP agent's
+    /// `additionalDirectories` and the native engine's writable roots at
+    /// start. Read-only ones are not among them: an agent's additional
+    /// directory is one it may edit.
+    fn attached_work_dirs(row: &ThreadMetadata) -> Vec<PathBuf> {
+        row.attached_projects
+            .iter()
+            .filter(|p| p.access.is_writable() && !row.references_folder_path(&p.path))
+            .map(|p| p.path.clone())
+            .collect()
+    }
+
+    /// Ask the user, in the session, to let its agent use `path`.
+    ///
+    /// The request appears where every permission request does, as the
+    /// approval card. `wait` bounds how long the caller is kept: past it the
+    /// answer is [`AccessRequestOutcome::Pending`] and the card stays up —
+    /// an approval that comes later still attaches the project, for the
+    /// agent's next look. A second request for the same path while one is
+    /// up waits on the same card rather than raising another.
+    pub async fn request_project_access(
+        self: &Arc<Self>,
+        session_id: &str,
+        request: ProjectAccessRequest,
+        wait: std::time::Duration,
+    ) -> Result<AccessRequestOutcome> {
+        let thread_id = self.row_for_session(session_id)?;
+        if let Some(existing) = self
+            .history_or_err()?
+            .store()
+            .attached_projects(thread_id)
+            .into_iter()
+            .find(|p| p.path == request.path)
+        {
+            if existing.access == ProjectAccess::ReadWrite || existing.access == request.access {
+                return Ok(AccessRequestOutcome::AlreadyGranted(existing.access));
+            }
+        }
+
+        let key = (session_id.to_string(), request.path.clone());
+        let mut rx = {
+            let mut pending = lock(&self.access_requests);
+            pending.retain(|_, rx| rx.borrow().is_none());
+            match pending.get(&key) {
+                Some(rx) => rx.clone(),
+                None => {
+                    let rx = self.raise_access_card(session_id, thread_id, request)?;
+                    pending.insert(key, rx.clone());
+                    rx
+                }
+            }
+        };
+        let decided = tokio::time::timeout(wait, rx.wait_for(Option::is_some)).await;
+        match decided {
+            Ok(Ok(value)) => Ok(value.clone().unwrap_or(AccessRequestOutcome::Denied)),
+            // The card went away without an answer (the session closed).
+            Ok(Err(_)) => Ok(AccessRequestOutcome::Denied),
+            Err(_) => Ok(AccessRequestOutcome::Pending),
+        }
+    }
+
+    /// Put the access request on the session's thread as an approval card,
+    /// and start the task that acts on the answer.
+    fn raise_access_card(
+        self: &Arc<Self>,
+        session_id: &str,
+        thread_id: ThreadId,
+        request: ProjectAccessRequest,
+    ) -> Result<AccessAnswer> {
+        let handle = self.thread(session_id)?;
+        let tool_call_id = acp::ToolCallId::new(format!("atlas-project-access-{}", Uuid::new_v4()));
+        let mut fields = acp::ToolCallUpdateFields::default();
+        fields.kind = Some(if request.access.is_writable() {
+            acp::ToolKind::Edit
+        } else {
+            acp::ToolKind::Read
+        });
+        fields.title = Some(access_card_title(&request));
+        fields.content = Some(vec![acp::ToolCallContent::Content(acp::Content::new(
+            acp::ContentBlock::Text(acp::TextContent::new(access_card_body(&request))),
+        ))]);
+        fields.locations = Some(vec![acp::ToolCallLocation::new(request.path.clone())]);
+        let mut options = Vec::new();
+        if request.access.is_writable() {
+            options.push(acp::PermissionOption::new(
+                ACCESS_OPTION_WRITE,
+                "Allow read and write",
+                acp::PermissionOptionKind::AllowOnce,
+            ));
+        }
+        options.push(acp::PermissionOption::new(
+            ACCESS_OPTION_READ,
+            "Allow read-only",
+            acp::PermissionOptionKind::AllowOnce,
+        ));
+        options.push(acp::PermissionOption::new(
+            ACCESS_OPTION_DENY,
+            "Deny",
+            acp::PermissionOptionKind::RejectOnce,
+        ));
+        let waiter = lock_thread(&handle)
+            .request_tool_call_authorization(
+                acp::ToolCallUpdate::new(tool_call_id.clone(), fields),
+                atlas_acp_thread::PermissionOptions::Flat(options),
+                atlas_acp_thread::AuthorizationKind::PermissionGrant,
+            )
+            .map_err(|e| HostError::new(e.to_string(), ErrorClass::Fatal))?;
+
+        let (tx, rx) = tokio::sync::watch::channel(None);
+        let host = Arc::downgrade(self);
+        let session_id = session_id.to_string();
+        tokio::spawn(async move {
+            let outcome = waiter.await;
+            let granted = match &outcome {
+                atlas_acp_thread::RequestPermissionOutcome::Selected(sel)
+                    if matches!(
+                        sel.option_kind,
+                        acp::PermissionOptionKind::AllowOnce
+                            | acp::PermissionOptionKind::AllowAlways
+                    ) =>
+                {
+                    Some(if sel.option_id.0.as_ref() == ACCESS_OPTION_WRITE {
+                        ProjectAccess::ReadWrite
+                    } else {
+                        ProjectAccess::ReadOnly
+                    })
+                }
+                // A rejection, a cancel (Esc), or the turn moving on without
+                // an answer: none of them is the user granting anything.
+                _ => None,
+            };
+            let result = match (granted, host.upgrade()) {
+                (Some(access), Some(host)) => {
+                    match host
+                        .grant_project_access(&session_id, thread_id, &request, access)
+                        .await
+                    {
+                        Ok(applied_live) => AccessRequestOutcome::Granted {
+                            access,
+                            applied_live,
+                        },
+                        Err(e) => {
+                            tracing::warn!(session_id, "access granted but not recorded: {e}");
+                            AccessRequestOutcome::Denied
+                        }
+                    }
+                }
+                _ => AccessRequestOutcome::Denied,
+            };
+            // Shown on the card's tool call, for the transcript.
+            if let Some(host) = host.upgrade() {
+                if let Ok(handle) = host.thread(&session_id) {
+                    let mut fields = acp::ToolCallUpdateFields::default();
+                    fields.status = Some(match result {
+                        AccessRequestOutcome::Granted { .. } => acp::ToolCallStatus::Completed,
+                        _ => acp::ToolCallStatus::Failed,
+                    });
+                    let _ = lock_thread(&handle)
+                        .update_tool_call(acp::ToolCallUpdate::new(tool_call_id, fields));
+                }
+            }
+            let _ = tx.send(Some(result));
+        });
+        Ok(rx)
+    }
+
+    /// The user approved: attach the project at the granted access (or raise
+    /// an attached one to it), and widen the session's roots.
+    async fn grant_project_access(
+        &self,
+        session_id: &str,
+        thread_id: ThreadId,
+        request: &ProjectAccessRequest,
+        access: ProjectAccess,
+    ) -> Result<bool> {
+        let store = self.history_or_err()?.store().clone();
+        let attached = store.attach_project(
+            thread_id,
+            AttachedProject::new(
+                request.path.clone(),
+                request.display_name.clone(),
+                access,
+                AttachSource::AgentRequest,
+            ),
+        );
+        if !attached {
+            store.set_project_access(thread_id, &request.path, access);
+        }
+        let projects = store.attached_projects(thread_id);
+        Ok(self.apply_session_roots(session_id, &projects).await)
+    }
+
+    /// Whether Atlas has work in flight in this session: a turn it sent that
+    /// has not come back, a turn the thread reports running, or a permission
+    /// or elicitation the user has not answered.
+    fn session_is_busy(&self, session_id: &str, activity: &HashMap<String, AtlasActivity>) -> bool {
+        if activity.get(session_id).is_some_and(|a| a.in_flight > 0) {
+            return true;
+        }
+        let Ok(handle) = self.thread(session_id) else {
+            return false;
+        };
+        let generating = lock_thread(&handle).is_generating();
+        generating || self.session_has_pending_request(session_id)
+    }
+
+    /// Whether the session is waiting on the user: a permission request or a
+    /// question (elicitation) not yet answered. A session Atlas is not
+    /// hosting has none it could know of.
+    fn session_has_pending_request(&self, session_id: &str) -> bool {
+        let Ok(handle) = self.thread(session_id) else {
+            return false;
+        };
+        let thread = lock_thread(&handle);
+        thread.elicitations().elicitations().iter().any(|e| {
+            matches!(
+                e.status,
+                atlas_acp_thread::ElicitationStatus::Pending { .. }
+            )
+        }) || thread.entries().iter().any(|entry| {
+            matches!(
+                entry,
+                atlas_acp_thread::AgentThreadEntry::ToolCall(call)
+                    if matches!(
+                        call.status,
+                        atlas_acp_thread::ToolCallStatus::WaitingForConfirmation { .. }
+                    )
+            )
+        })
+    }
+
+    /// Settle every session idle for longer than `idle`, skipping any that is
+    /// busy in Atlas ([`Self::session_is_busy`]: a running turn or a pending
+    /// request) or live in another process. The store applies the rest of
+    /// the rule (already settled, pinned, snoozed, un-settled since its last
+    /// activity) under its own lock. Answers how many were settled.
+    ///
+    /// Liveness elsewhere is judged per candidate from its own folders'
+    /// transcripts ([`ActivityIn`]), asked once per folder. The sweep covers
+    /// every project, while the session watcher only watches the open one;
+    /// reading only the watcher's times would take "nothing recorded" for
+    /// "quiet" and settle a session a terminal is using in another project.
+    /// A candidate any of whose folders cannot be answered for is skipped:
+    /// the sweep never settles a session it could not check.
+    #[cfg(test)]
+    pub fn auto_settle_idle(
+        &self,
+        idle: chrono::Duration,
+        activity_in: ActivityIn<'_>,
+    ) -> Result<usize> {
+        self.auto_settle_idle_keeping(idle, activity_in, false)
+    }
+
+    /// [`Self::auto_settle_idle`], leaving every session with a linked pull
+    /// request alone when `keep_pull_requests` (`autoSettleKeepPullRequests`).
+    /// A watched one is left alone either way.
+    pub fn auto_settle_idle_keeping(
+        &self,
+        idle: chrono::Duration,
+        activity_in: ActivityIn<'_>,
+        keep_pull_requests: bool,
+    ) -> Result<usize> {
+        let history = self.history_or_err()?;
+        let now = Utc::now();
+        let cutoff = now - idle;
+        // Only the rows already idle past the cutoff are worth a busy check:
+        // most ticks find none, and then nothing else is read.
+        let idle_sessions = history
+            .store()
+            .idle_sessions_keeping(cutoff, keep_pull_requests);
+        if idle_sessions.is_empty() {
+            return Ok(0);
+        }
+        let activity = self.atlas_activity();
+        let mut by_folder: HashMap<PathBuf, Option<HashMap<String, DateTime<Utc>>>> =
+            HashMap::new();
+        let busy: std::collections::HashSet<acp::SessionId> = idle_sessions
+            .into_iter()
+            .filter(|(session_id, folders)| {
+                let id = session_id.0.as_ref();
+                if folders.paths().is_empty() || self.session_is_busy(id, &activity) {
+                    return true;
+                }
+                let mut modified = None;
+                for folder in folders.paths() {
+                    let times = by_folder
+                        .entry(folder.clone())
+                        .or_insert_with(|| activity_in(folder));
+                    let Some(times) = times else {
+                        return true; // no coverage: not settled
+                    };
+                    modified = modified.max(times.get(id).copied());
+                }
+                live_elsewhere(modified, activity.get(id), now)
+            })
+            .map(|(session_id, _)| session_id)
+            .collect();
+        Ok(history
+            .store()
+            .auto_settle_idle_keeping(cutoff, &busy, keep_pull_requests))
     }
 
     /// Which installed agents can be imported from, and how much they have.
@@ -2527,7 +3271,7 @@ impl AgentHost {
     /// this is usually a brief window — but it is exactly the window the boot
     /// backfill runs in, one agent after another.
     fn connect_has_failed(&self, plugin_id: &str) -> bool {
-        let Ok(agent) = self.agent_for(plugin_id) else {
+        let Ok(agent) = self.installed_agent(plugin_id) else {
             return false;
         };
         self.manager
@@ -2598,7 +3342,7 @@ impl AgentHost {
     /// agent's storage, but "imported once, at boot" no longer holds. The agent
     /// is asked over ACP `session/list`, filtered to `cwd`, whenever the
     /// sidebar is shown for that project. Rows whose `updated_at` is within the
-    /// last week land unarchived; older ones land in History, as an import does.
+    /// last week land active; older ones land settled, as an import does.
     ///
     /// Only agents that already have a row in the store are asked. The sync is
     /// automatic, and an automatic action must not be the reason an installed
@@ -2612,13 +3356,11 @@ impl AgentHost {
     /// unless `force` (the session watcher saw an unknown transcript appear):
     /// that skips the check but still records the time.
     ///
-    /// Sessions the store already knows are not skipped outright. The
-    /// first-run backfill lands every session archived, so a session from
-    /// before that, picked up again in a terminal, would otherwise never reach
-    /// the sidebar. Their agent-reported `updated_at` goes through
-    /// [`ThreadMetadataStore::touch_sessions`] with the same cutoff: new
-    /// activity inside the window unarchives the row, and nothing else touches
-    /// an archived one.
+    /// Sessions the store already knows are not skipped outright: their
+    /// agent-reported `updated_at` goes through
+    /// [`ThreadMetadataStore::touch_sessions`], so a session picked up again
+    /// in a terminal moves up its section. It does not leave the Settled
+    /// shelf for that — only the user sending does.
     ///
     /// `cwd` must already be canonical (`threads_sync_project` does that): it
     /// is the debounce key and the `session/list` filter, and two spellings of
@@ -2646,7 +3388,7 @@ impl AgentHost {
             .into_iter()
             .map(|thread| thread.agent_id.as_str().to_owned())
             .collect();
-        let cutoff = sync_unarchive_cutoff(Utc::now());
+        let cutoff = sync_active_cutoff(Utc::now());
 
         let mut added = 0;
         for plugin_id in self.store.external_agents() {
@@ -2710,7 +3452,7 @@ impl AgentHost {
                 .filter(|s| known.contains(&s.session_id))
                 .filter_map(|s| Some((s.session_id.clone(), s.updated_at?)))
                 .collect();
-            history.store().touch_sessions(&activity, Some(cutoff));
+            history.store().touch_sessions(&activity);
             let rows =
                 importable_threads(sessions, &plugin_id.as_str().into(), &known, Some(cutoff));
             added += history.store().insert_new_sessions(rows);
@@ -2850,7 +3592,10 @@ fn snapshot_of(thread: &AcpThreadHandle) -> ThreadSnapshot {
             .title()
             .cloned()
             .or_else(|| thread.fallback_title(atlas_agent_transcript::strip_injected_context)),
-        work_dirs: thread.work_dirs().to_vec(),
+        // Its own folders only: an attached project the session was opened
+        // with as a working directory is not the session's project, and
+        // recording it would move the row to another group.
+        work_dirs: thread.own_work_dirs(),
     }
 }
 
@@ -2926,7 +3671,30 @@ pub struct ThreadRow {
     pub title: String,
     pub updated_at: String,
     pub created_at: Option<String>,
-    pub archived: bool,
+    /// When the session was settled — on the sidebar's Settled shelf — as
+    /// RFC 3339; `None` while it is active.
+    pub settled_at: Option<String>,
+    /// When the session was pinned (RFC 3339); `None` when it is not.
+    pub pinned_at: Option<String>,
+    /// Its place among the pinned: a fractional key compared as a plain
+    /// string. `None` sorts after every keyed pin.
+    pub pin_order: Option<String>,
+    /// When a snoozed session wakes on its own (RFC 3339); `None` when it is
+    /// not snoozed.
+    pub snoozed_until: Option<String>,
+    pub snoozed_at: Option<String>,
+    /// When it last woke from a snooze — on time, early because it raised its
+    /// hand, or by hand.
+    pub last_snooze_wake_at: Option<String>,
+    /// When the user last opened or focused it.
+    pub last_viewed_at: Option<String>,
+    /// When its latest turn completed, as Atlas saw it end.
+    pub last_turn_completed_at: Option<String>,
+    /// Its latest turn completed after the user last viewed it. Decided here
+    /// so every surface agrees.
+    pub unread: bool,
+    /// It woke from a snooze and the user has not viewed it since.
+    pub woke: bool,
     /// The project this thread belongs to, for a history row that is shown
     /// outside its project's group.
     pub project_name: String,
@@ -2936,9 +3704,162 @@ pub struct ThreadRow {
     /// detached HEAD, a folder that is not a repository, a row older than
     /// the column. Never guessed.
     pub branch: Option<String>,
+    /// The model the latest turn ran on, by its display name. `None` when
+    /// Atlas never saw one (an import, a row older than the column).
+    pub model: Option<String>,
     /// Another process (typically `claude` in a terminal) wrote this session
     /// within the liveness window and Atlas is not hosting it (Rule 7).
     pub live_elsewhere: bool,
+    /// The projects attached to the session besides its own folder, in the
+    /// order they were attached. Everything a surface needs to show them, to
+    /// match a project filter on them, or to split changes by them.
+    pub attached_projects: Vec<AttachedProjectWire>,
+    /// The session this one was branched from ("Branch from here"), as the
+    /// parent's agent session id. `None` for a session that was not forked
+    /// in Atlas. The session context overlay's Lineage reads it both ways:
+    /// this row's parent, and the rows that name this one.
+    pub forked_from_session_id: Option<String>,
+    /// The pull requests linked to the session — opened from it, found on
+    /// its branch, linked by the user or the agent — each with the host's
+    /// last reported state. Tombstones (unlinked ones) are left out.
+    pub pull_requests: Vec<super::session_pull_requests::PullRequestLinkWire>,
+}
+
+/// One project attached to a session, as every surface reads it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttachedProjectWire {
+    /// The folder, absolute. Its identity within the session.
+    pub path: String,
+    pub display_name: String,
+    /// `read_only` or `read_write`.
+    pub access: String,
+    /// RFC 3339.
+    pub attached_at: String,
+    /// `mention`, `agent_request` or `clone`.
+    pub source: String,
+}
+
+impl From<&AttachedProject> for AttachedProjectWire {
+    fn from(project: &AttachedProject) -> Self {
+        Self {
+            path: project.path.to_string_lossy().into_owned(),
+            display_name: project.display_name.to_string(),
+            access: project.access.as_str().to_string(),
+            attached_at: project.attached_at.to_rfc3339(),
+            source: project.source.as_str().to_string(),
+        }
+    }
+}
+
+/// What an attach, detach or access change did.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionProjectsChange {
+    /// The session's attached projects after the change.
+    pub projects: Vec<AttachedProjectWire>,
+    /// Whether anything changed. Attaching a path that is already attached,
+    /// or setting the access it already has, changes nothing.
+    pub changed: bool,
+    /// Whether the agent's sandbox takes the change from the session's next
+    /// turn. `false` when the agent cannot change an open session's roots
+    /// (ACP has no request for it) or the session is not open: the change is
+    /// recorded, and reaches the agent when the session is next opened.
+    /// Atlas's own file grants apply at once either way.
+    pub applied_live: bool,
+}
+
+/// An agent's request to use a folder, already validated
+/// (`session_projects::validate_requested_path`).
+#[derive(Debug, Clone)]
+pub struct ProjectAccessRequest {
+    /// Canonical, absolute, an existing directory.
+    pub path: PathBuf,
+    pub display_name: String,
+    pub access: ProjectAccess,
+    /// The agent's own words for why, shown on the card.
+    pub reason: Option<String>,
+    /// The folder is a git repository's root or inside one.
+    pub in_git_repository: bool,
+}
+
+/// How an access request ended, as the asking agent is told.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AccessRequestOutcome {
+    /// The user approved, at this access; `applied_live` as for
+    /// [`SessionProjectsChange::applied_live`].
+    Granted {
+        access: ProjectAccess,
+        applied_live: bool,
+    },
+    /// The user denied it, dismissed the card, or the session went away.
+    Denied,
+    /// Already attached at this access or more; nothing was asked.
+    AlreadyGranted(ProjectAccess),
+    /// No answer within the wait. The card stays up.
+    Pending,
+}
+
+/// How long an attach waits on the agent's sandbox update (ADR-0008).
+const ROOTS_UPDATE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// The access card's option ids, read back off the user's pick.
+const ACCESS_OPTION_WRITE: &str = "grant_read_write";
+const ACCESS_OPTION_READ: &str = "grant_read_only";
+const ACCESS_OPTION_DENY: &str = "deny";
+
+/// The roots a session's attached projects call for.
+pub(crate) fn session_roots(projects: &[AttachedProject]) -> atlas_acp_thread::SessionRoots {
+    let mut roots = atlas_acp_thread::SessionRoots::default();
+    for project in projects {
+        if project.access.is_writable() {
+            roots.read_write.push(project.path.clone());
+        } else {
+            roots.read_only.push(project.path.clone());
+        }
+    }
+    roots
+}
+
+/// `~/work/server` for a path under the home folder, the path as is
+/// otherwise: the card has to say clearly which folder, in the form the user
+/// knows it by.
+pub(crate) fn display_path(path: &Path) -> String {
+    if let Some(home) = dirs::home_dir() {
+        if let Ok(rest) = path.strip_prefix(&home) {
+            return format!("~/{}", rest.display());
+        }
+    }
+    path.display().to_string()
+}
+
+fn access_card_title(request: &ProjectAccessRequest) -> String {
+    let what = if request.access.is_writable() {
+        "write access"
+    } else {
+        "read access"
+    };
+    format!("Wants {what} to {}", display_path(&request.path))
+}
+
+fn access_card_body(request: &ProjectAccessRequest) -> String {
+    let mut body = String::new();
+    if let Some(reason) = request.reason.as_deref().filter(|r| !r.trim().is_empty()) {
+        body.push_str(reason.trim());
+        body.push_str("\n\n");
+    }
+    body.push_str(&format!("Folder: {}", request.path.display()));
+    if request.in_git_repository {
+        body.push_str(" (git repository)");
+    }
+    body.push_str(if request.access.is_writable() {
+        "\n\nApproving attaches it to this session. Read and write lets the agent edit it; \
+         read-only lets it look but never change anything."
+    } else {
+        "\n\nApproving attaches it to this session, read-only: the agent can look but never \
+         change anything."
+    });
+    body
 }
 
 /// What `thread_row` needs to decide [`ThreadRow::live_elsewhere`].
@@ -2946,6 +3867,9 @@ struct LiveContext<'a> {
     modified: &'a HashMap<String, DateTime<Utc>>,
     activity: HashMap<String, AtlasActivity>,
     now: DateTime<Utc>,
+    /// Branched sessions, child -> parent session id (`session_forks`), for
+    /// [`ThreadRow::forked_from_session_id`].
+    forks: HashMap<String, String>,
 }
 
 /// What Atlas's own turns have been doing in one session.
@@ -3051,6 +3975,11 @@ pub(crate) fn alias_owner(
 /// within the live window, and not by Atlas. Being *bound* in Atlas — the row
 /// was opened — says nothing either way; a terminal can be writing a session
 /// Atlas has open, and that is exactly the fork this guards against.
+/// For one folder, the session file times that are evidence of another
+/// process (`SessionWatcher::activity_in`); `None` when the folder cannot be
+/// checked. Settling reads it per row, so a row is judged by its own project.
+pub type ActivityIn<'a> = &'a dyn Fn(&Path) -> Option<HashMap<String, DateTime<Utc>>>;
+
 pub(crate) fn live_elsewhere(
     modified: Option<DateTime<Utc>>,
     activity: Option<&AtlasActivity>,
@@ -3085,6 +4014,9 @@ fn thread_row(thread: &ThreadMetadata, live: &LiveContext<'_>) -> ThreadRow {
             live.now,
         )
     });
+    let forked_from_session_id = session_id
+        .as_deref()
+        .and_then(|id| live.forks.get(id).cloned());
     ThreadRow {
         thread_id: thread.thread_id.to_key_string(),
         session_id,
@@ -3092,12 +4024,33 @@ fn thread_row(thread: &ThreadMetadata, live: &LiveContext<'_>) -> ThreadRow {
         title: display_title(thread),
         updated_at: thread.updated_at.to_rfc3339(),
         created_at: thread.created_at.map(|at| at.to_rfc3339()),
-        archived: thread.archived,
+        settled_at: rfc3339(thread.settled_at),
+        pinned_at: rfc3339(thread.pinned_at),
+        pin_order: thread.pin_order.as_deref().map(str::to_string),
+        snoozed_until: rfc3339(thread.snoozed_until),
+        snoozed_at: rfc3339(thread.snoozed_at),
+        last_snooze_wake_at: rfc3339(thread.last_snooze_wake_at),
+        last_viewed_at: rfc3339(thread.last_viewed_at),
+        last_turn_completed_at: rfc3339(thread.last_turn_completed_at),
+        unread: thread.is_unread(),
+        woke: thread.is_woke(),
         project_name: project_name(thread.main_worktree_paths()),
         folder_paths: paths_of(thread.folder_paths()),
         live_elsewhere,
         branch: thread.branch.as_deref().map(str::to_string),
+        model: thread.model.as_deref().map(str::to_string),
+        attached_projects: thread
+            .attached_projects
+            .iter()
+            .map(AttachedProjectWire::from)
+            .collect(),
+        forked_from_session_id,
+        pull_requests: super::session_pull_requests::links_wire(&thread.pull_requests),
     }
+}
+
+fn rfc3339(at: Option<DateTime<Utc>>) -> Option<String> {
+    at.map(|at| at.to_rfc3339())
 }
 
 /// The row's title with any Atlas memory block taken out.
@@ -4348,13 +5301,16 @@ mod tests {
 
     /// A history row is the user's record. An agent that cannot be reached,
     /// cannot be started, or has forgotten the conversation must leave it
-    /// exactly as it found it — archived flag included.
+    /// exactly as it found it — its lifecycle included.
     #[tokio::test]
     async fn a_resume_that_fails_changes_nothing_about_the_row() {
         let (host, dir) = fresh_host();
         let history = host.history().expect("a fresh host has history");
         let thread = atlas_thread_metadata::ThreadMetadata {
             session_id: Some(acp::SessionId::new("ses-1")),
+            // Settled where the user left it (a fresh row is inside the
+            // settle grace, so the store's `settle` would refuse it).
+            settled_at: Some(chrono::Utc::now()),
             ..atlas_thread_metadata::ThreadMetadata::new(
                 atlas_thread_metadata::ThreadId::new(),
                 // Not installed: `spawn` will refuse, which is the most basic
@@ -4365,7 +5321,6 @@ mod tests {
         };
         let thread_id = thread.thread_id;
         history.store().save_all(vec![thread]);
-        history.store().archive(thread_id);
 
         let error = host
             .resume_thread(thread_id)
@@ -4374,7 +5329,7 @@ mod tests {
         assert_eq!(error.class, ErrorClass::Fatal);
 
         let after = history.store().thread(thread_id).expect("the row survives");
-        assert!(after.archived, "and it is still where the user left it");
+        assert!(after.is_settled(), "and it is still where the user left it");
         assert_eq!(after.session_id, Some(acp::SessionId::new("ses-1")));
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -4445,6 +5400,195 @@ mod tests {
                 .is_session_deleted(&acp::SessionId::new("ses-live")),
             "and stays deleted against the next sync"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Settling refuses a session with a turn in flight, and the idle sweep
+    /// passes over it and over one live in another process; once quiet, both
+    /// settle it and the row says so on the wire.
+    #[tokio::test]
+    async fn a_running_session_is_not_settled_by_hand_or_by_the_sweep() {
+        let (host, dir) = fresh_host();
+        let history = host.history().expect("a fresh host has history");
+        let row = |session: &str| {
+            let mut thread = atlas_thread_metadata::ThreadMetadata {
+                session_id: Some(acp::SessionId::new(session)),
+                ..atlas_thread_metadata::ThreadMetadata::new(
+                    atlas_thread_metadata::ThreadId::new(),
+                    "an-uninstalled-agent".into(),
+                    atlas_thread_metadata::PathList::new(&[PathBuf::from("/tmp/atlas")]),
+                )
+            };
+            thread.updated_at = Utc::now() - chrono::Duration::days(5);
+            thread.interacted_at = Some(thread.updated_at);
+            thread
+        };
+        let (running, elsewhere) = (row("ses-running"), row("ses-elsewhere"));
+        let (running_id, elsewhere_id) = (running.thread_id, elsewhere.thread_id);
+        history.store().save_all(vec![running, elsewhere]);
+
+        let quiet = |_: &Path| Some(HashMap::new());
+        let written_just_now =
+            |_: &Path| Some(HashMap::from([("ses-elsewhere".to_owned(), Utc::now())]));
+
+        host.begin_atlas_turn("ses-running");
+        let err = host
+            .settle_thread(running_id, &quiet)
+            .expect_err("a session mid-turn is not settled");
+        assert!(err.message.contains("still running"));
+
+        host.settle_thread(elsewhere_id, &written_just_now)
+            .expect_err("nor is one running in another process");
+        let settled = host
+            .auto_settle_idle(chrono::Duration::days(3), &written_just_now)
+            .unwrap();
+        assert_eq!(settled, 0, "busy here, live elsewhere: neither is settled");
+
+        host.end_atlas_turn("ses-running");
+        assert!(
+            host.settle_thread(running_id, &quiet)
+                .expect("a quiet session settles"),
+            "and says it moved"
+        );
+        assert!(
+            !host.settle_thread(running_id, &quiet).unwrap(),
+            "settling it again changes nothing, and says so"
+        );
+        let settled = host
+            .auto_settle_idle(chrono::Duration::days(3), &quiet)
+            .unwrap();
+        assert_eq!(settled, 1, "the sweep settles the other once it is quiet");
+
+        let rows = host.thread_history(&HashMap::new()).unwrap();
+        for id in [running_id, elsewhere_id] {
+            let row = rows
+                .iter()
+                .find(|r| r.thread_id == id.to_key_string())
+                .unwrap();
+            assert!(row.settled_at.is_some(), "settledAt on the wire");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The review finding: the sweep covers every project, the session watcher
+    /// only the open one. A session in another project is judged by its own
+    /// folder's transcripts — and when they cannot be read, it is not settled.
+    #[tokio::test]
+    async fn the_sweep_judges_each_session_by_its_own_project() {
+        let (host, dir) = fresh_host();
+        let history = host.history().expect("a fresh host has history");
+        let mut thread = atlas_thread_metadata::ThreadMetadata::new(
+            atlas_thread_metadata::ThreadId::new(),
+            "an-uninstalled-agent".into(),
+            atlas_thread_metadata::PathList::new(&[PathBuf::from("/tmp/another-project")]),
+        );
+        thread.session_id = Some(acp::SessionId::new("ses-other"));
+        thread.updated_at = Utc::now() - chrono::Duration::days(5);
+        thread.interacted_at = Some(thread.updated_at);
+        let id = thread.thread_id;
+        history.store().save_all(vec![thread]);
+
+        // What the sidebar's open project knows: nothing about this one.
+        let open_project = PathBuf::from("/tmp/atlas");
+        let asked = std::sync::Mutex::new(Vec::<PathBuf>::new());
+        let terminal_in_other = |folder: &Path| {
+            asked.lock().unwrap().push(folder.to_path_buf());
+            if folder == open_project {
+                Some(HashMap::new())
+            } else {
+                Some(HashMap::from([("ses-other".to_owned(), Utc::now())]))
+            }
+        };
+        let idle = chrono::Duration::days(3);
+        assert_eq!(host.auto_settle_idle(idle, &terminal_in_other).unwrap(), 0);
+        assert_eq!(
+            *asked.lock().unwrap(),
+            [PathBuf::from("/tmp/another-project")],
+            "asked about the session's own folder"
+        );
+        host.settle_thread(id, &terminal_in_other)
+            .expect_err("by hand too, the row's own project decides");
+
+        let unreadable = |_: &Path| None;
+        assert_eq!(
+            host.auto_settle_idle(idle, &unreadable).unwrap(),
+            0,
+            "no coverage, no settle"
+        );
+
+        let quiet = |_: &Path| Some(HashMap::new());
+        assert_eq!(host.auto_settle_idle(idle, &quiet).unwrap(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Snoozing goes through the host's checks: a time in the past is refused
+    /// with a reason, and the wire row carries the snooze and, once woken,
+    /// the woke mark.
+    #[tokio::test]
+    async fn a_snooze_is_checked_and_reaches_the_wire() {
+        let (host, dir) = fresh_host();
+        let history = host.history().expect("a fresh host has history");
+        let mut thread = atlas_thread_metadata::ThreadMetadata::new(
+            atlas_thread_metadata::ThreadId::new(),
+            "an-uninstalled-agent".into(),
+            atlas_thread_metadata::PathList::new(&[PathBuf::from("/tmp/atlas")]),
+        );
+        thread.session_id = Some(acp::SessionId::new("ses-snooze"));
+        let id = thread.thread_id;
+        history.store().save_all(vec![thread]);
+
+        let err = host
+            .snooze_thread(id, Utc::now() - chrono::Duration::minutes(1))
+            .expect_err("the past is not a snooze");
+        assert!(err.message.contains("future"));
+
+        let until = Utc::now() + chrono::Duration::hours(1);
+        assert!(host.snooze_thread(id, until).unwrap());
+        let row_of = |host: &AgentHost| {
+            host.thread_history(&HashMap::new())
+                .unwrap()
+                .into_iter()
+                .find(|r| r.thread_id == id.to_key_string())
+                .unwrap()
+        };
+        let row = row_of(&host);
+        assert_eq!(row.snoozed_until, Some(until.to_rfc3339()));
+        assert!(!row.woke);
+
+        assert!(host.wake_thread(id).unwrap());
+        let row = row_of(&host);
+        assert!(row.snoozed_until.is_none() && row.woke);
+
+        assert!(host.mark_session_viewed("ses-snooze").unwrap());
+        assert!(!row_of(&host).woke, "viewing clears it");
+        assert!(
+            host.mark_thread_unread(id).is_err(),
+            "no finished turn to be unread"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A send records the interaction before the turn is counted in. A settle
+    /// that lands in that gap is refused, not taken as "quiet".
+    #[tokio::test]
+    async fn a_session_just_sent_to_is_not_settled() {
+        let (host, dir) = fresh_host();
+        let history = host.history().expect("a fresh host has history");
+        let mut thread = atlas_thread_metadata::ThreadMetadata::new(
+            atlas_thread_metadata::ThreadId::new(),
+            "an-uninstalled-agent".into(),
+            atlas_thread_metadata::PathList::new(&[PathBuf::from("/tmp/atlas")]),
+        );
+        thread.session_id = Some(acp::SessionId::new("ses-sent"));
+        let id = thread.thread_id;
+        history.store().save_all(vec![thread]);
+        history.store().update_interacted_at(id, Utc::now());
+
+        let err = host
+            .settle_thread(id, &|_: &Path| Some(HashMap::new()))
+            .expect_err("the turn has not been counted in yet");
+        assert!(err.message.contains("still running"));
+        assert!(!history.store().settle(id), "the store refuses it too");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -4589,6 +5733,7 @@ mod tests {
             modified: &EMPTY,
             activity: HashMap::new(),
             now: Utc::now(),
+            forks: HashMap::new(),
         }
     }
 

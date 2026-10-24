@@ -17,6 +17,11 @@ export interface ModelPrice {
   /** Zero when the provider publishes no cache rate — not every one does. */
   cacheRead: number;
   cacheWrite: number;
+  /** What models.dev states it can do; false or 0 when it doesn't say. */
+  reasoning?: boolean;
+  images?: boolean;
+  /** Context window in tokens. */
+  context?: number;
 }
 
 interface ModelPricingState {

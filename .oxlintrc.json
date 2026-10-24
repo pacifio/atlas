@@ -1,10 +1,136 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "plugins": ["typescript", "unicorn", "oxc"],
+  "jsPlugins": ["@shadcn/lint"],
+  "settings": {
+    "shadcn": {
+      "ui": "@/ui"
+    }
+  },
   "categories": {
     "correctness": "error"
   },
-  "rules": {},
+  "rules": {
+    "shadcn/no-unknown-classes": [
+      "error",
+      {
+        "allow": [
+          "atlas-ants",
+          "atlas-arc-spin",
+          "atlas-bubble-btn",
+          "atlas-bubble-in",
+          "atlas-bubble-link",
+          "atlas-bubble-sep",
+          "atlas-bubble-wrap",
+          "atlas-callout",
+          "atlas-callout-body",
+          "atlas-callout-emoji",
+          "atlas-cmd-suggest",
+          "atlas-code",
+          "atlas-code-copy",
+          "atlas-code-header",
+          "atlas-code-lang",
+          "atlas-entry",
+          "atlas-fade-in",
+          "atlas-group-slide-left",
+          "atlas-group-slide-right",
+          "atlas-live-pulse",
+          "atlas-loader",
+          "atlas-marker",
+          "atlas-marker-running",
+          "atlas-md-pending",
+          "atlas-mention-picker",
+          "atlas-menu-pop",
+          "atlas-panel-in-br",
+          "atlas-panel-in-tl",
+          "atlas-pill-in",
+          "atlas-pill-swap",
+          "atlas-pixel-cell",
+          "atlas-project-rail",
+          "atlas-prose",
+          "atlas-prose--user",
+          "atlas-radar-ping",
+          "atlas-radar-sweep",
+          "atlas-row",
+          "atlas-scroll-mask-b",
+          "atlas-slash-body",
+          "atlas-slash-chev",
+          "atlas-slash-eyebrow",
+          "atlas-slash-group",
+          "atlas-slash-hint",
+          "atlas-slash-iconwrap",
+          "atlas-slash-item",
+          "atlas-slash-kbd",
+          "atlas-slash-menu",
+          "atlas-slash-picker",
+          "atlas-slash-title",
+          "atlas-split",
+          "atlas-stream-caret",
+          "atlas-tab",
+          "atlas-tab-label",
+          "atlas-terminal-output",
+          "atlas-thinking-shimmer",
+          "atlas-timeline-beam",
+          "atlas-timeline-row",
+          "atlas-tiptap",
+          "atlas-toggle",
+          "atlas-toggle-body",
+          "atlas-toggle-chev",
+          "atlas-toggle-header",
+          "atlas-toggle-title",
+          "atlas-toggle-title-input",
+          "atlas-usage-in",
+          "hide-scrollbar",
+          "hljs",
+          "is-active",
+          "lucide",
+          "lucide-github",
+          "nodrag",
+          "prose-chat",
+          "reader-content"
+        ]
+      }
+    ],
+    "shadcn/no-restyle": [
+      "error",
+      {
+        "allow": ["layout", "font-mono", "tabular-nums", "capitalize"],
+        "contracts": [
+          {
+            "pattern": "^(Icon|\\w+Glyph)$",
+            "allow": ["layout", "color", "motion", "font-mono", "tabular-nums", "capitalize"]
+          },
+          {
+            "pattern": "^ScrollFade$",
+            "allow": ["layout", "color"]
+          },
+          {
+            "pattern": "^(Dialog|Popover)Content$",
+            "allow": ["layout", "spacing", "font-mono", "tabular-nums", "capitalize"]
+          }
+        ]
+      }
+    ]
+  },
+  "overrides": [
+    {
+      "files": ["src/ui/**"],
+      "rules": {
+        "shadcn/no-restyle": "off"
+      }
+    },
+    {
+      "files": [
+        "src/features/menu/components/menu-bar.tsx",
+        "src/features/spaces/components/space-chrome.tsx",
+        "src/features/comms/components/call-menu.tsx",
+        "src/features/capture/components/capture-popover.tsx"
+      ],
+      "rules": {
+        "shadcn/no-restyle": "off"
+      }
+    }
+  ],
   "env": {
     "builtin": true
   }

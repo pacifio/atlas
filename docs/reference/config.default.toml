@@ -27,6 +27,15 @@ enableAtlasLogs = true
 # Show dotfiles and dot-directories in the explorer file tree. (default: true)
 showHiddenFiles = true
 
+# The external editor that "Open in <editor>" uses for a file or the project:
+# an id such as "vscode", "cursor", "zed", "windsurf", "sublime", "xcode" or a
+# JetBrains IDE ("idea", "webstorm", "pycharm"…), or "system" for the app your
+# system opens the file with. Empty uses the first editor Atlas finds
+# installed. An id that isn't installed falls back to that same choice. Files
+# outside the project open in the system's app unless this names an editor.
+# (default: "")
+preferredEditor = ""
+
 # Interface zoom, where 1.0 is 100%. Also driven by Cmd +/-/0. Must be a
 # number between 0.5 and 2.0. (default: 1.0)
 uiScale = 1.0
@@ -70,14 +79,14 @@ iconTheme = "material-icon-theme"
 # know shows the default. (default: "dark")
 appIcon = "dark"
 
-# Next-step suggestion chips in the agent chat's per-turn card. Exactly
-# "agent" or "off", nothing else. (default: "agent")
+# Next-step suggestion chips in the session's per-turn card. Exactly "agent"
+# or "off", nothing else. (default: "agent")
 adaptiveSuggestions = "agent"
 
-# What picking another agent does to a chat that has a conversation: "new-tab"
-# keeps it and opens the new agent in a new tab, "handoff" switches in place
-# and attaches it to the next message, "reset" switches in place and starts
-# over. (default: "reset")
+# What picking another agent does to a session that has a conversation:
+# "new-tab" keeps it and opens the new agent in a new tab, "handoff" switches
+# in place and attaches it to the next message, "reset" switches in place and
+# starts over. (default: "reset")
 agentSwitchBehavior = "reset"
 
 # Before switching agents on a chat with a conversation, send the agent being
@@ -220,9 +229,9 @@ notifyAgentMinDurationMs = 0
 # Unknown entries are ignored. (default: [])
 favoriteModels = []
 
-# Ask before deleting a chat from the sidebar or the history. A deleted chat's
-# transcript stays with its agent, but Atlas forgets the chat. Archiving never
-# asks, because it can be undone. (default: true)
+# Ask before deleting a session from the sidebar or the history. A deleted
+# session's transcript stays with its agent, but Atlas forgets the session.
+# Settling never asks, because it can be undone. (default: true)
 confirmDeleteChat = true
 
 # Ask before quitting while an agent is in the middle of a turn, since
@@ -230,8 +239,8 @@ confirmDeleteChat = true
 # (default: true)
 confirmQuitWhileRunning = true
 
-# The agent a new chat starts with: "atlas-agent" for Atlas Agent, or the id
-# of an installed ACP agent, such as "claude-code". An agent that isn't
+# The agent a new session starts with: "atlas-agent" for Atlas Agent, or the
+# id of an installed ACP agent, such as "claude-code". An agent that isn't
 # installed falls back to Atlas Agent. (default: "atlas-agent") A project can
 # override it in its own .atlas/config.toml.
 defaultAgent = "atlas-agent"
@@ -240,13 +249,23 @@ defaultAgent = "atlas-agent"
 # "wide" (1080 pixels) or "full" (the whole panel). (default: "normal")
 chatWidth = "normal"
 
-# Wrap long lines in a chat's code blocks. Off: they keep their lines and
-# scroll sideways. (default: true)
-chatCodeWrap = true
+# Wrap long lines in file tabs, diffs and a session's code blocks. Off: lines
+# keep their shape and scroll sideways. The wrap button in a file's or the
+# review diff's header flips this same setting. (default: true)
+wordWrap = true
 
-# The order of chats in the sidebar: "recent" puts the chat with the latest
-# activity first, "created" the one started most recently. (default: "recent")
+# The order of sessions in the sidebar: "recent" puts the session with the
+# latest activity first, "created" the one started most recently. (default:
+# "recent")
 sidebarSort = "recent"
+
+# Days a session may sit idle before Atlas settles it: moves it to the Settled
+# shelf at the bottom of the session sidebar, where it stays listed and
+# resumable. A session that is running, waiting for you, pinned, snoozed, or
+# that you un-settled since its last activity is left alone, and sending to a
+# settled session brings it back. 0 turns auto-settling off; settling by hand
+# still works. Must be between 0 and 90. (default: 3)
+autoSettleAfterDays = 3
 
 # The clock for every time of day Atlas shows: "12h", "24h", or "system" to
 # follow your system's region settings. (default: "system")
@@ -286,10 +305,10 @@ terminalFontSize = 13
 # false)
 diffIgnoreWhitespace = false
 
-# Open a diff of several files, such as a commit or your changes, with each
-# file collapsed to its header. Off: every file starts expanded. (default:
-# false)
-diffFilesCollapsed = false
+# Open a diff, such as your changes or a commit, as a list of its files, each
+# collapsed to its header; click a file to expand it. Off: every file starts
+# expanded. (default: true)
+diffFilesCollapsed = true
 
 # The colours for added and removed lines: "theme" uses the theme's green and
 # red, "blue-orange" uses its blue and orange, which stay distinct with
@@ -301,3 +320,70 @@ diffPalette = "theme"
 # background. Applies to every theme, the terminal and charts included.
 # (default: 100)
 interfaceContrast = 100
+
+# The turn rail: a column of short ticks down the left edge of a session's
+# transcript, one per turn. Hovering a tick previews the prompt and the start
+# of the reply; clicking it jumps to that turn. Off hides the rail. (default:
+# true)
+showTurnRail = true
+
+# Settle a session once its linked pull request merges, when the merge came
+# after you last worked in the session. A pull request that is closed without
+# merging always settles its session. Settled sessions stay listed and
+# resumable. (default: true)
+autoSettleOnMerge = true
+
+# Auto-settling after days of inactivity (autoSettleAfterDays) leaves a
+# session alone while it has a linked pull request. Merging or closing it can
+# still settle the session (autoSettleOnMerge). (default: true)
+autoSettleKeepPullRequests = true
+
+# When a session watches its pull request (the agent asked to, or you turned
+# the watch on), a failing check, a new review or comment, or a conflict with
+# the base sends the session's agent an update so it can act. Off: watches
+# still track the pull request but never prompt an agent. (default: true)
+pullRequestWatchWakes = true
+
+# Open a pull request link from a session, the sidebar or a transcript in
+# Atlas's pull request tab when it belongs to the project's repository. Off,
+# or a pull request of another repository: it opens in the browser. (default:
+# true)
+pullRequestLinksOpenInApp = true
+
+# The method a pull request's Merge button starts on: "merge", "squash" or
+# "rebase", or "last" for whichever you picked most recently on this device. A
+# method the repository doesn't allow falls back to one it does. (default:
+# "last") A project can override it in its own .atlas/config.toml.
+pullRequestMergeMethod = "last"
+
+# Remove recognized agent credit lines (an agent's Co-Authored-By trailer, a
+# "Generated with" footer) from the message of a merge or squash Atlas
+# performs, auto-merge included. Human co-authors are kept. Commits already on
+# the branch are not rewritten. (default: false) A project can override it in
+# its own .atlas/config.toml.
+removeAgentCreditsOnMerge = false
+
+# Show the Guide tab on pull requests, where an agent writes a tour of the
+# change in reading order, with the calls a maintainer should make. The agent
+# reads a checkout of the pull request's head and changes nothing. (default:
+# true) A project can override it in its own .atlas/config.toml.
+pullRequestGuideEnabled = true
+
+# The agent that writes review guides: "atlas-agent" or an installed ACP
+# agent's id, such as "claude-code". Empty uses defaultAgent. An agent that
+# isn't installed falls back to Atlas Agent. (default: "") A project can
+# override it in its own .atlas/config.toml.
+pullRequestGuideAgent = ""
+
+# The model the guide's agent runs on, as that agent names it (the id after
+# the colon in favoriteModels). The guide reads the change over many steps, so
+# a stronger model helps. Empty keeps the agent's default; a model the agent
+# doesn't offer is ignored. (default: "") A project can override it in its own
+# .atlas/config.toml.
+pullRequestGuideModel = ""
+
+# Your preferences for review guides, added to the guide's prompt: what to
+# show first, dwell on or skip, and how long summaries should be. The guide's
+# format and its coverage of every changed file stay the same. (default: "") A
+# project can override it in its own .atlas/config.toml.
+pullRequestGuideInstructions = ""

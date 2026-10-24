@@ -36,6 +36,9 @@ const buttonVariants = cva(
     "rounded border border-transparent font-medium select-none",
     "transition-colors duration-fast ease-out-strong",
     "data-disabled:cursor-not-allowed data-disabled:opacity-50",
+    // A toggle (`aria-pressed`) that is on reads as selected, in any variant —
+    // the same rule as `IconButton`.
+    "aria-pressed:border-border-strong aria-pressed:bg-element-selected aria-pressed:text-foreground",
     "[&_svg]:pointer-events-none [&_svg]:shrink-0",
   ],
   {
@@ -47,6 +50,10 @@ const buttonVariants = cva(
         secondary: "bg-card text-foreground hover:bg-element-hover",
         ghost:
           "bg-transparent text-secondary-foreground hover:bg-element-hover hover:text-foreground",
+        // An action that answers a problem: conflicts to resolve, runs waiting
+        // for approval. The border and text carry the tone; hover tints it.
+        "destructive-outline": "border-error bg-transparent text-error hover:bg-error-muted",
+        "warning-outline": "border-warning bg-transparent text-warning hover:bg-warning-muted",
         link: "bg-transparent text-foreground underline-offset-2 hover:underline",
       },
       size: {

@@ -107,6 +107,37 @@ pub fn engine_policy(mode: &str) -> (AskForApproval, SandboxPolicy) {
     }
 }
 
+/// [`engine_policy`], with the session's extra writable roots — its
+/// read-write attached projects, and any further folders it was opened with
+/// — added to a workspace-write sandbox.
+///
+/// Only workspace-write takes them. Plan's read-only sandbox stays read-only
+/// (a read-write project is still not writable in a mode that writes
+/// nothing), and Bypass already reaches everything. Read-only attached
+/// projects need nothing here: the engine's sandbox reads the whole disk in
+/// every mode, and writes only where this says. A root that is not an
+/// absolute path is dropped rather than failing the mode.
+pub fn engine_policy_with_roots(
+    mode: &str,
+    writable: &[std::path::PathBuf],
+) -> (AskForApproval, SandboxPolicy) {
+    let (approval, mut sandbox) = engine_policy(mode);
+    if let SandboxPolicy::WorkspaceWrite { writable_roots, .. } = &mut sandbox {
+        for root in writable {
+            match atlas_engine_config::AbsolutePathBuf::from_absolute_path_checked(root) {
+                Ok(root) if !writable_roots.contains(&root) => writable_roots.push(root),
+                Ok(_) => {}
+                Err(e) => tracing::warn!(
+                    target: "atlas_native_agent::engine",
+                    root = %root.display(),
+                    "writable root dropped: {e}"
+                ),
+            }
+        }
+    }
+    (approval, sandbox)
+}
+
 /// Write inside the workspace, nothing outside it, no network.
 fn workspace_write() -> SandboxPolicy {
     SandboxPolicy::WorkspaceWrite {
@@ -230,6 +261,38 @@ mod tests {
         let (approval, sandbox) = engine_policy("something-we-have-never-heard-of");
         assert!(matches!(approval, AskForApproval::UnlessTrusted));
         assert!(!matches!(sandbox, SandboxPolicy::DangerFullAccess));
+    }
+
+    #[test]
+    fn writable_roots_widen_only_a_workspace_write_sandbox() {
+        let roots = [std::path::PathBuf::from("/work/server")];
+        for mode in ["default", "acceptEdits"] {
+            let (_, sandbox) = engine_policy_with_roots(mode, &roots);
+            let SandboxPolicy::WorkspaceWrite { writable_roots, .. } = sandbox else {
+                panic!("{mode} is workspace-write");
+            };
+            let roots: Vec<_> = writable_roots
+                .iter()
+                .map(atlas_engine_config::AbsolutePathBuf::to_path_buf)
+                .collect();
+            assert_eq!(roots, [std::path::PathBuf::from("/work/server")]);
+        }
+        // Plan writes nothing, attached project or not; Bypass needs no roots.
+        assert!(is_read_only(&engine_policy_with_roots("plan", &roots).1));
+        assert!(matches!(
+            engine_policy_with_roots("bypass", &roots).1,
+            SandboxPolicy::DangerFullAccess
+        ));
+    }
+
+    #[test]
+    fn a_relative_root_is_dropped_rather_than_failing_the_mode() {
+        let (_, sandbox) =
+            engine_policy_with_roots("default", &[std::path::PathBuf::from("relative/dir")]);
+        let SandboxPolicy::WorkspaceWrite { writable_roots, .. } = sandbox else {
+            panic!("default is workspace-write");
+        };
+        assert!(writable_roots.is_empty());
     }
 
     #[test]

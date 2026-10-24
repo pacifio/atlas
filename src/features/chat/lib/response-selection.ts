@@ -52,15 +52,15 @@ export function actionPosition(
   };
 }
 
-/** Existing targeted inserts carry a complete draft. Cite opts into appending
- * to the live editor, whose last keystrokes may not have reached the store. */
+/** A targeted insert carries a complete draft; an untargeted one appends to
+ * the active session's. (Cite used to append quoted text through here; it now
+ * drops a `cited_text` chip instead — `cited-text.ts`.) */
 export interface ChatInsertDetail {
   text: string;
   tabId?: string;
-  append?: boolean;
 }
 
 export function insertedDraft(current: string, detail: ChatInsertDetail): string {
-  if (detail.tabId && !detail.append) return detail.text;
+  if (detail.tabId) return detail.text;
   return current.trim() ? `${current}\n\n${detail.text}` : detail.text;
 }

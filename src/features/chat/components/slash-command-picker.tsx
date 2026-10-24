@@ -1,6 +1,6 @@
 // Floating slash-command picker. Same architecture as `mention-picker.tsx`:
 // portal-anchored, imperative handle, no DOM focus. Opens when the trigger
-// plugin (`cm-slash-extension.ts`) reports a `/` preceded by whitespace or
+// trigger (`components/composer/composer-triggers.ts`) reports a `/` preceded by whitespace or
 // start-of-line, anywhere in the composer.
 //
 // Per ADR 0003, the bound agent's own ACP `available_commands_update` is the
@@ -190,7 +190,7 @@ export const SlashCommandPicker = forwardRef<SlashCommandPickerHandle, SlashComm
       const handler = (e: MouseEvent) => {
         const target = e.target as HTMLElement | null;
         if (!target) return;
-        if (target.closest(".atlas-chat-cm-host")) return;
+        if (target.closest(".atlas-chat-composer")) return;
         if (target.closest(".atlas-slash-picker")) return;
         onCloseRef.current();
       };

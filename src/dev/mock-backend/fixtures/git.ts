@@ -22,9 +22,14 @@
 
 import { emit } from "@tauri-apps/api/event";
 import type { BlameLine } from "@/features/git/lib/git-blame-api";
-import type { RepoPullRequests } from "@/features/git/lib/git-pr-api";
 import type { RepoAvatars } from "@/features/git/lib/git-avatars-api";
-import type { CommitFile, DiffLineStatus, FileDiff } from "@/features/git/lib/git-diff-api";
+import type { DiffLineStatus } from "@/features/git/lib/git-diff-api";
+import type {
+  DiffFileContents,
+  DiffFilePatch,
+  DiffFileStatus,
+  DiffPreview,
+} from "@/features/git/lib/git-review-api";
 import type { GitErrorCode, GitErrorPayload } from "@/features/git/lib/git-errors";
 import type { BuiltGraph, CommitRow, LaneSegment } from "@/features/git/lib/git-graph";
 import type {
@@ -50,7 +55,21 @@ import type { RawGitStatus } from "@/features/terminal/components/block-terminal
 import type { GitSummary } from "@/features/projects/stores/project-git-store";
 import type { TypedHandlers, Unread } from "../types";
 import { ALL_PROJECTS, MOCK_PROJECT } from "../project";
-import { binaryFileDiff, buildFileDiff, lineStatusOf, unifiedDiff } from "./diff";
+import {
+  binaryFileDiff,
+  buildFileDiff,
+  diffPreviewOf,
+  lineStatusOf,
+  unifiedDiff,
+  type FileDiff,
+  type PreviewChange,
+} from "./diff";
+
+/** A file a fixture commit touched, with its porcelain status letter. */
+export interface CommitFile {
+  path: string;
+  status: string;
+}
 import { fileText } from "./files";
 
 /** Apply ordered substitutions, refusing to produce a no-op diff silently. */
@@ -122,7 +141,7 @@ const HEAD_LIB_RS = () =>
 const HEAD_TOKENS_CSS = () =>
   atHead("src/styles/tokens.css", [
     [`  --accent: #6e9cff;`, `  --accent: #4f7fe0;`],
-    [`  --destructive: #f2555a;\n`, ``],
+    [`  --danger: #f2555a;\n`, ``],
     [`  --font-mono: "JetBrains Mono", ui-monospace, monospace;\n`, ``],
     [`.card[data-state="disabled"] {\n  opacity: 0.45;\n  pointer-events: none;\n}\n`, ``],
   ]);
@@ -278,6 +297,26 @@ function restoreChange(path: string, status: string, isStaged: boolean): void {
   partial.delete(path);
 }
 
+const PREVIEW_STATUSES = new Set<string>([
+  "added",
+  "deleted",
+  "modified",
+  "renamed",
+  "conflicted",
+  "untracked",
+]);
+
+/** A working-tree change as `git_diff_preview` lists it. */
+function previewChange(change: FakeChange): PreviewChange {
+  return {
+    path: change.path,
+    before: change.status === "untracked" || change.status === "added" ? null : change.before(),
+    after: change.status === "deleted" ? null : change.after(),
+    status: (PREVIEW_STATUSES.has(change.status) ? change.status : "modified") as DiffFileStatus,
+    binary: change.binary,
+  };
+}
+
 function diffFor(file: string): FileDiff {
   const change = changeFor(file);
   if (change) {
@@ -377,6 +416,19 @@ const currentBranch = (): BranchInfo =>
   BRANCHES.find((branch) => branch.isCurrent && !branch.isRemote) ?? BRANCHES[0];
 
 const branchByName = (name: string) => BRANCHES.find((branch) => branch.name === name);
+
+/** The checked-out branch's name, for a fixture that answers per branch
+ *  (Create PR's prefill in `pull-requests.ts`). */
+export function mockCurrentBranchName(): string {
+  return currentBranch().name;
+}
+
+/** Start a scenario on `name`, one of the seeded local branches. Runs at
+ *  install, before the app reads anything, so no change event is needed. */
+export function seedCurrentBranch(name: string): void {
+  const target = branchByName(name);
+  if (target && !target.isRemote) switchTo(target);
+}
 
 const INITIAL_STASHES: StashEntry[] = [
   { index: 0, message: "WIP on main: 4f21a90 spike the token ramp", branch: "main" },
@@ -1030,16 +1082,16 @@ export interface GitResponses {
   git_log: GitLogEntry[];
   git_show: CommitDetail;
   capture_commit_sessions: CommitSession[];
-  git_commit_changed_files: CommitFile[];
   git_graph_signature: string;
   git_graph_build: BuiltGraph;
-  git_diff_structured: FileDiff;
-  diff_structured_text: FileDiff;
   git_diff_line_status: DiffLineStatus;
   git_diff_file: string;
   git_diff_all: string;
+  git_diff_preview: DiffPreview;
+  git_diff_file_contents: DiffFileContents;
+  git_diff_file_patch: DiffFilePatch;
+  diff_texts_patch: DiffFilePatch;
   git_blame_file: BlameLine[];
-  git_repo_pull_requests: RepoPullRequests;
   git_repo_avatars: RepoAvatars;
   git_stage: Unread;
   git_unstage: Unread;
@@ -1056,6 +1108,7 @@ export interface GitResponses {
   git_fetch: Unread;
   git_publish_branch: Unread;
   git_checkout: Unread;
+  git_switch_if_clean: Unread;
   git_create_branch: Unread;
   git_rename_branch: Unread;
   git_branch_delete: Unread;
@@ -1272,18 +1325,18 @@ export const gitHandlers: TypedHandlers<GitResponses> = {
     }
     return sessions;
   },
-  git_commit_changed_files: ({ sha }): CommitFile[] =>
-    COMMITS.find((commit) => commit.sha.startsWith(String(sha)))?.files ?? [],
-
   // `epoch` is what makes the graph refetch after a write: the query keys off
   // this string and is otherwise `staleTime: Infinity`.
   git_graph_signature: (): string => `${HEAD().sha}:${BRANCHES.length}:${stashes.length}:${epoch}`,
   git_graph_build: (): BuiltGraph => graph(),
 
-  git_diff_structured: ({ file }): FileDiff => diffFor(String(file)),
-  diff_structured_text: ({ oldText, newText, file }): FileDiff =>
-    buildFileDiff(String(oldText ?? ""), String(newText ?? ""), String(file)),
-  git_diff_line_status: ({ file }): DiffLineStatus => lineStatusOf(diffFor(String(file))),
+  // A file the fixture doesn't track as dirty reads as `diffFor`'s "first line
+  // added", stated directly: diffing it would cost the mock's quadratic line
+  // diff on every open, two seconds on the 10,000-line fixture.
+  git_diff_line_status: ({ file }): DiffLineStatus =>
+    changeFor(String(file))
+      ? lineStatusOf(diffFor(String(file)))
+      : { added: [1], changed: [], deletedBefore: [] },
   git_diff_file: ({ file }): string => {
     const change = changeFor(String(file));
     if (!change || change.binary) return "";
@@ -1293,9 +1346,41 @@ export const gitHandlers: TypedHandlers<GitResponses> = {
     CHANGES.filter((change) => !change.binary)
       .map((change) => unifiedDiff(change.before(), change.after(), change.path))
       .join(""),
+  // The review diff. The branch has no commits of its own on top of
+  // `origin/main`, so the range holds the same change set.
+  // Only the fake repository has changes. Another folder (a project attached
+  // to a session) answers as a folder outside git does, rather than echoing
+  // this repository's changes as its own.
+  git_diff_preview: ({ path }): DiffPreview =>
+    path && String(path) !== MOCK_PROJECT.path
+      ? { sources: [] }
+      : diffPreviewOf(CHANGES.map(previewChange), {
+          baseRef: "origin/main",
+          mergeBase: HEAD().sha,
+        }),
+  git_diff_file_contents: ({ filePath }): DiffFileContents => {
+    const change = changeFor(String(filePath));
+    if (change?.binary) return { oldText: "", newText: "", truncated: false, binary: true };
+    if (change) {
+      return { oldText: change.before(), newText: change.after(), truncated: false, binary: false };
+    }
+    const text = fileText(String(filePath));
+    return { oldText: text, newText: text, truncated: false, binary: false };
+  },
+  // Whitespace is not ignored here; the fake has no `-w`.
+  git_diff_file_patch: ({ filePath }): DiffFilePatch => {
+    const change = changeFor(String(filePath));
+    if (change?.binary) return { patch: "", truncated: false, binary: true };
+    const patch = change ? unifiedDiff(change.before(), change.after(), change.path) : "";
+    return { patch, truncated: false, binary: false };
+  },
+  diff_texts_patch: ({ oldText, newText, file }): DiffFilePatch => ({
+    patch: unifiedDiff(String(oldText ?? ""), String(newText ?? ""), String(file)),
+    truncated: false,
+    binary: false,
+  }),
   git_blame_file: ({ file }): BlameLine[] => blame(String(file)),
   // The default repository has no GitHub remote, so `gh` has nothing to say.
-  git_repo_pull_requests: (): RepoPullRequests => ({ kind: "failed" }),
   git_repo_avatars: (): RepoAvatars => ({ kind: "failed" }),
 
   // ── index ───────────────────────────────────────────────────────────────
@@ -1586,6 +1671,17 @@ export const gitHandlers: TypedHandlers<GitResponses> = {
     }),
 
   // ── branches ────────────────────────────────────────────────────────────
+  // Rust checks the tree and switches in one go; any change refuses it.
+  git_switch_if_clean: (args): null => {
+    if (CHANGES.length > 0) {
+      throw fail(
+        "uncommitted-changes",
+        "You have uncommitted changes in the way. Commit or stash them first.",
+      );
+    }
+    gitHandlers.git_checkout(args);
+    return null;
+  },
   git_checkout: ({ branch }): null => {
     const name = String(branch);
     if (name === currentBranch().name) return null; // git: "Already on 'main'"

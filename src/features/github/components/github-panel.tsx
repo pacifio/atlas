@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { Popover } from "@base-ui/react/popover";
 import { useAppStore } from "@/features/app/stores/app-store";
 import {
@@ -23,6 +22,16 @@ import { ScrollFade, useScrollEdges } from "@/ui/scroll-fade";
 import { logEvent } from "@/features/log/lib/log";
 import { toast } from "sonner";
 import { metaFromSearch, type ClonedRepo, type GithubRepo } from "@/features/github/types";
+import {
+  cloneGithubRepo,
+  deleteClonedRepo,
+  fetchClonedRepoMeta,
+  listClonedRepos,
+  listRemoteBranches,
+  searchGithub,
+  switchClonedRepoBranch,
+  updateClonedRepo,
+} from "@/features/github/lib/github-api";
 
 /**
  * The GitHub panel: search public repositories, clone them as reference
@@ -70,7 +79,7 @@ function BranchPicker({
     if (!open || branches) return;
     let cancelled = false;
     setError(null);
-    invoke<string[]>("list_remote_branches", { projectPath, repoName: repo.name })
+    listRemoteBranches(projectPath, repo.name)
       .then((list) => {
         if (!cancelled) setBranches(list);
       })
@@ -203,7 +212,7 @@ function ClonedRow({
     if (busy) return;
     setBusy("switch");
     try {
-      await invoke("switch_cloned_repo_branch", { projectPath, repoName: repo.name, branch });
+      await switchClonedRepoBranch(projectPath, repo.name, branch);
       toast.success(`${repo.display_name} is on ${branch}`);
       onChanged();
     } catch (e) {
@@ -217,10 +226,7 @@ function ClonedRow({
     if (busy) return;
     setBusy("update");
     try {
-      const branch = await invoke<string>("update_cloned_repo", {
-        projectPath,
-        repoName: repo.name,
-      });
+      const branch = await updateClonedRepo(projectPath, repo.name);
       toast.success(`${repo.display_name} updated to origin/${branch}`);
       onChanged();
     } catch (e) {
@@ -238,7 +244,7 @@ function ClonedRow({
     }
     setBusy("delete");
     try {
-      await invoke("delete_cloned_repo", { projectPath, repoName: repo.name });
+      await deleteClonedRepo(projectPath, repo.name);
       window.dispatchEvent(new Event("atlas:repo-cloned"));
       onChanged();
     } catch (e) {
@@ -368,7 +374,7 @@ export function GithubPanel() {
       return;
     }
     try {
-      setRepos(await invoke<ClonedRepo[]>("list_cloned_repos", { projectPath }));
+      setRepos(await listClonedRepos(projectPath));
     } catch {
       setRepos([]);
     }
@@ -396,10 +402,7 @@ export function GithubPanel() {
       for (let r = queue.shift(); r && !cancelled; r = queue.shift()) {
         backfilled.current.add(r.name);
         try {
-          const meta = await invoke<ClonedRepo["meta"]>("fetch_cloned_repo_meta", {
-            projectPath,
-            repoName: r.name,
-          });
+          const meta = await fetchClonedRepoMeta(projectPath, r.name);
           if (cancelled) return;
           setRepos((cur) => cur.map((x) => (x.name === r!.name ? { ...x, meta } : x)));
         } catch {
@@ -418,7 +421,7 @@ export function GithubPanel() {
     setLoading(true);
     setError(null);
     try {
-      const found = await invoke<GithubRepo[]>("search_github", { query: query.trim() });
+      const found = await searchGithub(query.trim());
       setResults(found);
     } catch (e) {
       setError(String(e));
@@ -441,12 +444,7 @@ export function GithubPanel() {
     setCloning((s) => new Set(s).add(repo.full_name));
     try {
       const repoName = repo.full_name.replace("/", "-");
-      await invoke("clone_github_repo", {
-        projectPath: currentProject.path,
-        cloneUrl: repo.clone_url,
-        repoName,
-        meta: metaFromSearch(repo),
-      });
+      await cloneGithubRepo(currentProject.path, repo.clone_url, repoName, metaFromSearch(repo));
       setCloned((s) => new Set(s).add(repo.full_name));
       window.dispatchEvent(new Event("atlas:repo-cloned"));
       logEvent({

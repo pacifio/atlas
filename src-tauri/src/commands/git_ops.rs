@@ -228,8 +228,8 @@ pub struct MergePreview {
     ///   - uptodate:    nothing to merge (0 commits)
     ///   - invalid:     unrelated histories (no merge base)
     ///   - unsupported: git too old for `merge-tree --write-tree` preview;
-    ///                  the merge can still be attempted, we just can't
-    ///                  predict conflicts ahead of time
+    ///     the merge can still be attempted, we just can't predict
+    ///     conflicts ahead of time
     pub kind: String,
     /// Commits on `branch` not yet on the current branch (what merging brings in).
     pub commit_count: u32,

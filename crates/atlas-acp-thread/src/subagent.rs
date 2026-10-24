@@ -31,13 +31,12 @@
 //! interleaved with the parent's own, and `_meta` is the only thing that tells
 //! them apart.
 //!
-//! Evidence was read from the ACP adapters Atlas ships against and from
-//! t3code's eight provider adapters (`provider-grok`, `provider-acp-registry`'s
-//! Devin and Copilot, Antigravity, Cursor, Pi, Muse, OpenCode), which solve
-//! exactly this problem per provider. The point of generalising rather than
-//! copying their per-flavour hooks is that an ACP agent Atlas has never heard
-//! of, expressing delegation the way the others do, gets subagent rendering
-//! without a code change.
+//! Evidence was read from the ACP adapters Atlas ships against and from how
+//! Grok, Devin, Copilot, Antigravity, Cursor, Pi, Muse and OpenCode each
+//! express delegation. The point of generalising rather than writing a hook
+//! per flavour is that an ACP agent Atlas has never heard of, expressing
+//! delegation the way the others do, gets subagent rendering without a code
+//! change.
 //!
 //! Detection is deliberately conservative throughout: a false positive is a
 //! phantom subagent row that never completes, which is worse than showing a

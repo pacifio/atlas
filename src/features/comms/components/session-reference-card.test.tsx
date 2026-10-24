@@ -148,7 +148,7 @@ describe("Session Reference card", () => {
       commitSha: undefined,
     });
     const layout = useLayoutStore.getState();
-    expect(layout.tabs.some((t) => t.type === "artifacts")).toBe(true);
+    expect(layout.destination?.type).toBe("artifacts");
   });
 
   it("lands a checkpoint reference on its commit", () => {

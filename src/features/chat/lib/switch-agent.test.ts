@@ -564,7 +564,7 @@ describe("switchAgentForTab with rememberBeforeSwitch", () => {
     switchAgentForTab(TAB, "claude-code");
     status("running");
     expect(isSwitchPending(TAB)).toBe(true);
-    useChatStore.getState().actions.enqueueMessage(TAB, "now add a retry");
+    useChatStore.getState().actions.enqueueMessage(TAB, "now add a retry", []);
     status("idle");
     await vi.waitFor(() => expect(agent()).toBe("claude-code"));
 
@@ -584,8 +584,8 @@ describe("switchAgentForTab with rememberBeforeSwitch", () => {
     switchAgentForTab(TAB, "claude-code");
     status("running");
     const { actions } = useChatStore.getState();
-    actions.enqueueMessage(TAB, "now add a retry");
-    actions.enqueueMessage(TAB, "and a test");
+    actions.enqueueMessage(TAB, "now add a retry", []);
+    actions.enqueueMessage(TAB, "and a test", []);
     status("idle");
     await vi.waitFor(() => expect(agent()).toBe("claude-code"));
 
@@ -609,7 +609,7 @@ describe("switchAgentForTab with rememberBeforeSwitch", () => {
 
     switchAgentForTab(TAB, "claude-code");
     status("running");
-    useChatStore.getState().actions.enqueueMessage(TAB, "now add a retry");
+    useChatStore.getState().actions.enqueueMessage(TAB, "now add a retry", []);
     status("idle");
     await vi.waitFor(() =>
       expect(openAgentChatInNewTab).toHaveBeenCalledWith("claude-code", { model: undefined }),

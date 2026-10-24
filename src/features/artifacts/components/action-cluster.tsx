@@ -42,7 +42,18 @@ export function ActionCluster({
             : "visible"
           : reveal === "fade"
             ? "opacity-0 focus-within:opacity-100 group-hover/row:opacity-100"
-            : "invisible focus-within:visible group-hover/row:visible",
+            : // Opacity, not `visibility`: a `visibility: hidden` control
+              // cannot take focus, so Tab skipped copy and comment entirely.
+              // Hidden here stays focusable and inert to the pointer, and any
+              // focus in the row brings it back. Still a snap — no transition.
+              [
+                "pointer-events-none opacity-0",
+                "group-hover/row:pointer-events-auto group-hover/row:opacity-100",
+                "focus-within:pointer-events-auto focus-within:opacity-100",
+                "group-focus-within/row:pointer-events-auto group-focus-within/row:opacity-100",
+                "has-aria-expanded:pointer-events-auto has-aria-expanded:opacity-100",
+                "pointer-coarse:pointer-events-auto pointer-coarse:opacity-100",
+              ],
         className,
       )}
     >

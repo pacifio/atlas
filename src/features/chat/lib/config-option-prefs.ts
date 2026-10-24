@@ -70,3 +70,14 @@ export function configOptionPushes(
   }
   return pushes;
 }
+
+/** Forget a pick, so the agent's own default applies again. */
+export function clearConfigOptionPref(agentType: string, configId: string): void {
+  try {
+    const prefs = loadConfigOptionPrefs(agentType);
+    delete prefs[configId];
+    localStorage.setItem(key(agentType), JSON.stringify(prefs));
+  } catch {
+    // storage unavailable — preferences are best-effort
+  }
+}

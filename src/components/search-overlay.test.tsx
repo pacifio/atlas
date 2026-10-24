@@ -8,11 +8,8 @@ const mocks = vi.hoisted(() => ({ codeGrep: vi.fn() }));
 
 vi.mock("@/components/code-search-api", () => ({ codeGrep: mocks.codeGrep }));
 vi.mock("@/lib/open-file", () => ({ openFile: vi.fn() }));
-vi.mock("@/features/explorer/stores/explorer-store", () => ({
-  useExplorerStore: { use: { rootPath: () => "/repo" } },
-}));
 vi.mock("@/features/app/stores/app-store", () => ({
-  useAppStore: { use: { currentProject: () => null } },
+  useAppStore: { use: { currentProject: () => ({ path: "/repo" }) } },
 }));
 vi.mock("@/features/app/stores/session-store", () => ({
   useSessionStore: {

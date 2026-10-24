@@ -34,6 +34,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use atlas_agent_store::ExternalAgentSource;
 use atlas_agent_transcript::TranscriptKind;
 
+use super::agent_config::{load_native_prefs, AgentLaunch};
 use super::agent_host::AgentHost;
 
 /// How a spawn of this agent would launch it right now.
@@ -122,6 +123,19 @@ pub struct AgentCatalogEntry {
     /// Binary distribution with no published sha256.
     pub unverified: bool,
     pub unsupported_reason: Option<String>,
+    /// Off in Settings → Agents: installed, but never started. Always true
+    /// for the native agent and for a detection.
+    pub enabled: bool,
+    /// The user's name for it, shown in place of `name`.
+    pub display_name: Option<String>,
+    /// How it launches, as the user set it. `None` for the native agent.
+    pub launch: Option<AgentLaunch>,
+    /// Model ids the user hid from the model picker.
+    pub hidden_models: Vec<String>,
+    /// The order the user put its models in; others follow in the agent's.
+    pub model_order: Vec<String>,
+    /// Models the user added by id. Always empty for the native agent.
+    pub custom_models: Vec<atlas_agent_store::CustomModel>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -146,8 +160,15 @@ pub fn emit_catalog_changed(app: &AppHandle, reason: &str) {
     );
 }
 
+/// One agent's entry, as [`agents_catalog`] would answer it.
+pub fn entry_for(host: &AgentHost, id: &str) -> Option<AgentCatalogEntry> {
+    build(host).entries.into_iter().find(|entry| entry.id == id)
+}
+
 fn build(host: &AgentHost) -> AgentCatalog {
     let registry_agents = host.registry().agents();
+    let installed_map = host.store().settings();
+    let native_prefs = load_native_prefs(host.config_dir());
     let market = |id: &str| {
         registry_agents
             .iter()
@@ -241,6 +262,47 @@ fn build(host: &AgentHost) -> AgentCatalog {
                         if binary.targets.values().any(|target| target.sha256.is_none())
                 ),
                 unsupported_reason: None,
+                enabled: is_native
+                    || installed_map
+                        .get(&id)
+                        .is_none_or(atlas_agent_store::AgentServerSettings::enabled),
+                display_name: if is_native {
+                    native_prefs.display_name.clone()
+                } else {
+                    installed_map
+                        .get(&id)
+                        .and_then(|e| e.display_name().map(str::to_string))
+                },
+                launch: (!is_native).then(|| {
+                    installed_map
+                        .get(&id)
+                        .map(AgentLaunch::of)
+                        .unwrap_or(AgentLaunch {
+                            command: None,
+                            args: Vec::new(),
+                            variables: Vec::new(),
+                        })
+                }),
+                hidden_models: if is_native {
+                    native_prefs.hidden_models.clone()
+                } else {
+                    installed_map
+                        .get(&id)
+                        .map(|e| e.hidden_models().to_vec())
+                        .unwrap_or_default()
+                },
+                model_order: if is_native {
+                    native_prefs.model_order.clone()
+                } else {
+                    installed_map
+                        .get(&id)
+                        .map(|e| e.model_order().to_vec())
+                        .unwrap_or_default()
+                },
+                custom_models: installed_map
+                    .get(&id)
+                    .map(|e| e.custom_models().to_vec())
+                    .unwrap_or_default(),
                 id,
             }
         })
@@ -293,6 +355,17 @@ fn build(host: &AgentHost) -> AgentCatalog {
             distribution_kind: String::new(),
             unverified: false,
             unsupported_reason: None,
+            enabled: true,
+            display_name: None,
+            // What accepting it would write: the user's own copy.
+            launch: Some(AgentLaunch {
+                command: Some(found.program.to_string_lossy().into_owned()),
+                args: found.args.clone(),
+                variables: Vec::new(),
+            }),
+            hidden_models: Vec::new(),
+            model_order: Vec::new(),
+            custom_models: Vec::new(),
             id: found.id,
         });
     }
@@ -416,6 +489,54 @@ mod tests {
             .await;
         assert_eq!(ids(&build(&host)), [atlas_native_agent::ATLAS_AGENT_ID]);
         assert!(host.agent_for("some-agent").is_err());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// What Settings → Agents writes comes back in the catalog, which is how
+    /// the picker and every label hear it; and an agent turned off there is
+    /// still listed but can no longer be started.
+    #[tokio::test]
+    async fn the_catalog_carries_what_the_user_configured() {
+        let (host, dir) = fresh_host();
+        let mut agent = AgentServerSettings::custom("/bin/echo", vec!["acp".into()]);
+        crate::commands::agent_config::apply_to_entry(
+            &mut agent,
+            serde_json::from_value(serde_json::json!({
+                "enabled": false,
+                "displayName": "Echo",
+                "hiddenModels": ["old"],
+                "launch": { "variables": [{ "name": "REGION", "value": "eu" }] },
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let mut settings = AllAgentServersSettings::default();
+        settings.0.insert("some-agent".to_string(), agent);
+        host.store().set_settings(settings).await;
+
+        let catalog = build(&host);
+        let configured = entry(&catalog, "some-agent");
+        assert!(!configured.enabled);
+        assert_eq!(configured.display_name.as_deref(), Some("Echo"));
+        assert_eq!(configured.hidden_models, ["old"]);
+        let launch = configured
+            .launch
+            .as_ref()
+            .expect("an external agent has launch settings");
+        assert_eq!(launch.command.as_deref(), Some("/bin/echo"));
+        assert_eq!(launch.args, ["acp"]);
+        assert_eq!(launch.variables[0].name, "REGION");
+        assert_eq!(launch.variables[0].value.as_deref(), Some("eu"));
+
+        let native = entry(&catalog, atlas_native_agent::ATLAS_AGENT_ID);
+        assert!(native.enabled);
+        assert!(native.launch.is_none());
+
+        let refused = host
+            .agent_for("some-agent")
+            .expect_err("a turned-off agent won't start");
+        assert!(refused.to_string().contains("turned off"), "{refused}");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -3,7 +3,6 @@ import { toast } from "sonner";
 import { Button } from "@/ui/button";
 import { useAppStore } from "@/features/app/stores/app-store";
 import { useSettingsStore } from "../../stores/settings-store";
-import { useSettingsNav } from "../../stores/settings-nav-store";
 import {
   SettingsGroup,
   SettingsPage,
@@ -11,6 +10,7 @@ import {
   SettingsSection,
 } from "../layout/settings-layout";
 import { SettingSwitch } from "../layout/setting-controls";
+import { EmbeddingModelSection } from "./embedding-model-section";
 
 export function MemoryPage() {
   const settings = useSettingsStore.use.settings();
@@ -36,7 +36,7 @@ export function MemoryPage() {
     <SettingsPage
       scopeable
       title="Memory"
-      description="Shared memory across agents, and instructions mirrored for them."
+      description="Shared memory across agents, instructions mirrored for them, and the model memory search runs on."
     >
       <SettingsSection title="Shared memory">
         <SettingsGroup>
@@ -80,24 +80,7 @@ export function MemoryPage() {
         </SettingsGroup>
       </SettingsSection>
 
-      <SettingsSection title="Models">
-        <SettingsGroup>
-          <SettingsRow
-            setting="embeddingModelId"
-            status={`Using ${settings.embeddingModelId}.`}
-            noReset
-            control={
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => useSettingsNav.getState().goTo("models")}
-              >
-                Manage
-              </Button>
-            }
-          />
-        </SettingsGroup>
-      </SettingsSection>
+      <EmbeddingModelSection />
     </SettingsPage>
   );
 }

@@ -1,8 +1,6 @@
-// Synchronous, cached syntax highlighting for the git diff view. The heavy
-// lowlight tokenization now lives in `diff-highlight-core.ts` (shared with the
-// off-main-thread worker, `diff-highlight.worker.ts`); this module is the
-// synchronous main-thread path — used by the unified diff view and as the
-// fallback for the side-by-side panel when the worker is unavailable.
+// Synchronous, cached syntax highlighting for the staging diff, the commit
+// view and artifact code blocks. The tokenizer lives in
+// `diff-highlight-core.ts`.
 //
 // See `diff-highlight-core.ts` for the per-line (not per-file) tradeoff.
 

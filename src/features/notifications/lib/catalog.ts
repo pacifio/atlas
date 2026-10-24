@@ -49,7 +49,7 @@ export interface CatalogEntry {
 }
 
 /** The Settings sections a notification can open. */
-export const NOTIFICATION_SETTINGS_SECTIONS = ["models", "agents"] as const;
+export const NOTIFICATION_SETTINGS_SECTIONS = ["memory", "agents"] as const;
 export type NotificationSettingsSection = (typeof NOTIFICATION_SETTINGS_SECTIONS)[number];
 export const isNotificationSettingsSection = (s: unknown): s is NotificationSettingsSection =>
   (NOTIFICATION_SETTINGS_SECTIONS as readonly unknown[]).includes(s);
@@ -67,8 +67,12 @@ export type NotificationTarget =
     }
   | {
       type: "session";
+      /** The tab showing the session; `""` when no tab does. */
       tabId: string;
       sessionId?: string;
+      /** Atlas's id for the session (ADR-0001). What opening it takes when no
+       *  tab shows it any more: the click resumes it from history. */
+      threadId?: string;
       projectId?: string;
       projectName?: string;
       orgId?: string;
@@ -87,7 +91,15 @@ export type NotificationTarget =
   /** `config.toml` itself — opens it in the OS editor. */
   | { type: "config-file" }
   /** One project's git panel (a push / pull / fetch ran there). */
-  | { type: "git-panel"; projectId: string; projectName?: string };
+  | { type: "git-panel"; projectId: string; projectName?: string }
+  /** A pull request's tab, at its Guide when `view` says so. */
+  | {
+      type: "pull-request";
+      repoPath: string;
+      number: number;
+      title?: string;
+      view?: "guide";
+    };
 
 /**
  * A button a notification offers — data only, so events and decisions stay
@@ -128,6 +140,21 @@ export function defaultActions(target: NotificationTarget): NotificationAction[]
   return [{ id: OPEN_ACTION_ID, label: "Open" }];
 }
 
+/** A pull request target as stored or carried in a banner payload. */
+export function isPullRequestTarget(
+  r: Record<string, unknown>,
+): r is Extract<NotificationTarget, { type: "pull-request" }> & Record<string, unknown> {
+  return (
+    r.type === "pull-request" &&
+    typeof r.repoPath === "string" &&
+    !!r.repoPath &&
+    typeof r.number === "number" &&
+    Number.isSafeInteger(r.number) &&
+    r.number > 0 &&
+    (r.view === undefined || r.view === "guide")
+  );
+}
+
 /** Targets that live in a chat or terminal tab (and so carry project/org). */
 export type TabTarget = Extract<NotificationTarget, { type: "terminal" | "session" }>;
 export const isTabTarget = (t: NotificationTarget): t is TabTarget =>
@@ -156,6 +183,8 @@ export const targetGroupKey = (t: NotificationTarget): string => {
       return `settings:${t.section}`;
     case "git-panel":
       return `git:${t.projectId}`;
+    case "pull-request":
+      return `pull-request:${t.repoPath}:${t.number}`;
     case "config-file":
       return "config-file";
   }
@@ -222,6 +251,20 @@ export const NOTIFICATION_CATALOG = {
     whenLooking: "record",
     sound: { native: "Ping" },
     toast: { variant: "default", durationMs: ATTENTION_TOAST_MS },
+    groupKey: targetGroupKey,
+  },
+  // A watched pull request changed and Atlas woke the session's agent about
+  // it (`pull_request_watch.rs`). News, not a request: the agent is already
+  // on it, so it is quiet and drops while the session is on screen, where the
+  // wake's own row says the same.
+  "pull-request-watch": {
+    label: "Pull request watch updates",
+    tier: "outcome",
+    source: "agent",
+    channels: ALL_CHANNELS,
+    whenLooking: "drop",
+    sound: null,
+    toast: { variant: "default", durationMs: DONE_TOAST_MS },
     groupKey: targetGroupKey,
   },
   // A finish is quiet: the banner carries no sound (permission and failures do).
@@ -432,6 +475,18 @@ export const NOTIFICATION_CATALOG = {
     whenLooking: "record",
     sound: null,
     toast: { variant: "error", durationMs: ATTENTION_TOAST_MS },
+    groupKey: targetGroupKey,
+  },
+  // A review guide's background run ended (`guide-notifier.ts`): written, or
+  // failed. Nothing to say while that pull request's Guide is on screen.
+  "pull-request-guide": {
+    label: "Review guide ready or failed",
+    tier: "outcome",
+    source: "app",
+    channels: ALL_CHANNELS,
+    whenLooking: "drop",
+    sound: null,
+    toast: { variant: "default", durationMs: ATTENTION_TOAST_MS },
     groupKey: targetGroupKey,
   },
 } as const satisfies Record<string, CatalogEntry>;

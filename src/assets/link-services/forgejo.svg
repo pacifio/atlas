@@ -1,0 +1,2 @@
+<!-- Forgejo mark, monochrome (Codeberg runs Forgejo). Drawn as a CSS mask in the link colour, so only its shape matters. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 212 212"><g transform="translate(6 6)" fill="none" stroke="black"><path d="M58 168 v-98 a50 50 0 0 1 50-50 h20" stroke-width="25" /><path d="M58 168 v-30 a50 50 0 0 1 50-50 h20" stroke-width="25" /><circle cx="142" cy="20" r="18" stroke-width="15" /><circle cx="142" cy="88" r="18" stroke-width="15" /><circle cx="58" cy="180" r="18" stroke-width="15" /></g></svg>

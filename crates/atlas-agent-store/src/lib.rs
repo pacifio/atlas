@@ -128,6 +128,7 @@ pub mod http;
 pub mod node;
 pub mod npm_tree;
 pub mod registry;
+pub mod secrets;
 pub mod servers;
 pub mod settings;
 pub mod store;
@@ -141,11 +142,12 @@ pub use registry::{
     AgentRegistryStore, RegistryAgent, RegistryAgentMetadata, RegistryBinaryAgent,
     RegistryNpxAgent, RegistryTargetConfig, REGISTRY_URL,
 };
+pub use secrets::{SecretEnv, SecretSource};
 pub use servers::{
     forget_npx_install_decision, installed_npx_version, npx_install_dir,
     InheritedProjectEnvironment, ProjectEnvironment,
 };
-pub use settings::{AgentServerSettings, AllAgentServersSettings};
+pub use settings::{AgentServerSettings, AllAgentServersSettings, CustomModel, UserSettingsMut};
 pub use store::{AgentServerStore, ExternalAgentEntry, ExternalAgentSource};
 
 use std::path::{Path, PathBuf};

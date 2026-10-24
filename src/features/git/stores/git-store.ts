@@ -47,8 +47,8 @@ export interface GitFileStatus {
  *
  * `refresh` runs on `atlas:git-changed`, on `atlas:explorer:changed` — i.e. on
  * every file save — on autofetch, and after every git action. Rebuilding the
- * array each time handed a new identity to six subscribers
- * (`file-tree`, `changed-files-tree`, `changes-view`, `conflicts-view`,
+ * array each time handed a new identity to its subscribers
+ * (`file-tree`, `changes-view`, `conflicts-view`,
  * `stashes-view`, `git-manager-panel`) whether or not anything had changed, and
  * identity is what they re-render on: `file-tree` rebuilt its git-overlay Maps,
  * `changes-view` re-invoked `git_diff_file` for an unchanged selection, and

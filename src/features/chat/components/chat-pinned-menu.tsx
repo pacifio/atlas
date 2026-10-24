@@ -1,4 +1,4 @@
-// Pinned messages for an agent chat, as a header dropdown.
+// Pinned messages for a session, as a title-bar dropdown.
 //
 // The comms pin rail's recipe, applied to the agent thread: one element
 // carrying border + fill + backdrop blur + the panel-in animation (splitting
@@ -22,6 +22,7 @@ import { Popover } from "@base-ui/react/popover";
 import { Pin, PinOff, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/time-ago";
+import { Button } from "@/ui/button";
 import { HintItem } from "@/ui/hint-group";
 import { Hint } from "@/ui/tooltip";
 import { pinsFor, useChatPinsStore, type ChatPin } from "../stores/chat-pins-store";
@@ -29,14 +30,16 @@ import { pinsFor, useChatPinsStore, type ChatPin } from "../stores/chat-pins-sto
 export function ChatPinnedMenu({
   pinScopeKey,
   onJump,
-  className,
+  open,
+  onOpenChange,
 }: {
   pinScopeKey: string;
   onJump: (pin: ChatPin) => void;
-  /** The header's shared control treatment — one height, one border. */
-  className?: string;
+  /** Owned by the caller: the session's ⋯ menu opens this too. */
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const setOpen = onOpenChange;
   const [query, setQuery] = useState("");
   const pins = useChatPinsStore((s) => pinsFor(s, pinScopeKey));
 
@@ -59,14 +62,10 @@ export function ChatPinnedMenu({
       <HintItem label="Pinned messages">
         <Popover.Trigger
           render={
-            <button
-              type="button"
-              aria-label={`${pins.length} pinned messages`}
-              className={className}
-            >
+            <Button variant="ghost" size="sm" aria-label={`${pins.length} pinned messages`}>
               <Pin size={12} />
-              <span className="tabular-nums text-xs leading-none">{pins.length}</span>
-            </button>
+              <span className="tabular-nums">{pins.length}</span>
+            </Button>
           }
         />
       </HintItem>

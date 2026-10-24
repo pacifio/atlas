@@ -476,7 +476,7 @@ function SubTabStrip({
   ];
   return (
     <div className="flex h-[36px] shrink-0 items-center gap-0.5 border-b border-border px-2">
-      {tabs.map(({ id, label, icon: Icon }) => (
+      {tabs.map(({ id, label, icon: TabIcon }) => (
         <button
           key={id}
           type="button"
@@ -488,7 +488,7 @@ function SubTabStrip({
               : "text-muted-foreground hover:text-secondary-foreground",
           )}
         >
-          <Icon size={11} className="shrink-0 opacity-80" />
+          <TabIcon size={11} className="shrink-0 opacity-80" />
           {label}
           {active === id && (
             <span className="absolute inset-x-2 bottom-0 h-[1.5px] rounded-full bg-foreground" />

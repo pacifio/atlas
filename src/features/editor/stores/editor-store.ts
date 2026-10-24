@@ -1,17 +1,19 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { createSelectors } from "@/lib/create-selectors";
-import { detectLanguage, type EditorLanguage } from "../lib/languages";
 import type { RevealTarget } from "../lib/reveal";
 
+/**
+ * What Atlas knows about an open file besides its text: the contents as last
+ * read or saved, and whether the document differs. The live document is the
+ * file view's editor's (docs/architecture.md); nothing here changes per
+ * keystroke — `dirty` flips only when the file starts or stops differing.
+ */
 interface Buffer {
   path: string;
+  /** The contents on disk as of the last read, reload or save. */
   originalContent: string;
   dirty: boolean;
-  /** The grammar this buffer is parsed with, or `"plaintext"` when there is
-   *  none. Resolved through the language registry, which guarantees a
-   *  non-plaintext value has a loader behind it (see lib/languages.ts). */
-  language: EditorLanguage;
   /** Disk mtime (unix ms) at the last read/save — the freshness gate for
    *  external-change revalidation. 0 until first known. */
   diskMtimeMs: number;
@@ -69,7 +71,6 @@ export const useEditorStore = createSelectors(
                 path,
                 originalContent: content,
                 dirty: false,
-                language: detectLanguage(path),
                 diskMtimeMs: mtimeMs,
                 externallyChanged: false,
               };

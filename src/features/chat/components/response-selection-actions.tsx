@@ -1,21 +1,17 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Quote, MessageSquare } from "lucide-react";
-import { Hint } from "@/ui/tooltip";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Quote } from "lucide-react";
+import { Popover as PopoverPrimitive } from "@base-ui/react/popover";
+import { Popover, PopoverContent } from "@/ui/popover";
 import { CommentButton } from "@/features/artifacts/components/comment-thread";
 import { cn } from "@/lib/utils";
-import { quoteLines } from "@/features/artifacts/lib/selection-comment";
+import { CiteForm, citeShareTarget } from "./cite-popover";
 import {
   useAnchorHit,
   useCommentActions,
   useCommentBucket,
   useCommentDirectory,
 } from "../stores/chat-comments-store";
-import {
-  actionPosition,
-  responseAt,
-  selectedResponse,
-  type ChatInsertDetail,
-} from "../lib/response-selection";
+import { actionPosition, responseAt, selectedResponse } from "../lib/response-selection";
 
 /** One pill for both actions — the CommentButton takes it as its className,
  *  so its height, padding and radius cannot drift from Cite's. */
@@ -62,6 +58,12 @@ export function ResponseSelectionActions({
       openRef.current = false;
       dismissed = true;
       setTarget(null);
+    };
+    // Layout moved under the pill (a scroll, a resize, the window losing
+    // focus). With a popover open, its draft matters more than the pill's
+    // position: the popover stays, anchored to the pill, and owns its close.
+    const layoutDismiss = () => {
+      if (!openRef.current) dismiss();
     };
     const readSelection = () => {
       if (
@@ -149,7 +151,7 @@ export function ResponseSelectionActions({
       dismiss();
     };
     const key = (event: KeyboardEvent) => {
-      if (openRef.current) return; // The comment popover owns its focus and Escape.
+      if (openRef.current) return; // An open popover owns its focus and Escape.
       if (event.key === "Escape" && targetRef.current) {
         event.preventDefault();
         dismiss();
@@ -185,7 +187,7 @@ export function ResponseSelectionActions({
       if (viewport.clientWidth !== width || viewport.clientHeight !== height) {
         width = viewport.clientWidth;
         height = viewport.clientHeight;
-        dismiss();
+        layoutDismiss();
       }
     });
     resizeObserver.observe(viewport);
@@ -197,9 +199,9 @@ export function ResponseSelectionActions({
     document.addEventListener("keydown", key);
     viewport.addEventListener("pointermove", move);
     viewport.addEventListener("pointerleave", leave);
-    viewport.addEventListener("scroll", dismiss, true);
-    window.addEventListener("resize", dismiss);
-    window.addEventListener("blur", dismiss);
+    viewport.addEventListener("scroll", layoutDismiss, true);
+    window.addEventListener("resize", layoutDismiss);
+    window.addEventListener("blur", layoutDismiss);
     return () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
@@ -212,9 +214,9 @@ export function ResponseSelectionActions({
       document.removeEventListener("keydown", key);
       viewport.removeEventListener("pointermove", move);
       viewport.removeEventListener("pointerleave", leave);
-      viewport.removeEventListener("scroll", dismiss, true);
-      window.removeEventListener("resize", dismiss);
-      window.removeEventListener("blur", dismiss);
+      viewport.removeEventListener("scroll", layoutDismiss, true);
+      window.removeEventListener("resize", layoutDismiss);
+      window.removeEventListener("blur", layoutDismiss);
       openRef.current = false;
     };
   }, [enabled, viewportRef]);
@@ -231,7 +233,6 @@ export function ResponseSelectionActions({
         openRef.current = open;
         if (!open) setTarget(null);
       }}
-      onDismiss={() => setTarget(null)}
       onPointerLeave={(event) => {
         if (
           !openRef.current &&
@@ -250,7 +251,6 @@ function SelectionToolbar({
   viewportRef,
   toolbarRef,
   onOpenChange,
-  onDismiss,
   onPointerLeave,
 }: {
   target: Target;
@@ -258,7 +258,6 @@ function SelectionToolbar({
   viewportRef: React.RefObject<HTMLDivElement | null>;
   toolbarRef: React.RefObject<HTMLDivElement | null>;
   onOpenChange: (open: boolean) => void;
-  onDismiss: () => void;
   onPointerLeave: React.PointerEventHandler<HTMLDivElement>;
 }) {
   const hit = useAnchorHit(tabId, target.messageId);
@@ -266,6 +265,20 @@ function SelectionToolbar({
   const actions = useCommentActions(tabId);
   const directory = useCommentDirectory(tabId);
   const canComment = !!(hit && actions && directory);
+  const [citing, setCiting] = useState(false);
+  const changeCiting = (open: boolean) => {
+    setCiting(open);
+    onOpenChange(open);
+  };
+  // The note field, focused without scrolling: the popup is portalled to the
+  // end of `body` and gets focus before it is positioned (the same reason
+  // `CommentButton` focuses its own popup this way).
+  const focusNote = useCallback((openType: string) => {
+    if (openType === "touch") return true;
+    const field = document.querySelector<HTMLTextAreaElement>("[data-cite-note] textarea");
+    field?.focus({ preventScroll: true });
+    return false;
+  }, []);
   const [position, setPosition] = useState({ left: 0, top: 0 });
   useLayoutEffect(() => {
     const viewport = viewportRef.current,
@@ -305,27 +318,45 @@ function SelectionToolbar({
       )}
       style={position}
       onPointerLeave={onPointerLeave}
-      onMouseDown={(event) => event.preventDefault()}
+      // Keep the selection while the pill is pressed. Only the pill's own
+      // DOM: React bubbles a portalled popover's events through here too, and
+      // preventing those would stop a click placing the caret in its field.
+      onMouseDown={(event) => {
+        if (event.currentTarget.contains(event.target as Node)) event.preventDefault();
+      }}
     >
       {target.text !== null && (
-        <button
-          type="button"
-          className={PILL_BUTTON}
-          onClick={() => {
-            window.dispatchEvent(
-              new CustomEvent<ChatInsertDetail>("atlas:chat-insert", {
-                detail: { text: quoteLines(target.text!), tabId, append: true },
-              }),
-            );
-            window.getSelection()?.removeAllRanges();
-            onDismiss();
-          }}
-        >
-          <Quote size={12} strokeWidth={1.7} />
-          Cite
-        </button>
+        <Popover open={citing} onOpenChange={changeCiting}>
+          {/* The bare trigger wearing the pill's button, as `CommentButton`
+              does, so Cite and Comment stay one shape. */}
+          <PopoverPrimitive.Trigger className={PILL_BUTTON}>
+            <Quote size={12} strokeWidth={1.7} />
+            Cite
+          </PopoverPrimitive.Trigger>
+          {/* Mounted only while open: a selection that is never cited costs
+              nothing past the pill, and the transcript never re-renders for
+              any of it (this toolbar owns its own state). */}
+          {citing && (
+            <PopoverContent side="bottom" align="start" sideOffset={6} initialFocus={focusNote}>
+              <div data-cite-note>
+                <CiteForm
+                  text={target.text}
+                  messageId={target.messageId}
+                  rowId={hit?.rowId ?? null}
+                  tabId={tabId}
+                  share={citeShareTarget(hit, actions, directory)}
+                  onDone={() => changeCiting(false)}
+                />
+              </div>
+            </PopoverContent>
+          )}
+        </Popover>
       )}
-      {canComment ? (
+      {/* A shared session keeps Comment beside Cite: it is also the reply's
+          thread (read, reply, resolve), and the way to comment on a passage
+          without pointing the agent at it. An unshared session has nothing to
+          comment on, so the pill is Cite alone. */}
+      {canComment && (
         <CommentButton
           bare
           showLabel
@@ -339,18 +370,6 @@ function SelectionToolbar({
           onOpenChange={onOpenChange}
           collisionBoundary={viewportRef.current ?? undefined}
         />
-      ) : (
-        <Hint label="Share this chat to comment on a response">
-          <button
-            type="button"
-            aria-label="Comment"
-            disabled
-            className={cn(PILL_BUTTON, "cursor-not-allowed opacity-50 hover:bg-transparent")}
-          >
-            <MessageSquare size={12} strokeWidth={1.7} />
-            Comment
-          </button>
-        </Hint>
       )}
     </div>
   );

@@ -361,6 +361,10 @@ async fn build_project_index(
             let app_for_watch = app_for_task.clone();
             let key_for_watch = key_for_task.clone();
             let window_for_watch = window_for_task.clone();
+            // Resolved once, here: a project opened through a symlink is
+            // reported by FSEvents under its resolved path, and nothing below
+            // (the ignore filter, the index, the tree's `dirs`) would match it.
+            let canonical_for_watch = resolved_alias(&root_for_task);
 
             // `NoCache`, not the platform default. On macOS `RecommendedCache` is a
             // `FileIdMap`, which `stat`s every event path to correlate renames — on
@@ -371,7 +375,16 @@ async fn build_project_index(
                 Duration::from_millis(150),
                 None,
                 move |result: notify_debouncer_full::DebounceEventResult| match result {
-                    Ok(events) => {
+                    Ok(mut events) => {
+                        // Event paths as the project was opened, not as the OS
+                        // resolved them.
+                        if let Some(canonical) = &canonical_for_watch {
+                            for e in &mut events {
+                                for p in &mut e.event.paths {
+                                    under_given_root(p, &root_for_watch, canonical);
+                                }
+                            }
+                        }
                         // Drop anything under a directory we never index BEFORE any
                         // work happens. Without this a single `npm install` or
                         // `cargo build` turns into a sustained event storm.
@@ -394,7 +407,28 @@ async fn build_project_index(
                         // directories instead of re-walking the whole
                         // project — agent file writes are tiny bursts,
                         // typically one parent dir per debounce.
-                        let (dirs_touched, full_refresh) = summarise_events(&events);
+                        let (dirs_touched, mut full_refresh) = summarise_events(&events);
+
+                        // A `.gitignore` edit changes which entries
+                        // `read_directories` flags as ignored, anywhere below
+                        // it: drop the cached matcher, and have the explorer
+                        // re-read what it has loaded rather than one folder.
+                        let gitignore_changed = events.iter().any(|e| {
+                            e.event
+                                .paths
+                                .iter()
+                                .any(|p| super::fs_entries::is_gitignore(p))
+                        });
+                        if gitignore_changed || full_refresh {
+                            super::fs_entries::invalidate(
+                                &root_for_watch,
+                                events
+                                    .iter()
+                                    .flat_map(|e| e.event.paths.iter().map(PathBuf::as_path)),
+                                full_refresh,
+                            );
+                        }
+                        full_refresh |= gitignore_changed;
 
                         apply_events(&root_for_watch, &files_for_watch, &gen_for_watch, events);
                         // Files just changed — drop the derived folder
@@ -651,7 +685,10 @@ fn score_rel(
 ///
 /// Nested ignored directories (`packages/*/node_modules`) still fall inside a
 /// watched subtree; [`is_ignored_event_path`] drops their events on arrival.
-fn watch_roots(root: &Path) -> Vec<(PathBuf, RecursiveMode)> {
+/// The directories to watch under one root, and how deep each watch goes.
+type WatchPlan = Vec<(PathBuf, RecursiveMode)>;
+
+fn watch_roots(root: &Path) -> WatchPlan {
     match plan_watches(root, 0) {
         // Nothing ignored anywhere in reach — one recursive watch is optimal.
         None => vec![(root.to_path_buf(), RecursiveMode::Recursive)],
@@ -682,7 +719,7 @@ const MAX_WATCHES: usize = 256;
 /// if anything below it does. Deciding on the immediate level alone was not
 /// enough — in this very repo `target/` sits at `src-tauri/target`, so the
 /// project root looks perfectly clean while 265k files hide two levels down.
-fn plan_watches(dir: &Path, depth: usize) -> Option<Vec<(PathBuf, RecursiveMode)>> {
+fn plan_watches(dir: &Path, depth: usize) -> Option<WatchPlan> {
     if depth >= MAX_SPLIT_DEPTH {
         // Stop splitting; report clean so the caller takes one recursive watch.
         // `is_ignored_event_path` absorbs whatever noise remains below.
@@ -725,7 +762,7 @@ fn plan_watches(dir: &Path, depth: usize) -> Option<Vec<(PathBuf, RecursiveMode)
         .unwrap_or(kept.len());
     let pruned_here = on_disk != kept.len();
 
-    let child_plans: Vec<(PathBuf, Option<Vec<(PathBuf, RecursiveMode)>>)> = kept
+    let child_plans: Vec<(PathBuf, Option<WatchPlan>)> = kept
         .into_iter()
         .map(|c| {
             let plan = plan_watches(&c, depth + 1);
@@ -767,6 +804,27 @@ const NOISY_DIRS: [&str; 12] = [
 ];
 
 /// True when an event path lies inside a directory we never index.
+/// `root` resolved through any symlinks, when that differs from `root`. The
+/// project keeps the path it was opened with; this is the one the OS may
+/// report events under (macOS FSEvents always answers with resolved paths).
+fn resolved_alias(root: &Path) -> Option<PathBuf> {
+    std::fs::canonicalize(root).ok().filter(|c| c != root)
+}
+
+/// Re-root `path` from `resolved` (see [`resolved_alias`]) onto `root`, the
+/// path the project was opened with. Paths not under `resolved` are left as
+/// they are.
+fn under_given_root(path: &mut PathBuf, root: &Path, resolved: &Path) {
+    let Ok(rest) = path.strip_prefix(resolved) else {
+        return;
+    };
+    *path = if rest.as_os_str().is_empty() {
+        root.to_path_buf()
+    } else {
+        root.join(rest)
+    };
+}
+
 fn is_ignored_event_path(root: &Path, path: &Path) -> bool {
     let Ok(rel) = path.strip_prefix(root) else {
         return false;
@@ -946,6 +1004,40 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    /// A project opened through a symlink: FSEvents reports the resolved path,
+    /// and the tree only matches paths under the root it was given.
+    #[cfg(unix)]
+    #[test]
+    fn events_under_a_symlinked_root_come_back_under_the_given_root() {
+        let t = TmpDir::new();
+        t.dir("real/src");
+        let link = t.path().join("link");
+        std::os::unix::fs::symlink(t.path().join("real"), &link).unwrap();
+
+        let resolved = resolved_alias(&link).expect("a symlinked root resolves elsewhere");
+        assert_eq!(
+            resolved,
+            std::fs::canonicalize(t.path().join("real")).unwrap()
+        );
+        assert_eq!(
+            resolved_alias(&resolved),
+            None,
+            "a resolved root is its own"
+        );
+
+        let mut inside = resolved.join("src/a.ts");
+        under_given_root(&mut inside, &link, &resolved);
+        assert_eq!(inside, link.join("src/a.ts"));
+
+        let mut at_root = resolved.clone();
+        under_given_root(&mut at_root, &link, &resolved);
+        assert_eq!(at_root, link);
+
+        let mut outside = PathBuf::from("/elsewhere/b.ts");
+        under_given_root(&mut outside, &link, &resolved);
+        assert_eq!(outside, PathBuf::from("/elsewhere/b.ts"));
     }
 
     /// The regression this whole change exists for: the watcher used to take one

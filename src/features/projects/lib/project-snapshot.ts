@@ -1,6 +1,6 @@
 /**
  * In-RAM per-project snapshot of the LIGHT panel-data stores
- * (explorer/git/analysis/knowledge) — part of the fast-switch path.
+ * (git/knowledge) — part of the fast-switch path.
  *
  * Heavy tab content (editor/terminal/chat) and the tab/split layout are NOT
  * snapshotted here: they stay RESIDENT in their own stores while the project
@@ -15,20 +15,18 @@
  */
 
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
-import { useExplorerStore } from "@/features/explorer/stores/explorer-store";
 import { useGitStore } from "@/features/git/stores/git-store";
 import { useKnowledgeStore } from "@/features/knowledge/stores/knowledge-store";
 import { useKnowledgeMetaStore } from "@/features/knowledge/stores/knowledge-meta-store";
 
 /** Max number of project snapshots kept warm in RAM. Beyond this we evict
  *  the least-recently-restored (never the active one). These are now just the
- *  lightweight PANEL-data slices (explorer/git/analysis/knowledge) — the heavy
+ *  lightweight PANEL-data slices (git/knowledge) — the heavy
  *  tab content (editor/terminal/chat) and the tab/split layout stay RESIDENT in
  *  their own stores across switches, so they aren't snapshotted here at all. */
 const LRU_CAP = 8;
 
 interface Snapshot {
-  explorer: Record<string, unknown>;
   git: Record<string, unknown>;
   knowledge: Record<string, unknown>;
   knowledgeMeta: Record<string, unknown>;
@@ -45,7 +43,7 @@ let clock = 0;
  * Deep-clone a pure-data slice (`actions` already stripped by `dataSlice`).
  * `structuredClone` is a single native pass — roughly 2× faster than the old
  * `JSON.parse(JSON.stringify(...))` round-trip and it doesn't stringify the
- * whole tree, so capturing a large explorer/git/analysis slice on every switch
+ * whole tree, so capturing a large git slice on every switch
  * costs less main-thread time. Falls back to the JSON round-trip if
  * `structuredClone` is unavailable or hits a stray non-cloneable value (where
  * JSON silently drops it, matching the previous behaviour).
@@ -93,7 +91,6 @@ function hashString(s: string): string {
  * cheap (a few JSON clones). Call this BEFORE resetting the stores on a switch.
  */
 export function captureSnapshot(projectId: string): void {
-  const explorer = dataSlice(useExplorerStore.getState());
   const git = dataSlice(useGitStore.getState());
   // Knowledge is captured BY REFERENCE, not cloned. Its store replaces state
   // wholesale on every update (`entries: newEntries`, `entries.map(...)` — new
@@ -121,7 +118,6 @@ export function captureSnapshot(projectId: string): void {
   };
 
   const snapshot: Snapshot = {
-    explorer,
     git,
     knowledge,
     knowledgeMeta,
@@ -145,7 +141,6 @@ export function restoreSnapshot(projectId: string): boolean {
   // Light PANEL-data stores only: merge the data slice back (actions untouched).
   // Tab content (editor/terminal/chat) + tab/split layout are resident in their
   // own stores and are restored via `loadProjectView`, not here.
-  useExplorerStore.setState(snap.explorer);
   useGitStore.setState(snap.git);
   useKnowledgeStore.setState(snap.knowledge);
   useKnowledgeMetaStore.setState(snap.knowledgeMeta);
@@ -165,11 +160,10 @@ export function evictSnapshot(projectId: string): void {
  * These stores are global, not per project: a switch overwrites them (restore
  * or cold load), but nothing else ever empties them. So when the project set
  * goes away with no successor — an org switch, closing the last project — the
- * file tree, git status and KB of the project just torn down stay on screen
+ * git status and KB of the project just torn down stay on screen
  * beside the Welcome screen, inside an org that does not contain it.
  */
 export function clearPanelStores(): void {
-  useExplorerStore.setState(dataSlice(useExplorerStore.getInitialState()));
   useGitStore.setState(dataSlice(useGitStore.getInitialState()));
   useKnowledgeStore.setState(dataSlice(useKnowledgeStore.getInitialState()));
   useKnowledgeMetaStore.setState(dataSlice(useKnowledgeMetaStore.getInitialState()));

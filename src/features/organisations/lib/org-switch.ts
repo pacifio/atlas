@@ -87,6 +87,10 @@ export async function switchOrg(id: string): Promise<void> {
       for (const tab of layout.tabs) {
         if (ORG_SCOPED_TYPES.has(tab.type)) layout.actions.closeTab(tab.id);
       }
+      // A Space or Usage open as the destination is the outgoing org's too.
+      if (layout.destination && ORG_SCOPED_TYPES.has(layout.destination.type)) {
+        layout.actions.closeTab(layout.destination.id);
+      }
       useSpacesStore.getState().actions.clearAll();
     }
 

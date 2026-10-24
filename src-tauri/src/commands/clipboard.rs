@@ -85,6 +85,22 @@ fn default_command_runner(program: &str, args: &[&str], input: &str) -> bool {
     let write_timeout = Duration::from_millis(1500);
     match rx.recv_timeout(write_timeout) {
         Ok(Ok(())) => {}
+        // The helper closed stdin before taking all of it, usually by exiting:
+        // its exit status is the answer, not the broken pipe. A fast runner
+        // hit this with `true`, which exits without reading.
+        Ok(Err(e)) if e.kind() == std::io::ErrorKind::BrokenPipe => {
+            let deadline = Instant::now() + Duration::from_millis(500);
+            while Instant::now() < deadline {
+                match child.try_wait() {
+                    Ok(Some(status)) => return status.success(),
+                    Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+                    Err(_) => break,
+                }
+            }
+            let _ = child.kill();
+            let _ = child.wait();
+            return false;
+        }
         _ => {
             let _ = child.kill();
             let _ = child.wait();

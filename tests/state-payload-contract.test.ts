@@ -19,8 +19,8 @@ import { fileURLToPath } from "node:url";
  * which the frontend had renamed to `activeProjectId`. Every install would
  * have lost its per-org last-active project on the first save after upgrade.
  * Writing the test immediately turned up a second instance of the same class:
- * `Project.pinned` / `ProjectGroup.pinned` existed only on the frontend, so
- * pinning a project never survived a restart.
+ * a project's `pinned` flag existed only on the frontend, so pinning a
+ * project never survived a restart.
  *
  * ## What it does
  *
@@ -280,7 +280,6 @@ const PAIRS: Pair[] = [
     direction: "both",
   },
   { rust: "Project", ts: { file: TS_PROJECT_STORE, name: "Project" }, direction: "both" },
-  { rust: "ProjectGroup", ts: { file: TS_PROJECT_STORE, name: "ProjectGroup" }, direction: "both" },
   { rust: "RecentProject", ts: { file: TS_APP_STORE, name: "RecentProject" }, direction: "both" },
   { rust: "ProjectRef", ts: { file: TS_APP_STORE, name: "ProjectRef" }, direction: "both" },
 ];

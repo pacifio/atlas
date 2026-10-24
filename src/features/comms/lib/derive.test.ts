@@ -3,6 +3,7 @@ import {
   aggregateReactions,
   conversationTitle,
   groupMessages,
+  hasUnreadConversation,
   initials,
   isNewDay,
   memberName,
@@ -272,5 +273,26 @@ describe("initials", () => {
   });
   it("is ? only when there is nothing to draw", () => {
     expect(initials("  ")).toBe("?");
+  });
+});
+
+describe("hasUnreadConversation", () => {
+  const conv = (id: string) => ({ id }) as ChatConversation;
+  const read = (conv_id: string, unread: number, mentions = 0) => ({
+    conv_id,
+    last_read_seq: 0,
+    unread,
+    mentions,
+  });
+
+  it("is true while a listed conversation has an unread message or mention", () => {
+    expect(hasUnreadConversation([read("a", 0), read("b", 3)], [conv("a"), conv("b")])).toBe(true);
+    expect(hasUnreadConversation([read("a", 0, 1)], [conv("a")])).toBe(true);
+  });
+
+  it("is false when everything is read, or the unread one is no longer listed", () => {
+    expect(hasUnreadConversation([read("a", 0)], [conv("a")])).toBe(false);
+    expect(hasUnreadConversation([read("gone", 5)], [conv("a")])).toBe(false);
+    expect(hasUnreadConversation([], [])).toBe(false);
   });
 });

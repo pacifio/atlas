@@ -297,9 +297,9 @@ export function SpacePages({
                   <Tooltip>
                     <TooltipTrigger
                       render={
-                        <span className="flex min-w-0 shrink-0 items-center gap-1">
+                        <span className="flex min-w-0 shrink-0 items-center">
                           <CommsAvatar member={author} size={16} />
-                          <span className="max-w-[64px] truncate text-2xs text-muted-foreground">
+                          <span className="ml-1 max-w-[64px] truncate text-2xs text-muted-foreground">
                             {firstName(author.name)}
                           </span>
                         </span>

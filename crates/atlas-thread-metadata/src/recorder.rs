@@ -56,7 +56,7 @@ pub fn affects_thread_metadata(event: &AcpThreadEvent) -> bool {
         | AcpThreadEvent::ToolAuthorizationReceived(_)
         | AcpThreadEvent::ElicitationRequested(_)
         | AcpThreadEvent::ElicitationResponded(_)
-        | AcpThreadEvent::Stopped(_)
+        | AcpThreadEvent::Stopped(..)
         | AcpThreadEvent::Error
         | AcpThreadEvent::LoadError(_)
         | AcpThreadEvent::Refusal
@@ -72,6 +72,32 @@ pub fn affects_thread_metadata(event: &AcpThreadEvent) -> bool {
         | AcpThreadEvent::AvailableCommandsUpdated(_)
         | AcpThreadEvent::ModeUpdated(_)
         | AcpThreadEvent::ConfigOptionsUpdated(_) => false,
+    }
+}
+
+/// What a thread event means for the session's lifecycle, beyond its row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LifecycleSignal {
+    /// A turn ended, at the time the thread stamped on it. Unread is
+    /// measured from it. Not a wake.
+    TurnCompleted(DateTime<Utc>),
+    /// The session needs the user: a permission request, a question, or a
+    /// failure. A snoozed session wakes for it.
+    RaisedHand,
+}
+
+/// Which events move a session's lifecycle. A completed turn is
+/// deliberately not a raised hand: a snoozed session that finishes
+/// background work stays asleep until its time.
+pub fn lifecycle_signal(event: &AcpThreadEvent) -> Option<LifecycleSignal> {
+    match event {
+        AcpThreadEvent::Stopped(_, turn) => Some(LifecycleSignal::TurnCompleted(turn.ended_at)),
+        AcpThreadEvent::ToolAuthorizationRequested { .. }
+        | AcpThreadEvent::ElicitationRequested(_)
+        | AcpThreadEvent::Error
+        | AcpThreadEvent::LoadError(_)
+        | AcpThreadEvent::Refusal => Some(LifecycleSignal::RaisedHand),
+        _ => None,
     }
 }
 
@@ -141,7 +167,49 @@ impl ThreadRecorder {
         if !affects_thread_metadata(event) {
             return;
         }
-        self.upsert(agent_id, session_id, snapshot);
+        let thread_id = self.upsert(agent_id, session_id, snapshot);
+        match lifecycle_signal(event) {
+            Some(LifecycleSignal::TurnCompleted(at)) => {
+                self.store.note_turn_completed(thread_id, at);
+            }
+            Some(LifecycleSignal::RaisedHand) => {
+                self.store.raise_hand(thread_id, Utc::now());
+            }
+            None => {}
+        }
+    }
+
+    /// The session's turn failed somewhere its thread does not report — the
+    /// send itself was refused. A raised hand, like any failure: a snoozed
+    /// session wakes for it.
+    pub fn note_failure(&self, session_id: &acp::SessionId, at: DateTime<Utc>) {
+        if let Some(thread_id) = self.thread_for(session_id) {
+            self.store.raise_hand(thread_id, at);
+        }
+    }
+
+    /// The user opened or focused the session. Clears unread and "woke".
+    /// Answers whether the session has a row to mark.
+    pub fn note_viewed(&self, session_id: &acp::SessionId, at: DateTime<Utc>) -> bool {
+        match self.thread_for(session_id) {
+            Some(thread_id) => {
+                self.store.mark_viewed(thread_id, at);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The row a live session writes to, without minting one: its binding,
+    /// else the row carrying its session id. A draft is found through its
+    /// binding, since its session id is never persisted.
+    pub fn thread_for(&self, session_id: &acp::SessionId) -> Option<ThreadId> {
+        let bound = self.lock().get(session_id).copied();
+        bound.or_else(|| {
+            self.store
+                .thread_for_session(session_id)
+                .map(|thread| thread.thread_id)
+        })
     }
 
     /// The user sent or queued a message Separate from [`ThreadRecorder::record`] because the send
@@ -164,6 +232,16 @@ impl ThreadRecorder {
         }
     }
 
+    /// The model the session's turn runs on. Like the branch, the host's to
+    /// know: the thread's events do not carry it. A session not bound to a
+    /// row is ignored.
+    pub fn note_model(&self, session_id: &acp::SessionId, model: Arc<str>) {
+        let thread_id = self.lock().get(session_id).copied();
+        if let Some(thread_id) = thread_id {
+            self.store.update_model(thread_id, Some(model));
+        }
+    }
+
     /// The conversation is over.
     ///
     /// A thread that was ever sent to keeps its row — history outliving the
@@ -180,7 +258,12 @@ impl ThreadRecorder {
         }
     }
 
-    fn upsert(&self, agent_id: &AgentId, session_id: &acp::SessionId, snapshot: ThreadSnapshot) {
+    fn upsert(
+        &self,
+        agent_id: &AgentId,
+        session_id: &acp::SessionId,
+        snapshot: ThreadSnapshot,
+    ) -> ThreadId {
         let thread_id = self.resolve(session_id);
         let folder_paths = PathList::new(&snapshot.work_dirs);
         self.store.record_live_update(LiveThreadUpdate {
@@ -192,6 +275,7 @@ impl ThreadRecorder {
             worktree_paths: WorktreePaths::from_folder_paths(&folder_paths),
             remote_connection: None,
         });
+        thread_id
     }
 
     /// Which row this session writes to: the one it is already bound to, else

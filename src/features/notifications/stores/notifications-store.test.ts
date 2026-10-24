@@ -128,7 +128,7 @@ describe("persistence", () => {
       item("chat", { type: "chat-conversation", convId: "c1" }),
       item("badchat", { type: "chat-conversation" }),
       item("upd", { type: "app-update" }),
-      item("models", { type: "settings", section: "models" }),
+      item("models", { type: "settings", section: "memory" }),
       item("badsettings", { type: "settings", section: "nope" }),
       item("agents", { type: "settings", section: "agents" }),
       item("cfg", { type: "config-file" }),
@@ -144,7 +144,7 @@ describe("persistence", () => {
     expect(byId.chat.target).toEqual({ type: "chat-conversation", convId: "c1" });
     expect(byId.badchat.target).toBeUndefined();
     expect(byId.upd.target).toEqual({ type: "app-update" });
-    expect(byId.models.target).toEqual({ type: "settings", section: "models" });
+    expect(byId.models.target).toEqual({ type: "settings", section: "memory" });
     expect(byId.badsettings.target).toBeUndefined();
     expect(byId.agents.target).toEqual({ type: "settings", section: "agents" });
     expect(byId.cfg.target).toEqual({ type: "config-file" });

@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { agents } from "../lib/agents-api";
+import type { InjectedPrompt } from "../lib/injected-prompt";
 import { immer } from "zustand/middleware/immer";
 import { createSelectors } from "@/lib/create-selectors";
 import type {
@@ -41,8 +42,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { extractPlanMarkdown, type PlanRecord } from "../lib/plans";
 import { extractNextSteps } from "../lib/next-steps";
-import { turnFileOfToolCall } from "../lib/tool-files";
-import type { TurnFile } from "@/types/agent";
+import { turnFilesOfToolCall } from "../lib/tool-files";
+import { withPastesInline } from "../lib/pasted-text";
+import { withCitesInline } from "../lib/cited-text";
+import { withReviewCommentsInline } from "../lib/review-comments";
+import type { MentionData } from "../lib/mentions";
+import type { TurnFile, TurnInterruption } from "@/types/agent";
 
 /** `firstUserContent` is a preview field, never the full text — see the note
  *  at its appendMessage write. 200 chars covers every consumer (they slice to
@@ -66,21 +71,13 @@ function reconstructTurnSummaries(messages: ChatMessage[]): void {
       if (m.role !== "assistant") continue;
       lastAsst = i;
       for (const tc of m.toolCalls) {
-        const file = turnFileOfToolCall({
+        const files = turnFilesOfToolCall({
           toolName: tc.toolName,
           kind: tc.kind,
           arguments: (tc.arguments ?? {}) as Record<string, unknown>,
           locations: tc.locations,
         });
-        if (!file) continue;
-        const ex = byPath.get(file.path);
-        if (!ex) byPath.set(file.path, file);
-        else {
-          ex.added += file.added;
-          ex.removed += file.removed;
-          if (file.kind === "edit") ex.kind = "edit";
-          if (file.created === false) ex.created = false;
-        }
+        for (const file of files) foldTurnFile(byPath, file);
       }
     }
     if (lastAsst >= 0) {
@@ -108,21 +105,40 @@ function reconstructTurnSummaries(messages: ChatMessage[]): void {
   flushTurn(turnStart, messages.length);
 }
 
-/** Collapse the per-turn tool-id map into one entry per file path, summing
- *  edit counts; `edit` wins over `read` when a file was both read and edited. */
+/** Fold one file a tool call touched into a turn's per-path entries, summing
+ *  edit counts; `edit` wins over `read`, and any real modify makes it "M". A
+ *  rename moves the entry of the path it left to the path it went to, so a
+ *  file edited then renamed in one turn is one entry: it keeps the earliest
+ *  origin, and a file the turn created stays created with no origin. */
+function foldTurnFile(byPath: Map<string, TurnFile>, file: TurnFile): void {
+  const left = file.movedFrom !== undefined ? byPath.get(file.movedFrom) : undefined;
+  if (left && file.movedFrom !== file.path) {
+    byPath.delete(left.path);
+    const moved: TurnFile = { ...left, path: file.path };
+    if (left.created) delete moved.movedFrom;
+    else moved.movedFrom = left.movedFrom ?? file.movedFrom;
+    const there = byPath.get(file.path);
+    byPath.delete(file.path);
+    byPath.set(file.path, moved);
+    if (there) foldTurnFile(byPath, { ...there, movedFrom: undefined });
+    foldTurnFile(byPath, { ...file, movedFrom: undefined, created: left.created ?? file.created });
+    return;
+  }
+  const ex = byPath.get(file.path);
+  if (!ex) {
+    byPath.set(file.path, { ...file });
+    return;
+  }
+  ex.added += file.added;
+  ex.removed += file.removed;
+  if (file.kind === "edit") ex.kind = "edit";
+  if (file.created === false) ex.created = false;
+}
+
+/** Collapse the per-turn tool-id map into one entry per file path. */
 function aggregateTurnFiles(tools: Record<string, TurnFile>): TurnFile[] {
   const byPath = new Map<string, TurnFile>();
-  for (const t of Object.values(tools)) {
-    const ex = byPath.get(t.path);
-    if (!ex) {
-      byPath.set(t.path, { ...t });
-      continue;
-    }
-    ex.added += t.added;
-    ex.removed += t.removed;
-    if (t.kind === "edit") ex.kind = "edit";
-    if (t.created === false) ex.created = false; // any real modify → "M"
-  }
+  for (const t of Object.values(tools)) foldTurnFile(byPath, t);
   return Array.from(byPath.values());
 }
 
@@ -318,6 +334,11 @@ function toChatToolCall(tc: AgentToolCall): ChatMessage["toolCalls"][number] {
     // arrive on one session, interleaved.
     parentToolCallId: tc.parent_tool_call_id,
     locations: toolLocations(tc.locations),
+    // Rust's times, which survive a reload. Spread only when present:
+    // `Object.assign` onto an existing call must not blank a start with an
+    // `undefined`.
+    ...(tc.started_at_ms !== undefined ? { startedAt: tc.started_at_ms } : {}),
+    ...(tc.ended_at_ms !== undefined ? { endedAt: tc.ended_at_ms } : {}),
     status:
       tc.status === "pending"
         ? "pending"
@@ -381,6 +402,18 @@ interface ChatActions {
       role: MessageRole,
       content: string,
       attachments?: ImageAttachment[],
+      /** See `ChatMessage.trustedMentionPaths`. */
+      trustedMentionPaths?: string[],
+    ) => void;
+    /** Append the prompt Atlas sent the agent of ACP session `acpSessionId`
+     *  on its own (`atlas:session-prompt-injected`) to that session's tab, if
+     *  one is open. A user-role message marked `injected`, so it draws as its
+     *  own row and never counts as the user's. */
+    addInjectedPrompt: (
+      acpSessionId: string,
+      text: string,
+      injected: InjectedPrompt,
+      at: string,
     ) => void;
     appendToolCall: (sessionId: string, toolName: string, input: Record<string, unknown>) => void;
     updateLastAssistantMessage: (sessionId: string, content: string) => void;
@@ -399,6 +432,8 @@ interface ChatActions {
      *  `ChatSession.resumePending` — gates sending, not reading. */
     setResumePending: (sessionId: string, pending: boolean) => void;
     clearSession: (sessionId: string) => void;
+    /** Where the tab's next bind opens its session (see `ChatSession.bindCwd`). */
+    setBindCwd: (tabId: string, cwd: string) => void;
     removeSession: (sessionId: string) => void;
     /** Drop several sessions at once (used when a project is DISCARDED from
      *  the hot set — frees its chat history from RAM; reloaded cold on revisit). */
@@ -498,11 +533,17 @@ interface ChatActions {
         role: MessageRole;
         content: string;
         timestamp?: string;
+        /** The timestamp is a replay's, not when the message was said. */
+        timestampApproximate?: boolean;
         /** Producing model recovered from the snapshot/transcript, so the
          *  per-message badge survives session reloads. */
         model?: string | null;
         /** Images a user message carried, restored from the snapshot. */
         attachments?: ImageAttachment[];
+        /** The turn's wall time and how it stopped, on the message that
+         *  ends it (snapshot `worked_ms` / `stop_reason`). */
+        workedMs?: number;
+        stopReason?: string;
         toolCalls?: Array<{
           /** The agent's own tool call id, when the caller has it. Optional
            *  only because not every paint path carries one; a caller that has
@@ -515,6 +556,10 @@ interface ChatActions {
           /** How the tool call actually ended. Absent means unknown, which is
            *  the only case that may be assumed completed. */
           status?: ToolCallStatus;
+          /** Epoch ms the call was first seen and first settled, as Rust
+           *  stamped them. */
+          startedAt?: number;
+          endedAt?: number;
         }>;
       }>,
     ) => void;
@@ -548,7 +593,14 @@ interface ChatActions {
     ) => void;
     /** Drop a draft (on submit, or when its tab closes). */
     clearDraft: (tabId: string) => void;
-    enqueueMessage: (sessionId: string, text: string) => void;
+    /**
+     * Queue a message. The queue holds strings, so every queued send passes
+     * the mentions it was sent with and its pastes' and cites' text goes into
+     * the string (`withPastesInline`, then `withCitesInline`): a bare
+     * `@paste:<id>` or `@cite:<id>` would reach the agent with nothing behind
+     * it. Required, so no queue path can skip it.
+     */
+    enqueueMessage: (sessionId: string, text: string, mentions: readonly MentionData[]) => void;
     removeQueueItem: (sessionId: string, index: number) => void;
     editQueueItem: (sessionId: string, index: number, text: string) => void;
     shiftQueue: (sessionId: string) => string | null;
@@ -789,6 +841,44 @@ export function stopReasonNotice(stopReason: string): string | null {
   }
 }
 
+/**
+ * Freeze a held sleep (`sleptMidTurn`) onto the turn's trailing assistant
+ * message as its `interruption` — the way `usage` and `turnSummary` are frozen
+ * at turn end, so the transcript draws it after the reply it may have cut
+ * short. A turn the sleep cut off before any output has no such message, so
+ * one is added with no content: it renders nothing but the record.
+ */
+function recordInterruption(
+  session: ChatSession,
+  outcome: TurnInterruption["outcome"],
+  error?: string,
+): void {
+  const slept = session.sleptMidTurn;
+  if (!slept) return;
+  session.sleptMidTurn = undefined;
+  const interruption: TurnInterruption = {
+    cause: "sleep",
+    sleptSecs: slept.sleptSecs,
+    outcome,
+    ...(error ? { error } : {}),
+  };
+  for (let i = session.messages.length - 1; i >= 0; i--) {
+    const m = session.messages[i];
+    if (m.role === "user") break;
+    if (m.role === "assistant") {
+      m.interruption = interruption;
+      return;
+    }
+  }
+  const host = makeAssistantTextMessage("");
+  host.interruption = interruption;
+  session.messages.push(host);
+}
+
+/** An agent session's title until the agent names it. Atlas calls them
+ *  sessions — never chats or threads — and so does every label built on this. */
+export const UNTITLED_SESSION = "New session";
+
 export const useChatStore = createSelectors(
   create<ChatState & ChatActions>()(
     immer((set, get) => ({
@@ -808,7 +898,7 @@ export const useChatStore = createSelectors(
             if (s.sessions[tabId]) return;
             s.sessions[tabId] = {
               id: tabId,
-              title: "New Chat",
+              title: UNTITLED_SESSION,
               messages: [],
               agentType,
               model: "",
@@ -983,7 +1073,7 @@ export const useChatStore = createSelectors(
           set((s) => {
             s.activeSessionId = id;
           }),
-        addMessage: (sessionId, role, content, attachments) =>
+        addMessage: (sessionId, role, content, attachments, trustedMentionPaths) =>
           set((s) => {
             const session = s.sessions[sessionId];
             if (!session) return;
@@ -997,6 +1087,7 @@ export const useChatStore = createSelectors(
               role,
               content,
               ...(attachments?.length ? { attachments } : {}),
+              ...(role === "user" && trustedMentionPaths?.length ? { trustedMentionPaths } : {}),
               toolCalls: [],
               fileChanges: [],
               plan: null,
@@ -1028,6 +1119,23 @@ export const useChatStore = createSelectors(
               // an early scroll) — id-scoping keeps it to the actual send.
               session.justSentMessageId = msg.id;
             }
+          }),
+        addInjectedPrompt: (acpSessionId, text, injected, at) =>
+          set((s) => {
+            const tabId = findTabByAcpSession(s.sessions, acpSessionId);
+            if (!tabId) return;
+            const session = s.sessions[tabId];
+            session.messages.push({
+              id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              role: "user",
+              content: text,
+              toolCalls: [],
+              fileChanges: [],
+              plan: null,
+              timestamp: at,
+              injected,
+            });
+            session.updatedAt = new Date().toISOString();
           }),
         appendToolCall: (sessionId, toolName, input) =>
           set((s) => {
@@ -1127,7 +1235,7 @@ export const useChatStore = createSelectors(
               session.acpAgentId = undefined;
               session.acpSessionId = undefined;
               forgetSessionUsage(session);
-              session.title = "New Chat";
+              session.title = UNTITLED_SESSION;
               session.firstUserContent = undefined;
               session.userMessageCount = 0;
               // Reset the turn-identity high-water mark + live per-turn scratch
@@ -1160,8 +1268,14 @@ export const useChatStore = createSelectors(
               // conversation being dropped, exactly like the queue below.
               session.pendingSend = undefined;
               session.unrestoredModeId = undefined;
+              session.bindCwd = undefined;
             }
             delete s.queues[sessionId];
+          }),
+        setBindCwd: (tabId, cwd) =>
+          set((s) => {
+            const session = s.sessions[tabId];
+            if (session) session.bindCwd = cwd;
           }),
         cycleClaudePermissionMode: (sessionId) => {
           let next: ClaudePermissionMode | undefined;
@@ -1485,12 +1599,21 @@ export const useChatStore = createSelectors(
                   result: tc.result ?? null,
                   status: tc.status ?? ("completed" as const),
                   duration: null,
+                  ...(tc.startedAt !== undefined ? { startedAt: tc.startedAt } : {}),
+                  ...(tc.endedAt !== undefined ? { endedAt: tc.endedAt } : {}),
                 })),
                 fileChanges: [],
                 plan: null,
                 timestamp: m.timestamp ?? new Date().toISOString(),
+                ...(m.timestampApproximate ? { timestampApproximate: true } : {}),
                 ...(m.role === "assistant" && m.model ? { model: m.model } : {}),
                 ...(m.attachments?.length ? { attachments: m.attachments } : {}),
+                ...(m.role === "assistant" && m.workedMs !== undefined
+                  ? { workedMs: m.workedMs }
+                  : {}),
+                ...(m.role === "assistant" && m.stopReason !== undefined
+                  ? { stopReason: m.stopReason }
+                  : {}),
                 ...(split && split.context !== null
                   ? {
                       atlasProse: split.prose,
@@ -1637,10 +1760,16 @@ export const useChatStore = createSelectors(
               chips: patch.chips ?? msg.suggestions?.chips ?? [],
             };
           }),
-        enqueueMessage: (sessionId, text) =>
+        enqueueMessage: (sessionId, text, mentions) =>
           set((s) => {
             const cur = s.queues[sessionId] ?? [];
-            s.queues[sessionId] = [...cur, text];
+            s.queues[sessionId] = [
+              ...cur,
+              withReviewCommentsInline(
+                withCitesInline(withPastesInline(text, mentions), mentions),
+                mentions,
+              ),
+            ];
           }),
         removeQueueItem: (sessionId, index) =>
           set((s) => {
@@ -2008,6 +2137,11 @@ function applyDeltaToDraft(s: ChatDraft, env: AgentDelta): void {
           session.livePlan = undefined;
           // Start a fresh per-turn files-touched scratch for the adaptive card.
           session.turnScratch = { seq, tools: {} };
+          // A sleep notice still held for an older turn missed its place —
+          // the new user message is already below it.
+          if (session.sleptMidTurn && session.sleptMidTurn.turnSeq < seq) {
+            session.sleptMidTurn = undefined;
+          }
         }
         session.status = env.status;
         return;
@@ -2041,6 +2175,18 @@ function applyDeltaToDraft(s: ChatDraft, env: AgentDelta): void {
       // Reject a terminal for a turn already superseded by a newer send —
       // don't flip to idle or inject an empty-turn placeholder for stale turns.
       if (isStaleTurn(session, env.turn_seq)) return;
+      // A terminal for no turn Rust saw open, landing on a turn that already
+      // ended: a late duplicate (a cancel answered behind the stop it raced).
+      // Applying it would relabel the finished turn — "Stopped after" on a
+      // reply that completed. Rust swallows these; this is the backstop.
+      const tail = session.messages[session.messages.length - 1];
+      if (
+        env.started_at_ms === undefined &&
+        tail?.role === "assistant" &&
+        tail.stopReason !== undefined
+      ) {
+        return;
+      }
       // Empty-turn detection: if no assistant content arrived
       // between the last user message and turn-end, insert a
       // placeholder so the UI doesn't show a vanishing spinner.
@@ -2172,13 +2318,21 @@ function applyDeltaToDraft(s: ChatDraft, env: AgentDelta): void {
         }
         session.turnScratch = undefined;
       }
-      // "Worked for 7m 37s": the turn's wall time, measured from the user's
-      // message. Only a live turn can be timed honestly — see `workedMs`.
-      if (lastUserIdx >= 0 && responded) {
-        const sentAt = Date.parse(session.messages[lastUserIdx].timestamp);
+      // "Worked for 7m 37s" / "Stopped after 12s": the turn's run time as
+      // Rust measured it (monotonic, so a sleep or a clock step does not
+      // stretch it), and how it ended — the same pair a snapshot puts on the
+      // same message, so the header reads the same after a reload.
+      //
+      // Only onto a message this turn produced. After a rewind (`/undo`) the
+      // trailing message can be the PREVIOUS turn's reply, and stamping it
+      // would overwrite that turn's own figure with this one's.
+      if (responded) {
         const last = session.messages[session.messages.length - 1];
-        if (Number.isFinite(sentAt) && last.role === "assistant") {
-          last.workedMs = Math.max(0, Date.now() - sentAt);
+        const ours =
+          env.started_at_ms === undefined || Date.parse(last.timestamp) >= env.started_at_ms;
+        if (last.role === "assistant" && ours) {
+          if (env.worked_ms !== undefined) last.workedMs = env.worked_ms;
+          last.stopReason = env.stop_reason;
         }
       }
       // Agent-generated next-step chips: extract the trailing assistant reply's
@@ -2197,6 +2351,7 @@ function applyDeltaToDraft(s: ChatDraft, env: AgentDelta): void {
         }
         break;
       }
+      recordInterruption(session, env.stop_reason === "cancelled" ? "stopped" : "finished");
       return;
     }
     case "turn_failed": {
@@ -2215,7 +2370,24 @@ function applyDeltaToDraft(s: ChatDraft, env: AgentDelta): void {
       // in-process and shares this error delta, so its provider errors (e.g. a
       // Gemini HTTP 400) were being mislabeled as ACP failures. Use a neutral
       // prefix.
-      session.messages.push(makeAssistantTextMessage(`Error: ${env.error}`));
+      // After a sleep the failure is almost always the sleep's doing — a dropped
+      // stream reports "error decoding response body", which names nothing the
+      // user did — so the interruption row leads and carries the agent's words
+      // folded, instead of a bare "Error:" line.
+      const last = session.messages[session.messages.length - 1];
+      if (session.sleptMidTurn) {
+        recordInterruption(session, "failed", env.error);
+      } else if (
+        last?.role === "assistant" &&
+        last.interruption?.outcome === "failed" &&
+        !last.interruption.error
+      ) {
+        // The sleep landed between the error status and this delta, and was
+        // recorded then; the error joins that record.
+        last.interruption = { ...last.interruption, error: env.error };
+      } else {
+        session.messages.push(makeAssistantTextMessage(`Error: ${env.error}`));
+      }
       session.status = "error";
       session.stopping = undefined;
       session.retryStatus = undefined;
@@ -2223,7 +2395,7 @@ function applyDeltaToDraft(s: ChatDraft, env: AgentDelta): void {
       // Auth failures route to the agent's sign-in flow (P15) instead of
       // dying as a generic banner. The composer components listen for this
       // (Claude → login dialog, Codex → sign-in pill); native/BYOK keys are
-      // covered by the error text pointing at Settings → API Keys.
+      // covered by the error text pointing at Settings → Agents → Provider keys.
       if (env.error_kind === "auth") {
         window.dispatchEvent(
           new CustomEvent("atlas:auth-required", {
@@ -2249,6 +2421,44 @@ function applyDeltaToDraft(s: ChatDraft, env: AgentDelta): void {
       session.disconnected = true;
       session.stopping = undefined;
       session.retryStatus = undefined;
+      recordInterruption(session, "disconnected");
+      return;
+    }
+    case "slept_mid_turn": {
+      if (isStaleTurn(session, env.turn_seq)) return;
+      // Live while the turn runs (the composer pill), frozen onto the turn when
+      // it ends. Rust delivers it ahead of the turn's terminal, but the
+      // background tick can lose that race — then the turn is already over and
+      // the record goes straight on.
+      session.sleptMidTurn = {
+        turnSeq: env.turn_seq,
+        sleptSecs: env.slept_secs,
+        wokeAt: Date.now(),
+      };
+      if (!isBusyAgentStatus(session.status)) {
+        // The next prompt is already sent: there is no reply left to sit
+        // after, and a record here would land in the next turn.
+        if (session.messages[session.messages.length - 1]?.role === "user") {
+          session.sleptMidTurn = undefined;
+          return;
+        }
+        if (session.status !== "error") {
+          recordInterruption(session, "finished");
+          return;
+        }
+        // The failure already pushed its bare "Error:" line; the record takes
+        // its place and carries the error, as it would have on time.
+        const tail = session.messages[session.messages.length - 1];
+        const errorLine =
+          tail?.role === "assistant" &&
+          !tail.interruption &&
+          tail.toolCalls.length === 0 &&
+          tail.content.startsWith("Error: ")
+            ? tail
+            : undefined;
+        if (errorLine) session.messages.pop();
+        recordInterruption(session, "failed", errorLine?.content.slice("Error: ".length));
+      }
       return;
     }
     case "retry_status": {
@@ -2295,6 +2505,7 @@ function applyDeltaToDraft(s: ChatDraft, env: AgentDelta): void {
             }))
           : null,
         timestamp: m.timestamp,
+        ...(m.timestamp_approximate ? { timestampApproximate: true } : {}),
         mode: m.mode,
       };
       if (appended.role === "assistant") stampProducingModel(session, appended);
@@ -2307,16 +2518,27 @@ function applyDeltaToDraft(s: ChatDraft, env: AgentDelta): void {
       // message rescan). Frozen into the trailing message at turn_finished.
       if (session.turnScratch) {
         const tc = env.tool_call;
-        const file = turnFileOfToolCall({
+        const files = turnFilesOfToolCall({
           toolName: tc.tool_name,
           kind: tc.kind,
           arguments: (tc.arguments ?? {}) as Record<string, unknown>,
           locations: toolLocations(tc.locations),
         });
         // A later sighting that names no file (a bare status update) must not
-        // erase what an earlier one recorded.
-        if (file) session.turnScratch.tools[tc.id] = file;
+        // erase what an earlier one recorded. A call that names several files
+        // (the native engine's patch) keeps the first under its id and the
+        // rest under `id#n`, replaced whole on each sighting.
+        if (files.length > 0) {
+          const tools = session.turnScratch.tools;
+          for (let n = 1; `${tc.id}#${n}` in tools; n++) delete tools[`${tc.id}#${n}`];
+          files.forEach((file, n) => {
+            tools[n === 0 ? tc.id : `${tc.id}#${n}`] = file;
+          });
+        }
       }
+      // Any tool call changing, in any message, is something a view of the
+      // session's edits must hear (`editsSignature`).
+      session.toolRevision = (session.toolRevision ?? 0) + 1;
       // Incremental in-flight index — the O(1) source for the composer's
       // busy check (hasInFlightToolCalls), replacing a per-frame scan of
       // every message's toolCalls.
@@ -2327,18 +2549,19 @@ function applyDeltaToDraft(s: ChatDraft, env: AgentDelta): void {
       }
       const found = findToolCall(session, env.tool_call.id);
       if (found) {
-        // `toChatToolCall` mints a fresh record with no `startedAt`; assigning
-        // it over the existing one leaves the stamp from first sight in place,
-        // which is the whole point — the clock must not restart on the
-        // pending→running→completed updates for the same call.
+        // Rust's start never moves across the pending→running→completed
+        // updates for one call, and `toChatToolCall` carries a time only when
+        // the wire did, so a first-sight stamp on a call that arrived without
+        // one is left in place rather than blanked.
         Object.assign(found.tc, toChatToolCall(env.tool_call));
         return;
       }
-      // First sight of this call: stamp the start the live elapsed figure
-      // counts from. The delta arrives when the agent announces the call, so
-      // this is its start to within one IPC hop.
+      // First sight of this call. Rust stamps its start; only a call that
+      // arrived without one is stamped here, at first sight — the delta comes
+      // when the agent announces the call, so that is its start to within one
+      // IPC hop.
       const fresh = toChatToolCall(env.tool_call);
-      fresh.startedAt = Date.now();
+      fresh.startedAt ??= Date.now();
       // Collapse consecutive tool calls into ONE assistant message
       // so the thread doesn't render N separate message-item boxes
       // (each with its own padding) for every Find/Read/Bash the

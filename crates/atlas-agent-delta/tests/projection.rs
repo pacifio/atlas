@@ -365,11 +365,19 @@ async fn a_turn_is_a_status_flip_and_a_terminal() {
         SessionDelta::TurnFinished {
             stop_reason,
             turn_seq,
+            started_at_ms,
+            ended_at_ms,
+            worked_ms,
         } => {
             // The token the frontend matches on, serialized rather than
             // hand-formatted (ATL-6 shipped "endturn").
             assert_eq!(stop_reason, "end_turn");
             assert_eq!(*turn_seq, 7);
+            // The turn's wall time travels with its terminal, so the client
+            // never has to time it itself.
+            let (started, ended) = (started_at_ms.unwrap(), ended_at_ms.unwrap());
+            assert!(started <= ended, "{started} > {ended}");
+            assert!(worked_ms.is_some(), "timed on the monotonic clock");
         }
         other => panic!("expected a terminal, got {other:?}"),
     }
@@ -830,6 +838,41 @@ fn a_snapshot_carries_the_whole_conversation_including_the_user() {
     // Message ids are unique — the frontend keys its mirror on them.
     let ids: std::collections::HashSet<_> = messages.iter().map(|m| &m.id).collect();
     assert_eq!(ids.len(), messages.len());
+}
+
+/// ACP carries no per-message time, so what an agent's `session/load` replays
+/// is stamped when Atlas heard it. The wire says so, live and in snapshots,
+/// until the user speaks again; from there messages are timed for real.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_replayed_message_says_its_time_is_approximate() {
+    let harness = Harness::start();
+
+    lock(&harness.thread).begin_replay();
+    harness.update(serde_json::json!({
+        "sessionUpdate": "user_message_chunk",
+        "content": { "type": "text", "text": "fix the bug" },
+    }));
+    harness.update(text_chunk("found it"));
+    harness.expect(1);
+    match &harness.recorder.deltas()[0] {
+        SessionDelta::MessageAppended { message } => assert!(message.timestamp_approximate),
+        other => panic!("expected a message, got {other:?}"),
+    }
+
+    lock(&harness.thread).push_user_content_block(
+        None,
+        acp::ContentBlock::Text(acp::TextContent::new("and the test".to_string())),
+    );
+    harness.update(text_chunk("added"));
+    harness.expect(2);
+    match &harness.recorder.deltas()[1] {
+        SessionDelta::MessageAppended { message } => assert!(!message.timestamp_approximate),
+        other => panic!("expected a message, got {other:?}"),
+    }
+
+    let messages = atlas_agent_delta::project::snapshot_messages(&lock(&harness.thread), None);
+    let approximate: Vec<bool> = messages.iter().map(|m| m.timestamp_approximate).collect();
+    assert_eq!(approximate, [true, true, false, false]);
 }
 
 // ------------------------------------------------------- terminal tool calls
@@ -2059,4 +2102,287 @@ async fn ordinary_tool_calls_announce_no_subagent() {
         subagents(&harness).is_empty(),
         "shape alone must not read as a subagent"
     );
+}
+
+fn tool_call_of(delta: &SessionDelta) -> &atlas_agent_delta::ToolCall {
+    match delta {
+        SessionDelta::ToolCallUpserted { tool_call, .. } => tool_call,
+        other => panic!("expected a tool call, got {other:?}"),
+    }
+}
+
+/// A call's start is stamped the first time it is seen, its end the first time
+/// it settles, and neither moves after that — which is what lets a reloaded
+/// session show the same duration the live one did.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_tool_call_is_timed_from_first_sight_to_first_settling() {
+    let harness = Harness::start();
+
+    harness.update(serde_json::json!({
+        "sessionUpdate": "tool_call",
+        "toolCallId": "call-1",
+        "title": "Bash",
+        "kind": "execute",
+        "status": "in_progress",
+        "rawInput": { "command": "ls" },
+    }));
+    harness.expect(1);
+    let first = tool_call_of(&harness.recorder.deltas()[0]).clone();
+    let started = first.started_at_ms.expect("stamped at first sight");
+    assert_eq!(first.ended_at_ms, None, "still running");
+
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    harness.update(serde_json::json!({
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "call-1",
+        "status": "completed",
+    }));
+    harness.expect(2);
+    let settled = tool_call_of(&harness.recorder.deltas()[1]).clone();
+    assert_eq!(
+        settled.started_at_ms,
+        Some(started),
+        "the start never moves"
+    );
+    let ended = settled.ended_at_ms.expect("stamped when it completed");
+    assert!(ended >= started + 5, "{ended} vs {started}");
+
+    // A later update to a finished call (a retitle) re-stamps nothing.
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    harness.update(serde_json::json!({
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "call-1",
+        "title": "Bash (done)",
+    }));
+    harness.expect(3);
+    let later = tool_call_of(&harness.recorder.deltas()[2]).clone();
+    assert_eq!(later.started_at_ms, Some(started));
+    assert_eq!(later.ended_at_ms, Some(ended));
+
+    // And the snapshot a reloaded client hydrates from says the same.
+    let messages = atlas_agent_delta::project::snapshot_messages(&lock(&harness.thread), None);
+    let call = &messages[0].tool_calls[0];
+    assert_eq!(call.started_at_ms, Some(started));
+    assert_eq!(call.ended_at_ms, Some(ended));
+}
+
+/// A call that fails, or is cancelled with its turn, has ended too.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cancelled_tool_call_is_stamped_as_ended() {
+    let harness = Harness::start();
+    lock(&harness.thread).begin_turn();
+    harness.update(serde_json::json!({
+        "sessionUpdate": "tool_call",
+        "toolCallId": "call-1",
+        "title": "Bash",
+        "kind": "execute",
+        "status": "in_progress",
+    }));
+    lock(&harness.thread).cancel();
+    harness.pump();
+
+    let last = harness
+        .recorder
+        .deltas()
+        .into_iter()
+        .rev()
+        .find(|delta| matches!(delta, SessionDelta::ToolCallUpserted { .. }))
+        .expect("the cancel was announced");
+    let call = tool_call_of(&last);
+    assert_eq!(call.status, atlas_agent_delta::ToolCallStatus::Failed);
+    assert!(call.ended_at_ms.is_some());
+}
+
+/// The snapshot puts each turn's wall time and stop reason on the message
+/// that ends it, so "Worked for" / "Stopped after" survives a reload.
+#[test]
+fn a_snapshot_carries_each_turns_timing_on_its_last_message() {
+    let harness = Harness::start();
+    let prompt = |text: &str| {
+        lock(&harness.thread).push_user_content_block(
+            None,
+            acp::ContentBlock::Text(acp::TextContent::new(text.to_string())),
+        );
+    };
+
+    prompt("first");
+    lock(&harness.thread).begin_turn();
+    harness.update(serde_json::json!({
+        "sessionUpdate": "tool_call",
+        "toolCallId": "call-1",
+        "title": "Read a.rs",
+        "kind": "read",
+        "status": "completed",
+    }));
+    harness.update(serde_json::json!({
+        "sessionUpdate": "agent_message_chunk",
+        "content": { "type": "text", "text": "done" },
+    }));
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    lock(&harness.thread).end_turn(acp::StopReason::EndTurn);
+
+    // A turn the user stopped before the agent said anything has no message
+    // of its own, and must not lend its time to the previous turn's reply.
+    prompt("second");
+    lock(&harness.thread).begin_turn();
+    lock(&harness.thread).end_turn(acp::StopReason::Cancelled);
+
+    prompt("third");
+    lock(&harness.thread).begin_turn();
+    harness.update(serde_json::json!({
+        "sessionUpdate": "agent_message_chunk",
+        "content": { "type": "text", "text": "partial" },
+    }));
+    lock(&harness.thread).end_turn(acp::StopReason::Cancelled);
+    harness.pump();
+
+    let messages = atlas_agent_delta::project::snapshot_messages(&lock(&harness.thread), None);
+    let timing: Vec<(&str, Option<u64>, Option<&str>)> = messages
+        .iter()
+        .map(|m| {
+            (
+                if m.content.is_empty() {
+                    "tool"
+                } else {
+                    m.content.as_str()
+                },
+                m.worked_ms,
+                m.stop_reason.as_deref(),
+            )
+        })
+        .collect();
+    // Two prompts with nothing between them are one user entry in the thread.
+    assert_eq!(timing.len(), 5, "{timing:?}");
+    assert_eq!(timing[0], ("first", None, None));
+    assert_eq!(
+        timing[1],
+        ("tool", None, None),
+        "only the turn's last message"
+    );
+    assert_eq!(timing[2].0, "done");
+    assert!(timing[2].1.unwrap() >= 5, "{timing:?}");
+    assert_eq!(
+        timing[2].2,
+        Some("end_turn"),
+        "the empty turn lent it nothing"
+    );
+    assert_eq!(timing[3], ("secondthird", None, None));
+    assert_eq!(timing[4].0, "partial");
+    assert!(timing[4].1.is_some());
+    assert_eq!(timing[4].2, Some("cancelled"));
+
+    // Absent rather than null on the wire, like every other optional field.
+    let json = serde_json::to_value(&messages[0]).unwrap();
+    assert!(json.get("worked_ms").is_none(), "got: {json}");
+    assert!(json.get("stop_reason").is_none(), "got: {json}");
+}
+
+fn chunk(harness: &Harness, text: &str) {
+    harness.update(serde_json::json!({
+        "sessionUpdate": "agent_message_chunk",
+        "content": { "type": "text", "text": text },
+    }));
+}
+
+/// A rewind inside a turn (`/undo`) must not leave the open turn counting
+/// from past the end of the thread: what the turn says after the rewind is
+/// its own, and is the message its timing belongs on.
+#[test]
+fn a_turn_rewound_into_still_times_what_it_says_next() {
+    let harness = Harness::start();
+    let prompt = |text: &str| {
+        lock(&harness.thread).push_user_content_block(
+            None,
+            acp::ContentBlock::Text(acp::TextContent::new(text.to_string())),
+        );
+    };
+
+    prompt("first");
+    lock(&harness.thread).begin_turn();
+    chunk(&harness, "first reply");
+    lock(&harness.thread).end_turn(acp::StopReason::EndTurn);
+
+    prompt("/undo");
+    lock(&harness.thread).begin_turn();
+    // The rewind takes the first exchange and the prompt back …
+    lock(&harness.thread).remove_entries_from(0);
+    // … and the turn then answers.
+    chunk(&harness, "undone");
+    lock(&harness.thread).end_turn(acp::StopReason::EndTurn);
+    harness.pump();
+
+    let messages = atlas_agent_delta::project::snapshot_messages(&lock(&harness.thread), None);
+    assert_eq!(messages.len(), 1, "{messages:?}");
+    assert_eq!(messages[0].content, "undone");
+    assert!(
+        messages[0].worked_ms.is_some(),
+        "the reply after the rewind is timed"
+    );
+    assert_eq!(messages[0].stop_reason.as_deref(), Some("end_turn"));
+}
+
+/// A stop that arrives after its turn already closed — a cancel answered
+/// behind the stop it raced — is swallowed, so it cannot relabel the finished
+/// turn as stopped.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_late_duplicate_stop_does_not_relabel_a_finished_turn() {
+    let harness = Harness::start();
+    lock(&harness.thread).push_user_content_block(
+        None,
+        acp::ContentBlock::Text(acp::TextContent::new("go".to_string())),
+    );
+    lock(&harness.thread).begin_turn();
+    chunk(&harness, "done");
+    lock(&harness.thread).end_turn(acp::StopReason::EndTurn);
+    lock(&harness.thread).end_turn(acp::StopReason::Cancelled);
+    harness.pump();
+
+    let finished: Vec<String> = harness
+        .recorder
+        .deltas()
+        .into_iter()
+        .filter_map(|delta| match delta {
+            SessionDelta::TurnFinished { stop_reason, .. } => Some(stop_reason),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(finished, ["end_turn"], "one terminal, the real one");
+    let messages = atlas_agent_delta::project::snapshot_messages(&lock(&harness.thread), None);
+    assert_eq!(
+        messages.last().unwrap().stop_reason.as_deref(),
+        Some("end_turn")
+    );
+}
+
+/// The terminal carries the turn it closed, not whatever the thread's newest
+/// record is when the projector gets to it: here a whole second turn runs
+/// before the first stop is drained.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_terminal_drained_late_announces_its_own_turn() {
+    let harness = Harness::start();
+    lock(&harness.thread).begin_turn();
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    lock(&harness.thread).end_turn(acp::StopReason::EndTurn);
+    lock(&harness.thread).begin_turn();
+    lock(&harness.thread).end_turn(acp::StopReason::Cancelled);
+    harness.pump();
+
+    let finished: Vec<(String, u64)> = harness
+        .recorder
+        .deltas()
+        .into_iter()
+        .filter_map(|delta| match delta {
+            SessionDelta::TurnFinished {
+                stop_reason,
+                worked_ms,
+                ..
+            } => Some((stop_reason, worked_ms.unwrap())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(finished.len(), 2);
+    assert_eq!(finished[0].0, "end_turn");
+    assert!(finished[0].1 >= 30, "{finished:?}");
+    assert_eq!(finished[1].0, "cancelled");
+    assert!(finished[1].1 < 30, "{finished:?}");
 }

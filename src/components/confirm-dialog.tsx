@@ -15,7 +15,7 @@ export function ConfirmDialog({ scope }: { scope?: string }) {
   if (!pending || pending.scope !== scope) return null;
 
   return (
-    <Dialog.Root open onOpenChange={(open) => !open && settle(false)}>
+    <Dialog.Root open onOpenChange={(open) => !open && settle("cancel")}>
       <Dialog.Portal>
         <Dialog.Backdrop className="fixed inset-0 z-overlay scrim backdrop-blur-xl" />
         <Dialog.Popup
@@ -36,7 +36,7 @@ export function ConfirmDialog({ scope }: { scope?: string }) {
             <div className="mt-4 flex justify-end gap-2">
               <button
                 autoFocus
-                onClick={() => settle(false)}
+                onClick={() => settle("cancel")}
                 className={cn(
                   pillButton,
                   "bg-[var(--card)] text-[var(--secondary-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]",
@@ -44,8 +44,21 @@ export function ConfirmDialog({ scope }: { scope?: string }) {
               >
                 Cancel
               </button>
+              {pending.alternateLabel && (
+                <button
+                  onClick={() => settle("alternate")}
+                  className={cn(
+                    pillButton,
+                    pending.alternateDestructive
+                      ? "border-error/40 bg-[var(--card)] text-error hover:bg-error/10"
+                      : "bg-[var(--card)] text-[var(--foreground)] hover:bg-[var(--atlas-element-hover)]",
+                  )}
+                >
+                  {pending.alternateLabel}
+                </button>
+              )}
               <button
-                onClick={() => settle(true)}
+                onClick={() => settle("confirm")}
                 className={cn(
                   pillButton,
                   pending.destructive

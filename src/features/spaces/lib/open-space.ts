@@ -3,24 +3,18 @@
  * conversation header's Space button and the UI tool server's `ui_open`
  * (target `space_page`, Atlas Agent's "open it for me").
  *
- * The realtime canvas opens as a CENTER tab (like a draft), not a sub-tab — a
- * canvas wants the whole window and should not move when somebody posts a
- * message underneath it. Open-or-refocus, one tab per conversation.
+ * The realtime canvas is a destination (ADR-0024), not a sub-tab: a canvas
+ * wants the whole window and should not move when somebody posts a message
+ * underneath it. Opening the Space already on screen keeps it as it is.
  */
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import type { SpacePage } from "./spaces-api";
 import { useSpacesStore } from "../stores/spaces-store";
 
-/** The conversation's Space tab, focused — opened first when there is none.
- *  Answers its tab id. */
+/** The conversation's Space, on screen. Answers its tab id. */
 export function openSpaceTab(convId: string, title: string): string {
-  const layout = useLayoutStore.getState();
   const tabId = `spaces-${convId}`;
-  if (layout.tabs.some((t) => t.id === tabId)) {
-    layout.actions.setActiveTab(tabId);
-    return tabId;
-  }
-  layout.actions.addTab({
+  useLayoutStore.getState().actions.addTab({
     id: tabId,
     type: "spaces",
     title: `${title} — Space`,

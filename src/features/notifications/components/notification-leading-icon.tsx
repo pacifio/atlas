@@ -6,6 +6,7 @@ import {
   Check,
   Download,
   GitBranch,
+  GitPullRequest,
   Hand,
   KeyRound,
   MessageSquare,
@@ -42,6 +43,8 @@ function SourceIcon({ kind, size }: { kind: NotificationKind; size: number }) {
     return <GitBranch {...common} className={warn} />;
   if (kind === "config-error") return <AlertTriangle {...common} className={warn} />;
   if (kind === "agent-update-failed") return <Download {...common} className={warn} />;
+  if (kind === "pull-request-guide")
+    return <GitPullRequest {...common} className="text-secondary-foreground" />;
   const source = catalogEntry(kind).source;
   if (source === "chat") return <MessageSquare {...common} className="text-primary" />;
   if (kind === "terminal-failed")

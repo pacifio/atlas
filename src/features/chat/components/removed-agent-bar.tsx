@@ -37,7 +37,7 @@ export function RemovedAgentBar({ tabId }: { tabId: string }) {
     <div
       data-testid="removed-agent-bar"
       className={COMPOSER_STRIP}
-      title="Switch this chat to another agent, or reinstall it from Settings → Agents"
+      title="Switch this session to another agent, or reinstall it from Settings → Agents"
     >
       <span className="min-w-0 truncate">
         <span className="font-semibold text-[var(--foreground)]">{agentMeta(agentType).label}</span>
@@ -47,7 +47,7 @@ export function RemovedAgentBar({ tabId }: { tabId: string }) {
         <button
           type="button"
           onClick={() => cycleChatAgent(tabId)}
-          title="Switch this chat to another agent"
+          title="Switch this session to another agent"
           className={cn(COMPOSER_STRIP_ACTION, "cursor-pointer")}
         >
           <ArrowLeftRight size={11} />

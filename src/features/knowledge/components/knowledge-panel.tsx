@@ -283,14 +283,14 @@ export function KnowledgePanel({ tabId }: { tabId?: string }) {
     },
   });
 
-  // Open a non-note file (image, code) in the CodeMirror editor rather than the
+  // Open a non-note file (image, code) in the file view rather than the
   // KB note editor.
-  const openInCodeMirror = useCallback((filePath: string) => {
+  const openInFileView = useCallback((filePath: string) => {
     void openFile(filePath);
   }, []);
 
   // Import external .md files (Obsidian-style). .md → KB notes; any non-.md
-  // files picked directly open in the CodeMirror editor instead.
+  // files picked directly open in the file view instead.
   const handleImportFiles = useCallback(async () => {
     if (!currentProject) return;
     const { open } = await import("@tauri-apps/plugin-dialog");
@@ -311,8 +311,8 @@ export function KnowledgePanel({ tabId }: { tabId?: string }) {
         toast.error(`Import failed: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
-    other.forEach(openInCodeMirror);
-  }, [currentProject, loadEntries, openInCodeMirror]);
+    other.forEach(openInFileView);
+  }, [currentProject, loadEntries, openInFileView]);
 
   // Import a whole folder (e.g. an Obsidian vault): .md become notes, other
   // files (images, code, attachments) are copied in so the vault stays intact.
@@ -566,7 +566,10 @@ export function KnowledgePanel({ tabId }: { tabId?: string }) {
               // viewport so long READMEs scroll cleanly.
               <div className="flex-1 min-h-0 overflow-auto">
                 <div className="max-w-3xl mx-auto px-8 py-8">
-                  <ReadmeView source={repoReadme} />
+                  <ReadmeView
+                    source={repoReadme}
+                    root={clonedRepos.find((r) => r.name === activeRepoName)?.path ?? null}
+                  />
                 </div>
               </div>
             ) : (

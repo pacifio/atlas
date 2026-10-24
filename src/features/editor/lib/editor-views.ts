@@ -1,31 +1,13 @@
 /**
- * The live CodeMirror views, by tab id, so a caller outside the editor panel
- * can read where the cursor is *on demand*.
+ * Where the cursor is in each open file tab, read on demand by tab id, so a
+ * caller outside the file view (the palette's "Open in editor", the agent's
+ * UI state) can ask without the view mirroring its cursor anywhere.
  *
- * This is deliberately a lookup and not a mirror: CodeMirror owns the
+ * This is deliberately a lookup and not a mirror: the view's editor owns the
  * document and the selection (docs/architecture.md, the authoritative-state
  * boundary), and copying the cursor into a store on every keystroke is the
  * cost that boundary exists to avoid.
  */
-
-import type { EditorState } from "@codemirror/state";
-import type { EditorView } from "@codemirror/view";
-
-const views = new Map<string, EditorView>();
-
-/** Record `view` as the one editing `tabId`; returns the matching unregister.
- *  An unregister only removes the view it registered, so a stale cleanup
- *  cannot drop the view a remounted panel put there since. */
-export function registerEditorView(tabId: string, view: EditorView): () => void {
-  views.set(tabId, view);
-  return () => {
-    if (views.get(tabId) === view) views.delete(tabId);
-  };
-}
-
-export function getEditorView(tabId: string): EditorView | undefined {
-  return views.get(tabId);
-}
 
 export interface LineCol {
   line: number;
@@ -38,13 +20,43 @@ export interface EditorPosition {
   selection?: { from: LineCol; to: LineCol };
 }
 
-/** Where the cursor is in `state`, 1-based, plus the selection if any. */
-export function editorPosition(state: EditorState): EditorPosition {
-  const at = (pos: number): LineCol => {
-    const line = state.doc.lineAt(pos);
-    return { line: line.number, col: pos - line.from + 1 };
+type PositionReader = () => EditorPosition | undefined;
+
+const readers = new Map<string, PositionReader>();
+
+/** Record `read` as the cursor of `tabId`; returns the matching unregister.
+ *  An unregister only removes the reader it registered, so a stale cleanup
+ *  cannot drop the one a remounted view put there since. */
+export function registerEditorView(tabId: string, read: PositionReader): () => void {
+  readers.set(tabId, read);
+  return () => {
+    if (readers.get(tabId) === read) readers.delete(tabId);
   };
-  const { main } = state.selection;
-  if (main.empty) return { cursor: at(main.head) };
-  return { cursor: at(main.head), selection: { from: at(main.from), to: at(main.to) } };
+}
+
+/** The cursor of `tabId`'s file view, 1-based; undefined when it has none. */
+export function getEditorPosition(tabId: string): EditorPosition | undefined {
+  return readers.get(tabId)?.();
+}
+
+/** A zero-based selection, as the view's editor holds it. */
+export interface ZeroBasedSelection {
+  start: { line: number; character: number };
+  end: { line: number; character: number };
+  /** -1: the caret is at `start`. */
+  direction: -1 | 0 | 1;
+}
+
+/** The 1-based position of an editor's primary selection. */
+export function positionOfSelection(selection: ZeroBasedSelection): EditorPosition {
+  const at = (p: { line: number; character: number }): LineCol => ({
+    line: p.line + 1,
+    col: p.character + 1,
+  });
+  const caret = selection.direction === -1 ? selection.start : selection.end;
+  const empty =
+    selection.start.line === selection.end.line &&
+    selection.start.character === selection.end.character;
+  if (empty) return { cursor: at(caret) };
+  return { cursor: at(caret), selection: { from: at(selection.start), to: at(selection.end) } };
 }

@@ -59,7 +59,7 @@ describe("the sessions-outside-Atlas switch", () => {
     backend({ sharing: true, external: false });
     const toggle = await openPopover();
     expect(toggle.getAttribute("aria-checked")).toBe("false");
-    expect(toggle.hasAttribute("disabled")).toBe(false);
+    expect(toggle.getAttribute("aria-disabled")).not.toBe("true");
 
     await userEvent.click(toggle);
     expect(invoke).toHaveBeenCalledWith("memory_from_external_sessions_set", {
@@ -73,7 +73,7 @@ describe("the sessions-outside-Atlas switch", () => {
     backend({ sharing: false, external: true });
     const toggle = await openPopover();
     expect(toggle.getAttribute("aria-checked")).toBe("true");
-    expect(toggle.hasAttribute("disabled")).toBe(true);
+    expect(toggle.getAttribute("aria-disabled")).toBe("true");
     expect(screen.getByText(EXTERNAL_SESSIONS_NEEDS_SHARING)).toBeTruthy();
 
     await userEvent.click(toggle);

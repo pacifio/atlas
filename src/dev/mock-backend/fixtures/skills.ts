@@ -1,4 +1,4 @@
-// Settings → Skills (Discover + My Skills) and Settings → Agents (the ACP
+// Settings → Skills (Installed + Discover) and Settings → Agents (the ACP
 // registry marketplace), plus the agent catalog every other agent surface
 // reads.
 //
@@ -47,6 +47,7 @@ import type {
   ToolInfo,
 } from "@/features/skills/lib/types";
 import type { AgentCatalog, AgentCatalogEntry } from "@/types/agent-catalog";
+import type { AgentConfigPatch } from "@/features/agents/lib/agent-config-api";
 import type { TypedHandlers, Unit, Unread } from "../types";
 import { MOCK_PROJECT } from "../project";
 
@@ -580,7 +581,7 @@ let installedPacks: MockPack[] = [
     behind: true,
   },
   {
-    // Ships no skills at all, so it only appears as its own row in My Skills —
+    // Ships no skills at all, so it only appears as its own row in Installed —
     // the branch that used to drop packs from the list entirely.
     scope: "global",
     pack: RELEASE_ENGINEERING,
@@ -1029,6 +1030,12 @@ let catalog: AgentCatalogEntry[] = [
     supportsModes: true,
     supportsModels: true,
     transcript: "native",
+    enabled: true,
+    displayName: null,
+    launch: null,
+    hiddenModels: [],
+    modelOrder: [],
+    customModels: [],
     login: null,
     authKinds: ["env_var"],
     supportsLogout: false,
@@ -1058,6 +1065,19 @@ let catalog: AgentCatalogEntry[] = [
     supportsModes: true,
     supportsModels: true,
     transcript: "none",
+    enabled: true,
+    displayName: null,
+    launch: {
+      command: null,
+      args: ["--verbose"],
+      variables: [
+        { name: "CLAUDE_CODE_MAX_OUTPUT_TOKENS", value: "32000", sensitive: false },
+        { name: "ANTHROPIC_API_KEY", value: null, sensitive: true },
+      ],
+    },
+    hiddenModels: [],
+    modelOrder: [],
+    customModels: [],
     login: { program: "claude", args: ["setup-token"] },
     authKinds: ["agent", "terminal"],
     supportsLogout: true,
@@ -1087,6 +1107,12 @@ let catalog: AgentCatalogEntry[] = [
     supportsModes: false,
     supportsModels: true,
     transcript: "none",
+    enabled: true,
+    displayName: null,
+    launch: { command: null, args: [], variables: [] },
+    hiddenModels: [],
+    modelOrder: [],
+    customModels: [],
     login: null,
     authKinds: [],
     supportsLogout: false,
@@ -1116,6 +1142,12 @@ let catalog: AgentCatalogEntry[] = [
     supportsModes: false,
     supportsModels: false,
     transcript: "none",
+    enabled: true,
+    displayName: null,
+    launch: { command: "/opt/homebrew/bin/codex-acp", args: [], variables: [] },
+    hiddenModels: [],
+    modelOrder: [],
+    customModels: [],
     login: null,
     authKinds: [],
     supportsLogout: false,
@@ -1145,6 +1177,16 @@ let catalog: AgentCatalogEntry[] = [
     supportsModes: false,
     supportsModels: false,
     transcript: "none",
+    enabled: true,
+    displayName: null,
+    launch: {
+      command: "/usr/local/bin/acme-agent",
+      args: ["--acp"],
+      variables: [{ name: "ACME_REGION", value: "eu-west-1", sensitive: false }],
+    },
+    hiddenModels: [],
+    modelOrder: [],
+    customModels: [],
     login: null,
     authKinds: ["env_var"],
     supportsLogout: false,
@@ -1174,6 +1216,12 @@ let catalog: AgentCatalogEntry[] = [
     supportsModes: false,
     supportsModels: false,
     transcript: "none",
+    enabled: true,
+    displayName: null,
+    launch: { command: null, args: [], variables: [] },
+    hiddenModels: [],
+    modelOrder: [],
+    customModels: [],
     login: null,
     authKinds: [],
     supportsLogout: false,
@@ -1226,6 +1274,12 @@ function catalogFromRegistry(
     supportsModes: false,
     supportsModels: false,
     transcript: "none",
+    enabled: true,
+    displayName: null,
+    launch: { command: null, args: [], variables: [] },
+    hiddenModels: [],
+    modelOrder: [],
+    customModels: [],
     login: null,
     // Empty until the agent has connected once: capabilities only exist after
     // the handshake, and a fresh install has never handshaken.
@@ -1242,6 +1296,41 @@ function catalogFromRegistry(
     unverified: entry.unverified,
     unsupportedReason: entry.unsupportedReason,
   };
+}
+
+/** `agents_configure`'s write, on a catalog entry. Shared with the Northwind
+ *  scenario, which keeps a catalog of its own. */
+export function applyAgentConfig(entry: AgentCatalogEntry, p: AgentConfigPatch): AgentCatalogEntry {
+  if (p.enabled !== undefined) {
+    if (entry.kind === "native" && !p.enabled) throw new Error("Atlas Agent can't be turned off");
+    entry.enabled = p.enabled;
+  }
+  if (p.displayName !== undefined) entry.displayName = p.displayName?.trim() || null;
+  if (p.hiddenModels !== undefined) entry.hiddenModels = p.hiddenModels;
+  if (p.modelOrder !== undefined) entry.modelOrder = p.modelOrder;
+  if (p.customModels !== undefined) {
+    if (entry.kind === "native") throw new Error("Atlas Agent takes no custom models");
+    entry.customModels = p.customModels;
+  }
+  if (p.launch !== undefined) {
+    if (!entry.launch) throw new Error(`${entry.name} runs in-process; it has no launch settings`);
+    if (p.launch.command !== undefined && entry.launch.command === null && p.launch.command) {
+      throw new Error(`${entry.name}'s command comes from the registry`);
+    }
+    const { variables, ...rest } = p.launch;
+    entry.launch = { ...entry.launch, ...rest };
+    if (variables) {
+      // Like the keychain: a sensitive value goes in and never comes back.
+      const named = (sensitive: boolean) =>
+        variables
+          .filter((v) => v.sensitive === sensitive)
+          .map((v) => ({ name: v.name, value: sensitive ? null : (v.value ?? ""), sensitive }))
+          .sort((a, b) => a.name.localeCompare(b.name));
+      entry.launch.variables = [...named(false), ...named(true)];
+    }
+    if (p.launch.command) entry.resolvedPath = p.launch.command;
+  }
+  return entry;
 }
 
 // ── Handlers ────────────────────────────────────────────────────────────────
@@ -1285,6 +1374,8 @@ export interface SkillsResponses {
   acp_registry_update: Unit;
   agents_catalog: AgentCatalog;
   agents_catalog_refresh: AgentCatalog;
+  agents_configure: AgentCatalogEntry;
+  agents_open_config_file: string;
 }
 
 export const skillsHandlers: TypedHandlers<SkillsResponses> = {
@@ -1619,6 +1710,7 @@ export const skillsHandlers: TypedHandlers<SkillsResponses> = {
       existing.installed = true;
       existing.source = "installed";
       existing.resolvedPath = found;
+      existing.launch = { command: found, args: [], variables: [] };
     }
     return null;
   },
@@ -1655,4 +1747,13 @@ export const skillsHandlers: TypedHandlers<SkillsResponses> = {
     lastDiscoveredAt: new Date().toISOString(),
     lastError: null,
   }),
+  /** What the real command writes to the installed map (or, for the native
+   *  agent, Atlas's own config), applied to the catalog entry it answers. */
+  agents_configure: ({ agentId, patch }): AgentCatalogEntry => {
+    const entry = catalogEntryFor(String(agentId));
+    if (!entry) throw new Error(`'${String(agentId)}' is not an agent Atlas knows`);
+    return applyAgentConfig(entry, patch as AgentConfigPatch);
+  },
+  /** The real command creates the file; the mock only expands `~`. */
+  agents_open_config_file: ({ path }): string => String(path).replace(/^~(?=\/|$)/, "/Users/dev"),
 };

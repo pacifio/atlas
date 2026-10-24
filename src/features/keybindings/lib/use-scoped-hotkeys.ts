@@ -3,20 +3,27 @@ import type { ActionId } from "./actions";
 import { matchesCombo } from "./combo";
 import { useKeybindingsStore } from "../stores/keybindings-store";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
+import { contextVariable, evaluateWhen, panelWhenContext } from "./when";
+import { liveWhenContext } from "./when-context";
 
 /**
  * Does this keydown match any live chord for `id` in the active profile?
  * Non-hook, reads the store directly — for feature listeners that keep their
  * own `keydown` handler and only need the literal key check replaced.
- * Always false while the recorder popup owns the keyboard.
+ * Always false while the recorder popup owns the keyboard, and while the
+ * action's `when` is false. The caller is the action's own panel, which gates
+ * on its own focus, so the panel's variable is taken as true: a `when` can
+ * narrow where a scoped action fires, never move it to another panel.
  */
 export function matchesAction(e: KeyboardEvent, id: ActionId): boolean {
   const state = useKeybindingsStore.getState();
   if (state.recording) return false;
   const bindings = state.resolved.byAction.get(id);
   if (!bindings) return false;
-  for (const b of bindings) if (matchesCombo(e, b.combo)) return true;
-  return false;
+  const hit = bindings.find((b) => matchesCombo(e, b.combo));
+  if (!hit) return false;
+  if (!hit.whenAst) return true;
+  return evaluateWhen(hit.whenAst, panelWhenContext(liveWhenContext(), contextVariable(hit.when)));
 }
 
 export type ScopedHandler = (e: KeyboardEvent) => boolean | void;

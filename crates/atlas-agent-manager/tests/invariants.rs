@@ -597,7 +597,7 @@ async fn a_cancelled_turn_still_closes_itself() {
         .drain_events(&session_id)
         .into_iter()
         .filter_map(|event| match event {
-            atlas_acp_thread::AcpThreadEvent::Stopped(reason) => Some(reason),
+            atlas_acp_thread::AcpThreadEvent::Stopped(reason, _) => Some(reason),
             _ => None,
         })
         .collect();

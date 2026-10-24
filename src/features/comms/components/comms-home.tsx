@@ -39,6 +39,12 @@ export function CommsHome() {
   const online = useCommsStore.use.online();
   const me = useCommsStore.use.me();
   const actions = useCommsStore.use.actions();
+  // ⌘-click (Ctrl elsewhere) opens a conversation in a tab of its own, the
+  // way a browser link does; a plain click navigates this one.
+  const open = (convId: string, e: React.MouseEvent) =>
+    e.metaKey || e.ctrlKey
+      ? actions.openConversationInNewTab(convId)
+      : actions.openConversation(convId);
 
   const [query, setQuery] = useState("");
   const [showDiscover, setShowDiscover] = useState(false);
@@ -124,12 +130,7 @@ export function CommsHome() {
       <div className="min-h-0 flex-1 overflow-y-auto hide-scrollbar pb-3">
         <SectionLabel label="Channels" icon={Hash} action={<CreateChannelMenu />} />
         {channels.map((c) => (
-          <ChannelRow
-            key={c.id}
-            conv={c}
-            read={readBy.get(c.id)}
-            onOpen={() => actions.openConversation(c.id)}
-          />
+          <ChannelRow key={c.id} conv={c} read={readBy.get(c.id)} onOpen={(e) => open(c.id, e)} />
         ))}
         {channels.length === 0 && (
           <EmptyHint text={q ? "No matching channels." : "No channels yet."} />
@@ -159,7 +160,7 @@ export function CommsHome() {
               members={members}
               online={online}
               me={me}
-              onOpen={() => actions.openConversation(c.id)}
+              onOpen={(e) => open(c.id, e)}
             />
           ))}
         {!rosterPending && groupDms.length > 0 && (oneToOnes.length > 0 || contacts.length > 0) && (
@@ -174,7 +175,7 @@ export function CommsHome() {
               members={members}
               online={online}
               me={me}
-              onOpen={() => actions.openConversation(c.id)}
+              onOpen={(e) => open(c.id, e)}
             />
           ))}
         {!rosterPending &&
@@ -290,7 +291,7 @@ function ChannelRow({
 }: {
   conv: ChatConversation;
   read: ChatReadState | undefined;
-  onOpen: () => void;
+  onOpen: (e: React.MouseEvent) => void;
 }) {
   const unread = Number(read?.unread ?? 0);
   const mentions = Number(read?.mentions ?? 0);
@@ -350,7 +351,7 @@ function DirectRow({
   members: Map<string, OrgMemberProfile>;
   online: string[];
   me: string;
-  onOpen: () => void;
+  onOpen: (e: React.MouseEvent) => void;
 }) {
   const unread = Number(read?.unread ?? 0);
   const mentions = Number(read?.mentions ?? 0);

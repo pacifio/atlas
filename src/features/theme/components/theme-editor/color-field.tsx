@@ -229,16 +229,22 @@ export const ColorField = memo(function ColorField({
           </Hint>
         ) : null}
         <Popover>
+          {/* The trigger is the hit area; the swatch it opens from is drawn
+              by the span inside it. */}
           <PopoverTrigger
             render={
               <button
                 type="button"
                 aria-label={`Choose ${label}`}
-                className="relative size-5 shrink-0 cursor-pointer rounded-full border border-border-strong transition-transform duration-fast hover:scale-105"
-                style={{ backgroundColor: value }}
+                className="group/swatch relative size-5 shrink-0 cursor-pointer"
               />
             }
-          />
+          >
+            <span
+              className="block size-full rounded-full border border-border-strong transition-transform duration-fast group-hover/swatch:scale-105"
+              style={{ backgroundColor: value }}
+            />
+          </PopoverTrigger>
           <PopoverContent align="end" side="bottom" sideOffset={8} className="w-64 p-3">
             <PickerPanel label={label} value={value} onChange={onChange} />
           </PopoverContent>

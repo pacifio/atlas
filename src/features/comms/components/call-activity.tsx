@@ -91,16 +91,20 @@ export const CallActivity = memo(function CallActivity({
                 <button
                   type="button"
                   onClick={() => void copyShareLink(orgId, call)}
-                  className="group/link cursor-pointer rounded text-left underline-offset-2 hover:underline focus-visible:underline focus-visible:outline-none"
+                  // A tooltip trigger takes layout only, so the hover/focus
+                  // underline is drawn by the span inside it.
+                  className="group/link cursor-pointer text-left"
                 >
-                  {/* Both halves brighten together: the name carries its own
-                    colour, so a hover rule on the button alone would lift the
-                    verb and leave the name behind. */}
-                  <span className="text-secondary-foreground transition-colors group-hover/link:text-foreground">
-                    {who}
-                  </span>{" "}
-                  <span className="transition-colors group-hover/link:text-foreground">
-                    {verb} a {kind}
+                  <span className="underline-offset-2 group-hover/link:underline group-focus-visible/link:underline">
+                    {/* Both halves brighten together: the name carries its own
+                      colour, so a hover rule on the button alone would lift the
+                      verb and leave the name behind. */}
+                    <span className="text-secondary-foreground transition-colors group-hover/link:text-foreground">
+                      {who}
+                    </span>{" "}
+                    <span className="transition-colors group-hover/link:text-foreground">
+                      {verb} a {kind}
+                    </span>
                   </span>
                 </button>
               }

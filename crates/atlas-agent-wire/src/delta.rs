@@ -173,6 +173,20 @@ pub enum SessionDelta {
         /// terminal for a superseded turn. 0 = untracked/current.
         #[serde(default)]
         turn_seq: u64,
+        /// When the turn opened, as epoch milliseconds. Absent when the thread
+        /// never saw it open (a stop announced with no turn running).
+        /// Additive: old frontends ignore it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        started_at_ms: Option<i64>,
+        /// When the turn stopped, as epoch milliseconds.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ended_at_ms: Option<i64>,
+        /// How long the turn ran, in ms, on the monotonic clock — not
+        /// `ended_at_ms - started_at_ms`, which a stepped wall clock or a
+        /// sleep stretches. The figure a snapshot carries as
+        /// `Message::worked_ms`. Absent with `started_at_ms`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        worked_ms: Option<u64>,
     },
     TurnFailed {
         error: String,
@@ -183,6 +197,16 @@ pub enum SessionDelta {
         /// Additive: absent on old payloads.
         #[serde(skip_serializing_if = "Option::is_none")]
         error_kind: Option<String>,
+    },
+    /// The computer slept (lid closed, system sleep) while this session's turn
+    /// was running, so whatever the agent was streaming may have been cut
+    /// off. Emitted by the host on waking, for any agent — it is about the
+    /// machine, not the agent. `turn_seq` is the turn that was in flight
+    /// (0 = untracked/current); `slept_secs` is roughly how long the machine
+    /// was asleep. Additive: old frontends ignore unknown kinds.
+    SleptMidTurn {
+        turn_seq: u64,
+        slept_secs: u64,
     },
     /// Underlying ACP agent process died.
     AgentDisconnected {

@@ -27,12 +27,11 @@ function ColIcon({ type }: { type: TabType }) {
   return <Icon size={12} className="text-[var(--muted-foreground)]" />;
 }
 
-/** Schematic mini-window preview of a layout (rails for side panels, a block
- *  per split column with its tab-type icon). Pure CSS, monochrome/AMOLED. */
+/** Schematic mini-window preview of a layout (a block per split column with
+ *  its tab-type icon). Pure CSS, monochrome/AMOLED. */
 export function LayoutThumbnail({ template }: { template: LayoutTemplate }) {
   return (
     <div className="aspect-[16/10] w-full rounded-md border border-[var(--border)] bg-[var(--background)] p-1 flex gap-1">
-      {template.panels.left && <div className="w-1.5 rounded-sm bg-[var(--card)] shrink-0" />}
       <div className="flex-1 flex gap-0.5 min-w-0">
         {template.columns.map((col, i) => (
           <div
@@ -43,7 +42,6 @@ export function LayoutThumbnail({ template }: { template: LayoutTemplate }) {
           </div>
         ))}
       </div>
-      {template.panels.right && <div className="w-1.5 rounded-sm bg-[var(--card)] shrink-0" />}
     </div>
   );
 }

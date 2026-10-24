@@ -163,6 +163,22 @@ export const CLAUDE_PERMISSION_MODE_LABEL: Record<ClaudePermissionMode, string> 
   auto: "Auto",
 };
 
+/**
+ * A turn that something other than the agent cut into. Sleep is the only cause
+ * today; a dropped network or a suspended app would be another `cause` with the
+ * same row, which is why this is not called `SleepNotice`.
+ */
+export interface TurnInterruption {
+  cause: "sleep";
+  /** How long the machine was asleep. */
+  sleptSecs: number;
+  /** How the turn ended after it: it carried on to the end, it failed (usually
+   *  the stream the sleep dropped), the user stopped it, or the agent exited. */
+  outcome: "finished" | "failed" | "stopped" | "disconnected";
+  /** The agent's own error, for `failed` — kept for diagnosis, shown folded. */
+  error?: string;
+}
+
 /** One file a turn read or modified, with edit line counts (0 for reads). */
 export interface TurnFile {
   path: string;
@@ -172,6 +188,8 @@ export interface TurnFile {
   /** For edits only: the file was created new (all edit ops had empty `old`) →
    *  git-status "A"; otherwise "M". Undefined for reads. */
   created?: boolean;
+  /** For a renamed file, the path it had before; `path` is where it went. */
+  movedFrom?: string;
 }
 
 export interface ChatSession {
@@ -212,6 +230,12 @@ export interface ChatSession {
     /** ms epoch when this retry status arrived (for the countdown). */
     receivedAt: number;
   };
+  /** The computer slept while this turn was running (`slept_mid_turn`) and the
+   *  turn is still going. Drives the composer's live pill (`sleep-pill.tsx`);
+   *  when the turn ends it becomes the trailing message's `interruption`, so
+   *  the record sits after the reply it may have cut short rather than inside
+   *  it. `turnSeq` is the turn it belongs to; `wokeAt` is ms epoch. */
+  sleptMidTurn?: { turnSeq: number; sleptSecs: number; wokeAt: number };
   /** Ids of tool calls currently pending/running, maintained incrementally on
    *  tool_call_upserted and swept (to undefined) on every terminal — the O(1)
    *  source for `hasInFlightToolCalls`. */
@@ -259,7 +283,15 @@ export interface ChatSession {
     seq: number;
     tools: Record<string, TurnFile>;
   };
+  /** Bumped on every `tool_call_upserted`, whichever message the call is in.
+   *  A cheap "the session's edits may have changed" for views that would
+   *  otherwise rescan the log (`editsSignature`). Only ever compared. */
+  toolRevision?: number;
   workingDirectory: string;
+  /** The folder the next bind must open the session in, when it is not the
+   *  tab's project root — a worktree the user asked to start in. Read once by
+   *  the bind; dropped with the conversation on a clear. */
+  bindCwd?: string;
   tasks: AgentTask[];
   createdAt: string;
   updatedAt: string;
@@ -415,6 +447,15 @@ export interface ChatMessage {
   fileChanges: FileChange[];
   plan: PlanStep[] | null;
   timestamp: string;
+  /** Set when `timestamp` is only when Atlas replayed the message, not when it
+   *  was said (wire `timestamp_approximate`). The footer shows no clock then. */
+  timestampApproximate?: boolean;
+  /** The absolute `@file:`/`@folder:` values the composer serialised from
+   *  files the user picked for this message. Only these may open outside the
+   *  project when clicked (`markdown-render.ts` `trustedPaths`); a user row
+   *  without them — replayed history, a handoff prompt quoting text from a
+   *  pull request — opens project paths only. Optimistic echo only. */
+  trustedMentionPaths?: string[];
   /**
    * Discriminator for ACP-driven assistant messages. Splits one logical "turn"
    * into a sequence of single-purpose messages so they render in event order
@@ -458,11 +499,15 @@ export interface ChatMessage {
     /** Whether the project was a git repo when the turn ended (gates commit). */
     repoAtTurn: boolean;
   };
-  /** Wall time of the turn this message ends, in ms: from the user's message to
-   *  turn_finished. Stamped live on the trailing assistant message and NOT
-   *  persisted — replayed timestamps are the load time, not the send time, so a
-   *  restored turn has no honest duration to rebuild and renders without one. */
+  /** Wall time of the turn this message ends, in ms, as Rust timed it: from
+   *  `turn_finished.started_at_ms`/`ended_at_ms` live, from the snapshot's
+   *  `worked_ms` on reload. Absent for a turn the thread did not see start —
+   *  a replayed one has no honest duration and renders without one. */
   workedMs?: number;
+  /** How the turn this message ends stopped (`end_turn`, `cancelled`, …), from
+   *  `turn_finished` live or the snapshot on reload. `cancelled` is what turns
+   *  the header's "Worked for" into "Stopped after". */
+  stopReason?: string;
   /** Agent-suggested next steps for this turn's footer. Generated once at
    *  turn end (parse-first, optional BYOK). `turnSeq` guards against a stale
    *  async result landing after a newer turn started. */
@@ -471,6 +516,15 @@ export interface ChatMessage {
     status: "idle" | "loading" | "ready" | "error";
     chips: string[];
   };
+  /** Something outside the conversation cut into the turn this message ends.
+   *  A record on the turn, not text in it: the transcript draws it as its own
+   *  row (`InterruptionRowView`), so it is never copied, exported or quoted as
+   *  if the agent had said it. */
+  interruption?: TurnInterruption;
+  /** Set on a user-role message Atlas sent the agent on its own — a pull
+   *  request watch's wake — rather than one the user typed. The transcript
+   *  draws it as its own row (`InjectedRowView`). */
+  injected?: import("@/features/chat/lib/injected-prompt").InjectedPrompt;
   /** Model that produced this assistant message, stamped when the message is
    *  created (and backstopped at turn end). The badge renders ONLY this —
    *  never live session state — so a later model or agent switch can't
@@ -502,19 +556,17 @@ export interface ToolCallDisplay {
   status: "pending" | "running" | "completed" | "failed";
   duration: number | null;
   /**
-   * Epoch ms this call was FIRST SEEN by the store, stamped client-side.
-   *
-   * Not a wire field: the session-delta wire carries no start
-   * time today (an additive field would be the way to add one; `duration` is only ever `null` — see `toChatToolCall`). A `tool_call`
-   * delta is pushed the moment the agent announces the call, so first-sight is
-   * the start to within one IPC hop, which is what the live elapsed figure on a
-   * running block needs and all it needs.
-   *
-   * Absent on calls restored from a transcript snapshot — a reloaded thread has
-   * no live clock to run, and inventing one would date every historical call to
-   * the moment the tab opened.
+   * Epoch ms the call was first seen, from the wire's `started_at_ms` — the
+   * thread stamps it once and no update moves it, so a reloaded session reads
+   * the same start the live one did. The store stamps first sight itself only
+   * when the wire carried none.
    */
   startedAt?: number;
+  /**
+   * Epoch ms the call first settled, from the wire's `ended_at_ms`. With
+   * `startedAt` it is the call's duration; absent while it runs.
+   */
+  endedAt?: number;
   /**
    * Structural content the agent attached to this call. Absent for almost every
    * call — only ACP agents that report edits as `ToolCallContent::Diff` (rather

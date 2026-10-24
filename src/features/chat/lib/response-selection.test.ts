@@ -66,11 +66,6 @@ describe("completed response selection", () => {
 });
 
 describe("composer insertion", () => {
-  it("appends Cite to the live draft and preserves its last keystrokes", () => {
-    expect(
-      insertedDraft("Unsynced draft!", { text: "> Selected", tabId: "chat-a", append: true }),
-    ).toBe("Unsynced draft!\n\n> Selected");
-  });
   it("keeps the existing complete-value targeted insert contract", () => {
     expect(insertedDraft("Old draft", { text: "Already appended draft", tabId: "chat-a" })).toBe(
       "Already appended draft",
@@ -78,9 +73,7 @@ describe("composer insertion", () => {
   });
   it("keeps untargeted inserts additive and avoids a blank leading gap", () => {
     expect(insertedDraft("Old draft", { text: "New text" })).toBe("Old draft\n\nNew text");
-    expect(insertedDraft("  ", { text: "> Selected", tabId: "chat-a", append: true })).toBe(
-      "> Selected",
-    );
+    expect(insertedDraft("  ", { text: "> Selected" })).toBe("> Selected");
   });
 });
 

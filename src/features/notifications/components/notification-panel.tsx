@@ -211,8 +211,14 @@ function targetOf(n: AppNotification): NotificationTarget | null {
   if (n.source === "terminal" && n.tabId && n.terminalId) {
     return { type: "terminal", tabId: n.tabId, terminalId: n.terminalId, projectId: n.projectId };
   }
-  if (n.source === "agent" && n.tabId) {
-    return { type: "session", tabId: n.tabId, sessionId: n.sessionId, projectId: n.projectId };
+  if (n.source === "agent" && (n.tabId || n.threadId)) {
+    return {
+      type: "session",
+      tabId: n.tabId ?? "",
+      sessionId: n.sessionId,
+      threadId: n.threadId,
+      projectId: n.projectId,
+    };
   }
   return null;
 }
@@ -225,6 +231,12 @@ function focusNotification(n: AppNotification) {
   }
   if (n.source === "terminal" && n.tabId) {
     void jumpToTerminal({ tabId: n.tabId, terminalId: n.terminalId, projectId: n.projectId });
+    return;
+  }
+  const target = n.source === "agent" && n.threadId ? targetOf(n) : null;
+  if (target) {
+    // No tab may show it any more: resumed from history by its thread id.
+    void openNotificationTarget(target);
     return;
   }
   if (n.source === "agent" && n.tabId) {

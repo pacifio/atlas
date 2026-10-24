@@ -1,9 +1,5 @@
-import { useEffect } from "react";
-import { toast } from "sonner";
-import { Button } from "@/ui/button";
 import { Switch } from "@/ui/switch";
 import { useSettingsStore } from "../../stores/settings-store";
-import { useModelPricingStore } from "../../stores/model-pricing-store";
 import {
   SettingsGroup,
   SettingsPage,
@@ -13,7 +9,7 @@ import {
 import { Select } from "@/ui/select";
 import { NATIVE_AGENT_ID } from "@/types/agent";
 import { useAgentRegistryStore } from "@/features/agents/stores/agent-registry-store";
-import { SettingSelect, SettingSwitch } from "../layout/setting-controls";
+import { SettingSelect, SettingStepper, SettingSwitch } from "../layout/setting-controls";
 import { useScopedSetting } from "../../lib/use-scoped-setting";
 
 const SIDEBAR_SORTS = [
@@ -46,10 +42,10 @@ export function ChatPage() {
   return (
     <SettingsPage
       scopeable
-      title="Chat"
-      description="New chats, the composer, layout, switching agents, and what Atlas Agent may do."
+      title="Sessions"
+      description="New sessions, the composer, layout, and switching agents."
     >
-      <SettingsSection title="New chats">
+      <SettingsSection title="New sessions">
         <SettingsGroup>
           <SettingsRow
             setting="defaultAgent"
@@ -61,10 +57,13 @@ export function ChatPage() {
 
       <SettingsSection title="Layout">
         <SettingsGroup>
-          <SettingsRow setting="chatCodeWrap" control={<SettingSwitch setting="chatCodeWrap" />} />
           <SettingsRow
             setting="sidebarSort"
             control={<SettingSelect setting="sidebarSort" options={SIDEBAR_SORTS} />}
+          />
+          <SettingsRow
+            setting="autoSettleAfterDays"
+            control={<SettingStepper setting="autoSettleAfterDays" unit="d" zeroLabel="Off" />}
           />
         </SettingsGroup>
       </SettingsSection>
@@ -109,55 +108,6 @@ export function ChatPage() {
           />
         </SettingsGroup>
       </SettingsSection>
-
-      <SettingsSection
-        title="Atlas Agent permissions"
-        description="Every action shows in the chat and in the Logs panel."
-      >
-        <SettingsGroup>
-          <SettingsRow
-            setting="agentUiNavigation"
-            description="Open files at a line, switch tabs and panels, fill in a message or a command for you. It never switches projects, sends for you, or presses Enter."
-            control={<SettingSwitch setting="agentUiNavigation" />}
-          />
-          <SettingsRow
-            setting="agentOrgAccess"
-            description="In a cloud-bound project, read your organization's sessions, comments and conversations, and act there as you. Anything that reaches another person asks first."
-            control={<SettingSwitch setting="agentOrgAccess" />}
-          />
-          <SettingsRow
-            setting="agentCodeTools"
-            description="Grep, find files, symbols, callers and search by meaning, in-process, respecting .gitignore and never reading secrets such as .env. Off: agents use their own tools."
-            control={<SettingSwitch setting="agentCodeTools" />}
-          />
-        </SettingsGroup>
-      </SettingsSection>
-
-      <SettingsSection title="Models">
-        <SettingsGroup>
-          <SettingsRow
-            setting="favoriteModels"
-            status={
-              settings.favoriteModels.length === 0
-                ? "None starred yet. Star a model in the composer's model picker."
-                : `${settings.favoriteModels.length} starred. The picker opens on them.`
-            }
-            noReset
-            control={
-              settings.favoriteModels.length > 0 ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => void updateSettings({ favoriteModels: [] })}
-                >
-                  Clear
-                </Button>
-              ) : undefined
-            }
-          />
-          <ModelPricingRow />
-        </SettingsGroup>
-      </SettingsSection>
     </SettingsPage>
   );
 }
@@ -183,38 +133,8 @@ function DefaultAgentSelect() {
       value={scoped.value}
       options={options}
       disabled={scoped.globalOnly}
-      aria-label="New chats: Default agent"
+      aria-label="New sessions: Default agent"
       onValueChange={(next) => scoped.set(next)}
-    />
-  );
-}
-
-function ModelPricingRow() {
-  const prices = useModelPricingStore.use.prices();
-  const loading = useModelPricingStore.use.loading();
-  const { load, refresh } = useModelPricingStore.use.actions();
-  useEffect(() => {
-    void load();
-  }, [load]);
-  const count = Object.keys(prices).filter((key) => key.includes("/")).length;
-  const update = async () => {
-    await refresh();
-    const n = Object.keys(useModelPricingStore.getState().prices).filter((key) =>
-      key.includes("/"),
-    ).length;
-    toast.success(`Model pricing updated: ${n} models`);
-  };
-  return (
-    <SettingsRow
-      anchor="model-pricing"
-      title="Model pricing"
-      description="Per-model prices from models.dev, shown in the model picker. Refreshed on launch."
-      status={count > 0 ? `${count} models priced.` : "Not fetched yet."}
-      control={
-        <Button variant="outline" size="sm" disabled={loading} onClick={() => void update()}>
-          {loading ? "Updating…" : "Update"}
-        </Button>
-      }
     />
   );
 }

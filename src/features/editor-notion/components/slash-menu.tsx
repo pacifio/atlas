@@ -260,7 +260,7 @@ export const SlashMenu = forwardRef<SlashMenuRef, SlashMenuProps>(function Slash
   if (items.length === 0) {
     return (
       <div
-        className="atlas-slash-menu empty"
+        className="atlas-slash-menu"
         style={{
           width: 280,
           padding: "10px 12px",

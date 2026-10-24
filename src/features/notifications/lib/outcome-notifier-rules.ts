@@ -62,14 +62,14 @@ export function decideModelDownload(
         kind: "model-download-done",
         title: `${r.name} downloaded`,
         body: "The model is ready to use.",
-        target: { type: "settings", section: "models" },
+        target: { type: "settings", section: "memory" },
         dedupeKey: `model:${r.id}:${r.seq}`,
       }
     : {
         kind: "model-download-failed",
         title: `${r.name} download failed`,
         body: trimError(r.error) || "The download did not complete.",
-        target: { type: "settings", section: "models" },
+        target: { type: "settings", section: "memory" },
         dedupeKey: `model:${r.id}:${r.seq}`,
       };
   return decideNotification(event, env, prefs);

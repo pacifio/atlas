@@ -163,16 +163,9 @@ export function ProviderModelPills({
   );
 
   const openApiKeys = useCallback(() => {
-    void import("@/features/layout/stores/layout-store").then(({ useLayoutStore }) => {
-      useLayoutStore.getState().actions.addTab({
-        id: "settings",
-        type: "settings",
-        title: "Settings",
-        closable: true,
-        dirty: false,
-        data: { section: "providers" },
-      });
-    });
+    void import("@/features/settings/lib/open-settings").then(({ openSettingsSection }) =>
+      openSettingsSection("agents", "provider-keys"),
+    );
     setOpen(false);
   }, []);
 

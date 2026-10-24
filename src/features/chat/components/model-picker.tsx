@@ -44,6 +44,8 @@ import {
 } from "@/features/keybindings/lib/use-scoped-hotkeys";
 import { useKeybindingsStore } from "@/features/keybindings/stores/keybindings-store";
 import { cn } from "@/lib/utils";
+import { catalogEntry } from "@/features/agents/lib/agent-meta";
+import { arrangeModels } from "@/features/agents/lib/agent-models";
 import { Button } from "@/ui/button";
 import { Kbd } from "@/ui/kbd";
 import { Hint } from "@/ui/tooltip";
@@ -140,9 +142,10 @@ function agentEntries(
   legacyOpen: boolean,
 ): Entry[] {
   const isFav = (m: SessionModeInfo) => favorites.has(favoriteKey(agent.agentType, m.id));
-  const pinned = agent.models.filter(isFav);
-  const rest = agent.models.filter((m) => !isFav(m) && !m.legacy);
-  const legacy = agent.models.filter((m) => !isFav(m) && m.legacy);
+  const models = agent.models;
+  const pinned = models.filter(isFav);
+  const rest = models.filter((m) => !isFav(m) && !m.legacy);
+  const legacy = models.filter((m) => !isFav(m) && m.legacy);
 
   const out: Entry[] = [];
   const pinnedSection: Section = { key: "pinned", label: "Pinned", mark: { kind: "pin" } };
@@ -191,7 +194,7 @@ function agentEntries(
 }
 
 export function ModelPicker({
-  agents,
+  agents: advertised,
   currentAgent,
   currentModel,
   onPick,
@@ -216,6 +219,23 @@ export function ModelPicker({
   addView?: ReactNode;
 }) {
   const { favorites, toggle } = useModelFavorites();
+  // Each agent's models as arranged in Settings → Agents: its own order, the
+  // models the user added by id, and without the ones hidden there — in
+  // every view, search included. A starred model stays, being asked for.
+  const agents = useMemo(
+    () =>
+      advertised.map((a) => {
+        const entry = catalogEntry(a.agentType);
+        const hidden = new Set(entry?.hiddenModels);
+        return {
+          ...a,
+          models: arrangeModels(entry, a.models).filter(
+            (m) => !hidden.has(m.id) || favorites.has(favoriteKey(a.agentType, m.id)),
+          ),
+        };
+      }),
+    [advertised, favorites],
+  );
   const agentOf = useMemo(() => new Map(agents.map((a) => [a.agentType, a])), [agents]);
   const homeView = agentOf.has(currentAgent) ? currentAgent : (agents[0]?.agentType ?? FAVORITES);
 
@@ -494,12 +514,7 @@ export function ModelPicker({
           {shownAgent.label}'s models show here once it has connected.
           <span className="mt-0.5 block caption">Switch to it to start on its default.</span>
         </span>
-        <Button
-          size="sm"
-          variant="outline"
-          className="gap-1.5"
-          onClick={() => onPick(shownAgent.agentType, null)}
-        >
+        <Button size="sm" variant="outline" onClick={() => onPick(shownAgent.agentType, null)}>
           <AgentGlyph agent={shownAgent.agentType} size={12} />
           Switch to {shownAgent.label}
         </Button>
@@ -514,6 +529,7 @@ export function ModelPicker({
     // app's own background, its edge carried by a hairline ring and a shadow.
     <div
       ref={rootRef}
+      data-when-scope="modelPickerOpen"
       className={cn("flex h-110 bg-foreground/[6.3%] py-1.5 pr-1.5", !showRail && "pl-1.5")}
     >
       {showRail && (

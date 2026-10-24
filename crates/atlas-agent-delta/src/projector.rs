@@ -703,7 +703,11 @@ impl SessionProjection {
             }
             AcpThreadEvent::EntryUpdated(ix) => {
                 let mut deltas = self.sync_entries();
-                deltas.extend(self.update_entry(ix));
+                let mut updated = self.update_entry(ix);
+                if lock_thread(&self.thread).entry_time_approximate(ix) {
+                    mark_time_approximate(&mut updated);
+                }
+                deltas.extend(updated);
                 deltas.extend(self.sync_subagents());
                 deltas
             }
@@ -755,10 +759,17 @@ impl SessionProjection {
                 deltas
             }
             AcpThreadEvent::StatusChanged => self.status_deltas(),
-            AcpThreadEvent::Stopped(stop_reason) => {
+            AcpThreadEvent::Stopped(stop_reason, turn) => {
+                // The event carries its own turn's record — the same figures a
+                // snapshot reads back after a reload. Read from the thread
+                // here instead, a stop drained behind a newer turn or a rewind
+                // would announce that one's times.
                 let mut deltas = vec![SessionDelta::TurnFinished {
                     stop_reason: project::stop_reason_token(stop_reason),
                     turn_seq: self.turn_seq,
+                    started_at_ms: turn.started_at.map(|at| at.timestamp_millis()),
+                    ended_at_ms: Some(turn.ended_at.timestamp_millis()),
+                    worked_ms: turn.worked_ms,
                 }];
                 deltas.extend(self.status_deltas());
                 // A child launched to run on its own ends with the turn: no
@@ -855,6 +866,9 @@ impl SessionProjection {
                 break;
             }
             let (projected, mut new) = self.project_new(&thread, ix);
+            if thread.entry_time_approximate(ix) {
+                mark_time_approximate(&mut new);
+            }
             drop(thread);
             self.entries.push(projected);
             deltas.append(&mut new);
@@ -1420,6 +1434,8 @@ fn tool_call_meta_eq(previous: &ToolCall, current: &ToolCall) -> bool {
         && previous.locations == current.locations
         && previous.raw_output == current.raw_output
         && previous.content_blocks == current.content_blocks
+        && previous.started_at_ms == current.started_at_ms
+        && previous.ended_at_ms == current.ended_at_ms
 }
 
 /// `LoadError`'s own `Display` is the reason text, so the wire carries exactly
@@ -1436,4 +1452,14 @@ fn lock_thread(thread: &AcpThreadHandle) -> std::sync::MutexGuard<'_, AcpThread>
     thread
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Mark every message these deltas announce as carrying a replay time, not the
+/// time it was said (`AcpThread::entry_time_approximate`).
+fn mark_time_approximate(deltas: &mut [SessionDelta]) {
+    for delta in deltas {
+        if let SessionDelta::MessageAppended { message } = delta {
+            message.timestamp_approximate = true;
+        }
+    }
 }

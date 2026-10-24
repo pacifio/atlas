@@ -56,7 +56,7 @@ describe("decideModelDownload", () => {
     const d = decideModelDownload(done, env({ targetVisible: false }), prefs)!;
     expect(d.kind).toBe("model-download-done");
     expect(d.channels).toMatchObject({ center: true, toast: true, native: false });
-    expect(d.target).toEqual({ type: "settings", section: "models" });
+    expect(d.target).toEqual({ type: "settings", section: "memory" });
   });
 
   it("keeps the toast and banner quiet while the models view shows it", () => {

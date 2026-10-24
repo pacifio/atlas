@@ -38,12 +38,22 @@ function DialogClose(props: DialogPrimitive.Close.Props) {
 }
 
 /** Radix called this the Overlay; Base UI calls it the Backdrop. */
-function DialogOverlay({ className, ...props }: DialogPrimitive.Backdrop.Props) {
+/**
+ * `blur` frosts what is behind the scrim as well as dimming it — for the
+ * blocking prompts (permission, elicitation, sign-in) where the app behind
+ * should read as unavailable rather than merely dimmed.
+ */
+function DialogOverlay({
+  className,
+  blur = false,
+  ...props
+}: DialogPrimitive.Backdrop.Props & { blur?: boolean }) {
   return (
     <DialogPrimitive.Backdrop
       data-slot="dialog-overlay"
       className={cn(
         "fixed inset-0 z-overlay scrim",
+        blur && "backdrop-blur-sm",
         "data-open:animate-fade-in data-closed:animate-fade-out",
         className,
       )}

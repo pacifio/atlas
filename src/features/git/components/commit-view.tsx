@@ -8,7 +8,6 @@ import {
   ChevronsDownUp,
   ChevronsUpDown,
   Columns2,
-  GitCompare,
   GitGraph,
   RotateCcw,
   Rows2,
@@ -24,7 +23,6 @@ import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useGitStore, type CommitDetail } from "../stores/git-store";
 import { handleGitError, isGitError } from "../lib/git-errors";
 import { highlightDiffLine } from "../lib/diff-highlight";
-import { openGitDiff } from "../lib/git-diff-api";
 import {
   parseDiff,
   splitHunkLines,
@@ -141,8 +139,6 @@ export function CommitView({ repoPath, sha }: { repoPath: string; sha: string })
   return (
     <DiffFilesView
       files={files}
-      repoPath={repoPath}
-      commit={detail.hash}
       header={<CommitHeader detail={detail} repoPath={repoPath} />}
       toolbarEnd={<CommitActions repoPath={repoPath} sha={detail.hash} />}
       emptyText="No file changes"
@@ -161,17 +157,12 @@ export function CommitView({ repoPath, sha }: { repoPath: string; sha: string })
  */
 export function DiffFilesView({
   files,
-  repoPath,
-  commit,
   header,
   toolbarEnd,
   emptyText,
   jump,
 }: {
   files: DiffFile[];
-  repoPath: string;
-  /** The commit the files belong to; null for uncommitted changes. */
-  commit: string | null;
   header?: React.ReactNode;
   toolbarEnd?: React.ReactNode;
   emptyText: string;
@@ -338,17 +329,6 @@ export function DiffFilesView({
                             </span>
                           )}
                         </span>
-                        <HintItem label="Open in diff view">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              openGitDiff(repoPath, file.path, false, commit);
-                            }}
-                            className="p-0.5 text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100"
-                          >
-                            <GitCompare size={11} />
-                          </button>
-                        </HintItem>
                         <span className="shrink-0 font-mono text-2xs">
                           <span className="text-success">+{file.additions}</span>{" "}
                           <span className="text-error">−{file.deletions}</span>
@@ -483,8 +463,8 @@ function SplitSide({
   );
 }
 
-/** A diff line's code, syntax-highlighted; long lines clip — the per-file
- *  "Open in diff view" shows them whole. */
+/** A diff line's code, syntax-highlighted; long lines clip (this is a
+ *  commit summary; the review panel's viewer shows them whole). */
 function Code({ content, language }: { content: string; language: string }) {
   const tokens = highlightDiffLine(language, content);
   return (

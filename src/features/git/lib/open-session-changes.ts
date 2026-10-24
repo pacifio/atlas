@@ -1,8 +1,10 @@
 import { MAX_GROUPS, useLayoutStore } from "@/features/layout/stores/layout-store";
+import { useDiffPanelStore } from "../stores/diff-panel-store";
 import { requestDiffJump } from "./diff-jump";
 
 /**
- * Show a thread's changes beside the thread, scrolled to `file`.
+ * Show a session's changes beside it, scrolled to `file`: all of them, or
+ * one turn's (`turnId`).
  *
  * One tab per agent session (`session-changes:<id>`). If it is already open —
  * in the split, or anywhere — this only activates it and jumps to the file:
@@ -18,9 +20,17 @@ export function openSessionChanges(opts: {
   sessionId: string;
   file: string;
   title?: string;
+  /** Show this turn's own edits (the panel's turn scope) rather than the
+   *  branch's changes. Without it, a panel left on a turn goes back to
+   *  Changes: the file asked for may not be in that turn. The turn's stable
+   *  key (`stableTurnKey`): it is persisted. */
+  turnId?: string;
 }): void {
-  const { projectPath, sessionId, file, title } = opts;
+  const { projectPath, sessionId, file, title, turnId } = opts;
   const id = `session-changes:${sessionId}`;
+  const diffPanel = useDiffPanelStore.getState();
+  if (turnId) diffPanel.actions.setTurn(id, turnId);
+  else if (diffPanel.scope[id] === "turn") diffPanel.actions.setScope(id, "branch-range");
   requestDiffJump(id, file);
 
   const layout = useLayoutStore.getState();

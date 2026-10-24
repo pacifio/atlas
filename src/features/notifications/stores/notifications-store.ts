@@ -11,6 +11,7 @@ import {
   cleanActionArgs,
   isNotificationKind,
   isNotificationSettingsSection,
+  isPullRequestTarget,
   OPEN_ACTION_ID,
   type NotificationAction,
   type NotificationKind,
@@ -31,7 +32,10 @@ export interface AppNotification {
   source: NotificationSource;
   /** Originating session / tab, for best-effort click-to-focus. */
   sessionId?: string;
+  /** `""` for a session no tab showed. */
   tabId?: string;
+  /** The session's thread id, so a session no tab shows still opens. */
+  threadId?: string;
   /** Terminal source: the layout terminal id inside `tabId`. */
   terminalId?: string;
   /** Owning project and organisation. Items are kept for every org and
@@ -180,7 +184,8 @@ function isAppTarget(t: unknown): t is NonNullable<AppNotification["target"]> {
     r.type === "app-update" ||
     (r.type === "settings" && isNotificationSettingsSection(r.section)) ||
     r.type === "config-file" ||
-    (r.type === "git-panel" && typeof r.projectId === "string" && !!r.projectId)
+    (r.type === "git-panel" && typeof r.projectId === "string" && !!r.projectId) ||
+    isPullRequestTarget(r)
   );
 }
 

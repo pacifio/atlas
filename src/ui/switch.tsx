@@ -55,7 +55,9 @@ export function Switch({
         "after:absolute after:-inset-2",
         "data-[size=md]:h-4 data-[size=md]:w-7",
         "data-[size=sm]:h-3.5 data-[size=sm]:w-6",
-        "data-checked:bg-primary data-unchecked:bg-input",
+        // Off also gets an inset hairline: on a popover in a dark theme the input
+        // fill alone is nearly the surface colour, and the track disappears.
+        "data-checked:bg-primary data-unchecked:bg-input data-unchecked:ring-1 data-unchecked:ring-border data-unchecked:ring-inset",
         "data-disabled:cursor-not-allowed data-disabled:opacity-50",
         className,
       )}

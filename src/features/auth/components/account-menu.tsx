@@ -1,44 +1,38 @@
-import type { ReactElement } from "react";
-import { Menu as DropdownMenu } from "@base-ui/react/menu";
-import { Keyboard, LayoutTemplate, LogIn, LogOut, Palette, Settings, Zap } from "lucide-react";
+import type { ReactElement, ReactNode } from "react";
+import { LogIn, LogOut, Moon, Settings, Shield, Type } from "lucide-react";
+import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { toast } from "sonner";
 
 import { KbdCombo } from "@/ui/kbd";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuShortcut,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/ui/dropdown-menu";
+import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
 import { openSettingsSection } from "@/features/settings/lib/open-settings";
-import type { SettingsSection } from "@/features/settings/stores/settings-nav-store";
+import { useSettingsStore } from "@/features/settings/stores/settings-store";
+import type { AppSettings } from "@/features/settings/lib/app-settings";
+import { SCALE_PRESETS } from "@/features/settings/lib/ui-scale";
+import { UiScalePanel } from "@/features/settings/components/ui-scale-control";
 import { type AccountUser, type SignedIn, type SignedOut } from "../lib/auth-api";
 import { useAuthStore } from "../stores/auth-store";
 import { AccountAvatar } from "./account-avatar";
 
-/**
- * The account menu's destinations.
- *
- * `label` is what the user is looking for and `section` is where it lives —
- * "Themes" is the Appearance section, not one of its own.
- *
- * `shortcut` is set only where Atlas really binds one, so a hint here always
- * survives being pressed.
- */
-const ITEMS: Array<{
-  label: string;
-  icon: typeof Settings;
-  section: SettingsSection;
-  shortcut?: string;
-}> = [
-  { label: "Settings", icon: Settings, section: "general", shortcut: "⌘," },
-  { label: "Keybindings", icon: Keyboard, section: "keybindings" },
-  { label: "Themes", icon: Palette, section: "appearance" },
-  { label: "Skills", icon: Zap, section: "skills" },
-  { label: "Layouts", icon: LayoutTemplate, section: "layouts" },
+const THEME_MODES: Array<{ value: AppSettings["themeMode"]; label: string }> = [
+  { value: "system", label: "System" },
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
 ];
-
-// Same shape as the composer's "+" menu, so every Atlas dropdown reads alike.
-// `z-popover` (decision 28) is the layer every menu sits on: the content is
-// portalled to `body`, so it shares a stacking context with every dialog and
-// overlay in the app, and a menu has to sit above a dialog rather than under it.
-const CONTENT_CLASS =
-  "min-w-[228px] max-w-[300px] rounded-md border border-[var(--border)] " +
-  "bg-[var(--card)] shadow-md py-1";
 
 /**
  * Shown when the background revocation did not land — offline, or an Atlas
@@ -52,31 +46,21 @@ const CONTENT_CLASS =
 const RESIDUAL_SESSION =
   "Signed out on this device. Your Atlas session may stay active on the server until it expires.";
 
-// `cursor-pointer`, not the `cursor-default` a native menu would use: every row
-// carrying this class does something when clicked, and the pointer says so.
-// It is deliberately on the class the *actionable* rows share — the identity
-// header is a `Label` and keeps the arrow, so the cursor distinguishes what you
-// can act on from what is only being reported.
-const ITEM_CLASS =
-  "flex items-center gap-2 px-3 h-[26px] text-xs cursor-pointer outline-none " +
-  "text-[var(--secondary-foreground)] data-[highlighted]:bg-[var(--atlas-element-hover)] " +
-  "data-[highlighted]:text-[var(--foreground)]";
-
-// Hoisted for the same reason as the two above: this menu now has three
-// separators, and a rule one of them disagreed with would be visible.
-const SEPARATOR_CLASS = "my-1 h-px bg-[var(--border)]";
-
 /**
- * The menu behind the title bar's avatar — who you are, the parts of Settings
- * people actually reach for, and the way out.
+ * The menu behind the sidebar footer's avatar, laid out as the Atlas web app's:
+ * who you are, Settings and Privacy, the two appearance choices people change
+ * most (theme and interface size, each a submenu showing its current value),
+ * and the way out.
  *
  * Wraps the account button rather than replacing it, so signed out the button
  * keeps its plain click-to-sign-in behaviour and this component is simply not
- * rendered. Escape, click-away, arrow keys and type-ahead come from Radix, the
- * same primitive every other Atlas menu uses.
+ * rendered. Escape, click-away, arrow keys and type-ahead come from Base UI,
+ * the same primitive every other Atlas menu uses.
  */
 export function AccountMenu({
   account,
+  side = "top",
+  extra,
   children,
 }: {
   /**
@@ -92,13 +76,25 @@ export function AccountMenu({
    * name would be worse than the gap it fills.
    */
   account: SignedIn | SignedOut;
+  /** Which way the menu opens from the avatar. */
+  side?: "top" | "bottom";
+  /** Rows a host folds in after Privacy (the title bar's Help), so they sit
+   *  with the other places this menu goes. */
+  extra?: ReactNode;
   children: ReactElement;
 }) {
   const { signOut, beginSignIn } = useAuthStore.use.actions();
+  const settings = useSettingsStore.use.settings();
+  const { updateSettings } = useSettingsStore.use.actions();
+  const settingsKeys = useActionShortcut("app.settings")?.label;
   const signedIn = account.status === "signed-in";
   const user = signedIn ? account.user : null;
+  const theme = THEME_MODES.find((m) => m.value === settings.themeMode)?.label ?? "System";
+  const scale =
+    SCALE_PRESETS.find((p) => p.value === settings.uiScale)?.label ??
+    `${Math.round(settings.uiScale * 100)}%`;
 
-  // Not awaited by anything on screen: the title bar has already flipped by the
+  // Not awaited by anything on screen: the button has already flipped by the
   // time this promise settles, off the state event Rust emits before it touches
   // the network. All that arrives here is whether a caveat is owed.
   const onSignOut = async () => {
@@ -106,53 +102,88 @@ export function AccountMenu({
   };
 
   return (
-    <DropdownMenu.Root>
-      <DropdownMenu.Trigger render={children} />
-      <DropdownMenu.Portal>
-        <DropdownMenu.Positioner className="z-popover" align="end" sideOffset={6}>
-          <DropdownMenu.Popup className={CONTENT_CLASS}>
-            {/* The account zone is always first, whichever state we are in: the
-                identity when there is one, the way to get one when there is not.
-                Keeping it in the same place means the destinations below never
-                move under the pointer as the user signs in or out. */}
-            {user && <Header user={user} />}
-            {!signedIn && (
-              <>
-                <DropdownMenu.Item onClick={() => void beginSignIn()} className={ITEM_CLASS}>
-                  <LogIn size={13} className="shrink-0 text-[var(--muted-foreground)]" />
-                  <span className="flex-1 text-left">Sign In</span>
-                </DropdownMenu.Item>
-                <DropdownMenu.Separator className={SEPARATOR_CLASS} />
-              </>
-            )}
-            {ITEMS.map((item) => (
-              <DropdownMenu.Item
-                key={item.section}
-                onClick={() => openSettingsSection(item.section)}
-                className={ITEM_CLASS}
-              >
-                <item.icon size={13} className="shrink-0 text-[var(--muted-foreground)]" />
-                <span className="flex-1 text-left">{item.label}</span>
-                {item.shortcut && <KbdCombo combo={item.shortcut} />}
-              </DropdownMenu.Item>
-            ))}
-            {/* Separated from the destinations above: everything else in this
-                menu navigates, and this one ends the session. Rendered whenever a
-                credential is held, with or without a profile — one we cannot put
-                a name to is still one the user must be able to disconnect. */}
-            {signedIn && (
-              <>
-                <DropdownMenu.Separator className={SEPARATOR_CLASS} />
-                <DropdownMenu.Item onClick={() => void onSignOut()} className={ITEM_CLASS}>
-                  <LogOut size={13} className="shrink-0 text-[var(--muted-foreground)]" />
-                  <span className="flex-1 text-left">Sign Out</span>
-                </DropdownMenu.Item>
-              </>
-            )}
-          </DropdownMenu.Popup>
-        </DropdownMenu.Positioner>
-      </DropdownMenu.Portal>
-    </DropdownMenu.Root>
+    <DropdownMenu>
+      <DropdownMenuTrigger render={children} />
+      <DropdownMenuContent side={side} align="end" sideOffset={6} className="w-60">
+        {/* The account zone is always first, whichever state we are in: the
+            identity when there is one, the way to get one when there is not. */}
+        {user && <Header user={user} />}
+        {!signedIn && (
+          <>
+            <DropdownMenuItem onClick={() => void beginSignIn()}>
+              <LogIn />
+              Sign in
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </>
+        )}
+        <DropdownMenuItem onClick={() => openSettingsSection("general")}>
+          <Settings />
+          Settings
+          {settingsKeys && (
+            <DropdownMenuShortcut>
+              <KbdCombo combo={settingsKeys} />
+            </DropdownMenuShortcut>
+          )}
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => openSettingsSection("privacy")}>
+          <Shield />
+          Privacy
+        </DropdownMenuItem>
+        {extra}
+
+        <DropdownMenuSeparator />
+
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>
+            <Moon />
+            Theme
+            <span className="ml-auto text-muted-foreground">{theme}</span>
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent>
+            <DropdownMenuRadioGroup
+              value={settings.themeMode}
+              onValueChange={(value) =>
+                void updateSettings({ themeMode: value as AppSettings["themeMode"] })
+              }
+            >
+              {THEME_MODES.map((m) => (
+                <DropdownMenuRadioItem key={m.value} value={m.value}>
+                  {m.label}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+        {/* The interface size lives here, as on the web: it is a personal
+            preference about how Atlas looks, the same kind as the theme. The
+            whole control is folded in — stepper, presets, Reset — not a
+            reduced list. */}
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>
+            <Type />
+            Interface size
+            <span className="ml-auto text-muted-foreground">{scale}</span>
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent className="w-58">
+            <UiScalePanel />
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+
+        {/* Separated from the rows above: everything else here navigates or
+            sets a preference, and this one ends the session. Rendered whenever
+            a credential is held, with or without a profile. */}
+        {signedIn && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem variant="destructive" onClick={() => void onSignOut()}>
+              <LogOut />
+              Log out
+            </DropdownMenuItem>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -168,25 +199,24 @@ function Header({ user }: { user: AccountUser }) {
 
   return (
     <>
-      {/* `GroupLabel`, not a bare div: inside `role="menu"` an unlabelled block
-          is announced as loose text between the items. This is the menu's
-          title. Base UI reads its group from context and throws when there is
-          none — where Radix's `Label` stood alone — so the `Group` wrapper is
-          required, not decorative. */}
-      <DropdownMenu.Group>
-        <DropdownMenu.GroupLabel className="flex items-center gap-2.5 px-3 py-1.5">
+      {/* A labelled group, not a bare div: inside `role="menu"` an unlabelled
+          block is announced as loose text between the items. Base UI reads the
+          label's group from context and throws without one. The raw primitive,
+          not `DropdownMenuLabel`: that one is the small-caps section eyebrow. */}
+      <DropdownMenuGroup>
+        <MenuPrimitive.GroupLabel className="flex items-center gap-2.5 px-2 py-1.5">
           <AccountAvatar user={user} size={28} />
-          {/* `flex-1 min-w-0` against the content's max width is what makes a
-            long address truncate rather than stretch the whole menu. */}
-          <div className="flex-1 min-w-0">
-            <div className="truncate text-sm font-medium text-[var(--foreground)]">{primary}</div>
+          {/* `min-w-0` against the content's width is what makes a long
+              address truncate rather than stretch the whole menu. */}
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-medium text-foreground">{primary}</div>
             {email && email !== primary && (
-              <div className="truncate text-xs text-[var(--muted-foreground)]">{email}</div>
+              <div className="truncate text-xs text-muted-foreground">{email}</div>
             )}
           </div>
-        </DropdownMenu.GroupLabel>
-      </DropdownMenu.Group>
-      <DropdownMenu.Separator className={SEPARATOR_CLASS} />
+        </MenuPrimitive.GroupLabel>
+      </DropdownMenuGroup>
+      <DropdownMenuSeparator />
     </>
   );
 }

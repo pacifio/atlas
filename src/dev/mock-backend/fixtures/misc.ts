@@ -15,6 +15,8 @@
 
 import { emit } from "@tauri-apps/api/event";
 import type { ComposedPrompt } from "@/features/chat/lib/mentions";
+import type { AttachedProject } from "@/features/chat/lib/history-api";
+import type { SessionProjectsChange } from "@/features/chat/lib/session-projects-api";
 import type {
   AtlasTranscriptMessage,
   AtlasTranscriptMeta,
@@ -22,6 +24,7 @@ import type {
 import type { AuthEnvStatus, AuthMethodWire } from "@/features/chat/lib/agents-api";
 import type {
   ImportCandidate,
+  PullRequestLink,
   ResumedThread,
   ThreadProject,
   ThreadRow,
@@ -35,11 +38,23 @@ import type { ProjectSettingsInfo } from "@/features/settings/lib/project-settin
 import type { ModelStatus, SelectResult } from "@/features/settings/lib/models-api";
 import type { UpdateStatus } from "@/features/updater/lib/updater-api";
 import type { NativeModelsRefresh } from "@/types/agents";
+import type {
+  ProjectScript,
+  SessionEnvironment,
+} from "@/features/session-context/lib/session-context-api";
 import type { MockHandlers } from "../types";
 import { abs, MOCK_PROJECT, OTHER_PROJECTS } from "../project";
 import { adoptSession } from "../fake-agent";
+import { sessionLifecycleHandlers, withDerivedLifecycle } from "../session-lifecycle";
+import { fixtureLink, sessionPullRequestHandlers } from "../session-pull-requests";
+import { RESTING_LIFECYCLE } from "@/features/chat/lib/session-lifecycle";
 
 const nothing = () => null;
+
+/** `link` with its snapshot based on `base` instead of `main`: a chain. */
+function chainedOn(link: PullRequestLink, base: string): PullRequestLink {
+  return link.snapshot ? { ...link, snapshot: { ...link.snapshot, baseBranch: base } } : link;
+}
 
 // Anchored when the mock loads, not at a fixed instant. Everything `ago`
 // feeds is rendered as a RELATIVE time ("5m", "3h ago"), so a frozen anchor
@@ -54,8 +69,10 @@ const ago = (ms: number) => new Date(T0 - ms).toISOString();
 /**
  * The sidebar and the history view read the same rows, so one list feeds both.
  * The spread is deliberate: a draft with no session id yet, a very long
- * agent-written title, an archived row that only the history view may show,
- * and two projects so the sidebar's grouping has more than one group.
+ * agent-written title, settled rows for the sidebar's Settled shelf (one of
+ * them archived before Settled replaced archiving), a pinned row, a snoozed
+ * row, an unread one and a woken one, and two projects so the sidebar's
+ * grouping has more than one group.
  */
 const THREADS: ThreadRow[] = [
   {
@@ -65,12 +82,34 @@ const THREADS: ThreadRow[] = [
     title: "Move the user reads onto /v2 and keep the retry helper",
     updatedAt: ago(5 * 60_000),
     createdAt: ago(3 * 3_600_000),
-    archived: false,
+    ...RESTING_LIFECYCLE,
     projectName: MOCK_PROJECT.name,
     folderPaths: [MOCK_PROJECT.path],
     // Another process is writing this one: the live dot, and the composer's
     // "Send anyway" hold when it is opened.
     liveElsewhere: true,
+    // A sibling project attached read-only: the composer chip's access toggle
+    // and the row's attached-projects data both have something to show.
+    attachedProjects: [
+      {
+        path: OTHER_PROJECTS[0].path,
+        displayName: OTHER_PROJECTS[0].name,
+        access: "read_only",
+        attachedAt: ago(2 * 3_600_000),
+        source: "mention",
+      },
+    ],
+    model: "Claude Sonnet 4.5",
+    pullRequests: [
+      // Opened from the session, found on its branch, and linked by hand: the
+      // badge's "+3", the hover list's three lines and the session's pull
+      // request panel. number 412 is watched (the eye), and number 405 is based on
+      // number 412's branch, so the two read as a chain of two.
+      { ...fixtureLink(412, "created", ago(50 * 60_000)), watching: true },
+      chainedOn(fixtureLink(405, "detected", ago(40 * 60_000)), "theo/payment-state-machine"),
+      fixtureLink(398, "manual", ago(30 * 60_000)),
+    ],
+    forkedFromSessionId: null,
     // One of the fake repo's own branches (`fixtures/git.ts`).
     branch: "feature/auth-v2",
   },
@@ -82,10 +121,14 @@ const THREADS: ThreadRow[] = [
     title: "New conversation",
     updatedAt: ago(40 * 60_000),
     createdAt: ago(40 * 60_000),
-    archived: false,
+    ...RESTING_LIFECYCLE,
     projectName: MOCK_PROJECT.name,
     folderPaths: [MOCK_PROJECT.path],
     liveElsewhere: false,
+    attachedProjects: [],
+    model: null,
+    pullRequests: [],
+    forkedFromSessionId: null,
     branch: "main",
   },
   {
@@ -96,10 +139,14 @@ const THREADS: ThreadRow[] = [
       "Regenerate the whole design-token ramp, including the dark-mode steps, and explain every value that moved",
     updatedAt: ago(26 * 3_600_000),
     createdAt: ago(28 * 3_600_000),
-    archived: false,
+    ...RESTING_LIFECYCLE,
     projectName: MOCK_PROJECT.name,
     folderPaths: [MOCK_PROJECT.path, abs("src/styles")],
     liveElsewhere: false,
+    attachedProjects: [],
+    model: null,
+    pullRequests: [],
+    forkedFromSessionId: null,
     branch: "main",
   },
   {
@@ -109,10 +156,17 @@ const THREADS: ThreadRow[] = [
     title: "Why does the PDF highlight drift after a rotate?",
     updatedAt: ago(3 * 86_400_000),
     createdAt: ago(3 * 86_400_000),
-    archived: false,
+    ...RESTING_LIFECYCLE,
+    // Unread: its last turn finished after the user last looked.
+    lastViewedAt: ago(3 * 86_400_000 + 600_000),
+    lastTurnCompletedAt: ago(3 * 86_400_000),
     projectName: OTHER_PROJECTS[0].name,
     folderPaths: [OTHER_PROJECTS[0].path],
     liveElsewhere: false,
+    attachedProjects: [],
+    model: null,
+    pullRequests: [],
+    forkedFromSessionId: null,
     branch: "main",
   },
   {
@@ -122,11 +176,17 @@ const THREADS: ThreadRow[] = [
     title: "Spike: swap HashMap for BTreeMap in the cache",
     updatedAt: ago(9 * 86_400_000),
     createdAt: ago(9 * 86_400_000),
-    // The only archived row — the history view's filter has something to do.
-    archived: true,
+    // Archived before Settled replaced archiving: the migration settled it at
+    // its last activity.
+    ...RESTING_LIFECYCLE,
+    settledAt: ago(9 * 86_400_000),
     projectName: MOCK_PROJECT.name,
     folderPaths: [MOCK_PROJECT.path],
     liveElsewhere: false,
+    attachedProjects: [],
+    model: null,
+    pullRequests: [],
+    forkedFromSessionId: null,
     // Detached HEAD when it ran, so Atlas never learned a branch.
     branch: null,
   },
@@ -137,10 +197,14 @@ const THREADS: ThreadRow[] = [
     title: "Trim the first paint: the titlebar dock mounts before the theme resolves",
     updatedAt: ago(2 * 3_600_000),
     createdAt: ago(2 * 3_600_000),
-    archived: false,
+    ...RESTING_LIFECYCLE,
     projectName: MOCK_PROJECT.name,
     folderPaths: [MOCK_PROJECT.path],
     liveElsewhere: false,
+    attachedProjects: [],
+    model: null,
+    pullRequests: [],
+    forkedFromSessionId: null,
     // A branch nobody would size a column for. The card trims it rather than
     // pushing the agent's mark off its own edge — the only row here that
     // exercises that, and the reason it is this long.
@@ -153,10 +217,17 @@ const THREADS: ThreadRow[] = [
     title: "Port the seatbelt profile to bubblewrap",
     updatedAt: ago(7 * 3_600_000),
     createdAt: ago(8 * 3_600_000),
-    archived: false,
+    ...RESTING_LIFECYCLE,
+    // Pinned: the Pinned section, never auto-settled.
+    pinnedAt: ago(6 * 3_600_000),
+    pinOrder: "n",
     projectName: MOCK_PROJECT.name,
     folderPaths: [MOCK_PROJECT.path],
     liveElsewhere: false,
+    attachedProjects: [],
+    model: null,
+    pullRequests: [],
+    forkedFromSessionId: null,
     branch: "feature/auth-v2",
   },
   {
@@ -166,10 +237,17 @@ const THREADS: ThreadRow[] = [
     title: "Explain the delta wire's additive-only rule",
     updatedAt: ago(19 * 3_600_000),
     createdAt: ago(19 * 3_600_000),
-    archived: false,
+    ...RESTING_LIFECYCLE,
+    // Snoozed for a few hours; the fake backend's timer wakes it.
+    snoozedAt: ago(3_600_000),
+    snoozedUntil: ago(-3 * 3_600_000),
     projectName: MOCK_PROJECT.name,
     folderPaths: [MOCK_PROJECT.path],
     liveElsewhere: false,
+    attachedProjects: [],
+    model: null,
+    pullRequests: [],
+    forkedFromSessionId: null,
     branch: null,
   },
   {
@@ -179,10 +257,16 @@ const THREADS: ThreadRow[] = [
     title: "Why is the terminal buffer re-rendering on every keystroke?",
     updatedAt: ago(2 * 86_400_000),
     createdAt: ago(2 * 86_400_000),
-    archived: false,
+    ...RESTING_LIFECYCLE,
+    // Woke from a snooze an hour ago and not looked at since.
+    lastSnoozeWakeAt: ago(3_600_000),
     projectName: MOCK_PROJECT.name,
     folderPaths: [MOCK_PROJECT.path],
     liveElsewhere: false,
+    attachedProjects: [],
+    model: null,
+    pullRequests: [],
+    forkedFromSessionId: null,
     branch: "main",
   },
   {
@@ -192,10 +276,17 @@ const THREADS: ThreadRow[] = [
     title: "Checkpoint restore drops the new-file blob",
     updatedAt: ago(5 * 86_400_000),
     createdAt: ago(5 * 86_400_000),
-    archived: false,
+    ...RESTING_LIFECYCLE,
+    // Idle past the auto-settle window: on the Settled shelf, settled at its
+    // last activity, as the idle sweep records it.
+    settledAt: ago(5 * 86_400_000),
     projectName: MOCK_PROJECT.name,
     folderPaths: [MOCK_PROJECT.path],
     liveElsewhere: false,
+    attachedProjects: [],
+    model: null,
+    pullRequests: [],
+    forkedFromSessionId: null,
     branch: "fix/checkpoint-blobs",
   },
   {
@@ -206,19 +297,52 @@ const THREADS: ThreadRow[] = [
     title: "First pass at the memory briefing",
     updatedAt: ago(12 * 86_400_000),
     createdAt: ago(12 * 86_400_000),
-    archived: false,
+    ...RESTING_LIFECYCLE,
+    settledAt: ago(12 * 86_400_000),
     projectName: MOCK_PROJECT.name,
     folderPaths: [MOCK_PROJECT.path],
     liveElsewhere: false,
+    attachedProjects: [],
+    model: null,
+    pullRequests: [],
+    forkedFromSessionId: null,
     branch: "main",
   },
 ];
 
-let threads: ThreadRow[] = THREADS.map((thread) => ({ ...thread }));
+let threads: ThreadRow[] = THREADS.map((thread) => withDerivedLifecycle({ ...thread }));
 
 /** Tell every history surface to re-read, exactly as Rust's store does. */
 function threadsChanged(): void {
   void emit("atlas:threads-changed");
+}
+
+/** Attached projects of sessions with no history row (a fresh mock tab). */
+const draftProjects = new Map<string, AttachedProject[]>();
+
+function sessionProjects(sessionId: string): AttachedProject[] {
+  return (
+    threads.find((t) => t.sessionId === sessionId)?.attachedProjects ??
+    draftProjects.get(sessionId) ??
+    []
+  );
+}
+
+function projectsChange(
+  sessionId: string,
+  projects: AttachedProject[],
+  changed: boolean,
+): SessionProjectsChange {
+  if (changed) {
+    const row = threads.find((t) => t.sessionId === sessionId);
+    if (row) {
+      threads = threads.map((t) => (t === row ? { ...t, attachedProjects: projects } : t));
+    } else {
+      draftProjects.set(sessionId, projects);
+    }
+    threadsChanged();
+  }
+  return { projects, changed, appliedLive: true };
 }
 
 /** As Rust answers it (`AgentHost::thread_projects`): scoped to `cwd`, only
@@ -227,7 +351,7 @@ function threadsChanged(): void {
 function threadProjects(cwd: string | null): ThreadProject[] {
   const byProject = new Map<string, ThreadRow[]>();
   for (const thread of threads) {
-    if (thread.archived) continue;
+    if (thread.sessionId === null) continue;
     const rows = byProject.get(thread.projectName) ?? [];
     rows.push(thread);
     byProject.set(thread.projectName, rows);
@@ -388,14 +512,77 @@ function simulateDownload(model: ModelStatus): void {
   }
 }
 
+// ── project scripts ───────────────────────────────────────────────────────
+
+/** Each project's `[[scripts]]`, as `.atlas/config.toml` would hold them. The
+ *  fake project starts with two, so the scripts row shows its split; the
+ *  second has never been approved, so running it shows the confirmation. */
+const projectScripts = new Map<string, ProjectScript[]>([
+  [
+    MOCK_PROJECT.path,
+    [
+      { id: "dev", name: "Dev server", command: "bun run dev", icon: "play" },
+      { id: "test", name: "Test", command: "bun run test", icon: "test" },
+    ],
+  ],
+]);
+
+/** As in Rust (`project-script-approvals.json`): project, id and command. */
+const approvedScripts = new Set<string>([`${MOCK_PROJECT.path}\u0000dev\u0000bun run dev`]);
+const approvalKey = (project: string, script: { id: string; command: string }) =>
+  `${project}\u0000${script.id}\u0000${script.command}`;
+const withApproval = (project: string, scripts: ProjectScript[]): ProjectScript[] =>
+  scripts.map((script) => ({
+    ...script,
+    approved: approvedScripts.has(approvalKey(project, script)),
+  }));
+
 // ── handlers ──────────────────────────────────────────────────────────────
 
 export const miscHandlers: MockHandlers = {
+  // ── session context (`commands/session_context.rs`, `project_scripts.rs`) ──
+  session_environment: (): SessionEnvironment => ({ name: "m4-pro", kind: "local" }),
+  project_scripts_list: ({ projectPath }): ProjectScript[] =>
+    withApproval(String(projectPath), projectScripts.get(String(projectPath)) ?? []),
+  project_scripts_approve: ({ projectPath, id, command }) => {
+    approvedScripts.add(
+      approvalKey(String(projectPath), { id: String(id), command: String(command) }),
+    );
+    return null;
+  },
+  // As in Rust: trimmed, a blank id derived from the name, ids made unique.
+  project_scripts_save: ({ projectPath, scripts }): ProjectScript[] => {
+    const seen = new Set<string>();
+    const saved = (scripts as ProjectScript[]).map((script) => {
+      const base =
+        script.id.trim() ||
+        script.name
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-+|-+$/g, "") ||
+        "script";
+      let id = base;
+      for (let n = 2; seen.has(id); n++) id = `${base}-${n}`;
+      seen.add(id);
+      return { id, name: script.name.trim(), command: script.command.trim(), icon: script.icon };
+    });
+    // As in Rust: what the save brought in was typed in Atlas, so it is approved.
+    const before = new Set(
+      (projectScripts.get(String(projectPath)) ?? []).map((s) => approvalKey("", s)),
+    );
+    for (const script of saved) {
+      if (!before.has(approvalKey("", script))) {
+        approvedScripts.add(approvalKey(String(projectPath), script));
+      }
+    }
+    projectScripts.set(String(projectPath), saved);
+    return withApproval(String(projectPath), saved);
+  },
+
   // ── chat history ────────────────────────────────────────────────────────
-  // As in Rust: `archivedOnly` narrows to archived rows, otherwise every row,
-  // archived or not (the composer's live-elsewhere feed relies on that).
-  threads_history: ({ archivedOnly }): ThreadRow[] =>
-    archivedOnly ? threads.filter((thread) => thread.archived) : threads,
+  // As in Rust: every row (the composer's live-elsewhere feed relies on that).
+  threads_history: (): ThreadRow[] => threads,
   threads_sync_project: () => 0,
   threads_projects: ({ cwd }): ThreadProject[] =>
     threadProjects(cwd === null || cwd === undefined ? null : String(cwd)),
@@ -416,13 +603,72 @@ export const miscHandlers: MockHandlers = {
     threadsChanged();
     return null;
   },
-  threads_archive: ({ threadId }): null => {
-    threads = threads.map((thread) =>
-      thread.threadId === String(threadId) ? { ...thread, archived: true } : thread,
-    );
-    threadsChanged();
-    return null;
+  // Projects attached to a session (`session_projects.rs`). Keyed by the live
+  // session id; a session with a history row keeps the list on the row. The
+  // fake agent takes a change from the next turn, as the native agent does.
+  session_projects_list: ({ sessionId }): AttachedProject[] => sessionProjects(String(sessionId)),
+  session_projects_attach: ({
+    sessionId,
+    path,
+    displayName,
+    access,
+    source,
+  }): SessionProjectsChange => {
+    const id = String(sessionId);
+    const want = String(path).replace(/\/+$/, "");
+    if (want === "/" || want === "/Users/dev" || !want.startsWith("/")) {
+      throw new Error(
+        `${want} is your home folder or above it; attach a project inside it instead.`,
+      );
+    }
+    const current = sessionProjects(id);
+    if (current.some((p) => p.path === want)) return projectsChange(id, current, false);
+    const next: AttachedProject[] = [
+      ...current,
+      {
+        path: want,
+        displayName: displayName ? String(displayName) : (want.split("/").pop() ?? want),
+        access: access === "read_write" ? "read_write" : "read_only",
+        attachedAt: new Date().toISOString(),
+        source: source === "agent_request" || source === "clone" ? source : "mention",
+      },
+    ];
+    return projectsChange(id, next, true);
   },
+  session_projects_detach: ({ sessionId, path }): SessionProjectsChange => {
+    const id = String(sessionId);
+    const current = sessionProjects(id);
+    const next = current.filter((p) => p.path !== String(path));
+    return projectsChange(id, next, next.length !== current.length);
+  },
+  session_projects_set_access: ({ sessionId, path, access }): SessionProjectsChange => {
+    const id = String(sessionId);
+    const current = sessionProjects(id);
+    const want = access === "read_write" ? "read_write" : "read_only";
+    let changed = false;
+    const next = current.map((p) => {
+      if (p.path !== String(path) || p.access === want) return p;
+      changed = true;
+      return { ...p, access: want } satisfies AttachedProject;
+    });
+    return projectsChange(id, next, changed);
+  },
+  // As in Rust: settling sinks the row to the Settled shelf, it stays listed;
+  // pin, snooze and viewed/unread follow the store's rules.
+  ...sessionLifecycleHandlers({
+    get: () => threads,
+    set: (rows) => {
+      threads = rows;
+    },
+    changed: threadsChanged,
+  }),
+  ...sessionPullRequestHandlers({
+    get: () => threads,
+    set: (rows) => {
+      threads = rows;
+    },
+    changed: threadsChanged,
+  }),
   // Importing is the slowest thing in the app (every agent is started to be
   // asked), so all three answer kinds are represented rather than just "ready".
   threads_import_candidates: (): ImportCandidate[] => [
@@ -673,7 +919,7 @@ export const miscHandlers: MockHandlers = {
   // Rust re-writes mentions into ACP resource links; the fake keeps the prose
   // verbatim and links whatever file mentions came through, which is enough
   // for the composer's chips to survive a send.
-  compose_prompt: ({ prose, mentions }): ComposedPrompt => ({
+  compose_prompt: ({ prose, mentions }): Omit<ComposedPrompt, "pastedTexts"> => ({
     prose: String(prose ?? ""),
     resourceLinks: ((mentions ?? []) as { kind?: string; id?: string; label?: string }[])
       .filter((mention) => mention.kind === "file")

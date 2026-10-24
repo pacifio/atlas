@@ -40,6 +40,8 @@ export function SettingsPage({
   title,
   description,
   scopeable = false,
+  wide = false,
+  header,
   children,
 }: {
   title: string;
@@ -47,16 +49,26 @@ export function SettingsPage({
   /** The page has settings a project can override: show the scope picker,
    *  and let its rows edit the picked project. */
   scopeable?: boolean;
+  /** A wider column, for a page whose content is two panes side by side. */
+  wide?: boolean;
+  /** Under the description: a page's own scope sentence, say. */
+  header?: ReactNode;
   children: ReactNode;
 }) {
   const scope = useSettingsNav((s) => s.scope);
   return (
     <PageScopeContext.Provider value={scopeable ? scope : null}>
-      <div className="@container mx-auto flex w-full max-w-180 flex-col gap-8 px-5 pt-8 pb-24">
+      <div
+        className={cn(
+          "@container mx-auto flex w-full flex-col gap-8 px-5 pt-8 pb-24",
+          wide ? "max-w-240" : "max-w-180",
+        )}
+      >
         <header className="flex flex-col gap-1">
           <h1 className="text-xl font-medium tracking-tight text-foreground">{title}</h1>
           {description && <p className="caption">{description}</p>}
           {scopeable && <ScopeSentence />}
+          {header}
         </header>
         {children}
       </div>
@@ -254,7 +266,7 @@ export function SettingsRow({
       >
         <div className={cn("flex min-w-0 flex-col gap-0.5", disabled && "opacity-50")}>
           <div className="flex min-h-5 items-center gap-1">
-            <h3 className="label">{rowTitle}</h3>
+            <h3 className="text-sm font-medium text-foreground">{rowTitle}</h3>
             {scope !== null && setting && meta?.project && <InheritanceHint scoped={scoped} />}
             {showReset && (
               <Hint label={scoped.resetLabel}>
@@ -268,9 +280,7 @@ export function SettingsRow({
             )}
           </div>
           {(description ?? meta?.summary) && (
-            <p className="max-w-xl text-2xs text-muted-foreground">
-              {description ?? meta?.summary}
-            </p>
+            <p className="max-w-xl text-xs text-muted-foreground">{description ?? meta?.summary}</p>
           )}
           {status && <p className="caption pt-0.5">{status}</p>}
         </div>

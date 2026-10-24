@@ -93,8 +93,8 @@ export function DraftsTab({ conv }: { conv: ChatConversation }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {/* One full-width band with the action inline, matching the agent
-          history sidebar's search row (`session-sidebar.tsx`) — a boxed input
+      {/* One full-width band with the action inline, matching the
+          sidebar's search row (`sidebar-session-header.tsx`) — a boxed input
           floating inside padding read as a second, competing surface. */}
       <div className="flex h-[32px] shrink-0 items-center gap-1.5 border-b border-border px-3">
         <FilePlus2 size={11} className="shrink-0 text-muted-foreground" />
@@ -178,9 +178,9 @@ export function DraftsTab({ conv }: { conv: ChatConversation }) {
               <Tooltip>
                 <TooltipTrigger
                   render={
-                    <span className="flex min-w-0 shrink-0 items-center gap-1">
+                    <span className="flex min-w-0 shrink-0 items-center">
                       <CommsAvatar member={author} size={16} />
-                      <span className="max-w-[72px] truncate text-2xs text-muted-foreground">
+                      <span className="ml-1 max-w-[72px] truncate text-2xs text-muted-foreground">
                         {firstName(author?.name)}
                       </span>
                     </span>

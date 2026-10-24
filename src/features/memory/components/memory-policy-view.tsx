@@ -442,7 +442,7 @@ function PolicyRow({
               </HintItem>
             </>
           ) : (
-            <HintItem label="Send to agent chat">
+            <HintItem label="Send to a session">
               <button
                 onClick={() => sendToAgentChat(`Preference — ${policy.key}: ${policy.value}`)}
                 className="flex items-center justify-center w-5 h-5 rounded text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--atlas-element-hover)] transition-colors"

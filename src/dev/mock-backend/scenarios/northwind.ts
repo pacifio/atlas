@@ -59,7 +59,7 @@ import {
   zuhayerOnline,
   zuhayerTyping,
 } from "./northwind-comms";
-import { northwindGitCommands, northwindGitRawCommands } from "./northwind-git";
+import { northwindGitCommands } from "./northwind-git";
 import {
   northwindMiscCommands,
   northwindMiscInit,
@@ -148,13 +148,12 @@ function installShortcuts(): void {
 }
 
 /**
- * Browser-storage keys that hold CONTENT from an earlier page load — recent
- * chats, the notification bell, pinned chat messages, another project's file
+ * Browser-storage keys that hold CONTENT from an earlier page load — the
+ * notification bell, pinned chat messages, another project's file
  * index. Layout and theme keys are left alone, so the window keeps the shape
  * it was arranged in for the take.
  */
 const CONTENT_KEYS = [
-  /^atlas-recent-chats$/,
   /^atlas-notifications$/,
   /^atlas-chat-pins$/,
   /^atlas:fileindex-cache:/,
@@ -186,7 +185,7 @@ export const northwind: Scenario = {
     ...northwindSpacesCommands,
     ...northwindTimelineCommands,
   },
-  rawCommands: { ...northwindMiscRawCommands, ...northwindGitRawCommands },
+  rawCommands: northwindMiscRawCommands,
   init: () => {
     installNorthwindAgent({
       effects: {

@@ -11,8 +11,7 @@
 //!
 //! - **known** to the history store and newer than last seen: their
 //!   `updated_at` is bumped (forward only), so ongoing terminal activity moves
-//!   the row to the top, and an archived row with new activity inside the
-//!   sync window comes back to the sidebar (`touch_sessions`). A write Atlas's
+//!   the row to the top of its section (`touch_sessions`). A write Atlas's
 //!   own turn explains is skipped: Atlas's Claude adapter writes the very
 //!   same transcript, and touching on it would be a SQLite write and a full
 //!   sidebar refetch per [`DEBOUNCE`] for every turn Atlas runs — the live
@@ -57,7 +56,7 @@ use notify_debouncer_full::new_debouncer;
 use parking_lot::Mutex;
 use tauri::{AppHandle, Emitter};
 
-use super::agent_host::{explained_by_atlas, live_elsewhere, sync_unarchive_cutoff, AgentHost};
+use super::agent_host::{explained_by_atlas, live_elsewhere, AgentHost};
 use super::agents::THREADS_CHANGED_EVENT;
 
 /// A terminal session writes its transcript in bursts; this folds a burst into
@@ -463,7 +462,7 @@ impl SessionWatcher {
 
         if !touches.is_empty() {
             self.tried.lock().forget(touches.iter().map(|(id, _)| id));
-            store.touch_sessions(&touches, Some(sync_unarchive_cutoff(Utc::now())));
+            store.touch_sessions(&touches);
         }
         if self.tried.lock().due(&unknown, &revoked, Instant::now()) {
             let host = self.host.clone();
@@ -560,6 +559,35 @@ fn on_batch(weak: &Weak<SessionWatcher>, generation: u64, cwd: &str, dir: &Path,
     this.handle_batch(generation, cwd, dir);
 }
 
+/// For one project folder, each session's last activity as evidence of
+/// another process — the input settling needs for a row in any project, not
+/// only the one the watcher is armed for. Read from disk now: a directory
+/// listing, plus the tail of each transcript inside the liveness window.
+/// Blocking.
+///
+/// `None` when the folder's transcript directory cannot be named (no home
+/// directory): no coverage, so the idle sweep leaves its sessions alone. A
+/// directory that does not exist is an answer — no transcripts, nothing live.
+pub fn activity_in(folder: &Path) -> Option<HashMap<String, DateTime<Utc>>> {
+    // The spelling Claude Code slugs: its physical `getcwd`.
+    let folder = dunce::canonicalize(folder).unwrap_or_else(|_| folder.to_path_buf());
+    Some(activity_in_dir(&claude_sessions_dir(&folder)?))
+}
+
+/// [`activity_in`] over a transcript directory already named.
+fn activity_in_dir(dir: &Path) -> HashMap<String, DateTime<Utc>> {
+    let now = Utc::now();
+    scan_sessions(dir)
+        .into_iter()
+        .filter_map(|s| {
+            let writer = is_live(s.modified, now)
+                .then(|| last_writer(&s.path))
+                .flatten();
+            activity_elsewhere(s.modified, writer.as_ref()).map(|at| (s.session_id, at))
+        })
+        .collect()
+}
+
 /// A session's last activity as evidence of another process, or `None` when
 /// there is none. Its newest conversation line decides: Atlas's own (an SDK
 /// entrypoint) is no evidence at all, and a terminal's is timed by that line.
@@ -579,6 +607,21 @@ fn activity_elsewhere(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The idle sweep's evidence for a project the watcher is not armed for:
+    /// a fresh transcript on disk counts, whatever the sidebar has open.
+    #[test]
+    fn activity_in_reads_a_projects_transcripts_from_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = "0b9e3f8e-6a55-4d4c-9a38-3f1c2b7d9e01";
+        std::fs::write(dir.path().join(format!("{id}.jsonl")), "{}\n").unwrap();
+        let activity = activity_in_dir(dir.path());
+        let at = activity.get(id).copied().expect("the transcript is listed");
+        assert!(is_live(at, Utc::now()), "and just written");
+
+        let missing = activity_in_dir(&dir.path().join("never-created"));
+        assert!(missing.is_empty(), "no directory: nothing live");
+    }
 
     fn writer(entrypoint: &str, at: Option<DateTime<Utc>>) -> LastWriter {
         LastWriter {
