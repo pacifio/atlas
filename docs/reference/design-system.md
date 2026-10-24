@@ -388,6 +388,52 @@ was wrong: Tailwind v4 emits its `/N` modifiers as an rgba fallback plus an
 built stylesheet, where all 195 `color-mix()` calls sit inside that guard. See
 "Colour functions" below.)
 
+### Navigation hints
+
+Workspace navigation uses `Hint` for individual controls and `HintGroup` /
+`HintItem` for horizontal toolbars. `TitlebarDock` composes the same group, so
+its sliding labels share the toolbar's focus, dismissal and accessibility
+behaviour. This replaces the dock's separate hover implementation and the
+sidebar's native `title` hints, and adds help to right-panel sections while
+preserving their visible labels.
+
+The shared timing is **300 ms to open on hover, 80 ms of leave grace, and a
+300 ms warm window** for moving to the next hint without another delay.
+Keyboard focus opens help immediately; blur dismisses it without the pointer
+grace unless the control or tooltip is still hovered. Press and Escape dismiss
+it immediately. The pointer can cross into the tooltip and keep it open to
+read. Escape also dismisses a hovered hint when keyboard focus is elsewhere.
+Sliding hints close on scroll or resize, when their measured anchor would be
+stale; reduced motion keeps the existing fade without travel.
+
+Every visible hint has `role="tooltip"` and is connected to its actual control
+by `aria-describedby`, preserving any existing description. Keep a concise
+accessible name on the control and its visible label where present. A disabled
+navigation action with an explanation uses `Button` with
+`focusableWhenDisabled`, so keyboard users can reach that explanation too.
+`Hint`'s disabled-capable wrapper describes the button inside it, not only the
+hover target.
+
+| Surface | Destination/help |
+|---|---|
+| Titlebar | Name File Explorer and Source Control, including their configured shortcuts. The Source Control toggle's name follows its action even when the right slot currently holds team chat. |
+| Project sidebar | Keep the module names visible; explain each destination and the prerequisite for unavailable actions. Knowledge opens the Knowledge Base in a center tab. |
+| File Explorer header | Name the folder picker and expand/collapse-folder actions. |
+| Right panel | Keep Source Control, Commit and GitHub labels; explain Commit as **Git Graph / Commit History**. |
+| Command palette | Knowledge opens a center tab; Source Control and Git Graph claim the right slot from team chat when necessary. |
+
+The center tab strip's existing back/forward, new-tab and split hints inherit
+the same group behaviour. Close-tab buttons retain their accessible names and
+their deliberately quiet presentation. File-path titles remain file metadata,
+rather than navigation help.
+
+`navigation-hints.test.tsx` exercises pointer gaps, hovering the tooltip,
+keyboard help, descriptions, disabled controls and dismissal across all three
+entry points. The dock tests retain positioning and overflow regressions;
+command-palette tests cover the actual navigation actions. Browser verification
+uses the normal mock workspace and `?scenario=design-system`; it does not cover
+native window chrome or macOS WKWebView. No dependency is added.
+
 ## Colour functions
 
 **`color-mix()` is allowed at a call site. Relative colour syntax is not, and

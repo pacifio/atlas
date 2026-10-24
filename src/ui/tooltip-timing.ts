@@ -1,4 +1,4 @@
-// One timing for every tooltip in the app — the Radix `Tooltip`/`Hint`, the
+// One timing for every tooltip in the app — the Base UI `Tooltip`/`Hint`, the
 // sliding `HintGroup`, and the titlebar dock. The first tooltip waits
 // TOOLTIP_OPEN_DELAY so a pointer crossing the UI doesn't flash labels; once
 // one has been open, the next opens instantly (and without an entrance) until
@@ -6,6 +6,8 @@
 // module state, so moving from one kind of tooltip to another stays instant.
 
 export const TOOLTIP_OPEN_DELAY = 300;
+/** Keeps a hint readable across a small pointer gap; focus/press/Escape do not wait. */
+export const TOOLTIP_CLOSE_DELAY = 80;
 export const TOOLTIP_WARM_WINDOW = 300;
 
 /** Strong ease-out: starts moving at once, settles without overshoot. */

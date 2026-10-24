@@ -19,7 +19,10 @@ import { AccountMenu } from "./account-menu";
  * Signed out or mid-grant it is a plain button that starts (or reopens)
  * sign-in — the menu has nothing to say in either state.
  */
-export function AccountButton({ compact = false }: { compact?: boolean } = {}) {
+export function AccountButton({
+  compact = false,
+  "aria-describedby": describedBy,
+}: { compact?: boolean; "aria-describedby"?: string } = {}) {
   const snapshot = useAuthStore.use.snapshot();
   const starting = useAuthStore.use.starting();
   const { beginSignIn, closeDialog } = useAuthStore.use.actions();
@@ -56,6 +59,7 @@ export function AccountButton({ compact = false }: { compact?: boolean } = {}) {
     <Button
       onClick={connecting ? toggleDialog : undefined}
       aria-label={title}
+      aria-describedby={describedBy}
       className={cn(
         "relative flex items-center justify-center transition-all duration-150",
         // Inside the titlebar dock the avatar is one of a row of 20px controls
