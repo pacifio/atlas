@@ -388,13 +388,16 @@ async fn build_project_index(
                         // Drop anything under a directory we never index BEFORE any
                         // work happens. Without this a single `npm install` or
                         // `cargo build` turns into a sustained event storm.
+                        // Reads go too (see `is_file_change`).
                         let events: Vec<_> = events
                             .into_iter()
                             .filter(|e| {
-                                !e.event
-                                    .paths
-                                    .iter()
-                                    .all(|p| is_ignored_event_path(&root_for_watch, p))
+                                is_file_change(&e.event)
+                                    && !e
+                                        .event
+                                        .paths
+                                        .iter()
+                                        .all(|p| is_ignored_event_path(&root_for_watch, p))
                             })
                             .collect();
                         if events.is_empty() {
@@ -836,6 +839,28 @@ fn is_ignored_event_path(root: &Path, path: &Path) -> bool {
     })
 }
 
+/// Whether a filesystem event under the project can mean a file changed.
+///
+/// Reads are not changes. On Linux inotify reports every `open` and `close`
+/// (macOS FSEvents reports neither). Every listener of `atlas:explorer:changed`
+/// reads the tree: the explorer re-lists directories, open editor tabs
+/// revalidate, and the project git store runs `git status`. Without this
+/// filter each of those reads fired the watcher again, about 40 times a
+/// second on an idle window (#407). Same rule as `atlas-theme`'s
+/// `is_theme_change` and #375's `is_git_change`.
+///
+/// Closing a file opened for writing still counts. A write always comes with
+/// a modify event too, so this is belt and braces, and nothing that only reads
+/// produces it.
+fn is_file_change(event: &notify::Event) -> bool {
+    use notify::event::{AccessKind, AccessMode};
+    match event.kind {
+        EventKind::Access(AccessKind::Close(AccessMode::Write)) => true,
+        EventKind::Access(_) => false,
+        _ => true,
+    }
+}
+
 fn walk_project(root: &Path) -> Vec<IndexedFile> {
     let walker = WalkBuilder::new(root)
         .hidden(false) // dotfiles like .env / .gitignore are valid hits
@@ -1259,6 +1284,49 @@ mod tests {
         // ASCII paths take the same fast path as before.
         assert!(score("readme", "docs/über/README.md").is_some());
         assert!(score("xyz", "docs/café.md").is_none());
+    }
+
+    /// What re-listing a directory, revalidating an editor tab or `git status`
+    /// does to the project on Linux: open, read, close. None of it may reach
+    /// the frontend, or its refresh re-fires the watcher forever (#407).
+    #[test]
+    fn reads_are_not_file_changes() {
+        use notify::event::{AccessKind, AccessMode};
+        for kind in [
+            AccessKind::Open(AccessMode::Read),
+            AccessKind::Open(AccessMode::Any),
+            AccessKind::Close(AccessMode::Read),
+            AccessKind::Read,
+            AccessKind::Any,
+        ] {
+            assert!(
+                !is_file_change(&notify::Event::new(EventKind::Access(kind))),
+                "{kind:?} must not count as a change"
+            );
+        }
+    }
+
+    /// Edits, creates, deletes and renames still reach the explorer and the
+    /// code index.
+    #[test]
+    fn writes_are_file_changes() {
+        use notify::event::{
+            AccessKind, AccessMode, CreateKind, DataChange, RemoveKind, RenameMode,
+        };
+        for kind in [
+            EventKind::Create(CreateKind::File),
+            EventKind::Modify(ModifyKind::Data(DataChange::Content)),
+            EventKind::Modify(ModifyKind::Name(RenameMode::To)),
+            EventKind::Modify(ModifyKind::Any),
+            EventKind::Remove(RemoveKind::File),
+            EventKind::Access(AccessKind::Close(AccessMode::Write)),
+            EventKind::Any,
+        ] {
+            assert!(
+                is_file_change(&notify::Event::new(kind)),
+                "{kind:?} must count as a change"
+            );
+        }
     }
 
     #[test]
