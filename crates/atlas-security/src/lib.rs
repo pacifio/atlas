@@ -7,4 +7,6 @@
 //! `docs/superpowers/specs/2026-10-31-security-agent-design.md` (local only).
 
 pub mod diff;
+pub mod map;
 pub mod repo;
+pub mod tags;

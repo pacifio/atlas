@@ -8,6 +8,7 @@ description = "The Atlas Security Agent's scanner (ATL-985): reads a Checkpoint'
 name = "atlas_security"
 
 [dependencies]
+regex = "1"
 
 [dev-dependencies]
 tempfile = "3"
