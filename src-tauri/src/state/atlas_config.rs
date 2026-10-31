@@ -610,7 +610,8 @@ pub struct AppSettings {
     pub pull_request_guide_instructions: String,
     /// Scan each new Checkpoint's commit with the local security layers
     /// (`commands::security_scan`), storing results without showing them:
-    /// shadow mode for ATL-985. Default **OFF**.
+    /// shadow mode for ATL-985. Default **OFF** in released builds; the
+    /// worker treats an absent key as ON in development builds.
     #[serde(default)]
     pub security_scan: bool,
 }

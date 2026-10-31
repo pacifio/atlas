@@ -311,7 +311,7 @@ const SETTINGS_DOCS: &[(&str, &str)] = &[
     ),
     (
         "securityScan",
-        "# Scan each new checkpoint's commit in the background for leaked credentials,\n# risky calls and dependencies with known advisories. Runs entirely on this\n# machine; only the public advisory lists are downloaded. Results are stored\n# with the checkpoint and not shown yet. Commits from before it was turned on\n# are not scanned. (default: false)",
+        "# Scan each new checkpoint's commit in the background for leaked credentials,\n# risky calls and dependencies with known advisories. Runs entirely on this\n# machine; only the public advisory lists are downloaded. Results are stored\n# with the checkpoint and not shown yet. Commits from before it was turned on\n# are not scanned. Off in released builds and on in development builds unless\n# this key is set. (default: false)",
     ),
 ];
 

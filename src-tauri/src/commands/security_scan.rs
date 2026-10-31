@@ -38,6 +38,11 @@ const SCAN_BUDGET: Duration = Duration::from_secs(30);
 const TICK: Duration = Duration::from_secs(10 * 60);
 /// How old the advisory index may get before a refresh.
 const ADVISORY_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
+/// After a failed refresh, try again this soon rather than a day later.
+const ADVISORY_RETRY: Duration = Duration::from_secs(60 * 60);
+/// A stalled download must not hold the only scan thread forever.
+const ADVISORY_CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
+const ADVISORY_READ_TIMEOUT: Duration = Duration::from_secs(60);
 
 static WORKER: OnceLock<mpsc::Sender<PathBuf>> = OnceLock::new();
 
@@ -63,25 +68,22 @@ pub(crate) fn nudge(project_root: &Path) {
 }
 
 fn worker(rx: mpsc::Receiver<PathBuf>, stores: StoreRegistry) {
-    let mut last_refresh: Option<Instant> = None;
+    let mut next_refresh: Option<Instant> = None;
     loop {
         let roots = match rx.recv_timeout(TICK) {
             Ok(root) => vec![root],
             Err(mpsc::RecvTimeoutError::Timeout) => registered_roots(&stores),
             Err(mpsc::RecvTimeoutError::Disconnected) => return,
         };
-        let enabled = crate::state::atlas_config::ConfigManager::load()
-            .effective()
-            .security_scan;
-        if !enabled {
+        if !scan_enabled(configured_setting(), atlas_profile::is_dev()) {
             continue;
         }
         let Some(data_dir) = data_dir() else {
             continue;
         };
-        if last_refresh.is_none_or(|t| t.elapsed() >= ADVISORY_MAX_AGE) {
-            refresh_advisories(&data_dir);
-            last_refresh = Some(Instant::now());
+        if next_refresh.is_none_or(|t| Instant::now() >= t) {
+            let failed = refresh_advisories(&data_dir);
+            next_refresh = Some(Instant::now() + next_refresh_in(failed));
         }
         for root in roots {
             let Some((store, is_writer)) = registered_store(&stores, &root) else {
@@ -109,6 +111,42 @@ fn worker(rx: mpsc::Receiver<PathBuf>, stores: StoreRegistry) {
     }
 }
 
+/// On when `securityScan` says so. With the key absent it is on in
+/// development builds (`bun run dev:app`) and off in released ones, so the
+/// team collects shadow data without every user paying for it.
+fn scan_enabled(explicit: Option<bool>, dev_build: bool) -> bool {
+    explicit.unwrap_or(dev_build)
+}
+
+/// `securityScan` as written in this profile's `config.toml`, if it is.
+fn configured_setting() -> Option<bool> {
+    let path = crate::state::atlas_config::ConfigManager::config_path()?;
+    explicit_setting(&std::fs::read_to_string(path).ok()?)
+}
+
+/// `[settings] securityScan` in a config file's text; `None` when the key
+/// is absent or the file does not parse.
+fn explicit_setting(raw: &str) -> Option<bool> {
+    let doc: toml::Table = toml::from_str(raw).ok()?;
+    doc.get("settings")?.get("securityScan")?.as_bool()
+}
+
+fn next_refresh_in(failed: bool) -> Duration {
+    if failed {
+        ADVISORY_RETRY
+    } else {
+        ADVISORY_MAX_AGE
+    }
+}
+
+fn advisory_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(ADVISORY_CONNECT_TIMEOUT)
+        .read_timeout(ADVISORY_READ_TIMEOUT)
+        .build()
+        .unwrap_or_default()
+}
+
 /// Where the advisory index lives: the OS cache folder, per profile.
 fn data_dir() -> Option<PathBuf> {
     Some(
@@ -118,8 +156,9 @@ fn data_dir() -> Option<PathBuf> {
     )
 }
 
-fn refresh_advisories(data_dir: &Path) {
-    let client = reqwest::Client::new();
+/// Refresh the advisory index; `true` when any ecosystem failed.
+fn refresh_advisories(data_dir: &Path) -> bool {
+    let client = advisory_client();
     let outcome =
         tauri::async_runtime::block_on(refresh(&data_dir.join("osv"), &client, ADVISORY_MAX_AGE));
     if !outcome.failed.is_empty() {
@@ -130,6 +169,7 @@ fn refresh_advisories(data_dir: &Path) {
             "advisory refresh incomplete"
         );
     }
+    !outcome.failed.is_empty()
 }
 
 /// What one pass over a Project did.
@@ -154,22 +194,25 @@ pub(crate) fn scan_project_once(
     if !enabled {
         return once;
     }
-    let since = {
-        let guard = lock(store);
-        match guard.scan_state("since") {
-            Ok(Some(raw)) => match DateTime::parse_from_rfc3339(&raw) {
-                Ok(t) => t.with_timezone(&Utc),
-                Err(_) => return once,
-            },
-            Ok(None) => {
-                let _ = guard.set_scan_state("since", &Utc::now().to_rfc3339());
-                once.started = true;
-                return once;
-            }
-            Err(_) => return once,
-        }
+    // Reads go through their own connection, so capture's writer lock is
+    // only taken to write a row (as `StoreRegistry`'s doc asks of readers).
+    let atlas_dir = lock(store).root().to_path_buf();
+    let Ok(reader) = Store::open_reader(&atlas_dir) else {
+        return once;
     };
-    let backlog = match lock(store).scan_backlog(SCANNER_VERSION, since, BATCH) {
+    let since = match reader.scan_state("since") {
+        Ok(Some(raw)) => match DateTime::parse_from_rfc3339(&raw) {
+            Ok(t) => t.with_timezone(&Utc),
+            Err(_) => return once,
+        },
+        Ok(None) => {
+            let _ = lock(store).set_scan_state("since", &Utc::now().to_rfc3339());
+            once.started = true;
+            return once;
+        }
+        Err(_) => return once,
+    };
+    let backlog = match reader.scan_backlog(SCANNER_VERSION, since, BATCH) {
         Ok(b) => b,
         Err(_) => return once,
     };
@@ -177,7 +220,7 @@ pub(crate) fn scan_project_once(
         root: root.to_path_buf(),
     };
     for checkpoint in backlog {
-        let provenance = from_store(&lock(store), &checkpoint.session_id).unwrap_or_default();
+        let provenance = from_store(&reader, &checkpoint.session_id).unwrap_or_default();
         // Loaded only for the ecosystems this commit's lockfiles use, and
         // dropped as soon as the scan is written.
         let ecosystems = lockfile_ecosystems(root, &checkpoint.commit_sha);
@@ -221,6 +264,7 @@ fn lockfile_ecosystems(root: &Path, sha: &str) -> Vec<Ecosystem> {
     let out = Command::new("git")
         .arg("-C")
         .arg(root)
+        .args(["-c", "core.quotepath=off"])
         .args([
             "diff-tree",
             "--no-commit-id",
@@ -344,6 +388,44 @@ mod tests {
                 sync_state: ProjectMode::Local.initial_sync_state(),
             })
             .unwrap()
+    }
+
+    #[test]
+    fn an_explicit_setting_wins_and_dev_builds_default_on() {
+        assert!(scan_enabled(None, true), "dev build, key absent: on");
+        assert!(!scan_enabled(None, false), "release build, key absent: off");
+        assert!(
+            !scan_enabled(Some(false), true),
+            "dev can still turn it off"
+        );
+        assert!(scan_enabled(Some(true), false), "release can turn it on");
+        assert_eq!(
+            explicit_setting("[settings]\nsecurityScan = false\n"),
+            Some(false)
+        );
+        assert_eq!(
+            explicit_setting("schemaVersion = 1\n[settings]\nsecurityScan = true\n"),
+            Some(true)
+        );
+        assert_eq!(
+            explicit_setting("[settings]\nshareTelemetry = true\n"),
+            None
+        );
+        assert_eq!(explicit_setting("not = [valid"), None);
+    }
+
+    #[test]
+    fn a_failed_refresh_is_retried_within_the_hour() {
+        assert_eq!(next_refresh_in(false), ADVISORY_MAX_AGE);
+        assert!(next_refresh_in(true) <= Duration::from_secs(60 * 60));
+    }
+
+    #[test]
+    fn the_advisory_client_has_timeouts() {
+        // Building it must succeed; the timeouts themselves are reqwest's.
+        let _ = advisory_client();
+        assert!(ADVISORY_CONNECT_TIMEOUT <= Duration::from_secs(30));
+        assert!(ADVISORY_READ_TIMEOUT <= Duration::from_secs(120));
     }
 
     #[test]

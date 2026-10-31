@@ -409,7 +409,8 @@ export interface AppSettings {
    * Scan each new checkpoint's commit in the background for leaked credentials, risky calls and
    * dependencies with known advisories. Runs entirely on this machine; only the public advisory
    * lists are downloaded. Results are stored with the checkpoint and not shown yet. Commits
-   * from before it was turned on are not scanned.
+   * from before it was turned on are not scanned. Off in released builds and on in development
+   * builds unless this key is set.
    */
   securityScan: boolean;
 }
