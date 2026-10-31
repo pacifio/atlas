@@ -6,6 +6,7 @@
 //! against real git repositories and real stores. See
 //! `docs/superpowers/specs/2026-10-31-security-agent-design.md` (local only).
 
+pub mod clef;
 pub mod deps;
 pub mod diff;
 pub mod finding;
