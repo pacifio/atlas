@@ -110,6 +110,7 @@ const ENV_KEY_VARS: &[(&str, &[&str])] = &[
         "cheaperinference",
         &["CHEAPER_INFERENCE_API_KEY", "CHEAPERINFERENCE_API_KEY"],
     ),
+    ("runcrate", &["RUNCRATE_API_KEY"]),
 ];
 
 /// One env-imported key: which provider it maps to, the variable it came from,
@@ -768,5 +769,15 @@ mod tests {
             vars,
             &["CHEAPER_INFERENCE_API_KEY", "CHEAPERINFERENCE_API_KEY"]
         );
+    }
+
+    #[test]
+    fn test_runcrate_env_vars() {
+        let entry = ENV_KEY_VARS
+            .iter()
+            .find(|(provider, _)| *provider == "runcrate");
+        assert!(entry.is_some(), "runcrate must be in ENV_KEY_VARS");
+        let (_, vars) = entry.unwrap();
+        assert_eq!(vars, &["RUNCRATE_API_KEY"]);
     }
 }
