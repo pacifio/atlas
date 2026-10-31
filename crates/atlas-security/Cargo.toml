@@ -11,10 +11,13 @@ name = "atlas_security"
 atlas-checkpoint = { path = "../atlas-checkpoint" }
 atlas-redact = { path = "../atlas-redact" }
 regex = "1"
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+semver = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 toml = "0.9"
+zip = "9.1"
 
 [dev-dependencies]
 tempfile = "3"
