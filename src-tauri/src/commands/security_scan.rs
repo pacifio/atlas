@@ -1,16 +1,18 @@
 //! Background security scans of new Checkpoints (ATL-985), in shadow mode.
 //!
-//! After the commit walk records Checkpoints, capture nudges this worker with
-//! the Project's root. On its own thread it scans each Checkpoint's commit
-//! with the local layers of `atlas-security` and stores the result beside the
-//! Checkpoint. Nothing is shown to the user yet: results are read with the
-//! harness's `security-eval export`. Gated by `securityScan` in `config.toml`,
-//! off by default.
+//! When capture links new Checkpoints (the commit walk, or a commit an agent
+//! made from its own shell), it nudges this worker with the Project's root.
+//! On its own thread the worker scans each Checkpoint's commit with the local
+//! layers of `atlas-security` and stores the result beside the Checkpoint.
+//! Nothing is shown to the user yet: results are read with the harness's
+//! `security-eval export`. Gated by `securityScan` in `config.toml`: an
+//! explicit value wins; absent, it is on in development builds and off in
+//! released ones.
 //!
 //! The capture path never waits on this. A nudge is a channel send; the scan
 //! runs with the store unlocked and only re-locks to write its row. History
-//! from before the first run is never scanned: the first pass records `since`
-//! and stops.
+//! is never scanned: the first pass starts a few minutes back, which takes in
+//! the commit that woke it and nothing older.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -172,10 +174,17 @@ fn refresh_advisories(data_dir: &Path) -> bool {
     !outcome.failed.is_empty()
 }
 
+/// Where scanning starts in a Project scanned for the first time: a few
+/// minutes back, so the commit whose checkpoint woke the scanner is
+/// included, while the Project's history is not.
+fn initial_since(now: DateTime<Utc>) -> DateTime<Utc> {
+    now - chrono::Duration::minutes(5)
+}
+
 /// What one pass over a Project did.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct ScanOnce {
-    /// This pass recorded `since`: the first pass ever, which scans nothing.
+    /// This pass recorded `since`: the Project's first pass.
     pub started: bool,
     pub scanned: usize,
     pub findings: usize,
@@ -206,9 +215,15 @@ pub(crate) fn scan_project_once(
             Err(_) => return once,
         },
         Ok(None) => {
-            let _ = lock(store).set_scan_state("since", &Utc::now().to_rfc3339());
+            let since = initial_since(Utc::now());
+            if lock(store)
+                .set_scan_state("since", &since.to_rfc3339())
+                .is_err()
+            {
+                return once;
+            }
             once.started = true;
-            return once;
+            since
         }
         Err(_) => return once,
     };
@@ -429,12 +444,14 @@ mod tests {
     }
 
     #[test]
-    fn first_run_records_since_and_scans_nothing() {
+    fn the_first_pass_scans_the_commit_that_woke_it() {
+        // The nudge comes right after the commit is linked, so the pass that
+        // records `since` must still count that checkpoint as new.
         let p = project();
-        commit_checkpoint(&p, "old.ts", "const a = 1;\n");
+        commit_checkpoint(&p, "new.ts", "const a = 1;\n");
         let once = scan_project_once(&p.store, p.dir.path(), p.data.path(), true);
         assert!(once.started);
-        assert_eq!(once.scanned, 0);
+        assert_eq!(once.scanned, 1);
         assert!(p
             .store
             .lock()
@@ -442,6 +459,12 @@ mod tests {
             .scan_state("since")
             .unwrap()
             .is_some());
+    }
+
+    #[test]
+    fn scanning_starts_a_few_minutes_back_not_at_the_beginning() {
+        let now = Utc::now();
+        assert_eq!(initial_since(now), now - chrono::Duration::minutes(5));
     }
 
     #[test]

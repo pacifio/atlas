@@ -3523,12 +3523,16 @@ fn process_job(job: Job, session_ids: &mut HashMap<String, String>, stores: &Sto
 
     if !link_after.is_empty() {
         match atlas_checkpoint::link_commits(store, &key.workspace_id, &root, &link_after, mode) {
-            Ok(created) if created > 0 => tracing::info!(
-                target: "atlas::capture",
-                commits = link_after.len(),
-                created,
-                "linked the commits a shell call made itself"
-            ),
+            Ok(created) if created > 0 => {
+                tracing::info!(
+                    target: "atlas::capture",
+                    commits = link_after.len(),
+                    created,
+                    "linked the commits a shell call made itself"
+                );
+                // An agent's own `git commit` lands here, not in the walk.
+                super::security_scan::nudge(&root);
+            }
             Ok(_) => {}
             Err(e) => tracing::warn!(
                 target: "atlas::capture",
