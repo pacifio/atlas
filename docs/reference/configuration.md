@@ -218,6 +218,8 @@ bookkeeping).
 | `diffPalette` | `"theme"` \| `"blue-orange"` | `"theme"` | Appearance › Interface › Diff colours | exactly one of these two strings |
 | `interfaceContrast` | integer | `100` | Appearance › Interface › Contrast | 50 ≤ n ≤ 200 |
 | `showTurnRail` | boolean | `true` | Appearance › Interface › Turn rail | — |
+| `welcomeBackground` | `"glow"` \| `"plain"` | `"glow"` | Appearance › Interface › New session background | exactly one of these two strings |
+| `welcomeGlowColor` | `"random"` \| `"ember"` \| `"plum"` \| `"ocean"` \| `"moss"` \| `"amber"` \| `"teal"` | `"random"` | Appearance › Interface › Glow colour | exactly one of these seven strings |
 | `autoSettleOnMerge` | boolean | `true` | Pull Requests › Sessions › Settle sessions when their pull request merges | — |
 | `autoSettleKeepPullRequests` | boolean | `true` | Pull Requests › Sessions › Keep sessions with a pull request from settling | — |
 | `pullRequestWatchWakes` | boolean | `true` | Pull Requests › Sessions › Let agents act on watched pull requests | — |

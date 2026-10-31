@@ -31,6 +31,7 @@ import { ColourSchemeSection } from "../appearance/colour-scheme-section";
 import { ThemesSection } from "../appearance/themes-section";
 import { IconThemesSection } from "../appearance/icon-themes-section";
 import { TypographySection } from "../appearance/typography-section";
+import { WELCOME_PALETTE } from "@/features/chat/components/welcome-glow";
 
 const CHAT_WIDTHS = [
   { value: "normal", label: "Normal", description: "760 pixels, the easiest line length to read." },
@@ -65,8 +66,34 @@ const DIFF_PALETTES = [
   },
 ] as const;
 
+const WELCOME_BACKGROUNDS = [
+  { value: "glow", label: "Glow", description: "A soft colour glow from the top edge." },
+  { value: "plain", label: "Plain", description: "The theme's own background." },
+] as const;
+
+/** A palette entry's dot, drawn by the same hue map as the glow itself. */
+function GlowSwatch({ name }: { name: string }) {
+  return (
+    <span aria-hidden className="atlas-welcome-swatch size-2.5 rounded-full" data-palette={name} />
+  );
+}
+
+const WELCOME_GLOW_COLORS = [
+  {
+    value: "random",
+    label: "Random",
+    description: "A different colour each time a new session opens.",
+  },
+  ...WELCOME_PALETTE.map((name) => ({
+    value: name,
+    label: name.charAt(0).toUpperCase() + name.slice(1),
+    icon: <GlowSwatch name={name} />,
+  })),
+] as const;
+
 export function AppearancePage() {
   const appIcon = useSettingsStore((s) => s.settings.appIcon);
+  const welcomeBackground = useSettingsStore((s) => s.settings.welcomeBackground);
   const { updateSettings } = useSettingsStore.use.actions();
 
   return (
@@ -100,6 +127,22 @@ export function AppearancePage() {
             control={<SettingSelect setting="chatWidth" options={CHAT_WIDTHS} />}
           />
           <SettingsRow setting="showTurnRail" control={<SettingSwitch setting="showTurnRail" />} />
+          <SettingsRow
+            setting="welcomeBackground"
+            control={<SettingSelect setting="welcomeBackground" options={WELCOME_BACKGROUNDS} />}
+          />
+          <SettingsRow
+            setting="welcomeGlowColor"
+            disabled={welcomeBackground === "plain"}
+            disabledReason="Only applies to the glow background."
+            control={
+              <SettingSelect
+                setting="welcomeGlowColor"
+                options={WELCOME_GLOW_COLORS}
+                disabled={welcomeBackground === "plain"}
+              />
+            }
+          />
           <SettingsRow
             setting="wordWrap"
             description="In file tabs and diffs. The wrap button in a file's or the review diff's header flips this too. A session's code blocks have their own setting, under Sessions."

@@ -340,6 +340,17 @@ interfaceContrast = 100
 # true)
 showTurnRail = true
 
+# What sits behind a new, empty session: "glow" is a soft radial glow from the
+# top edge in a colour from the palette (see welcomeGlowColor), "plain" is the
+# theme's own background. (default: "glow")
+welcomeBackground = "glow"
+
+# The colour of the new-session glow. "random" picks a different one from the
+# palette each time a new session opens; any other value always uses that
+# colour. Each has a dark and a light version, matched to the colour scheme.
+# Has no effect while welcomeBackground is "plain". (default: "random")
+welcomeGlowColor = "random"
+
 # Settle a session once its linked pull request merges, when the merge came
 # after you last worked in the session. A pull request that is closed without
 # merging always settles its session. Settled sessions stay listed and

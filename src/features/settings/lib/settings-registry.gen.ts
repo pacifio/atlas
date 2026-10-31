@@ -345,6 +345,18 @@ export interface AppSettings {
    */
   showTurnRail: boolean;
   /**
+   * What sits behind a new, empty session: "glow" is a soft radial glow from the top edge in a
+   * colour from the palette (see welcomeGlowColor), "plain" is the theme's own background.
+   */
+  welcomeBackground: "glow" | "plain";
+  /**
+   * The colour of the new-session glow. "random" picks a different one from the palette each
+   * time a new session opens; any other value always uses that colour. Each has a dark and a
+   * light version, matched to the colour scheme. Has no effect while welcomeBackground is
+   * "plain".
+   */
+  welcomeGlowColor: "random" | "ember" | "plum" | "ocean" | "moss" | "amber" | "teal";
+  /**
    * Settle a session once its linked pull request merges, when the merge came after you last
    * worked in the session. A pull request that is closed without merging always settles its
    * session. Settled sessions stay listed and resumable.
@@ -476,6 +488,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   diffPalette: "theme",
   interfaceContrast: 100,
   showTurnRail: true,
+  welcomeBackground: "glow",
+  welcomeGlowColor: "random",
   autoSettleOnMerge: true,
   autoSettleKeepPullRequests: true,
   pullRequestWatchWakes: true,
@@ -1230,6 +1244,26 @@ export const SETTINGS_REGISTRY: readonly SettingMeta[] = [
     title: "Turn rail",
     summary:
       "Show a tick for each turn down the left edge of a session. Hover one to preview it, click it to jump there.",
+  },
+  {
+    key: "welcomeBackground",
+    type: "enum",
+    status: "live",
+    page: "appearance",
+    section: "Interface",
+    title: "New session background",
+    summary: "A coloured glow behind a new session, or the plain background.",
+    values: ["glow", "plain"],
+  },
+  {
+    key: "welcomeGlowColor",
+    type: "enum",
+    status: "live",
+    page: "appearance",
+    section: "Interface",
+    title: "Glow colour",
+    summary: "A different colour each time, or always the same one.",
+    values: ["random", "ember", "plum", "ocean", "moss", "amber", "teal"],
   },
   {
     key: "autoSettleOnMerge",
