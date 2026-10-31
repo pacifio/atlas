@@ -3403,7 +3403,9 @@ dependencies = [
 name = "atlas-security"
 version = "0.1.0"
 dependencies = [
+ "atlas-checkpoint",
  "regex",
+ "serde_json",
  "tempfile",
 ]
 

@@ -200,6 +200,7 @@ describe("the CI plan", () => {
       "atlas-memory",
       "atlas-process",
       "atlas-redact",
+      "atlas-security",
     ]);
     expect(p.engineDialect).toBe(false);
   });

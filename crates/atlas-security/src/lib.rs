@@ -8,5 +8,6 @@
 
 pub mod diff;
 pub mod map;
+pub mod provenance;
 pub mod repo;
 pub mod tags;
