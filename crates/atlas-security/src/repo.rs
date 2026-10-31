@@ -9,6 +9,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
+use atlas_process::NoWindow;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RepoError {
     /// The commit is not in the repository (rewritten history, a gc'd object).
@@ -45,6 +47,7 @@ pub struct GitCli {
 impl GitCli {
     fn run(&self, args: &[&str]) -> Result<Output, RepoError> {
         Command::new("git")
+            .no_window()
             .arg("-C")
             .arg(&self.root)
             .args(["-c", "core.quotepath=off"])

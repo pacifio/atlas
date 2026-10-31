@@ -16,6 +16,8 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+use atlas_process::NoWindow;
 use std::sync::mpsc;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -277,6 +279,7 @@ pub(crate) fn scan_project_once(
 /// report what it could not read.
 fn lockfile_ecosystems(root: &Path, sha: &str) -> Vec<Ecosystem> {
     let out = Command::new("git")
+        .no_window()
         .arg("-C")
         .arg(root)
         .args(["-c", "core.quotepath=off"])
@@ -325,6 +328,7 @@ mod tests {
 
     fn git(root: &Path, args: &[&str]) -> String {
         let out = Command::new("git")
+            .no_window()
             .arg("-C")
             .arg(root)
             .args(["-c", "user.name=Test", "-c", "user.email=test@example.com"])

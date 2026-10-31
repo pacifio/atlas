@@ -3405,6 +3405,7 @@ name = "atlas-security"
 version = "0.1.0"
 dependencies = [
  "atlas-checkpoint",
+ "atlas-process",
  "atlas-profile",
  "atlas-redact",
  "regex",

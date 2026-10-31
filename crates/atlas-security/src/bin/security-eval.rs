@@ -31,6 +31,7 @@ use std::process::{Command, ExitCode};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use atlas_process::NoWindow;
 use atlas_security::clef::{
     build_state, parse_answers, request_body, ESCALATE_AT, MAX_STATE_CHARS, WORTH_A_LOOK_AT,
 };
@@ -158,6 +159,7 @@ struct MergeRepo {
 impl Repo for MergeRepo {
     fn commit_diff(&self, sha: &str) -> Result<Vec<u8>, RepoError> {
         let out = Command::new("git")
+            .no_window()
             .arg("-C")
             .arg(&self.git.root)
             .args(["diff", "-M", "-U3", "--no-color", "--no-ext-diff"])
@@ -643,6 +645,7 @@ fn speed(args: &[String]) -> Result<(), String> {
         .unwrap_or(2);
 
     let out = Command::new("git")
+        .no_window()
         .arg("-C")
         .arg(&root)
         .args(["rev-list", "--no-merges", "-n", &n.to_string(), rev])
@@ -677,6 +680,7 @@ fn speed(args: &[String]) -> Result<(), String> {
         let started = Instant::now();
         // What the worker does before scanning: which lockfile ecosystems?
         let names = Command::new("git")
+            .no_window()
             .arg("-C")
             .arg(&root)
             .args([
