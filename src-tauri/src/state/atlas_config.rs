@@ -608,6 +608,11 @@ pub struct AppSettings {
     /// The user's preferences for guides, appended to the guide prompt.
     #[serde(default)]
     pub pull_request_guide_instructions: String,
+    /// Scan each new Checkpoint's commit with the local security layers
+    /// (`commands::security_scan`), storing results without showing them:
+    /// shadow mode for ATL-985. Default **OFF**.
+    #[serde(default)]
+    pub security_scan: bool,
 }
 
 /// The longest `pullRequestGuideInstructions` accepted, in bytes.
@@ -748,6 +753,7 @@ impl Default for AppSettings {
             pull_request_guide_agent: String::new(),
             pull_request_guide_model: String::new(),
             pull_request_guide_instructions: String::new(),
+            security_scan: false,
         }
     }
 }
@@ -1265,6 +1271,7 @@ pub struct SettingsPatch {
     pub pull_request_guide_agent: Option<String>,
     pub pull_request_guide_model: Option<String>,
     pub pull_request_guide_instructions: Option<String>,
+    pub security_scan: Option<bool>,
 }
 
 impl SettingsPatch {
@@ -1443,6 +1450,7 @@ impl SettingsPatch {
             pull_request_guide_agent,
             pull_request_guide_model,
             pull_request_guide_instructions,
+            security_scan,
         );
     }
 
@@ -1509,6 +1517,7 @@ impl SettingsPatch {
         set_bool!(pull_request_watch_wakes, "pullRequestWatchWakes");
         set_bool!(pull_request_links_open_in_app, "pullRequestLinksOpenInApp");
         set_bool!(remove_agent_credits_on_merge, "removeAgentCreditsOnMerge");
+        set_bool!(security_scan, "securityScan");
         set_bool!(pull_request_guide_enabled, "pullRequestGuideEnabled");
         macro_rules! set_str {
             ($field:ident, $key:literal) => {
@@ -2770,6 +2779,7 @@ someFutureKey = \"left alone\"
             pull_request_guide_agent: Some("claude-code".to_string()),
             pull_request_guide_model: Some("opus".to_string()),
             pull_request_guide_instructions: Some("Show contracts first.\nSkip tests.".to_string()),
+            security_scan: Some(!defaults.security_scan),
         };
         let mut expected = defaults.clone();
         patch.apply_to(&mut expected);

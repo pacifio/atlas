@@ -309,6 +309,10 @@ const SETTINGS_DOCS: &[(&str, &str)] = &[
         "pullRequestGuideInstructions",
         "# Your preferences for review guides, added to the guide's prompt: what to\n# show first, dwell on or skip, and how long summaries should be. The guide's\n# format and its coverage of every changed file stay the same. (default: \"\") A\n# project can override it in its own .atlas/config.toml.",
     ),
+    (
+        "securityScan",
+        "# Scan each new checkpoint's commit in the background for leaked credentials,\n# risky calls and dependencies with known advisories. Runs entirely on this\n# machine; only the public advisory lists are downloaded. Results are stored\n# with the checkpoint and not shown yet. Commits from before it was turned on\n# are not scanned. (default: false)",
+    ),
 ];
 
 /// The keys a project's `.atlas/config.toml` may override (`project` in the
