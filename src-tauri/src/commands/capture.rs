@@ -582,7 +582,7 @@ impl CaptureState {
     /// Every write path — binding, promotion, the worker's own jobs — must go
     /// through this. Opening a second `Store` on the same root inside this
     /// process is what produced the phantom "another Atlas window" error.
-    fn writer(&self, root: &Path) -> Result<Arc<Mutex<Store>>, String> {
+    pub(crate) fn writer(&self, root: &Path) -> Result<Arc<Mutex<Store>>, String> {
         Ok(open_in(&self.stores, root)?.store)
     }
 

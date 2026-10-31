@@ -10,6 +10,7 @@ import {
   Hand,
   KeyRound,
   MessageSquare,
+  ShieldAlert,
   SquareTerminal,
   Sparkles,
   X,
@@ -43,6 +44,7 @@ function SourceIcon({ kind, size }: { kind: NotificationKind; size: number }) {
     return <GitBranch {...common} className={warn} />;
   if (kind === "config-error") return <AlertTriangle {...common} className={warn} />;
   if (kind === "agent-update-failed") return <Download {...common} className={warn} />;
+  if (kind === "security-finding") return <ShieldAlert {...common} className={error} />;
   if (kind === "pull-request-guide")
     return <GitPullRequest {...common} className="text-secondary-foreground" />;
   const source = catalogEntry(kind).source;

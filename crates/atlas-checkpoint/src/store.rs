@@ -2309,6 +2309,39 @@ impl Store {
         Ok(out)
     }
 
+    /// Every stored scan of `scanner_version`, with its Checkpoint, oldest
+    /// Checkpoint first. One store is one Project, so this is the Project's.
+    pub fn scans(&self, scanner_version: &str) -> Result<Vec<(Checkpoint, ScanRow)>> {
+        let columns = CHECKPOINT_COLUMNS
+            .split(", ")
+            .map(|c| format!("c.{}", c.trim()))
+            .chain(SCAN_COLUMNS.split(", ").map(|c| format!("s.{}", c.trim())))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let width = CHECKPOINT_COLUMNS.split(", ").count();
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {columns} FROM checkpoint_scan s
+               JOIN checkpoint c ON c.id = s.checkpoint_id
+              WHERE s.scanner_version = ?1
+              ORDER BY c.created_at"
+        ))?;
+        let rows = stmt.query_map([scanner_version], |row| {
+            let checkpoint = row_to_checkpoint(row)?;
+            let scan = ScanRow {
+                checkpoint_id: row.get(width)?,
+                scanner_version: row.get(width + 1)?,
+                status: row.get(width + 2)?,
+                level: row.get(width + 3)?,
+                blocking: row.get(width + 4)?,
+                result_json: row.get(width + 5)?,
+                attempts: row.get(width + 6)?,
+                created_at: parse_time(row.get::<_, String>(width + 7)?),
+            };
+            Ok((checkpoint, scan))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     /// Mark a finding "Not useful", or take the mark back.
     pub fn set_not_useful(
         &self,

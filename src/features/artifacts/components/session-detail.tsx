@@ -79,6 +79,9 @@ import { filterKeyForKind } from "../lib/comment-threads";
 import { JUMP_EVENT, type JumpDetail } from "./session-chat-message";
 import { AgentGlyph } from "./agent-glyph";
 import { formatDateTime, formatTime } from "@/lib/format-time";
+import { CheckpointFindings } from "@/features/security/components/checkpoint-findings";
+import { SecuritySummary } from "@/features/security/components/security-summary";
+import { ShipOverviewCard } from "@/features/security/components/ship-overview-card";
 
 /**
  * One Session, as the ordered record of what happened.
@@ -582,7 +585,11 @@ export function SessionDetail({
             className="hide-scrollbar min-h-0 flex-1 overflow-y-auto"
           >
             <div ref={contentRef} className={cn(MEASURE, "pb-28 pt-14")}>
-              <Masthead detail={detail} comments={comments} />
+              <Masthead detail={detail} comments={comments} projectPath={projectPath} />
+              <ShipOverviewCard
+                projectPath={projectPath}
+                branch={detail.summary.branches[0] ?? ""}
+              />
 
               {groups.length === 0 ? (
                 <Empty
@@ -719,7 +726,15 @@ export function SessionDetail({
  * around it rather than three rows that happen to be stacked. Export is not
  * here; it lives in the header dock with the tab's other actions.
  */
-function Masthead({ detail, comments }: { detail: Detail; comments: RowComments | null }) {
+function Masthead({
+  detail,
+  comments,
+  projectPath,
+}: {
+  detail: Detail;
+  comments: RowComments | null;
+  projectPath: string;
+}) {
   const openSignal = useOpenSignal(detail.summary.id);
   const s = detail.summary;
   const branch = s.branches[0];
@@ -855,6 +870,7 @@ function Masthead({ detail, comments }: { detail: Detail; comments: RowComments 
           />
         )}
       </div>
+      <SecuritySummary projectPath={projectPath} sessionId={s.id} />
     </>
   );
 }
@@ -1212,7 +1228,7 @@ const Row = memo(function Row({
             revealId={landedCallId}
           />
         ) : group.kind === "checkpoint" ? (
-          <Checkpoint entry={head} />
+          <Checkpoint entry={head} projectPath={projectPath} />
         ) : group.kind === "prompt" ? (
           <Prompt entry={head} projectPath={projectPath} />
         ) : (
@@ -1829,7 +1845,7 @@ const CallRow = memo(function CallRow({
  * paths and a diffstat, never the patch. A diff viewer here would need the
  * commit re-read from git, which is a different feature.
  */
-function Checkpoint({ entry }: { entry: TimelineEntry }) {
+function Checkpoint({ entry, projectPath }: { entry: TimelineEntry; projectPath: string }) {
   const orphaned = entry.linkState === "orphaned";
   return (
     <div
@@ -1900,6 +1916,10 @@ function Checkpoint({ entry }: { entry: TimelineEntry }) {
             </li>
           )}
         </ul>
+      )}
+
+      {entry.commitSha && !orphaned && (
+        <CheckpointFindings projectPath={projectPath} commitSha={entry.commitSha} />
       )}
 
       {/* Suppressed when orphaned: the branch no longer contains this commit,

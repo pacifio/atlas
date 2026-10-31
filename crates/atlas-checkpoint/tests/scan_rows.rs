@@ -218,3 +218,21 @@ fn a_finding_can_be_marked_not_useful_and_restored() {
     let got = store.not_useful_fingerprints().unwrap();
     assert!(!got.contains("fp-1") && got.contains("fp-2"));
 }
+
+#[test]
+fn scans_lists_every_stored_scan_of_a_version_oldest_first() {
+    let (_dir, store) = store();
+    let s = session(&store);
+    let a = checkpoint(&store, &s, "f0");
+    let b = checkpoint(&store, &s, "f1");
+    store.put_scan(&row(&b, "local-1", "done")).unwrap();
+    store.put_scan(&row(&a, "local-1", "done")).unwrap();
+    store.put_scan(&row(&a, "local-0", "done")).unwrap();
+    let got: Vec<String> = store
+        .scans("local-1")
+        .unwrap()
+        .into_iter()
+        .map(|(c, _)| c.id)
+        .collect();
+    assert_eq!(got, vec![a, b]);
+}

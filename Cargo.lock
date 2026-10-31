@@ -694,6 +694,7 @@ dependencies = [
  "atlas-native-agent",
  "atlas-process",
  "atlas-profile",
+ "atlas-redact",
  "atlas-search",
  "atlas-security",
  "atlas-terminal",

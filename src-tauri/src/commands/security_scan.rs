@@ -28,8 +28,12 @@ use atlas_security::deps::lockfiles::{ecosystem_of, Ecosystem};
 use atlas_security::deps::osv::{refresh, AdvisoryDb};
 use atlas_security::map::Limits;
 use atlas_security::provenance::from_store;
-use atlas_security::repo::GitCli;
-use atlas_security::scan::{scan_checkpoint, ScanInput, SCANNER_VERSION};
+use atlas_security::repo::{GitCli, Repo};
+use atlas_security::scan::{scan_checkpoint, ScanInput, ScanResult, SCANNER_VERSION};
+use atlas_security::view::{
+    checkpoint_view, session_summary, ship_overview, CheckpointSecurity, SessionSecurity,
+    ShipOverview, ShipScan,
+};
 use chrono::{DateTime, Utc};
 
 use super::capture::{registered_roots, registered_store, StoreRegistry};
@@ -101,13 +105,16 @@ fn worker(rx: mpsc::Receiver<PathBuf>, stores: StoreRegistry) {
                 scan_project_once(&store, &root, &data_dir, true)
             }));
             match result {
-                Ok(once) if once.scanned > 0 => tracing::info!(
-                    target: "atlas::security",
-                    scanned = once.scanned,
-                    findings = once.findings,
-                    blocking = once.blocking,
-                    "scanned checkpoints"
-                ),
+                Ok(once) if once.scanned > 0 => {
+                    tracing::info!(
+                        target: "atlas::security",
+                        scanned = once.scanned,
+                        findings = once.findings,
+                        blocking = once.blocking,
+                        "scanned checkpoints"
+                    );
+                    announce(&root);
+                }
                 Ok(_) => {}
                 Err(_) => tracing::warn!(target: "atlas::security", "a scan pass panicked"),
             }
@@ -315,6 +322,222 @@ fn lock(store: &Mutex<Store>) -> std::sync::MutexGuard<'_, Store> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
+// ── What the UI reads ───────────────────────────────────────────────────────
+
+/// The channel the worker announces a stored scan on, with `{ projectPath }`.
+pub(crate) const SCAN_CHANGED_EVENT: &str = "atlas:security-scan-changed";
+
+static APP: OnceLock<tauri::AppHandle> = OnceLock::new();
+
+/// Give the worker the handle it announces new scans through.
+pub(crate) fn attach(app: tauri::AppHandle) {
+    let _ = APP.set(app);
+}
+
+fn announce(root: &Path) {
+    use tauri::Emitter as _;
+    if let Some(app) = APP.get() {
+        let _ = app.emit(
+            SCAN_CHANGED_EVENT,
+            serde_json::json!({ "projectPath": root.to_string_lossy() }),
+        );
+    }
+}
+
+fn parse_result(json: &str) -> Option<ScanResult> {
+    serde_json::from_str(json).ok()
+}
+
+/// Every scanned session in the Project, with its badge.
+pub(crate) fn project_sessions_in(store: &Store) -> Result<Vec<SessionSecurity>, String> {
+    let not_useful = store.not_useful_fingerprints().map_err(|e| e.to_string())?;
+    let mut by_session: Vec<(String, Vec<CheckpointSecurity>)> = Vec::new();
+    for (checkpoint, row) in store.scans(SCANNER_VERSION).map_err(|e| e.to_string())? {
+        let Some(result) = parse_result(&row.result_json) else {
+            continue;
+        };
+        let view = checkpoint_view(
+            &checkpoint.id,
+            &checkpoint.commit_sha,
+            row.created_at,
+            &result,
+            &not_useful,
+        );
+        match by_session
+            .iter_mut()
+            .find(|(s, _)| *s == checkpoint.session_id)
+        {
+            Some((_, views)) => views.push(view),
+            None => by_session.push((checkpoint.session_id.clone(), vec![view])),
+        }
+    }
+    Ok(by_session
+        .iter()
+        .filter_map(|(session, views)| session_summary(session, views))
+        .collect())
+}
+
+/// A session's scanned checkpoints, for the Checkpoint cards.
+pub(crate) fn session_checkpoints_in(
+    store: &Store,
+    session_id: &str,
+) -> Result<Vec<CheckpointSecurity>, String> {
+    let not_useful = store.not_useful_fingerprints().map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for checkpoint in store
+        .checkpoints_for_session(session_id)
+        .map_err(|e| e.to_string())?
+    {
+        let Some(row) = store
+            .scan_for(&checkpoint.id, SCANNER_VERSION)
+            .map_err(|e| e.to_string())?
+        else {
+            continue;
+        };
+        if let Some(result) = parse_result(&row.result_json) {
+            out.push(checkpoint_view(
+                &checkpoint.id,
+                &checkpoint.commit_sha,
+                row.created_at,
+                &result,
+                &not_useful,
+            ));
+        }
+    }
+    Ok(out)
+}
+
+/// The branch's scanned checkpoints rolled up against its head; `None` when
+/// none of the branch's checkpoints has a scan.
+pub(crate) fn ship_overview_in(
+    store: &Store,
+    root: &Path,
+    branch: &str,
+) -> Result<Option<ShipOverview>, String> {
+    let not_useful = store.not_useful_fingerprints().map_err(|e| e.to_string())?;
+    let scans: Vec<ShipScan> = store
+        .scans(SCANNER_VERSION)
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .filter(|(c, _)| c.branch.as_deref() == Some(branch))
+        .filter_map(|(c, row)| {
+            parse_result(&row.result_json).map(|result| ShipScan {
+                commit_sha: c.commit_sha,
+                result,
+            })
+        })
+        .collect();
+    if scans.is_empty() {
+        return Ok(None);
+    }
+    let repo = GitCli {
+        root: root.to_path_buf(),
+    };
+    let head_file = |path: &str| -> Option<String> {
+        repo.file_at(branch, path)
+            .ok()
+            .flatten()
+            .map(|b| String::from_utf8_lossy(&b).into_owned())
+    };
+    Ok(Some(ship_overview(branch, &scans, &head_file, &not_useful)))
+}
+
+/// One line of a file at a commit, redacted, for "Show line".
+pub(crate) fn finding_line_in(root: &Path, sha: &str, path: &str, line: u32) -> Option<String> {
+    let repo = GitCli {
+        root: root.to_path_buf(),
+    };
+    let bytes = repo.file_at(sha, path).ok()??;
+    let text = String::from_utf8_lossy(&bytes);
+    let raw = text.lines().nth(line.checked_sub(1)? as usize)?;
+    Some(atlas_redact::redact(raw).text)
+}
+
+pub(crate) fn set_not_useful_in(
+    store: &Mutex<Store>,
+    fingerprint: &str,
+    rule_id: &str,
+    not_useful: bool,
+) -> Result<(), String> {
+    lock(store)
+        .set_not_useful(fingerprint, rule_id, SCANNER_VERSION, not_useful)
+        .map_err(|e| e.to_string())
+}
+
+/// The Project's store for reading, or `None` when it has never recorded.
+fn project_reader(project_path: &str) -> Option<Store> {
+    let dir = atlas_profile::dir_in(project_path);
+    dir.join("sessions.db")
+        .exists()
+        .then(|| Store::open_reader(&dir).ok())
+        .flatten()
+}
+
+async fn blocking<T: Send + 'static>(
+    f: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn security_project_sessions(
+    project_path: String,
+) -> Result<Vec<SessionSecurity>, String> {
+    blocking(move || match project_reader(&project_path) {
+        Some(store) => project_sessions_in(&store),
+        None => Ok(Vec::new()),
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn security_session_checkpoints(
+    project_path: String,
+    session_id: String,
+) -> Result<Vec<CheckpointSecurity>, String> {
+    blocking(move || match project_reader(&project_path) {
+        Some(store) => session_checkpoints_in(&store, &session_id),
+        None => Ok(Vec::new()),
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn security_ship_overview(
+    project_path: String,
+    branch: String,
+) -> Result<Option<ShipOverview>, String> {
+    blocking(move || match project_reader(&project_path) {
+        Some(store) => ship_overview_in(&store, Path::new(&project_path), &branch),
+        None => Ok(None),
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn security_finding_line(
+    project_path: String,
+    sha: String,
+    path: String,
+    line: u32,
+) -> Result<Option<String>, String> {
+    blocking(move || Ok(finding_line_in(Path::new(&project_path), &sha, &path, line))).await
+}
+
+#[tauri::command]
+pub async fn security_set_not_useful(
+    state: tauri::State<'_, super::capture::CaptureState>,
+    project_path: String,
+    fingerprint: String,
+    rule_id: String,
+    not_useful: bool,
+) -> Result<(), String> {
+    let store = state.writer(Path::new(&project_path))?;
+    blocking(move || set_not_useful_in(&store, &fingerprint, &rule_id, not_useful)).await
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -323,6 +546,7 @@ mod tests {
 
     use atlas_checkpoint::model::ProjectMode;
     use atlas_checkpoint::{CheckpointInput, Source, Store};
+    use atlas_security::finding::Level;
 
     use super::*;
 
@@ -445,6 +669,99 @@ mod tests {
         let _ = advisory_client();
         assert!(ADVISORY_CONNECT_TIMEOUT <= Duration::from_secs(30));
         assert!(ADVISORY_READ_TIMEOUT <= Duration::from_secs(120));
+    }
+
+    fn scanned_project() -> (Project, String) {
+        let p = project();
+        let id = commit_checkpoint(
+            &p,
+            "pay.ts",
+            "const k = \"sk_live_51NzQ8vKj2mXyR4tPq9WbE7cL0dF3gH6\";\n",
+        );
+        assert_eq!(
+            scan_project_once(&p.store, p.dir.path(), p.data.path(), true).scanned,
+            1
+        );
+        (p, id)
+    }
+
+    fn reader_of(p: &Project) -> Store {
+        Store::open_reader(p.dir.path().join(".atlas")).unwrap()
+    }
+
+    #[test]
+    fn project_sessions_give_each_scanned_session_its_badge() {
+        let (p, _) = scanned_project();
+        let sessions = project_sessions_in(&reader_of(&p)).unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].session_id, p.session_id);
+        assert_eq!(sessions[0].level, Level::Critical);
+        assert!(sessions[0].blocking);
+    }
+
+    #[test]
+    fn session_checkpoints_list_findings_by_commit() {
+        let (p, id) = scanned_project();
+        let views = session_checkpoints_in(&reader_of(&p), &p.session_id).unwrap();
+        assert_eq!(views.len(), 1);
+        assert_eq!(views[0].checkpoint_id, id);
+        assert_eq!(views[0].findings[0].path, "pay.ts");
+        assert_eq!(views[0].findings[0].line, 1);
+    }
+
+    #[test]
+    fn marking_not_useful_drops_the_badge_and_can_be_undone() {
+        let (p, _) = scanned_project();
+        let fp = session_checkpoints_in(&reader_of(&p), &p.session_id).unwrap()[0].findings[0]
+            .fingerprint
+            .clone();
+        set_not_useful_in(&p.store, &fp, "secret.vendor.stripe-access-token", true).unwrap();
+        let sessions = project_sessions_in(&reader_of(&p)).unwrap();
+        assert_eq!(sessions[0].level, Level::None);
+        assert_eq!(sessions[0].findings, 0);
+        set_not_useful_in(&p.store, &fp, "secret.vendor.stripe-access-token", false).unwrap();
+        assert_eq!(
+            project_sessions_in(&reader_of(&p)).unwrap()[0].level,
+            Level::Critical
+        );
+    }
+
+    #[test]
+    fn before_you_ship_reads_the_branch_at_its_head() {
+        let (p, _) = scanned_project();
+        let o = ship_overview_in(&reader_of(&p), p.dir.path(), "main")
+            .unwrap()
+            .expect("scanned");
+        assert_eq!(o.open.len(), 1);
+        assert!(o.blocking);
+        // Remove the key on the branch: the finding moves to fixed.
+        std::fs::write(p.dir.path().join("pay.ts"), "const k = process.env.KEY;\n").unwrap();
+        git(p.dir.path(), &["commit", "-q", "-am", "remove key"]);
+        let o = ship_overview_in(&reader_of(&p), p.dir.path(), "main")
+            .unwrap()
+            .unwrap();
+        assert!(o.open.is_empty(), "{:?}", o.open);
+        assert_eq!(o.fixed.len(), 1);
+        assert!(!o.blocking);
+        assert!(
+            ship_overview_in(&reader_of(&p), p.dir.path(), "no-such-branch")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_finding_line_is_read_from_the_commit_and_redacted() {
+        let (p, _) = scanned_project();
+        let views = session_checkpoints_in(&reader_of(&p), &p.session_id).unwrap();
+        let f = &views[0].findings[0];
+        let line = finding_line_in(p.dir.path(), &f.sha, &f.path, f.line).unwrap();
+        assert!(line.contains("const k ="), "{line}");
+        assert!(
+            !line.contains("sk_live_51Nz"),
+            "the key is never returned: {line}"
+        );
+        assert_eq!(finding_line_in(p.dir.path(), &f.sha, &f.path, 999), None);
     }
 
     #[test]

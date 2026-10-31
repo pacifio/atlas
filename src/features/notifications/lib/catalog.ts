@@ -99,7 +99,9 @@ export type NotificationTarget =
       number: number;
       title?: string;
       view?: "guide";
-    };
+    }
+  /** A session on the Timeline, scrolled to one commit's Checkpoint. */
+  | { type: "timeline-session"; projectPath: string; sessionId: string; commitSha: string };
 
 /**
  * A button a notification offers — data only, so events and decisions stay
@@ -155,6 +157,21 @@ export function isPullRequestTarget(
   );
 }
 
+/** A Timeline session target as stored or carried in a banner payload. */
+export function isTimelineSessionTarget(
+  r: Record<string, unknown>,
+): r is Extract<NotificationTarget, { type: "timeline-session" }> & Record<string, unknown> {
+  return (
+    r.type === "timeline-session" &&
+    typeof r.projectPath === "string" &&
+    !!r.projectPath &&
+    typeof r.sessionId === "string" &&
+    !!r.sessionId &&
+    typeof r.commitSha === "string" &&
+    !!r.commitSha
+  );
+}
+
 /** Targets that live in a chat or terminal tab (and so carry project/org). */
 export type TabTarget = Extract<NotificationTarget, { type: "terminal" | "session" }>;
 export const isTabTarget = (t: NotificationTarget): t is TabTarget =>
@@ -187,6 +204,8 @@ export const targetGroupKey = (t: NotificationTarget): string => {
       return `pull-request:${t.repoPath}:${t.number}`;
     case "config-file":
       return "config-file";
+    case "timeline-session":
+      return `timeline:${t.projectPath}:${t.sessionId}`;
   }
 };
 
@@ -487,6 +506,20 @@ export const NOTIFICATION_CATALOG = {
     whenLooking: "drop",
     sound: null,
     toast: { variant: "default", durationMs: ATTENTION_TOAST_MS },
+    groupKey: targetGroupKey,
+  },
+  // The Security Agent (ATL-985) found a blocking issue in a checkpoint's
+  // commit: a confirmed credential, a high advisory, disabled TLS. Raised once
+  // per finding (`security-notifier.ts`); everything below blocking stays on
+  // the Timeline.
+  "security-finding": {
+    label: "Blocking security issue committed",
+    tier: "warning",
+    source: "app",
+    channels: ALL_CHANNELS,
+    whenLooking: "record",
+    sound: { native: "Ping" },
+    toast: { variant: "error", durationMs: ATTENTION_TOAST_MS },
     groupKey: targetGroupKey,
   },
 } as const satisfies Record<string, CatalogEntry>;
