@@ -269,3 +269,51 @@ fn skipped_files_are_reported_not_dropped() {
     );
     assert_eq!(res.order.len(), 2);
 }
+
+#[test]
+fn findings_in_test_code_are_never_blocking() {
+    // A test file by path.
+    let r = repo(file_diff(
+        "src/pay.test.ts",
+        &[&format!("const k = \"{LIVE_KEY}\";")],
+    ));
+    let res = run(&r, None, soon());
+    assert_eq!(res.findings.len(), 1);
+    assert!(!res.findings[0].blocking, "{:?}", res.findings);
+    assert!(res.findings[0].test_code);
+    assert_eq!(res.findings[0].level, Level::Critical, "the level is kept");
+    assert!(!res.blocking);
+
+    // A Rust file whose `#[cfg(test)]` module holds the line.
+    let source = format!(
+        "pub fn real() {{}}\n\n#[cfg(test)]\nmod tests {{\n    #[test]\n    fn t() {{\n        let secret = \"{LIVE_KEY}\";\n    }}\n}}\n"
+    );
+    let diff = format!(
+        "diff --git a/src/redact.rs b/src/redact.rs\n--- a/src/redact.rs\n+++ b/src/redact.rs\n@@ -6,0 +7,1 @@ fn t() {{\n+        let secret = \"{LIVE_KEY}\";\n"
+    );
+    let mut r = repo(diff);
+    r.files.insert(
+        (SHA.to_string(), "src/redact.rs".to_string()),
+        source.into_bytes(),
+    );
+    let res = run(&r, None, soon());
+    assert_eq!(res.findings.len(), 1);
+    assert!(
+        !res.findings[0].blocking && res.findings[0].test_code,
+        "{:?}",
+        res.findings
+    );
+
+    // The same line above any test module still blocks.
+    let source = format!("pub fn real() {{\n    let secret = \"{LIVE_KEY}\";\n}}\n");
+    let diff = format!(
+        "diff --git a/src/real.rs b/src/real.rs\n--- a/src/real.rs\n+++ b/src/real.rs\n@@ -1,0 +2,1 @@ pub fn real() {{\n+    let secret = \"{LIVE_KEY}\";\n"
+    );
+    let mut r = repo(diff);
+    r.files.insert(
+        (SHA.to_string(), "src/real.rs".to_string()),
+        source.into_bytes(),
+    );
+    let res = run(&r, None, soon());
+    assert!(res.findings[0].blocking && !res.findings[0].test_code);
+}

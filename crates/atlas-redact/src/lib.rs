@@ -219,6 +219,14 @@ pub fn detect_categories(input: &str) -> Vec<Category> {
     found
 }
 
+/// Ids of the vendored betterleaks rules that match `input` (for example
+/// `stripe-access-token`), each once. Diagnostic: lets a caller name the
+/// provider a credential belongs to, and tell a provider-specific rule from
+/// a generic one.
+pub fn vendor_rule_ids(input: &str) -> Vec<&'static str> {
+    vendor::matched_ids(input)
+}
+
 /// Redact only the credential material inside a link value, keeping the link.
 ///
 /// Used by [`redact_json`] for `url`/`uri` fields. Replacing a whole URL

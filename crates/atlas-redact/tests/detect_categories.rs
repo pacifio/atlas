@@ -30,3 +30,11 @@ fn each_category_is_reported_once_in_order() {
     sorted.dedup();
     assert_eq!(found, sorted);
 }
+
+#[test]
+fn vendor_rule_ids_name_the_rules_that_matched() {
+    let ids =
+        atlas_redact::vendor_rule_ids("const k = \"sk_live_51NzQ8vKj2mXyR4tPq9WbE7cL0dF3gH6\";");
+    assert!(ids.iter().any(|id| id.contains("stripe")), "{ids:?}");
+    assert!(atlas_redact::vendor_rule_ids("let total = items.len();").is_empty());
+}

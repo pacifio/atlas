@@ -148,3 +148,53 @@ fn every_class_has_a_plain_template() {
         assert!(!t.to_lowercase().contains("clef"), "{class:?}");
     }
 }
+
+#[test]
+fn credential_name_on_code_expression_is_not_a_finding() {
+    for line in [
+        "    let token = |name: &str, fallback: &'static str| {",
+        "    let token = std::fs::read_to_string(path)",
+        "type ThemeFontToken = \"font-sans\" | \"font-mono\";",
+        "export const SEED_TOKENS = [\"background\", \"foreground\", \"primary\"] as const;",
+    ] {
+        let file = mapped("src/theme.ts", &[line], &[]);
+        assert!(
+            scan_secrets(SHA, &file, &Provenance::default()).is_empty(),
+            "{line}"
+        );
+    }
+}
+
+#[test]
+fn credential_assignment_with_a_literal_is_medium() {
+    let file = mapped("config.py", &["DB_PASSWORD = \"hunter2hunter2\""], &[]);
+    let f = scan_secrets(SHA, &file, &Provenance::default());
+    assert_eq!(f.len(), 1, "{f:?}");
+    assert_eq!(f[0].level, Level::Medium);
+    assert!(!f[0].blocking);
+}
+
+#[test]
+fn a_provider_specific_vendor_rule_names_the_provider() {
+    let file = mapped(
+        "server/pay.ts",
+        &[&format!("const k = \"{LIVE_KEY}\";")],
+        &[],
+    );
+    let f = scan_secrets(SHA, &file, &Provenance::default());
+    assert!(
+        f[0].rule_id.starts_with("secret.vendor.stripe"),
+        "{}",
+        f[0].rule_id
+    );
+}
+
+#[test]
+fn a_jwt_is_high_but_not_blocking() {
+    let jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4ifQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+    let file = mapped("src/api.ts", &[&format!("const session = \"{jwt}\";")], &[]);
+    let f = scan_secrets(SHA, &file, &Provenance::default());
+    assert_eq!(f.len(), 1, "{f:?}");
+    assert_eq!(f[0].level, Level::High);
+    assert!(!f[0].blocking);
+}

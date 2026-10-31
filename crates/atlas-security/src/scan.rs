@@ -13,14 +13,14 @@ use serde::{Deserialize, Serialize};
 use crate::deps::lockfiles::is_supported;
 use crate::deps::osv::AdvisoryDb;
 use crate::diff::parse_unified;
-use crate::finding::{Finding, Level};
+use crate::finding::{Finding, Level, Source};
 use crate::map::{build, Limits, SkipReason};
 use crate::provenance::Provenance;
 use crate::repo::{Repo, RepoError};
 use crate::rules::deps::scan_dependencies;
 use crate::rules::secrets::scan_secrets;
 use crate::rules::sinks::scan_sinks;
-use crate::tags::{is_lockfile, Tag};
+use crate::tags::{is_lockfile, is_test_path, Tag};
 
 /// Bump on any change to a rule, threshold or question.
 pub const SCANNER_VERSION: &str = "local-1";
@@ -187,6 +187,7 @@ pub fn scan_checkpoint(input: ScanInput<'_>) -> ScanResult {
     timings.insert("sinks".to_string(), t_sinks);
     timings.insert("deps".to_string(), t_deps);
 
+    mark_test_code(&mut findings, input.sha, input.repo);
     let findings = dedupe(findings);
     let level = findings
         .iter()
@@ -247,6 +248,35 @@ pub fn scan_checkpoint(input: ScanInput<'_>) -> ScanResult {
         },
         timings_ms: timings,
     }
+}
+
+/// Rule findings in test code keep their level but never block: fake keys
+/// and disabled TLS are normal in tests. Test code is a test path, or in
+/// Rust, anything after the file's `#[cfg(test)]`.
+fn mark_test_code(findings: &mut [Finding], sha: &str, repo: &dyn Repo) {
+    let mut rust_test_start: HashMap<String, Option<u32>> = HashMap::new();
+    for f in findings.iter_mut().filter(|f| f.source == Source::Rule) {
+        let Some(at) = f.refs.first() else { continue };
+        let in_test = is_test_path(&at.path)
+            || (at.path.ends_with(".rs")
+                && rust_test_start
+                    .entry(at.path.clone())
+                    .or_insert_with(|| cfg_test_line(repo, sha, &at.path))
+                    .is_some_and(|start| at.start > start));
+        if in_test {
+            f.test_code = true;
+            f.blocking = false;
+        }
+    }
+}
+
+/// The 1-based line of the first `#[cfg(test)]` in the file at `sha`.
+fn cfg_test_line(repo: &dyn Repo, sha: &str, path: &str) -> Option<u32> {
+    let bytes = repo.file_at(sha, path).ok()??;
+    String::from_utf8_lossy(&bytes)
+        .lines()
+        .position(|l| l.trim_start().starts_with("#[cfg(test)]"))
+        .map(|i| i as u32 + 1)
 }
 
 /// One finding per fingerprint: the highest level wins, blocking if any copy

@@ -123,6 +123,9 @@ pub struct Finding {
     pub rule_id: String,
     pub refs: Vec<LineRef>,
     pub reason: String,
+    /// The line is in test code: reported at its level, never blocking.
+    #[serde(default)]
+    pub test_code: bool,
 }
 
 /// Stable across commits: the same issue on the same line text in the same
@@ -161,5 +164,6 @@ pub fn on_line(hit: Hit<'_>, sha: &str, path: &str, line: (u32, &str)) -> Findin
             end: line_no,
         }],
         reason: hit.class.template().to_string(),
+        test_code: false,
     }
 }

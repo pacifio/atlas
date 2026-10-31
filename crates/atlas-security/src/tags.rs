@@ -117,6 +117,27 @@ pub fn file_name(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }
 
+/// Test code by path: test directories, fixtures, and the test-file naming
+/// conventions of the deep-check languages.
+pub fn is_test_path(path: &str) -> bool {
+    let name = file_name(path);
+    let dirs = path.split('/').rev().skip(1);
+    if dirs.into_iter().any(|d| {
+        matches!(
+            d,
+            "test" | "tests" | "__tests__" | "spec" | "fixtures" | "testdata" | "__fixtures__"
+        )
+    }) {
+        return true;
+    }
+    let stem = name.split('.').next().unwrap_or(name);
+    let js_test = [".test.", ".spec."].iter().any(|m| name.contains(m));
+    js_test
+        || name == "conftest.py"
+        || (name.ends_with(".py") && (stem.starts_with("test_") || stem.ends_with("_test")))
+        || (name.ends_with(".rs") && stem.ends_with("_test"))
+}
+
 pub fn is_lockfile(path: &str) -> bool {
     LOCKFILES.contains(&file_name(path))
 }

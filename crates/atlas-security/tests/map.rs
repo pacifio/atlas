@@ -168,3 +168,29 @@ fn react_hooks_dir_is_not_agent_config() {
     let husky = map_of(&file_diff(".husky/pre-commit", &["bun test"]));
     assert!(husky.files[0].tags.contains(&Tag::AgentConfig));
 }
+
+#[test]
+fn test_paths_are_recognised() {
+    use atlas_security::tags::is_test_path;
+    for p in [
+        "crates/x/tests/scan.rs",
+        "src/components/toast-icons.test.tsx",
+        "src/a.spec.ts",
+        "pkg/__tests__/a.js",
+        "app/test_views.py",
+        "app/views_test.py",
+        "conftest.py",
+        "src/lib_test.rs",
+        "eval/fixtures/a.json",
+    ] {
+        assert!(is_test_path(p), "{p}");
+    }
+    for p in [
+        "src/testing-library.ts",
+        "src/contest.rs",
+        "src/latest.py",
+        "docs/attest.md",
+    ] {
+        assert!(!is_test_path(p), "{p}");
+    }
+}
