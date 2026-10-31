@@ -73,6 +73,12 @@ pub trait AgentSessionEffort: Send + Sync {
     fn set_effort(&self, level: Option<String>) -> Result<()>;
 }
 
+/// Install the OS credential store (idempotent) before making a `keyring_core::Entry`.
+///
+/// keyring-core has no store until one is set; the engine's own keychain access
+/// installs it lazily through the same function, so the app and the engine share one
+/// process-wide default and neither can run first.
+pub use atlas_engine_keyring_store::ensure_default_store as ensure_credential_store;
 pub use engine::connection::EngineConnection;
 pub use engine::EngineAgentServer;
 pub use helper::run_engine_helper_if_asked;

@@ -11,6 +11,7 @@
  */
 
 import type { TabType } from "@/lib/constants";
+import { deepActiveElement, shadowHost } from "@/lib/deep-active-element";
 import { isLinux, isMac, isWindows } from "@/lib/platform";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { SURFACE_FOCUS_VARIABLES, type WhenContext } from "./when";
@@ -24,6 +25,9 @@ const TAB_SURFACE: Partial<Record<TabType, string>> = {
   canvas: "canvasFocus",
   spaces: "canvasFocus",
   browser: "browserFocus",
+  diff: "diffFocus",
+  "session-changes": "diffFocus",
+  "pull-request": "pullRequestFocus",
 };
 
 function isTextInput(el: Element | null): boolean {
@@ -34,15 +38,23 @@ function isTextInput(el: Element | null): boolean {
 export function liveWhenContext(): WhenContext {
   const ctx: Record<string, boolean> = { isMac, isWindows, isLinux };
 
-  const { tabs, activeTabId } = useLayoutStore.getState();
-  const tab = activeTabId ? tabs.find((t) => t.id === activeTabId) : undefined;
+  const { tabs, activeTabId, destination, destinationShown } = useLayoutStore.getState();
+  // A destination on screen is what the keyboard is in (ADR-0024).
+  const tab =
+    destinationShown && destination
+      ? destination
+      : activeTabId
+        ? tabs.find((t) => t.id === activeTabId)
+        : undefined;
   const surface = tab ? TAB_SURFACE[tab.type] : undefined;
   if (surface) ctx[surface] = true;
   if (tab?.type === "knowledge") ctx.knowledgeOpen = true;
 
-  const active = typeof document !== "undefined" ? document.activeElement : null;
+  const active = typeof document !== "undefined" ? deepActiveElement() : null;
   ctx.inputFocus = isTextInput(active);
-  for (let el = active; el; el = el.parentElement) {
+  // Up through shadow hosts too: focus inside the file view's shadow root
+  // still sits in the scopes around its host.
+  for (let el = active; el; el = el.parentElement ?? shadowHost(el)) {
     const scope = el.getAttribute("data-when-scope");
     if (!scope) continue;
     if ((SURFACE_FOCUS_VARIABLES as readonly string[]).includes(scope)) {

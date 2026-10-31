@@ -73,6 +73,9 @@ import type { NativeModelsRefresh } from "@/types/agents";
 import type { MockHandlers, MockResponses, TypedHandlers } from "../types";
 import type { AgentKey, MemoryContent } from "./northwind-content-types";
 import { adoptSession } from "../fake-agent";
+import { sessionLifecycleHandlers } from "../session-lifecycle";
+import { sessionPullRequestHandlers } from "../session-pull-requests";
+import { RESTING_LIFECYCLE } from "@/features/chat/lib/session-lifecycle";
 import { NORTHWIND_FILES } from "../fixtures/northwind-repo";
 import { applyAgentConfig } from "../fixtures/skills";
 import { CONTENT } from "./northwind-content";
@@ -141,7 +144,6 @@ function appState(): AppStateWire {
     currentProject: null,
     recentProjects: [],
     workspaces: [PROJECT],
-    groups: [],
     activeWorkspaceId: PROJECT.id,
     organisations: [
       {
@@ -473,6 +475,9 @@ const THREAD_AGENT: Record<AgentKey, string> = {
   "atlas-agent": "atlas-agent",
 };
 
+/** `autoSettleAfterDays`' default, in milliseconds. */
+const SETTLE_AFTER_MS = 3 * 86_400_000;
+
 /**
  * Uzayer's agent chats in Atlas: his recorded Sessions run from the composer.
  * Imported ones ran in a terminal before capture and never were Atlas chats;
@@ -488,7 +493,10 @@ function seedThreads(): ThreadRow[] {
       title: s.content.title,
       updatedAt: iso(s.lastMs),
       createdAt: iso(s.startMs),
-      archived: false,
+      ...RESTING_LIFECYCLE,
+      // Idle past the default three days: on the Settled shelf, settled at
+      // its last activity, as the idle sweep records it.
+      settledAt: Date.now() - s.lastMs > SETTLE_AFTER_MS ? iso(s.lastMs) : null,
       projectName: PROJECT.name,
       folderPaths: [PROJECT.path],
       // The branch the Session itself records: `main`, except the run that
@@ -496,6 +504,37 @@ function seedThreads(): ThreadRow[] {
       branch: s.content.branch,
       // The demo's own sessions: no other process is writing any of them.
       liveElsewhere: false,
+      attachedProjects: [],
+      model: "Claude Sonnet 4.5",
+      // The run on `server-discounts` went up as pull request 353, found on its branch.
+      // Merged, because the branch is: its commit is already on `main`.
+      pullRequests:
+        s.content.branch === "server-discounts"
+          ? [
+              {
+                repository: "northwind/northwind-shop",
+                number: 353,
+                url: "https://github.com/northwind/northwind-shop/pull/353",
+                source: "detected" as const,
+                linkedAt: iso(s.lastMs),
+                snapshot: {
+                  state: "merged" as const,
+                  title: "Validate discount codes on the server",
+                  headBranch: "server-discounts",
+                  baseBranch: "main",
+                  isDraft: false,
+                  updatedAt: iso(s.lastMs),
+                  mergedAt: iso(s.lastMs),
+                  checksState: "passing" as const,
+                  reviewDecision: "approved" as const,
+                  commentCount: 2,
+                  syncedAt: iso(s.lastMs),
+                },
+                watching: false,
+              },
+            ]
+          : [],
+      forkedFromSessionId: null,
     }));
 }
 
@@ -505,7 +544,7 @@ const threadsChanged = () => void emit("atlas:threads-changed");
 /** One project; current when the sidebar is scoped to it, as Rust marks it
  *  (unscoped, nothing is current and the sidebar heads the list with it). */
 function threadProjects(cwd: string | null): ThreadProject[] {
-  const live = threads.filter((thread) => !thread.archived);
+  const live = threads.filter((thread) => thread.sessionId !== null);
   if (live.length === 0) return [];
   const isCurrent = cwd !== null && cwd !== "";
   return [{ name: PROJECT.name, paths: [PROJECT.path], isCurrent, threads: live }];
@@ -1662,8 +1701,7 @@ export const northwindMiscRawCommands: MockHandlers = {
   load_editor_state: (): string => "{}",
 
   // ── chat history ────────────────────────────────────────────────────────
-  threads_history: ({ archivedOnly }): ThreadRow[] =>
-    threads.filter((thread) => (archivedOnly ? thread.archived : !thread.archived)),
+  threads_history: (): ThreadRow[] => threads,
   threads_projects: ({ cwd }): ThreadProject[] =>
     threadProjects(cwd === null || cwd === undefined ? null : String(cwd)),
   threads_resume: ({ threadId }): ResumedThread => {
@@ -1687,13 +1725,20 @@ export const northwindMiscRawCommands: MockHandlers = {
     threadsChanged();
     return null;
   },
-  threads_archive: ({ threadId }): null => {
-    threads = threads.map((thread) =>
-      thread.threadId === String(threadId) ? { ...thread, archived: true } : thread,
-    );
-    threadsChanged();
-    return null;
-  },
+  ...sessionLifecycleHandlers({
+    get: () => threads,
+    set: (rows) => {
+      threads = rows;
+    },
+    changed: threadsChanged,
+  }),
+  ...sessionPullRequestHandlers({
+    get: () => threads,
+    set: (rows) => {
+      threads = rows;
+    },
+    changed: threadsChanged,
+  }),
   threads_import_candidates: (): ImportCandidate[] => [
     {
       pluginId: "claude-acp",

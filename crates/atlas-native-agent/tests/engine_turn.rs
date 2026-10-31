@@ -1919,3 +1919,99 @@ async fn a_streamed_answer_is_not_rendered_twice() {
         "the answer was rendered more than once: {rendered}",
     );
 }
+
+// ---------------------------------------------------------------------------
+// Attached projects: an open session's roots change from its next turn.
+//
+// Asserted on the filesystem, like the tool-execution tests above: a command
+// that writes into a sibling folder succeeds only once that folder is a
+// read-write attached project, and never while it is read-only. The folders
+// live under the cargo target's tmp dir, not the system temp dir: macOS
+// seatbelt's workspace-write lets `/tmp` and `$TMPDIR` through, which would
+// make every write succeed and the test prove nothing.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn an_attached_project_is_writable_from_the_next_turn_only_when_read_write() {
+    let base = tempfile::Builder::new()
+        .prefix("atlas-roots-")
+        .tempdir_in(env!("CARGO_TARGET_TMPDIR"))
+        .expect("a scratch folder outside the system temp dir");
+    let app = base.path().join("app");
+    let server = base.path().join("server");
+    let docs = base.path().join("docs");
+    for dir in [&app, &server, &docs] {
+        std::fs::create_dir_all(dir).expect("mkdir");
+    }
+    let touch =
+        |dir: &std::path::Path, name: &str| format!("touch {}", dir.join(name).to_string_lossy());
+
+    let h = harness_with(vec![
+        // Turn 1, nothing attached: the write into `server` is refused.
+        (Some(1), sse_ok(command_turn(&touch(&server, "before")))),
+        (Some(1), sse_ok(assistant_turn("done"))),
+        // Turn 2, `server` read-write and `docs` read-only.
+        (
+            Some(1),
+            sse_ok(command_turn(&format!(
+                "{}; {}",
+                touch(&server, "after"),
+                touch(&docs, "after")
+            ))),
+        ),
+        (None, sse_ok(assistant_turn("done"))),
+    ])
+    .await;
+    let session_id = h.open_thread_in(app.clone()).await;
+    // Accept edits: commands run in the sandbox without a prompt, so the
+    // sandbox alone decides what lands.
+    h.connection
+        .session_modes(&session_id)
+        .expect("modes")
+        .set_mode(acp::SessionModeId::new("acceptEdits"))
+        .await
+        .expect("accept edits");
+
+    let run = |prompt: &'static str| {
+        let connection = h.connection.clone();
+        let session_id = session_id.clone();
+        async move {
+            tokio::time::timeout(
+                Duration::from_secs(60),
+                connection.prompt(acp::PromptRequest::new(session_id, text(prompt))),
+            )
+            .await
+            .expect("the turn should not hang")
+            .expect("the turn should complete")
+        }
+    };
+
+    run("try the sibling").await;
+    assert!(
+        !server.join("before").exists(),
+        "control: a sibling folder must not be writable before it is attached, \
+         or the rest of this test proves nothing"
+    );
+
+    assert!(h.connection.supports_live_session_roots());
+    h.connection
+        .update_session_roots(
+            &session_id,
+            atlas_acp_thread::SessionRoots {
+                read_only: vec![docs.clone()],
+                read_write: vec![server.clone()],
+            },
+        )
+        .await
+        .expect("the engine takes the new roots");
+
+    run("try both").await;
+    assert!(
+        server.join("after").exists(),
+        "a read-write attached project is writable from the next turn"
+    );
+    assert!(
+        !docs.join("after").exists(),
+        "a read-only attached project is never writable"
+    );
+}

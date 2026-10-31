@@ -381,23 +381,12 @@ function ThreadPicker({
 // ── Empty states ─────────────────────────────────────────────────────────────
 
 /** Open Settings on Agents › Provider keys — the same deep link Memory ▸ Chat
- *  uses. Dynamically imported so the artifacts panel does not pull the layout
- *  and settings stores into its own chunk. */
+ *  uses. Dynamically imported so the artifacts panel does not pull the settings
+ *  store into its own chunk. */
 function openProviderSettings(): void {
-  void Promise.all([
-    import("@/features/layout/stores/layout-store"),
-    import("@/features/settings/stores/settings-nav-store"),
-  ]).then(([{ useLayoutStore }, { useSettingsNav }]) => {
-    useSettingsNav.getState().goTo("agents", "provider-keys");
-    useLayoutStore.getState().actions.addTab({
-      id: "settings",
-      type: "settings",
-      title: "Settings",
-      closable: true,
-      dirty: false,
-      data: { section: "agents" },
-    });
-  });
+  void import("@/features/settings/lib/open-settings").then(({ openSettingsSection }) =>
+    openSettingsSection("agents", "provider-keys"),
+  );
 }
 
 function NeedsKey({ loaded }: { loaded: boolean }) {
@@ -547,11 +536,11 @@ function Composer({
         <ChatInput
           ref={inputRef}
           // Fixed, not conditional: `ChatInput` reads its placeholder when the
-          // CodeMirror view is built and never again, so a message that depended
+          // editor is built and never again, so a message that depended
           // on readiness froze at whatever was true on mount — "Pick a model to
           // start" stayed up long after one was picked.
           placeholder="Ask about this session…"
-          onChange={(v) => setHasText(v.trim().length > 0)}
+          onEmptyChange={(blank) => setHasText(!blank)}
           onSubmit={submit}
           enterToSend={enterToSend}
         />

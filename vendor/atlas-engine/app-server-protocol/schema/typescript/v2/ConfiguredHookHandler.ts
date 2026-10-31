@@ -10,4 +10,4 @@ export type ConfiguredHookHandler = { "type": "command", command: string, comman
  * evaluated against the original context; a spilled preview also includes recovery
  * metadata.
  */
-additionalContextLimit: number | null, } | { "type": "mcp_tool", server: string, tool: string, input: { [key in string]?: JsonValue }, timeoutSec: bigint | null, statusMessage: string | null, } | { "type": "prompt", } | { "type": "agent", };
+additionalContextLimit: number | null, } | { "type": "mcp_tool", server: string, tool: string, input: { [key in string]: JsonValue }, timeoutSec: bigint | null, statusMessage: string | null, } | { "type": "prompt", } | { "type": "agent", };

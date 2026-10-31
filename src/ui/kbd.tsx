@@ -29,6 +29,10 @@ const kbdVariants = cva(
       variant: {
         default: "",
         inverse: "border-background/20 bg-background/10 text-background",
+        // `soft` is a borderless filled cap in the foreground colour, for a
+        // legend of keys beside their labels (the command palette's footer:
+        // "↑ ↓ Navigate · Enter Select · Esc Close").
+        soft: "border-transparent bg-element-active text-foreground",
       },
       size: {
         xs: "h-control-xs min-w-(--control-xs) text-2xs",

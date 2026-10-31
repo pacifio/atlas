@@ -13,7 +13,7 @@ use serde_json::json;
 use tempfile::tempdir;
 
 use atlas_engine_keyring_store::tests::MockKeyringStore;
-use keyring::Error as KeyringError;
+use keyring_core::Error as KeyringError;
 
 #[tokio::test]
 async fn file_storage_load_returns_auth_dot_json() -> anyhow::Result<()> {

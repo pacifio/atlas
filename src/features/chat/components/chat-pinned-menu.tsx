@@ -1,4 +1,4 @@
-// Pinned messages for an agent chat, as a header dropdown.
+// Pinned messages for a session, as a title-bar dropdown.
 //
 // The comms pin rail's recipe, applied to the agent thread: one element
 // carrying border + fill + backdrop blur + the panel-in animation (splitting
@@ -10,9 +10,8 @@
 // so there is no loading state; and the pinned TEXT is stored with the pin, so
 // a pin whose message has been rewound off the thread still renders.
 //
-// The jump itself is the panel's (`onJump`): it has to clear the role filter
-// first and resolve the pin against the UNFILTERED list, and only the panel
-// owns both.
+// The jump itself is the panel's (`onJump`): it resolves the pin against the
+// session's messages, which only the panel holds.
 //
 // The trigger renders only when something is pinned. An always-present pin
 // button with a zero next to it is a control that asks to be ignored.
@@ -22,6 +21,7 @@ import { Popover } from "@base-ui/react/popover";
 import { Pin, PinOff, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/time-ago";
+import { Button } from "@/ui/button";
 import { HintItem } from "@/ui/hint-group";
 import { Hint } from "@/ui/tooltip";
 import { pinsFor, useChatPinsStore, type ChatPin } from "../stores/chat-pins-store";
@@ -29,12 +29,9 @@ import { pinsFor, useChatPinsStore, type ChatPin } from "../stores/chat-pins-sto
 export function ChatPinnedMenu({
   pinScopeKey,
   onJump,
-  className,
 }: {
   pinScopeKey: string;
   onJump: (pin: ChatPin) => void;
-  /** The header's shared control treatment — one height, one border. */
-  className?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -59,14 +56,10 @@ export function ChatPinnedMenu({
       <HintItem label="Pinned messages">
         <Popover.Trigger
           render={
-            <button
-              type="button"
-              aria-label={`${pins.length} pinned messages`}
-              className={className}
-            >
+            <Button variant="ghost" size="sm" aria-label={`${pins.length} pinned messages`}>
               <Pin size={12} />
-              <span className="tabular-nums text-xs leading-none">{pins.length}</span>
-            </button>
+              <span className="tabular-nums">{pins.length}</span>
+            </Button>
           }
         />
       </HintItem>

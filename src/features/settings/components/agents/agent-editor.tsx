@@ -1,5 +1,5 @@
-// The right pane of Settings → Agents: one agent's settings, laid out as T3
-// Code's provider editor. A header with its name, version and Remove; its
+// The right pane of Settings → Agents: one agent's settings, laid out as a
+// provider editor. A header with its name, version and Remove; its
 // display name over how it stands; then Setup, Defaults, Runtime,
 // Environment and Models, and Atlas's own About at the end.
 

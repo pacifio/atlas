@@ -11,8 +11,10 @@
 // synchronously on the main thread — they're cheap and avoid a paint flash.
 // If the worker can't start, we fall back to the previous gated-idle parse.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { hasFileIcons, paintFileIcons } from "@/features/icon-theme/lib/icon-markup";
 import { isTypingHot } from "./input-activity";
+import { onMarkdownClick, onMarkdownCopy, onMarkdownKeyDown } from "./markdown-links";
 import MarkdownWorker from "./markdown.worker?worker";
 import "@/styles/hljs.css";
 import { cn } from "./utils";
@@ -36,6 +38,23 @@ let cacheChars = 0;
 // they're sub-millisecond and going async would flash empty content. Larger
 // blocks (the ones that caused the long task) go to the worker.
 const SYNC_LIMIT = 2000;
+
+/**
+ * The cache key for a source rendered under a project root, with the outside
+ * paths its author is trusted to have attached. Both change the HTML (paths
+ * become file chips; only a path the composer attached opens outside the
+ * project), so both are part of the key; with neither the key is the source
+ * itself, as it always was.
+ */
+function keyOf(
+  src: string,
+  fileRoot: string | undefined,
+  trustedPaths?: readonly string[],
+): string {
+  const trusted = trustedPaths?.length ? trustedPaths.join("\u0001") : "";
+  if (!fileRoot && !trusted) return src;
+  return `${trusted}\u0000${fileRoot ?? ""}\u0000${src}`;
+}
 
 function cacheGet(src: string): string | undefined {
   const cached = cache.get(src);
@@ -94,26 +113,36 @@ export function primeMarkdownRenderer(): void {
  *  renderer chunk is already resident. Returns `null` when it isn't, so the
  *  caller can route the block through the worker instead of blocking on a
  *  module load. */
-function renderToHtmlSyncIfReady(src: string): string | null {
-  const cached = cacheGet(src);
+function renderToHtmlSyncIfReady(
+  src: string,
+  fileRoot?: string,
+  trustedPaths?: readonly string[],
+): string | null {
+  const key = keyOf(src, fileRoot, trustedPaths);
+  const cached = cacheGet(key);
   if (cached !== undefined) return cached;
   if (!renderMod) {
     void ensureRenderer();
     return null;
   }
-  const html = renderMod.parseMarkdown(src);
-  cacheSet(src, html);
+  const html = renderMod.parseMarkdown(src, fileRoot, { trustedPaths });
+  cacheSet(key, html);
   return html;
 }
 
 /** Main-thread parse, loading the renderer chunk first if needed. The
  *  worker-unavailable fallback path — correctness over latency. */
-async function renderToHtmlAsync(src: string): Promise<string> {
-  const cached = cacheGet(src);
+async function renderToHtmlAsync(
+  src: string,
+  fileRoot?: string,
+  trustedPaths?: readonly string[],
+): Promise<string> {
+  const key = keyOf(src, fileRoot, trustedPaths);
+  const cached = cacheGet(key);
   if (cached !== undefined) return cached;
   const m = await ensureRenderer();
-  const html = m.parseMarkdown(src);
-  cacheSet(src, html);
+  const html = m.parseMarkdown(src, fileRoot, { trustedPaths });
+  cacheSet(key, html);
   return html;
 }
 
@@ -131,7 +160,15 @@ let workerEverAnswered = false;
 let seq = 0;
 // Waiters keep their SOURCE so a worker failure can settle them synchronously —
 // without it each in-flight block sat blank until its own 3s watchdog fired.
-const waiters = new Map<number, { source: string; finish: (html: string) => void }>();
+const waiters = new Map<
+  number,
+  {
+    source: string;
+    fileRoot?: string;
+    trustedPaths?: readonly string[];
+    finish: (html: string) => void;
+  }
+>();
 // Dedupe concurrent requests for the same source so two visible copies of an
 // identical message don't parse twice.
 const pending = new Map<string, Promise<string>>();
@@ -159,7 +196,8 @@ function ensureWorker(): Worker | null {
       workerBroken = true;
       const stranded = Array.from(waiters.values());
       waiters.clear();
-      for (const w of stranded) void renderToHtmlAsync(w.source).then(w.finish);
+      for (const w of stranded)
+        void renderToHtmlAsync(w.source, w.fileRoot, w.trustedPaths).then(w.finish);
     };
   } catch {
     workerBroken = true;
@@ -218,6 +256,7 @@ export function warmMarkdownWorker(): void {
 // reader's viewport settles before anything off-screen is touched.
 
 interface QueueItem {
+  /** The cache key: source and project root. */
   source: string;
   priority: number;
   dispatch: () => void;
@@ -257,12 +296,18 @@ function bumpPriority(source: string, priority: number): void {
 /** Parse a large block off the main thread. Falls back to a gated-idle main-
  *  thread parse (the pre-worker behavior) if the worker is unavailable.
  *  `priority` orders the queue — higher goes first. */
-function parseLarge(source: string, priority: number): Promise<string> {
-  const hit = cacheGet(source);
+function parseLarge(
+  source: string,
+  priority: number,
+  fileRoot?: string,
+  trustedPaths?: readonly string[],
+): Promise<string> {
+  const key = keyOf(source, fileRoot, trustedPaths);
+  const hit = cacheGet(key);
   if (hit !== undefined) return Promise.resolve(hit);
-  const existing = pending.get(source);
+  const existing = pending.get(key);
   if (existing) {
-    bumpPriority(source, priority);
+    bumpPriority(key, priority);
     return existing;
   }
 
@@ -276,17 +321,17 @@ function parseLarge(source: string, priority: number): Promise<string> {
         if (settled) return;
         settled = true;
         waiters.delete(id);
-        cacheSet(source, html);
+        cacheSet(key, html);
         inFlight = Math.max(0, inFlight - 1);
         resolve(html);
         // Free slot — start the next-highest-priority block.
         pump();
       };
       queue.push({
-        source,
+        source: key,
         priority,
         dispatch: () => {
-          waiters.set(id, { source, finish });
+          waiters.set(id, { source, fileRoot, trustedPaths, finish });
           // Watchdog: if the worker never answers, fall back to a main-thread
           // parse so the message still renders instead of hanging blank. Only
           // a worker that has NEVER answered is presumed dead — a slow parse
@@ -295,10 +340,10 @@ function parseLarge(source: string, priority: number): Promise<string> {
           window.setTimeout(() => {
             if (!settled) {
               if (!workerEverAnswered) workerBroken = true;
-              void renderToHtmlAsync(source).then(finish);
+              void renderToHtmlAsync(source, fileRoot, trustedPaths).then(finish);
             }
           }, 3000);
-          w.postMessage({ id, source });
+          w.postMessage({ id, source, fileRoot, trustedPaths });
         },
       });
       pump();
@@ -319,19 +364,19 @@ function parseLarge(source: string, priority: number): Promise<string> {
           schedule();
           return;
         }
-        void renderToHtmlAsync(source).then(resolve);
+        void renderToHtmlAsync(source, fileRoot, trustedPaths).then(resolve);
       }
       schedule();
     });
   }
   pending.set(
-    source,
+    key,
     p.then((html) => {
-      pending.delete(source);
+      pending.delete(key);
       return html;
     }),
   );
-  return pending.get(source)!;
+  return pending.get(key)!;
 }
 
 // ── Transient (streaming-tail) lane ────────────────────────────────────────
@@ -345,7 +390,11 @@ function parseLarge(source: string, priority: number): Promise<string> {
 // superseded tails are never parsed at all.
 
 let transientBusy = false;
-let transientNext: { source: string; resolve: (html: string | null) => void } | null = null;
+let transientNext: {
+  source: string;
+  fileRoot?: string;
+  resolve: (html: string | null) => void;
+} | null = null;
 
 /** Whether the transient lane can run off-thread right now. When false the
  *  caller should parse synchronously itself (the pre-worker behavior). */
@@ -359,12 +408,12 @@ export function transientWorkerAvailable(): boolean {
  * caller skips that tick (a newer parse is already on the way, and settling
  * re-renders through `CachedMarkdown` regardless). Never caches.
  */
-export function parseTransientOffThread(source: string): Promise<string | null> {
+export function parseTransientOffThread(source: string, fileRoot?: string): Promise<string | null> {
   const w = ensureWorker();
   if (!w) return Promise.resolve(null);
   return new Promise((resolve) => {
     if (transientNext) transientNext.resolve(null); // superseded before dispatch
-    transientNext = { source, resolve };
+    transientNext = { source, fileRoot, resolve };
     pumpTransient(w);
   });
 }
@@ -400,7 +449,7 @@ function pumpTransient(w: Worker): void {
     const next = ensureWorker();
     if (next) pumpTransient(next);
   };
-  waiters.set(id, { source: job.source, finish });
+  waiters.set(id, { source: job.source, fileRoot: job.fileRoot, finish });
   // Same watchdog contract as parseLarge, but the fallback is "skip this
   // tick" rather than a main-thread parse — the next throttle tick retries,
   // and a stream that ended settles through CachedMarkdown anyway.
@@ -416,7 +465,7 @@ function pumpTransient(w: Worker): void {
     }
   }, 3000);
   try {
-    w.postMessage({ id, source: job.source });
+    w.postMessage({ id, source: job.source, fileRoot: job.fileRoot });
   } catch {
     finish(""); // resolve with empty → caller skips the tick
   }
@@ -444,6 +493,20 @@ interface CachedMarkdownProps {
    * begins. Only affects blocks large enough to go to the worker.
    */
   priority?: number;
+  /**
+   * The session's project root. Given one, file paths in inline code and
+   * links render as clickable file chips, and `@file` mentions resolve against
+   * it (`markdown-render.ts`). Part of the cache key.
+   */
+  fileRoot?: string;
+  /**
+   * The absolute paths outside the project the composer itself attached to
+   * this message (`ChatMessage.trustedMentionPaths`): an `@file` mention of
+   * one of them opens. Anything else — an agent's reply, replayed history, a
+   * handoff prompt quoting text from a pull request — leaves it unset, so only
+   * paths in the project are clickable there. Part of the cache key.
+   */
+  trustedPaths?: readonly string[];
 }
 
 /**
@@ -453,9 +516,17 @@ interface CachedMarkdownProps {
  * the first parse to a `requestIdleCallback` so initial mount paint
  * isn't blocked; subsequent remounts hit the cache and skip the deferral.
  */
-export function CachedMarkdown({ source, className, unstyled, priority = 0 }: CachedMarkdownProps) {
+export function CachedMarkdown({
+  source,
+  className,
+  unstyled,
+  priority = 0,
+  fileRoot,
+  trustedPaths,
+}: CachedMarkdownProps) {
+  const key = keyOf(source, fileRoot, trustedPaths);
   const [html, setHtml] = useState<string | null>(() => {
-    const hit = cacheGet(source);
+    const hit = cacheGet(key);
     if (hit !== undefined) return hit;
     // Small blocks parse synchronously (cheap, no flash); large blocks defer
     // to the worker via the effect below. A small block ALSO defers when the
@@ -467,19 +538,21 @@ export function CachedMarkdown({ source, className, unstyled, priority = 0 }: Ca
     // a scroll frame is a main-thread stall the compositor scrolls straight
     // past (black viewport). Cache hits above still render instantly; a
     // fresh block shows its raw-text placeholder and formats on settle.
-    if (source.length <= SYNC_LIMIT && !isScrollHot()) return renderToHtmlSyncIfReady(source);
+    if (source.length <= SYNC_LIMIT && !isScrollHot()) {
+      return renderToHtmlSyncIfReady(source, fileRoot, trustedPaths);
+    }
     return null;
   });
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const hit = cacheGet(source);
+    const hit = cacheGet(key);
     if (hit !== undefined) {
       if (hit !== html) setHtml(hit);
       return;
     }
     if (source.length <= SYNC_LIMIT && !isScrollHot()) {
-      const fresh = renderToHtmlSyncIfReady(source);
+      const fresh = renderToHtmlSyncIfReady(source, fileRoot, trustedPaths);
       if (fresh !== null) {
         if (fresh !== html) setHtml(fresh);
         return;
@@ -489,17 +562,19 @@ export function CachedMarkdown({ source, className, unstyled, priority = 0 }: Ca
     // Large block (or a small one before the renderer lands) → parse off the
     // main thread, then swap in the HTML.
     let cancelled = false;
-    void parseLarge(source, priority).then((result) => {
+    void parseLarge(source, priority, fileRoot, trustedPaths).then((result) => {
       if (!cancelled) setHtml(result);
     });
     return () => {
       cancelled = true;
     };
     // `html` intentionally omitted: re-running on our own setHtml would loop.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, priority]);
+    // `key` covers `source`, `fileRoot` and `trustedPaths`.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, priority]);
 
-  // One delegated click handler: copy-code buttons + safe external links.
+  // One delegated click handler: copy-code buttons, file chips, and safe
+  // external links (`markdown-links.ts`).
   useEffect(() => {
     const node = ref.current;
     if (!node) return;
@@ -518,18 +593,25 @@ export function CachedMarkdown({ source, className, unstyled, priority = 0 }: Ca
         }, 1200);
         return;
       }
-      // External links: open in the system browser via the opener plugin
-      // rather than letting an `<a>` navigate the WKWebView away from Atlas.
-      const anchor = target?.closest?.("a");
-      if (anchor instanceof HTMLAnchorElement && anchor.href && /^https?:/i.test(anchor.href)) {
-        e.preventDefault();
-        const href = anchor.href;
-        void import("@tauri-apps/plugin-opener").then((m) => m.openUrl(href)).catch(() => {});
-      }
+      onMarkdownClick(e);
     };
     node.addEventListener("click", onClick);
-    return () => node.removeEventListener("click", onClick);
+    node.addEventListener("keydown", onMarkdownKeyDown);
+    node.addEventListener("copy", onMarkdownCopy);
+    return () => {
+      node.removeEventListener("click", onClick);
+      node.removeEventListener("keydown", onMarkdownKeyDown);
+      node.removeEventListener("copy", onMarkdownCopy);
+    };
   }, []);
+
+  // The icon theme's icons into the file chips, before paint: a cached
+  // message remounting shows its icons in the same frame as its text. Only
+  // HTML that has chips is walked.
+  useLayoutEffect(() => {
+    const node = ref.current;
+    if (node && html && hasFileIcons(html)) paintFileIcons(node);
+  }, [html]);
 
   // Inject a language label + copy button into each code block once the
   // cached HTML lands (and again whenever it changes).
@@ -588,12 +670,5 @@ export function CachedMarkdown({ source, className, unstyled, priority = 0 }: Ca
     );
   }
 
-  return (
-    <div
-      ref={ref}
-      className={cls}
-      // eslint-disable-next-line react/no-danger
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
-  );
+  return <div ref={ref} className={cls} dangerouslySetInnerHTML={{ __html: html }} />;
 }

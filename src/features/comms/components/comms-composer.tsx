@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ALargeSmall,
   ArrowUp,
   AtSign,
   Bold,
@@ -39,11 +40,11 @@ import { toPlainText } from "../lib/to-plain-text";
 import { CHAT_BODY_MAX_BYTES, CHAT_MESSAGE_ATTACHMENT_MAX } from "../types";
 import type { CommsMessage, OrgMemberProfile } from "../types";
 
-// Start the CodeMirror chunk downloading as soon as this module evaluates,
-// but keep it a DYNAMIC import: a static one would put the 360 KB
-// `vendor-codemirror` chunk in the comms panel's own chunk, so opening team
-// chat would block on it. The agent composer does exactly this for the same
-// reason (`chat/components/message-input.tsx`). One promise, shared by every
+// Start the editor chunk downloading as soon as this module evaluates, but
+// keep it a DYNAMIC import: a static one would put Tiptap and ProseMirror in
+// the comms panel's own chunk, so opening team chat would block on them. The
+// session composer does exactly this for the same reason
+// (`chat/components/message-input.tsx`). One promise, shared by every
 // composer instance.
 const composerInputPromise: Promise<typeof import("./composer-input")> = import("./composer-input");
 
@@ -83,9 +84,9 @@ const EMPTY_COMPOSER = {
  *
  * Built on the agent composer's two-layer card (`chat/components/message-input.tsx`):
  * a muted outer shell whose exposed bottom strip *is* the toolbar, and an inner
- * input surface that owns the focus ring. It keeps a plain `<textarea>` rather
- * than the agent's CodeMirror — that exists to host mention *chips inside the
- * document*, whereas a chat body is plain text carrying `<@id>` tokens.
+ * input surface that owns the focus ring, and on the same editor core
+ * (`components/composer/`). The body stays plain text carrying `<@id>`
+ * tokens; the editor only paints them as pills (`composer-input.tsx`).
  *
  * Two limits are contract-driven, not taste: the body cap is counted in UTF-8
  * BYTES (emoji and CJK cost 3–4×, and a character counter would let someone
@@ -180,6 +181,23 @@ export function CommsComposer({
     return false;
   };
 
+  // A wall of text (a log, a whole file) goes up as a file rather than into
+  // the body, where it would blow the byte cap and every later keystroke
+  // would pay for its layout. Same scratch path as a pasted screenshot.
+  const handlePasteLargeText = (text: string): boolean => {
+    const lines = text.split("\n").length;
+    const file = new File([text], `pasted-text-${lines}-lines-${Date.now()}.txt`, {
+      type: "text/plain",
+    });
+    void scratchPathForFile(file)
+      .then((path) => actions.attachFiles(convId, [path]))
+      .catch((err) => {
+        console.warn("comms: large paste failed:", err);
+        toast.error(typeof err === "string" ? err : "Could not attach that paste.");
+      });
+    return true;
+  };
+
   // Focus on conversation switch and when an edit or reply is started.
   useEffect(() => {
     input.current?.focus();
@@ -244,12 +262,7 @@ export function CommsComposer({
   };
 
   /**
-   * Returns true when the key was consumed. CodeMirror asks before applying
-   * any binding of its own, which is what lets the mention picker keep Enter,
-   * Tab and the arrows.
-   */
-  /**
-   * Returns true when the key was consumed. CodeMirror asks before applying
+   * Returns true when the key was consumed. The editor asks before applying
    * any binding of its own, which is what lets the mention picker keep Enter,
    * Tab and the arrows.
    */
@@ -308,13 +321,46 @@ export function CommsComposer({
     return false;
   };
 
+  // The formatting row, shown on demand (the Aa toggle). Per composer, not
+  // remembered: it is a tool you reach for, not a mode you live in.
+  const [formatOpen, setFormatOpen] = useState(false);
+  // Focus anywhere in the composer (the editor, its buttons, the mention
+  // picker). Tracked rather than read off `:focus-within` because the width
+  // also holds while there is something in the bar.
+  const [focused, setFocused] = useState(false);
+  // At rest the bar is 84% of the column, centred; in use it eases out to 89.5%,
+  // never the full width. "In use" outlasts focus while the bar holds a draft,
+  // files, a reply or an edit, or the formatting row, so it never shrinks
+  // under something you are writing.
+  const expanded =
+    focused ||
+    draft.length > 0 ||
+    attachments.length > 0 ||
+    formatOpen ||
+    replyTo !== null ||
+    editing !== null;
+
   const intentTarget = editing ? lookup(editing) : replyTo ? lookup(replyTo) : undefined;
   const atLimit = attachments.length >= CHAT_MESSAGE_ATTACHMENT_MAX;
 
   return (
-    <div className="relative shrink-0 px-2 pb-2 pt-1">
-      {mentionQuery &&
-        matches.length > 0 && (
+    <div
+      className="relative shrink-0 px-2 pb-4 pt-1"
+      onFocus={() => setFocused(true)}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocused(false);
+      }}
+    >
+      {/* The bar's width: 84% at rest, 89.5% in use, centred, and never under
+          24rem (or the column, when that is narrower) — a side-panel chat is
+          already narrow. Width only; nothing else moves. */}
+      <div
+        className={cn(
+          "relative mx-auto min-w-[min(100%,24rem)] transition-[width] duration-slow ease-out-strong motion-reduce:transition-none",
+          expanded ? "w-[89.5%]" : "w-[84%]",
+        )}
+      >
+        {mentionQuery && matches.length > 0 && (
           // The house mention-picker shell (`src/features/mentions`): opaque
           // black, NOT frosted — a backdrop blur here re-blends against the
           // composer and glitches with the caret — plus the keycap footer, so
@@ -325,7 +371,7 @@ export function CommsComposer({
               "border border-border bg-popover",
               "shadow-lg inset-highlight",
             )}
-            // Selecting with the mouse must not blur the textarea first.
+            // Selecting with the mouse must not blur the editor first.
             onMouseDown={(e) => e.preventDefault()}
           >
             {/* No section header and no email line: one kind of thing is
@@ -365,7 +411,7 @@ export function CommsComposer({
           </div>
         )}
 
-      {/* The reply/edit strip, TUCKED into the top of the composer rather than
+        {/* The reply/edit strip, TUCKED into the top of the composer rather than
           floating above it — the same construction as the agent composer's AI
           grant bar. `mx-2` insets it so the composer reads as the wider element,
           `rounded-t-2xl` matches the shell's corners, and `-mb-4` against `pb-5`
@@ -373,230 +419,245 @@ export function CommsComposer({
           `z-0` keeps it behind; the shell below carries `z-10`.
           `atlas-pill-in` is the same 200ms rise the grant bar animates in with,
           and it is already disabled under prefers-reduced-motion. */}
-      {(replyTo || editing) && (
-        <div className="atlas-pill-in relative z-0 mx-2 -mb-4 flex items-center gap-1.5 rounded-t-2xl bg-[var(--popover)] px-3 pb-5 pt-1.5">
-          {editing ? (
-            <Pencil size={11} className="shrink-0 text-muted-foreground" />
-          ) : (
-            <CornerUpRight size={11} className="shrink-0 -scale-y-100 text-muted-foreground" />
-          )}
-          <span className="shrink-0 text-2xs font-medium uppercase tracking-wide text-muted-foreground">
-            {editing ? "Editing" : "Replying to"}
-          </span>
-          <span className="min-w-0 flex-1 truncate text-xs text-secondary-foreground">
-            {editing
-              ? null
-              : intentTarget
-                ? authorLabel(intentTarget, (id) => memberMap.get(id)?.name ?? "Unknown")
-                : "Unknown"}
-            {intentTarget && !editing ? " · " : ""}
-            {intentTarget?.deleted
-              ? "deleted message"
-              : intentTarget
-                ? toPlainText(intentTarget.body, memberMap)
-                : null}
-          </span>
-          <Hint label="Cancel" side="top">
-            <button
-              type="button"
-              onClick={onCancelIntent}
-              className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-element-active hover:text-foreground cursor-pointer"
-            >
-              <X size={11} />
-            </button>
-          </Hint>
-        </div>
-      )}
-
-      {/* Outer shell — its exposed bottom strip is the toolbar. */}
-      <HintGroup side="top">
-        <div
-          ref={shellRef}
-          className={cn(
-            // `z-10` so the shell paints over — and visually tucks — the reply
-            // strip's lower half.
-            "relative z-10 rounded-2xl border bg-[var(--card)] shadow-sm transition-colors",
-            isDropTarget
-              ? "border-[var(--primary)] ring-2 ring-[var(--primary)]/40"
-              : overLimit
-                ? "border-error"
-                : "border-border",
-          )}
-        >
-          {isDropTarget && (
-            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-[var(--primary)]/8 backdrop-blur-[1px]">
-              <span className="rounded-full bg-card px-3 py-1 text-xs font-medium text-secondary-foreground shadow">
-                Drop files to attach
-              </span>
-            </div>
-          )}
-
-          {attachments.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 px-2 pt-2">
-              {attachments.map((a) => (
-                <AttachmentChip key={a.uploadId} attachment={a} onRemove={onRemoveAttachment} />
-              ))}
-            </div>
-          )}
-
-          {/* Inner input surface. The disabled dimming, when it exists, belongs
-            HERE and not on the shell — on the shell it fades the toolbar and
-            every popover anchored to it. */}
-          <div className="relative m-1 rounded-xl border border-border bg-background transition-[border-color,box-shadow] duration-150 focus-within:border-[color-mix(in_srgb,var(--atlas-border-strong)_50%,var(--border))] focus-within:ring-1 focus-within:ring-[var(--primary)]/10">
-            {/* EVERY vertical value here is literal px, and that is the whole
-              point. Atlas's UI-scale shrinks the root font-size, so a rem-based
-              `py-2` renders ~6px rather than 8px while `min-h-[34px]` stays a
-              hard 34px — 6 + 18 + 6 = 30, and the missing 4px collected at the
-              bottom of the content box, dropping the line off-centre. Padding
-              and min-height must be derived from the same unit as the line box:
-              8 + 18 + 8 = 34, so one line is exactly centred and each extra
-              line adds a clean 18px. (The agent composer pins its geometry in
-              px for this same reason.) */}
-            <div className="min-h-[34px] w-full">
-              {Input ? (
-                <Input
-                  handle={input}
-                  value={draft}
-                  placeholder={placeholder}
-                  members={memberMap}
-                  me={me}
-                  onChange={handleChange}
-                  onKeyDown={handleKeyDown}
-                  onPaste={handlePaste}
-                />
-              ) : (
-                // Same geometry, so the composer does not resize when the real
-                // editor lands. Only ever seen on a cold first open.
-                <div className="px-[10px] py-[8px] text-base leading-[18px] text-disabled">
-                  {draft || placeholder}
-                </div>
-              )}
-            </div>
-            {/* Inline send, pinned top-right — the agent composer's placement, so
-              it stays put as the textarea grows downward. */}
-            <HintItem
-              label={editing ? "Save edit" : uploading ? "Waiting for uploads…" : "Send"}
-              className="absolute right-[4px] top-[4px]"
-            >
+        {(replyTo || editing) && (
+          <div className="atlas-pill-in relative z-0 mx-2 -mb-4 flex items-center gap-1.5 rounded-t-2xl bg-[var(--popover)] px-3 pb-5 pt-1.5">
+            {editing ? (
+              <Pencil size={11} className="shrink-0 text-muted-foreground" />
+            ) : (
+              <CornerUpRight size={11} className="shrink-0 -scale-y-100 text-muted-foreground" />
+            )}
+            <span className="shrink-0 text-2xs font-medium uppercase tracking-wide text-muted-foreground">
+              {editing ? "Editing" : "Replying to"}
+            </span>
+            <span className="min-w-0 flex-1 truncate text-xs text-secondary-foreground">
+              {editing
+                ? null
+                : intentTarget
+                  ? authorLabel(intentTarget, (id) => memberMap.get(id)?.name ?? "Unknown")
+                  : "Unknown"}
+              {intentTarget && !editing ? " · " : ""}
+              {intentTarget?.deleted
+                ? "deleted message"
+                : intentTarget
+                  ? toPlainText(intentTarget.body, memberMap)
+                  : null}
+            </span>
+            <Hint label="Cancel" side="top">
               <button
                 type="button"
-                disabled={!canSend}
-                onClick={submit}
-                className={cn(
-                  "flex h-control-md w-[26px] items-center justify-center rounded-lg border border-transparent transition-colors",
-                  canSend
-                    ? "text-foreground hover:border-border hover:bg-element-hover cursor-pointer"
-                    : "text-muted-foreground cursor-not-allowed",
-                )}
+                onClick={onCancelIntent}
+                className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-element-active hover:text-foreground cursor-pointer"
               >
-                {uploading ? (
-                  <Loader2 size={13} className="animate-spin" />
-                ) : (
-                  <ArrowUp size={15} strokeWidth={2.5} />
-                )}
+                <X size={11} />
               </button>
-            </HintItem>
+            </Hint>
           </div>
+        )}
 
-          <div className="flex items-center justify-between gap-1 px-1.5 pb-1.5 pt-0.5">
-            <div className="flex min-w-0 items-center gap-0.5">
-              <HintItem
-                label={atLimit ? `At most ${CHAT_MESSAGE_ATTACHMENT_MAX} files` : "Attach a file"}
-              >
-                <button
-                  type="button"
-                  disabled={atLimit}
-                  onClick={onPickFiles}
-                  className={cn(
-                    "flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full border border-border bg-card text-secondary-foreground transition-colors",
-                    atLimit
-                      ? "cursor-not-allowed opacity-50"
-                      : "hover:bg-element-hover hover:text-foreground cursor-pointer",
-                  )}
-                >
-                  <Plus size={13} />
-                </button>
-              </HintItem>
-              <Divider />
-              <EmojiPicker onPick={(char) => applyEdit(insertText(selection(), char))} />
-              <HintItem label="Mention someone">
-                <button
-                  type="button"
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => {
-                    const sel = selection();
-                    const needsSpace = sel.start > 0 && !/\s$/.test(draft.slice(0, sel.start));
-                    const edit = insertText(sel, needsSpace ? " @" : "@");
-                    applyEdit(edit);
-                    setMentionQuery({ start: edit.start - 1, query: "" });
-                  }}
-                  className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-element-hover hover:text-foreground cursor-pointer"
-                >
-                  <AtSign size={14} />
-                </button>
-              </HintItem>
-            </div>
-
-            <div className="flex shrink-0 items-center gap-0.5">
-              {/* Only shown near the ceiling — a permanent counter is noise. */}
-              {bytes > CHAT_BODY_MAX_BYTES * 0.8 && (
-                <span
-                  className={cn(
-                    "mr-1 text-2xs tabular-nums",
-                    overLimit ? "text-error" : "text-disabled",
-                  )}
-                >
-                  {bytes.toLocaleString()} / {CHAT_BODY_MAX_BYTES.toLocaleString()}
+        {/* One bar, Discord's: attach on the left, the text, then the few
+          controls a message needs on the right. Formatting is behind the Aa
+          toggle (and ⌘B / ⌘I / ⌘K) rather than eight glyphs that are always
+          there; a row of them only appears while it is on. One surface with a
+          glass rim, no inner field: the bar IS the field. */}
+        <HintGroup side="top">
+          <div
+            ref={shellRef}
+            className={cn(
+              // `z-10` so the shell paints over — and visually tucks — the reply
+              // strip's lower half.
+              // The glass rim (`glass-rim`, the sidebar dock's): the app's own
+              // background inside a 1px edge lit from the top.
+              // `rounded-composer` (globals.css) makes one line an exact
+              // capsule and keeps that corner as it grows. A drop or an
+              // over-limit draft colours that edge solid.
+              "glass-rim rounded-composer relative z-10",
+              isDropTarget
+                ? "border-[var(--primary)] ring-2 ring-[var(--primary)]/40"
+                : overLimit && "border-error",
+            )}
+          >
+            {isDropTarget && (
+              <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-composer bg-[var(--primary)]/8 backdrop-blur-[1px]">
+                <span className="rounded-full bg-card px-3 py-1 text-xs font-medium text-secondary-foreground shadow">
+                  Drop files to attach
                 </span>
-              )}
-              <FormatButton
-                title="Bold  ⌘B"
-                icon={Bold}
-                onApply={() => applyEdit(wrap(selection(), "**"))}
-              />
-              <FormatButton
-                title="Italic  ⌘I"
-                icon={Italic}
-                onApply={() => applyEdit(wrap(selection(), "*"))}
-              />
-              <FormatButton
-                title="Strikethrough"
-                icon={Strikethrough}
-                onApply={() => applyEdit(wrap(selection(), "~~"))}
-              />
-              <FormatButton
-                title="Code"
-                icon={Code}
-                onApply={() => applyEdit(wrap(selection(), "`"))}
-              />
-              <FormatButton
-                title="Link  ⌘K"
-                icon={Link2}
-                onApply={() => applyEdit(insertLink(selection()))}
-              />
-              <Divider />
-              <FormatButton
-                title="Bulleted list"
-                icon={List}
-                onApply={() => applyEdit(linePrefix(selection(), "- "))}
-              />
-              <FormatButton
-                title="Numbered list"
-                icon={ListOrdered}
-                onApply={() => applyEdit(linePrefix(selection(), "1. ", true))}
-              />
-              <FormatButton
-                title="Quote"
-                icon={Quote}
-                onApply={() => applyEdit(linePrefix(selection(), "> "))}
-              />
+              </div>
+            )}
+
+            {attachments.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 px-4 pt-3">
+                {attachments.map((a) => (
+                  <AttachmentChip key={a.uploadId} attachment={a} onRemove={onRemoveAttachment} />
+                ))}
+              </div>
+            )}
+
+            {formatOpen && (
+              <div className="flex flex-wrap items-center gap-0.5 border-b border-border-subtle px-4 pt-1.5 pb-1">
+                <FormatButton
+                  title="Bold  ⌘B"
+                  icon={Bold}
+                  onApply={() => applyEdit(wrap(selection(), "**"))}
+                />
+                <FormatButton
+                  title="Italic  ⌘I"
+                  icon={Italic}
+                  onApply={() => applyEdit(wrap(selection(), "*"))}
+                />
+                <FormatButton
+                  title="Strikethrough"
+                  icon={Strikethrough}
+                  onApply={() => applyEdit(wrap(selection(), "~~"))}
+                />
+                <FormatButton
+                  title="Code"
+                  icon={Code}
+                  onApply={() => applyEdit(wrap(selection(), "`"))}
+                />
+                <FormatButton
+                  title="Link  ⌘K"
+                  icon={Link2}
+                  onApply={() => applyEdit(insertLink(selection()))}
+                />
+                <Divider />
+                <FormatButton
+                  title="Bulleted list"
+                  icon={List}
+                  onApply={() => applyEdit(linePrefix(selection(), "- "))}
+                />
+                <FormatButton
+                  title="Numbered list"
+                  icon={ListOrdered}
+                  onApply={() => applyEdit(linePrefix(selection(), "1. ", true))}
+                />
+                <FormatButton
+                  title="Quote"
+                  icon={Quote}
+                  onApply={() => applyEdit(linePrefix(selection(), "> "))}
+                />
+              </div>
+            )}
+
+            {/* The side controls sit in 44px rows pinned to the BOTTOM, so they
+              stay on the last line as the text grows, the way Discord's do.
+              Vertical values are literal px, the line box's unit: the editor
+              is 8 + 18 + 8 = 34px, and 5px above and below make the 44px row
+              (Atlas's UI scale shrinks rem, which would drop the line
+              off-centre — see the editor's own padding). */}
+            <div className="flex items-end gap-1 px-[8px]">
+              <div className="flex h-[44px] shrink-0 items-center">
+                <HintItem
+                  label={atLimit ? `At most ${CHAT_MESSAGE_ATTACHMENT_MAX} files` : "Attach a file"}
+                >
+                  <button
+                    type="button"
+                    disabled={atLimit}
+                    onClick={onPickFiles}
+                    className={cn(
+                      BAR_BUTTON,
+                      atLimit && "cursor-not-allowed opacity-50 hover:bg-transparent",
+                    )}
+                  >
+                    <Plus size={18} />
+                  </button>
+                </HintItem>
+              </div>
+
+              <div className="min-h-[44px] min-w-0 flex-1 py-[5px]">
+                {Input ? (
+                  <Input
+                    handle={input}
+                    value={draft}
+                    placeholder={placeholder}
+                    members={memberMap}
+                    me={me}
+                    onChange={handleChange}
+                    onKeyDown={handleKeyDown}
+                    onPaste={handlePaste}
+                    onPasteLargeText={handlePasteLargeText}
+                  />
+                ) : (
+                  // Same geometry, so the composer does not resize when the real
+                  // editor lands. Only ever seen on a cold first open.
+                  <div className="px-[10px] py-[8px] text-base leading-[18px] text-disabled">
+                    {draft || placeholder}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex h-[44px] shrink-0 items-center gap-0.5">
+                {/* Only shown near the ceiling — a permanent counter is noise. */}
+                {bytes > CHAT_BODY_MAX_BYTES * 0.8 && (
+                  <span
+                    className={cn(
+                      "mr-1 text-2xs tabular-nums",
+                      overLimit ? "text-error" : "text-disabled",
+                    )}
+                  >
+                    {bytes.toLocaleString()} / {CHAT_BODY_MAX_BYTES.toLocaleString()}
+                  </span>
+                )}
+                <EmojiPicker onPick={(char) => applyEdit(insertText(selection(), char))} />
+                <HintItem label="Mention someone">
+                  <button
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      const sel = selection();
+                      const needsSpace = sel.start > 0 && !/\s$/.test(draft.slice(0, sel.start));
+                      const edit = insertText(sel, needsSpace ? " @" : "@");
+                      applyEdit(edit);
+                      setMentionQuery({ start: edit.start - 1, query: "" });
+                    }}
+                    className={BAR_BUTTON}
+                  >
+                    <AtSign size={16} />
+                  </button>
+                </HintItem>
+                <HintItem label={formatOpen ? "Hide formatting" : "Formatting"}>
+                  <button
+                    type="button"
+                    aria-pressed={formatOpen}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => setFormatOpen((v) => !v)}
+                    className={cn(BAR_BUTTON, formatOpen && "bg-element-active text-foreground")}
+                  >
+                    <ALargeSmall size={17} />
+                  </button>
+                </HintItem>
+                <HintItem
+                  label={editing ? "Save edit" : uploading ? "Waiting for uploads…" : "Send"}
+                >
+                  <button
+                    type="button"
+                    disabled={!canSend}
+                    onClick={submit}
+                    className={cn(
+                      BAR_BUTTON,
+                      canSend
+                        ? "text-foreground"
+                        : "cursor-not-allowed text-disabled hover:bg-transparent hover:text-disabled",
+                    )}
+                  >
+                    {uploading ? (
+                      <Loader2 size={15} className="animate-spin" />
+                    ) : (
+                      <ArrowUp size={17} strokeWidth={2.25} />
+                    )}
+                  </button>
+                </HintItem>
+              </div>
             </div>
           </div>
-        </div>
-      </HintGroup>
+        </HintGroup>
+      </div>
     </div>
   );
 }
+
+/** The bar's icon buttons: one size, one hover, Discord's spacing. */
+const BAR_BUTTON =
+  "flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-element-hover hover:text-foreground";
 
 function Divider() {
   return <span aria-hidden className="mx-0.5 h-3.5 w-px shrink-0 bg-border" />;
@@ -605,7 +666,7 @@ function Divider() {
 /**
  * A formatting button.
  *
- * `onMouseDown` preventDefault is load-bearing: without it the textarea loses
+ * `onMouseDown` preventDefault is load-bearing: without it the editor loses
  * its selection the moment the button takes focus, and every wrap would apply
  * to an empty range.
  */

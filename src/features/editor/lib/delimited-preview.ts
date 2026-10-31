@@ -1,0 +1,61 @@
+/**
+ * CSV and TSV for the file view's rendered table: which delimiter a file uses,
+ * and its first rows parsed with RFC 4180 quoting. Bounded on purpose (100
+ * rows, 30 columns, 2,000 characters a cell): the table is a glance, and the
+ * source view is one toggle away for the rest.
+ */
+
+export function filePreviewDelimiter(file: { name: string; mimeType?: string }): "," | "\t" | null {
+  const mime = file.mimeType?.split(";", 1)[0]?.trim().toLowerCase();
+  if (mime === "text/csv") return ",";
+  if (mime === "text/tab-separated-values") return "\t";
+  if (mime && mime !== "text/plain" && mime !== "application/octet-stream") return null;
+  if (/\.csv$/i.test(file.name)) return ",";
+  if (/\.tsv$/i.test(file.name)) return "\t";
+  return null;
+}
+
+export function parseDelimitedPreview(text: string, delimiter: "," | "\t") {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let quoted = false;
+  let truncated = false;
+  let rowStart = text.charCodeAt(0) === 0xfeff ? 1 : 0;
+  const endCell = () => {
+    if (row.length < 30) row.push(cell);
+    else truncated = true;
+    cell = "";
+  };
+  for (let index = rowStart; index < text.length; index++) {
+    const char = text[index];
+    if (char === '"') {
+      if (quoted && text[index + 1] === '"') {
+        if (cell.length < 2000) cell += '"';
+        else truncated = true;
+        index++;
+        continue;
+      }
+      if (quoted || cell === "") {
+        quoted = !quoted;
+        continue;
+      }
+    }
+    if (!quoted && (char === delimiter || char === "\n" || char === "\r")) {
+      endCell();
+      if (char !== delimiter) {
+        rows.push(row);
+        row = [];
+        if (char === "\r" && text[index + 1] === "\n") index++;
+        rowStart = index + 1;
+        if (rows.length === 100) return { rows, truncated: truncated || index < text.length - 1 };
+      }
+    } else if (cell.length < 2000) cell += char;
+    else truncated = true;
+  }
+  if (rowStart < text.length) {
+    endCell();
+    rows.push(row);
+  }
+  return { rows, truncated: truncated || quoted };
+}

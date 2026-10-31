@@ -57,7 +57,7 @@ export function useScrollEdges(
       el.removeEventListener("scroll", measure);
       ro.disconnect();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
   return edges;
 }

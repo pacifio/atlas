@@ -178,7 +178,7 @@ enum WireEvent {
     },
     CommentUpsert {
         session_id: String,
-        comment: Comment,
+        comment: Box<Comment>,
     },
     Presence {
         project_id: String,
@@ -214,7 +214,7 @@ fn emit(app: &AppHandle, event: ArtifactsEvent) {
             ..
         } => WireEvent::CommentUpsert {
             session_id,
-            comment: *comment,
+            comment,
         },
         ArtifactsEvent::Presence { key, online } => WireEvent::Presence {
             project_id: key.1,
@@ -939,7 +939,7 @@ mod tests {
         let frames = [
             WireEvent::CommentUpsert {
                 session_id: "ses_1".into(),
-                comment: comment("c1", AnchorKind::Message, "msg_1", None),
+                comment: Box::new(comment("c1", AnchorKind::Message, "msg_1", None)),
             },
             WireEvent::EntryUpsert {
                 session_id: "ses_1".into(),
@@ -972,7 +972,7 @@ mod tests {
         // The kind tag itself is what the renderer switches on.
         let json = serde_json::to_value(WireEvent::CommentUpsert {
             session_id: "ses_1".into(),
-            comment: comment("c1", AnchorKind::Message, "msg_1", None),
+            comment: Box::new(comment("c1", AnchorKind::Message, "msg_1", None)),
         })
         .unwrap();
         assert_eq!(json["kind"], "commentUpsert");

@@ -60,8 +60,8 @@ const BIND_SITES = [
     via: "resolveEffectiveMode",
   },
   {
-    what: "history sidebar resume",
-    file: "src/features/chat/components/session-sidebar.tsx",
+    what: "sidebar resume (openThread)",
+    file: "src/features/chat/lib/open-thread.ts",
     via: "applyModeOnResume",
   },
   {

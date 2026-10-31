@@ -174,7 +174,7 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle, TiptapEditorProps>(fu
         swappingRef.current = false;
       }
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [documentId, editor]);
 
   const flush = useCallback(async (): Promise<string | null> => {

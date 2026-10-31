@@ -1,4 +1,4 @@
-import { detectLanguage, PLAINTEXT } from "@/features/editor/lib/languages";
+import { detectLanguage, PLAINTEXT } from "./language-id";
 import { sanitizeSvg } from "./sanitize-svg";
 import { fontFaceCss, safeFontIdent } from "./font-face-css";
 import {

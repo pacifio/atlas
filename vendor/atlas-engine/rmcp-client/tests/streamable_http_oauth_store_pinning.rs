@@ -22,10 +22,11 @@ use atlas_engine_rmcp_client::WrappedOAuthTokenResponse;
 use atlas_engine_rmcp_client::save_oauth_tokens;
 use atlas_engine_rmcp_client::stored_oauth_credential_snapshot;
 use futures::future::BoxFuture;
-use keyring::credential::Credential;
-use keyring::credential::CredentialApi;
-use keyring::credential::CredentialBuilderApi;
-use keyring::credential::CredentialPersistence;
+use keyring_core::Entry;
+use keyring_core::api::Credential;
+use keyring_core::api::CredentialApi;
+use keyring_core::api::CredentialPersistence;
+use keyring_core::api::CredentialStoreApi;
 use oauth2::AccessToken;
 use oauth2::basic::BasicTokenType;
 use pretty_assertions::assert_eq;
@@ -111,7 +112,7 @@ struct TestCredential {
 }
 
 impl CredentialApi for TestCredential {
-    fn set_secret(&self, secret: &[u8]) -> keyring::Result<()> {
+    fn set_secret(&self, secret: &[u8]) -> keyring_core::Result<()> {
         *self
             .state
             .secret
@@ -120,9 +121,9 @@ impl CredentialApi for TestCredential {
         Ok(())
     }
 
-    fn get_secret(&self) -> keyring::Result<Vec<u8>> {
+    fn get_secret(&self) -> keyring_core::Result<Vec<u8>> {
         if self.state.fail_reads.load(Ordering::SeqCst) {
-            return Err(keyring::Error::Invalid(
+            return Err(keyring_core::Error::Invalid(
                 "simulated keyring read failure".to_string(),
                 "load".to_string(),
             ));
@@ -133,17 +134,25 @@ impl CredentialApi for TestCredential {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
-            .ok_or(keyring::Error::NoEntry)
+            .ok_or(keyring_core::Error::NoEntry)
     }
 
-    fn delete_credential(&self) -> keyring::Result<()> {
+    fn delete_credential(&self) -> keyring_core::Result<()> {
         self.state
             .secret
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .take()
             .map(|_| ())
-            .ok_or(keyring::Error::NoEntry)
+            .ok_or(keyring_core::Error::NoEntry)
+    }
+
+    fn get_credential(&self) -> keyring_core::Result<Option<Arc<Credential>>> {
+        Ok(None)
+    }
+
+    fn get_specifiers(&self) -> Option<(String, String)> {
+        None
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -152,20 +161,28 @@ impl CredentialApi for TestCredential {
 }
 
 #[derive(Debug)]
-struct TestCredentialBuilder {
+struct TestCredentialStore {
     state: Arc<TestKeyringState>,
 }
 
-impl CredentialBuilderApi for TestCredentialBuilder {
+impl CredentialStoreApi for TestCredentialStore {
+    fn vendor(&self) -> String {
+        "atlas-engine-rmcp-client test store".to_string()
+    }
+
+    fn id(&self) -> String {
+        "store-pinning".to_string()
+    }
+
     fn build(
         &self,
-        _target: Option<&str>,
         _service: &str,
         _user: &str,
-    ) -> keyring::Result<Box<Credential>> {
-        Ok(Box::new(TestCredential {
+        _modifiers: Option<&std::collections::HashMap<&str, &str>>,
+    ) -> keyring_core::Result<Entry> {
+        Ok(Entry::new_with_credential(Arc::new(TestCredential {
             state: Arc::clone(&self.state),
-        }))
+        })))
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -205,7 +222,7 @@ async fn auto_store_remains_pinned_across_session_recovery() -> anyhow::Result<(
 #[ignore = "spawned by auto_store_remains_pinned_across_session_recovery"]
 async fn auto_store_remains_pinned_across_session_recovery_child() -> anyhow::Result<()> {
     let state = Arc::new(TestKeyringState::default());
-    keyring::set_default_credential_builder(Box::new(TestCredentialBuilder {
+    keyring_core::set_default_store(Arc::new(TestCredentialStore {
         state: Arc::clone(&state),
     }));
 

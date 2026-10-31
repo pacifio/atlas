@@ -75,7 +75,7 @@ export function FeaturedAgentOffers({
               disabled={disabled}
               title={
                 offer.platformSupported
-                  ? `Install ${offer.label} and switch this chat to it`
+                  ? `Install ${offer.label} and switch this session to it`
                   : `${offer.label} has no published build for this platform`
               }
               className={cn(

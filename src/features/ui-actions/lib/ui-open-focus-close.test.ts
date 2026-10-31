@@ -1,5 +1,7 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { teamChatShown } from "@/features/layout/lib/team-chat";
+import { singletonShown } from "@/features/layout/lib/singleton-surface";
 
 // The settings store subscribes to config events when it loads.
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async () => () => {}), emit: vi.fn() }));
@@ -20,7 +22,7 @@ const invokeMock = vi.hoisted(() =>
               title: "Older chat",
               updatedAt: "",
               createdAt: null,
-              archived: false,
+              ...RESTING_LIFECYCLE,
               projectName: "atlas",
               folderPaths: ["/p"],
             },
@@ -72,6 +74,7 @@ import { useSpacesStore } from "@/features/spaces/stores/spaces-store";
 import { performUiAction } from "./ui-actions";
 import { seedWindow, tab, uiRequest } from "./test-fixtures";
 import type { UiActionReply } from "./types";
+import { RESTING_LIFECYCLE } from "@/features/chat/lib/session-lifecycle";
 
 const layout = () => useLayoutStore.getState();
 const result = (reply: UiActionReply) => {
@@ -164,18 +167,17 @@ describe("ui_open", () => {
     expect(layout().tabs.filter((t) => t.type === "chat").length).toBeGreaterThanOrEqual(before);
   });
 
-  it("opens a git diff of a file", async () => {
+  it("opens the repository's diff, landing on a file", async () => {
     const r = result(await act("ui_open", { target: "diff", path: "src/main.ts", staged: true }));
-    expect(r.tabId).toBe("diff:src/main.ts:s");
-    expect(layout().tabs.find((t) => t.id === r.tabId)?.data).toMatchObject({
-      repoPath: "/p",
-      staged: true,
-    });
+    // One review diff per repository; the file is where it scrolls to.
+    expect(r.tabId).toBe("diff:/p");
+    expect(layout().tabs.find((t) => t.id === r.tabId)?.data).toMatchObject({ repoPath: "/p" });
   });
 
   it("opens settings on a section and rejects one that does not exist", async () => {
     const r = result(await act("ui_open", { target: "settings", section: "keybindings" }));
-    expect(layout().tabs.find((t) => t.id === r.tabId)?.type).toBe("settings");
+    expect(r.section).toBe("keybindings");
+    expect(useSettingsNav.getState().open).toBe(true);
     expect(useSettingsNav.getState().section).toBe("keybindings");
     expect(error(await act("ui_open", { target: "settings", section: "secrets" }))).toMatch(
       /keybindings/,
@@ -192,7 +194,8 @@ describe("ui_open", () => {
 
   it("opens the Timeline at a session", async () => {
     result(await act("ui_open", { target: "timeline", sessionId: "cap-1" }));
-    expect(layout().tabs.find((t) => t.type === "artifacts")).toBeDefined();
+    expect(layout().destination?.type).toBe("artifacts");
+    expect(layout().destinationShown).toBe(true);
     expect(useArtifactsStore.getState().open).toMatchObject({
       sessionId: "cap-1",
       projectPath: "/p",
@@ -201,7 +204,7 @@ describe("ui_open", () => {
 
   it("opens a knowledge note", async () => {
     result(await act("ui_open", { target: "knowledge", noteId: "note-3" }));
-    expect(layout().tabs.find((t) => t.type === "knowledge")).toBeDefined();
+    expect(layout().destination?.type).toBe("knowledge");
     expect(useKnowledgeStore.getState().pendingOpenId).toBe("note-3");
   });
 
@@ -248,20 +251,25 @@ describe("ui_open", () => {
       pageId: "p-arch",
       page: "Architecture",
     });
-    const tab = layout().tabs.find((t) => t.id === "spaces-c-design");
-    expect(tab).toMatchObject({
+    // A Space is a destination (ADR-0024), never a column tab.
+    expect(layout().destination).toMatchObject({
+      id: "spaces-c-design",
       type: "spaces",
       title: "design — Space",
       data: { convId: "c-design" },
     });
-    expect(layout().activeTabId).toBe("spaces-c-design");
+    expect(layout().destinationShown).toBe(true);
+    expect(layout().tabs.some((t) => t.type === "spaces")).toBe(false);
     expect(useSpacesStore.getState().requestedPages["c-design"]).toBe("p-arch");
 
-    // Asked again, the same tab is refocused, not a second one opened.
+    // Asked again, the same Space stays: nothing is opened as a tab.
+    layout().actions.hideDestination();
     result(
       await act("ui_open", { target: "space_page", conversationId: "c-design", pageId: "p-arch" }),
     );
-    expect(layout().tabs.filter((t) => t.type === "spaces")).toHaveLength(1);
+    expect(layout().destination?.id).toBe("spaces-c-design");
+    expect(layout().destinationShown).toBe(true);
+    expect(layout().tabs.some((t) => t.type === "spaces")).toBe(false);
   });
 
   it("refuses a Space page that is not there, naming what is missing", async () => {
@@ -307,46 +315,44 @@ describe("ui_focus", () => {
   });
 
   it("shows, hides or toggles a panel", async () => {
-    result(await act("ui_focus", { target: "panel", name: "right", visible: true }));
-    expect(layout().rightPanel.visible).toBe(true);
-    result(await act("ui_focus", { target: "panel", name: "right", visible: true }));
-    expect(layout().rightPanel.visible).toBe(true);
-    result(await act("ui_focus", { target: "panel", name: "left" }));
-    expect(layout().leftPanel.visible).toBe(false);
+    result(await act("ui_focus", { target: "panel", name: "team_chat", visible: true }));
+    expect(teamChatShown(layout())).toBe(true);
+    result(await act("ui_focus", { target: "panel", name: "team_chat", visible: true }));
+    expect(teamChatShown(layout())).toBe(true);
+    result(await act("ui_focus", { target: "panel", name: "files" }));
+    expect(singletonShown(layout(), "files")).toBe(true);
+    result(await act("ui_focus", { target: "panel", name: "files", visible: false }));
+    expect(layout().tabs.some((t) => t.type === "files")).toBe(false);
     result(await act("ui_focus", { target: "panel", name: "chat_sidebar", visible: false }));
-    expect(layout().chatSidebar.visible).toBe(false);
+    expect(useProjectStore.getState().sidebarOpen).toBe(false);
   });
 
-  it("reveals a side panel section", async () => {
-    result(await act("ui_focus", { target: "section", side: "right", section: "git-graph" }));
-    expect(layout().rightPanel).toMatchObject({
-      visible: true,
-      activeSection: "git-graph",
-      mode: "source-control",
-    });
-    useLayoutStore.setState({ leftPanel: { ...layout().leftPanel, visible: false } });
-    result(await act("ui_focus", { target: "section", side: "left", section: "knowledge" }));
-    expect(layout().leftPanel).toMatchObject({ visible: true, activeSection: "knowledge" });
+  it("reveals a section of source control", async () => {
+    result(
+      await act("ui_focus", { target: "section", side: "source_control", section: "git-graph" }),
+    );
+    expect(layout().sourceControl.section).toBe("git-graph");
+    // Source control opens as a surface tab beside the main column, focused.
+    const sc = layout().tabs.find((t) => t.type === "source-control");
+    expect(sc?.groupId).toBe("g2");
+    expect(layout().activeByGroup.g2).toBe(sc?.id);
     expect(
-      error(await act("ui_focus", { target: "section", side: "left", section: "changes" })),
-    ).toMatch(/files/);
+      error(await act("ui_focus", { target: "section", side: "left", section: "files" })),
+    ).toMatch(/source_control/);
   });
 
-  it("switches the right panel's mode and keeps it open", async () => {
-    result(await act("ui_focus", { target: "right_mode", mode: "chat" }));
-    expect(layout().rightPanel).toMatchObject({ visible: true, mode: "chat" });
-    result(await act("ui_focus", { target: "right_mode", mode: "chat" }));
-    expect(layout().rightPanel.visible).toBe(true);
+  it("toggles source control as a tab: closed when shown, reopened when not", async () => {
+    result(await act("ui_focus", { target: "panel", name: "source_control", visible: true }));
+    expect(layout().tabs.some((t) => t.type === "source-control")).toBe(true);
+    result(await act("ui_focus", { target: "panel", name: "source_control", visible: false }));
+    expect(layout().tabs.some((t) => t.type === "source-control")).toBe(false);
   });
 
-  it("reveals a path in the explorer, opening the Files panel", async () => {
-    useLayoutStore.setState({
-      leftPanel: { ...layout().leftPanel, visible: false, activeSection: "knowledge" },
-    });
-    const { useExplorerStore } = await import("@/features/explorer/stores/explorer-store");
+  it("reveals a path in the explorer, opening the Files surface", async () => {
+    const { useFilesRevealStore } = await import("@/features/explorer/stores/files-reveal-store");
     result(await act("ui_focus", { target: "explorer", path: "src/App.tsx" }));
-    expect(layout().leftPanel).toMatchObject({ visible: true, activeSection: "files" });
-    expect(useExplorerStore.getState().selectedPaths).toEqual(["/p/src/App.tsx"]);
+    expect(singletonShown(layout(), "files")).toBe(true);
+    expect(useFilesRevealStore.getState().request?.path).toBe("/p/src/App.tsx");
     expect(error(await act("ui_focus", { target: "explorer", path: "/etc/hosts" }))).toMatch(
       /outside/,
     );
@@ -383,11 +389,23 @@ describe("ui_close", () => {
 
   /// Own-session refusal's sibling: closing unsaved work is the user's call.
   it("refuses to close an editor with unsaved changes", async () => {
+    // The tab's save session marks the tab itself dirty.
+    useLayoutStore.getState().actions.setTabDirty("editor:/p/src/App.tsx", true);
+    expect(error(await act("ui_close", { tabId: "editor:/p/src/App.tsx" }))).toMatch(/unsaved/);
+    expect(layout().tabs.some((t) => t.id === "editor:/p/src/App.tsx")).toBe(true);
+  });
+
+  /// A buffer's shared flag can outlive the edits it described (a tab closed
+  /// with "Don't save", another tab on the same file); only the tab's own
+  /// flag, which its save session keeps current, blocks the close.
+  it("closes a clean editor whose buffer carries a stale dirty flag, and drops the buffer", async () => {
     useEditorStore.setState({
       buffers: { "/p/src/App.tsx": { path: "/p/src/App.tsx", dirty: true } as never },
     });
-    expect(error(await act("ui_close", { tabId: "editor:/p/src/App.tsx" }))).toMatch(/unsaved/);
-    expect(layout().tabs.some((t) => t.id === "editor:/p/src/App.tsx")).toBe(true);
+    expect(result(await act("ui_close", { tabId: "editor:/p/src/App.tsx" }))).toMatchObject({
+      closed: true,
+    });
+    expect(useEditorStore.getState().buffers["/p/src/App.tsx"]).toBeUndefined();
   });
 
   /// Not only editors hold unsaved work: the PDF viewer marks its tab dirty

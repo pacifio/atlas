@@ -9,7 +9,7 @@ import {
 import { Select } from "@/ui/select";
 import { NATIVE_AGENT_ID } from "@/types/agent";
 import { useAgentRegistryStore } from "@/features/agents/stores/agent-registry-store";
-import { SettingSelect, SettingSwitch } from "../layout/setting-controls";
+import { SettingSelect, SettingStepper, SettingSwitch } from "../layout/setting-controls";
 import { useScopedSetting } from "../../lib/use-scoped-setting";
 
 const SIDEBAR_SORTS = [
@@ -42,25 +42,41 @@ export function ChatPage() {
   return (
     <SettingsPage
       scopeable
-      title="Chat"
-      description="New chats, the composer, layout, and switching agents."
+      title="Sessions"
+      description="New sessions, the composer, layout, and switching agents."
     >
-      <SettingsSection title="New chats">
+      <SettingsSection title="New sessions">
         <SettingsGroup>
           <SettingsRow
+            setting="newSessionUsesLastAgent"
+            control={<SettingSwitch setting="newSessionUsesLastAgent" />}
+          />
+          <SettingsRow
             setting="defaultAgent"
-            description="The agent a new chat starts with. Until it's installed, chats start with Atlas Agent."
+            description="The agent a new session starts with when it isn't the last one you picked. Until it's installed, sessions start with Atlas Agent."
             control={<DefaultAgentSelect />}
+          />
+        </SettingsGroup>
+      </SettingsSection>
+
+      <SettingsSection title="Running sessions">
+        <SettingsGroup>
+          <SettingsRow
+            setting="continueSessionsAfterRestart"
+            control={<SettingSwitch setting="continueSessionsAfterRestart" />}
           />
         </SettingsGroup>
       </SettingsSection>
 
       <SettingsSection title="Layout">
         <SettingsGroup>
-          <SettingsRow setting="chatCodeWrap" control={<SettingSwitch setting="chatCodeWrap" />} />
           <SettingsRow
             setting="sidebarSort"
             control={<SettingSelect setting="sidebarSort" options={SIDEBAR_SORTS} />}
+          />
+          <SettingsRow
+            setting="autoSettleAfterDays"
+            control={<SettingStepper setting="autoSettleAfterDays" unit="d" zeroLabel="Off" />}
           />
         </SettingsGroup>
       </SettingsSection>
@@ -130,7 +146,7 @@ function DefaultAgentSelect() {
       value={scoped.value}
       options={options}
       disabled={scoped.globalOnly}
-      aria-label="New chats: Default agent"
+      aria-label="New sessions: Default agent"
       onValueChange={(next) => scoped.set(next)}
     />
   );

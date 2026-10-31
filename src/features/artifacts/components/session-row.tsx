@@ -51,10 +51,12 @@ export function SessionRow({
       onClick={onOpen}
       aria-pressed={selected}
       className={cn(
-        // Wider than its column so the hover background reaches past the text
-        // on both sides — a row highlight that stops at the glyph reads as a
-        // box around the words rather than as the row being pointed at.
-        "-mx-2 flex w-[calc(100%+1rem)] cursor-pointer items-start gap-2.5 rounded-lg px-2 py-2.5 text-left",
+        // Exactly as wide as the hairlines between rows, inside them with a
+        // little air above and below (the row's wrapper in
+        // `timeline-calendar.tsx`). It used to overhang the hairlines by 8px a
+        // side, so a selected row's rounded corners stuck out past the rules
+        // and butted against the one above it.
+        "flex w-full cursor-pointer items-start gap-2.5 rounded-lg px-2 py-1.5 text-left",
         "transition-colors duration-fast ease-out-strong hover:bg-element-hover",
         selected && "bg-element-selected hover:bg-element-selected",
       )}
@@ -145,7 +147,6 @@ function Dot() {
 function joinDots(parts: (ReactNode | false | null | undefined)[]): ReactNode {
   const kept = parts.filter(Boolean) as ReactNode[];
   return kept.map((part, i) => (
-    // eslint-disable-next-line react/no-array-index-key -- the parts are fixed
     <Fragment key={i}>
       {i > 0 && <Dot />}
       {part}

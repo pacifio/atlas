@@ -56,9 +56,11 @@ const POPUP = [
   "origin-[var(--transform-origin)] animate-scale-in outline-none",
 ];
 
+/** `anchor` positions the menu against another element than its trigger:
+ *  a split row's ⌄ opens a menu lined up with (and as wide as) the row. */
 type PositionerProps = Pick<
   MenuPrimitive.Positioner.Props,
-  "align" | "alignOffset" | "side" | "sideOffset"
+  "align" | "alignOffset" | "side" | "sideOffset" | "anchor"
 >;
 
 function DropdownMenuContent({
@@ -67,12 +69,14 @@ function DropdownMenuContent({
   alignOffset = 0,
   side = "bottom",
   sideOffset = 4,
+  anchor,
   ...props
 }: MenuPrimitive.Popup.Props & PositionerProps) {
   return (
     <MenuPrimitive.Portal>
       <MenuPrimitive.Positioner
         className="isolate z-popover outline-none"
+        anchor={anchor}
         align={align}
         alignOffset={alignOffset}
         side={side}

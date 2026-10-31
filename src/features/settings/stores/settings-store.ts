@@ -102,7 +102,7 @@ function applyIcons(iconTheme: string, themeMode: AppSettings["themeMode"]): voi
  *  between `previous` and `next`. Shared by `updateSettings` (both the
  *  optimistic apply and the reconciled result), `hydrate`, and the
  *  `atlas:config-changed` listener below — one path so a hot-reloaded
- *  external edit re-applies UI scale/theme/explorer state exactly like a
+ *  external edit re-applies UI scale and theme exactly like a
  *  UI-driven change does.
  *
  *  "Changed" is by VALUE. Every IPC result is a freshly parsed object, so a
@@ -110,14 +110,6 @@ function applyIcons(iconTheme: string, themeMode: AppSettings["themeMode"]): voi
  *  settings write, twice (the reconcile and the `atlas:config-changed` echo) —
  *  and each apply collapses mermaid diagrams and re-themes every terminal. */
 function applySettingsSideEffects(next: AppSettings, previous: AppSettings): void {
-  // Toggling hidden-files visibility must re-apply the explorer's dotfile
-  // filter immediately. `refresh()` reconciles the root and every expanded
-  // subtree, so the user's expansion state survives.
-  if (next.showHiddenFiles !== previous.showHiddenFiles) {
-    void import("@/features/explorer/stores/explorer-store").then((m) =>
-      m.useExplorerStore.getState().actions.refresh(),
-    );
-  }
   if (next.uiScale !== previous.uiScale) applyUiScale(next.uiScale);
   if (displaySettingsChanged(next, previous)) applyDisplaySettings(next);
   if (

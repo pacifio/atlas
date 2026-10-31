@@ -1,3 +1,4 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 use std::fmt;
 use std::ops::Deref;
 
@@ -8,13 +9,27 @@ use ts_rs::TS;
 
 /// A Responses API item ID. New IDs require an explicit prefix; deserialization
 /// remains permissive so legacy rollouts can still be read.
-#[derive(
-    Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, JsonSchema, TS,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, TS)]
 #[serde(transparent)]
-#[schemars(with = "String")]
 #[ts(type = "string")]
 pub struct ResponseItemId(String);
+
+/// Inlined as a plain string without the description above. schemars 0.8 treated
+/// a transparent struct that way; schemars 1 gives a documented one a definition
+/// of its own, which would rewrite the committed app-server schemas.
+impl JsonSchema for ResponseItemId {
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "ResponseItemId".into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        String::json_schema(generator)
+    }
+}
 
 impl ResponseItemId {
     pub fn new(prefix: &str) -> Self {

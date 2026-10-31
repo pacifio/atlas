@@ -1,9 +1,11 @@
-import { memo, useEffect, useRef, useState, useMemo } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useState, useMemo } from "react";
 import {
   CachedMarkdown,
   parseTransientOffThread,
   transientWorkerAvailable,
 } from "@/lib/markdown-cache";
+import { onMarkdownClick, onMarkdownCopy, onMarkdownKeyDown } from "@/lib/markdown-links";
+import { hasFileIcons, paintFileIcons } from "@/features/icon-theme/lib/icon-markup";
 import { parseMarkdown } from "@/lib/markdown-render";
 import {
   type BlockSplit,
@@ -53,13 +55,18 @@ const TransientMarkdown = memo(function TransientMarkdown({
   source,
   className,
   unstyled,
+  fileRoot,
 }: {
   source: string;
   className?: string;
   unstyled?: boolean;
+  fileRoot?: string;
 }) {
   const small = source.length <= INLINE_PARSE_LIMIT;
-  const inline = useMemo(() => (small ? parseMarkdown(source) : null), [small, source]);
+  const inline = useMemo(
+    () => (small ? parseMarkdown(source, fileRoot) : null),
+    [small, source, fileRoot],
+  );
 
   // Large tail: throttled trailing-edge parse of the LATEST source. The parse
   // itself runs on the markdown worker via the transient lane (single slot,
@@ -70,6 +77,8 @@ const TransientMarkdown = memo(function TransientMarkdown({
   const [big, setBig] = useState("");
   const latest = useRef(source);
   latest.current = source;
+  const rootRef = useRef(fileRoot);
+  rootRef.current = fileRoot;
   const timer = useRef<number | null>(null);
   const lastRun = useRef(0);
   const alive = useRef(true);
@@ -85,13 +94,13 @@ const TransientMarkdown = memo(function TransientMarkdown({
       timer.current = null;
       lastRun.current = performance.now();
       if (transientWorkerAvailable()) {
-        void parseTransientOffThread(latest.current).then((html) => {
+        void parseTransientOffThread(latest.current, rootRef.current).then((html) => {
           // null/"" = superseded or timed out — skip the tick; a newer parse
           // is on the way (and settling re-renders through CachedMarkdown).
           if (alive.current && html) setBig(html);
         });
       } else {
-        setBig(parseMarkdown(latest.current));
+        setBig(parseMarkdown(latest.current, rootRef.current));
       }
     }, due);
   }, [small, source]);
@@ -113,7 +122,15 @@ const TransientMarkdown = memo(function TransientMarkdown({
   const html = inline ?? (big || lastHtml.current);
   lastHtml.current = html;
 
-  // Same external-link interception as CachedMarkdown — a click on a link in
+  // Each tick replaces the tail's HTML, chips and all. Painting before the
+  // browser does means a resolved icon is in place on every frame instead of
+  // flickering back to its fallback glyph; it is a cache lookup per chip.
+  useLayoutEffect(() => {
+    const node = ref.current;
+    if (node && hasFileIcons(html)) paintFileIcons(node);
+  }, [html]);
+
+  // Same link and file-chip handling as CachedMarkdown — a click on a link in
   // the live tail must not navigate the WKWebView away from Atlas. (Copy-code
   // bars are skipped: fences render as plain text until they close, and the
   // settled block gets them from CachedMarkdown.)
@@ -121,16 +138,15 @@ const TransientMarkdown = memo(function TransientMarkdown({
   useEffect(() => {
     const node = ref.current;
     if (!node) return;
-    const onClick = (e: MouseEvent) => {
-      const anchor = (e.target as HTMLElement | null)?.closest?.("a");
-      if (anchor instanceof HTMLAnchorElement && anchor.href && /^https?:/i.test(anchor.href)) {
-        e.preventDefault();
-        const href = anchor.href;
-        void import("@tauri-apps/plugin-opener").then((m) => m.openUrl(href)).catch(() => {});
-      }
-    };
+    const onClick = (e: MouseEvent) => void onMarkdownClick(e);
     node.addEventListener("click", onClick);
-    return () => node.removeEventListener("click", onClick);
+    node.addEventListener("keydown", onMarkdownKeyDown);
+    node.addEventListener("copy", onMarkdownCopy);
+    return () => {
+      node.removeEventListener("click", onClick);
+      node.removeEventListener("keydown", onMarkdownKeyDown);
+      node.removeEventListener("copy", onMarkdownCopy);
+    };
   }, []);
 
   return (
@@ -142,7 +158,6 @@ const TransientMarkdown = memo(function TransientMarkdown({
           : "prose-chat text-[var(--foreground)] leading-relaxed break-words select-text",
         className,
       )}
-      // eslint-disable-next-line react/no-danger
       dangerouslySetInnerHTML={{ __html: html }}
     />
   );
@@ -155,12 +170,14 @@ const MarkdownBlock = memo(function MarkdownBlock({
   className,
   unstyled,
   priority,
+  fileRoot,
 }: {
   source: string;
   trailing: boolean;
   className?: string;
   unstyled?: boolean;
   priority?: number;
+  fileRoot?: string;
 }) {
   // A still-open code fence renders as plain text (no per-frame re-highlight of a
   // growing block); it snaps to highlighted once the closing fence streams in.
@@ -183,6 +200,7 @@ const MarkdownBlock = memo(function MarkdownBlock({
       <TransientMarkdown
         source={source}
         unstyled={unstyled}
+        fileRoot={fileRoot}
         className={cn("[display:contents]", className)}
       />
     );
@@ -192,6 +210,7 @@ const MarkdownBlock = memo(function MarkdownBlock({
       source={source}
       unstyled={unstyled}
       priority={priority}
+      fileRoot={fileRoot}
       className={cn("[display:contents]", className)}
     />
   );
@@ -238,7 +257,6 @@ function useBlocks(source: string, streaming: boolean, whole: boolean): string[]
       split(latest.current);
     });
     // `split` closes over refs only; re-creating it per render is not a dep.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source, streaming, whole]);
 
   useEffect(
@@ -265,6 +283,7 @@ export function StreamingMarkdown({
   className,
   unstyled,
   priority,
+  fileRoot,
 }: {
   source: string;
   streaming: boolean;
@@ -273,6 +292,8 @@ export function StreamingMarkdown({
   unstyled?: boolean;
   /** See `CachedMarkdown.priority`. */
   priority?: number;
+  /** See `CachedMarkdown.fileRoot`. */
+  fileRoot?: string;
 }) {
   // Reference-style link / footnote definitions need cross-block context, so
   // fall back to a single whole-message render — but only once SETTLED. During
@@ -289,6 +310,7 @@ export function StreamingMarkdown({
         source={source}
         unstyled={unstyled}
         priority={priority}
+        fileRoot={fileRoot}
         className={className}
       />
     );
@@ -307,6 +329,7 @@ export function StreamingMarkdown({
           className={className}
           unstyled={unstyled}
           priority={priority}
+          fileRoot={fileRoot}
         />
       ))}
       {/* Terminal-style caret after the last block while streaming — unless the

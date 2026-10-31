@@ -1,7 +1,7 @@
 import { useEffect, type ComponentType } from "react";
 import { File as FileGlyph, Folder, FolderOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { detectLanguage, PLAINTEXT } from "@/features/editor/lib/languages";
+import { detectLanguage, PLAINTEXT } from "../lib/language-id";
 import { useIconThemeStore } from "../stores/icon-theme-store";
 import { cacheKey, type PreparedIcon } from "../stores/icon-theme-store";
 import type { IconKind } from "../lib/icon-theme-api";

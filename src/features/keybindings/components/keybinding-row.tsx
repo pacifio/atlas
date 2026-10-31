@@ -325,7 +325,7 @@ function ShortcutCapture({
     };
     // `save` reads the store fresh on every call; re-subscribing per render
     // would drop a keydown that lands between two effects.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [actionId, replace]);
 
   const save = (combo: Combo) => {

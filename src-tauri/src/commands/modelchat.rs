@@ -20,12 +20,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use rig_core::agent::{MultiTurnStreamItem, StreamingResult};
-use rig_core::client::completion::CompletionClient;
+use rig_core::completion::CompletionRequest;
 use rig_core::message::{ImageMediaType, Message as RigMessage, UserContent};
-use rig_core::providers::{anthropic, gemini, openai};
-use rig_core::streaming::{StreamedAssistantContent, StreamingChat};
-use rig_core::OneOrMany;
+use rig_core::operation::Completion;
+use rig_core::providers::anthropic::Anthropic;
+use rig_core::providers::gemini::Gemini;
+use rig_core::providers::openai::OpenAIConfig;
+use rig_core::streaming::{Item, StreamEvent, Streamed};
+use rig_core::DynModel;
 
 use super::byok;
 
@@ -205,53 +207,82 @@ fn to_rig(m: &ChatMsg) -> Option<RigMessage> {
                     None,
                 ));
             }
-            let content = OneOrMany::many(parts).ok()?;
-            Some(RigMessage::User { content })
+            if parts.is_empty() {
+                return None;
+            }
+            Some(RigMessage::User { content: parts })
         }
         _ => None,
     }
 }
 
-/// Split the conversation into `(prompt, prior_history)` — Rig's `stream_chat`
-/// wants the latest user turn separate from the history.
+/// Split the conversation into `(prompt, prior_history)` — Rig's request wants
+/// the latest user turn as the prompt, ahead of which the history goes.
 fn split_messages(msgs: &[ChatMsg]) -> Result<(RigMessage, Vec<RigMessage>), String> {
     let mut history: Vec<RigMessage> = msgs.iter().filter_map(to_rig).collect();
     let prompt = history.pop().ok_or("empty conversation")?;
     Ok((prompt, history))
 }
 
+/// The three-arm provider dispatch, shared with `memory_summarize`: Chat
+/// Completions (with `base_url`) for OpenAI and every OpenAI-compatible
+/// provider, native Anthropic, native Gemini.
+pub(super) fn build_model(
+    api: ApiKind,
+    base: &str,
+    key: &str,
+    model: &str,
+) -> DynModel<Completion> {
+    match api {
+        ApiKind::OpenAi => {
+            let mut config = OpenAIConfig::new(key);
+            config.base_url = base.to_string();
+            config.client().chat(model).into()
+        }
+        ApiKind::Anthropic => Anthropic::new(key).completion(model).into(),
+        ApiKind::Google => Gemini::new(key).completion(model).into(),
+    }
+}
+
+/// Start a stream for `prompt` after `history`.
+pub(super) fn start_stream(
+    model: &DynModel<Completion>,
+    prompt: RigMessage,
+    history: Vec<RigMessage>,
+) -> Result<Streamed<Completion>, String> {
+    let request = CompletionRequest::new(prompt).messages(history);
+    model.stream(request).map_err(|e| e.to_string())
+}
+
 // ── Stream drain (shared across providers) ──────────────────────────────────
 
-/// Iterate a Rig multi-turn stream, forwarding text deltas to the UI and
-/// capturing token usage. Generic over the provider response `R`.
-async fn drain<R>(
-    stream: &mut StreamingResult<R>,
+/// Iterate a Rig completion stream, forwarding text deltas to the UI, then read
+/// token usage from the folded response once the stream is exhausted.
+async fn drain(
+    mut stream: Streamed<Completion>,
     app: &AppHandle,
     stream_id: &str,
     cancel: &Arc<AtomicBool>,
 ) -> Result<(u64, u64), String> {
-    let mut input_tokens = 0u64;
-    let mut output_tokens = 0u64;
     while let Some(item) = stream.next().await {
         if cancel.load(Ordering::Relaxed) {
-            break;
+            return Ok((0, 0));
         }
-        match item.map_err(|e| e.to_string())? {
-            MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(t)) => {
-                if !t.text.is_empty() {
-                    emit(app, stream_id, ModelChatEvent::TextDelta { delta: t.text });
-                }
+        if let Item::Event(StreamEvent::Text { text, .. }) = item.map_err(|e| e.to_string())? {
+            if !text.is_empty() {
+                emit(app, stream_id, ModelChatEvent::TextDelta { delta: text });
             }
-            MultiTurnStreamItem::CompletionCall(call) => {
-                if let Some(usage) = call.usage {
-                    input_tokens = usage.input_tokens;
-                    output_tokens = usage.output_tokens;
-                }
-            }
-            _ => {}
         }
     }
-    Ok((input_tokens, output_tokens))
+    // The stream is fully read: its folded response carries the usage. A reply
+    // the provider never ended (connection cut before the terminal record)
+    // fails here as `Truncated` rather than as a stream item, so it must surface
+    // as an error, not as `Done` after partial text.
+    let response = stream.finish().await.map_err(|e| e.to_string())?;
+    Ok((
+        response.usage.input_tokens.unwrap_or(0),
+        response.usage.output_tokens.unwrap_or(0),
+    ))
 }
 
 // ── Stream command ──────────────────────────────────────────────────────────
@@ -334,33 +365,9 @@ async fn run_stream(
         .ok_or_else(|| format!("No API key configured for {provider}"))?;
     let (prompt, history) = split_messages(&messages)?;
 
-    match api {
-        ApiKind::OpenAi => {
-            let client = openai::CompletionsClient::builder()
-                .api_key(&key)
-                .base_url(base)
-                .build()
-                .map_err(|e| e.to_string())?;
-            let agent = client.agent(model).build();
-            let mut stream = agent.stream_chat(prompt, history).await;
-            drain(&mut stream, app, stream_id, cancel).await
-        }
-        ApiKind::Anthropic => {
-            let client = anthropic::Client::builder()
-                .api_key(&key)
-                .build()
-                .map_err(|e| e.to_string())?;
-            let agent = client.agent(model).build();
-            let mut stream = agent.stream_chat(prompt, history).await;
-            drain(&mut stream, app, stream_id, cancel).await
-        }
-        ApiKind::Google => {
-            let client = gemini::Client::new(&key).map_err(|e| e.to_string())?;
-            let agent = client.agent(model).build();
-            let mut stream = agent.stream_chat(prompt, history).await;
-            drain(&mut stream, app, stream_id, cancel).await
-        }
-    }
+    let model = build_model(api, base, &key, model);
+    let stream = start_stream(&model, prompt, history)?;
+    drain(stream, app, stream_id, cancel).await
 }
 
 #[tauri::command]

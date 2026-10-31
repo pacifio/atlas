@@ -93,6 +93,13 @@ function tokenize(command: string): string[] | null {
       continue;
     }
 
+    // An unquoted `#` at the start of a word opens a comment to the end of
+    // the line (`# setup\ncargo test`); inside a word (`a#b`) it is text.
+    if (c === "#" && !started) {
+      while (i + 1 < command.length && command[i + 1] !== "\n") i++;
+      continue;
+    }
+
     if (c === "$" && command[i + 1] === "(") return null;
     if (c === "`") return null;
 
@@ -462,4 +469,60 @@ export function parseShellCommand(command: string): ParsedShell {
   if (segments.length !== 1) return RUN;
 
   return classify(segments[0]);
+}
+
+/** Prefixes that run the command after them rather than being it, each with
+ *  its options that take a separate value (`sudo -u root`), which have to be
+ *  stepped over with that value. */
+const LAUNCHERS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ["sudo", new Set(["-u", "-g", "-h", "-p", "-C", "-D", "-r", "-t", "-T", "-U"])],
+  ["env", new Set(["-u", "-C", "-S"])],
+  ["time", new Set(["-f", "-o"])],
+  ["nohup", new Set()],
+  ["nice", new Set(["-n"])],
+  ["command", new Set()],
+  ["exec", new Set(["-a"])],
+]);
+
+const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+
+/** The token a segment runs: past `FOO=bar` assignments, launchers, and the
+ *  launchers' own options and their values. */
+function segmentProgram(segment: string[]): string | null {
+  let i = 0;
+  while (i < segment.length) {
+    const token = segment[i];
+    if (ASSIGNMENT.test(token)) {
+      i++;
+      continue;
+    }
+    const valued = LAUNCHERS.get(token);
+    if (!valued) return token;
+    i++;
+    while (i < segment.length && segment[i].startsWith("-")) {
+      const option = segment[i++];
+      if (option === "--") break;
+      // `-u root` takes the next token; `-uroot` and `--user=root` do not.
+      if (valued.has(option)) i++;
+    }
+  }
+  return null;
+}
+
+/**
+ * The program a command runs, for the live line ("Running sed"): the first
+ * segment that is not scaffolding (`cd x &&`) or output shaping (`| head`),
+ * past any `FOO=bar` assignments and launchers, as a basename. `null` when
+ * the command does not tokenize.
+ */
+export function commandProgramName(command: string): string | null {
+  const tokens = tokenize(command);
+  if (!tokens) return null;
+  const segments = splitOnConnectors(unwrap(tokens));
+  const real = segments.filter((s) => !isNoise(s) && !isFormattingHelper(s));
+  for (const segment of real.length > 0 ? real : segments) {
+    const program = segmentProgram(segment);
+    if (program) return program.split("/").pop() || program;
+  }
+  return null;
 }

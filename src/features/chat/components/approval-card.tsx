@@ -106,19 +106,66 @@ export function ApprovalCard({
     });
   };
 
-  // Keyboard: digits pick/toggle options, Enter advances/submits. Esc is the
-  // permission modal's job (it owns cancel), so it is deliberately not here.
+  const goBack = useCallback(() => {
+    clearAdvance();
+    setStep((s) => Math.max(0, s - 1));
+  }, [clearAdvance]);
+
+  // Keyboard: digits pick/toggle options, ↑/↓ walk the options (focus, so
+  // Space or Enter on one is the button's own press), ←/→ move between the
+  // questions (→ only once this one is answered, as the arrow button is), and
+  // Enter advances/submits. Esc is the permission modal's job (it owns
+  // cancel), so it is deliberately not here.
+  const optionsRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const inText = document.activeElement === inputRef.current;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const active = document.activeElement;
+      const inText = active === inputRef.current;
+      const options = Array.from(
+        optionsRef.current?.querySelectorAll<HTMLButtonElement>("[data-option]") ?? [],
+      );
+      const onOption = options.findIndex((b) => b === active);
       if (e.key === "Enter") {
+        // A focused option takes its own Enter (a press); the card takes the rest.
+        if (onOption >= 0) return;
         if (inText || isAnswered(answer)) {
           e.preventDefault();
           goNext();
         }
         return;
       }
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        // In the text field the arrows move the caret; a question only moves
+        // from its edges.
+        if (inText) {
+          const input = inputRef.current!;
+          const atStart = input.selectionStart === 0 && input.selectionEnd === 0;
+          const atEnd = input.selectionStart === input.value.length;
+          if (e.key === "ArrowLeft" ? !atStart : !atEnd) return;
+        }
+        if (e.key === "ArrowLeft" && step > 0) {
+          e.preventDefault();
+          goBack();
+        } else if (e.key === "ArrowRight" && isAnswered(answer)) {
+          e.preventDefault();
+          goNext();
+        }
+        return;
+      }
       if (inText) return;
+      if ((e.key === "ArrowDown" || e.key === "ArrowUp") && options.length > 0) {
+        e.preventDefault();
+        const dir = e.key === "ArrowDown" ? 1 : -1;
+        const next =
+          onOption < 0
+            ? dir > 0
+              ? 0
+              : options.length - 1
+            : (onOption + dir + options.length) % options.length;
+        options[next].focus();
+        return;
+      }
       const n = parseInt(e.key, 10);
       if (!Number.isNaN(n) && n >= 1 && n <= q.options.length) {
         e.preventDefault();
@@ -129,8 +176,8 @@ export function ApprovalCard({
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [answer, q, step, goNext]);
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+  }, [answer, q, step, goNext, goBack]);
 
   return (
     <div
@@ -147,8 +194,12 @@ export function ApprovalCard({
       // chrome uses when something sits above something else, and it is the
       // step that makes the card legible against the composer in both.
       //
-      // ratchet-allow: an in-flow raised card, softer than the menu elevation
-      className="mx-auto w-full max-w-[650px] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--popover)] shadow-[0_8px_24px_rgba(0,0,0,0.35)]"
+      // The menu elevation (`shadow-md`), which every theme defines for its
+      // own appearance. The hand-written black shadow it replaces was tuned
+      // for one dark theme and painted a grey smear under the card on light
+      // ones, and a heavier one than any menu on dark.
+      data-approval-card
+      className="mx-auto w-full max-w-[650px] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--popover)] shadow-md"
     >
       <div
         // `pb-6` rather than matching `pt-3.5`: the card is deliberately
@@ -188,16 +239,19 @@ export function ApprovalCard({
             the options sat in a column noticeably further from their left
             border than their numbers were from the right one. They now share
             the card's own padding with everything else. */}
-        <div className="mt-3 flex flex-col gap-0.5">
+        <div ref={optionsRef} className="mt-3 flex flex-col gap-0.5">
           {q.options.map((o, i) => {
             const on = answer.selected.includes(o.label);
             return (
               <button
                 key={`${o.label}-${i}`}
                 type="button"
+                data-option
+                aria-pressed={on}
                 onClick={() => (q.multiSelect ? toggle(o.label) : pick(o.label))}
                 className={cn(
-                  "flex min-h-9 w-full items-start gap-3 rounded-lg px-2 py-1.5 text-left transition-colors",
+                  "flex min-h-9 w-full items-start gap-3 rounded-lg px-2 py-1.5 text-left transition-colors outline-none",
+                  "focus-visible:bg-[var(--atlas-element-hover)] focus-visible:ring-1 focus-visible:ring-[var(--atlas-border-strong)]",
                   on ? "bg-[var(--atlas-element-active)]" : "hover:bg-[var(--atlas-element-hover)]",
                 )}
               >
@@ -248,8 +302,11 @@ export function ApprovalCard({
               })
             }
             placeholder={q.options.length > 0 ? "Answer in your own words…" : "Type your answer…"}
+            // A field, drawn as one: the hairline border is what says "type
+            // here". The translucent tint it replaces read as a darker band
+            // laid across the card rather than as an input.
             className={cn(
-              "h-10 w-full rounded-lg border-0 bg-[var(--background)]/70 px-3 text-base text-[var(--foreground)] outline-none transition-colors placeholder:text-[var(--muted-foreground)] focus:bg-[var(--background)]",
+              "h-10 w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 text-base text-[var(--foreground)] outline-none transition-colors placeholder:text-[var(--muted-foreground)] focus:border-[var(--atlas-border-strong)]",
               q.options.length > 0 && "mt-1.5",
             )}
           />
@@ -262,10 +319,7 @@ export function ApprovalCard({
               <button
                 type="button"
                 disabled={step === 0}
-                onClick={() => {
-                  clearAdvance();
-                  setStep((s) => Math.max(0, s - 1));
-                }}
+                onClick={goBack}
                 className={cn(
                   "grid size-8 place-items-center rounded-full transition-colors",
                   step === 0
@@ -319,7 +373,7 @@ export function ApprovalCard({
                   "flex h-9 items-center gap-1.5 rounded-full px-3 text-sm font-medium transition-colors",
                   isAnswered(answer)
                     ? "cursor-pointer bg-[var(--primary)] text-[var(--primary-foreground)] hover:bg-[var(--atlas-primary-hover)]"
-                    : "cursor-default bg-[var(--background)] text-[var(--atlas-text-disabled)]",
+                    : "cursor-default bg-[var(--atlas-element-hover)] text-[var(--atlas-text-disabled)]",
                 )}
               >
                 {last && questions.length > 1 && <span>Submit</span>}

@@ -9,6 +9,7 @@
  */
 
 import {
+  AppWindow,
   ArrowRightLeft,
   BookOpen,
   Brain,
@@ -53,6 +54,8 @@ const TOOL_ICON: Record<MarkerTool, LucideIcon> = {
   org: Building2,
   // Atlas memory: the Memory tab's own icon.
   memory: BrainCircuit,
+  // A browser-driving MCP server, whichever one.
+  browser: AppWindow,
   tool: Wrench,
 };
 

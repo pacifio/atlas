@@ -3,204 +3,229 @@ use crate::config_toml::ConfigToml;
 use crate::types::RawMcpServerConfig;
 use atlas_engine_features::FEATURES;
 use atlas_engine_features::legacy_feature_keys;
-use schemars::r#gen::SchemaGenerator;
-use schemars::r#gen::SchemaSettings;
-use schemars::schema::InstanceType;
-use schemars::schema::ObjectValidation;
-use schemars::schema::RootSchema;
-use schemars::schema::Schema;
-use schemars::schema::SchemaObject;
-use schemars::schema::SubschemaValidation;
+use atlas_engine_protocol::schema_compat::Compat08;
+use schemars::JsonSchema;
+use schemars::Schema;
+use schemars::SchemaGenerator;
+use schemars::generate::SchemaSettings;
+use schemars::json_schema;
 use serde_json::Map;
 use serde_json::Value;
 use std::path::Path;
 
 /// Schema for the `[features]` map with known + legacy keys only.
 pub fn features_schema(schema_gen: &mut SchemaGenerator) -> Schema {
-    let mut object = SchemaObject {
-        instance_type: Some(InstanceType::Object.into()),
-        ..Default::default()
-    };
-
-    let mut validation = ObjectValidation::default();
+    let mut properties = Map::new();
     for feature in FEATURES {
         if feature.id == atlas_engine_features::Feature::Artifact {
             continue;
         }
         if feature.id == atlas_engine_features::Feature::CodeMode {
-            validation.properties.insert(
+            properties.insert(
                 feature.key.to_string(),
-                schema_gen.subschema_for::<atlas_engine_features::FeatureToml<
-                    atlas_engine_features::CodeModeConfigToml,
-                >>(),
+                subschema::<
+                    atlas_engine_features::FeatureToml<atlas_engine_features::CodeModeConfigToml>,
+                >(schema_gen),
             );
             continue;
         }
         if feature.id == atlas_engine_features::Feature::CodeModeHost {
-            validation.properties.insert(
+            properties.insert(
                 feature.key.to_string(),
-                schema_gen.subschema_for::<atlas_engine_features::FeatureToml<
-                    atlas_engine_features::CodeModeHostConfigToml,
-                >>(),
+                subschema::<
+                    atlas_engine_features::FeatureToml<
+                        atlas_engine_features::CodeModeHostConfigToml,
+                    >,
+                >(schema_gen),
             );
             continue;
         }
         if feature.id == atlas_engine_features::Feature::NonPrefixedMcpToolNames {
-            validation.properties.insert(
+            properties.insert(
                 feature.key.to_string(),
-                schema_gen.subschema_for::<atlas_engine_features::FeatureToml<
-                    atlas_engine_features::NonPrefixedMcpToolNamesConfigToml,
-                >>(),
+                subschema::<
+                    atlas_engine_features::FeatureToml<
+                        atlas_engine_features::NonPrefixedMcpToolNamesConfigToml,
+                    >,
+                >(schema_gen),
             );
             continue;
         }
         if feature.id == atlas_engine_features::Feature::MultiAgentV2 {
-            validation.properties.insert(
+            properties.insert(
                 feature.key.to_string(),
-                schema_gen.subschema_for::<atlas_engine_features::FeatureToml<
-                    atlas_engine_features::MultiAgentV2ConfigToml,
-                >>(),
+                subschema::<
+                    atlas_engine_features::FeatureToml<
+                        atlas_engine_features::MultiAgentV2ConfigToml,
+                    >,
+                >(schema_gen),
             );
             continue;
         }
         if feature.id == atlas_engine_features::Feature::TokenBudget {
-            validation.properties.insert(
+            properties.insert(
                 feature.key.to_string(),
-                schema_gen.subschema_for::<atlas_engine_features::FeatureToml<
-                    atlas_engine_features::TokenBudgetConfigToml,
-                >>(),
+                subschema::<
+                    atlas_engine_features::FeatureToml<
+                        atlas_engine_features::TokenBudgetConfigToml,
+                    >,
+                >(schema_gen),
             );
             continue;
         }
         if feature.id == atlas_engine_features::Feature::RolloutBudget {
-            validation.properties.insert(
+            properties.insert(
                 feature.key.to_string(),
-                schema_gen.subschema_for::<atlas_engine_features::FeatureToml<
-                    atlas_engine_features::RolloutBudgetConfigToml,
-                >>(),
+                subschema::<
+                    atlas_engine_features::FeatureToml<
+                        atlas_engine_features::RolloutBudgetConfigToml,
+                    >,
+                >(schema_gen),
             );
             continue;
         }
         if feature.id == atlas_engine_features::Feature::CurrentTimeReminder {
-            validation.properties.insert(
+            properties.insert(
                 feature.key.to_string(),
-                schema_gen.subschema_for::<atlas_engine_features::FeatureToml<
-                    atlas_engine_features::CurrentTimeReminderConfigToml,
-                >>(),
+                subschema::<
+                    atlas_engine_features::FeatureToml<
+                        atlas_engine_features::CurrentTimeReminderConfigToml,
+                    >,
+                >(schema_gen),
             );
             continue;
         }
         if feature.id == atlas_engine_features::Feature::AppsMcpPathOverride {
-            validation.properties.insert(
+            properties.insert(
                 feature.key.to_string(),
-                removed_apps_mcp_path_override_schema(schema_gen),
+                removed_apps_mcp_path_override_schema(schema_gen).to_value(),
             );
             continue;
         }
         if feature.id == atlas_engine_features::Feature::NetworkProxy {
-            validation.properties.insert(
+            properties.insert(
                 feature.key.to_string(),
-                schema_gen.subschema_for::<atlas_engine_features::FeatureToml<
-                    atlas_engine_features::NetworkProxyConfigToml,
-                >>(),
+                subschema::<
+                    atlas_engine_features::FeatureToml<
+                        atlas_engine_features::NetworkProxyConfigToml,
+                    >,
+                >(schema_gen),
             );
             continue;
         }
-        validation
-            .properties
-            .insert(feature.key.to_string(), schema_gen.subschema_for::<bool>());
+        properties.insert(feature.key.to_string(), subschema::<bool>(schema_gen));
     }
     for legacy_key in legacy_feature_keys() {
-        validation
-            .properties
-            .insert(legacy_key.to_string(), schema_gen.subschema_for::<bool>());
+        properties.insert(legacy_key.to_string(), subschema::<bool>(schema_gen));
     }
-    validation.properties.insert(
+    properties.insert(
         "tool_registry".to_string(),
-        schema_gen.subschema_for::<atlas_engine_features::ToolRegistryConfigToml>(),
+        subschema::<atlas_engine_features::ToolRegistryConfigToml>(schema_gen),
     );
-    validation.additional_properties = Some(Box::new(Schema::Bool(false)));
-    object.object = Some(Box::new(validation));
-
-    Schema::Object(object)
+    json_schema!({
+        "type": "object",
+        "properties": properties,
+        "additionalProperties": false,
+    })
 }
 
 fn removed_apps_mcp_path_override_schema(schema_gen: &mut SchemaGenerator) -> Schema {
-    let mut config_validation = ObjectValidation::default();
-    config_validation
-        .properties
-        .insert("enabled".to_string(), schema_gen.subschema_for::<bool>());
-    config_validation
-        .properties
-        .insert("path".to_string(), schema_gen.subschema_for::<String>());
-    config_validation.additional_properties = Some(Box::new(Schema::Bool(false)));
-
-    let config = Schema::Object(SchemaObject {
-        instance_type: Some(InstanceType::Object.into()),
-        object: Some(Box::new(config_validation)),
-        ..Default::default()
+    let config = json_schema!({
+        "type": "object",
+        "properties": {
+            "enabled": subschema::<bool>(schema_gen),
+            "path": subschema::<String>(schema_gen),
+        },
+        "additionalProperties": false,
     });
-    Schema::Object(SchemaObject {
-        subschemas: Some(Box::new(SubschemaValidation {
-            any_of: Some(vec![schema_gen.subschema_for::<bool>(), config]),
-            ..Default::default()
-        })),
-        ..Default::default()
+    json_schema!({
+        "anyOf": [subschema::<bool>(schema_gen), config],
     })
 }
 
 /// Schema for the `[mcp_servers]` map using the raw input shape.
 pub fn mcp_servers_schema(schema_gen: &mut SchemaGenerator) -> Schema {
-    let mut object = SchemaObject {
-        instance_type: Some(InstanceType::Object.into()),
-        ..Default::default()
-    };
+    json_schema!({
+        "type": "object",
+        "additionalProperties": subschema::<RawMcpServerConfig>(schema_gen),
+    })
+}
 
-    let validation = ObjectValidation {
-        additional_properties: Some(Box::new(schema_gen.subschema_for::<RawMcpServerConfig>())),
-        ..Default::default()
-    };
-    object.object = Some(Box::new(validation));
-
-    Schema::Object(object)
+/// A subschema as plain JSON, for splicing into a hand-built schema.
+fn subschema<T: JsonSchema + ?Sized>(schema_gen: &mut SchemaGenerator) -> Value {
+    schema_gen.subschema_for::<T>().to_value()
 }
 
 /// Build the config schema for `config.toml`.
-pub fn config_schema() -> RootSchema {
+pub fn config_schema() -> Schema {
     let mut schema = SchemaSettings::draft07()
-        .with(|settings| {
-            settings.option_add_null_type = false;
-        })
+        .with_transform(Compat08::without_null())
         .into_generator()
         .into_root_schema_for::<ConfigToml>();
     add_shell_environment_policy_constraints(&mut schema);
+    restore_flattened_map_additional_properties(&mut schema);
     schema
 }
 
-fn add_shell_environment_policy_constraints(schema: &mut RootSchema) {
-    let Some(Schema::Object(policy)) = schema.definitions.get_mut("ShellEnvironmentPolicyToml")
+/// `additionalProperties` of the structs that `#[serde(flatten)]` a map.
+///
+/// schemars 0.8 took that keyword from the flattened map only when the struct
+/// also had `deny_unknown_fields`, and left it out otherwise. schemars 1 does
+/// the opposite, which is more accurate but would rewrite the committed
+/// `config.schema.json`. `None` removes the keyword.
+fn restore_flattened_map_additional_properties(schema: &mut Schema) {
+    let restored: [(&str, Option<Value>); 9] = [
+        (
+            "AgentsToml",
+            Some(serde_json::json!({ "$ref": "#/definitions/AgentRoleToml" })),
+        ),
+        (
+            "AppToolsConfig",
+            Some(serde_json::json!({ "$ref": "#/definitions/AppToolConfig" })),
+        ),
+        (
+            "AppsConfigToml",
+            Some(serde_json::json!({ "$ref": "#/definitions/AppConfig" })),
+        ),
+        (
+            "ModelAvailabilityNuxConfig",
+            Some(serde_json::json!({ "type": "integer", "format": "uint32", "minimum": 0.0 })),
+        ),
+        ("FilesystemPermissionsToml", None),
+        ("NetworkDomainPermissionsToml", None),
+        ("NetworkUnixSocketPermissionsToml", None),
+        ("PermissionsToml", None),
+        ("WorkspaceRootsToml", None),
+    ];
+    for (name, additional_properties) in restored {
+        let Some(definition) = schema
+            .pointer_mut(&format!("/definitions/{name}"))
+            .and_then(Value::as_object_mut)
+        else {
+            continue;
+        };
+        match additional_properties {
+            Some(value) => definition.insert("additionalProperties".to_string(), value),
+            None => definition.remove("additionalProperties"),
+        };
+    }
+}
+
+fn add_shell_environment_policy_constraints(schema: &mut Schema) {
+    let Some(policy) = schema
+        .pointer_mut("/definitions/ShellEnvironmentPolicyToml")
+        .and_then(Value::as_object_mut)
     else {
         return;
     };
-    let all_of = policy
-        .subschemas
-        .get_or_insert_default()
-        .all_of
-        .get_or_insert_default();
+    let Value::Array(all_of) = policy
+        .entry("allOf")
+        .or_insert_with(|| Value::Array(Vec::new()))
+    else {
+        return;
+    };
     for fields in [["exclude", "filters"], ["filters", "include_only"]] {
-        all_of.push(Schema::Object(SchemaObject {
-            subschemas: Some(Box::new(SubschemaValidation {
-                not: Some(Box::new(Schema::Object(SchemaObject {
-                    object: Some(Box::new(ObjectValidation {
-                        required: fields.into_iter().map(str::to_string).collect(),
-                        ..Default::default()
-                    })),
-                    ..Default::default()
-                }))),
-                ..Default::default()
-            })),
-            ..Default::default()
-        }));
+        all_of.push(serde_json::json!({ "not": { "required": fields } }));
     }
 }
 

@@ -18,7 +18,7 @@ drift out of date without anything noticing.
 | how a feature crosses the stack; a subsystem's file paths       | `docs/architecture.md`                                                                                           |
 | verification gates, branching, PR checklist, telemetry rules    | `CONTRIBUTING.md`                                                                                                |
 | what a term means                                               | `CONTEXT.md`                                                                                                     |
-| why a decision is what it is                                    | `docs/adr/` (0003 and 0004 are each used twice)                                                                  |
+| why a decision is what it is                                    | `docs/adr/`                                                                                                      |
 | tokens, type/radius/elevation/z-index/motion scales, primitives | `docs/reference/design-system.md`                                                                                |
 | theme keys, theme import, icon themes, config, keybindings      | `docs/reference/`                                                                                                |
 | the browser mock backend                                        | `src/dev/mock-backend/README.md`                                                                                 |
@@ -190,9 +190,10 @@ Each of these is a multi-file edit where missing one compiles fine.
   `[profile.dev.package.<name>]` stanza, and an entry in `.github/ci-crates.json`.
   If it reads a file outside its own directory, that file also goes in
   `EXTRA_INPUTS` in `scripts/ci-affected.mjs` (`ci-affected.test.ts` checks).
-- **A tab/panel type** — `TAB_TYPES` in `src/lib/constants.ts`, plus the lazy import,
-  the render branch and `NEW_TAB_OPTIONS` in
-  `src/features/layout/components/center-panel.tsx`. If it stays mounted across tab
+- **A tab/panel type** — first decide its placement (session, surface or destination;
+  the test is in ADR-0024) and add it to `TAB_PLACEMENT`. Then `TAB_TYPES` in `src/lib/constants.ts`, plus the lazy import
+  and the render branch in `src/features/layout/components/center-panel.tsx`, and
+  (if ⌘T should offer it) an entry in `SURFACES` in `src/features/layout/lib/surfaces.ts`. If it stays mounted across tab
   switches it also joins `PERSISTENT_TYPES`, guarded by
   `persistent-tab-render-contract.test.ts`.
 - **A mock** — an unmocked command resolves `null`, so an empty panel in `bun run dev`

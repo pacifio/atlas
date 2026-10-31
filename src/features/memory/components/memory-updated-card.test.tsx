@@ -69,8 +69,9 @@ describe("the Memory updated card", () => {
     expect(useMemoryStore.getState().subTab).toBe("shared");
     expect(useMemoryStore.getState().focusEntryId).toBe(2);
     const layout = useLayoutStore.getState();
-    const active = layout.tabs.find((t) => t.id === layout.activeByGroup[layout.focusedGroupId]);
-    expect(active?.type).toBe("memory");
+    // Memory is a destination (ADR-0024): it opens over the columns.
+    expect(layout.destinationShown).toBe(true);
+    expect(layout.destination?.type).toBe("memory");
   });
 
   it("offers no Forget on a write whose entry is gone or archived", async () => {

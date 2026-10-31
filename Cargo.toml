@@ -361,7 +361,7 @@ aws-credential-types = "1"
 aws-sigv4 = "1"
 aws-types = "1"
 axum = { version = "0.8", default-features = false }
-base64 = "0.22.1"
+base64 = "0.23"
 bitflags = "2.13.1"
 blake3 = "1.8"
 bm25 = "2.3.2"
@@ -387,18 +387,18 @@ ctor = "0.6.3"
 deno_core_icudata = "0.77.0"
 derive_more = "2"
 diffy = "0.4.2"
-dirs = "6"
+dirs = "7"
 divan = "0.1.21"
 dns-lookup = "3.0.1"
 dotenvy = "0.15.7"
 dunce = "1.0.4"
-ed25519-dalek = { version = "2.2.0", features = ["pkcs8"] }
+ed25519-dalek = { version = "3.0.0", features = ["alloc", "pkcs8"] }
 encoding_rs = "0.8.35"
 eventsource-stream = "0.2.3"
 flate2 = "1.1.8"
 futures = { version = "0.3", default-features = false }
 gethostname = "1.1.0"
-gix = { version = "0.83.0", default-features = false, features = ["sha1"] }
+gix = { version = "0.90", default-features = false, features = ["sha1"] }
 glob = "0.3"
 globset = "0.4"
 grep-matcher = "0.1.9"
@@ -420,11 +420,29 @@ insta = "1.46.3"
 inventory = "0.3.19"
 itertools = "0.14.0"
 jsonptr = { version = "0.7.1", default-features = false }
-jsonwebtoken = { version = "10.4.0", default-features = false, features = [
+jsonwebtoken = { version = "11.1.0", default-features = false, features = [
     "use_pem",
     "aws_lc_rs",
 ] }
-keyring = { version = "3.6", default-features = false }
+# The credential-store API (keyring 3 was split: this is the API, the platform
+# stores below are the implementations; keyring 4 is a sample CLI, not a library).
+# Nothing may make an `Entry` before a store is installed; that is
+# `atlas_engine_keyring_store::ensure_default_store`.
+keyring-core = "1"
+# macOS: the legacy "User" (login) keychain, which is what keyring 3's
+# `apple-native` used. Not `protected`: that is the data-protection keychain, a
+# different store.
+apple-native-keyring-store = { version = "1", default-features = false, features = [
+    "keychain",
+] }
+# Windows Credential Manager. Default config is keyring 3's: target name
+# `user.service`, Enterprise persistence, UTF-16LE blob. No `search` (regex).
+windows-native-keyring-store = { version = "1", default-features = false }
+# Linux: the Secret Service over zbus, as keyring 3's `linux-native-async-persistent`
+# actually resolved to (its default builder only ever built Secret Service entries).
+zbus-secret-service-keyring-store = { version = "1", features = [
+    "rt-async-io-crypto-rust",
+] }
 landlock = "0.4.4"
 lazy_static = "1"
 libc = "0.2.182"
@@ -443,11 +461,11 @@ nucleo = { git = "https://github.com/helix-editor/nucleo.git", rev = "4253de9faa
 nucleo-matcher = "0.3"
 once_cell = "1.20.2"
 openssl-sys = "*"
-opentelemetry = "0.31.0"
-opentelemetry-appender-tracing = "0.31.0"
-opentelemetry-otlp = "0.31.0"
-opentelemetry-semantic-conventions = "0.31.0"
-opentelemetry_sdk = "0.31.0"
+opentelemetry = "0.33.1"
+opentelemetry-appender-tracing = "0.33.1"
+opentelemetry-otlp = "0.33.1"
+opentelemetry-semantic-conventions = "0.33.1"
+opentelemetry_sdk = "0.33.1"
 os_info = "3.12.0"
 owo-colors = "4.3.0"
 pathdiff = "0.2"
@@ -455,9 +473,9 @@ portable-pty = "0.9.0"
 predicates = "3"
 pretty_assertions = "1.4.1"
 proptest = "1.11"
-pulldown-cmark = { version = "0.10", default-features = false }
+pulldown-cmark = { version = "0.13", default-features = false }
 quick-xml = "0.41.0"
-rand = "0.9"
+rand = "0.10"
 rayon = "1.12"
 ratatui = { version = "0.30.2", default-features = false, features = [
     "crossterm",
@@ -472,26 +490,25 @@ rcgen = { version = "0.14.7", default-features = false, features = [
 regex = "1.12.3"
 regex-syntax = "0.8"
 regex-lite = "0.1.8"
-# `default-features = false`: reqwest's default set is `default-tls` + the
-# three below. `default-tls` is native-tls (Security.framework on macOS), which
-# no consumer wants — every engine and Atlas crate asks for `rustls-tls` —
-# yet with both on, any `Client::new()` that never called `.use_rustls_tls()`
-# silently took native-tls. Dropping it removes native-tls, hyper-tls and
-# tokio-native-tls from the graph and puts every client on rustls/ring.
+# `default-features = false`: reqwest 0.13's default set is `default-tls` (an
+# alias for `rustls`) + `charset`, `http2` and `system-proxy`. Spelling the set
+# out keeps every client on one TLS stack and makes the choice visible here:
+# `rustls` is rustls on aws-lc-rs verifying through the OS trust store
+# (rustls-platform-verifier). No consumer wants native-tls, so it stays out of
+# the graph. `query` and `form` are opt-in features since 0.13; each crate that
+# calls `.query(` / `.form(` adds its own.
 # `cookies` stays: atlas-engine-http-client implements `reqwest::cookie::CookieStore`.
-reqwest = { version = "0.12", default-features = false, features = [
+reqwest = { version = "0.13", default-features = false, features = [
     "charset",
     "http2",
     "system-proxy",
     "cookies",
-    "rustls-tls",
+    "rustls",
 ] }
-# NOTE (Sep-03 audit): rmcp, rig-core and posthog-rs are the three crates
-# holding a second reqwest (0.13) tower in the lock, duplicating hyper/h2/
-# http/tower behind it. The collapse runs FORWARD, not back: all three have
-# 0.13 as their floor in every current release, so unification means moving
-# the app AND the engine to 0.13 — a large, cross-cutting change,
-# not a pin. Left as-is deliberately.
+# NOTE: every reqwest user here is on 0.13 except oauth2 5.0.0 (the latest
+# release), which still depends on reqwest 0.12 and so keeps a second hyper /
+# h2 / http / tower stack in the lock. That duplicate goes away when oauth2
+# moves to 0.13; nothing here can unify it.
 rmcp = { version = "=3.0.0", default-features = false }
 runfiles = { git = "https://github.com/dzbarsky/rules_rust", rev = "b56cbaa8465e74127f1ea216f813cd377295ad81" }
 rustix = { version = "1.1.4", features = ["net"] }
@@ -501,7 +518,7 @@ rustls = { version = "0.23", default-features = false, features = [
 ] }
 rustls-native-certs = "0.8.3"
 rustls-pki-types = "1.14.0"
-schemars = "0.8.22"
+schemars = "1"
 seccompiler = "0.5.0"
 semver = "1.0"
 # Types only. The full `sentry` client (transport, panic hooks, its own HTTP
@@ -542,7 +559,7 @@ sqlx = { version = "0.9.0", default-features = false, features = [
     "uuid",
 ] }
 starlark = { version = "0.14.2", default-features = false }
-strum = "0.27.2"
+strum = "0.28"
 strum_macros = "0.28.0"
 supports-color = "3.0.2"
 syntect = "5"
@@ -568,7 +585,7 @@ toml = "0.9.5"
 toml_edit = "0.24.0"
 tracing = "0.1.44"
 tracing-appender = "0.2.3"
-tracing-opentelemetry = "0.32.0"
+tracing-opentelemetry = "0.34.0"
 tracing-subscriber = "0.3.22"
 tracing-test = "0.2.5"
 tonic = { version = "0.14.3", default-features = false, features = ["channel", "codegen"] }
@@ -580,9 +597,9 @@ tonic-prost = "0.14.3"
 # need one: grammar crates bind to the `tree-sitter-language` shim rather than
 # to the core, which is exactly what lets one core serve grammars of several
 # vintages (Atlas's own are 0.23).
-tree-sitter = "0.26"
+tree-sitter = "0.27"
 tree-sitter-bash = "0.25"
-ts-rs = "11"
+ts-rs = "12"
 tungstenite = { version = "0.27.0", features = ["deflate", "proxy"] }
 uds_windows = "1.1.0"
 unicode-segmentation = "1.12.0"
@@ -598,7 +615,7 @@ which = "8"
 whoami = "1.6.1"
 wildmatch = "2.6.1"
 winapi-util = "0.1.11"
-zip = "2.4.2"
+zip = "9.1"
 zstd = "0.13"
 
 wiremock = "0.6"

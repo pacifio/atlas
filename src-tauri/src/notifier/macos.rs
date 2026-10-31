@@ -53,13 +53,16 @@ impl From<&NotificationAction> for ActionKey {
     }
 }
 
+/// Each registered action set, with its category identifier and object.
+type Categories = HashMap<Vec<ActionKey>, (String, Retained<UNNotificationCategory>)>;
+
 struct MainThreadState {
     center: Retained<UNUserNotificationCenter>,
     /// The center's `delegate` property is weak; this keeps it alive.
     _delegate: Retained<ResponseDelegate>,
     /// Every action set registered so far. macOS replaces the whole registered
     /// category set on each call, so the union is re-sent every time.
-    categories: RefCell<HashMap<Vec<ActionKey>, (String, Retained<UNNotificationCategory>)>>,
+    categories: RefCell<Categories>,
 }
 
 thread_local! {

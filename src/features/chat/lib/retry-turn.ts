@@ -125,7 +125,7 @@ async function runRetry(tabId: string, key: SessionKey): Promise<void> {
   // user can edit or send, and the drain effect only fires on a status or
   // binding transition, so nothing re-sends behind their back.
   const preserve = (why: string) => {
-    useChatStore.getState().actions.enqueueMessage(tabId, prompt as string);
+    useChatStore.getState().actions.enqueueMessage(tabId, prompt as string, []);
     toast.error(`${why} — your prompt is waiting in the composer`);
     logEvent({
       source: "agent",
@@ -159,12 +159,16 @@ async function runRetry(tabId: string, key: SessionKey): Promise<void> {
   // strips both suffixes for display the same way it does for a freshly
   // composed send (`derivedUser` in `turn-rows.ts`).
   //
-  // It is NOT byte-identical. The thread flattens content blocks, so a
-  // resource link comes back as a bare URI and mixed blocks lose the newlines
-  // the original input carried (`thread.rs:99` vs `sink.rs:351`); no
-  // `resourceLinks` are re-sent, and attachments are not reconstructed at all.
-  // A prompt that was pure prose round-trips exactly; one that mixed prose and
-  // `@`-mentions comes back flattened.
+  // It is NOT byte-identical. The thread flattens content blocks, a blank
+  // line between each (`UserMessage::prompt_text`), so a resource link comes
+  // back as a bare URI; no `resourceLinks` are re-sent, and attachments are
+  // not reconstructed at all. A prompt that was pure prose round-trips
+  // exactly; one that mixed prose and `@`-mentions comes back flattened. A
+  // large paste rode as a text block, so it comes back whole, after the prose
+  // in the form `withPastesInline` writes: re-sent as text it still reaches
+  // the agent in full, and handed back to the queue it collapses to its chip
+  // when edited. Nothing here relies on the mention registry, which forgets a
+  // paste once it is sent.
   const actions = useChatStore.getState().actions;
   actions.addMessage(tabId, "user", prompt);
   actions.updateSessionStatus(tabId, "running");

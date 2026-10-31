@@ -1,29 +1,40 @@
-export const RESPONSE_SELECTOR = "[data-agent-response]";
+/** A row a comment can hang off: a prompt or a settled response, carrying
+ *  its chat key. A response also carries `data-agent-response`, which is what
+ *  makes its text citable — a cite points the agent at ITS words. */
+export const ANCHOR_SELECTOR = "[data-comment-anchor]";
 const CONTROL_SELECTOR =
-  'button, input, textarea, select, [role="button"], [contenteditable="true"]';
+  'button, input, textarea, select, [role="button"], [contenteditable="true"], [data-comment-threads]';
 
 function elementOf(node: Node | null): Element | null {
   return node instanceof Element ? node : (node?.parentElement ?? null);
 }
 
-export function responseAt(node: Node | null, viewport: HTMLElement): HTMLElement | null {
+export function anchorAt(node: Node | null, viewport: HTMLElement): HTMLElement | null {
   const element = elementOf(node);
   if (element?.closest(CONTROL_SELECTOR)) return null;
-  const response = element?.closest<HTMLElement>(RESPONSE_SELECTOR);
-  return response && viewport.contains(response) ? response : null;
+  const anchor = element?.closest<HTMLElement>(ANCHOR_SELECTOR);
+  return anchor && viewport.contains(anchor) ? anchor : null;
 }
 
-/** A range belongs to one completed response, never two rows or UI chrome. */
-export function selectedResponse(selection: Selection | null, viewport: HTMLElement) {
+export function chatKeyOf(anchor: HTMLElement): string {
+  return anchor.dataset.commentAnchor!;
+}
+
+export function isCitable(anchor: HTMLElement): boolean {
+  return anchor.hasAttribute("data-agent-response");
+}
+
+/** A range belongs to one row, never two rows or UI chrome. */
+export function selectedAnchor(selection: Selection | null, viewport: HTMLElement) {
   if (!selection || selection.isCollapsed || selection.rangeCount !== 1) return null;
   const range = selection.getRangeAt(0);
-  const response = responseAt(range.startContainer, viewport);
-  if (!response || responseAt(range.endContainer, viewport) !== response) return null;
+  const anchor = anchorAt(range.startContainer, viewport);
+  if (!anchor || anchorAt(range.endContainer, viewport) !== anchor) return null;
   // Endpoints can be in valid text while the range crosses a toolbar.
   if (range.cloneContents().querySelector(CONTROL_SELECTOR)) return null;
   const text = selection.toString();
   if (!text.trim()) return null;
-  return { response, text, range };
+  return { anchor, text, range };
 }
 
 /** Clamp in the transcript's coordinate system. The panel can be CSS-scaled;
@@ -52,15 +63,15 @@ export function actionPosition(
   };
 }
 
-/** Existing targeted inserts carry a complete draft. Cite opts into appending
- * to the live editor, whose last keystrokes may not have reached the store. */
+/** A targeted insert carries a complete draft; an untargeted one appends to
+ * the active session's. (Cite used to append quoted text through here; it now
+ * drops a `cited_text` chip instead — `cited-text.ts`.) */
 export interface ChatInsertDetail {
   text: string;
   tabId?: string;
-  append?: boolean;
 }
 
 export function insertedDraft(current: string, detail: ChatInsertDetail): string {
-  if (detail.tabId && !detail.append) return detail.text;
+  if (detail.tabId) return detail.text;
   return current.trim() ? `${current}\n\n${detail.text}` : detail.text;
 }

@@ -1,5 +1,6 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 use base64::Engine;
-use rand::RngCore;
+use rand::Rng;
 use sha2::Digest;
 use sha2::Sha256;
 

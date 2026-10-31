@@ -134,7 +134,11 @@ describe("a child's own calls", () => {
     expect(row.workCount).toBe(2);
 
     const streamed = rowsOf(messages, { subagents }).flatMap((r) =>
-      r.kind === RowKind.MarkerGroup ? r.markers.map((m) => m.toolCallId) : [],
+      r.kind === RowKind.MarkerGroup
+        ? r.markers.map((m) => m.toolCallId)
+        : r.kind === RowKind.Marker
+          ? [r.toolCallId]
+          : [],
     );
     expect(streamed).toEqual(["own"]);
   });
@@ -151,7 +155,11 @@ describe("a child's own calls", () => {
     // as a launch must not have its calls silently swallowed.
     const orphan = turn([toolCall({ id: "x", parentToolCallId: "nobody" })]);
     const streamed = rowsOf(orphan, { subagents }).flatMap((r) =>
-      r.kind === RowKind.MarkerGroup ? r.markers.map((m) => m.toolCallId) : [],
+      r.kind === RowKind.MarkerGroup
+        ? r.markers.map((m) => m.toolCallId)
+        : r.kind === RowKind.Marker
+          ? [r.toolCallId]
+          : [],
     );
     expect(streamed).toEqual(["x"]);
   });
@@ -202,7 +210,11 @@ describe("a session that delegated nothing", () => {
     const rows = rowsOf(turn([LAUNCH, toolCall({ id: "own" })]));
     expect(rows.some((r) => r.kind === RowKind.Subagent)).toBe(false);
     const streamed = rows.flatMap((r) =>
-      r.kind === RowKind.MarkerGroup ? r.markers.map((m) => m.toolCallId) : [],
+      r.kind === RowKind.MarkerGroup
+        ? r.markers.map((m) => m.toolCallId)
+        : r.kind === RowKind.Marker
+          ? [r.toolCallId]
+          : [],
     );
     expect(streamed).toEqual(["task-a", "own"]);
   });

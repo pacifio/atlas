@@ -1,8 +1,7 @@
-// Pure, DOM-free lowlight tokenizer shared by the git-diff highlight worker
-// (`diff-highlight.worker.ts`) and the synchronous main-thread fallback
-// (`diff-highlight.ts`). Keeping the tokenize logic here — with no cache, no
-// React, no DOM — means the worker and the fallback can never drift, mirroring
-// how `markdown-render.ts` is shared by the markdown worker + its fallback.
+// Pure, DOM-free lowlight tokenizer behind `diff-highlight.ts`, which the
+// staging diff (`diff-view.tsx`), the commit view and artifact code blocks
+// use. The review diff does not: it tokenizes with Shiki in a worker pool
+// (`diff-viewer/`).
 //
 // Per-line (not per-file) tokenization is intentional: the diff only carries
 // individual lines. Lines inside a multi-line construct (block comment,

@@ -1,4 +1,4 @@
-// Settings → Agents, after T3 Code's Providers page: one card, the agents the
+// Settings → Agents: one card, the agents the
 // user has on the left and the picked one's settings on the right. Browsing
 // the ACP registry for more is the Add agent dialog.
 
@@ -39,7 +39,7 @@ export function AgentsPage() {
   const items = useMemo(
     () => libraryItems(registryEntries, catalogById),
     // `signature` moves whenever the arrays do; they are not stable refs.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
     [signature],
   );
   const [selectedId, setSelectedId] = useState<string | null>(null);

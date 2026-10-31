@@ -14,26 +14,35 @@ import { BlockTerminal } from "./block-terminal";
 import { terminalSessions } from "../lib/terminal-session";
 import { useIsFocusedTerminal } from "../lib/focus";
 import { pickPaneInDirection, type Direction, type RectLike } from "../lib/pane-navigation";
-import { TerminalSidebar } from "./terminal-sidebar";
+import { TerminalTabStrip } from "./terminal-tab-strip";
+import { DrawerPaneActions } from "./drawer-pane-actions";
 import { cn } from "@/lib/utils";
 
 // Sessions close when their terminal leaves the store — every close path in
 // one place. Bound once for the app's lifetime.
 terminalSessions.bindToStore();
 
-/** The same inset the chat and timeline tabs use, so the three cards align. */
-const CARD_INSET = 4;
-
 interface TerminalPanelProps {
   tabId: string;
   /** The project this tab belongs to — recorded so a notification can route
    *  back to it after its project has gone to the background. */
   projectId?: string;
+  /** Whether the terminals are on screen. A layout tab leaves this out and
+   *  asks the layout; a session's terminal drawer is not a layout tab, so it
+   *  says. */
+  visible?: boolean;
+  /** `drawer`: a session's terminal drawer. A pane with one terminal shows no
+   *  tab strip (a strip of one, in a drawer a few lines tall), only its
+   *  actions, floating at its top-right; the strip appears with the second
+   *  terminal. */
+  variant?: "tab" | "drawer";
 }
 
 /**
  * A terminal tab: a tree of resizable panes, each holding one or more
- * terminals (tabs within the pane).
+ * terminals (tabs within the pane, in a strip across its top). Panes split
+ * down only (`terminal.splitDown`); a tree restored from before that rule may
+ * still hold a side-by-side split, and renders as it was.
  *
  * Terminals render INSIDE their pane container. The previous design measured
  * every container with `getBoundingClientRect` and floated the terminals over
@@ -44,7 +53,7 @@ interface TerminalPanelProps {
  * So the geometry can be what the DOM says it is, and the ResizeObservers,
  * double-rAF retries and stale-rect guards are gone with it.
  */
-export function TerminalPanel({ tabId, projectId }: TerminalPanelProps) {
+export function TerminalPanel({ tabId, projectId, visible, variant = "tab" }: TerminalPanelProps) {
   const tab = useTerminalStore((s) => s.tabs[tabId]);
   const {
     initTab,
@@ -58,7 +67,9 @@ export function TerminalPanel({ tabId, projectId }: TerminalPanelProps) {
   // Is this tab the one showing in its column? Mounted already implies the
   // active project (background projects unmount terminal panels); this is
   // what tells a hidden tab's terminals to stop rendering.
-  const panelVisible = useIsTabVisible(tabId);
+  const tabVisible = useIsTabVisible(tabId);
+  const panelVisible = visible ?? tabVisible;
+  const drawer = variant === "drawer";
 
   useEffect(() => {
     initTab(tabId, projectId);
@@ -125,6 +136,13 @@ export function TerminalPanel({ tabId, projectId }: TerminalPanelProps) {
     handlers: {
       "terminal.closeTab": () => {
         const pane = activePane();
+        // A session drawer's last terminal closes here, and the drawer with
+        // it: letting ⌘W fall through would close the SESSION's tab from
+        // under the shell being typed in.
+        if (drawer && pane && pane.terminals.length === 1) {
+          closeTerminalInPane(tabId, pane.id, pane.activeTerminalId ?? pane.terminals[0]);
+          return true;
+        }
         // Only intercept when there's a terminal tab to close; otherwise let
         // the global ⌘W close the editor tab as usual.
         if (!pane || pane.terminals.length < 2) return false;
@@ -134,12 +152,6 @@ export function TerminalPanel({ tabId, projectId }: TerminalPanelProps) {
       },
       "terminal.prevTab": () => cycleTerminal(-1),
       "terminal.nextTab": () => cycleTerminal(1),
-      "terminal.splitRight": () => {
-        const pane = activePane();
-        if (!pane) return false;
-        splitPane(tabId, pane.id, "horizontal");
-        return true;
-      },
       "terminal.splitDown": () => {
         const pane = activePane();
         if (!pane) return false;
@@ -184,22 +196,18 @@ export function TerminalPanel({ tabId, projectId }: TerminalPanelProps) {
     : null;
 
   return (
-    // The chat and timeline tabs' card: an inset on the tab's card fill, the
-    // tab's own surface as a rounded card inside it, its edge carried by the
-    // ring and the shadow only lifting it. `overflow-hidden` is what makes
-    // the corners real — the panes paint to the edge.
-    <div className="h-full min-h-0 bg-[var(--card)]" style={{ padding: CARD_INSET }}>
-      <div
-        ref={rootRef}
-        data-when-scope="terminalFocus"
-        className="relative h-full min-h-0 overflow-hidden rounded-lg bg-[var(--atlas-terminal-background)] shadow-lg ring-1 ring-[var(--border)]"
-      >
-        {zoomed ? (
-          <PaneView pane={zoomed} tabId={tabId} panelVisible={panelVisible} zoomed />
-        ) : (
-          <LayoutRenderer node={tab.root} tabId={tabId} panelVisible={panelVisible} />
-        )}
-      </div>
+    // Flat, edge to edge — the column border is the terminal's edge. It used
+    // to be a rounded card inset on a lighter frame, a panel inside a panel.
+    <div
+      ref={rootRef}
+      data-when-scope="terminalFocus"
+      className="relative h-full min-h-0 overflow-hidden bg-[var(--atlas-terminal-background)]"
+    >
+      {zoomed ? (
+        <PaneView pane={zoomed} tabId={tabId} panelVisible={panelVisible} drawer={drawer} zoomed />
+      ) : (
+        <LayoutRenderer node={tab.root} tabId={tabId} panelVisible={panelVisible} drawer={drawer} />
+      )}
     </div>
   );
 }
@@ -208,15 +216,17 @@ function LayoutRenderer({
   node,
   tabId,
   panelVisible,
+  drawer,
 }: {
   node: TreeNode;
   tabId: string;
   panelVisible: boolean;
+  drawer: boolean;
 }) {
   if (node.type === "pane") {
-    return <PaneView pane={node} tabId={tabId} panelVisible={panelVisible} />;
+    return <PaneView pane={node} tabId={tabId} panelVisible={panelVisible} drawer={drawer} />;
   }
-  return <SplitView node={node} tabId={tabId} panelVisible={panelVisible} />;
+  return <SplitView node={node} tabId={tabId} panelVisible={panelVisible} drawer={drawer} />;
 }
 
 /** A split: a nested resizable group. Proportions live on the node and are
@@ -226,10 +236,12 @@ function SplitView({
   node,
   tabId,
   panelVisible,
+  drawer,
 }: {
   node: SplitNode;
   tabId: string;
   panelVisible: boolean;
+  drawer: boolean;
 }) {
   const { setSplitSizes } = useTerminalStore.use.actions();
   const horizontal = node.direction === "horizontal";
@@ -256,7 +268,12 @@ function SplitView({
           {/* Percentages: v4 reads bare numbers as pixels, unit-less strings
               as percentages. */}
           <Panel id={child.id} minSize="15" className="min-w-0 min-h-0">
-            <LayoutRenderer node={child} tabId={tabId} panelVisible={panelVisible} />
+            <LayoutRenderer
+              node={child}
+              tabId={tabId}
+              panelVisible={panelVisible}
+              drawer={drawer}
+            />
           </Panel>
         </Fragment>
       ))}
@@ -268,11 +285,13 @@ function PaneView({
   pane,
   tabId,
   panelVisible,
+  drawer,
   zoomed,
 }: {
   pane: PaneNode;
   tabId: string;
   panelVisible: boolean;
+  drawer: boolean;
   zoomed?: boolean;
 }) {
   // Only this pane's slice — a sibling's tab switch must not re-render us.
@@ -284,18 +303,19 @@ function PaneView({
   });
 
   return (
-    // A size container: the side list folds to glyphs in a narrow pane.
     <div
       className={cn(
-        "@container/pane h-full flex",
+        "flex h-full flex-col",
         isActivePane && groupFocused && "ring-1 ring-[var(--atlas-element-hover)] ring-inset",
       )}
     >
-      <TerminalSidebar pane={pane} tabId={tabId} zoomed={zoomed} hasSplits={hasSplits} />
+      {drawer && pane.terminals.length < 2 ? null : (
+        <TerminalTabStrip pane={pane} tabId={tabId} zoomed={zoomed} hasSplits={hasSplits} />
+      )}
       {/* The pane's terminals, in the DOM where they belong. Inactive ones stay
           laid out (`visibility:hidden`, not `display:none`) so their fit is
           real and switching is instant. */}
-      <div className="flex-1 min-w-0 min-h-0 relative" data-pane-container={pane.id}>
+      <div className="relative min-h-0 min-w-0 flex-1" data-pane-container={pane.id}>
         {pane.terminals.map((ptyId) => (
           <TerminalSlot
             key={ptyId}
@@ -305,6 +325,9 @@ function PaneView({
             panelVisible={panelVisible}
           />
         ))}
+        {drawer && pane.terminals.length < 2 && (
+          <DrawerPaneActions pane={pane} tabId={tabId} hasSplits={hasSplits} zoomed={zoomed} />
+        )}
       </div>
     </div>
   );

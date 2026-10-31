@@ -1,5 +1,5 @@
 // An agent's models in Settings → Agents: star, hide, reorder, and add a model
-// by id. T3 Code's ProviderModelsSection, on what an ACP agent advertises.
+// by id, on what an ACP agent advertises.
 //
 // An agent states its models in a session, so the list is the last one it
 // gave (`acp-models-cache`); before its first chat only the user's own custom
@@ -27,7 +27,7 @@ import {
 import { SettingsGroup, SettingsSection } from "../layout/settings-layout";
 import { configureAgent, type AgentItem } from "./agent-install";
 
-/** A starred model's star, filled like T3's. */
+/** A starred model's star, filled. */
 const StarFilled: LucideIcon = forwardRef((props, ref) => (
   <Star ref={ref} {...props} fill="currentColor" />
 ));

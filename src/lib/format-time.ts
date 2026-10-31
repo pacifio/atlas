@@ -52,3 +52,90 @@ export function formatDateTime(
 ): string {
   return new Date(at).toLocaleString(locale, { ...options, ...hourCycle() });
 }
+
+/**
+ * The message-timestamp formats, by name. Each is built once per locale and
+ * hour cycle and reused (`cachedFormatter`): a transcript formats one per
+ * visible message on every render, and constructing an `Intl.DateTimeFormat`
+ * costs far more than calling one.
+ */
+const MESSAGE_FORMATS = {
+  time: { hour: "numeric", minute: "2-digit" },
+  monthDay: { month: "numeric", day: "numeric" },
+  monthDayYear: { month: "numeric", day: "numeric", year: "numeric" },
+  full: {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  },
+} satisfies Record<string, Intl.DateTimeFormatOptions>;
+
+type MessageFormat = keyof typeof MESSAGE_FORMATS;
+
+/** Only these carry a time, so only these take the user's hour cycle. */
+const TIMED: ReadonlySet<MessageFormat> = new Set<MessageFormat>(["time", "full"]);
+
+const formatters = new Map<string, Intl.DateTimeFormat>();
+
+function cachedFormatter(
+  name: MessageFormat,
+  locale: string | string[] | undefined,
+): Intl.DateTimeFormat {
+  const timed = TIMED.has(name);
+  // The hour cycle is part of the key, so flipping the 12h/24h setting picks
+  // up a new formatter rather than reusing a stale one.
+  const key = `${name}|${String(locale ?? "")}|${timed ? current : ""}`;
+  let formatter = formatters.get(key);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat(locale, {
+      ...MESSAGE_FORMATS[name],
+      ...(timed ? hourCycle() : {}),
+    });
+    formatters.set(key, formatter);
+  }
+  return formatter;
+}
+
+/**
+ * A message's time, as short as it can be without hiding the day: "4:34 PM"
+ * for today, "yesterday at 4:34 PM", "10/22 4:34 PM" for another day this year
+ * and "10/22/2025 4:34 PM" for another year. Days are compared at local
+ * midnight, so a DST day of 23 or 25 hours still counts as one. A bare time
+ * means the same calendar day and nothing else: a date ahead of this clock (a
+ * skewed agent, a wrong system clock) gets its date too.
+ *
+ * `now` is a parameter so a test can pin it. The caller formats on every
+ * render, but nothing re-renders a row at midnight or when the 12h/24h setting
+ * changes, and a settled row seldom renders again — so a row that stays
+ * mounted keeps the label it last rendered with. That is the cheap side of the
+ * trade against a ticking clock in every row.
+ */
+export function formatDayAwareTime(
+  at: DateInput,
+  now: DateInput = Date.now(),
+  locale?: string | string[],
+): string {
+  const date = new Date(at);
+  if (Number.isNaN(date.getTime())) return "";
+  const time = cachedFormatter("time", locale).format(date);
+  const today = new Date(now);
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  const startOfDay = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const days = Math.round((startOfToday - startOfDay) / 86_400_000);
+  if (days === 0) return time;
+  if (days === 1) return `yesterday at ${time}`;
+  const sameYear = date.getFullYear() === today.getFullYear();
+  const day = cachedFormatter(sameYear ? "monthDay" : "monthDayYear", locale).format(date);
+  return `${day} ${time}`;
+}
+
+/** The whole date and time, for the tooltip behind a short timestamp:
+ *  "Thursday, October 22, 2026 at 4:34 PM". */
+export function formatFullTimestamp(at: DateInput, locale?: string | string[]): string {
+  const date = new Date(at);
+  if (Number.isNaN(date.getTime())) return "";
+  return cachedFormatter("full", locale).format(date);
+}

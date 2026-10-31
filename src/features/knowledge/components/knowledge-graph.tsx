@@ -355,7 +355,7 @@ function GraphCanvas({
         /* ignore */
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [graph, width, height]);
 
   return (

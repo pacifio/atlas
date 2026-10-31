@@ -29,7 +29,7 @@ export function editorTabId(path: string): string {
 /** Resolve the file kind, sniffing the bytes for unrecognized extensions:
  *  extension classification is an allowlist, so unknown names fall to
  *  "unsupported" — but if the bytes are UTF-8/ASCII text we treat it as text. */
-async function resolveFileKind(path: string): Promise<FileKind> {
+export async function fileKindOf(path: string): Promise<FileKind> {
   let kind = classifyFile(path);
   if (kind === "unsupported") {
     try {
@@ -68,14 +68,14 @@ export function openFileAs(path: string, kind: FileKind, opts?: OpenFileOptions)
 /** Open `path` as a tab, classified by extension (or by sniffing the bytes),
  *  and resolve to the tab id. */
 export async function openFile(path: string, opts?: OpenFileOptions): Promise<string> {
-  return openFileAs(path, await resolveFileKind(path), opts);
+  return openFileAs(path, await fileKindOf(path), opts);
 }
 
 /** Open a file in Atlas when it's a kind Atlas can render; otherwise reveal it
  *  in the OS file manager (Finder on macOS). Used by terminal link clicks — the
  *  user wants compatible files in-app and everything else handed to the OS. */
 export async function openFileOrReveal(path: string): Promise<void> {
-  const kind = await resolveFileKind(path);
+  const kind = await fileKindOf(path);
   if (kind === "unsupported") {
     try {
       const { revealItemInDir } = await import("@tauri-apps/plugin-opener");

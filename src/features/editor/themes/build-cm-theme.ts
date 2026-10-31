@@ -127,7 +127,6 @@ export function buildEditorChromeTheme(theme: ResolvedTheme | null): Extension {
         backgroundColor: c.gutterBg,
         color: c.gutterFg,
         border: "none",
-        minWidth: "40px",
       },
       ".cm-activeLineGutter": {
         color: c.activeLineGutterFg,

@@ -1,7 +1,7 @@
 // Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 use atlas_engine_http_client::Request;
 use atlas_engine_http_client::TransportError;
-use rand::Rng;
+use rand::RngExt;
 use std::future::Future;
 use std::time::Duration;
 

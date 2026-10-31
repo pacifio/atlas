@@ -1,3 +1,4 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use ts_rs::TS;
@@ -84,7 +85,8 @@ fn image_generation_item_preserves_authoritative_transparency() {
 #[test]
 fn image_generation_transparency_is_optional_in_typescript() {
     assert!(
-        ImageGenerationItem::inline().contains("transparentBackground?: boolean"),
+        ImageGenerationItem::inline(&ts_rs::Config::default())
+            .contains("transparentBackground?: boolean"),
         "image-generation transparency must remain optional for existing TypeScript clients"
     );
 }

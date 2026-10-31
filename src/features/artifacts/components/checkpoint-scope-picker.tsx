@@ -121,7 +121,7 @@ export function CheckpointScopePicker({
           render={
             <button
               type="button"
-              title="Choose what this chat reads"
+              title="Choose what this session reads"
               className="flex min-w-0 items-center gap-2 truncate text-left cursor-pointer outline-none"
             >
               {isFull ? (

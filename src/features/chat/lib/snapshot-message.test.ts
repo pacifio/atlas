@@ -110,4 +110,35 @@ describe("snapshotMessageToWire images", () => {
   it("adds no attachments key when there are no images", () => {
     expect(snapshotMessageToWire(message())).not.toHaveProperty("attachments");
   });
+
+  it("carries the turn's timing and each call's times, so durations survive a reload", () => {
+    const wire = snapshotMessageToWire(
+      message({
+        worked_ms: 252_000,
+        stop_reason: "cancelled",
+        tool_calls: [
+          {
+            id: "call-1",
+            tool_name: "run",
+            title: null,
+            kind: "execute",
+            status: "completed",
+            arguments: {},
+            result: null,
+            locations: [],
+            started_at_ms: 1_000,
+            ended_at_ms: 7_000,
+          },
+        ],
+      }),
+    );
+    expect(wire).toMatchObject({ workedMs: 252_000, stopReason: "cancelled" });
+    expect(wire.toolCalls[0]).toMatchObject({ startedAt: 1_000, endedAt: 7_000 });
+  });
+
+  it("adds no timing keys to a message that has none", () => {
+    const wire = snapshotMessageToWire(message());
+    expect(wire).not.toHaveProperty("workedMs");
+    expect(wire).not.toHaveProperty("stopReason");
+  });
 });

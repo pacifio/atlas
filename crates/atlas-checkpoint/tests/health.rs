@@ -141,6 +141,83 @@ fn a_flagged_session_moves_the_project_to_degraded() {
 }
 
 #[test]
+fn a_flag_older_than_the_window_stops_degrading_the_project() {
+    // The flag is permanent, so counting it forever meant one lock timeout
+    // weeks ago held the banner up for good. It stays on the Session; the
+    // Project's health only reports what is recent.
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = bound(dir.path());
+    let session = record_session(&mut store, "s1");
+    store
+        .flag_needs_attention(
+            &session,
+            "session store is not writable: database is locked",
+        )
+        .unwrap();
+
+    let weeks_ago = (chrono::Utc::now() - chrono::Duration::days(30)).to_rfc3339();
+    rusqlite::Connection::open(dir.path().join(".atlas").join("sessions.db"))
+        .unwrap()
+        .execute(
+            "UPDATE agent_session SET flagged_at = ?1 WHERE id = ?2",
+            rusqlite::params![weeks_ago, session],
+        )
+        .unwrap();
+
+    let health = health(&store, no_watcher_needed());
+    assert_eq!(health.state, HealthState::Ok, "{:?}", health.issues);
+    assert_eq!(health.flagged_sessions, 0);
+}
+
+#[test]
+fn work_in_a_long_flagged_session_does_not_make_its_flag_recent_again() {
+    // Every prompt and message moves `updated_at`. Counting by it kept an old
+    // flag on a Session still in use inside the window for as long as anyone
+    // worked in it; the window is the flag's own time.
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = bound(dir.path());
+    let session = record_session(&mut store, "s1");
+    store
+        .flag_needs_attention(&session, "redaction failed on this turn")
+        .unwrap();
+
+    let weeks_ago = (chrono::Utc::now() - chrono::Duration::days(30)).to_rfc3339();
+    let now = chrono::Utc::now().to_rfc3339();
+    rusqlite::Connection::open(dir.path().join(".atlas").join("sessions.db"))
+        .unwrap()
+        .execute(
+            "UPDATE agent_session SET flagged_at = ?1, updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![weeks_ago, now, session],
+        )
+        .unwrap();
+
+    let health = health(&store, no_watcher_needed());
+    assert_eq!(health.flagged_sessions, 0, "{:?}", health.issues);
+}
+
+#[test]
+fn rows_of_an_aborted_turn_are_not_counted_as_pending() {
+    // The outbox never sends an aborted turn's rows. Counting them as pending
+    // showed "N pending — sends when online" for work that never would, and
+    // the count could not reach zero.
+    let dir = tempfile::tempdir().unwrap();
+    {
+        let mut store = bound(dir.path());
+        record_session_in(&mut store, "s1", ProjectMode::Cloud);
+        // No `finish_turn`: the process dies mid-turn, and the reopen below
+        // reconciles the turn as aborted.
+    }
+
+    let store = store_in(dir.path());
+    let health = health(&store, no_watcher_needed());
+    let outbox = store
+        .pending_artifacts(WORKSPACE, WORKSPACE, "org", 100, usize::MAX)
+        .unwrap();
+    assert_eq!(health.pending_rows, outbox.len() as i64);
+    assert_eq!(health.pending_rows, 1, "only the Session itself is waiting");
+}
+
+#[test]
 fn a_storage_failure_flags_the_session_and_surfaces_as_degraded() {
     // Driven by causing the real failure rather than setting the flag directly.
     let dir = tempfile::tempdir().unwrap();

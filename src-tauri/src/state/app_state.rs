@@ -14,13 +14,13 @@ use tauri::{AppHandle, Manager};
 /// shape. Older payloads with a smaller `version` are loadable as long as
 /// the missing fields default to sensible values.
 ///
-/// v2 introduced the multi-project model (`projects`/`groups`/
+/// v2 introduced the multi-project model (`projects`/
 /// `active_workspace_id`); `current_project` is retained only as a
 /// migration source for v1 payloads.
 ///
 /// v3 introduced the Organisation layer above projects
 /// (`organisations`/`active_organisation_id`, plus `org_id` on each
-/// project/group). v2 payloads are migrated by wrapping all existing
+/// project). v2 payloads are migrated by wrapping all existing
 /// projects in a default local "Personal" org.
 ///
 /// v4 removed `AppSettings` from this struct entirely (issue #64) — user
@@ -66,47 +66,19 @@ pub struct Project {
     pub id: String,
     pub name: String,
     pub path: String,
-    #[serde(default)]
-    pub group_id: Option<String>,
     /// Owning Organisation. `None` on pre-v3 payloads — `migrate()` backfills
     /// it to the default org. The sidebar filters projects by the active org.
     #[serde(default)]
     pub org_id: Option<String>,
-    #[serde(default)]
-    pub color: Option<String>,
     /// Optional git remote. The ONLY field (besides id/name) that syncs to the
     /// server (`workspace_refs.git_url`) for one-click clone; the source tree
     /// itself never syncs. `None` for local-only projects.
     #[serde(default)]
     pub git_url: Option<String>,
-    /// Pinned to the top of the sidebar and kept out of the hot-set LRU.
-    /// Frontend-owned; Rust only stores it. Absent from this struct until
-    /// `tests/state-payload-contract.test.ts` found it: `pin()` scheduled a
-    /// save and serde dropped the field, so a pin never survived a restart.
-    #[serde(default)]
-    pub pinned: bool,
     /// ISO-8601 timestamp of the last time this project was the active
     /// one; used to order the sidebar / pick a fallback on close.
     #[serde(default)]
     pub last_active_at: Option<String>,
-}
-
-/// A user-defined collapsible folder that groups projects in the sidebar.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProjectGroup {
-    pub id: String,
-    pub name: String,
-    #[serde(default)]
-    pub order: u32,
-    /// Owning Organisation (mirrors `Project::org_id`). `None` on pre-v3
-    /// payloads — `migrate()` backfills it to the default org.
-    #[serde(default)]
-    pub org_id: Option<String>,
-    /// Pinned groups float to the top of the Recent tier. See `Project::pinned`
-    /// for why this was missing.
-    #[serde(default)]
-    pub pinned: bool,
 }
 
 /// A top-level tenant that owns a set of projects (the Linear "workspace
@@ -159,10 +131,8 @@ pub struct AppState {
     #[serde(default)]
     pub workspaces: Vec<Project>,
     #[serde(default)]
-    pub groups: Vec<ProjectGroup>,
-    #[serde(default)]
     pub active_workspace_id: Option<String>,
-    /// The Organisation layer above projects (v3). Each project/group is
+    /// The Organisation layer above projects (v3). Each project is
     /// tagged with an `org_id`; the sidebar shows only the active org's set.
     #[serde(default)]
     pub organisations: Vec<Organisation>,
@@ -204,8 +174,6 @@ pub struct AppStatePatch {
     #[serde(default)]
     pub workspaces: Vec<Project>,
     #[serde(default)]
-    pub groups: Vec<ProjectGroup>,
-    #[serde(default)]
     pub active_workspace_id: Option<String>,
     #[serde(default)]
     pub organisations: Vec<Organisation>,
@@ -219,7 +187,6 @@ impl Default for AppState {
             current_project: None,
             recent_projects: Vec::new(),
             workspaces: Vec::new(),
-            groups: Vec::new(),
             active_workspace_id: None,
             organisations: Vec::new(),
             active_organisation_id: None,
@@ -266,7 +233,7 @@ impl AppState {
     /// v1 → v2: if no projects exist yet but a legacy `current_project` is
     /// present, synthesize a single project from it and make it active.
     ///
-    /// v2 → v3: if no organisations exist yet, wrap every project/group in a
+    /// v2 → v3: if no organisations exist yet, wrap every project in a
     /// default local "Personal" org and make it active.
     fn migrate(&mut self) {
         if self.workspaces.is_empty() {
@@ -277,11 +244,8 @@ impl AppState {
                     id,
                     name: project.name,
                     path: project.path,
-                    group_id: None,
                     org_id: None,
-                    color: None,
                     git_url: None,
-                    pinned: false,
                     last_active_at: None,
                 });
             }
@@ -318,7 +282,7 @@ impl AppState {
             }
         }
 
-        // Backfill org ownership on any untagged project/group (covers both
+        // Backfill org ownership on any untagged project (covers both
         // the fresh migration above and stray untagged entries — the frontend
         // can mint `org_id: null` rows during a boot race, and every render
         // surface filters strictly by org, so an untagged row would otherwise
@@ -330,28 +294,10 @@ impl AppState {
             .clone()
             .or_else(|| self.organisations.first().map(|o| o.id.clone()));
         if let Some(default_org) = default_org {
-            let group_orgs: std::collections::HashMap<String, String> = self
-                .groups
-                .iter()
-                .filter_map(|g| Some((g.id.clone(), g.org_id.clone()?)))
-                .collect();
             let mut backfilled = 0usize;
-            for group in &mut self.groups {
-                if group.org_id.is_none() {
-                    group.org_id = Some(default_org.clone());
-                    backfilled += 1;
-                }
-            }
             for ws in &mut self.workspaces {
                 if ws.org_id.is_none() {
-                    // A project inside an org-tagged group belongs to that
-                    // group's org; only truly orphaned rows get the default.
-                    ws.org_id = Some(
-                        ws.group_id
-                            .as_ref()
-                            .and_then(|gid| group_orgs.get(gid).cloned())
-                            .unwrap_or_else(|| default_org.clone()),
-                    );
+                    ws.org_id = Some(default_org.clone());
                     backfilled += 1;
                 }
             }
@@ -359,7 +305,7 @@ impl AppState {
                 tracing::info!(
                     count = backfilled,
                     default_org = %default_org,
-                    "backfilled org_id on untagged projects/groups"
+                    "backfilled org_id on untagged projects"
                 );
             }
         }
@@ -382,7 +328,6 @@ impl AppState {
         self.current_project = None;
         self.recent_projects = p.recent_projects;
         self.workspaces = p.workspaces;
-        self.groups = p.groups;
         self.active_workspace_id = p.active_workspace_id;
         self.organisations = p.organisations;
         self.active_organisation_id = p.active_organisation_id;
@@ -440,10 +385,11 @@ impl AppState {
     /// replacing the file wholesale.
     ///
     /// Merging keeps any key another build of Atlas writes, for exactly the
-    /// reason `config.toml` patches preserve unknown TOML keys. The two keys
-    /// Atlas itself retired (`settings`, now `config.toml`, and its
-    /// `settingsConfigMigrated` marker) are dropped, so `state.json` carries
-    /// no stale shadow of the settings.
+    /// reason `config.toml` patches preserve unknown TOML keys. The keys
+    /// Atlas itself retired are dropped: `settings` (now `config.toml`) and
+    /// its `settingsConfigMigrated` marker, so `state.json` carries no stale
+    /// shadow of the settings, and `groups`, the project folders the sidebar
+    /// no longer has.
     fn merged_for_save(path: &Path, state: &AppState) -> serde_json::Result<serde_json::Value> {
         let mut merged = std::fs::read_to_string(path)
             .ok()
@@ -458,6 +404,7 @@ impl AppState {
             }
             dst.remove("settings");
             dst.remove("settingsConfigMigrated");
+            dst.remove("groups");
         }
         Ok(merged)
     }
@@ -578,7 +525,6 @@ mod tests {
             "currentProject": null,
             "recentProjects": [],
             "workspaces": [],
-            "groups": [],
             "activeWorkspaceId": "proj-1",
             "organisations": [],
             "activeOrganisationId": null,
@@ -628,18 +574,21 @@ mod tests {
         assert_eq!(renamed.active_workspace_id, None);
     }
 
-    /// `pinned` was frontend-only: `pin()` scheduled a save and serde threw the
-    /// field away, so a pinned project or group came back unpinned on the next
-    /// launch. Found by `tests/state-payload-contract.test.ts`.
+    /// The project folders are gone from the sidebar, and so is their key: a
+    /// save drops the `groups` an older build left in `state.json`.
     #[test]
-    fn a_project_and_a_group_keep_their_pin() {
-        let patch: AppStatePatch = serde_json::from_value(serde_json::json!({
-            "workspaces": [{ "id": "p1", "name": "a", "path": "/a", "pinned": true }],
-            "groups": [{ "id": "g1", "name": "g", "pinned": true }],
-        }))
-        .expect("patch deserializes");
-        assert!(patch.workspaces[0].pinned);
-        assert!(patch.groups[0].pinned);
+    fn a_save_drops_the_retired_groups_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        std::fs::write(
+            &path,
+            r#"{ "groups": [{ "id": "g1", "name": "g" }], "recentProjects": [] }"#,
+        )
+        .unwrap();
+
+        let merged = AppState::merged_for_save(&path, &AppState::default()).unwrap();
+
+        assert!(merged.get("groups").is_none());
     }
 
     /// The regression test for the analytics bug: a settings save must not cost

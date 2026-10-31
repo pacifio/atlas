@@ -42,15 +42,16 @@ export function EmojiPicker({ onPick }: { onPick: (emoji: string) => void }) {
               // Keeps the textarea selection alive so the emoji lands where the
               // caret was, not at the end.
               onMouseDown={(e) => e.preventDefault()}
-              className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-element-hover hover:text-foreground cursor-pointer"
+              // The composer bar's button (`BAR_BUTTON` in comms-composer).
+              className="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-element-hover hover:text-foreground"
             >
-              <Smile size={14} />
+              <Smile size={17} />
             </button>
           }
         />
       </HintItem>
       <Popover.Portal>
-        <Popover.Positioner className="z-modal" side="top" align="start" sideOffset={8}>
+        <Popover.Positioner className="z-modal" side="top" align="end" sideOffset={8}>
           <Popover.Popup
             // Radix's onOpenAutoFocus + preventDefault + focus() is one
             // Base UI prop: hand initialFocus the element to land on.

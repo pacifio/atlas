@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Loader2, Play } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAppStore } from "@/features/app/stores/app-store";
+import { documentFileRoot } from "@/lib/file-links";
 import { Markdown } from "@/lib/markdown";
 import {
   codeFence,
@@ -34,6 +36,8 @@ type LoadState =
  */
 export function NotebookViewer({ filePath }: NotebookViewerProps) {
   const [state, setState] = useState<LoadState>({ status: "loading" });
+  const projectPath = useAppStore.use.currentProject()?.path ?? null;
+  const fileRoot = documentFileRoot(filePath, projectPath);
 
   useEffect(() => {
     let cancelled = false;
@@ -70,14 +74,21 @@ export function NotebookViewer({ filePath }: NotebookViewerProps) {
             Couldn't open this notebook: {state.message}
           </div>
         ) : (
-          <NotebookBody notebook={state.notebook} />
+          <NotebookBody notebook={state.notebook} fileRoot={fileRoot} />
         )}
       </div>
     </div>
   );
 }
 
-function NotebookBody({ notebook }: { notebook: NotebookFile }) {
+function NotebookBody({
+  notebook,
+  fileRoot,
+}: {
+  notebook: NotebookFile;
+  /** Where a markdown cell's file paths resolve (`documentFileRoot`). */
+  fileRoot: string | null;
+}) {
   const language = useMemo(() => notebookLanguage(notebook), [notebook]);
 
   if (notebook.cells.length === 0) {
@@ -89,19 +100,27 @@ function NotebookBody({ notebook }: { notebook: NotebookFile }) {
   return (
     <div className="max-w-4xl mx-auto px-4 py-4 space-y-3">
       {notebook.cells.map((cell, i) => (
-        <NotebookCellView key={i} cell={cell} language={language} />
+        <NotebookCellView key={i} cell={cell} language={language} fileRoot={fileRoot} />
       ))}
     </div>
   );
 }
 
-function NotebookCellView({ cell, language }: { cell: NotebookCell; language: string }) {
+function NotebookCellView({
+  cell,
+  language,
+  fileRoot,
+}: {
+  cell: NotebookCell;
+  language: string;
+  fileRoot: string | null;
+}) {
   const source = joinSource(cell.source);
 
   if (cell.cell_type === "markdown") {
     return source.trim() ? (
       <div className="px-1">
-        <Markdown>{source}</Markdown>
+        <Markdown fileRoot={fileRoot}>{source}</Markdown>
       </div>
     ) : null;
   }

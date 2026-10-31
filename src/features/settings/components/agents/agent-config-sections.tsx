@@ -1,6 +1,6 @@
 // The editor sections that write an agent's own settings through
 // `agents_configure`: its name, what it needs to sign in, how it runs, and its
-// environment. T3 Code's provider editor, on Atlas's installed-agents map.
+// environment, on Atlas's installed-agents map.
 //
 // The well-known agents get named fields from their profile
 // (`agent-profiles.ts`); each is a view onto one environment variable, so the
@@ -118,7 +118,7 @@ export function IdentityRow({ item }: { item: AgentItem }) {
 }
 
 /** One profile field. Text-like fields sit full width under their
- *  description, the way T3 lays out a provider's runtime fields. */
+ *  description, as a provider's runtime fields are laid out. */
 function ProfileFieldRow({ item, field }: { item: AgentItem; field: ProfileField }) {
   const variables = item.catalog?.launch?.variables ?? [];
   const value = readField(variables, field);
@@ -420,7 +420,7 @@ export function EnvironmentSection({ item }: { item: AgentItem }) {
     if (incoming === published.current) return;
     setRows(toRows(generic));
     // `generic` is derived from the catalog; its signature is the dependency.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [incoming]);
 
   if (!launch || item.state !== "installed") return null;

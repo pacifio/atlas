@@ -5,4 +5,4 @@
 /**
  * Successful response for `fs/createDirectory`.
  */
-export type FsCreateDirectoryResponse = Record<string, never>;
+export type FsCreateDirectoryResponse = Record<symbol, never>;

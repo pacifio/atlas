@@ -5202,10 +5202,7 @@ fn the_tool_list_carries_the_cache_fields_the_2026_07_28_spec_requires() {
 fn the_instructions_state_the_protocol_in_three_sentences_or_fewer() {
     assert!(INSTRUCTIONS.contains("Call org_whoami first"));
     assert!(INSTRUCTIONS.contains("ask the user which one"));
-    assert!(
-        INSTRUCTIONS.matches(". ").count() + 1 <= 3,
-        "{INSTRUCTIONS}"
-    );
+    assert!(INSTRUCTIONS.matches(". ").count() < 3, "{INSTRUCTIONS}");
 }
 
 /// The Chat Completions wire drops a server's instructions (`reshape_tools`

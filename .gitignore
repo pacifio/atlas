@@ -13,7 +13,11 @@ dist-next/
 target/
 
 # IDE
-.vscode/
+# Per-developer editor state stays out; the shared settings and extension
+# recommendations are committed.
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
 .idea/
 *.swp
 *.swo
@@ -49,6 +53,8 @@ skills-lock.json
 !.github/CODE_OF_CONDUCT.md
 !CONTEXT.md
 !docs/architecture.md
+# The map of docs/ itself.
+!docs/README.md
 !docs/adr/*.md
 !docs/archive/*.md
 !docs/archive/radix-to-base-ui/*.md

@@ -128,8 +128,14 @@
   --animate-fade-in: fade-in 0.15s var(--ease-out-strong);
   --animate-fade-out: fade-out 0.12s var(--ease-out-strong);
   --animate-scale-in: scale-in 0.15s var(--ease-out-strong);
+  /* A card growing out of the button that opened it (the session Details
+     popover): a smaller step than `scale-in`, since the card is large and a
+     5% scale on it reads as a zoom, not a grow. */
+  --animate-card-in: card-in 0.15s var(--ease-out-strong);
   --animate-scale-out: scale-out 0.12s var(--ease-out-strong);
   --animate-slide-in-right: slide-in-right 0.18s var(--ease-drawer);
+  /* The closed sidebar's peek (`SidebarPeek`). */
+  --animate-slide-in-left: slide-in-left 0.18s var(--ease-drawer);
 
   /* Animated icon glyphs (`src/ui/animated-icon.tsx`, decision 33). Only the
      one-shot, click-driven ones need a keyframe: everything hover-driven is a
@@ -210,6 +216,15 @@
     }
   }
 
+  @keyframes slide-in-left {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(0);
+    }
+  }
+
   @keyframes fade-in {
     from {
       opacity: 0;
@@ -230,6 +245,16 @@
     from {
       opacity: 0;
       transform: scale(0.95);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+  @keyframes card-in {
+    from {
+      opacity: 0;
+      transform: scale(0.97);
     }
     to {
       opacity: 1;
@@ -382,9 +407,6 @@
 @utility h-titlebar {
   height: var(--titlebar-height);
 }
-@utility h-tab-strip {
-  height: var(--tab-strip-height);
-}
 
 /* ──────────────────────────────────────────────────────────────────────────
    Z-index layers (decision 28). `z-<number>` only takes numbers, so the layers
@@ -456,6 +478,50 @@
 @utility glass-hud {
   border: 1px solid var(--border);
   box-shadow: var(--inset-highlight), var(--elevation-menu);
+}
+
+/* A glass rim: the surface the app sits on (black on a dark theme, white on
+   a light one) inside a 1px edge that catches light at the top, eases off
+   through the sides and comes back at the bottom — never so far that the
+   lower edge fades out (it read as missing on the composer bar) — plus a
+   faint inner top highlight: the edge of a pane of glass, without a blur or a
+   tint. The
+   edge is a border-box gradient behind a padding-box fill, so it follows any
+   radius. Both come off `--foreground`, so the rim reads on every theme. */
+@utility glass-rim {
+  --glass-fill: var(--background);
+  border: 1px solid transparent;
+  background:
+    linear-gradient(var(--glass-fill), var(--glass-fill)) padding-box,
+    linear-gradient(
+        to bottom,
+        color-mix(in srgb, var(--foreground) 26%, transparent),
+        color-mix(in srgb, var(--foreground) 13%, transparent) 50%,
+        color-mix(in srgb, var(--foreground) 20%, transparent)
+      )
+      border-box;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--foreground) 6%, transparent);
+}
+
+/* The team chat composer's corner, and the agent composer's input card
+   while folded: half a one-line height (both are 46px), so a single
+   line is an exact capsule. In px, like the bar's own geometry — the bar is
+   44px + a 1px rim top and bottom, all literal px — because the `rounded-*`
+   scale is in rem and shrinks with the UI zoom, which left the ends short of
+   round. Past one line the corner stays 23px rather than growing into a
+   stadium that would clip the formatting row and attachment chips. */
+@utility rounded-composer {
+  border-radius: 23px;
+}
+
+/* A `glass-rim` that is a control: the fill lifts a step on hover and while
+   its menu is open. The rim's gradient paints over `background-color`, so the
+   usual `hover:bg-*` cannot reach the fill; this moves the fill itself. */
+@utility glass-rim-control {
+  &:hover:not(:disabled),
+  &[data-popup-open] {
+    --glass-fill: color-mix(in srgb, var(--foreground) 7%, var(--background));
+  }
 }
 
 @utility scrim {
@@ -719,145 +785,101 @@
   }
 }
 
-/* ── Chat input — CodeMirror host + mention chips ────────────────────────────
-   The chat composer mounts a CodeMirror EditorView inside `.atlas-chat-cm-host`.
-   These rules size the host, hide CM's default editor chrome that doesn't make
-   sense for a chat input, and render mention chips as atomic pills.
+/* ── Composer — the shared Tiptap core (`components/composer/`) ────────────
+   Structure every composer shares: a ProseMirror field that wraps like a
+   textarea, one paragraph per line with no margins, and the placeholder
+   overlay. Typography and the field's box belong to each composer's host class
+   below. Plain CSS rather than Tailwind on the editor element because
+   ProseMirror owns that element's class attribute.
 */
-.atlas-chat-cm-host {
+.atlas-composer {
+  position: relative;
   width: 100%;
 }
-.atlas-chat-cm-host .cm-editor {
-  border: none;
-  background: transparent;
-  /* The composer is UI, not code. These three mirror the EditorView.theme in
-     `chat-input.tsx` ON PURPOSE as a belt-and-braces fallback: if CodeMirror's
-     runtime stylesheet injection ever fails again (the 2026-09 cause was the
-     Tauri CSP nonce blocking `style-src 'unsafe-inline'` in bundled builds —
-     see index.html), the composer falls back to CM's defaults: monospace,
-     ~2px inset, and a ~28px field that the 28px send button — absolutely
-     positioned 8px from the top — hangs out the bottom of. Structure must not
-     depend on an injection that can fail, so it lives here too. Unlayered, so
-     it also beats the `@layer base` .cm-editor rules that dress the CODE
-     editor in the code font.
+.atlas-composer .ProseMirror {
+  outline: none;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  caret-color: var(--foreground);
+}
+.atlas-composer .ProseMirror p {
+  margin: 0;
+}
+.atlas-composer .ProseMirror ::selection {
+  background: var(--atlas-selection-background);
+}
+.atlas-composer-placeholder {
+  position: absolute;
+  pointer-events: none;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--muted-foreground);
+  animation: atlas-placeholder-in 0.22s ease-out;
+}
 
-     Stronger than "keep in step with chat-input.tsx": these rules WIN over the
-     runtime theme, they do not merely stand in for it. style-mod prepends CM's
-     <style> to <head> when it first mounts it, so this file comes later in
-     document order — and `.atlas-chat-cm-host .cm-editor` (0,2,0) outranks the
-     theme's `&` → `.ͼN` (0,1,0) outright, while `.cm-scroller` / `.cm-content`
-     / `.cm-line` tie at (0,2,0) and win on order.
-
-     So SEVEN declarations in chat-input.tsx's EditorView.theme are inert —
-     editing them alone changes NOTHING. Edit here, or edit both:
-       &            backgroundColor, fontSize, lineHeight
-       .cm-scroller fontFamily, minHeight
-       .cm-content  padding
-       .cm-line     padding
-     `.cm-selectionBackground` is dead too, by a different route: it is
-     `!important` here inside `@layer base` (see the CodeMirror block below),
-     and for important declarations the layer order inverts, so layered beats
-     the theme's unlayered `!important`.
-
-     Watch the min-height especially: `minHeight` is a PROP on ChatInput, so
-     `<ChatInput minHeight={80}>` type-checks and silently does nothing against
-     the hardcoded 44px below. */
+/* The session composer. One line = 12 + 20 + 12 = 44px: the send button's 8px
+   inset + 28px box sits inside that, at any UI scale (px, not rem, because the
+   UI-scale setting shrinks the root font size). */
+.atlas-chat-composer {
+  color: var(--foreground);
   font-family:
-    var(--atlas-composer-font, var(--font-sans)),
-    system-ui,
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    sans-serif;
+    var(--atlas-composer-font, var(--font-sans)), system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
   font-size: 13px;
   line-height: 1.55;
 }
-.atlas-chat-cm-host .cm-scroller {
-  font-family: inherit;
-  line-height: inherit;
-  /* One line = 12 + 20 + 12. The send button's 8px inset + 28px box needs 36
-     of those 44 to sit inside the field. */
-  min-height: 44px;
-}
-.atlas-chat-cm-host .cm-content {
+.atlas-chat-composer .ProseMirror {
   padding: 12px 16px;
-  font-family: inherit;
+  min-height: 44px;
+  max-height: 200px;
+  overflow-y: auto;
+  /* Hide the scrollbar (the app's `hide-scrollbar` convention). The global
+     ::-webkit-scrollbar reserves 8px of layout width, and WebKit reveals it on
+     hover, which rewraps the text, flips the overflow and oscillates the field
+     for a couple of frames. Content still scrolls by wheel and trackpad. */
+  scrollbar-width: none;
 }
-.atlas-chat-cm-host .cm-gutters {
+.atlas-chat-composer .ProseMirror::-webkit-scrollbar {
   display: none;
 }
-.atlas-chat-cm-host .cm-line {
-  padding: 0;
+.atlas-chat-composer .atlas-composer-placeholder {
+  top: 12px;
+  left: 16px;
+  right: 16px;
 }
 
-/* Team-chat composer — the same problem as the chat host above, and the same
-   solution. `@layer base` dresses every `.cm-editor` as a CODE editor (13px
-   in the code font), which is why a mention pill in the comms composer rendered
-   in monospace. A chat message is prose, so the editor has to be undressed
-   again.
-
-   These rules are UNLAYERED, so they beat the `@layer base` block regardless
-   of specificity, and they are also the belt-and-braces copy of the runtime
-   theme: CodeMirror injects its `EditorView.theme` as a <style> at mount, and
-   in the bundled app that injection has failed before (the Tauri CSP nonce
-   disabling `style-src 'unsafe-inline'` — see index.html). Structure must not
-   depend on an injection that can fail, so `composer-input.tsx` carries NO
-   theme at all and this block is the single authority. */
-.atlas-comms-cm-host {
-  width: 100%;
-}
-.atlas-comms-cm-host .cm-editor {
-  border: none;
-  background: transparent;
-  font-family: var(--font-sans);
+/* The team chat composer (`features/comms/components/composer-input.tsx`).
+   12.5px on an 18px line, as a chat message reads. */
+.atlas-comms-composer {
   color: var(--foreground);
-  /* Both live on the editor root so content and gutters would measure the same
-     row height, per the CodeMirror block below. */
+  font-family: var(--font-sans);
   font-size: 12.5px;
   line-height: 18px;
 }
-.atlas-comms-cm-host .cm-scroller {
-  font-family: inherit;
-  line-height: inherit;
-  /* The cap the old `<textarea>` autosize enforced by measuring. CodeMirror
-     grows to fit and scrolls past it, so there is no measurement to get wrong. */
-  max-height: 160px;
-  overflow-y: auto;
-  scrollbar-width: none;
-}
-.atlas-comms-cm-host .cm-scroller::-webkit-scrollbar {
-  display: none;
-}
-.atlas-comms-cm-host .cm-content {
-  font-family: inherit;
+.atlas-comms-composer .ProseMirror {
   /* 8 + 18 + 8 = 34, so a single line is exactly centred in the field; the
      38px right inset clears the send button. Literal px because Atlas's
      UI-scale shrinks the root font size and a rem-derived padding stops
      matching the px line box. */
   padding: 8px 38px 8px 10px;
-  min-height: 18px;
-  caret-color: var(--foreground);
+  min-height: 34px;
+  /* The cap the old `<textarea>` autosize enforced by measuring. */
+  max-height: 160px;
+  overflow-y: auto;
+  scrollbar-width: none;
 }
-.atlas-comms-cm-host .cm-gutters {
+.atlas-comms-composer .ProseMirror::-webkit-scrollbar {
   display: none;
 }
-.atlas-comms-cm-host .cm-line {
-  padding: 0;
+.atlas-comms-composer .ProseMirror ::selection {
+  background-color: color-mix(in srgb, var(--primary) 28%, transparent);
 }
-.atlas-comms-cm-host .cm-placeholder {
+.atlas-comms-composer .atlas-composer-placeholder {
+  top: 8px;
+  left: 10px;
+  right: 38px;
   color: var(--atlas-text-disabled);
-}
-.atlas-comms-cm-host .cm-cursor,
-.atlas-comms-cm-host .cm-dropCursor {
-  border-left-color: var(--foreground);
-  border-left-width: 1px;
-}
-/* `!important` because the base-layer rule is important too, and for IMPORTANT
-   declarations the layer order inverts: layered would otherwise beat this. */
-.atlas-comms-cm-host .cm-selectionBackground,
-.atlas-comms-cm-host .cm-focused .cm-selectionBackground,
-.atlas-comms-cm-host .cm-content ::selection {
-  background-color: color-mix(in srgb, var(--primary) 28%, transparent) !important;
 }
 
 .atlas-mention-chip {
@@ -879,6 +901,11 @@
   white-space: nowrap;
   max-width: 320px;
 }
+/* Node-selected in a composer (a click on the chip, or ⇧← over it). */
+.atlas-mention-chip--selected {
+  outline: 1px solid var(--primary);
+  outline-offset: 0;
+}
 .atlas-mention-chip__icon {
   display: inline-flex;
   align-items: center;
@@ -890,9 +917,22 @@
   display: block;
 }
 .atlas-mention-chip__label {
+  /* `min-width: 0` lets the label give way inside the chip's `max-width`,
+     so a trailing meta span (a file's size) stays inside the pill; without
+     it the label kept its full width and pushed the meta out past the border,
+     where it wrapped. */
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* A quiet fact beside the label — an attached image's size. */
+.atlas-mention-chip__meta {
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
 }
 .atlas-mention-chip[data-mention-kind="file"] {
   color: var(--primary);
@@ -934,8 +974,8 @@
   color: var(--atlas-status-warning-foreground);
 }
 
-/* Hover preview card for media (`@file` image/video) mention chips. Appended to
-   document.body by the CM ChipWidget; positioned inline via fixed coords. */
+/* Hover preview card for media (`@file` image/video) mention chips. Portalled
+   to document.body by `session-mention-chip.tsx`; positioned by fixed coords. */
 .atlas-mention-preview {
   border-radius: 8px;
   border: 1px solid var(--border);
@@ -975,6 +1015,188 @@
   vertical-align: baseline;
   user-select: text;
   font-size: 11px;
+}
+
+/* A file or folder chip in a sent message or an agent's reply
+   (`markdown-render.ts`): clickable, and wearing the icon theme's icon. The
+   icon slot is a fixed box, so the theme's icon painting in over the fallback
+   glyph (`icon-markup.ts`) never moves the line. */
+/* Sized in em so it scales with the prose around it, and tinted with the
+   file accent: a quiet blue wash with a border that reads as a token, not a
+   button. */
+.atlas-file-chip {
+  --atlas-file-chip-accent: var(--primary);
+  height: 1.41em;
+  padding: 0 0.5em;
+  gap: 0.33em;
+  border-radius: 0.5em;
+  font-size: 0.86em;
+  font-weight: 500;
+  vertical-align: middle;
+  border-color: color-mix(in oklab, var(--atlas-file-chip-accent) 34%, var(--border));
+  background: color-mix(in oklab, var(--atlas-file-chip-accent) 11%, transparent);
+  color: color-mix(in oklab, var(--atlas-file-chip-accent) 22%, var(--foreground));
+}
+.atlas-file-chip[data-file-path] {
+  cursor: pointer;
+}
+.atlas-file-chip[data-file-path]:hover {
+  border-color: color-mix(in oklab, var(--atlas-file-chip-accent) 48%, var(--border));
+  background: color-mix(in oklab, var(--atlas-file-chip-accent) 17%, transparent);
+}
+.atlas-file-chip:focus-visible {
+  outline: 1px solid var(--primary);
+  outline-offset: 1px;
+}
+.atlas-file-chip__icon {
+  width: 1.17em;
+  height: 1.17em;
+  opacity: 1;
+}
+/* The fallback while the theme's icon is unknown, or when the theme has none:
+   lucide's file-text and folder glyphs as masks in the chip's own colour. CSS
+   rather than markup, so the hundreds of chips a transcript can hold carry no
+   SVG subtree each. */
+.atlas-file-chip__icon:empty {
+  background-color: currentColor;
+  opacity: 0.85;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z'/%3E%3Cpath d='M14 2v4a2 2 0 0 0 2 2h4'/%3E%3Cpath d='M10 9H8'/%3E%3Cpath d='M16 13H8'/%3E%3Cpath d='M16 17H8'/%3E%3C/svg%3E")
+    center / 100% 100% no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z'/%3E%3Cpath d='M14 2v4a2 2 0 0 0 2 2h4'/%3E%3Cpath d='M10 9H8'/%3E%3Cpath d='M16 13H8'/%3E%3Cpath d='M16 17H8'/%3E%3C/svg%3E")
+    center / 100% 100% no-repeat;
+}
+.atlas-file-chip__icon[data-file-icon="folder"]:empty {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z'/%3E%3C/svg%3E");
+}
+.atlas-file-chip__icon > svg,
+.atlas-file-chip__icon > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.atlas-file-icon-glyph {
+  display: block;
+  width: 11px;
+  height: 11px;
+  font-size: 11px;
+  line-height: 11px;
+  text-align: center;
+}
+/* The parent folders after a base-name label, when two chips in one document
+   would otherwise read alike (`file-chip-hast.ts`). */
+.atlas-file-chip__suffix {
+  margin-left: 0.35em;
+  color: var(--muted-foreground);
+}
+
+/* A table or code block in rendered markdown with its collapse and copy
+   buttons under it (`markdown-block-frame.tsx`). Collapsed, a table's cells
+   keep to one line each and a code block to its first lines. */
+.atlas-md-block {
+  margin: 0.75rem 0;
+}
+.prose-chat .atlas-md-block > table,
+.prose-chat .atlas-md-block > pre,
+.atlas-md-block > table,
+.atlas-md-block > pre {
+  margin: 0;
+}
+.atlas-md-block__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 0.125rem;
+  user-select: none;
+}
+/* Fixed layout, so the columns share the width and a long cell ends in an
+   ellipsis instead of pushing the table past its pane. */
+.atlas-md-block[data-collapsed="true"] table {
+  table-layout: fixed;
+}
+.atlas-md-block[data-collapsed="true"] th,
+.atlas-md-block[data-collapsed="true"] td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.atlas-md-block[data-kind="code"][data-collapsed="true"] pre {
+  max-height: 192px;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, black 70%, transparent);
+  mask-image: linear-gradient(to bottom, black 70%, transparent);
+}
+
+/* A web link in a session wears its service's mark before its text
+   (`markdown-render.ts`, `link-services.ts`). The mark is a mask filled with
+   the link's own colour, so it follows the theme and the hover state like the
+   text does. The SVGs are bundled: nothing is fetched from the service. The
+   lead span keeps the icon and the first characters together across a wrap. */
+.atlas-link__lead {
+  white-space: nowrap;
+}
+.atlas-link__icon {
+  display: inline-block;
+  width: 0.95em;
+  height: 0.95em;
+  margin-inline: 0.1em 0.25em;
+  vertical-align: -0.13em;
+  background-color: currentColor;
+  -webkit-mask: center / contain no-repeat;
+  mask: center / contain no-repeat;
+}
+.atlas-link--mono {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+.atlas-link__icon[data-link-service="web"] {
+  -webkit-mask-image: url("../assets/link-services/web.svg");
+  mask-image: url("../assets/link-services/web.svg");
+  opacity: 0.8;
+}
+.atlas-link__icon[data-link-service="github"] {
+  -webkit-mask-image: url("../assets/link-services/github.svg");
+  mask-image: url("../assets/link-services/github.svg");
+}
+.atlas-link__icon[data-link-service="gitlab"] {
+  -webkit-mask-image: url("../assets/link-services/gitlab.svg");
+  mask-image: url("../assets/link-services/gitlab.svg");
+}
+.atlas-link__icon[data-link-service="bitbucket"] {
+  -webkit-mask-image: url("../assets/link-services/bitbucket.svg");
+  mask-image: url("../assets/link-services/bitbucket.svg");
+}
+.atlas-link__icon[data-link-service="forgejo"] {
+  -webkit-mask-image: url("../assets/link-services/forgejo.svg");
+  mask-image: url("../assets/link-services/forgejo.svg");
+}
+.atlas-link__icon[data-link-service="linear"] {
+  -webkit-mask-image: url("../assets/link-services/linear.svg");
+  mask-image: url("../assets/link-services/linear.svg");
+}
+.atlas-link__icon[data-link-service="slack"] {
+  -webkit-mask-image: url("../assets/link-services/slack.svg");
+  mask-image: url("../assets/link-services/slack.svg");
+}
+.atlas-link__icon[data-link-service="notion"] {
+  -webkit-mask-image: url("../assets/link-services/notion.svg");
+  mask-image: url("../assets/link-services/notion.svg");
+}
+.atlas-link__icon[data-link-service="figma"] {
+  -webkit-mask-image: url("../assets/link-services/figma.svg");
+  mask-image: url("../assets/link-services/figma.svg");
+}
+.atlas-link__icon[data-link-service="vercel"] {
+  -webkit-mask-image: url("../assets/link-services/vercel.svg");
+  mask-image: url("../assets/link-services/vercel.svg");
+}
+.atlas-link__icon[data-link-service="npm"] {
+  -webkit-mask-image: url("../assets/link-services/npm.svg");
+  mask-image: url("../assets/link-services/npm.svg");
+}
+.atlas-link__icon[data-link-service="azure-devops"] {
+  -webkit-mask-image: url("../assets/link-services/azure-devops.svg");
+  mask-image: url("../assets/link-services/azure-devops.svg");
 }
 
 @layer base {
@@ -1079,6 +1301,79 @@
     opacity: 0.2;
     mix-blend-mode: soft-light;
     background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  /* The chat welcome's backdrop: a radial glow falling from the top edge.
+     It replaced a canvas dither field that repainted tens of thousands of
+     glyphs at 12fps; this is one static paint. No grain over it — a noise
+     layer visibly degraded the gradient.
+
+     The hue is one of a palette per appearance, picked fresh each time the
+     screen mounts (`data-palette`, chosen in `welcome-glow.tsx`). Each hue is
+     mixed into the theme's own `--background`, so the glow belongs to
+     whichever theme is active rather than sitting on it. Dark palettes are
+     deep and low-chroma, light palettes are pastels, and both fade to the
+     plain background well before the composer. */
+  .atlas-welcome-glow {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    /* Narrower than the panel, so the glow peaks behind the middle of the
+       floating title bar and has already fallen off by the corners, where the
+       bar's breadcrumb and buttons sit. */
+    background-image: radial-gradient(
+      ellipse 80% 99% at 50% -22%,
+      color-mix(in oklab, var(--welcome-hue) 78%, var(--background)) 0%,
+      color-mix(in oklab, var(--welcome-hue) 35.5%, var(--background)) 45%,
+      var(--background) 75%
+    );
+  }
+  /* The session column's title bar floats over the glow (see
+     `pane-top-inset.ts`), and its quiet greys — tuned for plain background —
+     sink into a coloured one. While the glow is on screen, the bar's muted and
+     disabled tones become the theme's foreground at an alpha instead: about
+     as quiet, but tinted by whatever is behind them, so they sit in the
+     palette rather than going muddy against it. `data-atlas-offstage` marks a
+     hidden (still mounted) chat, whose glow must not restyle the bar. */
+  [data-session-column]:has(.atlas-welcome-glow:not([data-atlas-offstage] *)) > [data-pane-header] {
+    --muted-foreground: color-mix(in oklab, var(--foreground) 62%, transparent);
+    --atlas-text-disabled: color-mix(in oklab, var(--foreground) 40%, transparent);
+  }
+  .atlas-welcome-glow[data-palette="ember"] {
+    --welcome-hue: #a3281c;
+  }
+  .atlas-welcome-glow[data-palette="plum"] {
+    --welcome-hue: #6c2a92;
+  }
+  .atlas-welcome-glow[data-palette="ocean"] {
+    --welcome-hue: #1f50a3;
+  }
+  .atlas-welcome-glow[data-palette="moss"] {
+    --welcome-hue: #2e6c3e;
+  }
+  .atlas-welcome-glow[data-palette="amber"] {
+    --welcome-hue: #9e6014;
+  }
+  .atlas-welcome-glow[data-palette="teal"] {
+    --welcome-hue: #116a6e;
+  }
+  :root:not(.dark) .atlas-welcome-glow[data-palette="ember"] {
+    --welcome-hue: #f7b9a4;
+  }
+  :root:not(.dark) .atlas-welcome-glow[data-palette="plum"] {
+    --welcome-hue: #dcc4f4;
+  }
+  :root:not(.dark) .atlas-welcome-glow[data-palette="ocean"] {
+    --welcome-hue: #b9d4f6;
+  }
+  :root:not(.dark) .atlas-welcome-glow[data-palette="moss"] {
+    --welcome-hue: #c4e6cc;
+  }
+  :root:not(.dark) .atlas-welcome-glow[data-palette="amber"] {
+    --welcome-hue: #f6dca2;
+  }
+  :root:not(.dark) .atlas-welcome-glow[data-palette="teal"] {
+    --welcome-hue: #b4e2df;
   }
 
   /* macOS-native overlay scrollbars.
@@ -1769,6 +2064,7 @@
      too. Only the name is swapped — duration, easing, delay and fill-mode stay.
      `animate-fade-in` / `.atlas-fade-in` are already opacity-only. */
   [class*="animate-scale-in"],
+  [class*="animate-card-in"],
   [class*="animate-slide-in-right"],
   .atlas-pill-in,
   .atlas-panel-in-br,
@@ -1855,205 +2151,6 @@
   color: #000 !important;
 }
 
-/* Atlas-themed CodeMirror Find/Replace panel (Cmd+F). These rules sit
-   OUTSIDE `@layer base` so they outrank any unlayered @codemirror/view
-   StyleModule injections — layered styles always lose to unlayered. The
-   `!important` annotations cover the few properties StyleModule sets
-   inline-equivalent (button height, input padding). */
-.cm-panels {
-  background-color: var(--card) !important;
-  color: var(--foreground) !important;
-  border-top: 1px solid var(--border) !important;
-}
-.cm-panel.cm-search {
-  display: flex !important;
-  flex-wrap: wrap !important;
-  align-items: center !important;
-  gap: 6px !important;
-  padding: 4px 10px !important;
-  background: var(--card) !important;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
-  font-size: 12px !important;
-  color: var(--secondary-foreground) !important;
-  position: relative !important;
-}
-/* Search input — mirrors the Pomodoro DayRail filter: rounded `bg-input`
-   container with an inline lucide search icon on the left (baked as a
-   data-URI background so we don't need extra DOM that CodeMirror won't
-   give us). The icon's stroke colour is hard-coded to match
-   `--muted-foreground` (#737373). */
-.cm-panel.cm-search input[type="text"] {
-  appearance: none !important;
-  -webkit-appearance: none !important;
-  background-color: var(--atlas-panel-input-background) !important;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23737373' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='8'/><path d='m21 21-4.3-4.3'/></svg>") !important;
-  background-repeat: no-repeat !important;
-  background-position: 8px center !important;
-  background-size: 12px 12px !important;
-  color: var(--foreground) !important;
-  border: 1px solid var(--border) !important;
-  border-radius: 999px !important;
-  padding: 0 12px 0 26px !important;
-  height: 22px !important;
-  font-size: 12px !important;
-  font-family: inherit !important;
-  outline: none !important;
-  min-width: 200px !important;
-  margin: 0 !important;
-  transition:
-    border-color 120ms,
-    background-color 120ms !important;
-}
-.cm-panel.cm-search input[type="text"]:hover {
-  background-color: var(--atlas-element-hover) !important;
-}
-.cm-panel.cm-search input[type="text"]:focus {
-  border-color: var(--atlas-border-strong) !important;
-  background-color: var(--atlas-panel-input-background) !important;
-}
-.cm-panel.cm-search input[type="text"]::placeholder {
-  color: var(--muted-foreground) !important;
-}
-/* Action buttons rendered as a grouped segmented control. CodeMirror
-   tags them via `name=` so we can position-style without extra DOM.
-   - Find group:   next | prev | select  (the "all" button)
-   - Replace group: replace | replaceAll
-   Outer rounding only on first/last; shared center border. */
-.cm-panel.cm-search button:not([name="close"]) {
-  appearance: none !important;
-  -webkit-appearance: none !important;
-  background: var(--card) !important;
-  color: var(--secondary-foreground) !important;
-  border: 1px solid var(--border) !important;
-  border-radius: 0 !important;
-  padding: 0 10px !important;
-  height: 22px !important;
-  font-size: 11.5px !important;
-  font-family: inherit !important;
-  font-weight: 500 !important;
-  cursor: pointer !important;
-  transition:
-    background-color 120ms,
-    color 120ms !important;
-  text-transform: none !important;
-  margin: 0 !important;
-  box-shadow: none !important;
-}
-.cm-panel.cm-search button:not([name="close"]):hover {
-  background: var(--atlas-element-hover) !important;
-  color: var(--foreground) !important;
-  z-index: 1 !important;
-  position: relative !important;
-}
-/* Find group: next | prev | select */
-.cm-panel.cm-search button[name="next"] {
-  border-top-left-radius: 999px !important;
-  border-bottom-left-radius: 999px !important;
-  padding-left: 12px !important;
-}
-.cm-panel.cm-search button[name="prev"] {
-  border-left-width: 0 !important;
-  margin-left: -6px !important; /* cancel the parent's flex `gap` */
-}
-.cm-panel.cm-search button[name="select"] {
-  border-left-width: 0 !important;
-  border-top-right-radius: 999px !important;
-  border-bottom-right-radius: 999px !important;
-  padding-right: 12px !important;
-  margin-left: -6px !important;
-}
-/* Replace group: replace | replaceAll */
-.cm-panel.cm-search button[name="replace"] {
-  border-top-left-radius: 999px !important;
-  border-bottom-left-radius: 999px !important;
-  padding-left: 12px !important;
-}
-.cm-panel.cm-search button[name="replaceAll"] {
-  border-left-width: 0 !important;
-  border-top-right-radius: 999px !important;
-  border-bottom-right-radius: 999px !important;
-  padding-right: 12px !important;
-  margin-left: -6px !important;
-}
-.cm-panel.cm-search label {
-  display: inline-flex !important;
-  align-items: center !important;
-  gap: 6px !important;
-  font-size: 11.5px !important;
-  color: var(--secondary-foreground) !important;
-  cursor: pointer !important;
-  padding: 0 4px !important;
-  user-select: none !important;
-}
-.cm-panel.cm-search label input[type="checkbox"] {
-  appearance: none !important;
-  -webkit-appearance: none !important;
-  width: 12px !important;
-  height: 12px !important;
-  border: 1px solid var(--border) !important;
-  border-radius: 3px !important;
-  background: var(--atlas-panel-input-background) !important;
-  cursor: pointer !important;
-  position: relative !important;
-  margin: 0 !important;
-  padding: 0 !important;
-  transition:
-    background-color 120ms,
-    border-color 120ms !important;
-  flex-shrink: 0 !important;
-}
-.cm-panel.cm-search label input[type="checkbox"]:checked {
-  background: var(--foreground) !important;
-  border-color: var(--foreground) !important;
-}
-.cm-panel.cm-search label input[type="checkbox"]:checked::after {
-  content: "" !important;
-  position: absolute !important;
-  left: 3px !important;
-  top: 0px !important;
-  width: 4px !important;
-  height: 7px !important;
-  border: solid var(--background) !important;
-  border-width: 0 1.5px 1.5px 0 !important;
-  transform: rotate(45deg) !important;
-}
-.cm-panel.cm-search br {
-  flex-basis: 100% !important;
-  height: 0 !important;
-  margin: 0 !important;
-}
-.cm-panel.cm-search button[name="close"] {
-  position: absolute !important;
-  top: 6px !important;
-  right: 8px !important;
-  background: transparent !important;
-  border: none !important;
-  color: var(--muted-foreground) !important;
-  font-size: 16px !important;
-  line-height: 1 !important;
-  cursor: pointer !important;
-  padding: 2px 6px !important;
-  border-radius: 4px !important;
-  height: auto !important;
-}
-.cm-panel.cm-search button[name="close"]:hover {
-  background: var(--atlas-element-hover) !important;
-  color: var(--foreground) !important;
-}
-/* Search matches follow the theme (`search.match.*`). They were a fixed
-   `rgba(249, 115, 22, …)` orange, which clashed with every theme that is not
-   orange and was unreadable on a light background. The outline is the ACTIVE
-   fill, so an ordinary match is a tint with an edge and the one under the
-   cursor is the same hue filled in. */
-.cm-searchMatch {
-  background: var(--atlas-search-match-background) !important;
-  outline: 1px solid var(--atlas-search-match-active-background) !important;
-  border-radius: 2px !important;
-}
-.cm-searchMatch-selected {
-  background: var(--atlas-search-match-active-background) !important;
-}
-
 /* Chat markdown styling. The old <Markdown> component attached Tailwind
    utilities to each tag via react-markdown's `components` override; the
    cached pipeline emits bare HTML, so the same rules live as plain CSS
@@ -2108,8 +2205,8 @@
   overflow-wrap: anywhere;
   overflow: hidden;
 }
-/* `chatCodeWrap` off: long lines keep their shape and the block scrolls. */
-html[data-chat-code-wrap="off"] .prose-chat pre {
+/* `wordWrap` off: long lines keep their shape and the block scrolls. */
+html[data-word-wrap="off"] .prose-chat pre {
   white-space: pre;
   word-break: normal;
   overflow-wrap: normal;
@@ -2170,12 +2267,29 @@ html[data-chat-code-wrap="off"] .prose-chat pre {
   color: inherit;
   font-size: inherit;
 }
-.prose-chat a {
-  color: var(--primary);
-  text-decoration: underline;
+/* A link in rendered markdown reads by colour alone and is underlined only
+   under the pointer or keyboard focus. The colour is the info hue rather than
+   `--primary`: several themes' primary is near the text colour (the default
+   light theme's is near-black), and without an underline at rest a link has to
+   be told apart by hue. The underline is a dotted rule drawn as a background
+   rather than `text-decoration`, so it runs under the service mark
+   (`.atlas-link__icon`, an inline-block that text-decoration skips) as well as
+   the text. Focus still gets the global `:focus-visible` ring on top. File
+   chips are spans (`.atlas-file-chip`), not anchors, so none of this reaches
+   them. Session messages are `.atlas-prose`; other markdown is `.prose-chat`. */
+.prose-chat a,
+.atlas-prose a {
+  color: var(--atlas-status-info-foreground);
+  text-decoration: none;
 }
-.prose-chat a:hover {
-  opacity: 0.8;
+.prose-chat a:hover,
+.prose-chat a:focus-visible,
+.atlas-prose a:hover,
+.atlas-prose a:focus-visible {
+  background-image: radial-gradient(circle, currentcolor 0.75px, transparent 1px);
+  background-position: left bottom;
+  background-repeat: repeat-x;
+  background-size: 4px 2px;
 }
 .prose-chat strong {
   font-weight: 600;
@@ -2341,9 +2455,25 @@ html[data-chat-code-wrap="off"] .prose-chat pre {
   margin-top: 18px;
 }
 
+/* Bullets are drawn as `::before` text, not `list-style: disc`. WebKit
+   leaves a native marker's box out of the fill it paints between selected
+   blocks, so a selection across list items showed a dark box beside every
+   bullet. Generated content is not part of a selection, and as an
+   inline-block in the line (not absolutely positioned, which WebKit also
+   clips out of that fill) it leaves no hole. */
 .atlas-prose ul {
-  list-style-type: disc;
+  list-style: none;
   padding-left: 20px;
+}
+.atlas-prose ul > li:not(:has(> input[type="checkbox"]))::before {
+  content: "•";
+  display: inline-block;
+  width: 20px;
+  margin-left: -20px;
+  text-align: center;
+}
+.atlas-prose ul ul > li:not(:has(> input[type="checkbox"]))::before {
+  content: "◦";
 }
 .atlas-prose ol {
   list-style-type: decimal;
@@ -2399,13 +2529,6 @@ html[data-chat-code-wrap="off"] .prose-chat pre {
   margin: 6px 0;
 }
 
-.atlas-prose a {
-  color: var(--primary);
-  text-decoration: underline;
-}
-.atlas-prose a:hover {
-  opacity: 0.8;
-}
 .atlas-prose strong {
   font-weight: 600;
 }
@@ -2506,19 +2629,19 @@ html[data-chat-code-wrap="off"] .prose-chat pre {
      Strictly worse than the blanking it was meant to fix. */
 }
 
-/* The workspace rail. One monochrome gradient — brighter at the top, falling
-   to the theme's sidebar surface by the fold — so the rail reads as a distinct
-   surface beside the editor without a coloured tint or a hard edge; a 1px inner
-   highlight along the top edge is the only "light source". Two variants: the
-   docked rail is opaque over the base; the floating one is translucent and
-   sits on the overlay wrapper's own backdrop blur (blur + fill must share one
-   element or WKWebView has nothing to sample).
+/* A turn's last response and its changed-files card are separate rows, but
+   one response: its hover footer sits after the card, in the turn footer row
+   (`TurnFooterRowView`), and hovering the response's text reveals it as
+   hovering the card does. An attribute on the row wrapper and a sibling
+   combinator, not `:has()`, so a hover invalidates only the next row. */
+.atlas-row[data-footer-below]:hover + .atlas-row [data-response-footer] {
+  pointer-events: auto;
+  opacity: 1;
+}
 
-   Every colour comes off the theme. The fill used to be a fixed near-black with
-   a white sheen, which on a light theme put a black band behind the traffic
-   lights and the org row, and drew the org name dark-on-black. The sheen is
-   the theme's foreground at a few percent, so it lifts on dark and shades on
-   light. */
+/* The workspace rail: the theme's flat sidebar surface, with a 1px inner
+   highlight along the top edge as the only "light source". Every colour comes
+   off the theme. */
 /* The rail's divider.
  *
  * `border.strong` held back toward the surface on the far side of it, so the
@@ -2542,39 +2665,10 @@ html[data-chat-code-wrap="off"] .prose-chat pre {
 }
 
 .atlas-project-rail {
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--foreground) 3.8%, transparent) 0%,
-      color-mix(in srgb, var(--foreground) 1.6%, transparent) 34%,
-      color-mix(in srgb, var(--foreground) 0.6%, transparent) 70%,
-      transparent 100%
-    ),
-    var(--sidebar);
-  /* The gradient stops at the padding edge, so it never paints inside the
-     1px border strip. `border-box` is the default, and under it this vertical
-     fade tints the rail's own right border — brightest at the top, gone by
-     the bottom — which reads as a divider that fades down the window rather
-     than a line. The divider is a boundary; it has to be one value. */
-  background-clip: padding-box;
-  border-right-color: var(--atlas-rail-divider);
+  background: var(--sidebar);
+  /* Only the sides given a width draw: the right, docked or peeking. */
+  border-color: var(--atlas-rail-divider);
   box-shadow: var(--inset-highlight);
-}
-.atlas-project-rail--glass {
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--foreground) 4.1%, transparent) 0%,
-      color-mix(in srgb, var(--foreground) 1.8%, transparent) 34%,
-      color-mix(in srgb, var(--foreground) 0.6%, transparent) 70%,
-      transparent 100%
-    ),
-    color-mix(in srgb, var(--sidebar) 66%, transparent);
-  /* As above, and it matters more here: this fill is translucent, so under
-     `border-box` both it and the gradient sit behind the border. */
-  background-clip: padding-box;
-  border-right-color: var(--atlas-rail-divider);
-  box-shadow: var(--inset-highlight), var(--elevation-menu);
 }
 
 /* Set by use-transcript-scroll on the content element for the life of a
@@ -2640,7 +2734,20 @@ html[data-chat-code-wrap="off"] .prose-chat pre {
   background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
-  animation: atlas-thinking-sweep 2.2s linear infinite;
+  /* Stepped: a moving background is a repaint per frame, and at 120Hz that
+     kept the display link busy for minutes on end. Thirty steps across the
+     sweep still reads as motion. */
+  animation: atlas-thinking-sweep 2.2s steps(30) infinite;
+}
+
+/* Nobody is looking: the window is hidden, the session sits in a background
+   tab (still laid out, where animations keep running), or the row is
+   scrolled away. See `src/lib/visible-animation.ts`. */
+:root[data-atlas-hidden] :is(.atlas-thinking-shimmer, .atlas-marker-running, .atlas-pixel-cell),
+[data-atlas-offstage] :is(.atlas-thinking-shimmer, .atlas-marker-running, .atlas-pixel-cell),
+[data-offscreen] :is(.atlas-thinking-shimmer, .atlas-marker-running, .atlas-pixel-cell),
+:is(.atlas-thinking-shimmer, .atlas-marker-running, .atlas-pixel-cell)[data-offscreen] {
+  animation-play-state: paused;
 }
 @media (prefers-reduced-motion: reduce) {
   .atlas-thinking-shimmer {
@@ -2837,9 +2944,6 @@ html[data-chat-code-wrap="off"] .prose-chat pre {
     opacity: 1;
   }
 }
-.atlas-chat-cm-host .cm-placeholder {
-  animation: atlas-placeholder-in 0.22s ease-out;
-}
 
 [data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-description] {
   color: var(--secondary-foreground);
@@ -3008,11 +3112,26 @@ html[data-chat-width="full"] {
   --atlas-chat-column: 100%;
 }
 
+/* Two diff colours that are not theme keys, only status colours the theme
+   already has, until the palette below takes those for additions and
+   removals: a changed line's bar in the file view's line numbers
+   (`diff-gutter.ts`), and a modified file's mark in the review diff (its
+   header icon, its tree row). */
+:root {
+  --atlas-diff-changed-bar: var(--atlas-status-info-foreground);
+  --atlas-diff-modified-text: var(--atlas-status-warning-foreground);
+}
+
 /* `diffPalette = "blue-orange"`: the theme's own info blue and warning orange
    in place of green and red, so additions and removals stay apart under
    red-green colour blindness and still follow the theme. The extra attribute
-   outranks the resolved theme's `html:root` block. */
+   outranks the resolved theme's `html:root` block. Additions take the blue
+   a changed line's bar used and removals the orange a modified file's mark
+   used, so both step back to the gutter's neutral: three marks, three
+   colours. */
 html:root[data-diff-palette="blue-orange"] {
+  --atlas-diff-changed-bar: var(--atlas-editor-gutter-foreground);
+  --atlas-diff-modified-text: var(--atlas-editor-gutter-foreground);
   --atlas-diff-added-text: var(--atlas-status-info-foreground);
   --atlas-diff-added-background: color-mix(
     in srgb,
@@ -3035,4 +3154,19 @@ html:root[data-diff-palette="blue-orange"] {
     var(--atlas-status-warning-foreground) 34%,
     transparent
   );
+}
+
+/* A thinking row's live thought (`ThinkingRowView`): at most four lines, the
+   newest ones, with the older text fading out at the top edge — only once
+   there is older text cut off there (`data-clipped`, set by `LiveThought`). */
+.atlas-live-thought {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  max-height: calc(4 * 19px + 4px);
+  overflow: hidden;
+}
+
+.atlas-live-thought[data-clipped] {
+  mask-image: linear-gradient(to bottom, transparent, black 20px);
 }

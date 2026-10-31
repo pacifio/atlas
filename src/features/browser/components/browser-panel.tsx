@@ -356,7 +356,7 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps) 
     if (createdRef.current || !initialUrl) return;
     const raf = requestAnimationFrame(() => ensureLive(normalizeUrl(initialUrl)));
     return () => cancelAnimationFrame(raf);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, initialUrl]);
 
   // Toggle the native overlay's visibility when switching Live⇄Reader, and

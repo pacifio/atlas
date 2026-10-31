@@ -313,7 +313,7 @@ export function SpaceActionPill({
   useEffect(() => {
     if (followed)
       toast(`Following ${nameOf(followed)} — pan or press Esc to stop`, { duration: 2200 });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [following]);
 
   return (

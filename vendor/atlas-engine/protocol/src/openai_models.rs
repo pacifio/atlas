@@ -10,12 +10,9 @@ use std::str::FromStr;
 use chrono::DateTime;
 use chrono::Utc;
 use schemars::JsonSchema;
-use schemars::r#gen::SchemaGenerator;
-use schemars::schema::InstanceType;
-use schemars::schema::Metadata;
-use schemars::schema::Schema;
-use schemars::schema::SchemaObject;
-use schemars::schema::StringValidation;
+use schemars::Schema;
+use schemars::SchemaGenerator;
+use schemars::json_schema;
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
@@ -80,24 +77,15 @@ impl fmt::Display for ReasoningEffort {
 }
 
 impl JsonSchema for ReasoningEffort {
-    fn schema_name() -> String {
-        "ReasoningEffort".to_string()
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "ReasoningEffort".into()
     }
 
     fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
-        Schema::Object(SchemaObject {
-            instance_type: Some(InstanceType::String.into()),
-            metadata: Some(Box::new(Metadata {
-                description: Some(
-                    "A non-empty reasoning effort value advertised by the model.".to_string(),
-                ),
-                ..Default::default()
-            })),
-            string: Some(Box::new(StringValidation {
-                min_length: Some(1),
-                ..Default::default()
-            })),
-            ..Default::default()
+        json_schema!({
+            "type": "string",
+            "description": "A non-empty reasoning effort value advertised by the model.",
+            "minLength": 1,
         })
     }
 }
@@ -1142,19 +1130,10 @@ mod tests {
 
         assert_eq!(
             ReasoningEffort::json_schema(&mut effort_generator),
-            Schema::Object(SchemaObject {
-                instance_type: Some(InstanceType::String.into()),
-                metadata: Some(Box::new(Metadata {
-                    description: Some(
-                        "A non-empty reasoning effort value advertised by the model.".to_string(),
-                    ),
-                    ..Default::default()
-                })),
-                string: Some(Box::new(StringValidation {
-                    min_length: Some(1),
-                    ..Default::default()
-                })),
-                ..Default::default()
+            json_schema!({
+                "type": "string",
+                "description": "A non-empty reasoning effort value advertised by the model.",
+                "minLength": 1,
             })
         );
     }

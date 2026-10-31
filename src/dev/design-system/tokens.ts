@@ -69,7 +69,6 @@ export const CONTROL_HEIGHTS = [
 
 export const LAYOUT_CONSTANTS = [
   { name: "titlebar", cssVar: "--titlebar-height", utility: "h-titlebar" },
-  { name: "tab strip", cssVar: "--tab-strip-height", utility: "h-tab-strip" },
 ] as const;
 
 export const RADII = [

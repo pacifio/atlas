@@ -2,6 +2,7 @@ import { memo } from "react";
 import { type NodeProps } from "@xyflow/react";
 import { StickyNote } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAppStore } from "@/features/app/stores/app-store";
 import { Markdown } from "@/lib/markdown";
 import { timeAgo } from "@/lib/time-ago";
 import { NodeHandles } from "./node-handles";
@@ -17,6 +18,7 @@ export interface NoteNodeData extends Record<string, unknown> {
 export const NoteNode = memo(function NoteNode({ data, selected }: NodeProps) {
   const d = data as NoteNodeData;
   const isEmpty = !d.body.trim();
+  const projectPath = useAppStore.use.currentProject()?.path ?? null;
 
   return (
     <div
@@ -61,7 +63,7 @@ export const NoteNode = memo(function NoteNode({ data, selected }: NodeProps) {
           </div>
         ) : (
           <div className="text-sm leading-relaxed text-[var(--secondary-foreground)] [&_*]:!my-1 [&_p]:!my-0">
-            <Markdown>{d.body}</Markdown>
+            <Markdown fileRoot={projectPath}>{d.body}</Markdown>
           </div>
         )}
         {/* Fade overlay so long content dissolves visually */}

@@ -1,7 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Trash2, FileText } from "lucide-react";
-import { TreeRow } from "@/features/explorer/components/tree-row";
+import { KnowledgeTreeRow } from "./knowledge-tree-row";
 import { ROW_HEIGHT } from "@/features/explorer/lib/tree-constants";
 import { Hint } from "@/ui/tooltip";
 
@@ -41,7 +41,7 @@ interface KnowledgeTreeProps {
 }
 
 /**
- * Mirror of FileTree for the knowledge base. Entries arrive flat from
+ * The knowledge base as a virtualized tree. Entries arrive flat from
  * `list_knowledge` with slash-delimited ids ("notes/foo/note-123"),
  * so the tree is reconstructed client-side rather than via a new
  * Tauri command — knowledge dirs are small.
@@ -168,7 +168,7 @@ export const KnowledgeTree = forwardRef<KnowledgeTreeHandle, KnowledgeTreeProps>
             const node = flat[virtualRow.index];
             const isActive = !node.isDir && node.key === activeEntryId;
             return (
-              <TreeRow
+              <KnowledgeTreeRow
                 // Compose with isDir to disambiguate the rare case where a
                 // folder and a file share the same path string.
                 key={`${node.isDir ? "d" : "f"}:${node.key}`}

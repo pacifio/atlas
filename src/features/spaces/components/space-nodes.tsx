@@ -266,7 +266,7 @@ export const SpaceMediaNode = memo(function SpaceMediaNode({ id, data, selected 
             <Loader2 size={16} className="animate-spin" />
           </div>
         ) : d.mediaKind === "video" ? (
-          // eslint-disable-next-line jsx-a11y/media-has-caption
+          // oxlint-disable-next-line jsx-a11y/media-has-caption
           <video src={url} controls className="h-full w-full object-contain" />
         ) : (
           <img src={url} alt="" draggable={false} className="h-full w-full object-contain" />

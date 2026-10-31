@@ -37,7 +37,7 @@ futures = "0.3"
 # The catalogue fetch (ADR-0007): one `GET /v1/catalogue` per connect, at
 # most. Same feature shape as the workspace's own stanza — no default TLS, so
 # this client sits on rustls like every other one in the app.
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 serde_json = "1"
 tokio = { version = "1", features = ["fs", "macros", "rt", "sync", "time"] }
 tracing = "0.1"
@@ -46,7 +46,7 @@ tracing = "0.1"
 # No longer optional. These sat behind the `ported-engine` feature so the previous native
 # path could keep shipping while the engine was proved; that path is gone (#54),
 # so gating them would gate the whole crate.
-base64 = { version = "0.22" }
+base64 = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 toml = { version = "0.9" }
 # For the gateway-dialect surfaces the seam re-exports (the org source).
@@ -60,6 +60,9 @@ atlas-engine-utils-json-to-toml = { path = "../../vendor/atlas-engine/utils/json
 atlas-engine-core = { path = "../../vendor/atlas-engine/core" }
 atlas-engine-exec-server = { path = "../../vendor/atlas-engine/exec-server" }
 atlas-engine-feedback = { path = "../../vendor/atlas-engine/feedback" }
+# Re-exported (`ensure_credential_store`) so the app installs the same OS credential store
+# the engine uses; the app cannot name an engine crate itself.
+atlas-engine-keyring-store = { workspace = true }
 atlas-engine-login = { path = "../../vendor/atlas-engine/login" }
 # For the engine's bundled base prompt, which the authored catalogue (D3) uses as
 # every row's `instructions_template`.

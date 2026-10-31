@@ -129,6 +129,13 @@ interface Props {
   /** Told when the binding changes, so the surrounding tab can re-read. */
   onChanged: () => void;
   onClose: () => void;
+  /**
+   * Render without the panel chrome (border, fill, blur, shadow, enter
+   * animation), for a host that already draws the surface — the session
+   * context overlay shows this as one of its views. The width stays 352px:
+   * the radar is laid out against it (`RADAR_ORIGIN_X`).
+   */
+  embedded?: boolean;
 }
 
 /**
@@ -193,7 +200,13 @@ function connectRefusal(candidates: unknown[]): string {
     : "The server did not recognize this pick. Reopen this tab to refresh the Project list.";
 }
 
-export function CapturePopover({ projectPath, health, onChanged, onClose }: Props) {
+export function CapturePopover({
+  projectPath,
+  health,
+  onChanged,
+  onClose,
+  embedded = false,
+}: Props) {
   const signedIn = useAuthStore.use.snapshot().status === "signed-in";
   const organisations = useOrgStore.use.organisations();
   const activeOrganisationId = useOrgStore.use.activeOrganisationId();
@@ -337,13 +350,13 @@ export function CapturePopover({ projectPath, health, onChanged, onClose }: Prop
   return (
     <div
       className={cn(
-        "w-[352px] select-none overflow-hidden rounded-xl text-sm shadow-md",
+        "w-[352px] select-none overflow-hidden text-sm",
         // Border, translucent fill and blur all on THIS element — the same one
         // the enter animation transforms. Splitting them across a wrapper would
         // isolate the compositing layer and flatten the blur to flat
         // transparency (see the note beside the keyframes in globals.css).
-        "border border-[var(--atlas-element-active)] bg-[var(--card)]/95 backdrop-blur-2xl",
-        "atlas-panel-in-tl",
+        !embedded &&
+          "rounded-xl border border-[var(--atlas-element-active)] bg-[var(--card)]/95 shadow-md backdrop-blur-2xl atlas-panel-in-tl",
       )}
     >
       {/* A bound project opens onto the radar rather than a title bar: the panel
@@ -872,7 +885,7 @@ function CaptureRadar({ live, health }: { live: boolean; health: CaptureHealth |
       />
 
       <span className="absolute bottom-3 left-3.5 flex items-center gap-1.5">
-        <CaptureDot live={live} tone={live ? "success" : "idle"} />
+        <CaptureDot tone={live ? "success" : "idle"} />
         <span className="text-3xs font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
           {live ? "Capturing" : "Paused"}
         </span>

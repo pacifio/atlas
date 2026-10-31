@@ -11,9 +11,7 @@ use agent_client_protocol::schema::v1 as acp;
 use atlas_acp_thread::{
     AgentSessionInfo, AgentSessionList, AgentSessionListRequest, AgentSessionListResponse,
 };
-use atlas_thread_metadata::{
-    collect_all_sessions, importable_threads, ThreadFilter, ThreadMetadataStore,
-};
+use atlas_thread_metadata::{collect_all_sessions, importable_threads, ThreadMetadataStore};
 use chrono::{TimeZone, Utc};
 use futures::future::BoxFuture;
 use futures::FutureExt;
@@ -135,9 +133,10 @@ fn import_writes_metadata_only_and_lands_in_history_not_the_active_list() {
 
     let imported = store.threads();
     assert_eq!(imported.len(), 1);
-    assert!(
-        imported[0].archived,
-        "imports land in history, not the sidebar"
+    assert_eq!(
+        imported[0].settled_at,
+        Some(imported[0].updated_at),
+        "imports land on the Settled shelf, settled at their own last activity"
     );
     assert_eq!(imported[0].agent_id.as_str(), "some-agent");
     assert_eq!(imported[0].display_title().as_ref(), "a title");
@@ -151,10 +150,11 @@ fn import_writes_metadata_only_and_lands_in_history_not_the_active_list() {
             .threads_for_path(&atlas_thread_metadata::PathList::new(&[PathBuf::from(
                 "/tmp/atlas"
             )]))
-            .is_empty(),
-        "and nothing appears in the project's active list"
+            .iter()
+            .all(atlas_thread_metadata::ThreadMetadata::is_settled),
+        "and nothing lands in the project's active list"
     );
-    assert_eq!(store.history(ThreadFilter::ArchivedOnly).len(), 1);
+    assert_eq!(store.history().len(), 1);
 }
 
 #[test]
@@ -289,7 +289,7 @@ fn session_updated(id: &str, updated_at: chrono::DateTime<Utc>) -> AgentSessionI
 }
 
 #[test]
-fn the_cutoff_splits_rows_into_sidebar_and_history() {
+fn the_cutoff_splits_rows_into_active_and_settled() {
     let cutoff = Utc.with_ymd_and_hms(2026, 10, 1, 0, 0, 0).unwrap();
     let rows = importable_threads(
         vec![
@@ -303,20 +303,20 @@ fn the_cutoff_splits_rows_into_sidebar_and_history() {
         Some(cutoff),
     );
 
-    let archived_of = |id: &str| {
+    let settled_of = |id: &str| {
         rows.iter()
             .find(|row| row.session_id == Some(acp::SessionId::new(id)))
             .unwrap()
-            .archived
+            .is_settled()
     };
-    assert!(archived_of("old"));
-    assert!(archived_of("just-before"));
-    assert!(!archived_of("exactly-at"), "the cutoff itself is recent");
-    assert!(!archived_of("new"));
+    assert!(settled_of("old"));
+    assert!(settled_of("just-before"));
+    assert!(!settled_of("exactly-at"), "the cutoff itself is recent");
+    assert!(!settled_of("new"));
 }
 
 #[test]
-fn without_a_cutoff_everything_is_archived() {
+fn without_a_cutoff_everything_lands_settled() {
     let rows = importable_threads(
         vec![session_updated("fresh", Utc::now())],
         &"some-agent".into(),
@@ -325,7 +325,10 @@ fn without_a_cutoff_everything_is_archived() {
     );
 
     assert_eq!(rows.len(), 1);
-    assert!(rows[0].archived, "no cutoff means the old behaviour");
+    assert!(
+        rows[0].is_settled(),
+        "no cutoff: the whole past goes to the shelf"
+    );
 }
 
 #[test]
@@ -376,13 +379,10 @@ fn an_imported_row_keeps_its_place_in_history_when_touched() {
         Some(t0 - chrono::Duration::days(7)),
     ));
 
-    store.touch_sessions(
-        &[(acp::SessionId::new("older"), t0 + chrono::Duration::days(5))],
-        None,
-    );
+    store.touch_sessions(&[(acp::SessionId::new("older"), t0 + chrono::Duration::days(5))]);
 
     let order: Vec<_> = store
-        .history(ThreadFilter::All)
+        .history()
         .into_iter()
         .map(|t| t.session_id.unwrap().0.to_string())
         .collect();
@@ -467,7 +467,7 @@ fn a_deleted_session_is_never_imported_again() {
     );
     assert_eq!(store.insert_new_sessions(unfiltered), 0);
     assert_eq!(
-        store.touch_sessions(&[(acp::SessionId::new("gone"), Utc::now())], None),
+        store.touch_sessions(&[(acp::SessionId::new("gone"), Utc::now())]),
         0
     );
     assert!(store.threads().is_empty());

@@ -123,15 +123,15 @@ impl<'de> Deserialize<'de> for RolloutItem {
 }
 
 impl JsonSchema for RolloutItem {
-    fn schema_name() -> String {
-        "RolloutItem".to_string()
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "RolloutItem".into()
     }
 
     fn schema_id() -> std::borrow::Cow<'static, str> {
         std::borrow::Cow::Borrowed(concat!(module_path!(), "::RolloutItem"))
     }
 
-    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::schema::Schema {
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
         rollout_payload::RolloutItemWire::json_schema(generator)
     }
 }
@@ -169,15 +169,15 @@ impl<'de> Deserialize<'de> for CompactedItem {
 }
 
 impl JsonSchema for CompactedItem {
-    fn schema_name() -> String {
-        "CompactedItem".to_string()
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "CompactedItem".into()
     }
 
     fn schema_id() -> std::borrow::Cow<'static, str> {
         std::borrow::Cow::Borrowed(concat!(module_path!(), "::CompactedItem"))
     }
 
-    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::schema::Schema {
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
         rollout_payload::CompactedItemWire::json_schema(generator)
     }
 }

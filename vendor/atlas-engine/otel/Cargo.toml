@@ -32,7 +32,7 @@ opentelemetry-otlp = { workspace = true, features = [
     "trace",
     "reqwest-blocking-client",
     "reqwest-rustls",
-    "tls",
+    "tls-ring",
     "tls-roots",
 ]}
 opentelemetry-semantic-conventions = { workspace = true }
@@ -47,7 +47,7 @@ opentelemetry_sdk = { workspace = true, features = [
 ] }
 http = { workspace = true }
 os_info = { workspace = true }
-reqwest = { workspace = true, features = ["blocking", "rustls-tls"] }
+reqwest = { workspace = true, features = ["blocking", "rustls"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 strum_macros = { workspace = true }

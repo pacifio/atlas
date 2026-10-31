@@ -75,7 +75,7 @@ export function MergeBranchDialog({
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   // Recompute the preview whenever the chosen branch changes.

@@ -23,7 +23,16 @@ import type { ChatConversation, ChatReadState, OrgMemberProfile } from "../types
  * the server makes that idempotent, so it is "open" in every case that
  * matters.
  */
-export function CommsHome() {
+export function CommsHome({
+  activeConvId = null,
+  sidebar = false,
+}: {
+  /** The conversation on screen beside this list (the split view), lit. */
+  activeConvId?: string | null;
+  /** Laid out as the split view's left column rather than a full-width
+   *  page: no fade-in, since it is there from the first frame. */
+  sidebar?: boolean;
+} = {}) {
   const conversations = useCommsStore.use.conversations();
   const discoverable = useCommsStore.use.discoverable();
   const reads = useCommsStore.use.reads();
@@ -39,6 +48,12 @@ export function CommsHome() {
   const online = useCommsStore.use.online();
   const me = useCommsStore.use.me();
   const actions = useCommsStore.use.actions();
+  // ⌘-click (Ctrl elsewhere) opens a conversation in a tab of its own, the
+  // way a browser link does; a plain click navigates this one.
+  const open = (convId: string, e: React.MouseEvent) =>
+    e.metaKey || e.ctrlKey
+      ? actions.openConversationInNewTab(convId)
+      : actions.openConversation(convId);
 
   const [query, setQuery] = useState("");
   const [showDiscover, setShowDiscover] = useState(false);
@@ -53,7 +68,7 @@ export function CommsHome() {
 
   const channels = useMemo(
     () => conversations.filter((c) => c.kind === "channel" && matches(c.name)).sort(byRecency),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
     [conversations, q],
   );
   const directs = useMemo(
@@ -61,7 +76,7 @@ export function CommsHome() {
       conversations
         .filter((c) => c.kind !== "channel" && matches(conversationTitle(c, members, me)))
         .sort(byRecency),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
     [conversations, members, me, q],
   );
   // Group conversations and 1:1s are different things wearing the same row —
@@ -81,12 +96,12 @@ export function CommsHome() {
       .filter((m) => m.id !== me && !haveDm.has(m.id))
       .filter((m) => matches(m.name) || matches(m.email))
       .sort((a, b) => a.name.localeCompare(b.name));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [conversations, memberList, me, q]);
 
   const discover = useMemo(
     () => discoverable.filter((c) => matches(c.name)).sort(byRecency),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
     [discoverable, q],
   );
 
@@ -106,7 +121,7 @@ export function CommsHome() {
   };
 
   return (
-    <div className="flex min-w-0 flex-1 flex-col animate-fade-in">
+    <div className={cn("flex min-w-0 flex-1 flex-col", !sidebar && "animate-fade-in")}>
       <div className="shrink-0 px-2 pt-2 pb-1">
         {/* Radius matches the surface card it sits in (CommsSurface's
             `rounded-xl`) — a tighter corner read as a different family. */}
@@ -128,7 +143,8 @@ export function CommsHome() {
             key={c.id}
             conv={c}
             read={readBy.get(c.id)}
-            onOpen={() => actions.openConversation(c.id)}
+            active={c.id === activeConvId}
+            onOpen={(e) => open(c.id, e)}
           />
         ))}
         {channels.length === 0 && (
@@ -159,7 +175,8 @@ export function CommsHome() {
               members={members}
               online={online}
               me={me}
-              onOpen={() => actions.openConversation(c.id)}
+              active={c.id === activeConvId}
+              onOpen={(e) => open(c.id, e)}
             />
           ))}
         {!rosterPending && groupDms.length > 0 && (oneToOnes.length > 0 || contacts.length > 0) && (
@@ -174,7 +191,8 @@ export function CommsHome() {
               members={members}
               online={online}
               me={me}
-              onOpen={() => actions.openConversation(c.id)}
+              active={c.id === activeConvId}
+              onOpen={(e) => open(c.id, e)}
             />
           ))}
         {!rosterPending &&
@@ -286,11 +304,13 @@ function EmptyHint({ text }: { text: string }) {
 function ChannelRow({
   conv,
   read,
+  active = false,
   onOpen,
 }: {
   conv: ChatConversation;
   read: ChatReadState | undefined;
-  onOpen: () => void;
+  active?: boolean;
+  onOpen: (e: React.MouseEvent) => void;
 }) {
   const unread = Number(read?.unread ?? 0);
   const mentions = Number(read?.mentions ?? 0);
@@ -298,7 +318,11 @@ function ChannelRow({
     <button
       type="button"
       onClick={onOpen}
-      className="flex w-full items-center gap-2 py-[5px] pl-3.5 pr-2.5 text-left transition-colors hover:bg-element-hover cursor-pointer"
+      aria-current={active || undefined}
+      className={cn(
+        "flex w-full items-center gap-2 py-[5px] pl-3.5 pr-2.5 text-left transition-colors cursor-pointer",
+        active ? "bg-element-active" : "hover:bg-element-hover",
+      )}
     >
       <RowIcon>
         {conv.visibility === "private" ? (
@@ -310,7 +334,11 @@ function ChannelRow({
       <span
         className={cn(
           "min-w-0 flex-1 truncate text-sm",
-          unread > 0 ? "font-medium text-foreground" : "text-secondary-foreground",
+          unread > 0
+            ? "font-medium text-foreground"
+            : active
+              ? "text-foreground"
+              : "text-secondary-foreground",
         )}
       >
         {conv.name}
@@ -340,6 +368,7 @@ function ChannelRow({
 function DirectRow({
   conv,
   read,
+  active = false,
   members,
   online,
   me,
@@ -347,10 +376,11 @@ function DirectRow({
 }: {
   conv: ChatConversation;
   read: ChatReadState | undefined;
+  active?: boolean;
   members: Map<string, OrgMemberProfile>;
   online: string[];
   me: string;
-  onOpen: () => void;
+  onOpen: (e: React.MouseEvent) => void;
 }) {
   const unread = Number(read?.unread ?? 0);
   const mentions = Number(read?.mentions ?? 0);
@@ -363,7 +393,11 @@ function DirectRow({
     <button
       type="button"
       onClick={onOpen}
-      className="flex w-full items-center gap-2 py-[5px] pl-3.5 pr-2.5 text-left transition-colors hover:bg-element-hover cursor-pointer"
+      aria-current={active || undefined}
+      className={cn(
+        "flex w-full items-center gap-2 py-[5px] pl-3.5 pr-2.5 text-left transition-colors cursor-pointer",
+        active ? "bg-element-active" : "hover:bg-element-hover",
+      )}
     >
       <RowIcon>
         {isGroup ? (
@@ -381,7 +415,11 @@ function DirectRow({
       <span
         className={cn(
           "min-w-0 flex-1 truncate text-sm",
-          unread > 0 ? "font-medium text-foreground" : "text-secondary-foreground",
+          unread > 0
+            ? "font-medium text-foreground"
+            : active
+              ? "text-foreground"
+              : "text-secondary-foreground",
         )}
       >
         {title}

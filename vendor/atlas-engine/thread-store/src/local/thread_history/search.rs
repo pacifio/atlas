@@ -358,25 +358,32 @@ fn markdown_to_search_text(markdown: &str) -> String {
             Event::Text(value)
             | Event::Code(value)
             | Event::Html(value)
-            | Event::InlineHtml(value) => text.push_str(&value),
+            | Event::InlineHtml(value)
+            | Event::InlineMath(value)
+            | Event::DisplayMath(value) => text.push_str(&value),
             Event::SoftBreak | Event::HardBreak | Event::Rule => text.push(' '),
             Event::End(
                 TagEnd::Paragraph
                 | TagEnd::Heading(_)
-                | TagEnd::BlockQuote
+                | TagEnd::BlockQuote(_)
                 | TagEnd::CodeBlock
                 | TagEnd::List(_)
                 | TagEnd::Item
                 | TagEnd::Table
                 | TagEnd::TableHead
                 | TagEnd::TableRow
-                | TagEnd::TableCell,
+                | TagEnd::TableCell
+                | TagEnd::DefinitionList
+                | TagEnd::DefinitionListTitle
+                | TagEnd::DefinitionListDefinition,
             ) => text.push(' '),
             Event::Start(_)
             | Event::End(
                 TagEnd::Emphasis
                 | TagEnd::Strong
                 | TagEnd::Strikethrough
+                | TagEnd::Superscript
+                | TagEnd::Subscript
                 | TagEnd::Link
                 | TagEnd::HtmlBlock
                 | TagEnd::FootnoteDefinition

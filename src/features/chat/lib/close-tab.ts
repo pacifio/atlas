@@ -6,6 +6,11 @@ import { agents } from "./agents-api";
 import { clearSessionAttention } from "@/features/notifications/lib/agent-notifier";
 import { isBusyAgentStatus } from "@/types/agent";
 import { useStopAgentsConfirmStore } from "@/features/projects/lib/stop-agents-confirm";
+import {
+  confirmCloseFileTab,
+  filePathOf,
+  releaseFileBuffer,
+} from "@/features/editor/lib/dirty-close";
 
 /**
  * Close a tab, with chat-session hygiene. Bare `layout.closeTab` never told the
@@ -19,12 +24,27 @@ import { useStopAgentsConfirmStore } from "@/features/projects/lib/stop-agents-c
  *
  * So: a busy chat asks first (same dialog as project close) and is cancelled
  * on confirm; either way the store session + backend actor are dropped WITH the
- * tab. Non-chat tabs close exactly as before.
+ * tab. A file tab with unsaved edits asks Save / Don't save / Cancel, and the
+ * last tab on a file drops its buffer. Other tabs close exactly as before.
  */
 export function requestCloseTab(tabId: string): void {
   const layout = useLayoutStore.getState();
   const tab = layout.tabs.find((t) => t.id === tabId);
   if (!tab || !tab.closable) return;
+  if (tab.type === "editor") {
+    const close = () => {
+      useLayoutStore.getState().actions.closeTab(tabId);
+      releaseFileBuffer(filePathOf(tab), useLayoutStore.getState().tabs);
+    };
+    // A clean tab closes at once (`ui_close` reads the result synchronously);
+    // unsaved edits ask first, see `dirty-close.ts`.
+    if (!tab.dirty) {
+      close();
+      return;
+    }
+    void confirmCloseFileTab(tab).then((ok) => ok && close());
+    return;
+  }
   if (tab.type !== "chat") {
     layout.actions.closeTab(tabId);
     // A terminal tab's pane tree (and any command still queued for one of its
@@ -40,7 +60,7 @@ export function requestCloseTab(tabId: string): void {
     void (async () => {
       const ok = await useStopAgentsConfirmStore.getState().actions.ask({
         count: 1,
-        actionLabel: "Closing this chat",
+        actionLabel: "Closing this session",
         confirmLabel: "Stop agent & close",
       });
       if (!ok) return;

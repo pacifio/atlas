@@ -18,7 +18,6 @@
 // names those sessions, and the files' HEAD text and blame move to match.
 
 import { emit } from "@tauri-apps/api/event";
-import type { FileEntry } from "@/features/explorer/stores/explorer-store";
 import type {
   FileIndexStatus,
   FileMatch,
@@ -27,8 +26,13 @@ import type {
 import type { RecentFile } from "@/features/chat/stores/recent-files-store";
 import type { CodeGrepMatch, CodeGrepResult } from "@/components/code-search-api";
 import type { BlameLine } from "@/features/git/lib/git-blame-api";
-import type { BranchPullRequest, RepoPullRequests } from "@/features/git/lib/git-pr-api";
-import type { CommitFile, DiffLineStatus, FileDiff } from "@/features/git/lib/git-diff-api";
+import type { DiffLineStatus } from "@/features/git/lib/git-diff-api";
+import type {
+  DiffFileContents,
+  DiffFilePatch,
+  DiffPreview,
+} from "@/features/git/lib/git-review-api";
+import type { DirectoryListing } from "@/features/explorer/lib/fs-api";
 import type { GitErrorPayload } from "@/features/git/lib/git-errors";
 import type { BuiltGraph, CommitRow, LaneSegment } from "@/features/git/lib/git-graph";
 import type {
@@ -47,9 +51,15 @@ import type { ConflictState } from "@/features/git/components/git-manager/confli
 import type { CommitSession } from "@/features/git/components/commit-view";
 import type { RawGitStatus } from "@/features/terminal/components/block-terminal";
 import type { GitSummary } from "@/features/projects/stores/project-git-store";
-import type { MockArgs, MockHandlers, MockResponses, TypedHandlers } from "../types";
-import { buildFileDiff, lineStatusOf, unifiedDiff } from "../fixtures/diff";
-import { fsHandlers, listDir } from "../fixtures/files";
+import type { MockArgs, MockResponses, TypedHandlers } from "../types";
+import {
+  buildFileDiff,
+  diffPreviewOf,
+  lineStatusOf,
+  unifiedDiff,
+  type FileDiff,
+} from "../fixtures/diff";
+import { directoryListings, fsHandlers, type FileEntry } from "../fixtures/files";
 import { gitHandlers } from "../fixtures/git";
 import { NORTHWIND_LANE_COLOR, northwindFilesAt } from "../fixtures/northwind-repo";
 import type { CommitContent } from "./northwind-content-types";
@@ -247,16 +257,6 @@ function commitTrees(commit: CommitContent): { before: Tree; after: Tree } {
   return touched;
 }
 
-function commitFiles(commit: CommitContent): CommitFile[] {
-  const { before, after } = commitTrees(commit);
-  return Object.keys(after)
-    .sort()
-    .map((path) => ({
-      path,
-      status: before[path] === null ? "A" : after[path] === null ? "D" : "M",
-    }));
-}
-
 function commitDiff(commit: CommitContent): string {
   const { before, after } = commitTrees(commit);
   return Object.keys(after)
@@ -276,19 +276,6 @@ let epoch = 0;
 
 const TAG = { name: "v0.1.0", commit: "c-check" };
 const MERGED_BRANCH = { name: "server-discounts", commit: "c-validate" };
-
-/**
- * The PR `server-discounts` went up as. Merged, because the branch is: its
- * commit is already on `main` (see `branches()`), so an open PR for it would
- * contradict the git panel. `main` has no PR, so every other branch is `null`.
- */
-const MERGED_BRANCH_PR: BranchPullRequest = {
-  number: 353,
-  state: "merged",
-  title: "Validate discount codes on the server",
-  url: "https://github.com/northwind/northwind-shop/pull/353",
-  isDraft: false,
-};
 
 function mainBranch(): BranchInfo {
   const tip = headCommit();
@@ -591,7 +578,7 @@ function commitStaged(summary: string, description: string, coAuthors: string[])
 
 const byteLength = (text: string): number => new TextEncoder().encode(text).length;
 
-/** `read_directory` for the northwind tree: directories first, then files, case-insensitively. */
+/** One level of the northwind tree: directories first, then files, case-insensitively. */
 function readDirectory(path: string): FileEntry[] {
   const at = rel(path) ?? "";
   if (head.has(at) || edits.has(at)) throw new Error(`Not a directory: ${path}`);
@@ -823,6 +810,10 @@ export const northwindGitCommands: Partial<TypedHandlers<MockResponses>> = {
     return recents;
   },
   code_grep: (args) => (ours(args.path) ? grepWorktree(args) : fsHandlers.code_grep(args)),
+  read_directories: (args): DirectoryListing[] | Promise<DirectoryListing[]> =>
+    args.root === PROJECT.path
+      ? directoryListings(PROJECT.path, (args.paths ?? []) as string[], readDirectory, true)
+      : fsHandlers.read_directories(args),
 
   // ── git: status ─────────────────────────────────────────────────────────
   git_workspace_summary: (args) =>
@@ -910,11 +901,6 @@ export const northwindGitCommands: Partial<TypedHandlers<MockResponses>> = {
     const commit = commitBySha(args.commitSha);
     return commit ? commitSessions(commit) : [];
   },
-  git_commit_changed_files: (args): CommitFile[] | Promise<CommitFile[]> => {
-    if (!ours(args.path)) return gitHandlers.git_commit_changed_files(args);
-    const commit = commitBySha(args.sha);
-    return commit ? commitFiles(commit) : [];
-  },
   git_graph_signature: (args) =>
     ours(args.path)
       ? `${headCommit().sha}:${ahead}:${epoch}`
@@ -923,16 +909,6 @@ export const northwindGitCommands: Partial<TypedHandlers<MockResponses>> = {
     ours(args.path) ? graph(Number(args.limit ?? 1000)) : gitHandlers.git_graph_build(args),
 
   // ── git: diffs and blame ────────────────────────────────────────────────
-  git_diff_structured: (args): FileDiff | Promise<FileDiff> => {
-    if (!ours(args.path)) return gitHandlers.git_diff_structured(args);
-    const file = String(args.file);
-    const commit = args.commit ? commitBySha(args.commit) : undefined;
-    if (commit) {
-      const { before, after } = commitTrees(commit);
-      return buildFileDiff(before[file] ?? "", after[file] ?? "", file);
-    }
-    return workingDiff(file);
-  },
   git_diff_line_status: (args): DiffLineStatus | Promise<DiffLineStatus> =>
     ours(args.path)
       ? lineStatusOf(workingDiff(String(args.file)))
@@ -948,12 +924,40 @@ export const northwindGitCommands: Partial<TypedHandlers<MockResponses>> = {
           .map((change) => unifiedDiff(change.before ?? "", change.after, change.path))
           .join("")
       : gitHandlers.git_diff_all(args),
+  // The review diff: the take's uncommitted work, and the same change set
+  // against `origin/main` (the branch's commits are already pushed).
+  git_diff_preview: (args): DiffPreview | Promise<DiffPreview> =>
+    ours(args.path)
+      ? diffPreviewOf(
+          changes().map((change) => ({
+            path: change.path,
+            before: change.before,
+            after: change.after,
+            status: change.before === null ? "untracked" : "modified",
+          })),
+          { baseRef: "origin/main", mergeBase: headCommit().sha },
+        )
+      : gitHandlers.git_diff_preview(args),
+  git_diff_file_contents: (args): DiffFileContents | Promise<DiffFileContents> => {
+    if (!ours(args.path)) return gitHandlers.git_diff_file_contents(args);
+    const file = String(args.filePath);
+    const change = changeFor(file);
+    const text = worktreeText(file) ?? "";
+    return {
+      oldText: change ? (change.before ?? "") : text,
+      newText: change ? change.after : text,
+      truncated: false,
+      binary: false,
+    };
+  },
+  git_diff_file_patch: (args): DiffFilePatch | Promise<DiffFilePatch> => {
+    if (!ours(args.path)) return gitHandlers.git_diff_file_patch(args);
+    const change = changeFor(String(args.filePath));
+    const patch = change ? unifiedDiff(change.before ?? "", change.after, change.path) : "";
+    return { patch, truncated: false, binary: false };
+  },
   git_blame_file: (args): BlameLine[] | Promise<BlameLine[]> =>
     ours(args.path) ? blame(String(args.file)) : gitHandlers.git_blame_file(args),
-  git_repo_pull_requests: (args): RepoPullRequests | Promise<RepoPullRequests> =>
-    ours(args.path)
-      ? { kind: "ok", byBranch: { [MERGED_BRANCH.name]: MERGED_BRANCH_PR } }
-      : gitHandlers.git_repo_pull_requests(args),
 
   // ── git: index and working tree ─────────────────────────────────────────
   git_stage: (args) => {
@@ -1046,6 +1050,7 @@ export const northwindGitCommands: Partial<TypedHandlers<MockResponses>> = {
   // into the default fixture's repository.
   git_publish_branch: quietly("git_publish_branch"),
   git_checkout: quietly("git_checkout"),
+  git_switch_if_clean: quietly("git_switch_if_clean"),
   git_create_branch: quietly("git_create_branch"),
   git_rename_branch: quietly("git_rename_branch"),
   git_branch_delete: quietly("git_branch_delete"),
@@ -1083,15 +1088,6 @@ function discard(files: string[]): void {
     notifyChanged();
   }
 }
-
-/**
- * Commands no fixture declares a response type for: `read_directory` is an
- * inline handler in `base.ts`, so it is overridden here, untyped.
- */
-export const northwindGitRawCommands: MockHandlers = {
-  read_directory: ({ path }): FileEntry[] =>
-    ours(path) ? readDirectory(String(path)) : listDir(String(path)),
-};
 
 /** The file on disk right now, for the scripted run that builds `pending` from it. */
 export function northwindFileText(path: string): string | undefined {

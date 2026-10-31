@@ -1,8 +1,9 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 use std::fmt::Display;
 
 use schemars::JsonSchema;
-use schemars::r#gen::SchemaGenerator;
-use schemars::schema::Schema;
+use schemars::Schema;
+use schemars::SchemaGenerator;
 use serde::Deserialize;
 use serde::Serialize;
 use ts_rs::TS;
@@ -97,8 +98,8 @@ impl<'de> Deserialize<'de> for SessionId {
 }
 
 impl JsonSchema for SessionId {
-    fn schema_name() -> String {
-        "SessionId".to_string()
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "SessionId".into()
     }
 
     fn json_schema(generator: &mut SchemaGenerator) -> Schema {

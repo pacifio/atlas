@@ -8,4 +8,4 @@
  * Treat this as an invalidation signal and re-run `skills/list` with the
  * client's current parameters when refreshed skill metadata is needed.
  */
-export type SkillsChangedNotification = Record<string, never>;
+export type SkillsChangedNotification = Record<symbol, never>;

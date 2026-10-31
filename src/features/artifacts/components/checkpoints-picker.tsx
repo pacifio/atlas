@@ -75,7 +75,7 @@ export function CheckpointsPicker({
         if (mine === seq.current) setRows([]);
       });
     // `projectsKey` stands in for `projects`: same content, stable identity.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [open, projectsKey]);
 
   const q = query.trim().toLowerCase();

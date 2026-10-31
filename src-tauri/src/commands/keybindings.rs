@@ -530,8 +530,10 @@ mod tests {
 
     #[test]
     fn normalize_resets_a_dangling_active_profile() {
-        let mut file = KeybindingsFile::default();
-        file.active_profile_id = "ghost".into();
+        let mut file = KeybindingsFile {
+            active_profile_id: "ghost".into(),
+            ..Default::default()
+        };
         normalize(&mut file);
         assert_eq!(file.active_profile_id, DEFAULT_PROFILE_ID);
     }

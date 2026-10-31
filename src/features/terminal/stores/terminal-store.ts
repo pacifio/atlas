@@ -66,11 +66,20 @@ interface TerminalState {
    *  snapshot knows too, but only after a commit; this is written at the
    *  moment the tab is initialised, by the panel that knows its project. */
   owners: Record<string, string>;
+  /** Where a terminal TAB's new shells start, when it is not the active
+   *  project's root. A session's terminal drawer opens in the session's
+   *  working directory (its worktree when it has one); a layout terminal tab
+   *  has no entry and follows the project. */
+  cwds: Record<string, string>;
 }
 
 interface TerminalActions {
   actions: {
-    initTab: (tabId: string, projectId?: string) => void;
+    initTab: (tabId: string, projectId?: string, cwd?: string) => void;
+    /** Move a tab's tree (and its owner and cwd) to a new id. The terminals
+     *  keep their ids, so their shells carry on. A no-op when `from` is
+     *  absent or `to` is taken. */
+    renameTab: (from: string, to: string) => void;
     addTerminalToPane: (tabId: string, paneId: string) => void;
     splitPane: (tabId: string, paneId: string, direction: SplitDirection) => void;
     closeTerminalInPane: (tabId: string, paneId: string, ptyId: string) => void;
@@ -237,14 +246,20 @@ export const useTerminalStore = createSelectors(
       pendingCommands: {},
       pendingTyped: {},
       owners: {},
+      cwds: {},
       actions: {
-        initTab: (tabId, projectId) => {
+        initTab: (tabId, projectId, cwd) => {
           if (get().tabs[tabId]) {
             // Already seeded (e.g. by addTerminalForCommand); still record the
             // owner if we learn it now.
             if (projectId && get().owners[tabId] !== projectId) {
               set((s) => {
                 s.owners[tabId] = projectId;
+              });
+            }
+            if (cwd && get().cwds[tabId] !== cwd) {
+              set((s) => {
+                s.cwds[tabId] = cwd;
               });
             }
             return;
@@ -257,8 +272,21 @@ export const useTerminalStore = createSelectors(
               activePaneId: paneId,
             };
             if (projectId) s.owners[tabId] = projectId;
+            if (cwd) s.cwds[tabId] = cwd;
           });
         },
+
+        renameTab: (from, to) =>
+          set((s) => {
+            if (from === to || !s.tabs[from] || s.tabs[to]) return;
+            s.tabs[to] = s.tabs[from];
+            delete s.tabs[from];
+            if (s.owners[from] !== undefined) s.owners[to] = s.owners[from];
+            delete s.owners[from];
+            if (s.cwds[from] !== undefined) s.cwds[to] = s.cwds[from];
+            delete s.cwds[from];
+            if (s.pendingFocus?.tabId === from) s.pendingFocus.tabId = to;
+          }),
 
         addTerminalToPane: (tabId, paneId) => {
           set((s) => {
@@ -316,6 +344,7 @@ export const useTerminalStore = createSelectors(
               if (!result) {
                 delete s.tabs[tabId];
                 delete s.owners[tabId];
+                delete s.cwds[tabId];
                 return;
               }
               t.root = result;
@@ -356,6 +385,7 @@ export const useTerminalStore = createSelectors(
             if (!result) {
               delete s.tabs[tabId];
               delete s.owners[tabId];
+              delete s.cwds[tabId];
               return;
             }
             t.root = result;
@@ -500,6 +530,7 @@ export const useTerminalStore = createSelectors(
               }
               delete s.tabs[id];
               delete s.owners[id];
+              delete s.cwds[id];
             }
           }),
       },

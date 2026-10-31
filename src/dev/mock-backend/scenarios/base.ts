@@ -5,7 +5,6 @@
 // `bun run typecheck` flags a fake that no longer matches what Rust returns.
 
 import type { UpdaterSnapshot } from "@/features/updater/lib/updater-api";
-import type { FileEntry } from "@/features/explorer/stores/explorer-store";
 import type { SavedTheme, Theme, ThemeCatalogSummary } from "@/features/theme/lib/theme-api";
 import { themeIdSlug } from "@/features/theme/lib/theme-import-api";
 import type { MockHandlers } from "../types";
@@ -15,7 +14,8 @@ import { agentHandlers } from "../fake-agent";
 import { artifactsHandlers } from "../fixtures/artifacts";
 import { captureHandlers } from "../fixtures/capture";
 import { commsHandlers } from "../fixtures/comms";
-import { fsHandlers, listDir } from "../fixtures/files";
+import { externalEditorHandlers } from "../fixtures/external-editor";
+import { fsHandlers } from "../fixtures/files";
 import { fontHandlers } from "../fixtures/fonts";
 import { gitHandlers } from "../fixtures/git";
 import { iconThemeHandlers } from "../fixtures/icon-themes";
@@ -24,6 +24,8 @@ import { knowledgeHandlers } from "../fixtures/knowledge";
 import { logHandlers } from "../fixtures/log";
 import { memoryHandlers } from "../fixtures/memory";
 import { miscHandlers } from "../fixtures/misc";
+import { projectSourcesHandlers } from "../fixtures/project-sources";
+import { pullRequestsHandlers } from "../fixtures/pull-requests";
 import { settingsHandlers } from "../fixtures/settings";
 import { skillsHandlers } from "../fixtures/skills";
 import { spacesHandlers } from "../fixtures/spaces";
@@ -52,6 +54,7 @@ export const baseFixtureMaps: Readonly<Record<string, MockHandlers>> = {
   "fixtures/git": gitHandlers,
   "fake-agent": agentHandlers,
   "fixtures/files": fsHandlers,
+  "fixtures/external-editor": externalEditorHandlers,
   "fixtures/fonts": fontHandlers,
   "fixtures/settings": settingsHandlers,
   "fixtures/log": logHandlers,
@@ -60,6 +63,7 @@ export const baseFixtureMaps: Readonly<Record<string, MockHandlers>> = {
   "fixtures/comms": commsHandlers,
   "fixtures/integrations": integrationsHandlers,
   "fixtures/memory": memoryHandlers,
+  "fixtures/pull-requests": pullRequestsHandlers,
   "fixtures/skills": skillsHandlers,
   "fixtures/spaces": spacesHandlers,
   "fixtures/terminal": terminalHandlers,
@@ -148,7 +152,6 @@ export const baseHandlers: MockHandlers = {
   load_editor_state: () => "{}",
   save_editor_state: nothing,
   load_project_session: () => "{}",
-  read_directory: ({ path }): FileEntry[] => listDir(path),
   log_interaction: nothing,
 
   // ── knowledge ───────────────────────────────────────────────────────────
@@ -174,6 +177,7 @@ export const baseHandlers: MockHandlers = {
   // rather than by an import's position. (`misc`, the catch-all, is spread at
   // the very top so everything outranks it.)
   ...fsHandlers,
+  ...externalEditorHandlers,
   ...fontHandlers,
   ...settingsHandlers,
   ...logHandlers,
@@ -182,12 +186,13 @@ export const baseHandlers: MockHandlers = {
   ...commsHandlers,
   ...integrationsHandlers,
   ...memoryHandlers,
+  ...projectSourcesHandlers,
+  ...pullRequestsHandlers,
   ...skillsHandlers,
   ...spacesHandlers,
   ...terminalHandlers,
 
   // ── fire-and-forget housekeeping ────────────────────────────────────────
-  comms_ready: nothing,
   fileindex_close_project: nothing,
   // Mirrored instructions: Rust writes AGENTS.md; nothing to fake in a browser.
   instruction_sync_start: nothing,

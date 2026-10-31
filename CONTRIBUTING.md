@@ -65,9 +65,15 @@ We suggest using [mise](https://mise.jdx.dev/) to manage Bun and Node — the re
 ```bash
 git clone git@github.com:pacifio/atlas.git
 cd atlas
+mise install     # optional, see above
 bun install
+bun run doctor   # checks your toolchain against the pins, with a fix hint for each miss
 bun run dev:app
 ```
+
+`bun run doctor` is quick and changes nothing: it compares Node, Bun and Rust with `mise.toml` and `rust-toolchain.toml`, checks the Xcode tools and git hooks, and warns about optional pieces (Docker, `cargo-sweep`) and an oversized `target/`. `dev:app` also runs `scripts/target-gc.sh` before it starts, so `target/` is tidied without `ci:local`; it only acts after a Rust upgrade or once a week, and a failure never blocks dev.
+
+The repo commits shared VS Code settings in `.vscode/` (oxc as the formatter with format on save, rust-analyzer on its own target dir so it does not fight `dev:app` for the build lock) and recommends the matching extensions; `.editorconfig` covers other editors.
 
 The first Rust compile takes a few minutes; after that, seconds. `bun run dev:app` hot-reloads the frontend on save — Rust changes need a restart.
 
@@ -84,8 +90,8 @@ Other commands you'll use:
 
 ```bash
 bun run dev             # Vite only, in your browser, on a fake backend — see "UI work in the browser"
-bun run format          # oxfmt --write on src/
-bun run lint            # oxlint on src/
+bun run format          # oxfmt --write on src/, tests/, scripts/
+bun run lint            # oxlint on src/, tests/, scripts/
 ```
 
 A husky pre-commit hook runs `lint-staged` (oxfmt + oxlint on staged files) plus `bun run typecheck`, so most formatting/lint issues are caught before they ever reach CI (see Verification below).
@@ -179,7 +185,7 @@ Run `bun run bump` (`scripts/bump.sh`) once per release, on the version branch, 
 ## Verification
 
 ```bash
-bun run lint                       # oxlint on src/
+bun run lint                       # oxlint on src/, tests/, scripts/
 bun run format:check               # oxfmt --check on src/
 bun run typecheck                  # frontend typecheck (app + test code)
 bun run test                       # frontend and cross-cutting tests
@@ -271,6 +277,14 @@ container's cache volume:
 - **Once a week**, it removes artifacts cargo hasn't used in 30 days: mostly
   old dependency versions left behind by lockfile bumps. Getting one wrong
   costs a rebuild, never a broken build.
+- **Over a size cap**, only when `ATLAS_GC_MAX_MB` is set: it removes the
+  least recently used artifacts until the dir fits. For a target dir shared
+  by several worktrees, which churns through dependency versions faster than
+  30 days can age them out. `ATLAS_GC_UNUSED_DAYS` and `ATLAS_GC_EVERY_DAYS`
+  shorten the two windows above for the same case. The main checkout's
+  `target/` sets none of them. A `target/` that is a symlink (the shared dir)
+  is only collected by the worktree wrapper, under its build lock, since
+  cargo-sweep takes no lock of its own.
 
 Both use [`cargo-sweep`](https://github.com/holmgr/cargo-sweep), which the
 container image ships with. On your machine, install it once with

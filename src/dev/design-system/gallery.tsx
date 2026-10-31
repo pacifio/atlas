@@ -867,6 +867,13 @@ function PrimitiveSection() {
             <Kbd size="sm">K</Kbd>
           </div>
         </Row>
+        <Row name={`variant="soft"`}>
+          <div className="flex items-center gap-3">
+            <Kbd variant="soft">↑↓</Kbd>
+            <Kbd variant="soft">Enter</Kbd>
+            <Kbd variant="soft">Esc</Kbd>
+          </div>
+        </Row>
       </Section>
     </>
   );

@@ -1,5 +1,6 @@
 import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { useVisibleAnimation } from "@/lib/visible-animation";
 
 /**
  * LOADING STATE — the pixel-grid loader shown while a turn is doing work the
@@ -130,10 +131,12 @@ export const LoadingState = memo(function LoadingState({
   showElapsedAfterMs?: number;
 }) {
   const { ref: elapsed, stalled } = useElapsed(stallAfterMs, showElapsedAfterMs);
+  const shimmer = useVisibleAnimation<HTMLElement>();
   const { delays, dur, round } = PATTERNS[variant] ?? PATTERNS.dots;
 
   const indicator = (
     <div
+      ref={shimmer}
       role="status"
       aria-live="polite"
       aria-label={label}

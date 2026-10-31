@@ -21,7 +21,6 @@ import {
   ChevronUp,
   Search,
   X,
-  GitBranch,
   Lock,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -39,7 +38,6 @@ import { terminalSessions } from "../lib/terminal-session";
 import { CommandInput, type CommandInputHandle } from "./command-input";
 import { TerminalStopControl } from "./terminal-stop-control";
 import { useTerminalStore } from "../stores/terminal-store";
-import { fetchTermGit, type TermGit } from "../lib/term-git";
 
 export type { RawGitStatus } from "../lib/term-git";
 
@@ -119,14 +117,18 @@ export const BlockTerminal = memo(function BlockTerminal({
     () =>
       terminalSessions.acquire(terminalKey, {
         tabId,
-        cwd: useAppStore.getState().currentProject?.path ?? "~",
+        // A tab with its own directory (a session's terminal drawer) starts
+        // there; a terminal tab follows the project.
+        cwd:
+          useTerminalStore.getState().cwds[tabId] ??
+          useAppStore.getState().currentProject?.path ??
+          "~",
       }),
     [terminalKey, tabId],
   );
   const snap = useSyncExternalStore(session.subscribe, session.getSnapshot, session.getSnapshot);
   const { blocks, altScreen, rawMode, appCursorKeys, cwd, surfaceReady, exited } = snap;
 
-  const [git, setGit] = useState<TermGit | null>(null);
   const [search, setSearch] = useState({ open: false, query: "" });
   const [matchCount, setMatchCount] = useState(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -251,29 +253,6 @@ export const BlockTerminal = memo(function BlockTerminal({
     return !!last && last.running && last.command !== "";
   }, [blocks]);
   const caps = useMemo(() => renderCaps(blocks), [blocks]);
-
-  // Resolve git status for the live cwd (reuses the project git command).
-  // Re-run when the directory changes or a command FINISHES (which may have
-  // mutated the tree) — never when one starts: nothing has changed yet, and
-  // three git spawns racing the command just launched (a `git push`, a build)
-  // is pure contention. Debounced so a burst of output doesn't thrash git.
-  useEffect(() => {
-    if (!visible || !cwd || cwd === "~") {
-      if (!cwd || cwd === "~") setGit(null);
-      return;
-    }
-    if (busy) return;
-    let cancelled = false;
-    const t = window.setTimeout(() => {
-      void fetchTermGit(cwd).then((g) => {
-        if (!cancelled) setGit(g);
-      });
-    }, 150);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(t);
-    };
-  }, [cwd, busy, visible]);
 
   const runCommand = useCallback((cmd: string) => session.runCommand(cmd), [session]);
   const interrupt = useCallback(() => session.interrupt(), [session]);
@@ -463,14 +442,6 @@ export const BlockTerminal = memo(function BlockTerminal({
           onForceStop={forceStop}
           onForceStopped={restoreBlockSurface}
         />
-        {/* Divider between the stop control and the cwd/git badge — same rule
-            the badge draws between its dir and branch segments. Only when both
-            neighbours are visible: stop control needs `busy`, the badge hides
-            in alt-screen and below the 300px container query. */}
-        {busy && !altScreen && (
-          <span className="hidden h-3 w-px shrink-0 bg-[var(--border)] @[300px]:block" />
-        )}
-        {!altScreen && <StatusBadge cwd={cwd} git={git} />}
       </div>
     </div>
   );
@@ -505,45 +476,6 @@ function BlockPasswordInput({ onSubmit }: { onSubmit: (pw: string) => void }) {
         placeholder="Enter password, then press Enter…"
         className="flex-1 bg-transparent font-terminal text-sm text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]"
       />
-    </div>
-  );
-}
-
-/** Right-aligned cwd + git status badge in the command input row. */
-function StatusBadge({ cwd, git }: { cwd: string; git: TermGit | null }) {
-  const dir = cwd ? cwd.split("/").filter(Boolean).pop() || "/" : "";
-  if (!dir) return null;
-  return (
-    // Progressive disclosure as the PANE narrows (container query against the
-    // terminal root): the git segment goes first, then the whole badge, so the
-    // command input always keeps usable width. Long dir/branch names truncate.
-    <div className="ml-auto hidden shrink-0 items-center gap-2 text-2xs text-[var(--muted-foreground)] @[300px]:flex">
-      <span className="flex min-w-0 items-center gap-1" title={cwd}>
-        <Folder size={9} className="shrink-0" />
-        <span className="max-w-[96px] truncate">{dir}</span>
-      </span>
-      {git && (
-        <>
-          <span className="hidden h-3 w-px bg-[var(--border)] @[420px]:block" />
-          <span
-            className="hidden min-w-0 items-center gap-1 @[420px]:flex"
-            title={`On branch ${git.branch}`}
-          >
-            <GitBranch size={9} className="shrink-0" />
-            <span className="max-w-[140px] truncate">{git.branch || "(detached)"}</span>
-            {git.ahead > 0 && <span>↑{git.ahead}</span>}
-            {git.behind > 0 && <span>↓{git.behind}</span>}
-            {git.dirty && (
-              <span
-                className="text-[var(--atlas-status-warning-foreground)]"
-                title="Uncommitted changes"
-              >
-                ●
-              </span>
-            )}
-          </span>
-        </>
-      )}
     </div>
   );
 }

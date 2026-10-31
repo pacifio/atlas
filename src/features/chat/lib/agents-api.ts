@@ -147,14 +147,21 @@ export const agents = {
     attachments?: ImageAttachment[],
     /** `@`-mentioned files, sent as ACP `ResourceLink` blocks (P2.1). */
     resourceLinks?: { uri: string; name: string }[],
+    /** Large pastes, each in full. Rust sends an embedded resource when the
+     *  agent advertised `embeddedContext`, a fenced text block otherwise. */
+    pastedTexts?: { id: string; text: string }[],
   ) =>
     invoke<void>("agents_send", {
       key,
       text,
       attachments: attachments?.length ? attachments : null,
       resourceLinks: resourceLinks?.length ? resourceLinks : null,
+      pastedTexts: pastedTexts?.length ? pastedTexts : null,
     }),
-  cancel: (key: SessionKey) => invoke<void>("agents_cancel", { key }),
+  /** Cancel the turn. `stop` is the user's Stop: it also ends the session's
+   *  pull request watches. A tab or project closing leaves them on. */
+  cancel: (key: SessionKey, opts?: { stop?: boolean }) =>
+    invoke<void>("agents_cancel", { key, stop: opts?.stop ?? false }),
   /** Answer an elicitation the agent raised (P3.3). */
   respondElicitation: (
     agentId: AgentId,

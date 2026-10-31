@@ -35,11 +35,28 @@ pub enum EscalationPermissions {
 /// The `command` tokens form the prefix that would be added as an execpolicy
 /// `prefix_rule(..., decision="allow")`, letting the agent bypass approval for
 /// commands that start with this token sequence.
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, TS)]
 #[serde(transparent)]
 #[ts(type = "Array<string>")]
 pub struct ExecPolicyAmendment {
     pub command: Vec<String>,
+}
+
+/// Inlined as a plain array without the description above. schemars 0.8 treated
+/// a transparent struct that way; schemars 1 gives a documented one a definition
+/// of its own, which would rewrite the committed app-server schemas.
+impl JsonSchema for ExecPolicyAmendment {
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "ExecPolicyAmendment".into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        <Vec<String>>::json_schema(generator)
+    }
 }
 
 impl ExecPolicyAmendment {

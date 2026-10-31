@@ -35,7 +35,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
-use atlas_acp_thread::prompt::{self, ImageAttachment, ResourceLinkSpec};
+use atlas_acp_thread::prompt::{self, ImageAttachment, PastedText, ResourceLinkSpec};
 use atlas_agent_store::{
     AgentRegistryStore, AgentServerStore, InheritedProjectEnvironment, NodeRuntime, ReqwestClient,
 };
@@ -324,6 +324,7 @@ impl OutboundMiddleware<SessionDeltaEnvelope> for AnalyticsMiddleware {
             SessionDelta::TurnFinished {
                 stop_reason,
                 turn_seq,
+                ..
             } => self.flush(
                 envelope,
                 *turn_seq,
@@ -592,9 +593,151 @@ impl OutboundMiddleware<SessionDeltaEnvelope> for MemoryIngestMiddleware {
     }
 }
 
+/// How often the idle sweep looks for sessions to settle. The threshold is in
+/// days, so a minute is far finer than it needs to be; it is what keeps a
+/// change to the setting visible without a restart.
+const AUTO_SETTLE_EVERY: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// A sweep that settles more than this many sessions at once tells the user,
+/// the first time only ([`SESSIONS_AUTO_SETTLED_EVENT`]).
+const AUTO_SETTLE_NOTICE_OVER: usize = 5;
+
+/// Fired once, ever: the first idle sweep that settled more than
+/// [`AUTO_SETTLE_NOTICE_OVER`] sessions. Payload `{ count }`.
+pub const SESSIONS_AUTO_SETTLED_EVENT: &str = "atlas:sessions-auto-settled";
+
+/// The flag that the notice has been shown, a marker file in the app data
+/// directory. Its presence is the whole of it.
+const AUTO_SETTLE_NOTICE_MARKER: &str = "auto-settle-notice-shown";
+
+#[derive(Clone, serde::Serialize)]
+struct AutoSettledNotice {
+    count: usize,
+}
+
+/// The longest the snooze timer sleeps before re-reading the wall clock.
+///
+/// Tokio's timer runs on the monotonic clock, which stops while the machine
+/// sleeps: a timer set for 9:00 before the lid closed at 8:00 would fire an
+/// hour after it opens, not at 9:00. Capping each sleep bounds that lag. It
+/// is still one timer, not a poll per session — each wake-up reads one
+/// minimum and goes back to sleep.
+const SNOOZE_TIMER_MAX_SLEEP: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Wake snoozed sessions when their time comes: one timer, for the soonest
+/// `snoozed_until`, recomputed whenever the store changes (a new snooze, a
+/// wake, a send that cleared one). Every snooze already due — at launch,
+/// after the machine slept — wakes on the first pass. Ends when the store
+/// does.
+pub(crate) async fn run_snooze_waker(store: atlas_thread_metadata::ThreadMetadataStore) {
+    let mut changes = store.subscribe();
+    loop {
+        let now = chrono::Utc::now();
+        store.wake_due(now);
+        let sleep = store
+            .next_snooze_wake()
+            .map(|at| (at - now).to_std().unwrap_or_default())
+            .unwrap_or(SNOOZE_TIMER_MAX_SLEEP)
+            .min(SNOOZE_TIMER_MAX_SLEEP);
+        tokio::select! {
+            () = tokio::time::sleep(sleep) => {}
+            changed = changes.recv() => {
+                if matches!(changed, Err(tokio::sync::broadcast::error::RecvError::Closed)) {
+                    return;
+                }
+            }
+        }
+    }
+}
+
+/// One pass of the idle sweep. Blocking: run it under `spawn_blocking`.
+fn auto_settle_tick(app: &AppHandle, host: &Arc<AgentHost>) {
+    let Some(days) = app
+        .try_state::<crate::state::AtlasConfigHandle>()
+        .map(|config| config.lock().effective().auto_settle_after_days)
+    else {
+        return;
+    };
+    if days == 0 {
+        return;
+    }
+    // Each candidate is judged by its own project's transcripts, read now:
+    // the session watcher only covers the project the sidebar has open.
+    let keep_pull_requests = crate::state::atlas_config::read(app).auto_settle_keep_pull_requests;
+    match host.auto_settle_idle_keeping(
+        chrono::Duration::days(i64::from(days)),
+        &super::session_watcher::activity_in,
+        keep_pull_requests,
+    ) {
+        Ok(0) => {}
+        Ok(settled) => {
+            tracing::debug!(settled, days, "auto-settled idle sessions");
+            if settled > AUTO_SETTLE_NOTICE_OVER {
+                notice_auto_settled_once(app, settled);
+            }
+        }
+        Err(e) => tracing::warn!(error = %e, "auto-settle sweep failed"),
+    }
+}
+
+/// Tell the user about a big sweep, unless they have been told before. The
+/// marker is written first: a notice that fails to send is not retried, and
+/// one that is shown twice would be worse than one that is never shown.
+fn notice_auto_settled_once(app: &AppHandle, count: usize) {
+    let Ok(dir) = app.path().app_data_dir() else {
+        return;
+    };
+    let marker = dir.join(AUTO_SETTLE_NOTICE_MARKER);
+    if marker.exists() {
+        return;
+    }
+    let _ = std::fs::create_dir_all(&dir);
+    if let Err(e) = std::fs::write(&marker, b"") {
+        tracing::warn!(error = %e, "could not record the auto-settle notice");
+        return;
+    }
+    let _ = app.emit(SESSIONS_AUTO_SETTLED_EVENT, AutoSettledNotice { count });
+}
+
 /// Emitted whenever Atlas's session history changes. Carries no payload: a
 /// listener re-reads the store, which is the correct response to any change.
 pub const THREADS_CHANGED_EVENT: &str = "atlas:threads-changed";
+
+/// The longest a store change waits to be announced, and so the most often
+/// `atlas:threads-changed` goes out for store changes.
+const THREADS_CHANGED_COALESCE: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// Call `emit` once per burst of `changes`: the first change opens a
+/// `window`, every change arriving before it closes is folded in, and `emit`
+/// runs once at its end (trailing edge). So a burst is announced at most
+/// `window` late, and never more than once per `window`. A lagged receiver
+/// is several changes collapsed into one — what a listener that re-reads
+/// the store wants anyway. Returns when the sender is gone.
+pub(crate) async fn coalesce_changes<T: Clone>(
+    mut changes: tokio::sync::broadcast::Receiver<T>,
+    window: std::time::Duration,
+    mut emit: impl FnMut(),
+) {
+    use tokio::sync::broadcast::error::RecvError;
+    loop {
+        match changes.recv().await {
+            Ok(_) | Err(RecvError::Lagged(_)) => {}
+            Err(RecvError::Closed) => return,
+        }
+        tokio::time::sleep(window).await;
+        let closed = loop {
+            match changes.try_recv() {
+                Ok(_) | Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => {}
+                Err(tokio::sync::broadcast::error::TryRecvError::Empty) => break false,
+                Err(tokio::sync::broadcast::error::TryRecvError::Closed) => break true,
+            }
+        };
+        emit();
+        if closed {
+            return;
+        }
+    }
+}
 
 /// A connection asked the user something outside any session.
 ///
@@ -820,6 +963,11 @@ pub fn install_manager(app: &AppHandle) {
         host.clone(),
         app.clone(),
     ));
+    super::session_pull_requests::sweep_leftover_checkouts_later(host.clone(), data_dir.clone());
+    // Pull request watches wake their sessions' agents, window hidden or not.
+    super::pull_request_watch::start(app.clone(), host.clone());
+    // Turns the last run left running carry on, through the wakes just wired.
+    super::restart_continuation::start(app, host.clone());
 
     // Shared memory: every write is announced to the webview (the Shared tab
     // re-pulls on it), session start/end are recorded in the scope's sessions
@@ -931,8 +1079,28 @@ pub fn install_manager(app: &AppHandle) {
         // The code index (Phase 2) serves the symbol tools and names grep
         // hits by their enclosing symbol; it is managed in `setup` before
         // this runs.
-        let code_router =
-            super::code_server::router(super::code_server::CodeTools::new(code_tools.clone()));
+        // `request_project_access` rides the same server: every agent that
+        // gets the code tools can ask for a folder, and the host puts the
+        // request on the session's approval card.
+        let code_router = super::code_server::router(
+            super::code_server::CodeTools::new(code_tools.clone())
+                .with_access(Arc::new(super::session_projects::HostAccessBroker(
+                    Arc::downgrade(&host),
+                )))
+                // The pull request tools too: the agent ties the pull requests
+                // it opens to its session, and watches them.
+                .with_pull_requests(Arc::new(
+                    super::session_pull_requests::HostPullRequestBroker {
+                        host: Arc::downgrade(&host),
+                        wakes_on: {
+                            let app = app.clone();
+                            Arc::new(move || {
+                                crate::state::atlas_config::read(&app).pull_request_watch_wakes
+                            })
+                        },
+                    },
+                )),
+        );
         // Every agent that can take the server is handed it on each session
         // request, with a token of its own. It is the only way memory reaches
         // an agent (ADR-0010): nothing is prepended to a prompt. A connection
@@ -1131,21 +1299,48 @@ pub fn install_manager(app: &AppHandle) {
     // through the store, so its changes arrive here like any other. Liveness
     // ("running in a terminal") is not stored; the watcher emits the same event
     // itself when the live set changes.
+    //
+    // The store notifies many times a turn, and every listener re-reads the
+    // whole sidebar, so the forwarder coalesces: the first change opens a
+    // window of `THREADS_CHANGED_COALESCE`, everything arriving inside it is
+    // folded in, and one event goes out at its end (`coalesce_changes`).
     if let Some(history) = host.history() {
         let app = app.clone();
-        let mut changes = history.store().subscribe();
+        let changes = history.store().subscribe();
+        tauri::async_runtime::spawn(coalesce_changes(
+            changes,
+            THREADS_CHANGED_COALESCE,
+            move || {
+                let _ = app.emit(THREADS_CHANGED_EVENT, ());
+            },
+        ));
+    }
+
+    // Snoozes wake on one timer, set for the soonest of them and re-read on
+    // every store change (`run_snooze_waker`). A wake is a store change, so
+    // the forwarder above announces it like any other.
+    if let Some(history) = host.history() {
+        tauri::async_runtime::spawn(run_snooze_waker(history.store().clone()));
+    }
+
+    // Auto-settle: once a minute, sessions idle for `autoSettleAfterDays`
+    // move to the sidebar's Settled shelf (0 turns it off). The host skips the
+    // busy and the live-elsewhere ones, the store the pinned, the snoozed and
+    // the ones the user un-settled since their last activity; a settle announces
+    // itself through the forwarder above. The setting is read every pass, so
+    // a change takes effect within the minute. Each tick's work reads the
+    // store, the watcher and possibly a file, so it runs off the async
+    // runtime the IPC channel shares.
+    if host.history().is_some() {
+        let app = app.clone();
+        let host = host.clone();
         tauri::async_runtime::spawn(async move {
             loop {
-                match changes.recv().await {
-                    Ok(_) => {
-                        let _ = app.emit(THREADS_CHANGED_EVENT, ());
-                    }
-                    // Lagged means several changes collapsed into one, which is
-                    // exactly what a listener that re-reads the store wants.
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                        let _ = app.emit(THREADS_CHANGED_EVENT, ());
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+                tokio::time::sleep(AUTO_SETTLE_EVERY).await;
+                let (app, host) = (app.clone(), host.clone());
+                let tick = tokio::task::spawn_blocking(move || auto_settle_tick(&app, &host));
+                if let Err(e) = tick.await {
+                    tracing::warn!(error = %e, "auto-settle tick panicked");
                 }
             }
         });
@@ -1333,7 +1528,7 @@ pub struct CmdError {
 
 impl CmdError {
     #[cfg_attr(not(test), allow(dead_code))]
-    fn new(message: impl Into<String>, kind: ErrorClass) -> Self {
+    pub(crate) fn new(message: impl Into<String>, kind: ErrorClass) -> Self {
         Self {
             message: message.into(),
             kind: kind.wire_token().to_string(),
@@ -1556,6 +1751,9 @@ fn transcript_to_messages(t: super::agent_transcript::StoredTranscript) -> Vec<M
             plan: None,
             model: m.model,
             images: Vec::new(),
+            timestamp_approximate: false,
+            worked_ms: None,
+            stop_reason: None,
             timestamp: m
                 .timestamp
                 .parse::<chrono::DateTime<chrono::Utc>>()
@@ -1649,31 +1847,171 @@ pub async fn threads_delete(
 }
 
 /// Every project the user has threads in — the sidebar's only source (#21).
-#[tauri::command]
-pub fn threads_projects(
+///
+/// Async, with the build under `spawn_blocking`: the sidebar asks for every
+/// row (unscoped) on each `atlas:threads-changed`, and building and
+/// serialising a thousand-odd rows must not run on the main thread or hold
+/// an async worker the IPC channel shares.
+#[tauri::command(async)]
+pub async fn threads_projects(
     cwd: Option<String>,
     host: State<'_, Arc<AgentHost>>,
     watcher: State<'_, Arc<super::session_watcher::SessionWatcher>>,
 ) -> Result<Vec<super::agent_host::ThreadProjectWire>, CmdError> {
-    host.thread_projects(cwd.as_deref(), &watcher.last_modified())
+    let host = host.inner().clone();
+    let modified = watcher.last_modified();
+    tauri::async_runtime::spawn_blocking(move || host.thread_projects(cwd.as_deref(), &modified))
+        .await
+        .map_err(|e| CmdError::new(e.to_string(), ErrorClass::Fatal))?
         .map_err(CmdError::from)
 }
 
-/// Every thread, archived or not, newest-started first — the history view.
-#[tauri::command]
-pub fn threads_history(
-    archived_only: bool,
+/// Every thread, newest-started first — the history view. Off the main
+/// thread for the same reason as [`threads_projects`].
+#[tauri::command(async)]
+pub async fn threads_history(
     host: State<'_, Arc<AgentHost>>,
     watcher: State<'_, Arc<super::session_watcher::SessionWatcher>>,
 ) -> Result<Vec<super::agent_host::ThreadRow>, CmdError> {
-    host.thread_history(archived_only, &watcher.last_modified())
+    let host = host.inner().clone();
+    let modified = watcher.last_modified();
+    tauri::async_runtime::spawn_blocking(move || host.thread_history(&modified))
+        .await
+        .map_err(|e| CmdError::new(e.to_string(), ErrorClass::Fatal))?
         .map_err(CmdError::from)
 }
 
-/// Take a thread out of the active list, keeping it in history.
+/// Move a session to the sidebar's Settled shelf. Refused while a turn is
+/// running there, in Atlas or in another process, or just after a send.
+/// Answers whether it moved: `false` for one already settled or gone.
+///
+/// Liveness elsewhere is read from the row's own project's transcripts, which
+/// is file I/O, so the check runs off the async workers.
 #[tauri::command]
-pub fn threads_archive(thread_id: String, host: State<'_, Arc<AgentHost>>) -> Result<(), CmdError> {
-    host.archive_thread(parse_thread_id(&thread_id)?)
+pub async fn threads_settle(
+    thread_id: String,
+    host: State<'_, Arc<AgentHost>>,
+) -> Result<bool, CmdError> {
+    let thread_id = parse_thread_id(&thread_id)?;
+    let host = host.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        host.settle_thread(thread_id, &super::session_watcher::activity_in)
+    })
+    .await
+    .map_err(|e| CmdError::new(e.to_string(), ErrorClass::Fatal))?
+    .map_err(CmdError::from)
+}
+
+/// Take a session back off the Settled shelf. Answers whether it was on it.
+#[tauri::command]
+pub fn threads_unsettle(
+    thread_id: String,
+    host: State<'_, Arc<AgentHost>>,
+) -> Result<bool, CmdError> {
+    host.unsettle_thread(parse_thread_id(&thread_id)?)
+        .map_err(CmdError::from)
+}
+
+// The lifecycle commands below touch only the store's in-memory index and its
+// write queue (the disk write happens on the store's own writer thread), so
+// none blocks. `async` keeps them off the main thread all the same: a pin or
+// a debounced "viewed" must never wait behind a frame.
+
+/// Pin a session. `orderKey` places it among the pinned (a fractional key the
+/// frontend mints); omitted, it sorts after every keyed pin. Brings a settled
+/// or snoozed session back. Answers whether anything changed.
+#[tauri::command(async)]
+pub fn threads_pin(
+    thread_id: String,
+    order_key: Option<String>,
+    host: State<'_, Arc<AgentHost>>,
+) -> Result<bool, CmdError> {
+    host.pin_thread(parse_thread_id(&thread_id)?, order_key)
+        .map_err(CmdError::from)
+}
+
+/// Unpin a session. Answers whether it was pinned.
+#[tauri::command(async)]
+pub fn threads_unpin(thread_id: String, host: State<'_, Arc<AgentHost>>) -> Result<bool, CmdError> {
+    host.unpin_thread(parse_thread_id(&thread_id)?)
+        .map_err(CmdError::from)
+}
+
+/// Move a pinned session to `orderKey`. `false` for one that is not pinned.
+#[tauri::command(async)]
+pub fn threads_reorder_pin(
+    thread_id: String,
+    order_key: String,
+    host: State<'_, Arc<AgentHost>>,
+) -> Result<bool, CmdError> {
+    host.reorder_pinned_thread(parse_thread_id(&thread_id)?, order_key)
+        .map_err(CmdError::from)
+}
+
+/// Snooze a session until `until` (RFC 3339). Rejected for a time not in the
+/// future and for a session with a pending permission or question.
+#[tauri::command(async)]
+pub fn threads_snooze(
+    thread_id: String,
+    until: String,
+    host: State<'_, Arc<AgentHost>>,
+) -> Result<bool, CmdError> {
+    let until = chrono::DateTime::parse_from_rfc3339(&until)
+        .map_err(|_| CmdError::new(format!("not a time: {until}"), ErrorClass::Fatal))?
+        .with_timezone(&chrono::Utc);
+    host.snooze_thread(parse_thread_id(&thread_id)?, until)
+        .map_err(CmdError::from)
+}
+
+/// Rename a session. An empty title clears the rename.
+#[tauri::command(async)]
+pub fn threads_rename(
+    thread_id: String,
+    title: String,
+    host: State<'_, Arc<AgentHost>>,
+) -> Result<(), CmdError> {
+    host.rename_thread(parse_thread_id(&thread_id)?, &title)
+        .map_err(CmdError::from)
+}
+
+/// Wake a snoozed session now. Answers whether it was snoozed.
+#[tauri::command(async)]
+pub fn threads_wake(thread_id: String, host: State<'_, Arc<AgentHost>>) -> Result<bool, CmdError> {
+    host.wake_thread(parse_thread_id(&thread_id)?)
+        .map_err(CmdError::from)
+}
+
+/// Undo a snooze the user just set: like a wake, but it leaves no "woke"
+/// mark. Answers whether it was snoozed.
+#[tauri::command(async)]
+pub fn threads_unsnooze(
+    thread_id: String,
+    host: State<'_, Arc<AgentHost>>,
+) -> Result<bool, CmdError> {
+    host.unsnooze_thread(parse_thread_id(&thread_id)?)
+        .map_err(CmdError::from)
+}
+
+/// The user opened or focused the chat tab running `sessionId`. Keyed by the
+/// live session, not the row, because that is what a tab knows. The frontend
+/// debounces it. Answers whether a row was marked.
+#[tauri::command(async)]
+pub fn threads_mark_viewed(
+    session_id: String,
+    host: State<'_, Arc<AgentHost>>,
+) -> Result<bool, CmdError> {
+    host.mark_session_viewed(&session_id)
+        .map_err(CmdError::from)
+}
+
+/// Make a session read as unread again. Rejected for one with no finished
+/// turn. Answers whether anything changed.
+#[tauri::command(async)]
+pub fn threads_mark_unread(
+    thread_id: String,
+    host: State<'_, Arc<AgentHost>>,
+) -> Result<bool, CmdError> {
+    host.mark_thread_unread(parse_thread_id(&thread_id)?)
         .map_err(CmdError::from)
 }
 
@@ -1788,8 +2126,10 @@ pub async fn agents_send(
     // rather than flattened into the prose — the ACP-native way to hand an
     // agent a file, and every agent is required to accept it.
     resource_links: Option<Vec<ResourceLinkSpec>>,
+    // Large pastes the composer kept as chips. Each goes in full: an embedded
+    // resource when the agent takes embedded context, a text block otherwise.
+    pasted_texts: Option<Vec<PastedText>>,
     host: State<'_, Arc<AgentHost>>,
-    sharing: State<'_, MemorySharingState>,
     app: AppHandle,
 ) -> Result<(), String> {
     // `agent_turn_started` is NOT emitted here. It used to be, but this runs
@@ -1802,22 +2142,83 @@ pub async fn agents_send(
     // side-channel drained by the next send. Held here and folded into the
     // content at the one send below, so nothing can strand images for some
     // later turn to pick up.
-    let images = attachments.unwrap_or_default();
-    let links = resource_links.unwrap_or_default();
-
-    // Resolve the project cwd. Unknown session → fail with the SAME error
-    // shape `manager.send` produces, without attempting a send that would
-    // skip session registration (one condition, one behavior — L5).
-    // Meta only — the full snapshot deep-clones the whole transcript under the
-    // SessionState mutex the streaming actor locks per chunk, and this path
-    // reads three small fields.
-    let Ok(snapshot) = host.snapshot_meta(&key) else {
-        return Err(HostError::unknown_session().to_string());
+    let outgoing = OutgoingPrompt {
+        text,
+        images: attachments.unwrap_or_default(),
+        links: resource_links.unwrap_or_default(),
+        pastes: pasted_texts.unwrap_or_default(),
     };
-    let current_model = snapshot.current_model.clone();
-    let plugin_id = snapshot.plugin_id.clone();
-    let cwd = snapshot.cwd;
+    send_prompt(&app, host.inner(), &key, outgoing, PromptOrigin::User)
+}
 
+/// Who a prompt is from. The user's own words count as the user's
+/// interaction with the session; a prompt Atlas sends on its own (a pull
+/// request watch waking the agent, a turn continued after a restart) is
+/// recorded everywhere else the same way, but is not the user, so it neither
+/// marks the session interacted with nor un-settles it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PromptOrigin {
+    User,
+    Atlas,
+}
+
+/// A prompt on its way to the agent: the text, and what rides with it.
+#[derive(Debug, Default)]
+pub(crate) struct OutgoingPrompt {
+    pub text: String,
+    pub images: Vec<ImageAttachment>,
+    pub links: Vec<ResourceLinkSpec>,
+    pub pastes: Vec<PastedText>,
+}
+
+impl OutgoingPrompt {
+    /// Just text, as a wake sends.
+    pub fn text(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            ..Self::default()
+        }
+    }
+}
+
+/// Where a prompt is written down before it goes to the agent. A trait so
+/// the order and the conditions ([`record_prompt`]) are testable without a
+/// Tauri app; [`AppBooks`] is the real one.
+pub(crate) trait PromptBooks {
+    /// Session capture: the prompt, and the session bound to its scope.
+    fn capture(
+        &self,
+        session_id: &str,
+        cwd: &str,
+        plugin_id: &str,
+        model: Option<&str>,
+        text: &str,
+    );
+    /// The user interacted with the session (`interacted_at`).
+    fn interaction(&self, session_id: &str);
+    /// Atlas's own transcript of the session.
+    fn transcript(&self, session_id: &str, cwd: &str, plugin_id: &str, text: &str);
+    /// Whether memory sharing is on for `cwd`.
+    fn sharing_enabled(&self, cwd: &str) -> bool;
+    /// Register the session so its deltas are captured into the scope's record.
+    fn register_memory(&self, session_id: &str, cwd: &str, plugin_id: &str);
+}
+
+/// What a prompt is recorded against: the session's cheap metadata.
+pub(crate) struct PromptMeta<'a> {
+    pub cwd: &'a str,
+    pub plugin_id: &'a str,
+    pub model: Option<&'a str>,
+}
+
+/// Write `text` down in every book, in the order the send path always has.
+pub(crate) fn record_prompt(
+    books: &dyn PromptBooks,
+    session_id: &str,
+    meta: &PromptMeta<'_>,
+    text: &str,
+    origin: PromptOrigin,
+) {
     // Session capture: record the prompt and bind the session.
     //
     // This has to happen here rather than in the delta middleware, because the
@@ -1832,37 +2233,21 @@ pub async fn agents_send(
     // the former ("claude-code", "codex", the native agent's id) is both what a
     // reader wants to see on a timeline row and what tells capture whether this
     // is an ACP-hosted agent or the native one.
-    app.state::<super::capture::CaptureState>().note_prompt(
-        &key.session_id,
-        &cwd,
-        &plugin_id,
-        current_model.as_deref(),
-        &text,
-    );
+    books.capture(session_id, meta.cwd, meta.plugin_id, meta.model, text);
 
     // The user just sent something. `interacted_at` is the only field the
     // thread's own events cannot supply — a queued message never reaches the
-    // agent.
-    if let Some(history) = host.history() {
-        history.note_interaction(
-            &acp::SessionId::new(key.session_id.as_str()),
-            chrono::Utc::now(),
-        );
+    // agent. A wake is not the user.
+    if origin == PromptOrigin::User {
+        books.interaction(session_id);
     }
 
     // Atlas's own transcript, for every agent. Recorded here for the same
     // reason capture is: the user's prompt is never emitted as a delta, so a
     // delta-only recorder produces transcripts that start mid-answer and have
     // no title.
-    if !cwd.is_empty() {
-        app.state::<Arc<super::agent_transcript::TranscriptState>>()
-            .note_prompt(
-                &key.session_id,
-                &cwd,
-                &plugin_id,
-                &text,
-                chrono::Utc::now().to_rfc3339(),
-            );
+    if !meta.cwd.is_empty() {
+        books.transcript(session_id, meta.cwd, meta.plugin_id, text);
     }
 
     // Register this session so the capture path (`TauriDeltaSink::emit`) can
@@ -1870,13 +2255,109 @@ pub async fn agents_send(
     // agent untouched: a slash command stays at byte 0 (Claude Code resolves
     // one only there), and nothing Atlas wrote can be echoed back as the
     // user's words.
-    if !cwd.is_empty() && sharing.is_enabled(&cwd) {
-        app.state::<SharedMemoryStore>()
-            .register_session(&key.session_id, &cwd, &plugin_id);
+    if !meta.cwd.is_empty() && books.sharing_enabled(meta.cwd) {
+        books.register_memory(session_id, meta.cwd, meta.plugin_id);
     }
+}
+
+/// The app's books.
+struct AppBooks<'a> {
+    app: &'a AppHandle,
+    host: &'a AgentHost,
+}
+
+impl PromptBooks for AppBooks<'_> {
+    fn capture(
+        &self,
+        session_id: &str,
+        cwd: &str,
+        plugin_id: &str,
+        model: Option<&str>,
+        text: &str,
+    ) {
+        self.app
+            .state::<super::capture::CaptureState>()
+            .note_prompt(session_id, cwd, plugin_id, model, text);
+    }
+
+    fn interaction(&self, session_id: &str) {
+        if let Some(history) = self.host.history() {
+            history.note_interaction(&acp::SessionId::new(session_id), chrono::Utc::now());
+        }
+    }
+
+    fn transcript(&self, session_id: &str, cwd: &str, plugin_id: &str, text: &str) {
+        self.app
+            .state::<Arc<super::agent_transcript::TranscriptState>>()
+            .note_prompt(
+                session_id,
+                cwd,
+                plugin_id,
+                text,
+                chrono::Utc::now().to_rfc3339(),
+            );
+    }
+
+    fn sharing_enabled(&self, cwd: &str) -> bool {
+        self.app.state::<MemorySharingState>().is_enabled(cwd)
+    }
+
+    fn register_memory(&self, session_id: &str, cwd: &str, plugin_id: &str) {
+        self.app
+            .state::<SharedMemoryStore>()
+            .register_session(session_id, cwd, plugin_id);
+    }
+}
+
+/// Send `outgoing` to the session `key` as a turn: recorded in every book
+/// ([`record_prompt`]), then started. The one way a prompt reaches an agent,
+/// whether the user typed it ([`agents_send`]) or Atlas sends it on its own
+/// (a pull request watch's wake, `AgentHost::wake`).
+pub(crate) fn send_prompt(
+    app: &AppHandle,
+    host: &Arc<AgentHost>,
+    key: &SessionKey,
+    outgoing: OutgoingPrompt,
+    origin: PromptOrigin,
+) -> Result<(), String> {
+    let OutgoingPrompt {
+        text,
+        images,
+        links,
+        pastes,
+    } = outgoing;
+
+    // Resolve the project cwd. Unknown session → fail with the SAME error
+    // shape `manager.send` produces, without attempting a send that would
+    // skip session registration (one condition, one behavior — L5).
+    // Meta only — the full snapshot deep-clones the whole transcript under the
+    // SessionState mutex the streaming actor locks per chunk, and this path
+    // reads three small fields.
+    let Ok(snapshot) = host.snapshot_meta(key) else {
+        return Err(HostError::unknown_session().to_string());
+    };
+    record_prompt(
+        &AppBooks { app, host },
+        &key.session_id,
+        &PromptMeta {
+            cwd: &snapshot.cwd,
+            plugin_id: &snapshot.plugin_id,
+            model: snapshot.current_model.as_deref(),
+        },
+        &text,
+        origin,
+    );
+    let embedded_context = !pastes.is_empty()
+        && host
+            .prompt_embedded_context(key)
+            .map_err(|e| e.to_string())?;
     host.send(
-        &key,
-        prompt::with_resource_links(prompt::compose(text, images), links),
+        key,
+        prompt::with_pasted_texts(
+            prompt::with_resource_links(prompt::compose(text, images), links),
+            pastes,
+            embedded_context,
+        ),
     )
     .map_err(|e| e.to_string())
 }
@@ -1946,9 +2427,23 @@ async fn build_bootstrap(
     }
 }
 
+/// Cancel the session's turn. `stop` is the user's Stop button: it also ends
+/// the session's pull request watches, since a Stop means "stop" and a wake
+/// landing right after it would start the agent straight back up. Every
+/// other cancel (a tab closing, a project closing, a guide run cancelled)
+/// leaves the watches on; both drop a wake held for the turn.
 #[tauri::command]
-pub fn agents_cancel(key: SessionKey, host: State<'_, Arc<AgentHost>>) -> Result<(), String> {
-    host.cancel(&key).map_err(|e| e.to_string())
+pub fn agents_cancel(
+    key: SessionKey,
+    stop: Option<bool>,
+    host: State<'_, Arc<AgentHost>>,
+) -> Result<(), String> {
+    if stop.unwrap_or(false) {
+        host.stop(&key)
+    } else {
+        host.interrupt(&key)
+    }
+    .map_err(|e| e.to_string())
 }
 
 /// Tear down a session's backend state when its tab closes or the project
@@ -2589,6 +3084,80 @@ impl PendingUpdates {
 }
 
 #[cfg(test)]
+mod snooze_waker_tests {
+    use std::path::PathBuf;
+    use std::time::Duration as StdDuration;
+
+    use agent_client_protocol::schema::v1 as acp;
+    use atlas_thread_metadata::{PathList, ThreadId, ThreadMetadata, ThreadMetadataStore};
+    use chrono::{Duration, Utc};
+
+    use super::run_snooze_waker;
+
+    fn saved(store: &ThreadMetadataStore) -> ThreadId {
+        let mut thread = ThreadMetadata::new(
+            ThreadId::new(),
+            "some-agent".into(),
+            PathList::new(&[PathBuf::from("/tmp/atlas")]),
+        );
+        thread.session_id = Some(acp::SessionId::new(thread.thread_id.to_key_string()));
+        let id = thread.thread_id;
+        store.save_all(vec![thread]);
+        id
+    }
+
+    async fn until_awake(store: &ThreadMetadataStore, id: ThreadId) -> bool {
+        for _ in 0..60 {
+            if !store.thread(id).unwrap().is_snoozed() {
+                return true;
+            }
+            tokio::time::sleep(StdDuration::from_millis(50)).await;
+        }
+        false
+    }
+
+    /// One timer serves every snooze: one already due when it starts wakes at
+    /// once, one set afterwards is picked up from the change it makes, and
+    /// each wakes at its own time — not before.
+    #[tokio::test]
+    async fn the_timer_wakes_each_snooze_at_its_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ThreadMetadataStore::open(dir.path().join("threads.db")).unwrap();
+
+        let overdue = saved(&store);
+        let mut row = store.thread(overdue).unwrap();
+        row.snoozed_until = Some(Utc::now() - Duration::minutes(5));
+        row.snoozed_at = Some(Utc::now() - Duration::hours(1));
+        store.save_all(vec![row]);
+
+        let waker = tokio::spawn(run_snooze_waker(store.clone()));
+        assert!(
+            until_awake(&store, overdue).await,
+            "a missed wake fires at start"
+        );
+        assert!(store.thread(overdue).unwrap().is_woke());
+
+        let later = saved(&store);
+        let distant = saved(&store);
+        store.snooze(later, Utc::now() + Duration::milliseconds(400));
+        store.snooze(distant, Utc::now() + Duration::hours(2));
+        assert!(
+            store.thread(later).unwrap().is_snoozed(),
+            "not before its time"
+        );
+        assert!(
+            until_awake(&store, later).await,
+            "a new snooze is scheduled"
+        );
+        assert!(
+            store.thread(distant).unwrap().is_snoozed(),
+            "and the distant one sleeps on"
+        );
+        waker.abort();
+    }
+}
+
+#[cfg(test)]
 mod project_dir_tests {
     use super::canonical_project_dir;
 
@@ -2640,5 +3209,183 @@ mod project_dir_tests {
         );
         assert_eq!(canonical_project_dir(""), "");
         assert_eq!(canonical_project_dir("   "), "");
+    }
+}
+
+#[cfg(test)]
+mod coalesce_tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use super::coalesce_changes;
+
+    /// A burst of store changes — many a turn — is one sidebar refresh, sent
+    /// once the burst's window closes; a later change is its own refresh; and
+    /// the forwarder ends with the store.
+    #[tokio::test]
+    async fn a_burst_of_changes_is_one_event_on_the_trailing_edge() {
+        let (tx, rx) = tokio::sync::broadcast::channel::<()>(16);
+        let emitted = Arc::new(AtomicUsize::new(0));
+        let count = emitted.clone();
+        let window = Duration::from_millis(100);
+        let task = tokio::spawn(coalesce_changes(rx, window, move || {
+            count.fetch_add(1, Ordering::SeqCst);
+        }));
+
+        // More changes than the channel holds: the lag folds in too.
+        for _ in 0..50 {
+            tx.send(()).unwrap();
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert_eq!(
+            emitted.load(Ordering::SeqCst),
+            0,
+            "not before the window closes"
+        );
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        assert_eq!(emitted.load(Ordering::SeqCst), 1, "one event for the burst");
+
+        tx.send(()).unwrap();
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        assert_eq!(emitted.load(Ordering::SeqCst), 2);
+
+        drop(tx);
+        tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .expect("the forwarder ends with its store")
+            .unwrap();
+        assert_eq!(emitted.load(Ordering::SeqCst), 2, "no event for the close");
+    }
+}
+
+#[cfg(test)]
+mod prompt_books_tests {
+    use std::cell::RefCell;
+
+    use super::{record_prompt, PromptBooks, PromptMeta, PromptOrigin};
+
+    /// Every book write, in order, with what it was given.
+    #[derive(Default)]
+    struct Recording {
+        sharing: bool,
+        writes: RefCell<Vec<String>>,
+    }
+
+    impl PromptBooks for Recording {
+        fn capture(
+            &self,
+            session_id: &str,
+            cwd: &str,
+            plugin_id: &str,
+            model: Option<&str>,
+            text: &str,
+        ) {
+            self.writes.borrow_mut().push(format!(
+                "capture {session_id} {cwd} {plugin_id} {} {text}",
+                model.unwrap_or("-")
+            ));
+        }
+        fn interaction(&self, session_id: &str) {
+            self.writes
+                .borrow_mut()
+                .push(format!("interaction {session_id}"));
+        }
+        fn transcript(&self, session_id: &str, cwd: &str, plugin_id: &str, text: &str) {
+            self.writes
+                .borrow_mut()
+                .push(format!("transcript {session_id} {cwd} {plugin_id} {text}"));
+        }
+        fn sharing_enabled(&self, _cwd: &str) -> bool {
+            self.sharing
+        }
+        fn register_memory(&self, session_id: &str, cwd: &str, plugin_id: &str) {
+            self.writes
+                .borrow_mut()
+                .push(format!("memory {session_id} {cwd} {plugin_id}"));
+        }
+    }
+
+    fn meta(cwd: &str) -> PromptMeta<'_> {
+        PromptMeta {
+            cwd,
+            plugin_id: "claude-code",
+            model: Some("opus"),
+        }
+    }
+
+    /// The user's prompt is written exactly as `agents_send` always wrote it:
+    /// capture first, then the interaction, the transcript, and the memory
+    /// registration where sharing is on.
+    #[test]
+    fn a_user_prompt_writes_every_book_in_order() {
+        let books = Recording {
+            sharing: true,
+            ..Recording::default()
+        };
+        record_prompt(&books, "s1", &meta("/work"), "fix it", PromptOrigin::User);
+        assert_eq!(
+            books.writes.into_inner(),
+            vec![
+                "capture s1 /work claude-code opus fix it",
+                "interaction s1",
+                "transcript s1 /work claude-code fix it",
+                "memory s1 /work claude-code",
+            ]
+        );
+    }
+
+    #[test]
+    fn without_sharing_no_memory_registration() {
+        let books = Recording::default();
+        record_prompt(&books, "s1", &meta("/work"), "hi", PromptOrigin::User);
+        assert_eq!(
+            books.writes.into_inner(),
+            vec![
+                "capture s1 /work claude-code opus hi",
+                "interaction s1",
+                "transcript s1 /work claude-code hi",
+            ]
+        );
+    }
+
+    /// A session with no folder is captured and counts as interacted with,
+    /// but has no transcript and no memory scope to register in.
+    #[test]
+    fn without_a_folder_only_capture_and_the_interaction() {
+        let books = Recording {
+            sharing: true,
+            ..Recording::default()
+        };
+        record_prompt(&books, "s1", &meta(""), "hi", PromptOrigin::User);
+        assert_eq!(
+            books.writes.into_inner(),
+            vec!["capture s1  claude-code opus hi", "interaction s1"]
+        );
+    }
+
+    /// A watch's wake is written like any prompt, except that it is not the
+    /// user interacting with the session.
+    #[test]
+    fn a_wake_is_recorded_but_is_not_the_user() {
+        let books = Recording {
+            sharing: true,
+            ..Recording::default()
+        };
+        record_prompt(
+            &books,
+            "s1",
+            &meta("/work"),
+            "Update on pull request #7",
+            PromptOrigin::Atlas,
+        );
+        assert_eq!(
+            books.writes.into_inner(),
+            vec![
+                "capture s1 /work claude-code opus Update on pull request #7",
+                "transcript s1 /work claude-code Update on pull request #7",
+                "memory s1 /work claude-code",
+            ]
+        );
     }
 }

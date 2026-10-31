@@ -78,7 +78,7 @@ export function DraftEditor({ conv, draft }: { conv: ChatConversation; draft: Pr
       view.destroy();
     };
     // Recreated only on identity-level changes; yCollab owns doc content.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, ytext, sent]);
 
   // Live-reskin on every theme apply, as `editor-panel.tsx` does.

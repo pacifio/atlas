@@ -23,7 +23,7 @@ use crate::error::{Error, Result};
 /// withdrawn; the real V9 (`file_touch.sketch_after`) then reused it. A store
 /// stamped 9 may therefore be either shape, which is why `migrate` re-runs V9
 /// tolerantly on a 9 rather than trusting the stamp — see the comment there.
-pub const SCHEMA_VERSION: i64 = 10;
+pub const SCHEMA_VERSION: i64 = 11;
 
 pub fn migrate(conn: &Connection) -> Result<()> {
     // Fast path, outside any transaction: the overwhelmingly common case is a
@@ -95,6 +95,10 @@ pub fn migrate(conn: &Connection) -> Result<()> {
         }
         if found < 10 {
             conn.execute_batch(V10)?;
+        }
+        if found < 11 {
+            // One ALTER TABLE and a backfill, both safe to re-run.
+            apply_tolerant(conn, V11)?;
         }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(())
@@ -263,6 +267,21 @@ CREATE TABLE IF NOT EXISTS usage_cursor (
 -- The dashboard's "ledger since" figure, and any date-ranged read.
 CREATE INDEX IF NOT EXISTS idx_usage_delta_recorded
     ON usage_delta (recorded_at);
+"#;
+
+const V11: &str = r#"
+-- When a Session was flagged, apart from when its record last changed.
+-- Capture health counts recent flags, and `updated_at` moves with every prompt
+-- and message, so a Session flagged weeks ago that is still in use would keep
+-- counting as freshly flagged and hold the Project's health down for as long
+-- as anyone worked in it.
+ALTER TABLE agent_session ADD COLUMN flagged_at TEXT;
+
+-- Flags from before this column: the last change is the closest thing to the
+-- flag's time there is, and it can only be later than the flag, so these age
+-- out of the window no later than they would have.
+UPDATE agent_session SET flagged_at = updated_at
+ WHERE needs_attention = 1 AND flagged_at IS NULL;
 "#;
 
 const V1: &str = r#"

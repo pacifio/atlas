@@ -30,6 +30,42 @@ import { fileURLToPath } from "node:url";
  *    renamed argument (`threads_sync_project`'s `cwd`) compiles on both sides
  *    and silently arrives as `undefined` / fails to deserialize.
  *
+ * #11 pins a cloud comment's shape: the TS `Comment` the threads render and
+ *    the Rust `atlas_artifacts::model::Comment` that deserializes the server's
+ *    rows, field for field, plus their `AnchorKind`s. The server's own
+ *    `ArtifactComment` (in the separate server repository's contracts
+ *    package) is not reachable from this repo or its CI, so it is not pinned
+ *    here; a field the server adds is dropped by serde without an error,
+ *    which is exactly why the two sides this repo owns must at least agree.
+ * #12 pins the cite chip (`MentionCitedText`) to the `compose_prompt`
+ *    variant it deserializes as (`MentionSpec::CitedText`): a renamed field
+ *    there arrives as `None`, and the agent silently loses the note or row.
+ *    The review comment chip (`MentionReviewComment`, a comment on diff or
+ *    file lines) is pinned the same way to `MentionSpec::ReviewComment`: a
+ *    renamed field would fail the send's deserialize, or reach the agent
+ *    without its quoted lines.
+ * #13 pins the pull-request surface: every `Pr*` struct and enum in
+ *    `commands/pull_requests/model.rs` against its twin in
+ *    `pull-requests-types.ts`, the error kinds the hand-written serializer
+ *    emits, and every `pr_*` command's argument names against its wrapper.
+ *    The surface is wide (dozens of shapes) and read by UI that does not
+ *    exist yet, so a renamed field would otherwise surface as `undefined`
+ *    long after the change that caused it.
+ * #14 pins attached projects: the session row's `attachedProjects` entries
+ *    and an attach's answer against `agent_host.rs`, the access and source
+ *    words against the store's enums, every `session_projects_*` command's
+ *    argument names against `session-projects-api.ts`, and the `access` a
+ *    project or repo mention carries into `compose_prompt`. A renamed access
+ *    word would read every project as unattached — the agent told nothing
+ *    about what it may edit, and the chip's toggle never shown.
+ * #15 pins linked pull requests: the session row's `pullRequests` entries and
+ *    their snapshot against `session_pull_requests.rs`, the source words
+ *    against the store's enum (less the tombstone, which never leaves Rust),
+ *    the snapshot fields the store keeps, every `session_pull_requests_*`
+ *    command's argument names, and `pr_create`'s `sessionId`, which is what
+ *    records a `created` link. A renamed field would read every session as
+ *    having no pull request, and nothing else would notice.
+ *
  * Unlike `tests/state-payload-contract.test.ts` (which is specifically the
  * `save_app_state` / `bootstrap_app_state` payload and generalises over many
  * struct pairs), these four are one-off, unrelated commands — plain regression
@@ -258,6 +294,24 @@ describe("thread history ↔ agent_host wire shapes (#7)", () => {
     expect(tsInterfaceProps(ts, "ThreadRow")).toContain("liveElsewhere");
   });
 
+  it("ThreadRow carries settledAt, the Settled shelf's only input", () => {
+    expect(tsInterfaceProps(ts, "ThreadRow")).toContain("settledAt");
+  });
+
+  it("ThreadRow carries the lifecycle Rust decides: pin, snooze, unread, woke", () => {
+    expect(tsInterfaceProps(ts, "ThreadRow")).toEqual(
+      expect.arrayContaining(["pinOrder", "snoozedUntil", "unread", "woke"]),
+    );
+  });
+
+  it("ThreadRow carries model, so the hover card names it for a session not open", () => {
+    expect(tsInterfaceProps(ts, "ThreadRow")).toContain("model");
+  });
+
+  it("ThreadRow carries forkedFromSessionId, the only input to Lineage's parent and branches", () => {
+    expect(tsInterfaceProps(ts, "ThreadRow")).toContain("forkedFromSessionId");
+  });
+
   it("the threads_* history commands are returned as those structs", () => {
     expect(commands).toMatch(/fn threads_history\([\s\S]*?\) -> Result<Vec<[\w:]*ThreadRow>/);
     expect(commands).toMatch(
@@ -270,7 +324,22 @@ describe("thread history ↔ agent_host wire shapes (#7)", () => {
 
   it("covers the thread commands, including threads_sync_project", () => {
     expect(invoked).toEqual(
-      expect.arrayContaining(["threads_sync_project", "threads_projects", "threads_history"]),
+      expect.arrayContaining([
+        "threads_sync_project",
+        "threads_projects",
+        "threads_history",
+        "threads_settle",
+        "threads_unsettle",
+        "threads_pin",
+        "threads_unpin",
+        "threads_reorder_pin",
+        "threads_snooze",
+        "threads_wake",
+        "threads_unsnooze",
+        "threads_rename",
+        "threads_mark_viewed",
+        "threads_mark_unread",
+      ]),
     );
   });
 
@@ -419,5 +488,389 @@ describe("slept_mid_turn: Rust SleptMidTurn ↔ the renderer's delta (#9)", () =
   it("the chat store applies it", () => {
     expect(store).toMatch(/case "slept_mid_turn":/);
     expect(store).toMatch(/env\.turn_seq/);
+  });
+});
+
+describe("timing: tool-call and turn times ↔ the renderer (#10)", () => {
+  // A call's start/end and a turn's wall time travel from Rust so "Worked for",
+  // "Stopped after" and each step's duration survive a reload. Every name here
+  // is a string to `tsc`: a rename on either side compiles, and the durations
+  // silently vanish from every reloaded session.
+  const types = read("crates", "atlas-agent-wire", "src", "types.rs");
+  const delta = read("crates", "atlas-agent-wire", "src", "delta.rs");
+  const wireTs = read("src", "types", "agents.ts");
+  const store = read("src", "features", "chat", "stores", "chat-store.ts");
+  const snapshot = read("src", "features", "chat", "lib", "snapshot-message.ts");
+
+  it("a tool call's times are declared on both sides and mapped by the store", () => {
+    const rust = rustStructFields(rustItem(types, "struct", "ToolCall").body);
+    const ts = tsInterfaceProps(wireTs, "ToolCall");
+    for (const field of ["started_at_ms", "ended_at_ms"]) {
+      expect(rust).toContain(field);
+      expect(ts).toContain(field);
+      expect(store).toContain(`tc.${field}`);
+      expect(snapshot).toContain(`tc.${field}`);
+    }
+  });
+
+  it("a snapshot message carries its turn's timing on both sides", () => {
+    const rust = rustStructFields(rustItem(types, "struct", "Message").body);
+    const ts = tsInterfaceProps(wireTs, "SessionMessage");
+    for (const field of ["worked_ms", "stop_reason"]) {
+      expect(rust).toContain(field);
+      expect(ts).toContain(field);
+      expect(snapshot).toContain(`m.${field}`);
+    }
+  });
+
+  it("a message says when its time is only a replay's, on both sides", () => {
+    // An agent's `session/load` replay carries no per-message time, so Rust
+    // flags those messages. A rename on either side compiles, and every
+    // replayed message goes back to showing the replay time as its own.
+    const rust = rustStructFields(rustItem(types, "struct", "Message").body);
+    const ts = tsInterfaceProps(wireTs, "SessionMessage");
+    expect(rust).toContain("timestamp_approximate");
+    expect(ts).toContain("timestamp_approximate");
+    // Both paths that turn a wire message into a ChatMessage carry it: the
+    // snapshot mapper and the live `message_appended` arm.
+    expect(snapshot).toContain("m.timestamp_approximate");
+    expect(store).toContain("m.timestamp_approximate");
+  });
+
+  it("turn_finished carries the turn's start and end on both sides", () => {
+    const rust = /TurnFinished\s*\{([\s\S]*?)\n\s{4}\},/.exec(delta);
+    expect(rust, "the TurnFinished variant").not.toBeNull();
+    const ts = /kind: "turn_finished";([\s\S]*?)\}/.exec(wireTs);
+    expect(ts, "the turn_finished member of AgentDelta").not.toBeNull();
+    for (const field of ["started_at_ms", "worked_ms"]) {
+      expect(rust![1]).toMatch(new RegExp(`\\b${field}: Option<(i64|u64)>,`));
+      expect(ts![1]).toMatch(new RegExp(`\\b${field}\\?: number;`));
+      expect(store).toContain(`env.${field}`);
+    }
+    expect(rust![1]).toMatch(/\bended_at_ms: Option<i64>,/);
+    expect(ts![1]).toMatch(/\bended_at_ms\?: number;/);
+  });
+});
+
+/** Field names of one `Variant { ... }` inside an enum body. */
+function rustVariantFields(enumBody: string, variant: string): string[] {
+  const m = new RegExp(`\\n\\s{4}${variant}\\s*\\{([\\s\\S]*?)\\n\\s{4}\\},`).exec(enumBody);
+  if (!m) throw new Error(`Rust variant ${variant} not found — the source moved`);
+  return rustStructFields(m[1]);
+}
+
+describe("cloud comments: TS Comment ↔ atlas_artifacts Comment (#11)", () => {
+  const rust = read("crates", "atlas-artifacts", "src", "model.rs");
+  const ts = read("src", "features", "artifacts", "lib", "comments-api.ts");
+
+  it("Comment has the same fields on both sides, camelCased", () => {
+    const { attrs, body } = rustItem(rust, "struct", "Comment");
+    expect(attrs).toMatch(/rename_all\s*=\s*"camelCase"/);
+    const rustFields = rustStructFields(body).map(snakeToCamel).sort();
+    // Floor against a vacuous pass: the fields the passage comment relies on.
+    expect(rustFields).toEqual(expect.arrayContaining(["anchorKind", "anchorId", "body"]));
+    expect(tsInterfaceProps(ts, "Comment").sort()).toEqual(rustFields);
+  });
+
+  it("CommentVotes has the same fields on both sides", () => {
+    const { body } = rustItem(rust, "struct", "CommentVotes");
+    expect(tsInterfaceProps(ts, "CommentVotes").sort()).toEqual(rustStructFields(body).sort());
+  });
+
+  it("AnchorKind has the same members on both sides", () => {
+    const { attrs, body } = rustItem(rust, "enum", "AnchorKind");
+    expect(attrs).toMatch(/rename_all\s*=\s*"snake_case"/);
+    expect(tsUnionLiterals(ts, "AnchorKind").sort()).toEqual(
+      rustEnumVariants(body).map(pascalToSnake).sort(),
+    );
+  });
+});
+
+describe("cite chip: MentionCitedText ↔ MentionSpec::CitedText (#12)", () => {
+  const rust = read("src-tauri", "src", "commands", "compose_prompt.rs");
+  const ts = read("src", "features", "chat", "lib", "mentions.ts");
+
+  it("carries the same fields under the same tag", () => {
+    const { attrs, body } = rustItem(rust, "enum", "MentionSpec");
+    expect(attrs).toMatch(/tag\s*=\s*"kind"/);
+    expect(attrs).toMatch(/rename_all\s*=\s*"snake_case"/);
+    expect(attrs).toMatch(/rename_all_fields\s*=\s*"camelCase"/);
+    const rustFields = rustVariantFields(body, "CitedText").map(snakeToCamel).sort();
+    expect(rustFields).toEqual(expect.arrayContaining(["messageId", "rowId", "text", "note"]));
+    const tsFields = tsInterfaceProps(ts, "MentionCitedText").filter((f) => f !== "kind");
+    expect(tsFields.sort()).toEqual(rustFields);
+    expect(ts).toMatch(/interface MentionCitedText \{\s*kind: "cited_text";/);
+    expect(pascalToSnake("CitedText")).toBe("cited_text");
+  });
+});
+
+describe("review comment chip: MentionReviewComment ↔ MentionSpec::ReviewComment (#12)", () => {
+  const rust = read("src-tauri", "src", "commands", "compose_prompt.rs");
+  const ts = read("src", "features", "chat", "lib", "mentions.ts");
+
+  it("carries the same fields under the same tag", () => {
+    const { body } = rustItem(rust, "enum", "MentionSpec");
+    const rustFields = rustVariantFields(body, "ReviewComment").map(snakeToCamel).sort();
+    expect(rustFields).toEqual(
+      expect.arrayContaining(["filePath", "rangeLabel", "diff", "fenceLanguage", "text"]),
+    );
+    const tsFields = tsInterfaceProps(ts, "MentionReviewComment").filter((f) => f !== "kind");
+    expect(tsFields.sort()).toEqual(rustFields);
+    expect(ts).toMatch(/interface MentionReviewComment \{\s*kind: "review_comment";/);
+    expect(pascalToSnake("ReviewComment")).toBe("review_comment");
+  });
+});
+
+describe("pull requests: model.rs ↔ pull-requests-types.ts, and every pr_* command (#13)", () => {
+  const model = read("src-tauri", "src", "commands", "pull_requests", "model.rs");
+  const commands = read("src-tauri", "src", "commands", "pull_requests", "mod.rs");
+  const types = read("src", "features", "pull-requests", "lib", "pull-requests-types.ts");
+  const api = read("src", "features", "pull-requests", "lib", "pull-requests-api.ts");
+
+  const structs = [...model.matchAll(/^pub struct (Pr\w+)\s*\{/gm)].map((m) => m[1]);
+  const unitEnums = [...model.matchAll(/^pub enum (Pr\w+)\s*\{/gm)]
+    .map((m) => m[1])
+    // A tagged enum carries fields and is pinned below; `PrError` serializes by hand.
+    .filter((name) => !["PrError", "PrTimelineItem", "PrReviewPosition"].includes(name));
+  const kebab = (s: string) => pascalToSnake(s).replace(/_/g, "-");
+
+  it("finds the structs and enums it pins", () => {
+    expect(structs).toEqual(expect.arrayContaining(["PrDetail", "PrActivity", "PrDiffResult"]));
+    expect(unitEnums).toEqual(expect.arrayContaining(["PrState", "PrAction", "PrCheckStatus"]));
+  });
+
+  it("every struct has the same fields on both sides, camelCased", () => {
+    for (const name of structs) {
+      const { attrs, body } = rustItem(model, "struct", name);
+      expect(attrs, name).toMatch(/rename_all\s*=\s*"camelCase"/);
+      const rustFields = rustStructFields(body).map(snakeToCamel).sort();
+      expect(tsInterfaceProps(types, name).sort(), name).toEqual(rustFields);
+    }
+  });
+
+  it("every value enum has the same kebab-case members on both sides", () => {
+    for (const name of unitEnums) {
+      const { attrs, body } = rustItem(model, "enum", name);
+      expect(attrs, name).toMatch(/rename_all\s*=\s*"kebab-case"/);
+      expect(tsUnionLiterals(types, name).sort(), name).toEqual(
+        rustEnumVariants(body).map(kebab).sort(),
+      );
+    }
+  });
+
+  it("every error kind the serializer writes is a PrErrorKind", () => {
+    const written = [...model.matchAll(/=> \("(\w+)", /g)].map((m) => m[1]);
+    expect(new Set(written)).toEqual(new Set(tsUnionLiterals(types, "PrErrorKind")));
+  });
+
+  it("the tagged enums carry the same variants and fields", () => {
+    for (const name of ["PrTimelineItem", "PrReviewPosition"]) {
+      const { attrs, body } = rustItem(model, "enum", name);
+      expect(attrs, name).toMatch(/tag\s*=\s*"kind"/);
+      const variants = [...body.matchAll(/^\s{4}(\w+)\s*\{/gm)].map((m) => m[1]);
+      expect(variants.length, name).toBeGreaterThan(1);
+      const union = new RegExp(`type\\s+${name}\\s*=([\\s\\S]*?);\\n\\n`).exec(types)![1];
+      for (const variant of variants) {
+        const member = new RegExp(`\\{\\s*kind: "${kebab(variant)}";([^}]*)\\}`).exec(union);
+        expect(member, `${name}::${variant}`).not.toBeNull();
+        const tsFields = [...member![1].matchAll(/(\w+)\??:/g)].map((m) => m[1]).sort();
+        const fieldBody = new RegExp(`${variant}\\s*\\{([^}]*)\\}`).exec(body)![1];
+        const rustFields = fieldBody
+          .split(",")
+          .map((f) => /^\s*(\w+):/.exec(f)?.[1])
+          .filter((f): f is string => !!f)
+          .map(snakeToCamel)
+          .sort();
+        expect(tsFields, `${name}::${variant}`).toEqual(rustFields);
+      }
+    }
+  });
+
+  it("every pr_* command is invoked with exactly its Rust argument names", () => {
+    const names = [...commands.matchAll(/pub async fn (pr_\w+)\s*\(/g)].map((m) => m[1]);
+    expect(names).toEqual(expect.arrayContaining(["pr_list", "pr_detail", "pr_diff", "pr_image"]));
+    for (const name of names) {
+      expect(tsInvokeArgKeys(api, name).sort(), name).toEqual(
+        rustCommandArgKeys(commands, name).sort(),
+      );
+    }
+  });
+});
+
+describe("attached projects: session row, commands and mentions (#14)", () => {
+  const host = read("src-tauri", "src", "commands", "agent_host.rs");
+  const commands = read("src-tauri", "src", "commands", "session_projects.rs");
+  const store = read("crates", "atlas-thread-metadata", "src", "projects.rs");
+  const compose = read("src-tauri", "src", "commands", "compose_prompt.rs");
+  const history = read("src", "features", "chat", "lib", "history-api.ts");
+  const api = read("src", "features", "chat", "lib", "session-projects-api.ts");
+  const mentions = read("src", "features", "chat", "lib", "mentions.ts");
+
+  const PAIRS: Array<[rust: string, ts: string, source: string]> = [
+    ["AttachedProjectWire", "AttachedProject", history],
+    ["SessionProjectsChange", "SessionProjectsChange", api],
+  ];
+  for (const [rustName, tsName, source] of PAIRS) {
+    it(`${tsName} matches Rust ${rustName} field for field`, () => {
+      const { attrs, body } = rustItem(host, "struct", rustName);
+      expect(attrs).toMatch(/rename_all\s*=\s*"camelCase"/);
+      const rustWire = rustStructFields(body).map(snakeToCamel);
+      expect(rustWire.length).toBeGreaterThan(1);
+      expect([...tsInterfaceProps(source, tsName)].sort()).toEqual([...rustWire].sort());
+    });
+  }
+
+  it("ThreadRow carries attachedProjects, which a project filter will match on", () => {
+    expect(tsInterfaceProps(history, "ThreadRow")).toContain("attachedProjects");
+  });
+
+  const ENUMS: Array<[rust: string, ts: string]> = [
+    ["ProjectAccess", "ProjectAccess"],
+    ["AttachSource", "AttachSource"],
+  ];
+  for (const [rustName, tsName] of ENUMS) {
+    it(`the ${tsName} words are the store's ${rustName} variants`, () => {
+      const { attrs, body } = rustItem(store, "enum", rustName);
+      expect(attrs).toMatch(/rename_all\s*=\s*"snake_case"/);
+      const rustWire = rustEnumVariants(body).map(pascalToSnake);
+      expect(rustWire.length).toBeGreaterThan(1);
+      expect([...tsUnionLiterals(history, tsName)].sort()).toEqual([...rustWire].sort());
+    });
+  }
+
+  const invoked = [...api.matchAll(/invoke(?:<[^(]*>)?\(\s*"(session_projects_\w+)"/g)].map(
+    (m) => m[1],
+  );
+  it("covers every session_projects_* command", () => {
+    expect([...invoked].sort()).toEqual([
+      "session_projects_attach",
+      "session_projects_detach",
+      "session_projects_list",
+      "session_projects_set_access",
+    ]);
+  });
+  for (const name of invoked) {
+    it(`${name}'s argument keys match its Rust parameters`, () => {
+      expect([...tsInvokeArgKeys(api, name)].sort()).toEqual(
+        [...rustCommandArgKeys(commands, name)].sort(),
+      );
+    });
+  }
+
+  it("a project or repo mention carries `access` into compose_prompt", () => {
+    const { body } = rustItem(compose, "enum", "MentionSpec");
+    expect(rustVariantFields(body, "Workspace")).toContain("access");
+    expect(rustVariantFields(body, "Repo")).toContain("access");
+    expect(tsInterfaceProps(mentions, "MentionProject")).toContain("access");
+    expect(tsInterfaceProps(mentions, "MentionRepo")).toContain("access");
+  });
+});
+
+describe("linked pull requests: session row, store and commands (#15)", () => {
+  const host = read("src-tauri", "src", "commands", "agent_host.rs");
+  const commands = read("src-tauri", "src", "commands", "session_pull_requests.rs");
+  const create = read("src-tauri", "src", "commands", "pull_requests", "create.rs");
+  const store = read("crates", "atlas-thread-metadata", "src", "pull_requests.rs");
+  const history = read("src", "features", "chat", "lib", "history-api.ts");
+  const api = read("src", "features", "pull-requests", "lib", "session-pull-requests-api.ts");
+  const prApi = read("src", "features", "pull-requests", "lib", "pull-requests-api.ts");
+
+  const PAIRS: Array<[rust: string, ts: string, source: string]> = [
+    ["PullRequestLinkWire", "PullRequestLink", history],
+    ["PullRequestSnapshotWire", "PullRequestLinkSnapshot", history],
+    ["SessionPullRequestsChange", "SessionPullRequestsChange", api],
+    ["SessionPullRequestsSync", "SessionPullRequestsSync", api],
+  ];
+  for (const [rustName, tsName, source] of PAIRS) {
+    it(`${tsName} matches Rust ${rustName} field for field`, () => {
+      const { attrs, body } = rustItem(commands, "struct", rustName);
+      expect(attrs).toMatch(/rename_all\s*=\s*"camelCase"/);
+      const rustWire = rustStructFields(body).map(snakeToCamel);
+      expect(rustWire.length).toBeGreaterThan(1);
+      expect([...tsInterfaceProps(source, tsName)].sort()).toEqual([...rustWire].sort());
+    });
+  }
+
+  it("the watch's injected-prompt event matches SessionPromptInjected field for field", () => {
+    const watch = read("src-tauri", "src", "commands", "pull_request_watch.rs");
+    const injected = read("src", "features", "chat", "lib", "injected-prompt.ts");
+    const { attrs, body } = rustItem(watch, "struct", "SessionPromptInjected");
+    expect(attrs).toMatch(/rename_all\s*=\s*"camelCase"/);
+    const rustWire = rustStructFields(body).map(snakeToCamel);
+    expect(rustWire.length).toBeGreaterThan(1);
+    expect([...tsInterfaceProps(injected, "SessionPromptInjected")].sort()).toEqual(
+      [...rustWire].sort(),
+    );
+    // Every source word Rust sends (`WakeSource::token`) is one the
+    // frontend knows, and the event carries the wake's own.
+    expect(watch).toMatch(/source:\s*wake\.source\.token\(\)\.into\(\)/);
+    const wake = read("src-tauri", "src", "commands", "agent_host", "wake.rs");
+    const tokenFn = wake.slice(wake.indexOf("pub fn token"));
+    const rustTokens = [
+      ...tokenFn.slice(0, tokenFn.indexOf("\n    }\n")).matchAll(/=> "([a-z-]+)"/g),
+    ]
+      .map((m) => m[1])
+      .sort();
+    const union = /InjectedPromptSource = ([^;]+);/.exec(injected)?.[1] ?? "";
+    const tsTokens = [...union.matchAll(/"([a-z-]+)"/g)].map((m) => m[1]).sort();
+    expect(rustTokens).toEqual(["pull-request-watch", "restart"]);
+    expect(tsTokens).toEqual(rustTokens);
+  });
+
+  it("ThreadRow carries pullRequests, the sidebar badge's and the overlay's only input", () => {
+    expect(tsInterfaceProps(history, "ThreadRow")).toContain("pullRequests");
+    expect(rustStructFields(rustItem(host, "struct", "ThreadRow").body)).toContain("pull_requests");
+  });
+
+  it("the snapshot the wire carries is the snapshot the store keeps", () => {
+    const kept = rustStructFields(rustItem(store, "struct", "PullRequestSnapshot").body);
+    const wire = rustStructFields(rustItem(commands, "struct", "PullRequestSnapshotWire").body);
+    expect([...wire].sort()).toEqual([...kept].sort());
+  });
+
+  it("the snapshot keeps the merge time, which dates a merge for settling", () => {
+    // Additive: optional on both sides, so a snapshot stored before it still
+    // reads. Settle on merge falls back to `updated_at` when it is missing.
+    const kept = rustItem(store, "struct", "PullRequestSnapshot").body;
+    expect(rustStructFields(kept)).toContain("merged_at");
+    expect(kept).toMatch(/#\[serde\(default[^\]]*\)\]\s*pub merged_at: Option<String>/);
+    expect(tsInterfaceProps(history, "PullRequestLinkSnapshot")).toContain("mergedAt");
+  });
+
+  it("the source words are the store's variants, less the tombstone", () => {
+    const { attrs, body } = rustItem(store, "enum", "PullRequestLinkSource");
+    expect(attrs).toMatch(/rename_all\s*=\s*"snake_case"/);
+    const rustWire = rustEnumVariants(body)
+      .map(pascalToSnake)
+      .filter((w) => w !== "dismissed");
+    expect(rustWire.length).toBeGreaterThan(1);
+    expect([...tsUnionLiterals(history, "PullRequestLinkSource")].sort()).toEqual(
+      [...rustWire].sort(),
+    );
+  });
+
+  const invoked = [...api.matchAll(/invoke(?:<[^(]*>)?\(\s*"(session_pull_requests_\w+)"/g)].map(
+    (m) => m[1],
+  );
+  it("covers every session_pull_requests_* command", () => {
+    const declared = [
+      ...commands.matchAll(/pub (?:async )?fn (session_pull_requests_\w+)\s*\(/g),
+    ].map((m) => m[1]);
+    expect(declared.length).toBe(4);
+    expect([...invoked].sort()).toEqual([...declared].sort());
+  });
+  for (const name of invoked) {
+    it(`${name}'s argument keys match its Rust parameters`, () => {
+      expect([...tsInvokeArgKeys(api, name)].sort()).toEqual(
+        [...rustCommandArgKeys(commands, name)].sort(),
+      );
+    });
+  }
+
+  it("pr_create is invoked with its sessionId, which records the created link", () => {
+    expect(rustCommandArgKeys(create, "pr_create")).toContain("sessionId");
+    expect([...tsInvokeArgKeys(prApi, "pr_create")].sort()).toEqual(
+      [...rustCommandArgKeys(create, "pr_create")].sort(),
+    );
   });
 });

@@ -172,6 +172,31 @@ pub fn enqueue_notification<Notif>(
     }
 }
 
+struct BarrierWork<F: FnOnce() + Send + 'static> {
+    then: F,
+}
+
+impl<F: FnOnce() + Send + 'static> DispatchWorkItem for BarrierWork<F> {
+    fn run(self: Box<Self>, _ctx: &ClientContext) {
+        (self.then)();
+    }
+
+    fn reject(self: Box<Self>) {
+        // Nothing left to wait behind: the queue is gone.
+        (self.then)();
+    }
+}
+
+/// Run `then` on the drain once every message queued before it has been
+/// handled: the end of a `session/load` replay is ordered behind the replay's
+/// own frames this way. Runs at once if the queue is gone.
+pub fn enqueue_barrier(dispatch_tx: &DispatchTx, then: impl FnOnce() + Send + 'static) {
+    let work: DispatchWork = Box::new(BarrierWork { then });
+    if let Err(err) = dispatch_tx.send(work) {
+        err.0.reject();
+    }
+}
+
 /// Start one connection's ordered drain and hand back its sender.
 ///
 /// The drain runs each work item's SYNCHRONOUS phase to completion, in wire
@@ -346,7 +371,9 @@ pub fn handle_complete_elicitation(
 //
 // Bound to the session's granted directories (`AcpThread::work_dirs` — cwd
 // plus any `additionalDirectories`), the same set advertised to the agent in
-// `session/new`. Without this an agent that merely knows a session id can
+// `session/new` — widened by the projects attached to the session at their
+// access: reads may reach every attached project, writes only the read-write
+// ones (`AcpThread::readable_roots` / `writable_roots`). Without this an agent that merely knows a session id can
 // hand back an absolute path or a `../` climb and read or overwrite anything
 // the OS user can touch, not just the project the user granted.
 
@@ -359,7 +386,9 @@ pub fn handle_write_text_file(
         Ok(thread) => thread,
         Err(err) => return respond_err(responder, err),
     };
-    let roots = lock(&thread).work_dirs().to_vec();
+    // The session's own folders and its read-write attached projects; a
+    // read-only attached project is never written through here.
+    let roots = lock(&thread).writable_roots();
 
     // Disk IO off the queue: a write to a slow volume must not stall the
     // messages behind it.
@@ -400,7 +429,9 @@ pub fn handle_read_text_file(
         Ok(thread) => thread,
         Err(err) => return respond_err(responder, err),
     };
-    let roots = lock(&thread).work_dirs().to_vec();
+    // The session's own folders and every attached project, read-only ones
+    // included.
+    let roots = lock(&thread).readable_roots();
 
     let cancellation = responder.cancellation();
     let path = args.path.clone();
@@ -989,8 +1020,10 @@ pub fn handle_create_terminal(
 
     // The cwd is held to the same rule as fs reads/writes: inside a granted
     // root or nowhere. Without this, "run `git status` in /Users/x/.ssh" was
-    // a legal request.
-    let roots = lock(&thread).work_dirs().to_vec();
+    // a legal request. Writable roots, not readable ones: a command can
+    // write wherever it runs, so a read-only attached project is no place to
+    // start one.
+    let roots = lock(&thread).writable_roots();
     if let Some(dir) = cwd.as_deref() {
         if let Err(err) = resolve_within_roots(dir, &roots) {
             return respond_err(
@@ -1278,6 +1311,62 @@ fn with_terminal<R>(
         .terminal(terminal_id)
         .ok_or_else(|| unknown_terminal(terminal_id))?;
     Ok(f(terminal))
+}
+
+#[cfg(test)]
+mod dispatch_barrier_tests {
+    use super::*;
+
+    struct Push(Arc<Mutex<Vec<&'static str>>>, &'static str);
+
+    impl DispatchWorkItem for Push {
+        fn run(self: Box<Self>, _ctx: &ClientContext) {
+            lock(&self.0).push(self.1);
+        }
+
+        fn reject(self: Box<Self>) {}
+    }
+
+    fn ctx() -> ClientContext {
+        ClientContext {
+            sessions: Arc::new(SessionRegistry::default()),
+            request_elicitations: Arc::new(Mutex::new(
+                atlas_acp_thread::elicitation::ElicitationStore::new(
+                    atlas_acp_thread::event_channel().0,
+                ),
+            )),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_barrier_runs_after_everything_queued_before_it() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let tx = spawn_dispatch_queue(ctx());
+        for frame in ["replay 1", "replay 2", "replay 3"] {
+            tx.send(Box::new(Push(seen.clone(), frame))).unwrap();
+        }
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+        let order = seen.clone();
+        enqueue_barrier(&tx, move || {
+            lock(&order).push("end replay");
+            let _ = done_tx.send(());
+        });
+        done_rx.await.unwrap();
+        assert_eq!(
+            *lock(&seen),
+            ["replay 1", "replay 2", "replay 3", "end replay"]
+        );
+    }
+
+    #[test]
+    fn a_barrier_on_a_closed_queue_runs_at_once() {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<DispatchWork>();
+        drop(rx);
+        let ran = Arc::new(Mutex::new(false));
+        let flag = ran.clone();
+        enqueue_barrier(&tx, move || *lock(&flag) = true);
+        assert!(*lock(&ran));
+    }
 }
 
 #[cfg(test)]

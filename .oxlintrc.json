@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["typescript", "unicorn", "oxc"],
+  "plugins": ["typescript", "unicorn", "oxc", "react", "jsx-a11y"],
   "jsPlugins": ["@shadcn/lint"],
   "settings": {
     "shadcn": {
@@ -11,6 +11,31 @@
     "correctness": "error"
   },
   "rules": {
+    "typescript/no-explicit-any": "error",
+    "react-hooks/rules-of-hooks": "error",
+    "react/set-state-in-effect": "off",
+    "react/refs": "off",
+    "react/preserve-manual-memoization": "off",
+    "react/incompatible-library": "off",
+    "react/purity": "off",
+    "react/immutability": "off",
+    "react/static-components": "off",
+    "react/use-memo": "off",
+    "react-hooks/exhaustive-deps": "off",
+    "jsx-a11y/prefer-tag-over-role": "off",
+    "jsx-a11y/no-autofocus": "off",
+    "jsx-a11y/no-static-element-interactions": "off",
+    "jsx-a11y/click-events-have-key-events": "off",
+    "jsx-a11y/interactive-supports-focus": "off",
+    "jsx-a11y/no-noninteractive-tabindex": "off",
+    "jsx-a11y/no-noninteractive-element-interactions": "off",
+    "jsx-a11y/media-has-caption": "off",
+    "jsx-a11y/control-has-associated-label": "off",
+    "jsx-a11y/no-noninteractive-element-to-interactive-role": "off",
+    "jsx-a11y/label-has-associated-control": "off",
+    "jsx-a11y/anchor-has-content": "off",
+    "jsx-a11y/role-supports-aria-props": "off",
+    "jsx-a11y/role-has-required-aria-props": "off",
     "shadcn/no-unknown-classes": [
       "error",
       {
@@ -47,7 +72,6 @@
           "atlas-pill-swap",
           "atlas-pixel-cell",
           "atlas-project-rail",
-          "atlas-project-rail--glass",
           "atlas-prose",
           "atlas-prose--user",
           "atlas-radar-ping",
@@ -81,6 +105,7 @@
           "atlas-toggle-title",
           "atlas-toggle-title-input",
           "atlas-usage-in",
+          "atlas-welcome-glow",
           "hide-scrollbar",
           "hljs",
           "is-active",
@@ -114,6 +139,12 @@
     ]
   },
   "overrides": [
+    {
+      "files": ["**/*.test.ts", "**/*.test.tsx", "**/__fixtures__/**", "tests/**"],
+      "rules": {
+        "typescript/no-explicit-any": "off"
+      }
+    },
     {
       "files": ["src/ui/**"],
       "rules": {

@@ -2,7 +2,6 @@ import { useState, useEffect, useRef } from "react";
 import { Dialog } from "@base-ui/react/dialog";
 import { cn } from "@/lib/utils";
 import { Hint } from "@/ui/tooltip";
-import { useExplorerStore } from "@/features/explorer/stores/explorer-store";
 import { openFile } from "@/lib/open-file";
 import { useSessionStore } from "@/features/app/stores/session-store";
 import { useAppStore } from "@/features/app/stores/app-store";
@@ -39,11 +38,11 @@ export function SearchOverlay({
   // Bumped by every search (and by closing): a response from an older one is
   // dropped, so a slow search never overwrites a newer one's results.
   const searchSeq = useRef(0);
-  const rootPath = useExplorerStore.use.rootPath();
   const session = useSessionStore.use.session();
   const { addSearchHistory, removeSearchHistory, clearSearchHistory, saveSession } =
     useSessionStore.use.actions();
   const currentProject = useAppStore.use.currentProject();
+  const rootPath = currentProject?.path ?? null;
 
   useEffect(() => {
     if (!open) {

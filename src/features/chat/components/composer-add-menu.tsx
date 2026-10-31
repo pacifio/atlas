@@ -270,7 +270,7 @@ function GithubSubmenu({
     const on = () => loadCloned();
     window.addEventListener("atlas:repo-cloned", on);
     return () => window.removeEventListener("atlas:repo-cloned", on);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [projectPath]);
 
   // A searched repo is "already downloaded" when its on-disk dir (`owner-repo`)

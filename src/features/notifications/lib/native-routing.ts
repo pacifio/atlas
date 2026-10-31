@@ -10,6 +10,7 @@
 import {
   cleanActionArgs,
   isNotificationSettingsSection,
+  isPullRequestTarget,
   type NotificationAction,
   type NotificationActionArgs,
   type NotificationTarget,
@@ -67,6 +68,8 @@ export function permissionForResponse(r: SystemNotificationResponse): Permission
   }
 }
 
+const hasText = (v: unknown): v is string => typeof v === "string" && v.length > 0;
+
 function isTarget(t: unknown): t is NotificationTarget {
   if (typeof t !== "object" || t === null) return false;
   const r = t as Record<string, unknown>;
@@ -78,6 +81,9 @@ function isTarget(t: unknown): t is NotificationTarget {
   if (r.type === "settings") return isNotificationSettingsSection(r.section);
   if (r.type === "config-file") return true;
   if (r.type === "git-panel") return typeof r.projectId === "string" && !!r.projectId;
+  if (r.type === "pull-request") return isPullRequestTarget(r);
+  // A session no tab shows still opens, from history, by its thread id.
+  if (r.type === "session" && typeof r.tabId === "string" && hasText(r.threadId)) return true;
   if (typeof r.tabId !== "string" || !r.tabId) return false;
   if (r.type === "terminal") return typeof r.terminalId === "string";
   return r.type === "session";

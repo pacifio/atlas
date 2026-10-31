@@ -9,8 +9,11 @@ use atlas_agent_store::SecretSource;
 
 const SERVICE: &str = "Atlas agent variables";
 
-fn entry(agent: &str, name: &str) -> keyring::Result<keyring::Entry> {
-    keyring::Entry::new(SERVICE, &format!("{agent}/{name}"))
+fn entry(agent: &str, name: &str) -> keyring_core::Result<keyring_core::Entry> {
+    // keyring-core has no store until one is installed; this is the same idempotent
+    // installer the engine's keychain access calls, so both see one default store.
+    atlas_native_agent::ensure_credential_store()?;
+    keyring_core::Entry::new(SERVICE, &format!("{agent}/{name}"))
 }
 
 /// The store's view of the keychain.
@@ -20,7 +23,7 @@ impl SecretSource for Keychain {
     fn read(&self, agent: &str, name: &str) -> Option<String> {
         match entry(agent, name).and_then(|e| e.get_password()) {
             Ok(value) => Some(value),
-            Err(keyring::Error::NoEntry) => None,
+            Err(keyring_core::Error::NoEntry) => None,
             Err(e) => {
                 tracing::warn!(
                     target: "atlas::agents",
@@ -43,7 +46,7 @@ pub fn write(agent: &str, name: &str, value: &str) -> Result<(), String> {
 /// Blocking: call it from `spawn_blocking`.
 pub fn delete(agent: &str, name: &str) -> Result<(), String> {
     match entry(agent, name).and_then(|e| e.delete_credential()) {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Ok(()) | Err(keyring_core::Error::NoEntry) => Ok(()),
         Err(e) => Err(format!("removing {name} from the keychain: {e}")),
     }
 }

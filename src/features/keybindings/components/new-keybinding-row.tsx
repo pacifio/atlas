@@ -28,7 +28,7 @@ const COMMAND_OPTIONS = ACTIONS.map((a) => ({
 
 /**
  * "Add keybinding": pick a command, press its shortcut, optionally set where
- * it works, and Save. Ported from T3 Code's `NewKeybindingSettingsRow`.
+ * it works, and Save.
  *
  * An Atlas condition belongs to the command, not to one shortcut, so the
  * When here starts from the command's current condition and saving one

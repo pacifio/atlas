@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Card } from "@/components/usage-primitives";
 import { GradualBlur } from "@/components/gradual-blur";
-import { useOrgStore } from "@/features/organisations/stores/org-store";
 import { useProjectStore } from "@/features/projects/stores/project-store";
 import { useUsageStore } from "../stores/usage-store";
 import { useUsageView } from "../lib/use-usage-view";
@@ -38,15 +37,11 @@ export function UsagePanel() {
     setTable,
     setSearch,
   } = useUsageStore.use.actions();
-  const orgName = useOrgStore((s) => {
-    const id = s.activeOrganisationId;
-    return s.organisations.find((o) => o.id === id)?.name ?? null;
-  });
   // Re-fetch when the org's project set changes (this also covers an org switch).
   const projectSig = useProjectStore((s) => s.projects.map((p) => p.path).join("|"));
   useEffect(() => {
     void refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [projectSig]);
 
   const captureRef = useRef<HTMLDivElement>(null);
@@ -81,13 +76,8 @@ export function UsagePanel() {
   const attribution = attributionLine(data?.ledgerSince ?? null, range);
 
   return (
-    // The tab is a card on a slightly lighter ground, the way the Timeline is:
-    // the page's content sits INSIDE a rounded, ringed panel rather than
-    // bleeding into the window's edges. Same inset constant, so the two tabs
-    // line up when they sit side by side in a split.
-    <div className="flex h-full min-h-0 flex-col bg-[var(--card)]">
+    <div className="flex h-full min-h-0 flex-col bg-[var(--background)]">
       <UsageHeader
-        orgName={orgName}
         range={range}
         onRange={setRange}
         earliest={earliest}
@@ -95,15 +85,8 @@ export function UsagePanel() {
         onRefresh={() => void refresh({ force: true })}
         loading={loading}
         canExport={!!data}
-        inset={CARD_INSET}
       />
-      <div
-        // `ring-1 ring-border` + `shadow-lg`, which is the Timeline's card
-        // exactly: on a near-black panel a shadow has almost nothing to darken,
-        // so the ring carries the edge and the shadow only lifts the card.
-        className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg bg-background shadow-lg ring-1 ring-border"
-        style={{ marginInline: CARD_INSET, marginBottom: CARD_INSET }}
-      >
+      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden border-t border-border bg-background">
         <div
           className="hide-scrollbar min-h-0 flex-1 overflow-y-auto"
           style={{ paddingTop: data ? FILTER_H : 0 }}
@@ -223,12 +206,6 @@ export function UsagePanel() {
     </div>
   );
 }
-
-/**
- * The card's inset from the tab's edges, in px. Matches the Timeline's, which
- * is what it is measured against — the two tabs sit side by side in a split.
- */
-const CARD_INSET = 4;
 
 /**
  * The floating filter row's geometry.

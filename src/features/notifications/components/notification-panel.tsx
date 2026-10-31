@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useLayoutEffect, useMemo, useState } from "react";
 import { Bell, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Hint } from "@/ui/tooltip";
@@ -15,6 +15,45 @@ import {
   visibleItems,
   type AppNotification,
 } from "../stores/notifications-store";
+
+/** Drawer width when no surfaces pane is on screen. */
+const FALLBACK_WIDTH = 360;
+
+/**
+ * The on-screen surfaces pane's width, measured from the left edge of its
+ * first visible column to the window's right edge, so the drawer covers
+ * exactly the right panel. Collapsed columns and background projects measure
+ * zero and are skipped; with none visible, the fallback width.
+ */
+function useSurfacesPaneWidth(active: boolean): number {
+  const [width, setWidth] = useState(FALLBACK_WIDTH);
+  useLayoutEffect(() => {
+    if (!active) return;
+    const query = () => document.querySelectorAll<HTMLElement>("[data-surface-column]");
+    // Re-queried on every pass, so a column added, removed or promoted to
+    // main while the drawer is open is never measured from a stale list.
+    const measure = () => {
+      let left = Infinity;
+      let right = -Infinity;
+      for (const el of query()) {
+        const r = el.getBoundingClientRect();
+        if (r.width === 0) continue;
+        left = Math.min(left, r.left);
+        right = Math.max(right, r.right);
+      }
+      setWidth(left === Infinity ? FALLBACK_WIDTH : Math.round(right - left));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    for (const el of query()) ro.observe(el);
+    window.addEventListener("resize", measure);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [active]);
+  return width;
+}
 
 /** Bucket a timestamp into a relative-day group label. */
 function dayBucket(iso: string): string {
@@ -36,6 +75,7 @@ export function NotificationPanel() {
   // lose the other org's items, only hide them.
   const items = useMemo(() => visibleItems(allItems, activeOrgId), [allItems, activeOrgId]);
   const { close, clearAll } = useNotificationsStore.use.actions();
+  const width = useSurfacesPaneWidth(open);
 
   // Preserve first-seen order within each day bucket (items are newest-first).
   const groups = useMemo(() => {
@@ -61,11 +101,12 @@ export function NotificationPanel() {
       />
       <aside
         className={cn(
-          "fixed right-0 top-0 bottom-0 z-drawer w-[360px] flex flex-col",
+          "fixed right-0 top-0 bottom-0 z-drawer flex flex-col",
           "border-l border-[var(--border)]",
           "bg-[var(--card)]/60 backdrop-blur-2xl",
           "shadow-md animate-slide-in-right",
         )}
+        style={{ width }}
         role="dialog"
         aria-label="Notifications"
       >
@@ -211,8 +252,14 @@ function targetOf(n: AppNotification): NotificationTarget | null {
   if (n.source === "terminal" && n.tabId && n.terminalId) {
     return { type: "terminal", tabId: n.tabId, terminalId: n.terminalId, projectId: n.projectId };
   }
-  if (n.source === "agent" && n.tabId) {
-    return { type: "session", tabId: n.tabId, sessionId: n.sessionId, projectId: n.projectId };
+  if (n.source === "agent" && (n.tabId || n.threadId)) {
+    return {
+      type: "session",
+      tabId: n.tabId ?? "",
+      sessionId: n.sessionId,
+      threadId: n.threadId,
+      projectId: n.projectId,
+    };
   }
   return null;
 }
@@ -225,6 +272,12 @@ function focusNotification(n: AppNotification) {
   }
   if (n.source === "terminal" && n.tabId) {
     void jumpToTerminal({ tabId: n.tabId, terminalId: n.terminalId, projectId: n.projectId });
+    return;
+  }
+  const target = n.source === "agent" && n.threadId ? targetOf(n) : null;
+  if (target) {
+    // No tab may show it any more: resumed from history by its thread id.
+    void openNotificationTarget(target);
     return;
   }
   if (n.source === "agent" && n.tabId) {

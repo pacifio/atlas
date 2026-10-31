@@ -115,6 +115,8 @@ const REVIEWED_AGENT_COMMANDS = [
   "workspace.toggleSidebar",
   "app.settings",
   "app.capture",
+  // Opens the session's checkout in the user's own editor; changes nothing.
+  "app.openInEditor",
   "nav.commandPalette",
   "nav.filePicker",
   "nav.search",
@@ -124,13 +126,14 @@ const REVIEWED_AGENT_COMMANDS = [
   "hintNav.toggle",
   "panels.left",
   "panels.right",
+  "panels.sessionDetails",
   "panels.teamChat",
   "panels.terminal",
-  "panels.agentSidebar",
-  "panels.tabBar",
   "panels.knowledge",
   "panels.zen",
+  "tabs.openSurface",
   "tabs.newChat",
+  "tabs.newChatIn",
   "tabs.newTerminal",
   "tabs.newUntitled",
   "tabs.prev",
@@ -149,6 +152,9 @@ const REVIEWED_AGENT_COMMANDS = [
   "split.focusRight",
   // Moves the column's tabs to its neighbour; closes nothing.
   "split.close",
+  // Moves the open session to the Settled shelf; it stays listed, and the
+  // same command (or Undo) brings it back. Refused mid-turn by the backend.
+  "chat.settleSession",
   "view.zoomIn",
   "view.zoomOut",
   "view.zoomReset",

@@ -117,14 +117,13 @@ export function ElicitationModal({
               </button>
             )}
 
-            {pending.mode === "form" &&
-              fields.length === 0 && (
-                // A form with nothing to fill is still answerable — the agent may
-                // just want a yes/no. Saying so beats an empty box.
-                <p className="px-0.5 text-xs text-secondary-foreground">
-                  Confirm to continue, or decline to tell the agent no.
-                </p>
-              )}
+            {pending.mode === "form" && fields.length === 0 && (
+              // A form with nothing to fill is still answerable — the agent may
+              // just want a yes/no. Saying so beats an empty box.
+              <p className="px-0.5 text-xs text-secondary-foreground">
+                Confirm to continue, or decline to tell the agent no.
+              </p>
+            )}
 
             {fields.map((f) => (
               <div key={f.name} className="flex flex-col gap-1">

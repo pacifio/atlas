@@ -11,7 +11,7 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-use schemars::{schema_for, JsonSchema};
+use schemars::{generate::SchemaSettings, transform::RecursiveTransform, JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -659,6 +659,39 @@ fn debounce(rx: &mpsc::Receiver<()>, window: Duration, mut on_change: impl FnMut
     }
 }
 
+/// Puts back three details of how schemars 0.8 wrote the schema, so that moving to
+/// schemars 1 leaves `schema/theme-v1.json` as editors already know it: a doc
+/// comment becomes one line per paragraph (1.x keeps the author's wrapping),
+/// `required` is sorted (1.x keeps field order), and `minimum` is a float.
+fn keep_schemars_0_8_shapes(schema: &mut Schema) {
+    use serde_json::Value;
+    let Some(object) = schema.as_object_mut() else {
+        return;
+    };
+    if let Some(Value::String(text)) = object.get_mut("description") {
+        *text = text
+            .trim()
+            .split("\n\n")
+            .map(|paragraph| {
+                paragraph
+                    .lines()
+                    .map(str::trim)
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+    }
+    if let Some(Value::Array(required)) = object.get_mut("required") {
+        required.sort_by(|a, b| a.as_str().cmp(&b.as_str()));
+    }
+    if let Some(value) = object.get_mut("minimum") {
+        if let Some(number) = value.as_f64().and_then(serde_json::Number::from_f64) {
+            *value = Value::Number(number);
+        }
+    }
+}
+
 /// The schema authors get through the `#:schema` comment at the top of a theme.
 ///
 /// `schemars` describes the struct, which types `keys` as an open map of
@@ -671,8 +704,16 @@ fn debounce(rx: &mpsc::Receiver<()>, window: Duration, mut on_change: impl FnMut
 /// unknown key as a warning for forward compatibility. That is deliberate — the
 /// editor should flag a key this build has never heard of.
 pub fn json_schema() -> serde_json::Value {
-    let mut schema =
-        serde_json::to_value(schema_for!(Theme)).expect("Theme JSON schema serializes");
+    // Draft-07 with `definitions`, which the loader below and the theme-key
+    // generator both address by path; `schema_for!` is 2020-12 (`$defs`) since
+    // schemars 1.
+    let mut schema = serde_json::to_value(
+        SchemaSettings::draft07()
+            .with_transform(RecursiveTransform(keep_schemars_0_8_shapes))
+            .into_generator()
+            .into_root_schema_for::<Theme>(),
+    )
+    .expect("Theme JSON schema serializes");
     let keys = schema
         .pointer_mut("/definitions/ThemeVariant/properties/keys")
         .and_then(serde_json::Value::as_object_mut)

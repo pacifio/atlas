@@ -1,5 +1,5 @@
-// The titlebar's action dock: the loose icon row, gathered into one pill with
-// a single tooltip that slides between its items.
+// The bar's action dock: the window-level icon row (update, notifications,
+// account) with a single tooltip that slides between its items.
 //
 // The tooltip is ONE strip containing every label, translated so the active
 // label centres under the hovered icon and clipped so only that label shows.
@@ -39,6 +39,8 @@ export interface DockItem {
   badge?: React.ReactNode;
   /** Overrides `label` for the accessible name where it says more. */
   title?: string;
+  /** A toggle that is on. */
+  pressed?: boolean;
 }
 
 interface Geometry extends SlideGeometry {
@@ -143,10 +145,9 @@ export function TitlebarDock({
     <div className={cn("relative", className)} onMouseLeave={onLeave}>
       <div
         ref={pill}
-        className={cn(
-          "flex h-6 items-center gap-1 rounded-full px-1 py-0.5",
-          "border border-border-subtle bg-card",
-        )}
+        // A plain row, not a pill: the bar is flat, and a capsule around these
+        // four read as one more container inside it.
+        className="flex items-center gap-0.5"
       >
         {items.map((item, index) => (
           <button
@@ -160,13 +161,15 @@ export function TitlebarDock({
             onFocus={() => onEnter(index)}
             onBlur={onLeave}
             disabled={item.disabled}
+            aria-pressed={item.pressed}
             aria-label={item.title ?? item.label}
             className={cn(
-              "relative flex size-5 items-center justify-center rounded-full outline-none",
+              "relative flex size-6 items-center justify-center rounded-md outline-none",
               "text-muted-foreground transition-colors duration-150",
               item.disabled
                 ? "cursor-default opacity-60"
                 : "cursor-pointer hover:bg-element-hover hover:text-foreground",
+              "aria-pressed:bg-element-selected aria-pressed:text-foreground",
             )}
           >
             {item.icon}

@@ -666,7 +666,7 @@ async fn sandbox_denied_shell_command_returns_original_output() -> Result<()> {
         "printf {sentinel:?}; printf {content:?} > {path:?}",
         sentinel = format!("{sentinel}\n"),
         content = "sandbox denied",
-        path = &target_path
+        path = target_path
     );
     let args = json!({
         "command": command,

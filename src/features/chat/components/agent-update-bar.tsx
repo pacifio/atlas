@@ -31,7 +31,7 @@ export function AgentUpdateBar({ tabId }: { tabId: string }) {
         {phase
           ? `Updating ${entry.name} to v${phase.version}. Your conversation continues on it with your next message.`
           : `${entry.name} v${entry.version} is available${
-              entry.installedVersion ? ` — this chat runs v${entry.installedVersion}` : ""
+              entry.installedVersion ? ` — this session runs v${entry.installedVersion}` : ""
             }.`}
       </span>
       {phase ? (

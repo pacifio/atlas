@@ -1,4 +1,4 @@
-import { useLayoutStore } from "@/features/layout/stores/layout-store";
+import { revealSourceControl } from "@/features/layout/lib/source-control";
 import { useProjectStore } from "@/features/projects/stores/project-store";
 
 /** Bring a project's git panel into view: switch to the project if needed,
@@ -8,5 +8,5 @@ export async function openGitPanel(projectId: string): Promise<void> {
   if (ws.projects.some((p) => p.id === projectId) && projectId !== ws.activeProjectId) {
     await ws.actions.switchTo(projectId);
   }
-  useLayoutStore.getState().actions.revealRightSection("changes");
+  revealSourceControl("changes");
 }

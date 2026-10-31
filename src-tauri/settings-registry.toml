@@ -76,8 +76,8 @@ description = "Themes, icons, fonts, and how the interface is drawn."
 
 [[page]]
 id = "chat"
-title = "Chat"
-description = "New chats, the composer, layout, and switching agents."
+title = "Sessions"
+description = "New sessions, the composer, layout, and switching agents."
 
 [[page]]
 id = "agents"
@@ -98,6 +98,11 @@ description = "What notifies you, how, and after how long."
 id = "source-control"
 title = "Source Control"
 description = "Git in the editor, diffs, and in the background."
+
+[[page]]
+id = "pull-requests"
+title = "Pull Requests"
+description = "Merging, sessions with a pull request, links, and review guides."
 
 [[page]]
 id = "privacy"
@@ -151,6 +156,25 @@ title = "Show hidden files"
 summary = "Show dotfiles and dot-directories in the explorer file tree."
 doc = "Show dotfiles and dot-directories in the explorer file tree."
 validation = "—"
+
+[[setting]]
+key = "preferredEditor"
+type = "string"
+default = ""
+status = "live"
+page = "general"
+section = "Files"
+title = "Preferred editor"
+summary = "The external editor that Open in Editor uses for files and projects."
+doc = """
+The external editor that "Open in <editor>" uses for a file or the project:
+an id such as "vscode", "cursor", "zed", "windsurf", "sublime", "xcode" or a
+JetBrains IDE ("idea", "webstorm", "pycharm"…), or "system" for the app your
+system opens the file with. Empty uses the first editor Atlas finds installed.
+An id that isn't installed falls back to that same choice. Files outside the
+project open in the system's app unless this names an editor.
+"""
+validation = "an editor id; one that isn't installed falls back to the first one found"
 
 [[setting]]
 key = "uiScale"
@@ -324,7 +348,7 @@ section = "Conversation"
 title = "Next-step suggestions"
 summary = "After each turn, the agent suggests two or three follow-ups as clickable chips."
 doc = """
-Next-step suggestion chips in the agent chat's per-turn card. Exactly "agent"
+Next-step suggestion chips in the session's per-turn card. Exactly "agent"
 or "off", nothing else.
 """
 validation = "exactly one of these two strings"
@@ -337,10 +361,10 @@ default = "reset"
 status = "live"
 page = "chat"
 section = "Switching agents"
-title = "Switching agents in a chat"
-summary = "What picking another agent does once a chat has a conversation."
+title = "Switching agents in a session"
+summary = "What picking another agent does once a session has a conversation."
 doc = """
-What picking another agent does to a chat that has a conversation: "new-tab"
+What picking another agent does to a session that has a conversation: "new-tab"
 keeps it and opens the new agent in a new tab, "handoff" switches in place and
 attaches it to the next message, "reset" switches in place and starts over.
 """
@@ -805,12 +829,12 @@ default = true
 status = "live"
 page = "general"
 section = "Confirmations"
-title = "Confirm before deleting a chat"
-summary = "Ask first when you delete a chat from the sidebar or history."
+title = "Confirm before deleting a session"
+summary = "Ask first when you delete a session from the sidebar or history."
 doc = """
-Ask before deleting a chat from the sidebar or the history. A deleted chat's
-transcript stays with its agent, but Atlas forgets the chat. Archiving never
-asks, because it can be undone.
+Ask before deleting a session from the sidebar or the history. A deleted
+session's transcript stays with its agent, but Atlas forgets the session.
+Settling never asks, because it can be undone.
 """
 validation = "—"
 
@@ -830,17 +854,51 @@ stops it. Quitting again while the question is open quits anyway.
 validation = "—"
 
 [[setting]]
+key = "continueSessionsAfterRestart"
+type = "boolean"
+default = true
+status = "live"
+page = "chat"
+section = "Running sessions"
+title = "Continue sessions after a restart"
+summary = "A turn cut short when Atlas quits, crashes or updates carries on when Atlas opens again."
+doc = """
+When Atlas quits, crashes or restarts to update while an agent is in the
+middle of a turn, the next launch opens that session and tells the agent to
+continue where it left off, with a row in the transcript saying so. Settled
+and snoozed sessions are left alone, and a turn that keeps getting cut short
+is let go after three tries in a row.
+"""
+validation = "—"
+
+[[setting]]
+key = "newSessionUsesLastAgent"
+type = "boolean"
+default = true
+status = "live"
+page = "chat"
+section = "New sessions"
+title = "Start with the last agent you picked"
+summary = "A new session starts on the agent you last chose in a composer, instead of the default agent."
+doc = """
+A new session starts on the agent you last picked in a composer, by switching
+or with the agent shortcut, as long as it is still installed. Off, or before
+you have picked one, new sessions start on defaultAgent.
+"""
+validation = "—"
+
+[[setting]]
 key = "defaultAgent"
 type = "string"
 default = "atlas-agent"
 status = "live"
 project = true
 page = "chat"
-section = "New chats"
+section = "New sessions"
 title = "Default agent"
-summary = "The agent a new chat starts with."
+summary = "The agent a new session starts with."
 doc = """
-The agent a new chat starts with: "atlas-agent" for Atlas Agent, or the id of
+The agent a new session starts with: "atlas-agent" for Atlas Agent, or the id of
 an installed ACP agent, such as "claude-code". An agent that isn't installed
 falls back to Atlas Agent.
 """
@@ -854,7 +912,7 @@ default = "normal"
 status = "live"
 page = "appearance"
 section = "Interface"
-title = "Chat width"
+title = "Session width"
 summary = "How wide the conversation and the composer may grow."
 doc = """
 How wide the conversation and the composer may grow: "normal" (760 pixels),
@@ -863,17 +921,18 @@ How wide the conversation and the composer may grow: "normal" (760 pixels),
 validation = "exactly one of these three strings"
 
 [[setting]]
-key = "chatCodeWrap"
+key = "wordWrap"
 type = "boolean"
 default = true
 status = "live"
-page = "chat"
-section = "Layout"
-title = "Wrap code in chat"
-summary = "Wrap long lines in a chat's code blocks instead of scrolling sideways."
+page = "appearance"
+section = "Interface"
+title = "Word wrap"
+summary = "Wrap long lines in files, diffs and a session's code blocks instead of scrolling sideways."
 doc = """
-Wrap long lines in a chat's code blocks. Off: they keep their lines and scroll
-sideways.
+Wrap long lines in file tabs, diffs and a session's code blocks. Off: lines keep
+their shape and scroll sideways. The wrap button in a file's or the review
+diff's header flips this same setting.
 """
 validation = "—"
 
@@ -885,13 +944,34 @@ default = "recent"
 status = "live"
 page = "chat"
 section = "Layout"
-title = "Sort chats by"
-summary = "Order the sidebar's chats by their latest activity or by when they started."
+title = "Sort sessions by"
+summary = "Order the sidebar's sessions by their latest activity or by when they started."
 doc = """
-The order of chats in the sidebar: "recent" puts the chat with the latest
+The order of sessions in the sidebar: "recent" puts the session with the latest
 activity first, "created" the one started most recently.
 """
 validation = "exactly one of these two strings"
+
+[[setting]]
+key = "autoSettleAfterDays"
+type = "integer"
+min = 0
+max = 90
+default = 3
+status = "live"
+page = "chat"
+section = "Layout"
+title = "Settle idle sessions after"
+summary = "A session with no activity for this many days moves to the sidebar's Settled shelf. 0 turns this off."
+doc = """
+Days a session may sit idle before Atlas settles it: moves it to the Settled
+shelf at the bottom of the session sidebar, where it stays listed and
+resumable. A session that is running, waiting for you, pinned, snoozed, or
+that you un-settled since its last activity is left alone, and sending to a
+settled session brings it back. 0 turns auto-settling off; settling by hand still
+works. Must be between 0 and 90.
+"""
+validation = "0 ≤ n ≤ 90"
 
 [[setting]]
 key = "timeFormat"
@@ -1025,15 +1105,16 @@ validation = "—"
 [[setting]]
 key = "diffFilesCollapsed"
 type = "boolean"
-default = false
+default = true
 status = "live"
 page = "source-control"
 section = "Diffs"
 title = "Start files collapsed"
-summary = "Open a diff of several files with each one collapsed to its header."
+summary = "Open a diff with each file collapsed to its header."
 doc = """
-Open a diff of several files, such as a commit or your changes, with each file
-collapsed to its header. Off: every file starts expanded.
+Open a diff, such as your changes or a commit, as a list of its files, each
+collapsed to its header; click a file to expand it. Off: every file starts
+expanded.
 """
 validation = "—"
 
@@ -1071,3 +1152,190 @@ Above 100 moves them toward the text colour, below 100 toward the background.
 Applies to every theme, the terminal and charts included.
 """
 validation = "50 ≤ n ≤ 200"
+
+[[setting]]
+key = "showTurnRail"
+type = "boolean"
+default = true
+status = "live"
+page = "appearance"
+section = "Interface"
+title = "Turn rail"
+summary = "Show a tick for each turn down the left edge of a session. Hover one to preview it, click it to jump there."
+doc = """
+The turn rail: a column of short ticks down the left edge of a session's
+transcript, one per turn. Hovering a tick previews the prompt and the start of
+the reply; clicking it jumps to that turn. Off hides the rail.
+"""
+validation = "—"
+
+[[setting]]
+key = "autoSettleOnMerge"
+type = "boolean"
+default = true
+status = "live"
+page = "pull-requests"
+section = "Sessions"
+title = "Settle sessions when their pull request merges"
+summary = "Move a session to Settled once its pull request merges or closes."
+doc = """
+Settle a session once its linked pull request merges, when the merge came
+after you last worked in the session. A pull request that is closed without
+merging always settles its session. Settled sessions stay listed and
+resumable.
+"""
+validation = "—"
+
+[[setting]]
+key = "autoSettleKeepPullRequests"
+type = "boolean"
+default = true
+status = "live"
+page = "pull-requests"
+section = "Sessions"
+title = "Keep sessions with a pull request from settling"
+summary = "Idle auto-settling leaves a session with a linked pull request alone."
+doc = """
+Auto-settling after days of inactivity (autoSettleAfterDays) leaves a session
+alone while it has a linked pull request. Merging or closing it can still
+settle the session (autoSettleOnMerge).
+"""
+validation = "—"
+
+[[setting]]
+key = "pullRequestWatchWakes"
+type = "boolean"
+default = true
+status = "live"
+page = "pull-requests"
+section = "Sessions"
+title = "Let agents act on watched pull requests"
+summary = "A watched pull request can prompt its session's agent when checks fail, reviews arrive or it conflicts."
+doc = """
+When a session watches its pull request (the agent asked to, or you turned the
+watch on), a failing check, a new review or comment, or a conflict with the
+base sends the session's agent an update so it can act. Off: watches still
+track the pull request but never prompt an agent.
+"""
+validation = "—"
+
+[[setting]]
+key = "pullRequestLinksOpenInApp"
+type = "boolean"
+default = true
+status = "live"
+page = "pull-requests"
+section = "Links"
+title = "Open pull request links in Atlas"
+summary = "Open a pull request of the project's repository in a tab instead of the browser."
+doc = """
+Open a pull request link from a session, the sidebar or a transcript in
+Atlas's pull request tab when it belongs to the project's repository. Off, or
+a pull request of another repository: it opens in the browser.
+"""
+validation = "—"
+
+[[setting]]
+key = "pullRequestMergeMethod"
+type = "enum"
+values = ["last", "merge", "squash", "rebase"]
+default = "last"
+status = "live"
+project = true
+page = "pull-requests"
+section = "Merging"
+title = "Default merge method"
+summary = "The method a pull request's Merge button starts on. Last used reuses your latest pick."
+doc = """
+The method a pull request's Merge button starts on: "merge", "squash" or
+"rebase", or "last" for whichever you picked most recently on this device. A
+method the repository doesn't allow falls back to one it does.
+"""
+validation = "exactly one of these four strings"
+
+[[setting]]
+key = "removeAgentCreditsOnMerge"
+type = "boolean"
+default = false
+status = "live"
+project = true
+page = "pull-requests"
+section = "Merging"
+title = "Remove agent credits when merging"
+summary = "Drop agent co-author and attribution lines from merge and squash messages, keeping human co-authors."
+doc = """
+Remove recognized agent credit lines (an agent's Co-Authored-By trailer, a
+"Generated with" footer) from the message of a merge or squash Atlas performs,
+auto-merge included. Human co-authors are kept. Commits already on the branch
+are not rewritten.
+"""
+validation = "—"
+
+[[setting]]
+key = "pullRequestGuideEnabled"
+type = "boolean"
+default = true
+status = "live"
+project = true
+page = "pull-requests"
+section = "Review guide"
+title = "Review guides"
+summary = "A Guide tab on pull requests: an agent writes a tour of the change, stop by stop."
+doc = """
+Show the Guide tab on pull requests, where an agent writes a tour of the
+change in reading order, with the calls a maintainer should make. The agent
+reads a checkout of the pull request's head and changes nothing.
+"""
+validation = "—"
+
+[[setting]]
+key = "pullRequestGuideAgent"
+type = "string"
+default = ""
+status = "live"
+project = true
+page = "pull-requests"
+section = "Review guide"
+title = "Guide agent"
+summary = "The agent that writes review guides. Empty uses the default agent for new sessions."
+doc = """
+The agent that writes review guides: "atlas-agent" or an installed ACP
+agent's id, such as "claude-code". Empty uses defaultAgent. An agent that
+isn't installed falls back to Atlas Agent.
+"""
+validation = "an agent id (letters, digits, `-`, `_`, `.`), at most 64 characters; empty uses the default agent"
+
+[[setting]]
+key = "pullRequestGuideModel"
+type = "string"
+default = ""
+status = "live"
+project = true
+page = "pull-requests"
+section = "Review guide"
+title = "Guide model"
+summary = "The model the guide's agent runs on. Empty keeps the agent's own default."
+doc = """
+The model the guide's agent runs on, as that agent names it (the id after
+the colon in favoriteModels). The guide reads the change over many steps, so
+a stronger model helps. Empty keeps the agent's default; a model the agent
+doesn't offer is ignored.
+"""
+validation = "one line, at most 200 characters; empty keeps the agent's default"
+
+[[setting]]
+key = "pullRequestGuideInstructions"
+type = "string"
+default = ""
+status = "live"
+project = true
+page = "pull-requests"
+section = "Review guide"
+title = "Guide instructions"
+summary = "Your preferences for review guides: what to show first, dwell on, or skip."
+doc = """
+Your preferences for review guides, added to the guide's prompt: what to show
+first, dwell on or skip, and how long summaries should be. The guide's format
+and its coverage of every changed file stay the same.
+"""
+validation = "at most 4000 bytes"

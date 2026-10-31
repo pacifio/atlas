@@ -1,0 +1,29 @@
+{
+  // oxfmt is the formatter the format:check gate runs; format on save keeps
+  // you from tripping it.
+  "editor.formatOnSave": true,
+  "[typescript]": { "editor.defaultFormatter": "oxc.oxc-vscode" },
+  "[typescriptreact]": { "editor.defaultFormatter": "oxc.oxc-vscode" },
+  "[javascript]": { "editor.defaultFormatter": "oxc.oxc-vscode" },
+  "[json]": { "editor.defaultFormatter": "oxc.oxc-vscode" },
+  "[jsonc]": { "editor.defaultFormatter": "oxc.oxc-vscode" },
+  "[css]": { "editor.defaultFormatter": "oxc.oxc-vscode" },
+  "[rust]": { "editor.defaultFormatter": "rust-lang.rust-analyzer" },
+
+  // true gives rust-analyzer its own subdirectory under target/, so its
+  // checks stop contending for the build lock with `tauri dev` and cargo, and
+  // stop invalidating each other's artifacts (they pass different TAURI_CONFIG).
+  "rust-analyzer.cargo.targetDir": true,
+  "rust-analyzer.check.command": "clippy",
+
+  "files.watcherExclude": {
+    "**/target/**": true,
+    "**/node_modules/**": true,
+    "**/dist/**": true
+  },
+  "search.exclude": {
+    "**/target": true,
+    "**/node_modules": true,
+    "**/dist": true
+  }
+}

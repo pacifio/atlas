@@ -18,6 +18,7 @@ atlas-engine-core = { workspace = true }
 atlas-engine-extension-api = { workspace = true }
 atlas-engine-features = { workspace = true }
 atlas-engine-otel = { workspace = true }
+atlas-engine-protocol = { workspace = true }
 atlas-engine-tools = { workspace = true }
 atlas-engine-utils-absolute-path = { workspace = true }
 atlas-engine-utils-output-truncation = { workspace = true }

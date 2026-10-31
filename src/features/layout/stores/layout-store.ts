@@ -8,7 +8,11 @@ import {
   LEGACY_TAB_TYPES,
   ORG_SCOPED_TYPES,
   TAB_TYPES,
+  WINDOW_TYPES,
+  isDestinationOnly,
+  isDualPlacement,
   migrateTabType,
+  type DualPlacementType,
   type TabType,
 } from "@/lib/constants";
 import type { LayoutTemplate } from "../templates";
@@ -42,24 +46,12 @@ interface ZenSnapshot {
   activeByGroup: Record<string, string | null>;
   focusedGroupId: string;
   tabGroups: Record<string, string>;
-  leftVisible: boolean;
-  rightVisible: boolean;
 }
 
 interface LayoutState {
-  leftPanel: {
-    visible: boolean;
-    width: number;
-    activeSection: "files" | "knowledge";
-  };
-  rightPanel: {
-    visible: boolean;
-    width: number;
-    activeSection: "changes" | "github" | "git-graph";
-    /** The right slot holds one occupant at a time: source control (⌘⇧B) or
-     *  team chat (⌘⇧C). Pressing the other one's key swaps the occupant rather
-     *  than opening a second panel. */
-    mode: "source-control" | "chat";
+  /** The source-control surface's last section, kept across reopening it. */
+  sourceControl: {
+    section: SourceControlSection;
   };
   /** Per-app KB tab layout — survives tab switches (each KB tab gets the
    *  same panel layout, matching the global-left/right model). */
@@ -68,10 +60,6 @@ interface LayoutState {
     showInspector: boolean;
     sidebarWidth: number;
     inspectorWidth: number;
-  };
-  chatSidebar: {
-    visible: boolean;
-    width: number;
   };
   bashPanel: {
     width: number;
@@ -107,49 +95,76 @@ interface LayoutState {
   activeByGroup: Record<string, string | null>;
   /** The column that owns keyboard focus (tab hotkeys target it). */
   focusedGroupId: string;
-  /** Zen mode: a focused Knowledge │ Chat │ Browser 3-column split with the
-   *  global side panels hidden. `zenPrev` snapshots the layout to restore. */
+  /** Zen mode: the session beside a browser, with the global side panels
+   *  hidden. `zenPrev` snapshots the layout to restore. */
   zen: boolean;
   zenPrev: ZenSnapshot | null;
-  tabBarVisible: boolean;
+  /** The surfaces pane — every split column after the first, which is the
+   *  main pane. `hidden` collapses it to nothing while its tabs keep
+   *  running; `expanded` gives it the whole centre,
+   *  collapsing the main pane instead. Not persisted: a relaunch starts with
+   *  both on screen. */
+  surfaces: SurfacesMode;
+  /**
+   * The destination (ADR-0024): a full-page view taking the area right of the
+   * rail, one at a time, never a tab in a column. `destinationShown` false is
+   * Back: the view stays mounted, hidden, so returning to it is instant, until
+   * another destination replaces it or it is closed. Not persisted: a relaunch
+   * starts at the session.
+   */
+  destination: Tab | null;
+  destinationShown: boolean;
+  /** The form each `surface-or-destination` type was last shown in (team
+   *  chat): what its own shortcut reopens it as. Persisted: it is how the
+   *  reader likes to use it. */
+  lastForm: Partial<Record<DualPlacementType, PlacementForm>>;
   // Back/forward stack of tab ids — entries are pushed every time the user
   // navigates to a tab; back() / forward() rewind/advance an index.
   tabHistory: string[];
   tabHistoryIndex: number;
 }
 
+export type SurfacesMode = "shown" | "hidden" | "expanded";
+/** Which of its two forms a `surface-or-destination` type is in. */
+export type PlacementForm = "surface" | "destination";
+
+/** The source-control surface's sections, in the order its header shows them. */
+export const SOURCE_CONTROL_SECTIONS = ["changes", "git-graph", "github"] as const;
+export type SourceControlSection = (typeof SOURCE_CONTROL_SECTIONS)[number];
+
 interface LayoutActions {
   actions: {
-    toggleLeftPanel: () => void;
-    /** ⌘⇧B — source control. Closes the slot if it already holds source
-     *  control, otherwise takes the slot over from chat. */
-    toggleRightPanel: () => void;
-    /** ⌘⇧C — team chat. Mirror of `toggleRightPanel`. */
-    toggleRightChatPanel: () => void;
-    /** Shared implementation: a key that owns a mode either closes the slot
-     *  (it already holds that mode) or claims it. */
-    toggleRightPanelMode: (mode: LayoutState["rightPanel"]["mode"]) => void;
-    toggleChatSidebar: () => void;
+    /** Show, hide or expand the surfaces pane (see `surfaces`). */
+    setSurfaces: (mode: SurfacesMode) => void;
     toggleKnowledgeSidebar: () => void;
     toggleKnowledgeInspector: () => void;
     setKnowledgeSidebarWidth: (width: number) => void;
     setKnowledgeInspectorWidth: (width: number) => void;
-    setChatSidebarWidth: (width: number) => void;
     setBashPanelWidth: (width: number) => void;
     setPlansPanelWidth: (width: number) => void;
     toggleTimelineSidebar: () => void;
     setTimelineSidebarWidth: (width: number) => void;
-    setLeftSection: (section: LayoutState["leftPanel"]["activeSection"]) => void;
-    setRightSection: (section: LayoutState["rightPanel"]["activeSection"]) => void;
-    /** Make the right panel visible AND switch it to `section` (e.g. open the
-     *  Source Control pane from a notification). */
-    revealRightSection: (section: LayoutState["rightPanel"]["activeSection"]) => void;
+    setSourceControlSection: (section: SourceControlSection) => void;
     addTab: (tab: Tab, groupId?: string) => void;
     closeTab: (id: string) => void;
+    /** Move a tab to `toIndex` among its own column's tabs (a drag in the
+     *  strip). It never leaves its column, and every other column's tabs keep
+     *  their places. The order is the column's order everywhere: the strip,
+     *  ⌘1–9, and the per-project layout file. */
+    moveTab: (id: string, toIndex: number) => void;
     setActiveTab: (id: string) => void;
+    /** Back to the session from a destination; it stays mounted, hidden. */
+    hideDestination: () => void;
+    /** Open `tab` on the destination screen. A destination-only type is the
+     *  same as `addTab`; a `surface-or-destination` type (team chat) leaves
+     *  its column for it, so the window still holds one. */
+    showDestination: (tab: Tab) => void;
     setTabDirty: (id: string, dirty: boolean) => void;
-    toggleTabBar: () => void;
-    setTabBarVisible: (visible: boolean) => void;
+    /** Rename a tab, e.g. once a pull request's title has loaded. */
+    setTabTitle: (id: string, title: string) => void;
+    /** Merge fields into a tab's persisted `data` (a pull request tab's
+     *  `openedFrom`, when it is opened again from somewhere else). */
+    setTabData: (id: string, patch: Record<string, unknown>) => void;
     navigateTabBack: () => void;
     navigateTabForward: () => void;
     activateTabByIndex: (i: number) => void;
@@ -164,8 +179,8 @@ interface LayoutActions {
     /** Close a split column, moving its tabs to the left neighbour (never the
      *  last remaining column). */
     closeGroup: (groupId: string) => void;
-    /** Toggle Zen mode: a Knowledge │ Chat │ Browser 3-column split with the
-     *  global side panels hidden; toggling again restores the prior layout. */
+    /** Toggle Zen mode: the session beside a browser with the global side
+     *  panels hidden; toggling again restores the prior layout. */
     toggleZenMode: () => void;
     /** Apply a predefined layout template to the active project: set panels +
      *  split columns + a tab of each template type per column (reusing existing
@@ -187,26 +202,14 @@ interface LayoutActions {
 }
 
 const initialState: LayoutState = {
-  leftPanel: {
-    visible: true,
-    width: 240,
-    activeSection: "files",
-  },
-  rightPanel: {
-    visible: true,
-    width: 280,
-    activeSection: "changes",
-    mode: "source-control",
+  sourceControl: {
+    section: "changes",
   },
   knowledgePanel: {
     showSidebar: true,
     showInspector: true,
     sidebarWidth: 240,
     inspectorWidth: 280,
-  },
-  chatSidebar: {
-    visible: true,
-    width: 220,
   },
   bashPanel: {
     width: 260,
@@ -237,13 +240,24 @@ const initialState: LayoutState = {
   focusedGroupId: "main",
   zen: false,
   zenPrev: null,
-  // Hidden by default — Settings → Layouts and `panels.tabBar` show it.
-  tabBarVisible: false,
+  surfaces: "shown",
+  destination: null,
+  destinationShown: false,
+  lastForm: {},
   tabHistory: ["welcome-chat"],
   tabHistoryIndex: 0,
 };
 
 const DEFAULT_GROUP = "main";
+
+/** Bring `groupId` on screen: a tab landing in the hidden surfaces pane shows
+ *  it, and one landing in the main pane while surfaces are expanded restores
+ *  the split. */
+function revealGroup(s: { surfaces: SurfacesMode; groupOrder: string[] }, groupId: string): void {
+  const isMain = groupId === s.groupOrder[0];
+  if (s.surfaces === "hidden" && !isMain) s.surfaces = "shown";
+  else if (s.surfaces === "expanded" && isMain) s.surfaces = "shown";
+}
 export const MAX_GROUPS = 3;
 
 /** Which split column a tab lives in. Exported because anything asking "is
@@ -295,10 +309,62 @@ function reconcileGroups(s: LayoutState): void {
   syncActiveMirror(s);
 }
 
+/**
+ * Whether `type` may live in the main column. The main column is the session:
+ * it never shows a tab strip, so it holds the agent and nothing else, and
+ * files, editors and tools open in the surfaces pane beside it. That includes
+ * the projectless types: the projectless shell shows its tabs from whichever
+ * column has focus, so they need no exception.
+ */
+function belongsInMain(type: TabType): boolean {
+  return type === "chat";
+}
+
+/** The surfaces column a tool should open in: the focused one when it is not
+ *  the main column, else the first beside it — made when there is none. */
+function surfaceGroupFor(s: LayoutState): string {
+  const main = s.groupOrder[0];
+  if (s.focusedGroupId !== main && s.groupOrder.includes(s.focusedGroupId)) {
+    return s.focusedGroupId;
+  }
+  if (s.groupOrder.length > 1) return s.groupOrder[1];
+  const gid = `split-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
+  s.groupOrder.push(gid);
+  s.activeByGroup[gid] = null;
+  return gid;
+}
+
+/**
+ * Put every tab in the column its placement says (ADR-0024): anything that
+ * is not a session out of the main column, and any session out of the
+ * surfaces pane into it. Restored layouts, templates and zen can leave either
+ * behind. A surfaces column emptied by losing its sessions closes.
+ */
+function keepMainForSessions(s: LayoutState): void {
+  const main = s.groupOrder[0];
+  const strays = s.tabs.filter((t) => groupOf(t) === main && !belongsInMain(t.type));
+  const exiles = s.tabs.filter((t) => groupOf(t) !== main && belongsInMain(t.type));
+  if (strays.length === 0 && exiles.length === 0) return;
+  const emptied = new Set(exiles.map(groupOf));
+  for (const t of exiles) t.groupId = main;
+  for (const g of emptied) {
+    if (s.tabs.some((t) => groupOf(t) === g)) continue;
+    s.groupOrder = s.groupOrder.filter((x) => x !== g);
+    delete s.activeByGroup[g];
+  }
+  if (s.groupOrder.length === 1) s.surfaces = "shown";
+  if (strays.length > 0) {
+    const target = surfaceGroupFor(s);
+    for (const t of strays) t.groupId = target;
+  }
+  if (!s.tabs.some((t) => groupOf(t) === main)) s.tabs.push(WELCOME_TAB(main));
+  reconcileGroups(s);
+}
+
 const WELCOME_TAB = (groupId: string): Tab => ({
   id: "welcome-chat",
   type: "chat",
-  title: "Chat",
+  title: "Session",
   closable: false,
   dirty: false,
   data: {},
@@ -353,7 +419,7 @@ function captureView(s: LayoutState): ProjectView {
  * Exported for `org-tabs.test.ts`.
  */
 export function persistsInEditorState(t: { type: TabType; closable: boolean }): boolean {
-  return t.closable && !ORG_SCOPED_TYPES.has(t.type);
+  return t.closable && !ORG_SCOPED_TYPES.has(t.type) && !WINDOW_TYPES.has(t.type);
 }
 
 /**
@@ -376,7 +442,10 @@ export function isRetiredTab(tab: { type: string; data?: Record<string, unknown>
  */
 export function restoredTabType(saved: string): TabType | null {
   const type = migrateTabType(saved);
-  if (type === null || ORG_SCOPED_TYPES.has(type)) return null;
+  if (type === null || ORG_SCOPED_TYPES.has(type) || WINDOW_TYPES.has(type)) return null;
+  // A destination is never a column tab (ADR-0024). Files saved before then
+  // carry Knowledge or Timeline tabs; they do not come back as columns.
+  if (isDestinationOnly(type)) return null;
   return type;
 }
 
@@ -422,50 +491,104 @@ function applyView(s: LayoutState, v: ProjectView): void {
   s.tabHistoryIndex = v.tabHistoryIndex;
 }
 
+/** Team chat's tab. One per window (`WINDOW_TYPES`); `team-chat.ts` opens it. */
+export const TEAM_CHAT_TAB: Tab = {
+  id: "team-chat",
+  type: "team-chat",
+  title: "Team chat",
+  closable: true,
+  dirty: false,
+  data: {},
+};
+
+/**
+ * `applyView`, except that the window's own tabs (team chat) come along
+ * instead of being swapped out with the outgoing project. The incoming view's
+ * copy, captured when that project was last left, is stale: the window's
+ * current state wins, so a team chat closed elsewhere stays closed.
+ *
+ * A carried tab keeps its column position when the incoming view has a column
+ * there (never the main one), else it opens in the surfaces pane; and it stays
+ * the column's active tab if it was. Exported for `window-tabs.test.ts`.
+ */
+export function applyViewKeepingWindowTabs(s: LayoutState, v: ProjectView): void {
+  const carried = s.tabs
+    .filter((t) => WINDOW_TYPES.has(t.type))
+    .map((t) => ({
+      tab: { ...t },
+      column: s.groupOrder.indexOf(groupOf(t)),
+      active: s.activeByGroup[groupOf(t)] === t.id,
+    }));
+  applyView(s, {
+    ...v,
+    tabs: v.tabs.filter((t) => !WINDOW_TYPES.has(t.type) && !isDestinationOnly(t.type)),
+  });
+  for (const c of carried) {
+    const gid =
+      c.column > 0 && c.column < s.groupOrder.length ? s.groupOrder[c.column] : surfaceGroupFor(s);
+    s.tabs.push({ ...c.tab, groupId: gid });
+    if (c.active || !s.activeByGroup[gid]) s.activeByGroup[gid] = c.tab.id;
+  }
+  reconcileGroups(s);
+}
+
+/**
+ * Put `tab` on the destination screen (ADR-0024). One at a time: the same kind
+ * reopens in place, keeping its mounted state; a Space is per conversation,
+ * so another one replaces it. A `surface-or-destination` type leaves its
+ * column first, so the window never holds it twice.
+ */
+function enterDestination(s: LayoutState, tab: Tab): void {
+  if (isDualPlacement(tab.type)) {
+    const inColumn = s.tabs.find((t) => t.type === tab.type);
+    if (inColumn) removeColumnTab(s, inColumn.id);
+    s.lastForm[tab.type] = "destination";
+  }
+  const perConversation = tab.type === "spaces";
+  const same =
+    s.destination?.type === tab.type && (!perConversation || s.destination.id === tab.id);
+  s.destination = same
+    ? { ...s.destination!, title: tab.title, data: tab.data }
+    : { ...tab, groupId: undefined };
+  s.destinationShown = true;
+}
+
+/** Take `id` out of its column, as closing it would: its neighbour takes
+ *  over, an emptied surfaces column collapses, an emptied last column gets
+ *  the welcome session back. */
+function removeColumnTab(s: LayoutState, id: string): void {
+  const idx = s.tabs.findIndex((t) => t.id === id);
+  if (idx === -1) return;
+  const grp = groupOf(s.tabs[idx]);
+  const groupIdxInGroup = s.tabs.filter((t) => groupOf(t) === grp).findIndex((t) => t.id === id);
+  s.tabs.splice(idx, 1);
+  const remaining = s.tabs.filter((t) => groupOf(t) === grp);
+  if (remaining.length === 0) {
+    if (s.groupOrder.length > 1) {
+      // The column emptied — collapse the split.
+      s.groupOrder = s.groupOrder.filter((g) => g !== grp);
+      delete s.activeByGroup[grp];
+      if (s.focusedGroupId === grp) s.focusedGroupId = s.groupOrder[0];
+      if (s.groupOrder.length === 1) s.surfaces = "shown";
+    } else {
+      // Last column emptied — restore the permanent welcome chat.
+      s.tabs.push(WELCOME_TAB(grp));
+      s.activeByGroup[grp] = "welcome-chat";
+    }
+  } else if (s.activeByGroup[grp] === id) {
+    // Activate the neighbour at the same slot within the column.
+    const next = remaining[Math.min(groupIdxInGroup, remaining.length - 1)];
+    s.activeByGroup[grp] = next.id;
+  }
+  syncActiveMirror(s);
+}
+
 export const useLayoutStore = createSelectors(
   create<LayoutState & LayoutActions>()(
     persist(
       immer((set) => ({
         ...initialState,
         actions: {
-          toggleLeftPanel: () =>
-            set((s) => {
-              s.leftPanel.visible = !s.leftPanel.visible;
-            }),
-          toggleRightPanelMode: (mode) =>
-            set((s) => {
-              // Already showing this mode → the key that opened it closes it.
-              // Showing the other mode → swap the occupant, stay open. Closed →
-              // open on this mode.
-              if (s.rightPanel.visible && s.rightPanel.mode === mode) {
-                s.rightPanel.visible = false;
-                return;
-              }
-              s.rightPanel.visible = true;
-              s.rightPanel.mode = mode;
-            }),
-          toggleRightPanel: () =>
-            set((s) => {
-              if (s.rightPanel.visible && s.rightPanel.mode === "source-control") {
-                s.rightPanel.visible = false;
-                return;
-              }
-              s.rightPanel.visible = true;
-              s.rightPanel.mode = "source-control";
-            }),
-          toggleRightChatPanel: () =>
-            set((s) => {
-              if (s.rightPanel.visible && s.rightPanel.mode === "chat") {
-                s.rightPanel.visible = false;
-                return;
-              }
-              s.rightPanel.visible = true;
-              s.rightPanel.mode = "chat";
-            }),
-          toggleChatSidebar: () =>
-            set((s) => {
-              s.chatSidebar.visible = !s.chatSidebar.visible;
-            }),
           toggleKnowledgeSidebar: () =>
             set((s) => {
               s.knowledgePanel.showSidebar = !s.knowledgePanel.showSidebar;
@@ -490,10 +613,6 @@ export const useLayoutStore = createSelectors(
             set((s) => {
               s.knowledgePanel.inspectorWidth = Math.max(220, Math.min(width, 520));
             }),
-          setChatSidebarWidth: (width) =>
-            set((s) => {
-              s.chatSidebar.width = Math.max(160, Math.min(width, 420));
-            }),
           setBashPanelWidth: (width) =>
             set((s) => {
               s.bashPanel.width = Math.max(200, Math.min(width, 480));
@@ -502,24 +621,44 @@ export const useLayoutStore = createSelectors(
             set((s) => {
               s.plansPanel.width = Math.max(300, Math.min(width, 640));
             }),
-          setLeftSection: (section) =>
+          setSourceControlSection: (section) =>
             set((s) => {
-              s.leftPanel.activeSection = section;
-            }),
-          setRightSection: (section) =>
-            set((s) => {
-              s.rightPanel.activeSection = section;
-            }),
-          revealRightSection: (section) =>
-            set((s) => {
-              s.rightPanel.visible = true;
-              // The sections are all source-control views, so revealing one has
-              // to claim the slot back from chat.
-              s.rightPanel.mode = "source-control";
-              s.rightPanel.activeSection = section;
+              s.sourceControl.section = section;
             }),
           addTab: (tab, groupId) =>
             set((s) => {
+              // A destination never enters a column (ADR-0024).
+              if (isDestinationOnly(tab.type)) {
+                enterDestination(s, tab);
+                return;
+              }
+              s.destinationShown = false;
+              // A `surface-or-destination` type opened as a tab is the surface
+              // form: it leaves the destination screen for the column, so the
+              // window still holds one.
+              if (isDualPlacement(tab.type)) {
+                if (s.destination?.type === tab.type) s.destination = null;
+                s.lastForm[tab.type] = "surface";
+              }
+              // Source control and team chat are one per window, and Files one
+              // per project (these tabs are the project's), wherever the open
+              // one is.
+              if (
+                tab.type === "source-control" ||
+                tab.type === "files" ||
+                WINDOW_TYPES.has(tab.type)
+              ) {
+                const open = s.tabs.find((t) => t.type === tab.type);
+                if (open) {
+                  const grp = groupOf(open);
+                  s.focusedGroupId = grp;
+                  s.activeByGroup[grp] = open.id;
+                  revealGroup(s, grp);
+                  pushTabHistory(s, open.id);
+                  syncActiveMirror(s);
+                  return;
+                }
+              }
               // chat: each session is its own tab. File-backed viewers (editor /
               // diff / media / svg / pdf / notebook / unsupported) are one-per-FILE (deduped
               // by id, which is `${type}:${path}`) so opening a different file
@@ -532,6 +671,12 @@ export const useLayoutStore = createSelectors(
                 tab.type === "commit" ||
                 // One per AGENT SESSION (id is `session-changes:{sessionId}`).
                 tab.type === "session-changes" ||
+                // One per PULL REQUEST (id is `pull-request:{repoPath}:{number}`).
+                tab.type === "pull-request" ||
+                // One per REPOSITORY (id is `pull-requests:{repoPath}`).
+                tab.type === "pull-requests" ||
+                // One per SESSION (id is `session-pull-requests:{threadId}`).
+                tab.type === "session-pull-requests" ||
                 tab.type === "chat" ||
                 tab.type === "media" ||
                 tab.type === "svg" ||
@@ -540,14 +685,18 @@ export const useLayoutStore = createSelectors(
                 // One per DRAFT (id is `comms-draft-{id}`): the singleton rule
                 // would focus draft A when asked to open draft B.
                 tab.type === "comms-draft" ||
-                // One per CONVERSATION (id is `spaces-{convId}`), same rule.
-                tab.type === "spaces" ||
                 tab.type === "unsupported";
 
               let targetId = tab.id;
               // Where the tab lands: caller-specified column, else the focused one.
               let targetGroup = groupId ?? s.focusedGroupId;
               if (!s.groupOrder.includes(targetGroup)) targetGroup = s.focusedGroupId;
+              // …unless that is the main column and this is not a session. And
+              // a session always opens in the main column, wherever the focus
+              // was (ADR-0024): a session in the surfaces pane gets the
+              // narrow column's cramped layout and no breadcrumb.
+              if (belongsInMain(tab.type)) targetGroup = s.groupOrder[0];
+              else if (targetGroup === s.groupOrder[0]) targetGroup = surfaceGroupFor(s);
 
               if (!allowMultiple) {
                 const existingInGroup = s.tabs.find(
@@ -571,58 +720,63 @@ export const useLayoutStore = createSelectors(
               }
               s.focusedGroupId = targetGroup;
               s.activeByGroup[targetGroup] = targetId;
+              revealGroup(s, targetGroup);
               pushTabHistory(s, targetId);
               syncActiveMirror(s);
             }),
           closeTab: (id) =>
             set((s) => {
-              const idx = s.tabs.findIndex((t) => t.id === id);
-              if (idx === -1) return;
-              const tab = s.tabs[idx];
-              if (!tab.closable) return;
-              const grp = groupOf(tab);
-              const groupIdxInGroup = s.tabs
-                .filter((t) => groupOf(t) === grp)
-                .findIndex((t) => t.id === id);
-              s.tabs.splice(idx, 1);
-
-              const remaining = s.tabs.filter((t) => groupOf(t) === grp);
-              if (remaining.length === 0) {
-                if (s.groupOrder.length > 1) {
-                  // The column emptied — collapse the split.
-                  s.groupOrder = s.groupOrder.filter((g) => g !== grp);
-                  delete s.activeByGroup[grp];
-                  if (s.focusedGroupId === grp) s.focusedGroupId = s.groupOrder[0];
-                } else {
-                  // Last column emptied — restore the permanent welcome chat.
-                  s.tabs.push(WELCOME_TAB(grp));
-                  s.activeByGroup[grp] = "welcome-chat";
-                }
-              } else if (s.activeByGroup[grp] === id) {
-                // Activate the neighbour at the same slot within the column.
-                const next = remaining[Math.min(groupIdxInGroup, remaining.length - 1)];
-                s.activeByGroup[grp] = next.id;
+              if (s.destination?.id === id) {
+                s.destination = null;
+                s.destinationShown = false;
+                return;
               }
-              syncActiveMirror(s);
+              const tab = s.tabs.find((t) => t.id === id);
+              if (!tab?.closable) return;
+              removeColumnTab(s, id);
+            }),
+          moveTab: (id, toIndex) =>
+            set((s) => {
+              const tab = s.tabs.find((t) => t.id === id);
+              if (!tab) return;
+              const grp = groupOf(tab);
+              const column = s.tabs.filter((t) => groupOf(t) === grp);
+              const from = column.indexOf(tab);
+              const to = Math.max(0, Math.min(toIndex, column.length - 1));
+              if (from === to) return;
+              column.splice(from, 1);
+              column.splice(to, 0, tab);
+              // Refill the column's own slots in `tabs`, in the new order, so
+              // the tabs of every other column stay exactly where they were.
+              let next = 0;
+              s.tabs = s.tabs.map((t) => (groupOf(t) === grp ? column[next++] : t));
+            }),
+          hideDestination: () =>
+            set((s) => {
+              s.destinationShown = false;
+            }),
+          showDestination: (tab) =>
+            set((s) => {
+              if (isDestinationOnly(tab.type) || isDualPlacement(tab.type))
+                enterDestination(s, tab);
             }),
           setActiveTab: (id) =>
             set((s) => {
+              if (s.destination?.id === id) {
+                s.destinationShown = true;
+                return;
+              }
+              // Going to any session or surface leaves the destination.
+              s.destinationShown = false;
               const tab = s.tabs.find((t) => t.id === id);
               const target = tab ? id : (s.tabs[0]?.id ?? null);
               if (target === null) return;
               const grp = groupOf(s.tabs.find((t) => t.id === target));
               s.focusedGroupId = grp;
               s.activeByGroup[grp] = target;
+              revealGroup(s, grp);
               pushTabHistory(s, target);
               syncActiveMirror(s);
-            }),
-          toggleTabBar: () =>
-            set((s) => {
-              s.tabBarVisible = !s.tabBarVisible;
-            }),
-          setTabBarVisible: (visible) =>
-            set((s) => {
-              s.tabBarVisible = visible;
             }),
           navigateTabBack: () =>
             set((s) => {
@@ -676,6 +830,18 @@ export const useLayoutStore = createSelectors(
               pushTabHistory(s, next.id);
               syncActiveMirror(s);
             }),
+          setSurfaces: (mode) =>
+            set((s) => {
+              s.surfaces = s.groupOrder.length > 1 ? mode : "shown";
+              const main = s.groupOrder[0];
+              // Keyboard focus follows what is on screen: hidden surfaces hand
+              // it to the main pane, an expanded one takes it.
+              if (s.surfaces === "hidden") s.focusedGroupId = main;
+              else if (s.surfaces === "expanded" && s.focusedGroupId === main) {
+                s.focusedGroupId = s.groupOrder[1];
+              }
+              syncActiveMirror(s);
+            }),
           setFocusedGroup: (groupId) =>
             set((s) => {
               if (!s.groupOrder.includes(groupId) || s.focusedGroupId === groupId) return;
@@ -700,6 +866,7 @@ export const useLayoutStore = createSelectors(
               s.groupOrder.splice(fi + 1, 0, gid);
               s.activeByGroup[gid] = null;
               s.focusedGroupId = gid;
+              if (s.surfaces === "hidden") s.surfaces = "shown";
               syncActiveMirror(s);
             }),
           closeGroup: (groupId) =>
@@ -707,25 +874,39 @@ export const useLayoutStore = createSelectors(
               if (s.groupOrder.length <= 1) return;
               const gi = s.groupOrder.indexOf(groupId);
               if (gi === -1) return;
-              const leftId = s.groupOrder[gi - 1] ?? s.groupOrder[gi + 1];
-              // Move the column's tabs to the neighbour (they remount there).
-              for (const t of s.tabs) {
-                if (groupOf(t) === groupId) t.groupId = leftId;
+              const remaining = s.groupOrder.filter((g) => g !== groupId);
+              const main = remaining[0];
+              // The column's tabs move (and remount): sessions to the main
+              // column, tools to the nearest surfaces column left standing.
+              const toolHome =
+                [s.groupOrder[gi - 1], s.groupOrder[gi + 1]].find((g) => g && g !== main) ??
+                remaining.find((g) => g !== main);
+              const here = s.tabs.filter((t) => groupOf(t) === groupId);
+              if (!toolHome && here.some((t) => !belongsInMain(t.type))) {
+                // The only surfaces column, with tools in it: they have nowhere
+                // to go but the main column, which shows no tabs. Hide the
+                // pane instead; its tools keep running and come back with it.
+                s.surfaces = "hidden";
+                s.focusedGroupId = main;
+                syncActiveMirror(s);
+                return;
               }
               const moved = s.activeByGroup[groupId];
-              s.groupOrder.splice(gi, 1);
+              for (const t of here) t.groupId = belongsInMain(t.type) ? main : toolHome!;
+              s.groupOrder = remaining;
               delete s.activeByGroup[groupId];
-              if (moved) s.activeByGroup[leftId] = moved;
-              s.focusedGroupId = leftId;
-              syncActiveMirror(s);
+              const movedTab = here.find((t) => t.id === moved);
+              if (movedTab) s.activeByGroup[groupOf(movedTab)] = movedTab.id;
+              s.focusedGroupId = movedTab ? groupOf(movedTab) : main;
+              if (s.groupOrder.length === 1) s.surfaces = "shown";
+              reconcileGroups(s);
+              keepMainForSessions(s);
             }),
           toggleZenMode: () =>
             set((s) => {
               // Exit: restore the snapshot.
               if (s.zen && s.zenPrev) {
                 const p = s.zenPrev;
-                s.leftPanel.visible = p.leftVisible;
-                s.rightPanel.visible = p.rightVisible;
                 s.groupOrder = p.groupOrder.length ? [...p.groupOrder] : [DEFAULT_GROUP];
                 s.activeByGroup = { ...p.activeByGroup };
                 s.focusedGroupId = p.focusedGroupId;
@@ -733,10 +914,10 @@ export const useLayoutStore = createSelectors(
                 s.zen = false;
                 s.zenPrev = null;
                 reconcileGroups(s);
+                keepMainForSessions(s);
                 return;
               }
-              // Enter: snapshot the current layout, then build Knowledge │ Chat │
-              // Browser with the side panels hidden.
+              // Enter: snapshot the current layout, then build Session │ Browser.
               const tabGroups: Record<string, string> = {};
               for (const t of s.tabs) tabGroups[t.id] = groupOf(t);
               s.zenPrev = {
@@ -744,10 +925,7 @@ export const useLayoutStore = createSelectors(
                 activeByGroup: { ...s.activeByGroup },
                 focusedGroupId: s.focusedGroupId,
                 tabGroups,
-                leftVisible: s.leftPanel.visible,
-                rightVisible: s.rightPanel.visible,
               };
-              const G_KB = "zen-kb";
               const G_CHAT = "zen-chat";
               const G_BROWSER = "zen-browser";
               // Reuse the existing singleton tab if present, else create one.
@@ -769,14 +947,13 @@ export const useLayoutStore = createSelectors(
                 });
                 return id;
               };
-              const kbId = ensure("knowledge", "Knowledge", G_KB);
               // A chat tab always exists (welcome-chat is the non-closable baseline).
               let chat = s.tabs.find((x) => x.type === "chat");
               if (!chat) {
                 chat = {
                   id: "chat-zen",
                   type: "chat",
-                  title: "Chat",
+                  title: "Session",
                   closable: true,
                   dirty: false,
                   data: {},
@@ -787,11 +964,12 @@ export const useLayoutStore = createSelectors(
                 chat.groupId = G_CHAT;
               }
               const browserId = ensure("browser", "Browser", G_BROWSER);
-              s.groupOrder = [G_KB, G_CHAT, G_BROWSER];
-              s.activeByGroup = { [G_KB]: kbId, [G_CHAT]: chat.id, [G_BROWSER]: browserId };
+              // The agent first: the main column holds the session.
+              s.groupOrder = [G_CHAT, G_BROWSER];
+              s.activeByGroup = { [G_CHAT]: chat.id, [G_BROWSER]: browserId };
               s.focusedGroupId = G_CHAT;
-              s.leftPanel.visible = false;
-              s.rightPanel.visible = false;
+              // Team chat, like every tab outside the three, stays where it
+              // was and comes back on exit.
               s.zen = true;
               syncActiveMirror(s);
             }),
@@ -838,24 +1016,28 @@ export const useLayoutStore = createSelectors(
                 order[Math.min(template.focus ?? order.length - 1, order.length - 1)];
 
               // Park any OTHER open tabs in the first column (kept, not lost) and
-              // validate actives/focus.
+              // validate actives/focus — then move the tools among them out of
+              // it, since the main column shows no tabs.
               reconcileGroups(s);
-
-              // Panels — left/right are explicitly controlled by templates.
-              s.leftPanel.visible = !!template.panels.left;
-              s.rightPanel.visible = !!template.panels.right;
-              if (template.leftSection) s.leftPanel.activeSection = template.leftSection;
-              // A template naming a section means it wants source control in
-              // the slot; leaving chat there would silently ignore the request.
-              if (template.rightSection) {
-                s.rightPanel.activeSection = template.rightSection;
-                s.rightPanel.mode = "source-control";
-              }
+              keepMainForSessions(s);
+              // A one-column template means the session alone: tools parked
+              // beside it stay open but out of sight.
+              if (template.columns.length === 1 && s.groupOrder.length > 1) s.surfaces = "hidden";
             }),
           setTabDirty: (id, dirty) =>
             set((s) => {
               const tab = s.tabs.find((t) => t.id === id);
               if (tab) tab.dirty = dirty;
+            }),
+          setTabTitle: (id, title) =>
+            set((s) => {
+              const tab = s.tabs.find((t) => t.id === id);
+              if (tab && tab.title !== title) tab.title = title;
+            }),
+          setTabData: (id, patch) =>
+            set((s) => {
+              const tab = s.tabs.find((t) => t.id === id);
+              if (tab) tab.data = { ...tab.data, ...patch };
             }),
           // Persist the whole project layout (split columns + their tabs) per
           // project so the AKB arrangement comes back on reopen. The Rust
@@ -884,7 +1066,8 @@ export const useLayoutStore = createSelectors(
           loadProjectView: (wsId) =>
             set((s) => {
               const v = s.viewsByWs[wsId] ?? welcomeView(wsId);
-              applyView(s, v);
+              applyViewKeepingWindowTabs(s, v);
+              keepMainForSessions(s);
               s.currentViewWsId = wsId;
             }),
           removeProjectView: (wsId) =>
@@ -979,6 +1162,7 @@ export const useLayoutStore = createSelectors(
                       ? data.focusedGroupId
                       : s.groupOrder[0];
                   syncActiveMirror(s);
+                  keepMainForSessions(s);
                 });
               }
             } catch {
@@ -995,43 +1179,40 @@ export const useLayoutStore = createSelectors(
         // they're deliberately excluded.
         name: "atlas-layout-prefs",
         version: 2,
-        // v2: the tab bar became hidden by default. Every v1 blob carries
-        // `tabBarVisible: true` because that was the old default, not a
-        // choice, so it's reset once; from v2 on the stored value is the
-        // user's own and survives restarts.
-        migrate: (persisted, version) => {
-          const p = (persisted ?? {}) as Partial<LayoutState>;
-          if (version < 2) return { ...p, tabBarVisible: false };
-          return p;
-        },
         partialize: (s) => ({
-          leftPanel: s.leftPanel,
-          rightPanel: s.rightPanel,
+          // Derived, not a field: the tab is the truth while the app runs.
+          teamChat: { open: s.tabs.some((t) => t.type === "team-chat") },
+          sourceControl: s.sourceControl,
           knowledgePanel: s.knowledgePanel,
-          chatSidebar: s.chatSidebar,
           bashPanel: s.bashPanel,
           plansPanel: s.plansPanel,
           timelinePanel: s.timelinePanel,
-          tabBarVisible: s.tabBarVisible,
+          lastForm: s.lastForm,
         }),
         // One-level-deep merge so persisted slices overlay the defaults
         // without dropping any fields added in newer versions (the
         // default shallow merge would replace whole slices).
         merge: (persisted, current) => {
           const p = (persisted ?? {}) as Partial<LayoutState>;
-          const leftPanel = { ...current.leftPanel, ...p.leftPanel };
-          const rightPanel = { ...current.rightPanel, ...p.rightPanel };
-          // Coerce section ids that no longer belong to this panel (e.g. a
-          // pre-move `state.json` with "git-graph" on the left or "analysis"
-          // on the right) back to a valid default so the panel isn't blank.
-          const LEFT = ["files", "knowledge"];
-          const RIGHT = ["changes", "github", "git-graph"];
-          if (!LEFT.includes(leftPanel.activeSection)) leftPanel.activeSection = "files";
-          if (!RIGHT.includes(rightPanel.activeSection)) rightPanel.activeSection = "changes";
-          // Same coercion for the slot occupant — a persisted state predating
-          // the chat panel has no `mode` at all.
-          const RIGHT_MODES = ["source-control", "chat"];
-          if (!RIGHT_MODES.includes(rightPanel.mode)) rightPanel.mode = "source-control";
+          // Team chat open at quit reopens. A save from before it was a tab
+          // says so as the right slot showing chat (`rightPanel`, which source
+          // control shared before that, with `mode`).
+          const persisted_ = (persisted ?? {}) as {
+            teamChat?: { open?: boolean };
+            rightPanel?: { visible?: boolean; mode?: string };
+          };
+          const legacyRight = persisted_.rightPanel;
+          const teamChatOpen =
+            persisted_.teamChat?.open ??
+            (!!legacyRight?.visible &&
+              (legacyRight.mode === undefined || legacyRight.mode === "chat"));
+          const sourceControl = { ...current.sourceControl, ...p.sourceControl };
+          // Coerce a section id that no longer belongs to this panel (e.g. a
+          // pre-move `state.json` with "analysis") back to a valid default so
+          // the panel isn't blank.
+          if (!(SOURCE_CONTROL_SECTIONS as readonly string[]).includes(sourceControl.section)) {
+            sourceControl.section = "changes";
+          }
           // Tabs whose feature has since been removed (pomodoro, model-chat,
           // research…) still sit in persisted state.json; restoring them
           // yields a permanent placeholder tab. Drop them, and repoint
@@ -1046,20 +1227,39 @@ export const useLayoutStore = createSelectors(
               const id = t.id in LEGACY_TAB_TYPES ? LEGACY_TAB_TYPES[t.id] : t.id;
               return { ...t, id, type };
             })
-            .filter((t) => validTypes.has(t.type) && !isRetiredTab(t));
+            .filter(
+              (t) =>
+                validTypes.has(t.type) && !isRetiredTab(t) && !isDestinationOnly(t.type as TabType),
+            );
+          // Seeded into the tab set here so the first `loadProjectView` (or the
+          // projectless shell) carries it like any open team chat.
+          if (teamChatOpen && !tabs.some((t) => t.type === "team-chat")) {
+            tabs.push({ ...TEAM_CHAT_TAB });
+          }
           let activeTabId = p.activeTabId ?? current.activeTabId;
           if (activeTabId !== null && !tabs.some((t) => t.id === activeTabId)) {
             activeTabId = tabs[0]?.id ?? null;
           }
+          // `chatSidebar` is the per-chat session column the app sidebar
+          // replaced; a save from before carries it, and nothing reads it.
+          const {
+            rightPanel: _legacy,
+            teamChat: _derived,
+            chatSidebar: _retired,
+            ...rest
+          } = p as Partial<LayoutState> & {
+            rightPanel?: unknown;
+            teamChat?: unknown;
+            chatSidebar?: unknown;
+          };
           return {
             ...current,
-            ...p,
+            ...rest,
+            lastForm: { ...rest.lastForm },
             tabs,
             activeTabId,
-            leftPanel,
-            rightPanel,
+            sourceControl,
             knowledgePanel: { ...current.knowledgePanel, ...p.knowledgePanel },
-            chatSidebar: { ...current.chatSidebar, ...p.chatSidebar },
             bashPanel: { ...current.bashPanel, ...p.bashPanel },
             plansPanel: { ...current.plansPanel, ...p.plansPanel },
           };

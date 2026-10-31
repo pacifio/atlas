@@ -475,6 +475,130 @@ pub async fn git_workspace_summary(path: String) -> Result<GitProjectSummary, St
     .map_err(|e| e.to_string())
 }
 
+/// Where a checkout's branch stands against the repository's default branch:
+/// what the session Details card's Commit and Changes rows read, beside
+/// `git_snapshot`'s upstream view.
+#[derive(Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitBranchCompare {
+    /// `main`, from `origin/HEAD`, else a local `main` / `master`.
+    pub default_branch: Option<String>,
+    /// HEAD is the default branch.
+    pub is_default: bool,
+    /// The repository has at least one remote.
+    pub has_remote: bool,
+    /// Commits on HEAD the default branch does not have; `None` without one.
+    pub ahead_of_default: Option<u32>,
+    /// Lines added and removed since the branch left the default branch,
+    /// uncommitted changes and untracked files included. On the default branch (or with no
+    /// default branch) the working tree against HEAD.
+    pub additions: u32,
+    pub deletions: u32,
+}
+
+/// Untracked files larger than this are left out of the branch's line count.
+const UNTRACKED_COUNT_MAX_BYTES: u64 = 1024 * 1024;
+
+/// Sum a `git diff --numstat` listing. Binary files (`-`) count nothing.
+fn sum_numstat(numstat: &str) -> (u32, u32) {
+    numstat.lines().fold((0, 0), |(a, d), line| {
+        let mut cols = line.split('\t');
+        let add = cols.next().and_then(|c| c.parse::<u32>().ok()).unwrap_or(0);
+        let del = cols.next().and_then(|c| c.parse::<u32>().ok()).unwrap_or(0);
+        (a.saturating_add(add), d.saturating_add(del))
+    })
+}
+
+/// `origin/main` → `main`: the remote's name is everything before the first `/`.
+fn strip_remote(remote_ref: &str) -> &str {
+    remote_ref.split_once('/').map_or(remote_ref, |(_, b)| b)
+}
+
+#[tauri::command]
+pub async fn git_branch_compare(path: String) -> Result<GitBranchCompare, String> {
+    tokio::task::spawn_blocking(move || {
+        let git = |args: &[&str]| -> Option<String> {
+            let out = git_read().args(args).current_dir(&path).output().ok()?;
+            if !out.status.success() {
+                return None;
+            }
+            Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+        };
+        let exists = |rev: &str| git(&["rev-parse", "--verify", "--quiet", rev]).is_some();
+
+        let has_remote = git(&["remote"]).is_some_and(|s| !s.is_empty());
+        let origin_head = git(&[
+            "symbolic-ref",
+            "--quiet",
+            "--short",
+            "refs/remotes/origin/HEAD",
+        ]);
+        let default_branch = origin_head
+            .as_deref()
+            .map(|r| strip_remote(r).to_string())
+            .or_else(|| {
+                ["main", "master"]
+                    .into_iter()
+                    .find(|b| exists(&format!("refs/heads/{b}")))
+                    .map(String::from)
+            });
+        let current = git(&["symbolic-ref", "--quiet", "--short", "HEAD"]);
+        let is_default = matches!((&current, &default_branch), (Some(c), Some(d)) if c == d);
+
+        // The remote's copy when there is one: a local `main` left behind
+        // would count every commit merged since as this branch's.
+        let base = default_branch.as_ref().and_then(|d| {
+            origin_head
+                .as_ref()
+                .map(|_| format!("origin/{d}"))
+                .filter(|r| exists(r))
+                .or_else(|| exists(d).then(|| d.clone()))
+        });
+        let ahead_of_default = base
+            .as_ref()
+            .and_then(|b| git(&["rev-list", "--count", &format!("{b}..HEAD")]))
+            .and_then(|s| s.parse().ok());
+        let from = match (&base, is_default) {
+            (Some(b), false) => git(&["merge-base", b, "HEAD"]),
+            _ => None,
+        }
+        .unwrap_or_else(|| "HEAD".to_string());
+        let (mut additions, deletions) = git(&["diff", "--numstat", &from])
+            .map(|s| sum_numstat(&s))
+            .unwrap_or((0, 0));
+        // `git diff` does not see untracked files, and a turn that only adds
+        // files would read `+0 −0`: count their lines as added. Text only, as
+        // numstat skips binaries, and nothing huge (a stray log or dump that
+        // is not ignored would otherwise be read whole on every refresh).
+        if let Some(list) = git(&["ls-files", "-z", "--others", "--exclude-standard"]) {
+            let root = std::path::Path::new(&path);
+            for rel in list.split('\0').filter(|l| !l.is_empty()) {
+                let file = root.join(rel);
+                let small = std::fs::metadata(&file)
+                    .is_ok_and(|m| m.is_file() && m.len() <= UNTRACKED_COUNT_MAX_BYTES);
+                if !small {
+                    continue;
+                }
+                if let Ok(text) = std::fs::read_to_string(&file) {
+                    let lines = u32::try_from(text.lines().count()).unwrap_or(u32::MAX);
+                    additions = additions.saturating_add(lines);
+                }
+            }
+        }
+
+        GitBranchCompare {
+            default_branch,
+            is_default,
+            has_remote,
+            ahead_of_default,
+            additions,
+            deletions,
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub async fn git_diff_all(path: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
@@ -484,62 +608,6 @@ pub async fn git_diff_all(path: String) -> Result<String, String> {
             .output()
             .map_err(|e| e.to_string())?;
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
-/// Uncommitted changes (working tree against HEAD) to just `files`, as one
-/// unified diff — for "what is this thread's change right now".
-///
-/// Paths are relative to `path`, and so is the output (`--relative`), so a
-/// Project opened in a subdirectory of its repository reads back its own
-/// spelling of each path. Untracked files — ones the thread created and nobody
-/// has staged — are invisible to `git diff HEAD`, so each gets a `--no-index`
-/// diff against `/dev/null` (which exits 1 on a difference, by design).
-#[tauri::command]
-pub async fn git_diff_paths(
-    path: String,
-    files: Vec<String>,
-    ignore_whitespace: Option<bool>,
-) -> Result<String, String> {
-    if files.is_empty() {
-        return Ok(String::new());
-    }
-    tokio::task::spawn_blocking(move || {
-        // `-w`: `diffIgnoreWhitespace`; this diff is only read, never staged.
-        let ws: &[&str] = if ignore_whitespace.unwrap_or(false) {
-            &["-w"]
-        } else {
-            &[]
-        };
-        let tracked = git_read()
-            .args(["diff", "HEAD", "--relative"])
-            .args(ws)
-            .arg("--")
-            .args(&files)
-            .current_dir(&path)
-            .output()
-            .map_err(|e| e.to_string())?;
-        let mut out = String::from_utf8_lossy(&tracked.stdout).into_owned();
-
-        let untracked = git_read()
-            .args(["ls-files", "--others", "--exclude-standard", "--"])
-            .args(&files)
-            .current_dir(&path)
-            .output()
-            .map_err(|e| e.to_string())?;
-        for file in String::from_utf8_lossy(&untracked.stdout).lines() {
-            let Ok(created) = git_read()
-                .args(["diff", "--no-index", "--", "/dev/null", file])
-                .current_dir(&path)
-                .output()
-            else {
-                continue;
-            };
-            out.push_str(&String::from_utf8_lossy(&created.stdout));
-        }
-        Ok(out)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -615,20 +683,68 @@ pub async fn git_list_branches(path: String) -> Result<Vec<GitBranch>, String> {
     .map_err(|e| e.to_string())?
 }
 
+/// Refuse a branch name git would read as an option. `git check-ref-format`
+/// refuses one too, but only after git has already parsed it as a flag.
+fn branch_arg(branch: &str) -> Result<&str, GitErrorPayload> {
+    if branch.is_empty() || branch.starts_with('-') {
+        return Err(GitErrorPayload::internal(format!(
+            "'{branch}' is not a branch name."
+        )));
+    }
+    Ok(branch)
+}
+
+/// `git checkout <branch> --`: the trailing `--` pins `branch` as a revision,
+/// so a name that is also a file is never read as a path to restore.
+fn checkout(path: &str, branch: &str) -> Result<(), GitErrorPayload> {
+    GitCommand::new(path, &["checkout", branch_arg(branch)?, "--"]).run()?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn git_checkout(path: String, branch: String) -> Result<(), GitErrorPayload> {
-    tokio::task::spawn_blocking(move || {
-        GitCommand::new(&path, &["checkout", &branch]).run()?;
-        Ok(())
-    })
-    .await
-    .map_err(join_err)?
+    tokio::task::spawn_blocking(move || checkout(&path, &branch))
+        .await
+        .map_err(join_err)?
+}
+
+/// Switch `path` to `branch` only if its working tree is clean (untracked
+/// files count): the check and the switch run back to back in one blocking
+/// task, so nothing the UI read earlier can have gone stale in between. A
+/// dirty tree is refused with `uncommitted-changes` and left alone. For
+/// starting a session on another session's branch, where the checkout may be
+/// shared with an agent Atlas does not run.
+#[tauri::command]
+pub async fn git_switch_if_clean(path: String, branch: String) -> Result<(), GitErrorPayload> {
+    tokio::task::spawn_blocking(move || switch_if_clean(&path, &branch))
+        .await
+        .map_err(join_err)?
+}
+
+fn switch_if_clean(path: &str, branch: &str) -> Result<(), GitErrorPayload> {
+    let branch = branch_arg(branch)?;
+    let status = GitCommand::new(path, &["status", "--porcelain", "--untracked-files=normal"])
+        .read_only()
+        .run()?;
+    if !status.stdout.trim().is_empty() {
+        let code = atlas_git::GitErrorCode::UncommittedChanges;
+        return Err(GitErrorPayload {
+            code,
+            message: atlas_git::error::friendly_message(code, &[], None),
+            raw_stderr: String::new(),
+            command: "git status --porcelain".into(),
+            exit_code: None,
+            files: Vec::new(),
+            hint: None,
+        });
+    }
+    checkout(path, branch)
 }
 
 #[tauri::command]
 pub async fn git_create_branch(path: String, name: String) -> Result<(), GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
-        GitCommand::new(&path, &["checkout", "-b", &name]).run()?;
+        GitCommand::new(&path, &["checkout", "-b", branch_arg(&name)?]).run()?;
         Ok(())
     })
     .await
@@ -748,6 +864,95 @@ mod tests {
             .status()
             .expect("git is on PATH");
         assert!(status.success(), "git {args:?} failed");
+    }
+
+    fn head(repo: &Path) -> String {
+        let out = atlas_process::command("git")
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    }
+
+    #[test]
+    fn numstat_sums_lines_and_skips_binaries() {
+        assert_eq!(
+            sum_numstat("3\t1\ta.rs\n-\t-\tlogo.png\n10\t0\tb.rs\n"),
+            (13, 1)
+        );
+        assert_eq!(sum_numstat(""), (0, 0));
+        assert_eq!(strip_remote("origin/main"), "main");
+        assert_eq!(strip_remote("origin/release/1.0"), "release/1.0");
+    }
+
+    /// A feature branch counts its commits past `main` and every line since
+    /// it left `main`, uncommitted ones included; `main` itself counts only
+    /// its working tree.
+    #[tokio::test]
+    async fn branch_compare_measures_a_branch_against_main() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        git(root, &["init", "-q", "-b", "main"]);
+        fs::write(root.join("f"), "a\n").unwrap();
+        git(root, &["add", "-A"]);
+        git(root, &["commit", "-qm", "init"]);
+        let path = root.to_string_lossy().into_owned();
+
+        let on_main = git_branch_compare(path.clone()).await.unwrap();
+        assert_eq!(on_main.default_branch.as_deref(), Some("main"));
+        assert!(on_main.is_default);
+        assert!(!on_main.has_remote);
+        assert_eq!(on_main.ahead_of_default, Some(0));
+        assert_eq!((on_main.additions, on_main.deletions), (0, 0));
+
+        git(root, &["checkout", "-qb", "feature"]);
+        fs::write(root.join("f"), "a\nb\nc\n").unwrap();
+        git(root, &["commit", "-qam", "two lines"]);
+        fs::write(root.join("f"), "b\nc\nd\n").unwrap();
+
+        let feature = git_branch_compare(path).await.unwrap();
+        assert!(!feature.is_default);
+        assert_eq!(feature.ahead_of_default, Some(1));
+        // a → b c d: one removed, three added, the last uncommitted.
+        assert_eq!((feature.additions, feature.deletions), (3, 1));
+    }
+
+    /// Starting a session on another session's branch: the switch happens
+    /// only on a clean tree, untracked files included, and a name that is
+    /// also a file, or that looks like an option, is never misread.
+    #[test]
+    fn switch_if_clean_refuses_a_dirty_tree_and_reads_the_branch_safely() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        git(root, &["init", "-q", "-b", "main"]);
+        fs::write(root.join("f"), "a").unwrap();
+        // A file named like the branch: plain `git checkout feature` with
+        // a pathspec reading would restore it rather than switch.
+        fs::write(root.join("feature"), "a file").unwrap();
+        git(root, &["add", "-A"]);
+        git(root, &["commit", "-qm", "init"]);
+        git(root, &["branch", "feature"]);
+        let path = root.to_string_lossy().into_owned();
+
+        fs::write(root.join("untracked"), "x").unwrap();
+        let err = switch_if_clean(&path, "feature").unwrap_err();
+        assert_eq!(err.code, atlas_git::GitErrorCode::UncommittedChanges);
+        assert_eq!(head(root), "main", "left alone");
+        fs::remove_file(root.join("untracked")).unwrap();
+
+        fs::write(root.join("f"), "edited").unwrap();
+        assert!(switch_if_clean(&path, "feature").is_err());
+        assert_eq!(head(root), "main");
+        git(root, &["checkout", "-q", "--", "f"]);
+
+        for bad in ["-f", "--orphan=x", ""] {
+            assert!(switch_if_clean(&path, bad).is_err(), "{bad:?} refused");
+            assert_eq!(head(root), "main");
+        }
+
+        switch_if_clean(&path, "feature").unwrap();
+        assert_eq!(head(root), "feature");
     }
 
     /// `git_log` is branch-scoped unless a caller opts in. The Source-Control

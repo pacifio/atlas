@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { formatDateTime, formatTime, hourCycle, setTimeFormat } from "./format-time";
+import {
+  formatDateTime,
+  formatDayAwareTime,
+  formatFullTimestamp,
+  formatTime,
+  hourCycle,
+  setTimeFormat,
+} from "./format-time";
 
 const AFTERNOON = new Date(2026, 9, 22, 15, 7);
 
@@ -27,5 +34,68 @@ describe("format-time", () => {
   it("forces a 12-hour clock", () => {
     setTimeFormat("12h");
     expect(formatTime(AFTERNOON, undefined, "en-GB")).toMatch(/^3:07\s?pm$/i);
+  });
+});
+
+describe("formatDayAwareTime", () => {
+  const NOW = new Date(2026, 9, 24, 9, 30);
+  const fmt = (at: Date) => formatDayAwareTime(at, NOW, "en-US");
+
+  it("shows the time alone for a message from today", () => {
+    expect(fmt(new Date(2026, 9, 24, 0, 1))).toBe("12:01 AM");
+    expect(fmt(new Date(2026, 9, 24, 9, 29))).toBe("9:29 AM");
+  });
+
+  it("treats a later time on the same day as today", () => {
+    expect(fmt(new Date(2026, 9, 24, 9, 31))).toBe("9:31 AM");
+  });
+
+  it("dates a timestamp from a future day rather than passing it off as today", () => {
+    expect(fmt(new Date(2026, 9, 25, 0, 5))).toBe("10/25 12:05 AM");
+    expect(fmt(new Date(2027, 0, 2, 8, 0))).toBe("1/2/2027 8:00 AM");
+  });
+
+  it("picks up a changed hour cycle instead of reusing a cached formatter", () => {
+    const at = new Date(2026, 9, 24, 16, 34);
+    expect(fmt(at)).toBe("4:34 PM");
+    setTimeFormat("24h");
+    expect(fmt(at)).toBe("16:34");
+    setTimeFormat("system");
+    expect(fmt(at)).toBe("4:34 PM");
+  });
+
+  it("says yesterday for the previous calendar day, however few hours ago", () => {
+    expect(fmt(new Date(2026, 9, 23, 23, 59))).toBe("yesterday at 11:59 PM");
+    expect(fmt(new Date(2026, 9, 23, 0, 0))).toBe("yesterday at 12:00 AM");
+  });
+
+  it("adds month and day for an earlier day this year", () => {
+    expect(fmt(new Date(2026, 9, 22, 16, 34))).toBe("10/22 4:34 PM");
+    expect(fmt(new Date(2026, 0, 1, 8, 0))).toBe("1/1 8:00 AM");
+  });
+
+  it("adds the year for a message from another year", () => {
+    expect(fmt(new Date(2025, 9, 22, 16, 34))).toBe("10/22/2025 4:34 PM");
+  });
+
+  it("follows the 24-hour setting", () => {
+    setTimeFormat("24h");
+    expect(fmt(new Date(2026, 9, 22, 16, 34))).toBe("10/22 16:34");
+  });
+
+  it("renders nothing for an unparseable timestamp", () => {
+    expect(formatDayAwareTime("not a date", NOW, "en-US")).toBe("");
+  });
+});
+
+describe("formatFullTimestamp", () => {
+  it("spells out the weekday, date and time", () => {
+    expect(formatFullTimestamp(new Date(2026, 9, 22, 16, 34), "en-US")).toBe(
+      "Thursday, October 22, 2026 at 4:34 PM",
+    );
+  });
+
+  it("renders nothing for an unparseable timestamp", () => {
+    expect(formatFullTimestamp("", "en-US")).toBe("");
   });
 });

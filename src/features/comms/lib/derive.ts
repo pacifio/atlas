@@ -2,7 +2,13 @@
 // state — no I/O, no store access — so the awkward parts (reaction counts,
 // speaker grouping, DM titles) stay testable without a socket.
 
-import type { ChatConversation, ChatReaction, CommsMessage, OrgMemberProfile } from "../types";
+import type {
+  ChatConversation,
+  ChatReaction,
+  ChatReadState,
+  CommsMessage,
+  OrgMemberProfile,
+} from "../types";
 import { formatTime, timeFormat } from "@/lib/format-time";
 
 /** The server sends reaction ROWS and no aggregate; this is where counts come
@@ -195,4 +201,21 @@ export function utf8Bytes(s: string): number {
 /** Sort for the sidebar: most recent activity first. */
 export function byRecency(a: ChatConversation, b: ChatConversation): number {
   return b.last_activity_seq - a.last_activity_seq;
+}
+
+/** Whether any conversation the user is in has something unread — a message
+ *  or a mention, both counted by the server (`ChatReadState`), never here.
+ *  Only listed conversations count: a read row outlives a conversation the
+ *  user left. */
+export function hasUnreadConversation(
+  reads: readonly ChatReadState[],
+  conversations: readonly ChatConversation[],
+): boolean {
+  let listed: Set<string> | null = null;
+  for (const read of reads) {
+    if (Number(read.unread) <= 0 && Number(read.mentions) <= 0) continue;
+    listed ??= new Set(conversations.map((c) => c.id));
+    if (listed.has(read.conv_id)) return true;
+  }
+  return false;
 }

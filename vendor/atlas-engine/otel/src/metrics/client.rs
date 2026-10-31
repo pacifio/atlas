@@ -19,6 +19,11 @@ use opentelemetry::metrics::Meter;
 use opentelemetry::metrics::MeterProvider as _;
 use opentelemetry_otlp::OTEL_EXPORTER_OTLP_METRICS_TIMEOUT;
 use opentelemetry_otlp::Protocol;
+// Every exporter below sets `RetryPolicy::disabled()`: OTLP 0.33 retries by
+// default, and its deadline does not cancel an in-flight attempt, so a slow
+// collector could hold an export near twice the timeout. This keeps 0.31's
+// single attempt.
+use opentelemetry_otlp::RetryPolicy;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_otlp::WithHttpConfig;
 use opentelemetry_otlp::WithTonicConfig;
@@ -559,6 +564,7 @@ fn build_otlp_metric_exporter(
 
             opentelemetry_otlp::MetricExporter::builder()
                 .with_tonic()
+                .with_retry_policy(RetryPolicy::disabled())
                 .with_endpoint(endpoint)
                 .with_temporality(temporality)
                 .with_metadata(MetadataMap::from_headers(header_map))
@@ -581,6 +587,7 @@ fn build_otlp_metric_exporter(
 
             let mut exporter_builder = opentelemetry_otlp::MetricExporter::builder()
                 .with_http()
+                .with_retry_policy(RetryPolicy::disabled())
                 .with_endpoint(endpoint)
                 .with_temporality(temporality)
                 .with_protocol(protocol)

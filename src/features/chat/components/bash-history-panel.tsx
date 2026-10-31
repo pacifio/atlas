@@ -137,7 +137,7 @@ export function BashHistoryPanel({ messages, onJump, onClose }: BashHistoryPanel
         <div ref={parentRef} className="flex-1 overflow-y-auto hide-scrollbar">
           {entries.length === 0 ? (
             <div className="px-3 py-3 text-xs text-[var(--muted-foreground)] leading-relaxed">
-              No bash commands in this chat yet.
+              No bash commands in this session yet.
             </div>
           ) : (
             <div

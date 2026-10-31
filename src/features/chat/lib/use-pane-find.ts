@@ -16,8 +16,21 @@ import { matchesAction } from "@/features/keybindings/lib/use-scoped-hotkeys";
  * pane moves *pane* focus without moving DOM focus — so an activeElement check
  * lets the other pane keep the keyboard and both finders fire.
  */
+/** Opens a chat tab's find bar from outside its panel (the Details card's
+ *  Find button). A window event; `detail.tabId` names the tab. */
+export const OPEN_CHAT_FIND_EVENT = "atlas:chat-open-find";
+
 export function usePaneFind(tabId: string | undefined): [boolean, (open: boolean) => void] {
   const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!tabId) return;
+    const onOpen = (e: Event) => {
+      if ((e as CustomEvent<{ tabId?: string }>).detail?.tabId === tabId) setOpen(true);
+    };
+    window.addEventListener(OPEN_CHAT_FIND_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_CHAT_FIND_EVENT, onOpen);
+  }, [tabId]);
 
   useEffect(() => {
     if (!tabId) return;

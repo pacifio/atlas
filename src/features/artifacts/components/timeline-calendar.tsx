@@ -117,13 +117,12 @@ export function TimelineCalendar<T>({
 
   return (
     <div data-slot="timeline-calendar" className={className}>
-      {/* The backing bleeds past each side: rows widen their hover background
-          past the column's edges, and without the bleed that background shows
-          either side of the date as a row scrolls under it. */}
+      {/* The backing bleeds past each side, so nothing scrolling under the
+          date shows at its edges. */}
       <header
         className={cn(
           HEADER,
-          "sticky top-0 z-panel flex items-end border-b border-border pb-2.5",
+          "sticky top-0 z-panel flex items-end border-b border-border px-2 pb-2.5",
           "before:absolute before:-inset-x-4 before:inset-y-0 before:-z-10 before:bg-background",
         )}
       >
@@ -166,7 +165,9 @@ export function TimelineCalendar<T>({
               {item.kind === "day" ? (
                 <DayHeader day={item} first={v.index === 0} />
               ) : (
-                <div className="border-b border-border-subtle">{renderRow(item.data)}</div>
+                // `py-1`: a selected or hovered row's fill sits inside the
+                // hairlines rather than touching them.
+                <div className="border-b border-border-subtle py-1">{renderRow(item.data)}</div>
               )}
             </div>
           );
@@ -183,7 +184,12 @@ function DayHeader({ day, first }: { day: CalendarDay; first: boolean }) {
   return (
     <div className={cn(!first && "pt-10")}>
       <h2
-        className={cn(HEADER, "flex items-end justify-between gap-3 border-b border-border pb-2.5")}
+        // `px-2`: the date lines up with the rows' text, which sits inside
+        // their fill.
+        className={cn(
+          HEADER,
+          "flex items-end justify-between gap-3 border-b border-border px-2 pb-2.5",
+        )}
       >
         <span className="text-lg tracking-tight">
           <span className="font-medium text-foreground">{day.date}</span>

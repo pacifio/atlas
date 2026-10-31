@@ -14,19 +14,24 @@ import { useOrgStore } from "@/features/organisations/stores/org-store";
 import { useAuthStore } from "@/features/auth/stores/auth-store";
 import { useMembersStore } from "@/features/organisations/stores/members-store";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { conversationTitle, memberName } from "../lib/derive";
+import { byRecency, conversationTitle, memberName } from "../lib/derive";
 import type { ChatConversation, OrgMemberProfile } from "../types";
 
 /**
- * Team chat, in the right panel slot (⌘⇧C).
+ * Team chat, a surface tab and a destination (⌘⇧C, ADR-0024).
  *
- * Conversations open as TABS in the header rather than replacing one another,
- * because chat here is org-scoped and someone watching #atlas-desktop while
- * answering a DM is the ordinary case, not the exception. The tab strip mirrors
- * the source-control panel's 29px header band so the two occupants of the slot
- * are visually interchangeable.
+ * As a surface — the short-hand view beside a session — conversations open as
+ * tabs in a bar of their own rather than replacing one another, because chat
+ * here is org-scoped and someone watching #atlas-desktop while answering a DM
+ * is the ordinary case, not the exception. The bar sits under the column's
+ * tab strip; the window's controls are the column header's, not this panel's.
+ *
+ * As the destination (`split`) it is the web app's layout: the channels and
+ * people as a sidebar on the left, the open conversation beside it, #general
+ * until something else is picked. The two forms share one store, so a
+ * conversation opened in one is the one the other shows.
  */
-export function CommsPanel() {
+export function CommsPanel({ split = false }: { split?: boolean } = {}) {
   const conversations = useCommsStore.use.conversations();
   const reads = useCommsStore.use.reads();
   const memberList = useCommsStore.use.members();
@@ -97,6 +102,23 @@ export function CommsPanel() {
     if (connected && socketOpen) void actions.hydrate();
   }, [connected, socketOpen, actions]);
 
+  // The split view always has a conversation open: #general when nothing is,
+  // else the first channel, else the most recent conversation. Picked once the
+  // list is here, and again if the open one goes away (left, deleted).
+  const defaultConvId = useMemo(() => {
+    if (!split) return null;
+    const channels = conversations.filter((c) => c.kind === "channel");
+    return (
+      channels.find((c) => c.name === "general")?.id ??
+      [...channels].sort(byRecency)[0]?.id ??
+      [...conversations].sort(byRecency)[0]?.id ??
+      null
+    );
+  }, [split, conversations]);
+  useEffect(() => {
+    if (split && !activeConv && defaultConvId) actions.openConversation(defaultConvId);
+  }, [split, activeConv, defaultConvId, actions]);
+
   useEffect(() => {
     const roster = remoteId ? rosterByOrg[remoteId] : undefined;
     if (!roster?.members) return;
@@ -132,7 +154,7 @@ export function CommsPanel() {
     // an empty 29px strip labelled "Team Chat" only repeats what the panel
     // already is. The placeholder gets the whole surface.
     return (
-      <div className="atlas-vibrant-panel flex h-full flex-col bg-[var(--sidebar)] pt-1.5">
+      <div className="flex h-full flex-col bg-background">
         <CommsSurface>
           <CommsNotConnected org={activeOrg} />
         </CommsSurface>
@@ -150,13 +172,7 @@ export function CommsPanel() {
   if (conversations.length === 0 && connection.state !== "open") {
     const terminal = connection.state === "unavailable";
     return (
-      <div className="atlas-vibrant-panel flex h-full flex-col bg-[var(--sidebar)]">
-        <div className="flex h-[38px] shrink-0 items-center pl-2">
-          <div className="flex h-[26px] items-center gap-1.5 rounded-lg bg-[var(--atlas-element-selected)] pl-2.5 pr-2.5 text-sm font-medium text-foreground select-none">
-            <MessagesSquare size={11} className="shrink-0 opacity-70" />
-            Chats
-          </div>
-        </div>
+      <div className="flex h-full flex-col bg-background">
         <CommsSurface>
           {terminal ? (
             <CommsConnecting
@@ -172,61 +188,83 @@ export function CommsPanel() {
     );
   }
 
-  return (
-    <div className="atlas-vibrant-panel flex h-full flex-col bg-[var(--sidebar)]">
-      {/* The header lives on the BACKDROP, not the card — that separation is
-          the whole depth trick. Taller than the old 29px band so the tabs
-          breathe like the reference. */}
-      <div className="flex h-[38px] shrink-0 items-center gap-1 pl-2">
-        <div
-          className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto hide-scrollbar"
-          // A gradient overlay in the backdrop colour never quite matched it —
-          // the vibrant grain composites on top of the token, so the patch
-          // read as its own rectangle. A mask fades the CONTENT instead, and
-          // whatever is behind it shows through exactly.
-          style={{
-            maskImage: "linear-gradient(to right, black, black calc(100% - 28px), transparent)",
-            WebkitMaskImage:
-              "linear-gradient(to right, black, black calc(100% - 28px), transparent)",
-          }}
-        >
-          {tabs.map((tab) => (
-            <TabButton
-              key={tab.id}
-              conv={tab.convId ? (convById.get(tab.convId) ?? null) : null}
-              members={members}
-              me={me}
-              active={tab.id === activeTabId}
-              read={tab.convId ? readBy.get(tab.convId) : undefined}
-              onSelect={() => actions.setActiveTab(tab.id)}
-              onClose={() => actions.closeTab(tab.id)}
-            />
-          ))}
-        </div>
-
-        {/* The project sidebar's add-project button, verbatim. */}
-        <div className="flex shrink-0 items-center pr-1.5">
-          <Hint label="New tab">
-            <button
-              type="button"
-              onClick={() => actions.newTab()}
-              className="flex h-6 w-6 items-center justify-center rounded-full border border-[var(--border)] text-[var(--secondary-foreground)] transition-colors hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] outline-none cursor-pointer"
+  if (split) {
+    return (
+      // A rule along the top, under the window's bar, so the view starts
+      // where the bar ends.
+      <div className="flex h-full flex-col bg-background">
+        <CommsSurface>
+          <div className="relative flex min-h-0 flex-1 overflow-hidden border-t border-border">
+            <aside
+              aria-label="Channels and people"
+              className="flex w-72 shrink-0 flex-col border-r border-border"
             >
-              <Plus size={14} />
-            </button>
-          </Hint>
-        </div>
+              <CommsHome sidebar activeConvId={activeConv?.id ?? null} />
+            </aside>
+            <div className="flex min-w-0 flex-1">
+              {activeConv ? (
+                // Keyed so each conversation mounts fresh.
+                <div key={activeConv.id} className="flex min-w-0 flex-1">
+                  <CommsConversation conv={activeConv} showBack={false} />
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </CommsSurface>
+        <MediaLightbox />
       </div>
+    );
+  }
 
-      {/* `overflow-hidden` so a view can never paint outside the panel, and the
-          transition is OPACITY ONLY. A transform here was the bug: this panel
-          carries `atlas-vibrant-panel`, whose grain overlay blends with
-          `mix-blend-mode: soft-light`, and translating a descendant across it
-          made WKWebView re-composite the blended layer every frame — which it
-          did wrong, flashing black and clipping the view mid-slide. The house
-          rule from the notification panel is that blur and animation belong on
-          ONE element; the honest way to keep a transition here is to move no
-          geometry at all. */}
+  return (
+    <div className="flex h-full flex-col bg-background">
+      {/* Only with two or more open: one view needs no tabs of its own under
+          the column's "Team chat" tab, and a conversation's header already
+          leads back home. ⌘-click a conversation to open a second. */}
+      {tabs.length > 1 && (
+        <ConversationBar>
+          <div
+            className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto hide-scrollbar"
+            // A gradient overlay in the backdrop colour never quite matched it —
+            // the vibrant grain composites on top of the token, so the patch
+            // read as its own rectangle. A mask fades the CONTENT instead, and
+            // whatever is behind it shows through exactly.
+            style={{
+              maskImage: "linear-gradient(to right, black, black calc(100% - 28px), transparent)",
+              WebkitMaskImage:
+                "linear-gradient(to right, black, black calc(100% - 28px), transparent)",
+            }}
+          >
+            {tabs.map((tab) => (
+              <TabButton
+                key={tab.id}
+                conv={tab.convId ? (convById.get(tab.convId) ?? null) : null}
+                members={members}
+                me={me}
+                active={tab.id === activeTabId}
+                read={tab.convId ? readBy.get(tab.convId) : undefined}
+                onSelect={() => actions.setActiveTab(tab.id)}
+                onClose={() => actions.closeTab(tab.id)}
+              />
+            ))}
+          </div>
+
+          {/* The project sidebar's add-project button, verbatim. */}
+          <div className="flex shrink-0 items-center pr-1.5">
+            <Hint label="New tab">
+              <button
+                type="button"
+                onClick={() => actions.newTab()}
+                className="flex h-6 w-6 items-center justify-center rounded-full border border-[var(--border)] text-[var(--secondary-foreground)] transition-colors hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] outline-none cursor-pointer"
+              >
+                <Plus size={14} />
+              </button>
+            </Hint>
+          </div>
+        </ConversationBar>
+      )}
+
+      {/* `overflow-hidden` so a view can never paint outside the panel. */}
       <CommsSurface>
         <div className="relative flex min-h-0 flex-1 overflow-hidden">
           {activeConv ? (
@@ -244,20 +282,19 @@ export function CommsPanel() {
   );
 }
 
-/**
- * The interface card: a rounded near-black surface floating on the panel's
- * warm backdrop, inset on the sides and bottom. The depth is the point — a
- * hairline ring plus a soft drop shadow, no blur and no transform, so it
- * lives safely inside `atlas-vibrant-panel`.
- */
+/** The open conversations, as tabs, under the column's own tab strip. */
+function ConversationBar({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex h-9 shrink-0 items-center gap-1 border-b border-[var(--border)] pl-1.5">
+      {children}
+    </div>
+  );
+}
+
+/** The conversation's surface, flat under the conversation bar. */
 function CommsSurface({ children }: { children: React.ReactNode }) {
   return (
-    <div
-      // Pure black on the panel's own near-black background leaves a drop
-      // shadow almost nothing to darken, so the hairline ring carries the
-      // edge; the shadow just softens it.
-      className="mx-1.5 mb-1.5 flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl bg-[var(--background)] ring-1 ring-[var(--atlas-element-active)] shadow-sm"
-    >
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--background)]">
       {children}
     </div>
   );

@@ -1,9 +1,9 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Menu as DropdownMenu } from "@base-ui/react/menu";
+import { BreadcrumbButton } from "@/components/breadcrumb-button";
 import { Dialog } from "@base-ui/react/dialog";
 import {
   Check,
-  ChevronDown,
   Plus,
   Cloud,
   Lock,
@@ -24,8 +24,6 @@ import { useAuthStore } from "@/features/auth/stores/auth-store";
 import { auth } from "@/features/auth/lib/auth-api";
 import { useOrgStore } from "../stores/org-store";
 import { switchOrg, deleteOrgAndData } from "../lib/org-switch";
-import { AddProjectMenu } from "@/features/projects/components/add-project-menu";
-import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
 import { CreateOrgDialog } from "./create-org-dialog";
 import { MembersModal } from "./members-modal";
 import { isSyncedOrg, type Organisation } from "../types";
@@ -38,7 +36,7 @@ function initials(name: string): string {
   return (words[0][0] + words[1][0]).toUpperCase();
 }
 
-function OrgAvatar({
+export function OrgAvatar({
   org,
   size = 20,
   plain,
@@ -112,14 +110,42 @@ function OrgAvatar({
   );
 }
 
+/** The org menu's surround, shared by the title bar's breadcrumb menu and the
+ *  sidebar project picker's Organization submenu so the two never drift.
+ *
+ *  No inset top highlight: on a card this size it draws a bright line across
+ *  the whole head of the menu, which reads as a second border above the
+ *  first. The surround is the foreground at 4% over the background — a shade
+ *  over the inset card, not the card token, which read as a grey slab beside
+ *  it — under the raised-rung shadow: the menu rung was all halo this close to
+ *  black. */
+export const ORG_MENU_POPUP_CLASS =
+  "flex max-h-[min(480px,70vh)] w-[268px] flex-col overflow-hidden rounded-xl border border-border-subtle bg-[color-mix(in_srgb,var(--foreground)_4%,var(--background)_92%)] p-1.5 shadow-sm backdrop-blur-2xl atlas-panel-in-tl select-none text-[var(--secondary-foreground)]";
+
 /**
- * Organisation switcher — the top-level tenant picker (Linear-style).
+ * The organisation menu — the top-level tenant picker (Linear-style) — as a
+ * hook, so two places can host it: the title bar's `org / project`
+ * breadcrumb, and the Organization submenu at the foot of the sidebar's
+ * project picker.
  *
  * Scoped to organisations only. Identity, Settings and sign-out live in the
- * title bar's account menu, which is backed by real auth; duplicating them here
- * as disabled rows only advertised things this menu cannot do.
+ * account menu, which is backed by real auth; duplicating them here as
+ * disabled rows only advertised things this menu cannot do.
+ *
+ * `panel(close)` is the menu's body: search, the org list (a synced org this
+ * account cannot open is locked, with the reason on hover), create, members,
+ * the org id and sync. It renders Base UI menu items, so it goes inside a
+ * menu popup or submenu popup; `close` shuts whichever menu hosts it. `reset`
+ * clears the search and any inline rename when that menu closes. `dialogs`
+ * are the create, members and delete dialogs, which outlive the menu and so
+ * render beside it.
  */
-export function OrgSwitcher() {
+export function useOrgMenu(): {
+  active: Organisation | null;
+  panel: (close: () => void) => ReactNode;
+  reset: () => void;
+  dialogs: ReactNode;
+} {
   const organisations = useOrgStore.use.organisations();
   const activeOrganisationId = useOrgStore.use.activeOrganisationId();
   const { rename, enableSync } = useOrgStore.use.actions();
@@ -155,10 +181,6 @@ export function OrgSwitcher() {
     return { ok: true };
   };
 
-  /** Label for the search button's tooltip, from the live keymap. */
-  const paletteHint = useActionShortcut("nav.commandPalette")?.label;
-
-  const [open, setOpen] = useState(false);
   // True while a manual list-refresh is in flight (spins the refresh icon).
   const [refreshing, setRefreshing] = useState(false);
   const [query, setQuery] = useState("");
@@ -221,353 +243,15 @@ export function OrgSwitcher() {
     setEditingId(null);
   };
 
-  if (!active) return null;
+  const reset = () => {
+    setEditingId(null);
+    setQuery("");
+  };
 
-  return (
-    // Fixed 29px row + border-b so the divider aligns exactly with the file-tree
-    // "ATLAS" header and the editor tab bar (both h-[29px] border-b under the
-    // titlebar).
-    // The visual top of the rail: avatar, name, chevron on the left; two ghost
-    // icon actions on the right. No rule beneath it — the gradient surface
-    // and the spacing do the separating.
-    <div className="h-[32px] shrink-0 flex items-center px-2">
-      <DropdownMenu.Root
-        open={open}
-        onOpenChange={(o) => {
-          setOpen(o);
-          if (!o) {
-            setEditingId(null);
-            setQuery("");
-          }
-        }}
-      >
-        <DropdownMenu.Trigger
-          render={
-            <button
-              className="flex h-7 items-center gap-2 px-1.5 rounded-md outline-none text-sm font-medium text-[var(--foreground)] hover:bg-[var(--atlas-element-hover)] transition-colors cursor-pointer min-w-0"
-              title="Switch organization"
-            >
-              <OrgAvatar org={active} size={18} />
-              <span className="text-left truncate">{active.name}</span>
-              <ChevronDown size={11} className="text-[var(--muted-foreground)] shrink-0" />
-            </button>
-          }
-        />
-
-        {/* Quick actions — the org row has spare width to its right, so the two
-         *  things you reach for constantly (add a project, search everything)
-         *  live here as icons instead of eating two full rows in the header
-         *  list below. Usage moved up to the titlebar band with the rest of
-         *  the rail chrome; Settings is reachable from the account menu and
-         *  the command palette, so it no longer spends a slot here. */}
-        <div className="ml-auto flex items-center gap-0.5 shrink-0">
-          <AddProjectMenu />
-          <Hint label="Search" shortcut={paletteHint}>
-            <button
-              onClick={() => window.dispatchEvent(new CustomEvent("atlas:command-palette"))}
-              className="flex size-6 items-center justify-center rounded-md text-[var(--muted-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] outline-none transition-colors cursor-pointer"
-            >
-              <Search size={13} />
-            </button>
-          </Hint>
-        </div>
-
-        <DropdownMenu.Portal>
-          {/* The house menu surface (chat's session picker, the pin rail):
-              border + translucent fill + backdrop blur + the grow-from-the-
-              trigger animation, ALL on this one element. Splitting them across
-              a wrapper isolates the layer and kills the blur. */}
-          <DropdownMenu.Positioner className="z-popover" align="start" sideOffset={6}>
-            <DropdownMenu.Popup
-              // No inset top highlight: on a card this size it draws a bright
-              // line across the whole head of the menu, which reads as a second
-              // border above the first. The surround is the foreground at 4%
-              // over the background — a shade over the inset card, not the
-              // card token, which read as a grey slab beside it — under the
-              // raised-rung shadow: the menu rung was all halo this close to
-              // black.
-              className="flex max-h-[min(480px,70vh)] w-[268px] flex-col overflow-hidden rounded-xl border border-border-subtle bg-[color-mix(in_srgb,var(--foreground)_4%,var(--background)_92%)] p-1.5 shadow-sm backdrop-blur-2xl atlas-panel-in-tl select-none text-[var(--secondary-foreground)]"
-            >
-              {/* Two surfaces, the agent/model picker's recipe: this popup is the
-                  tinted surround carrying the actions, and the search + org list
-                  sit in an inset card on the app's own background, its edge
-                  carried by a hairline ring and a shadow. */}
-              <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg bg-background shadow-sm ring-1 ring-border">
-                {/* Head: a filter field with the refresh beside it, ruled off from
-                  the list the way the model picker's search row is. */}
-                <div className="flex h-control-lg shrink-0 items-center gap-1.5 border-b border-foreground/8 px-2.5">
-                  <Search size={11} className="shrink-0 text-[var(--muted-foreground)]" />
-                  <input
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    onKeyDown={(e) => {
-                      // Keep keys from the popup's typeahead and arrow nav, but let Escape
-                      // bubble to the dismiss handler so it still closes the popup.
-                      if (e.key !== "Escape") e.stopPropagation();
-                    }}
-                    placeholder="Search organizations…"
-                    aria-label="Search organizations"
-                    className="min-w-0 flex-1 bg-transparent text-xs text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]"
-                  />
-                  {/* Manual re-sync — only meaningful with a credential to pull
-                    with. Silent on failure: Rust keeps the last-known list. */}
-                  {signedIn && (
-                    <Hint label="Refresh organizations">
-                      <button
-                        disabled={refreshing}
-                        onClick={async (e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          setRefreshing(true);
-                          try {
-                            await auth.refresh();
-                          } catch {
-                            // Left as-is on purpose; the pull failing is not an error
-                            // worth a toast on a background list.
-                          } finally {
-                            setRefreshing(false);
-                          }
-                        }}
-                        className="flex size-5 shrink-0 items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] outline-none transition-colors cursor-pointer disabled:opacity-50"
-                      >
-                        <RefreshCw size={10} className={refreshing ? "animate-spin" : ""} />
-                      </button>
-                    </Hint>
-                  )}
-                </div>
-
-                <div className="hide-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain py-1">
-                  {filteredOrgs.length === 0 && (
-                    <div className="px-2.5 py-3 text-center text-xs text-[var(--atlas-text-disabled)]">
-                      No organizations match.
-                    </div>
-                  )}
-                  {filteredOrgs.map((org) => {
-                    const isActive = org.id === active.id;
-                    // Inline-rename row: a plain input (NOT a menu item) so typing
-                    // doesn't trigger Radix typeahead / select / close.
-                    if (editingId === org.id) {
-                      return (
-                        <div
-                          key={org.id}
-                          className="mx-1 flex h-control-md w-[calc(100%-8px)] items-center gap-2 rounded-md px-1.5"
-                          onKeyDown={(e) => e.stopPropagation()}
-                        >
-                          <OrgAvatar org={org} size={16} plain />
-                          <input
-                            autoFocus
-                            value={editName}
-                            onChange={(e) => setEditName(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") submitRename();
-                              if (e.key === "Escape") setEditingId(null);
-                            }}
-                            onBlur={submitRename}
-                            className="flex-1 min-w-0 bg-transparent outline-none text-sm text-[var(--foreground)]"
-                          />
-                        </div>
-                      );
-                    }
-                    const access = orgAccess(org);
-                    return (
-                      <DropdownMenu.Item
-                        key={org.id}
-                        disabled={!access.ok}
-                        title={access.ok ? undefined : access.reason}
-                        onClick={() => {
-                          if (!access.ok) return;
-                          if (!isActive) void switchOrg(org.id);
-                        }}
-                        className={cn(
-                          // Inset rows (a margin, a radius) rather than full-bleed
-                          // stripes: the highlight then reads as a chip inside the
-                          // card, which is what the chat menus do.
-                          "group/org mx-1 flex h-control-md w-[calc(100%-8px)] items-center gap-2 rounded-md px-1.5 text-sm outline-none transition-colors",
-                          isActive && "bg-foreground/8 text-[var(--foreground)]",
-                          access.ok
-                            ? "cursor-pointer hover:bg-foreground/6 data-highlighted:bg-foreground/6 hover:text-[var(--foreground)]"
-                            : "cursor-not-allowed opacity-40",
-                        )}
-                      >
-                        <OrgAvatar org={org} size={16} plain />
-                        <span className="flex-1 text-left truncate">{org.name}</span>
-                        {/* A locked org offers no row actions — you can't manage an
-                          org this account has no access to. */}
-                        {/* Rename (pencil) — appears on hover; doesn't switch/close.
-                          Local-only orgs only: a synced org's name is owned by the
-                          server and re-applied on every auth refresh, so a local
-                          rename would silently revert. There is no org-update
-                          route in the client to write it through with. */}
-                        {access.ok && !isSyncedOrg(org) && (
-                          <Hint label="Rename organization">
-                            <button
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                beginRename(org.id, org.name);
-                              }}
-                              className="flex size-5 shrink-0 items-center justify-center rounded text-[var(--muted-foreground)] opacity-0 hover:bg-[var(--card)] hover:text-[var(--foreground)] group-hover/org:opacity-100 focus-visible:opacity-100 cursor-pointer transform-gpu [backface-visibility:hidden]"
-                            >
-                              <Pencil size={11} />
-                            </button>
-                          </Hint>
-                        )}
-                        {/* Delete — appears on hover; opens confirmation. Hidden when
-                          this is the only org (can't delete the last one). */}
-                        {access.ok && canDelete && (
-                          <Hint label="Delete organization">
-                            <button
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                setConfirmDelete(org);
-                                setOpen(false);
-                              }}
-                              className="flex size-5 shrink-0 items-center justify-center rounded text-[var(--muted-foreground)] opacity-0 hover:bg-[var(--card)] hover:text-error group-hover/org:opacity-100 focus-visible:opacity-100 cursor-pointer transform-gpu [backface-visibility:hidden]"
-                            >
-                              <Trash2 size={11} />
-                            </button>
-                          </Hint>
-                        )}
-                        {!access.ok ? (
-                          <Lock size={11} className="text-[var(--muted-foreground)] shrink-0" />
-                        ) : (
-                          isActive && (
-                            <Check size={13} className="shrink-0 text-[var(--foreground)]" />
-                          )
-                        )}
-                      </DropdownMenu.Item>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Create organisation — opens the name + handle modal (the handle
-                  is globally unique, so it needs a real form, not an inline input). */}
-              <DropdownMenu.Item
-                onClick={() => {
-                  setOpen(false);
-                  setCreateOpen(true);
-                }}
-                className="mt-1.5 flex h-control-md w-full shrink-0 items-center gap-2 rounded-md px-1.5 text-xs outline-none transition-colors hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] cursor-pointer"
-              >
-                <Plus size={12} className="shrink-0 text-[var(--muted-foreground)]" />
-                <span className="flex-1 text-left">Create organization…</span>
-              </DropdownMenu.Item>
-
-              {/* Members live on the server, so this only means anything for a
-                  SYNCED org — a local-only org has no server org to manage. */}
-              {canManageMembers ? (
-                <DropdownMenu.Item
-                  onClick={() => {
-                    setOpen(false);
-                    setMembersOpen(true);
-                  }}
-                  className="flex h-control-md w-full shrink-0 items-center gap-2 rounded-md px-1.5 text-xs outline-none transition-colors hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] cursor-pointer"
-                >
-                  <Users size={12} className="shrink-0 text-[var(--muted-foreground)]" />
-                  <span className="flex-1 text-left">Invite &amp; Manage members</span>
-                </DropdownMenu.Item>
-              ) : (
-                <div
-                  title={
-                    activeIsSynced ? "Sign in to manage members" : "Turn on sync to manage members"
-                  }
-                  className="flex h-control-md w-full shrink-0 cursor-not-allowed items-center gap-2 rounded-md px-1.5 text-xs text-[var(--secondary-foreground)] opacity-40 select-none"
-                >
-                  <Users size={12} className="shrink-0" />
-                  <span className="flex-1 text-left">Invite &amp; Manage members</span>
-                </div>
-              )}
-
-              {/* The ACTIVE org's server id, for support threads and anywhere a
-                  teammate has to name this org precisely. Disabled rather than
-                  hidden when the org is local: the row explains why the id the
-                  user came looking for isn't there yet. */}
-              {copyableOrgId ? (
-                <DropdownMenu.Item
-                  onClick={async () => {
-                    setOpen(false);
-                    if (await copyText(copyableOrgId)) toast.success("Organization ID copied");
-                    else toast.error("Could not copy the organization ID");
-                  }}
-                  title={copyableOrgId}
-                  className="flex h-control-md w-full shrink-0 items-center gap-2 rounded-md px-1.5 text-xs outline-none transition-colors hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] cursor-pointer"
-                >
-                  <Copy size={12} className="shrink-0 text-[var(--muted-foreground)]" />
-                  <span className="flex-1 text-left">Copy organization ID</span>
-                </DropdownMenu.Item>
-              ) : (
-                <div
-                  title="Turn on sync to give this organization an ID"
-                  className="flex h-control-md w-full shrink-0 cursor-not-allowed items-center gap-2 rounded-md px-1.5 text-xs text-[var(--secondary-foreground)] opacity-40 select-none"
-                >
-                  <Copy size={12} className="shrink-0" />
-                  <span className="flex-1 text-left">Copy organization ID</span>
-                </div>
-              )}
-
-              <DropdownMenu.Separator className="mx-1.5 my-1 h-px shrink-0 bg-border-subtle" />
-
-              {/* Sync toggle for the ACTIVE org — in the footer (not under the org
-               *  list) so it's unambiguous which org it applies to. Signed out,
-               *  the action starts sign-in; already-synced, it just reports state. */}
-              {syncing ? (
-                <div
-                  title="Syncing…"
-                  className="flex h-control-md w-full items-center gap-2 rounded-md px-1.5 text-xs text-[var(--secondary-foreground)] select-none"
-                >
-                  <Loader2
-                    size={12}
-                    className="shrink-0 animate-spin text-[var(--muted-foreground)]"
-                  />
-                  <span className="flex-1 text-left truncate">Syncing {active.name}…</span>
-                </div>
-              ) : isSyncedOrg(active) ? (
-                <div
-                  title="This organization is synced with your Atlas account"
-                  className="flex h-control-md w-full items-center gap-2 rounded-md px-1.5 text-xs text-[var(--secondary-foreground)] select-none"
-                >
-                  <Cloud size={12} className="shrink-0 text-[var(--muted-foreground)]" />
-                  <span className="flex-1 text-left truncate">{active.name} is synced</span>
-                  <Check size={12} className="shrink-0 text-[var(--secondary-foreground)]" />
-                </div>
-              ) : (
-                <DropdownMenu.Item
-                  // Radix kept the menu open by calling preventDefault() inside
-                  // onSelect; Base UI spells that closeOnClick={false}.
-                  closeOnClick={false}
-                  onClick={() => {
-                    // Signed out, enableSync opens sign-in and returns instantly —
-                    // no spinner. Signed in, it round-trips, so show the syncing
-                    // state until it settles (success → "synced", failure → toast).
-                    if (!signedIn) {
-                      void enableSync(active.id);
-                      return;
-                    }
-                    setSyncing(true);
-                    void enableSync(active.id).finally(() => setSyncing(false));
-                  }}
-                  title={
-                    signedIn
-                      ? "Create this organization in your Atlas account"
-                      : "Sign in to sync this organization"
-                  }
-                  className="flex h-control-md w-full items-center gap-2 rounded-md px-1.5 text-xs text-[var(--secondary-foreground)] outline-none transition-colors hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] cursor-pointer"
-                >
-                  <Cloud size={12} className="shrink-0" />
-                  <span className="flex-1 text-left truncate">Turn on sync for {active.name}…</span>
-                </DropdownMenu.Item>
-              )}
-            </DropdownMenu.Popup>
-          </DropdownMenu.Positioner>
-        </DropdownMenu.Portal>
-      </DropdownMenu.Root>
-
+  const dialogs = active ? (
+    <>
       <CreateOrgDialog open={createOpen} onOpenChange={setCreateOpen} />
-
       <MembersModal org={active} open={membersOpen} onOpenChange={setMembersOpen} />
-
       <DeleteOrgDialog
         org={confirmDelete}
         projectCount={
@@ -575,6 +259,316 @@ export function OrgSwitcher() {
         }
         onClose={() => setConfirmDelete(null)}
       />
+    </>
+  ) : null;
+
+  const panel = (close: () => void): ReactNode =>
+    active ? (
+      <>
+        {/* Two surfaces, the agent/model picker's recipe: the popup is the
+            tinted surround carrying the actions, and the search + org list
+            sit in an inset card on the app's own background, its edge
+            carried by a hairline ring and a shadow. */}
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg bg-background shadow-sm ring-1 ring-border">
+          {/* Head: a filter field with the refresh beside it, ruled off from
+              the list the way the model picker's search row is. */}
+          <div className="flex h-control-lg shrink-0 items-center gap-1.5 border-b border-foreground/8 px-2.5">
+            <Search size={11} className="shrink-0 text-[var(--muted-foreground)]" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                // Keep keys from the popup's typeahead and arrow nav, but let Escape
+                // bubble to the dismiss handler so it still closes the popup.
+                if (e.key !== "Escape") e.stopPropagation();
+              }}
+              placeholder="Search organizations…"
+              aria-label="Search organizations"
+              className="min-w-0 flex-1 bg-transparent text-xs text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]"
+            />
+            {/* Manual re-sync — only meaningful with a credential to pull
+                with. Silent on failure: Rust keeps the last-known list. */}
+            {signedIn && (
+              <Hint label="Refresh organizations">
+                <button
+                  disabled={refreshing}
+                  onClick={async (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setRefreshing(true);
+                    try {
+                      await auth.refresh();
+                    } catch {
+                      // Left as-is on purpose; the pull failing is not an error
+                      // worth a toast on a background list.
+                    } finally {
+                      setRefreshing(false);
+                    }
+                  }}
+                  className="flex size-5 shrink-0 items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] outline-none transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  <RefreshCw size={10} className={refreshing ? "animate-spin" : ""} />
+                </button>
+              </Hint>
+            )}
+          </div>
+
+          <div className="hide-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain py-1">
+            {filteredOrgs.length === 0 && (
+              <div className="px-2.5 py-3 text-center text-xs text-[var(--atlas-text-disabled)]">
+                No organizations match.
+              </div>
+            )}
+            {filteredOrgs.map((org) => {
+              const isActive = org.id === active.id;
+              // Inline-rename row: a plain input (NOT a menu item) so typing
+              // doesn't trigger the menu's typeahead / select / close.
+              if (editingId === org.id) {
+                return (
+                  <div
+                    key={org.id}
+                    className="mx-1 flex h-control-md w-[calc(100%-8px)] items-center gap-2 rounded-md px-1.5"
+                    onKeyDown={(e) => e.stopPropagation()}
+                  >
+                    <OrgAvatar org={org} size={16} plain />
+                    <input
+                      autoFocus
+                      value={editName}
+                      onChange={(e) => setEditName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") submitRename();
+                        if (e.key === "Escape") setEditingId(null);
+                      }}
+                      onBlur={submitRename}
+                      className="flex-1 min-w-0 bg-transparent outline-none text-sm text-[var(--foreground)]"
+                    />
+                  </div>
+                );
+              }
+              const access = orgAccess(org);
+              return (
+                <DropdownMenu.Item
+                  key={org.id}
+                  disabled={!access.ok}
+                  title={access.ok ? undefined : access.reason}
+                  onClick={() => {
+                    if (!access.ok) return;
+                    if (!isActive) void switchOrg(org.id);
+                  }}
+                  className={cn(
+                    // Inset rows (a margin, a radius) rather than full-bleed
+                    // stripes: the highlight then reads as a chip inside the
+                    // card, which is what the chat menus do.
+                    "group/org mx-1 flex h-control-md w-[calc(100%-8px)] items-center gap-2 rounded-md px-1.5 text-sm outline-none transition-colors",
+                    isActive && "bg-foreground/8 text-[var(--foreground)]",
+                    access.ok
+                      ? "cursor-pointer hover:bg-foreground/6 data-highlighted:bg-foreground/6 hover:text-[var(--foreground)]"
+                      : "cursor-not-allowed opacity-40",
+                  )}
+                >
+                  <OrgAvatar org={org} size={16} plain />
+                  <span className="flex-1 text-left truncate">{org.name}</span>
+                  {/* A locked org offers no row actions — you can't manage an
+                      org this account has no access to. */}
+                  {/* Rename (pencil) — appears on hover; doesn't switch/close.
+                      Local-only orgs only: a synced org's name is owned by the
+                      server and re-applied on every auth refresh, so a local
+                      rename would silently revert. There is no org-update
+                      route in the client to write it through with. */}
+                  {access.ok && !isSyncedOrg(org) && (
+                    <Hint label="Rename organization">
+                      <button
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          beginRename(org.id, org.name);
+                        }}
+                        className="flex size-5 shrink-0 items-center justify-center rounded text-[var(--muted-foreground)] opacity-0 hover:bg-[var(--card)] hover:text-[var(--foreground)] group-hover/org:opacity-100 focus-visible:opacity-100 cursor-pointer transform-gpu [backface-visibility:hidden]"
+                      >
+                        <Pencil size={11} />
+                      </button>
+                    </Hint>
+                  )}
+                  {/* Delete — appears on hover; opens confirmation. Hidden when
+                      this is the only org (can't delete the last one). */}
+                  {access.ok && canDelete && (
+                    <Hint label="Delete organization">
+                      <button
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setConfirmDelete(org);
+                          close();
+                        }}
+                        className="flex size-5 shrink-0 items-center justify-center rounded text-[var(--muted-foreground)] opacity-0 hover:bg-[var(--card)] hover:text-error group-hover/org:opacity-100 focus-visible:opacity-100 cursor-pointer transform-gpu [backface-visibility:hidden]"
+                      >
+                        <Trash2 size={11} />
+                      </button>
+                    </Hint>
+                  )}
+                  {!access.ok ? (
+                    <Lock size={11} className="text-[var(--muted-foreground)] shrink-0" />
+                  ) : (
+                    isActive && <Check size={13} className="shrink-0 text-[var(--foreground)]" />
+                  )}
+                </DropdownMenu.Item>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Create organisation — opens the name + handle modal (the handle
+            is globally unique, so it needs a real form, not an inline input). */}
+        <DropdownMenu.Item
+          onClick={() => {
+            close();
+            setCreateOpen(true);
+          }}
+          className="mt-1.5 flex h-control-md w-full shrink-0 items-center gap-2 rounded-md px-1.5 text-xs outline-none transition-colors hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] cursor-pointer"
+        >
+          <Plus size={12} className="shrink-0 text-[var(--muted-foreground)]" />
+          <span className="flex-1 text-left">Create organization…</span>
+        </DropdownMenu.Item>
+
+        {/* Members live on the server, so this only means anything for a
+            SYNCED org — a local-only org has no server org to manage. */}
+        {canManageMembers ? (
+          <DropdownMenu.Item
+            onClick={() => {
+              close();
+              setMembersOpen(true);
+            }}
+            className="flex h-control-md w-full shrink-0 items-center gap-2 rounded-md px-1.5 text-xs outline-none transition-colors hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] cursor-pointer"
+          >
+            <Users size={12} className="shrink-0 text-[var(--muted-foreground)]" />
+            <span className="flex-1 text-left">Invite &amp; Manage members</span>
+          </DropdownMenu.Item>
+        ) : (
+          <div
+            title={activeIsSynced ? "Sign in to manage members" : "Turn on sync to manage members"}
+            className="flex h-control-md w-full shrink-0 cursor-not-allowed items-center gap-2 rounded-md px-1.5 text-xs text-[var(--secondary-foreground)] opacity-40 select-none"
+          >
+            <Users size={12} className="shrink-0" />
+            <span className="flex-1 text-left">Invite &amp; Manage members</span>
+          </div>
+        )}
+
+        {/* The ACTIVE org's server id, for support threads and anywhere a
+            teammate has to name this org precisely. Disabled rather than
+            hidden when the org is local: the row explains why the id the
+            user came looking for isn't there yet. */}
+        {copyableOrgId ? (
+          <DropdownMenu.Item
+            onClick={async () => {
+              close();
+              if (await copyText(copyableOrgId)) toast.success("Organization ID copied");
+              else toast.error("Could not copy the organization ID");
+            }}
+            title={copyableOrgId}
+            className="flex h-control-md w-full shrink-0 items-center gap-2 rounded-md px-1.5 text-xs outline-none transition-colors hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] cursor-pointer"
+          >
+            <Copy size={12} className="shrink-0 text-[var(--muted-foreground)]" />
+            <span className="flex-1 text-left">Copy organization ID</span>
+          </DropdownMenu.Item>
+        ) : (
+          <div
+            title="Turn on sync to give this organization an ID"
+            className="flex h-control-md w-full shrink-0 cursor-not-allowed items-center gap-2 rounded-md px-1.5 text-xs text-[var(--secondary-foreground)] opacity-40 select-none"
+          >
+            <Copy size={12} className="shrink-0" />
+            <span className="flex-1 text-left">Copy organization ID</span>
+          </div>
+        )}
+
+        <DropdownMenu.Separator className="mx-1.5 my-1 h-px shrink-0 bg-border-subtle" />
+
+        {/* Sync toggle for the ACTIVE org — in the footer (not under the org
+         *  list) so it's unambiguous which org it applies to. Signed out,
+         *  the action starts sign-in; already-synced, it just reports state. */}
+        {syncing ? (
+          <div
+            title="Syncing…"
+            className="flex h-control-md w-full items-center gap-2 rounded-md px-1.5 text-xs text-[var(--secondary-foreground)] select-none"
+          >
+            <Loader2 size={12} className="shrink-0 animate-spin text-[var(--muted-foreground)]" />
+            <span className="flex-1 text-left truncate">Syncing {active.name}…</span>
+          </div>
+        ) : isSyncedOrg(active) ? (
+          <div
+            title="This organization is synced with your Atlas account"
+            className="flex h-control-md w-full items-center gap-2 rounded-md px-1.5 text-xs text-[var(--secondary-foreground)] select-none"
+          >
+            <Cloud size={12} className="shrink-0 text-[var(--muted-foreground)]" />
+            <span className="flex-1 text-left truncate">{active.name} is synced</span>
+            <Check size={12} className="shrink-0 text-[var(--secondary-foreground)]" />
+          </div>
+        ) : (
+          <DropdownMenu.Item
+            // Radix kept the menu open by calling preventDefault() inside
+            // onSelect; Base UI spells that closeOnClick={false}.
+            closeOnClick={false}
+            onClick={() => {
+              // Signed out, enableSync opens sign-in and returns instantly —
+              // no spinner. Signed in, it round-trips, so show the syncing
+              // state until it settles (success → "synced", failure → toast).
+              if (!signedIn) {
+                void enableSync(active.id);
+                return;
+              }
+              setSyncing(true);
+              void enableSync(active.id).finally(() => setSyncing(false));
+            }}
+            title={
+              signedIn
+                ? "Create this organization in your Atlas account"
+                : "Sign in to sync this organization"
+            }
+            className="flex h-control-md w-full items-center gap-2 rounded-md px-1.5 text-xs text-[var(--secondary-foreground)] outline-none transition-colors hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] cursor-pointer"
+          >
+            <Cloud size={12} className="shrink-0" />
+            <span className="flex-1 text-left truncate">Turn on sync for {active.name}…</span>
+          </DropdownMenu.Item>
+        )}
+      </>
+    ) : null;
+
+  return { active: active ?? null, panel, reset, dialogs };
+}
+
+/**
+ * The org half of the title bar's `org / project` breadcrumb: the org's name
+ * and a chevron, opening the organisation menu. The same menu is the
+ * Organization submenu at the foot of the sidebar's project picker.
+ */
+export function OrgSwitcher() {
+  const { active, panel, reset, dialogs } = useOrgMenu();
+  const [open, setOpen] = useState(false);
+  if (!active) return null;
+  return (
+    <div className="flex min-w-0 shrink items-center">
+      <DropdownMenu.Root
+        open={open}
+        onOpenChange={(o) => {
+          setOpen(o);
+          if (!o) reset();
+        }}
+      >
+        <DropdownMenu.Trigger
+          render={<BreadcrumbButton title="Switch organization">{active.name}</BreadcrumbButton>}
+        />
+        <DropdownMenu.Portal>
+          {/* The house menu surface (chat's session picker, the pin rail):
+              border + translucent fill + backdrop blur + the grow-from-the-
+              trigger animation, ALL on this one element. Splitting them across
+              a wrapper isolates the layer and kills the blur. */}
+          <DropdownMenu.Positioner className="z-popover" align="start" sideOffset={6}>
+            <DropdownMenu.Popup className={ORG_MENU_POPUP_CLASS}>
+              {panel(() => setOpen(false))}
+            </DropdownMenu.Popup>
+          </DropdownMenu.Positioner>
+        </DropdownMenu.Portal>
+      </DropdownMenu.Root>
+      {dialogs}
     </div>
   );
 }

@@ -32,10 +32,11 @@ tracing = "0.1"
 # on the capture worker's own thread, and rustls rather than native-tls for the
 # same reason the app does: the macOS Security.framework path fails silently in
 # sandboxed release builds.
-reqwest = { version = "0.12", default-features = false, features = [
+reqwest = { version = "0.13", default-features = false, features = [
     "json",
     "blocking",
-    "rustls-tls",
+    "rustls",
+    "query",
 ] }
 
 [dev-dependencies]

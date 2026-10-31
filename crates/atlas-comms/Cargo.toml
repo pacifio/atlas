@@ -15,9 +15,9 @@ tokio = { version = "1", features = ["sync", "time", "rt", "macros", "fs", "io-u
 # unify with that one instead.
 tokio-tungstenite = { workspace = true }
 futures-util = "0.3"
-reqwest = { version = "0.12", default-features = false, features = [
+reqwest = { version = "0.13", default-features = false, features = [
   "json",
-  "rustls-tls",
+  "rustls",
   "stream",
 ] }
 # Same pin, same reason, as `atlas-thread-metadata` — which is where that
@@ -29,7 +29,7 @@ rusqlite = { version = "0.39", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 # Spaces binary frames cross the bridge as base64 — the window event channel is
 # JSON, and 0.21 is the version already in the workspace graph.
-base64 = "0.21"
+base64 = "0.23"
 serde_json = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
 thiserror = "2"

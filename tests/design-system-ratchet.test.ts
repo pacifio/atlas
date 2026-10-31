@@ -153,6 +153,10 @@ const EXEMPT_FILES: Record<string, string> = {
     "Shape 2. The vendors' logo marks, drawn as inline SVG. Same argument as " +
     "`agent-brand.ts`: a recoloured logo is the wrong logo.",
   "src/components/agent-icons.test.tsx": "Shape 2. Asserts the marks above are drawn as shipped.",
+  "src/features/external-editor/components/editor-icons.tsx":
+    "Shape 2. The editors' logo marks (VS Code's blues, VSCodium's gradient) " +
+    'beside "Open in <editor>". Same argument as `agent-icons.tsx`: ' +
+    "a recoloured logo is the wrong logo.",
   "src/features/knowledge/components/cover-picker.tsx":
     "Shape 2. The page-cover palette the user picks from. These are document " +
     "content, like a highlighter colour — the chrome around the picker is themed.",

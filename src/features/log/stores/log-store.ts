@@ -139,7 +139,6 @@ export const useLogStore = createSelectors(
               });
             }
           } catch (err) {
-            // eslint-disable-next-line no-console
             console.error("pin log entry failed", err);
           }
         },
@@ -156,7 +155,6 @@ export const useLogStore = createSelectors(
               remaining.map((e) => JSON.stringify(e)).join("\n") + (remaining.length ? "\n" : "");
             if (org) await invoke("rewrite_pinned_log", { org, entriesJson: body });
           } catch (err) {
-            // eslint-disable-next-line no-console
             console.error("unpin log entry failed", err);
           }
         },
@@ -179,7 +177,6 @@ export const useLogStore = createSelectors(
             const org = activeOrg();
             if (org) await invoke("clear_pinned_log", { org });
           } catch (err) {
-            // eslint-disable-next-line no-console
             console.error("clear pinned log failed", err);
           }
         },

@@ -5,27 +5,50 @@
 // its graph put the whole pipeline in the entry chunk, parsed before first
 // paint. Import THIS module directly only from code that is already lazy.
 
-import ReactMarkdown from "react-markdown";
+import { useMemo } from "react";
+import ReactMarkdown, { type Options } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import { cn } from "@/lib/utils";
+import { rehypeFileChips } from "./file-chip-hast";
+import { openFileChipUnder, useFileChipHost } from "./file-chip-host";
 import type { MarkdownProps } from "./markdown-props";
 
+const REMARK_PLUGINS: NonNullable<Options["remarkPlugins"]> = [remarkGfm];
+const PLAIN_REHYPE_PLUGINS: NonNullable<Options["rehypePlugins"]> = [rehypeHighlight];
+
 /**
- * Shared Markdown renderer used by the chat assistant bubbles and the canvas
- * note cards/inspector. Styled overrides match the Atlas design tokens.
+ * Shared Markdown renderer used by the plans panel, canvas notes and the
+ * notebook viewer. Styled overrides match the Atlas design tokens. With a
+ * `fileRoot`, paths in it become chips that open in Atlas's viewer, inside
+ * that folder only.
  */
-export default function MarkdownImpl({ children, className }: MarkdownProps) {
+export default function MarkdownImpl({ children, className, fileRoot }: MarkdownProps) {
+  const rehypePlugins = useMemo<NonNullable<Options["rehypePlugins"]>>(
+    () =>
+      fileRoot
+        ? [
+            [rehypeFileChips, { root: fileRoot, label: "basename", folders: false }],
+            rehypeHighlight,
+          ]
+        : PLAIN_REHYPE_PLUGINS,
+    [fileRoot],
+  );
+  const open = useMemo(() => (fileRoot ? openFileChipUnder(fileRoot) : null), [fileRoot]);
+  const host = useFileChipHost(open);
   return (
     <div
+      ref={host.ref}
+      onClick={host.onClick}
+      onKeyDown={host.onKeyDown}
       className={cn(
         "prose-chat text-[var(--foreground)] leading-relaxed break-words select-text",
         className,
       )}
     >
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeHighlight]}
+        remarkPlugins={REMARK_PLUGINS}
+        rehypePlugins={rehypePlugins}
         components={{
           code(props) {
             const { className, children, ...rest } = props as {

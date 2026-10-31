@@ -1,6 +1,5 @@
 /**
- * `when` expressions: the condition a shortcut fires under, after T3 Code's
- * keybinding clauses. Variables joined with `!`, `&&`, `||` and parentheses —
+ * `when` expressions: the condition a shortcut fires under. Variables joined with `!`, `&&`, `||` and parentheses —
  * `!terminalFocus`, `chatFocus && !inputFocus`. Empty means "always".
  *
  * Each action has a default expression (its registry context), and a profile
@@ -31,6 +30,8 @@ export const SURFACE_FOCUS_VARIABLES = [
   "pdfFocus",
   "canvasFocus",
   "browserFocus",
+  "diffFocus",
+  "pullRequestFocus",
 ] as const;
 
 /** Every variable Atlas provides, in the order the editor lists them. */
@@ -57,6 +58,8 @@ export const WHEN_VARIABLE_DESCRIPTIONS: Readonly<Record<string, string>> = {
   pdfFocus: "A PDF is the active tab",
   canvasFocus: "A canvas or space is the active tab",
   browserFocus: "The browser is the active tab",
+  diffFocus: "The review diff is the active tab",
+  pullRequestFocus: "A pull request is the active tab",
   inputFocus: "You're typing in a text field",
   knowledgeOpen: "Knowledge is open",
   modelPickerOpen: "The model picker has focus",

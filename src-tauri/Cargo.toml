@@ -29,6 +29,10 @@ default = []
 # there is nothing left to select and every build contains it.
 
 [dependencies]
+# The OS credential store for agent variables marked sensitive
+# (`crate::commands::agent_secrets`): the API only. The store itself is installed by
+# `atlas_native_agent::ensure_credential_store`, the engine's own installer.
+keyring-core = { workspace = true }
 atlas-process = { path = "../crates/atlas-process" }
 # Whose data this process owns — the released app's or the dev profile's.
 # Fixed from the bundle identifier at the top of `run()`.
@@ -46,7 +50,7 @@ tauri = { version = "2", features = ["protocol-asset", "macos-private-api", "uns
 # Used to embed KB cover images as `data:` URLs (covers live under the
 # hidden `.atlas/` dir, which the asset protocol won't serve). Pinned to the
 # version already in the lockfile so no new resolution is pulled in.
-base64 = "0.21"
+base64 = "0.23"
 # Allowlist HTML sanitizer (html5ever-based) for the browser reader. Replaces
 # a hand-rolled string-level denylist whose bypass list kept growing —
 # <meta refresh>, <base>, unquoted javascript: hrefs, `</script >` variants.
@@ -157,7 +161,7 @@ atlas-checkpoint = { path = "../crates/atlas-checkpoint" }
 # In-process code search (ripgrep engine): the `atlas_code` tool server and
 # the project search overlay (`commands::code_server`). Tauri-free.
 atlas-search = { path = "../crates/atlas-search" }
-dirs = "6"
+dirs = "7"
 # `canonicalize` without Windows' `\\?\` verbatim prefix, which would otherwise
 # leak into workspace paths, capture ids and asset scopes. Already in the
 # lockfile via the engine tree, so no new resolution.
@@ -166,20 +170,24 @@ sha2 = "0.10"
 # URL parsing for the embedded browser (`commands::browser`). Already in the
 # lockfile transitively via tauri/reqwest; declared here to name the type.
 url = "2"
-# `rustls-tls` (not `native-tls`) + bundled `webpki-roots`. The macOS
-# Security.framework / Keychain code path that `native-tls` uses can fail
+# `rustls` (not `native-tls`): TLS is rustls on aws-lc-rs, with certificates
+# verified by rustls-platform-verifier (reqwest 0.13's default; 0.12's
+# `rustls-tls` used bundled webpki roots). The platform verifier asks the OS to
+# validate the chain (Security.framework trust evaluation on macOS), which is
+# not the keychain handshake path `native-tls` used. That path could fail
 # silently in sandboxed Hardened-Runtime release builds even with
-# `com.apple.security.network.client` set — symptom: every reqwest call
-# returns a TLS handshake error in `.app` form while working fine under
-# `tauri dev`. rustls is self-contained: no OS keychain, no surprises.
+# `com.apple.security.network.client` set: every reqwest call returned a TLS
+# handshake error in `.app` form while working under `tauri dev`. If that
+# symptom ever returns, test a release `.app` first.
 #
 # `gzip` + `brotli` so arXiv / Semantic Scholar responses (often
 # gzip-encoded) decode transparently.
-reqwest = { version = "0.12", default-features = false, features = [
+reqwest = { version = "0.13", default-features = false, features = [
     "json",
     "charset",
     "http2",
-    "rustls-tls",
+    "rustls",
+    "query",
     "gzip",
     "brotli",
     "stream",
@@ -210,7 +218,10 @@ mimalloc = { version = "0.1", default-features = false }
 # notes to HTML (single-note export, workspace export, and the standalone
 # server crate template).
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
-rig-core = "0.38.1"
+# 0.45 ships no HTTP transport unless `reqwest` is on (rustls via default features);
+# the agent runtime moved to the separate `rig-agent` crate, which Atlas does not
+# use — modelchat / memory_summarize drive `Model::stream` directly.
+rig-core = { version = "0.45.0", features = ["reqwest"] }
 # Loads a `.env` (cwd) at startup so source / fork builds can point telemetry at
 # their own PostHog OSS project via `POSTHOG_KEY`/`POSTHOG_HOST` without a
 # rebuild. Tiny, zero transitive deps. See `crate::telemetry`.
@@ -219,13 +230,21 @@ dotenvy = "0.15"
 # remote-config value vs the running `CARGO_PKG_VERSION`). See
 # `crate::commands::updater`.
 semver = "1"
-posthog-rs = "0.14"
+posthog-rs = "0.30"
 # The memory tool server (`commands::memory_server`): MCP over streamable HTTP
 # on loopback. Both crates are already linked into this binary through the
 # engine (`atlas-engine-rmcp-client` enables exactly these rmcp
 # features; `atlas-engine-app-server` these axum ones), so this adds no resolution.
 rmcp = { workspace = true, features = ["server", "transport-streamable-http-server"] }
 axum = { workspace = true, features = ["http1", "tokio"] }
+# NFC-folding names for a case-only rename (`commands::fs`): macOS hands back
+# NFD, a typed name is NFC. 0.1.25 is already in the lockfile transitively, so
+# this adds no resolution.
+unicode-normalization = "0.1"
+# A rename that refuses to replace its target (`renamex_np(RENAME_EXCL)`,
+# `renameat2(RENAME_NOREPLACE)`) in `commands::fs`. The workspace's libc,
+# already linked through the engine.
+libc = { workspace = true }
 
 [dev-dependencies]
 # An in-process MCP client for the memory tool server's loopback tests.
@@ -237,17 +256,13 @@ rmcp = { workspace = true, features = ["client", "transport-streamable-http-clie
 tempfile = "3"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-# The OS credential store for agent variables marked sensitive
-# (`crate::commands::agent_secrets`). The workspace's keyring, already in the
-# tree for the engine, with each platform's native backend.
-keyring = { workspace = true, features = ["windows-native"] }
 # Read the Windows Installer's uninstall entry for Atlas: the auto-updater
 # relaunches from (and only upgrades) the MSI's `InstallLocation`. See
 # `crate::commands::updater`. Already in the tree transitively.
 winreg = "0.55"
-# Native toasts (`crate::notifier::toast`). 0.61 is the version
+# Native toasts (`crate::notifier::toast`). 0.62 is the version
 # `tauri-winrt-notification` already resolves, so no second `windows` major.
-windows = { version = "0.61", features = [
+windows = { version = "0.62", features = [
   "Data_Xml_Dom",
   "Foundation",
   "Foundation_Collections",
@@ -255,7 +270,6 @@ windows = { version = "0.61", features = [
 ] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-keyring = { workspace = true, features = ["linux-native-async-persistent"] }
 # Native notifications over the freedesktop D-Bus interface
 # (`crate::notifier::freedesktop`). 5.14 is the zbus `notify-rust` already
 # resolves (the lockfile also holds a 4.x for other crates), default features
@@ -263,7 +277,6 @@ keyring = { workspace = true, features = ["linux-native-async-persistent"] }
 zbus = "5"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-keyring = { workspace = true, features = ["apple-native"] }
 # Native NSWindow access for the titlebar double-click "zoom" (AppKit
 # performZoom:), which Tauri's cross-platform maximize API doesn't cover.
 # Already in the tree transitively; pinned here for the direct msg_send.

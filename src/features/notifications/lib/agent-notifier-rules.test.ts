@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   decideAgentNotification,
+  findHistorySession,
   isSupersededTurn,
   type AgentCtx,
   type AgentNotifyEvent,
@@ -419,5 +420,43 @@ describe("agent sign-in required", () => {
       notifyNeedsYouNative: false,
     });
     expect(d?.channels.native).toBe(false);
+  });
+});
+
+describe("pull request watch", () => {
+  const wake: AgentNotifyEvent = { type: "pull_request_watch", summary: "#12: merged", nonce: "t" };
+  const noTab: AgentCtx = { tabId: "", sessionId: "acp-9", threadId: "thread-9" };
+
+  it("notifies for a session no tab shows, with a target that opens it by thread id", () => {
+    const d = decideAgentNotification(wake, noTab, { ...looking, targetVisible: false }, prefs);
+    expect(d?.kind).toBe("pull-request-watch");
+    expect(d?.target).toEqual({
+      type: "session",
+      tabId: "",
+      sessionId: "acp-9",
+      threadId: "thread-9",
+    });
+  });
+
+  it("drops for the session in view", () => {
+    expect(decideAgentNotification(wake, ctx, looking, prefs)).toBeNull();
+  });
+});
+
+describe("findHistorySession", () => {
+  const row = (threadId: string, sessionId: string | null) =>
+    ({ threadId, sessionId }) as unknown as import("@/features/chat/lib/history-api").ThreadRow;
+  const groups = [
+    { name: "a", paths: ["/a"], isCurrent: false, threads: [row("t1", "s1")] },
+    { name: "b", paths: ["/b"], isCurrent: true, threads: [row("t2", "s2")] },
+  ];
+
+  it("finds a row by thread id, else by session id, with its group's paths", () => {
+    expect(findHistorySession(groups, "t2")).toEqual({
+      row: groups[1]!.threads[0],
+      groupPaths: ["/b"],
+    });
+    expect(findHistorySession(groups, "missing", "s1")?.groupPaths).toEqual(["/a"]);
+    expect(findHistorySession(groups, "missing", "nope")).toBeNull();
   });
 });

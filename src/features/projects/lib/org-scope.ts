@@ -1,9 +1,9 @@
 import { useMemo } from "react";
-import { useProjectStore, type Project, type ProjectGroup } from "../stores/project-store";
+import { useProjectStore, type Project } from "../stores/project-store";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
 
 /**
- * The ONE org-scoping rule for projects/groups. Every surface that renders
+ * The ONE org-scoping rule for projects. Every surface that renders
  * or aggregates the project registry must go through these helpers — ad-hoc
  * filters are how the "org1's projects show up in org2" leak happened. The
  * filter is STRICT (`orgId === orgId`, no null fallback): untagged rows are
@@ -20,23 +20,11 @@ function projectsForOrg(projects: Project[], orgId: string | null): Project[] {
   return projects.filter((w) => w.orgId === orgId);
 }
 
-function groupsForOrg(groups: ProjectGroup[], orgId: string | null): ProjectGroup[] {
-  if (orgId == null) return [];
-  return groups.filter((g) => g.orgId === orgId);
-}
-
 /** Hook: the active org's projects (registry order preserved). */
 export function useActiveOrgProjects(): Project[] {
   const all = useProjectStore.use.projects();
   const orgId = useOrgStore.use.activeOrganisationId();
   return useMemo(() => projectsForOrg(all, orgId), [all, orgId]);
-}
-
-/** Hook: the active org's groups. */
-export function useActiveOrgGroups(): ProjectGroup[] {
-  const all = useProjectStore.use.groups();
-  const orgId = useOrgStore.use.activeOrganisationId();
-  return useMemo(() => groupsForOrg(all, orgId), [all, orgId]);
 }
 
 /** Imperative snapshot for stores / non-React code (Mission Control, prefetch,

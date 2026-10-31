@@ -199,6 +199,35 @@ async fn a_protocol_chunk_does_not_merge_into_the_optimistic_prompt() {
 
     assert_eq!(user_messages(&thread), vec!["typed", "from agent"]);
 }
+/// A retry re-sends the last user message's prompt text. A turn that carried a
+/// large paste as a text block must give it back whole and set apart from the
+/// prose, in the form the composer's queue reads back (`withPastesInline`).
+#[tokio::test]
+async fn a_prompt_with_a_paste_comes_back_whole_for_a_retry() {
+    let (mut thread, _events, _conn) = new_thread();
+    let paste = prompt::PastedText {
+        id: "p1".into(),
+        text: "log line 1\nlog line 2".into(),
+    };
+    let blocks = prompt::with_pasted_texts(
+        vec![text_block("summarise @paste:p1")],
+        vec![paste.clone()],
+        false,
+    );
+    let id = Some(ClientUserMessageId::new());
+    for block in blocks {
+        thread.push_user_content_block(id.clone(), block);
+    }
+
+    let Some(AgentThreadEntry::UserMessage(msg)) = thread.entries().last() else {
+        panic!("expected the user message");
+    };
+    assert_eq!(
+        msg.prompt_text(),
+        format!("summarise @paste:p1\n\n{}", prompt::paste_as_text(&paste))
+    );
+}
+
 #[tokio::test]
 async fn an_echoed_user_chunk_is_not_rendered_twice() {
     let (mut thread, _events, _conn) = new_thread();
@@ -670,7 +699,7 @@ async fn a_cancelled_turn_still_announces_its_own_stop() {
 
     let mut stopped = None;
     while let Ok(event) = events.try_recv() {
-        if let AcpThreadEvent::Stopped(reason) = event {
+        if let AcpThreadEvent::Stopped(reason, _) = event {
             stopped = Some(reason);
         }
     }
@@ -679,6 +708,58 @@ async fn a_cancelled_turn_still_announces_its_own_stop() {
         Some(acp::StopReason::Cancelled),
         "the stop is announced, with the reason the agent gave"
     );
+}
+
+/// A cancelled turn is still timed: `cancel()` clears the running turn, but
+/// not the start the stop is measured from.
+#[tokio::test]
+async fn a_cancelled_turn_keeps_its_start_for_its_record() {
+    let (mut thread, _events, _conn) = new_thread();
+
+    let turn = thread.begin_turn();
+    thread.cancel();
+    thread.end_turn_unless_superseded(turn, acp::StopReason::Cancelled);
+
+    let [record] = thread.turns() else {
+        panic!("one turn recorded, got {:?}", thread.turns());
+    };
+    assert_eq!(record.stop_reason, acp::StopReason::Cancelled);
+    let started = record.started_at.expect("the start survived the cancel");
+    assert!(started <= record.ended_at);
+}
+
+/// A rewind takes back the turns whose output it removed; their timing would
+/// otherwise land on whatever message ends up at those positions next.
+#[tokio::test]
+async fn a_rewind_drops_the_turns_it_took_back() {
+    let (mut thread, _events, _conn) = new_thread();
+
+    thread
+        .handle_session_update(user_chunk("one", Some("m1")))
+        .unwrap();
+    thread.begin_turn();
+    thread.end_turn(acp::StopReason::EndTurn);
+    thread
+        .handle_session_update(acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new(acp::ContentBlock::Text(acp::TextContent::new(
+                "hi".to_string(),
+            ))),
+        ))
+        .unwrap();
+    thread.begin_turn();
+    thread
+        .handle_session_update(acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new(acp::ContentBlock::Text(acp::TextContent::new(
+                "hi".to_string(),
+            ))),
+        ))
+        .unwrap();
+    thread.end_turn(acp::StopReason::EndTurn);
+    assert_eq!(thread.turns().len(), 2);
+
+    thread.remove_entries_from(1);
+    assert_eq!(thread.turns().len(), 1, "{:?}", thread.turns());
+    assert_eq!(thread.turns()[0].entries, 1..1);
 }
 
 /// The unguarded `end_turn` stays as it is: `atlas-agent-delta` and this
@@ -693,7 +774,7 @@ async fn end_turn_still_announces_a_stop_with_no_turn_open() {
 
     let mut stopped = false;
     while let Ok(event) = events.try_recv() {
-        if matches!(event, AcpThreadEvent::Stopped(_)) {
+        if matches!(event, AcpThreadEvent::Stopped(..)) {
             stopped = true;
         }
     }
@@ -1031,4 +1112,79 @@ fn the_machinery_predicate_is_narrow_enough_to_keep_real_titles() {
     ] {
         assert!(!is_host_machinery_title(title), "should be kept: {title}");
     }
+}
+
+// ------------------------------------------------------- attached projects
+
+/// A session opened with a read-write attached project carries it in its
+/// working directories (that is how it reaches the agent). Making it
+/// read-only, or detaching it, must take it out of the writable set the
+/// `fs/*` handlers use — and history must never count it as the session's
+/// own folder.
+#[test]
+fn an_attached_root_widens_reads_and_writes_at_its_access_and_never_joins_the_own_folders() {
+    use std::path::PathBuf;
+    let (tx, _rx) = event_channel();
+    let app = PathBuf::from("/work/app");
+    let server = PathBuf::from("/work/server");
+    let docs = PathBuf::from("/work/docs");
+    let mut thread = AcpThread::new(
+        acp::SessionId::new("test-session"),
+        StubAgentConnection::new(),
+        vec![app.clone(), server.clone()],
+        None,
+        tx,
+    );
+    thread.set_attached_roots(SessionRoots {
+        read_only: vec![docs.clone()],
+        read_write: vec![server.clone()],
+    });
+    assert_eq!(thread.own_work_dirs(), vec![app.clone()]);
+    assert_eq!(thread.writable_roots(), vec![app.clone(), server.clone()]);
+    assert_eq!(
+        thread.readable_roots(),
+        vec![app.clone(), server.clone(), docs.clone()]
+    );
+
+    // Server made read-only: still readable, no longer writable, even though
+    // the session was opened with it as a working directory.
+    thread.set_attached_roots(SessionRoots {
+        read_only: vec![docs, server.clone()],
+        read_write: Vec::new(),
+    });
+    assert_eq!(thread.writable_roots(), vec![app.clone()]);
+    assert!(thread.readable_roots().contains(&server));
+
+    // Everything detached: back to the session's own folder alone.
+    thread.set_attached_roots(SessionRoots::default());
+    assert_eq!(thread.readable_roots(), vec![app.clone()]);
+    assert_eq!(thread.writable_roots(), vec![app]);
+}
+
+#[test]
+fn a_replay_ends_when_told_and_live_entries_after_it_are_timed() {
+    let (mut thread, _rx, _conn) = new_thread();
+    thread.begin_replay();
+    thread
+        .handle_session_update(user_chunk("earlier question", Some("m1")))
+        .unwrap();
+    thread
+        .handle_session_update(agent_chunk("earlier answer", Some("a1")))
+        .unwrap();
+    assert!(thread.entry_time_approximate(0));
+    assert!(thread.entry_time_approximate(1));
+
+    // The load answered and its queued frames drained: no prompt yet, but
+    // what the agent says now is live.
+    thread.end_replay();
+    thread
+        .handle_session_update(acp::SessionUpdate::ToolCall(tool_call(
+            "t-live",
+            "Read file",
+            acp::ToolCallStatus::Completed,
+        )))
+        .unwrap();
+    assert_eq!(thread.entries().len(), 3);
+    assert!(thread.entry_time_approximate(1));
+    assert!(!thread.entry_time_approximate(2));
 }

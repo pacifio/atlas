@@ -23,12 +23,16 @@
 // here than in the agent chat, because these bodies are written by other
 // people.
 
-import { useContext } from "react";
+import { useContext, useMemo } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
+import type { PluggableList } from "unified";
 import { Image as ImageIcon } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { useAppStore } from "@/features/app/stores/app-store";
+import { rehypeFileChips } from "@/lib/file-chip-hast";
+import { openFileChipUnder, useFileChipHost } from "@/lib/file-chip-host";
 import { cn } from "@/lib/utils";
 import { remarkCommsInline } from "../lib/remark-comms-inline";
 import { MENTION_AVATAR_SIZE, mentionPillClass } from "../lib/mention-pill";
@@ -301,15 +305,36 @@ const COMPONENTS: Components = {
   del: (props) => <span className="line-through opacity-70">{props.children}</span>,
 };
 
+/**
+ * File paths in a message become chips only for files under the project the
+ * VIEWER has open: a colleague's `src/lib/api.ts` means the reader's copy of
+ * it, resolved on the reader's machine when the message is drawn. Anything
+ * outside that project — an absolute path elsewhere, `../` above it — stays
+ * code. A click opens Atlas's viewer and nothing else
+ * (`openUntrustedPathLink`): other people write these messages.
+ */
+function chipPlugins(root: string | null): PluggableList {
+  if (!root) return REHYPE_PLUGINS;
+  return [[rehypeFileChips, { root, label: "basename", folders: false }], ...REHYPE_PLUGINS];
+}
+
 export default function MessageBodyImpl({ body }: { body: string }) {
+  const root = useAppStore.use.currentProject()?.path ?? null;
+  const rehypePlugins = useMemo(() => chipPlugins(root), [root]);
+  const open = useMemo(() => (root ? openFileChipUnder(root) : null), [root]);
+  const host = useFileChipHost(open);
   return (
-    <ReactMarkdown
-      remarkPlugins={REMARK_PLUGINS}
-      rehypePlugins={REHYPE_PLUGINS}
-      urlTransform={commsUrlTransform}
-      components={COMPONENTS}
-    >
-      {body}
-    </ReactMarkdown>
+    // `display: contents`: the host only listens and paints icons; the
+    // message's layout is the markdown's own.
+    <div ref={host.ref} onClick={host.onClick} onKeyDown={host.onKeyDown} className="contents">
+      <ReactMarkdown
+        remarkPlugins={REMARK_PLUGINS}
+        rehypePlugins={rehypePlugins}
+        urlTransform={commsUrlTransform}
+        components={COMPONENTS}
+      >
+        {body}
+      </ReactMarkdown>
+    </div>
   );
 }

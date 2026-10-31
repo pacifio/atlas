@@ -1,28 +1,34 @@
-import {
-  useEffect,
-  useRef,
-  useState,
-  useCallback,
-  useMemo,
-  memo,
-  lazy,
-  Suspense,
-  Fragment,
-} from "react";
+import { useEffect, useRef, useState, useMemo, memo, lazy, Suspense, Fragment } from "react";
 import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
 import { cn } from "@/lib/utils";
+import { deepActiveElement } from "@/lib/deep-active-element";
 import { HintGroup, HintItem } from "@/ui/hint-group";
-import { requestCloseTab } from "@/features/chat/lib/close-tab";
-import { Menu as DropdownMenu } from "@base-ui/react/menu";
-import { Group, Panel, Separator, useDefaultLayout } from "react-resizable-panels";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuShortcut,
+  DropdownMenuTrigger,
+} from "@/ui/dropdown-menu";
+import { Kbd } from "@/ui/kbd";
+import { IconButton } from "@/ui/icon-button";
+import { PaneHeader } from "@/components/titlebar";
+import { BreadcrumbSeparator } from "@/components/breadcrumb-button";
+import { columnChrome } from "../lib/shell-edges";
+import { PaneTopInsetContext } from "../lib/pane-top-inset";
+import { OPEN_SURFACE_MENU_EVENT, SURFACES, openSurface, surfaceForKey } from "../lib/surfaces";
+import { Group, Panel, Separator, useDefaultLayout, usePanelRef } from "react-resizable-panels";
 import { useLayoutStore, type Tab, type ProjectView } from "../stores/layout-store";
 import { useProjectStore } from "@/features/projects/stores/project-store";
-import { FileIcon, type FallbackIcon } from "@/features/icon-theme/components/file-icon";
 // Chat is the default landing surface — always loaded so the first paint
 // shows the agent UI without a Suspense flash.
 import { ChatPanel } from "@/features/chat/components/chat-panel";
 import { WelcomeScreen } from "@/features/app/components/welcome-screen";
 import { UnsupportedView } from "@/features/unsupported/components/unsupported-view";
+import { FileTabFrame } from "@/features/explorer/components/file-tab-frame";
+import { FileDockColumn } from "@/features/explorer/components/file-dock";
+import { PaneTab, tabIcons } from "./pane-tab";
+import { PaneTabStrip } from "./pane-tab-strip";
 
 // Every other tab type is lazy. Editor/Terminal in particular pull in
 // CodeMirror+Lezer (~600 KB) and xterm (~250 KB) respectively — keeping
@@ -51,9 +57,6 @@ const CommsDraftTab = lazy(() =>
     default: m.CommsDraftTab,
   })),
 );
-const SpacesTab = lazy(() =>
-  import("@/features/spaces/components/spaces-tab").then((m) => ({ default: m.SpacesTab })),
-);
 const PdfViewer = lazy(() =>
   import("@/features/pdf/components/pdf-viewer").then((m) => ({ default: m.PdfViewer })),
 );
@@ -65,109 +68,62 @@ const NotebookViewer = lazy(() =>
 const CommitView = lazy(() =>
   import("@/features/git/components/commit-view").then((m) => ({ default: m.CommitView })),
 );
-const SessionChangesView = lazy(() =>
-  import("@/features/git/components/session-changes-view").then((m) => ({
-    default: m.SessionChangesView,
+// One pull request (`pull-request:<checkout>:<number>`); its own chunk.
+const PullRequestPanel = lazy(() =>
+  import("@/features/pull-requests/components/pull-request-panel").then((m) => ({
+    default: m.PullRequestPanel,
   })),
 );
-const GitDiffPanel = lazy(() =>
-  import("@/features/git/components/git-diff-panel").then((m) => ({ default: m.GitDiffPanel })),
-);
-const KnowledgePanel = lazy(() =>
-  import("@/features/knowledge/components/knowledge-panel").then((m) => ({
-    default: m.KnowledgePanel,
+// A repository's pull requests (`pull-requests:<checkout>`); its own chunk.
+const PullRequestListPanel = lazy(() =>
+  import("@/features/pull-requests/components/pull-request-list-panel").then((m) => ({
+    default: m.PullRequestListPanel,
   })),
 );
-const KnowledgeGraph = lazy(() =>
-  import("@/features/knowledge/components/knowledge-graph").then((m) => ({
-    default: m.KnowledgeGraph,
+// One session's linked pull requests (`session-pull-requests:<threadId>`);
+// its own chunk.
+const SessionPullRequestsPanel = lazy(() =>
+  import("@/features/pull-requests/components/session-pull-requests-panel").then((m) => ({
+    default: m.SessionPullRequestsPanel,
   })),
 );
-const SettingsPanel = lazy(() =>
-  import("@/features/settings/components/settings-panel").then((m) => ({
-    default: m.SettingsPanel,
+// The review diff (`diff`, `session-changes`). Its own chunk, which is the only
+// thing that imports the diff viewer, Shiki and their workers.
+const ReviewPanel = lazy(() =>
+  import("@/features/git/components/diff-viewer/review-panel").then((m) => ({
+    default: m.ReviewPanel,
   })),
+);
+// The project tree as a surface of its own (`files-surface.ts`).
+const FilesPanel = lazy(() =>
+  import("@/features/explorer/components/files-panel").then((m) => ({
+    default: m.FilesPanel,
+  })),
+);
+const SourceControlPanel = lazy(() =>
+  import("@/features/git/components/source-control-panel").then((m) => ({
+    default: m.SourceControlPanel,
+  })),
+);
+// Team chat is a surface tab (ADR-0024); it used to be the right slot.
+const CommsPanel = lazy(() =>
+  import("@/features/comms/components/comms-panel").then((m) => ({ default: m.CommsPanel })),
 );
 const LogPanel = lazy(() =>
   import("@/features/log/components/log-panel").then((m) => ({ default: m.LogPanel })),
 );
-const UsagePanel = lazy(() =>
-  import("@/features/usage/components/usage-panel").then((m) => ({ default: m.UsagePanel })),
-);
-const ArtifactsPanel = lazy(() =>
-  import("@/features/artifacts/components/artifacts-panel").then((m) => ({
-    default: m.ArtifactsPanel,
-  })),
-);
-const CanvasPanel = lazy(() =>
-  import("@/features/canvas/components/canvas-panel").then((m) => ({ default: m.CanvasPanel })),
-);
-const MemoryPanel = lazy(() =>
-  import("@/features/memory/components/memory-panel").then((m) => ({ default: m.MemoryPanel })),
-);
 import { useAppStore } from "@/features/app/stores/app-store";
 import { PanelSkeleton } from "@/components/panel-skeleton";
-import { AtlasIcon } from "@/components/atlas-icon";
 import { useChatStore } from "@/features/chat/stores/chat-store";
+import { sessionDisplayTitle } from "@/features/chat/lib/session-title";
+import { SessionHeaderSlot } from "@/features/chat/components/session-header-slot";
 import { useShallow } from "zustand/react/shallow";
-import {
-  MessageSquare,
-  Map,
-  Globe,
-  Loader2,
-  Code,
-  Brain,
-  BrainCircuit,
-  Network,
-  Terminal,
-  GitCompare,
-  FileDiff,
-  GitCommitHorizontal,
-  Settings,
-  Plus,
-  X,
-  CheckSquare,
-  ChevronLeft,
-  ChevronRight,
-  ScrollText,
-  FileText,
-  Columns2,
-  House,
-  Gauge,
-  Layers,
-  Frame,
-  NotebookText,
-} from "lucide-react";
-import { PROJECTLESS_TYPES, type TabType } from "@/lib/constants";
-
-// Typed as the icon-theme fallback rather than `React.ElementType`: these are
-// what a tab falls back to when the icon theme has nothing for it, and
-// `ElementType` also admits raw tag names, which a fallback cannot be.
-const tabIcons: Record<TabType, FallbackIcon> = {
-  chat: AtlasIcon,
-  canvas: Map,
-  browser: Globe,
-  tasks: CheckSquare,
-  editor: Code,
-  knowledge: Brain,
-  "knowledge-graph": Network,
-  memory: BrainCircuit,
-  terminal: Terminal,
-  diff: GitCompare,
-  commit: GitCommitHorizontal,
-  "session-changes": FileDiff,
-  settings: Settings,
-  log: ScrollText,
-  media: Code,
-  svg: Code,
-  pdf: FileText,
-  notebook: NotebookText,
-  unsupported: Code,
-  usage: Gauge,
-  artifacts: Layers,
-  "comms-draft": FileText,
-  spaces: Frame,
-};
+import { MessageSquare, Plus, House, Maximize2, Minimize2 } from "lucide-react";
+import { readPullRequestTabData } from "@/features/pull-requests/lib/open-pull-request-tab";
+import { readPullRequestListTabData } from "@/features/pull-requests/lib/open-pull-request-list-tab";
+import { readSessionPullRequestsTabData } from "@/features/pull-requests/lib/open-session-pull-requests-tab";
+import { PROJECTLESS_TYPES, surfaceMinWidth, type TabType } from "@/lib/constants";
+import { useSettingsNav } from "@/features/settings/stores/settings-nav-store";
 
 const GROUP_OF = (t: Tab) => t.groupId ?? "main";
 /**
@@ -184,20 +140,15 @@ export const PERSISTENT_TYPES_LIST = [
   "editor",
   "terminal",
   "browser",
-  "knowledge-graph",
   "pdf",
-  // Keep chat + knowledge mounted across tab switches too: chat keeps its
-  // mounted transcript window + scroll position (remounting re-ran the
-  // "loading transcript" path and rebuilt scroll), and knowledge avoids
-  // re-walking its tree/graph on every revisit.
+  // Keep chat mounted across tab switches too: it keeps its mounted
+  // transcript window + scroll position (remounting re-ran the "loading
+  // transcript" path and rebuilt scroll). Team chat, for the same reason: an
+  // open conversation keeps its scroll and its half-typed message.
   "chat",
-  "knowledge",
-  // Keep settings mounted so its open section + sub-tab + form drafts survive a
-  // tab switch (it's a singleton tab; remounting reset all its local useState).
-  "settings",
-  // A Space is a live socket + a Y.Doc: remounting re-dials, replays the page
-  // and lands re-fitted. Kept mounted so a tab switch is a tab switch.
-  "spaces",
+  "team-chat",
+  // Knowledge, the knowledge graph and Spaces were here too; they are
+  // destinations now (ADR-0024), kept mounted by the destination screen.
 ] as const satisfies readonly TabType[];
 
 type PersistentTabType = (typeof PERSISTENT_TYPES_LIST)[number];
@@ -215,9 +166,7 @@ const PERSISTENT_TYPES: ReadonlySet<TabType> = new Set(PERSISTENT_TYPES_LIST);
 export const IDLE_EXPENSIVE_TYPES_LIST = [
   "terminal",
   "browser",
-  "knowledge-graph",
   "pdf",
-  "spaces",
 ] as const satisfies readonly PersistentTabType[];
 
 const IDLE_EXPENSIVE_TYPES: ReadonlySet<TabType> = new Set(IDLE_EXPENSIVE_TYPES_LIST);
@@ -327,7 +276,18 @@ const ProjectColumns = memo(function ProjectColumns({
   isActive: boolean;
   runningTabIds: Set<string>;
 }) {
-  const solo = view.groupOrder.length === 1;
+  const surfaces = useLayoutStore.use.surfaces();
+  const split = view.groupOrder.length > 1;
+  // The first column is the main pane; every one after it is the surfaces
+  // pane. Hidden or expanded, a column is collapsed to zero width rather than
+  // unmounted, so its terminals keep running and its chat keeps its scroll.
+  const shown = view.groupOrder.map((_, i) =>
+    !split || surfaces === "shown" ? true : surfaces === "hidden" ? i === 0 : i > 0,
+  );
+  const firstShown = shown.indexOf(true);
+  const lastShown = shown.lastIndexOf(true);
+  const solo = firstShown === lastShown;
+  const edges = (i: number) => ({ atLeft: i === firstShown, atRight: i === lastShown });
   // A fresh two-column split opens 65/35, not even: the column you split from
   // is the one you were working in (a chat, beside its changes), and the new
   // one is a reference beside it. Only a default — the library uses it when it
@@ -350,256 +310,308 @@ const ProjectColumns = memo(function ProjectColumns({
       {view.groupOrder.map((gid, i) => (
         <Fragment key={gid}>
           {i > 0 && (
-            <Separator className="w-px bg-border hover:bg-primary data-[separator=active]:bg-primary transition-colors cursor-col-resize" />
+            <Separator
+              className={cn(
+                "bg-border hover:bg-primary data-[separator=active]:bg-primary transition-colors",
+                "w-px cursor-col-resize",
+                // Kept in the tree, like the collapsed column beside it; inert
+                // while either side is collapsed.
+                !(shown[i - 1] && shown[i]) && "pointer-events-none invisible",
+              )}
+            />
           )}
-          {/* Sizes are percentages: v4 reads bare numbers as PIXELS and
-              unit-less strings as percentages. `order` is gone — panels are
-              ordered by DOM position — but `id` still keys the saved layout. */}
-          <Panel id={gid} minSize="20" defaultSize={pairSizes?.[i]} className="min-w-0">
+          <ColumnPanel
+            id={gid}
+            shown={shown[i]}
+            defaultSize={pairSizes?.[i]}
+            minSize={i === 0 ? undefined : columnMinSize(view, gid)}
+          >
             <TabColumn
               groupId={gid}
+              role={i === 0 ? "main" : "surface"}
               view={view}
               isActive={isActive}
               runningTabIds={runningTabIds}
-              soloColumn={solo}
+              solo={solo}
+              {...edges(i)}
+              placementControls={i > 0 && i === view.groupOrder.length - 1}
               projectId={projectId}
             />
-          </Panel>
+          </ColumnPanel>
         </Fragment>
       ))}
     </Group>
   );
 });
 
+/**
+ * A surfaces column's floor: the pixel minimum its active surface declares
+ * (`TAB_PLACEMENT`, ADR-0024), so a column cannot be dragged narrower than
+ * its tool's layout works at. A percentage floor alone let team chat's
+ * composer wrap on a narrow window.
+ */
+function columnMinSize(view: ProjectView, groupId: string): string {
+  const activeId = view.activeByGroup[groupId];
+  const tab = view.tabs.find((t) => t.id === activeId);
+  const px = tab ? surfaceMinWidth(tab.type) : null;
+  return px === null ? "20" : `${px}px`;
+}
+
+/**
+ * One split column's panel, collapsed to zero width instead of unmounted when
+ * the surfaces mode hides it. Sizes are percentages: v4 reads bare numbers as
+ * PIXELS and unit-less strings as percentages. `order` is gone — panels are
+ * ordered by DOM position — but `id` still keys the saved layout.
+ */
+function ColumnPanel({
+  id,
+  shown,
+  defaultSize,
+  minSize = "20",
+  children,
+}: {
+  id: string;
+  shown: boolean;
+  defaultSize?: string;
+  /** A percentage, or a pixel floor ("320px") from the surface it shows. */
+  minSize?: string;
+  children: React.ReactNode;
+}) {
+  const panelRef = usePanelRef();
+  // Synced again on the next frame: on mount the Group has not measured itself
+  // yet, so a collapse or expand issued then is a no-op or throws.
+  useEffect(() => {
+    const sync = () => {
+      const panel = panelRef.current;
+      if (!panel) return;
+      try {
+        if (shown && panel.isCollapsed()) panel.expand();
+        else if (!shown && !panel.isCollapsed()) panel.collapse();
+      } catch {
+        // A panel added this commit is not registered with its Group yet and
+        // throws "constraints not found"; the next-frame sync handles it.
+      }
+    };
+    sync();
+    const raf = requestAnimationFrame(sync);
+    return () => cancelAnimationFrame(raf);
+  }, [shown, panelRef]);
+  return (
+    <Panel
+      id={id}
+      panelRef={panelRef}
+      collapsible
+      collapsedSize="0"
+      minSize={minSize}
+      defaultSize={defaultSize}
+      className="min-w-0"
+    >
+      {children}
+    </Panel>
+  );
+}
+
+/**
+ * One split column. The two roles are deliberately unalike, so it reads at a
+ * glance which pane is the work and which holds references beside it:
+ *
+ * - **main** (the first column): no `+` and no close. With one tab it shows no
+ *   strip at all — the tab's title is the breadcrumb's last segment, except an
+ *   editor's, which its own crumb row names. A strip appears only once there
+ *   is something to switch between. Its right end carries the session's own
+ *   controls on a session tab (Details, terminal, ⋯), and on the window's
+ *   right edge the window's group (the panel toggle, the account).
+ * - **surface**: tabs then `+`, left-aligned; the pane's last column ends in
+ *   maximize and the two placement toggles (`PanelPlacementControls`). The
+ *   pane is shown and hidden by the window group's panel toggle
+ *   (`RightPanelToggle`), never closed with an ×, so hiding it never throws
+ *   its tabs into the main pane.
+ */
 const TabColumn = memo(function TabColumn({
   groupId,
+  role,
   view,
   isActive,
   runningTabIds,
-  soloColumn,
+  solo,
+  atLeft,
+  atRight,
+  placementControls,
   projectId,
 }: {
   groupId: string;
+  role: "main" | "surface";
   view: ProjectView;
   isActive: boolean;
   runningTabIds: Set<string>;
-  soloColumn?: boolean;
+  /** The only column on screen. */
+  solo: boolean;
+  atLeft: boolean;
+  atRight: boolean;
+  /** The pane's last column: its strip ends in maximize and the placement
+   *  toggles. */
+  placementControls: boolean;
   projectId: string;
 }) {
-  const splitNewHint = useActionShortcut("split.new")?.label;
-  const splitCloseHint = useActionShortcut("split.close")?.label;
-  const tabBarVisible = useLayoutStore.use.tabBarVisible();
-  const {
-    setActiveTab,
-    addTab,
-    navigateTabBack,
-    navigateTabForward,
-    setFocusedGroup,
-    addGroup,
-    closeGroup,
-  } = useLayoutStore.use.actions();
+  const { setActiveTab, setFocusedGroup, moveTab } = useLayoutStore.use.actions();
 
   const tabsAll = view.tabs;
-  const tabHistory = view.tabHistory;
-  const tabHistoryIndex = view.tabHistoryIndex;
   const tabs = useMemo(() => tabsAll.filter((t) => GROUP_OF(t) === groupId), [tabsAll, groupId]);
   const activeId = view.activeByGroup[groupId] ?? null;
+  const activeTab = tabs.find((t) => t.id === activeId) ?? null;
   const isFocused = isActive && view.focusedGroupId === groupId;
-  const canSplit = view.groupOrder.length < 3;
-  const canCloseGroup = view.groupOrder.length > 1;
-
-  // Back/forward operate on the (global) tab history.
-  const canGoBack = useMemo(() => {
-    for (let i = tabHistoryIndex - 1; i >= 0; i--)
-      if (tabsAll.find((t) => t.id === tabHistory[i])) return true;
-    return false;
-  }, [tabHistory, tabHistoryIndex, tabsAll]);
-  const canGoForward = useMemo(() => {
-    for (let i = tabHistoryIndex + 1; i < tabHistory.length; i++)
-      if (tabsAll.find((t) => t.id === tabHistory[i])) return true;
-    return false;
-  }, [tabHistory, tabHistoryIndex, tabsAll]);
+  const chrome = columnChrome(atLeft, atRight);
+  const main = role === "main";
+  // The main column is the session: it names it in the breadcrumb and never
+  // draws a strip. Sessions switch from the sidebar; everything else opens in
+  // the surfaces pane, whose strip this is.
+  const showStrip = !main;
+  // The session column's header floats over the transcript (see
+  // `pane-top-inset.ts`); how tall it is, for what has to clear it.
+  const headerRef = useRef<HTMLDivElement>(null);
+  const topInset = useFloatingHeaderHeight(headerRef, main);
 
   return (
     <div
-      className={cn("h-full flex flex-col overflow-hidden bg-background")}
+      data-session-column={main || undefined}
+      className="relative h-full flex flex-col overflow-hidden bg-background"
+      // The notifications drawer sizes itself to the surfaces pane by this.
+      data-surface-column={main ? undefined : ""}
       onMouseDownCapture={() => setFocusedGroup(groupId)}
     >
-      {tabBarVisible && (
-        <div
-          className={cn(
-            "flex items-stretch h-[29px] shrink-0 bg-background border-b border-border transition-opacity",
-            // When split, dim the UNFOCUSED columns' tab bars so the focused
-            // one stands out (the focused pane also shows a white dot, below).
-            !soloColumn && !isFocused && "opacity-45",
+      {/* The column's header, and this column's slice of the window bar: the
+          outermost columns carry the window's own controls. In the session
+          column it floats, transparent, over the content: the transcript
+          scrolls under it and dissolves into the transcript's progressive
+          blur instead of being cut off by an opaque strip. */}
+      <PaneHeader
+        ref={headerRef}
+        leading={chrome.leading}
+        breadcrumb={main && chrome.breadcrumb}
+        trailing={chrome.trailing}
+        className={main ? "absolute inset-x-0 top-0 z-titlebar" : undefined}
+      >
+        {main && chrome.breadcrumb && !showStrip && activeTab && namedInWindowBar(activeTab) && (
+          <>
+            <BreadcrumbSeparator />
+            <MainTitle tab={activeTab} />
+          </>
+        )}
+        <HintGroup>
+          {showStrip && (
+            // Tabs then `+`, left-aligned together: the `+` sits where the
+            // next tab will appear. Only the tabs scroll; the `+` and the
+            // controls after it stay put.
+            <PaneTabStrip
+              tabs={tabs}
+              activeId={activeId}
+              // With two panes on screen, only the focused one's active tab
+              // is fully lit, so it is clear where the next keystroke lands.
+              focused={solo || isFocused}
+              runningTabIds={runningTabIds}
+              onSelect={setActiveTab}
+              onMove={moveTab}
+            />
           )}
-        >
-          <HintGroup>
-            <div className="flex items-center justify-center gap-0.5 w-[44px] border-r border-border shrink-0">
-              <HintItem label="Back">
-                <button
-                  onClick={navigateTabBack}
-                  disabled={!canGoBack}
-                  className={cn(
-                    "flex items-center justify-center w-6 h-6 rounded transition-colors outline-none",
-                    canGoBack
-                      ? "text-secondary-foreground hover:text-foreground hover:bg-element-hover cursor-pointer"
-                      : "text-muted-foreground/40 cursor-not-allowed",
-                  )}
-                >
-                  <ChevronLeft size={13} />
-                </button>
-              </HintItem>
-              <HintItem label="Forward">
-                <button
-                  onClick={navigateTabForward}
-                  disabled={!canGoForward}
-                  className={cn(
-                    "flex items-center justify-center w-6 h-6 rounded transition-colors outline-none",
-                    canGoForward
-                      ? "text-secondary-foreground hover:text-foreground hover:bg-element-hover cursor-pointer"
-                      : "text-muted-foreground/40 cursor-not-allowed",
-                  )}
-                >
-                  <ChevronRight size={13} />
-                </button>
-              </HintItem>
-            </div>
-          </HintGroup>
-
-          <div className="flex items-stretch min-w-0 flex-1 overflow-x-auto hide-scrollbar">
-            {tabs.map((tab) => {
-              const Icon = tabIcons[tab.type as TabType] ?? MessageSquare;
-              // A tab opened from a path carries it in `data.filePath`, so the
-              // strip shows the same icon the tree row it came from does.
-              const tabFilePath = typeof tab.data?.filePath === "string" ? tab.data.filePath : null;
-              const isActive = tab.id === activeId;
-              const isRunning = runningTabIds.has(tab.id);
-              return (
-                <div
-                  key={tab.id}
-                  role="tab"
-                  tabIndex={0}
-                  onClick={() => setActiveTab(tab.id)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") setActiveTab(tab.id);
-                  }}
-                  className={cn(
-                    "atlas-tab group relative flex items-center gap-1.5 px-4 h-full text-sm font-medium shrink-0 cursor-pointer select-none border-r border-border",
-                    "transition-[background-color,color] duration-150",
-                    isActive
-                      ? "text-foreground bg-background"
-                      : "text-muted-foreground bg-background hover:text-secondary-foreground hover:bg-element-hover",
-                  )}
-                >
-                  {isRunning ? (
-                    <Loader2 size={12} className="animate-spin text-primary shrink-0" />
-                  ) : tabFilePath ? (
-                    <FileIcon path={tabFilePath} size={12} fallback={Icon} />
-                  ) : (
-                    <Icon
-                      size={12}
-                      className={cn(
-                        "shrink-0",
-                        isActive ? "text-secondary-foreground" : "text-muted-foreground",
-                      )}
-                    />
-                  )}
-                  <span
-                    className={cn(
-                      "truncate max-w-[140px] leading-normal",
-                      tab.dirty && "italic",
-                      // Fades out from under the close button on hover — see
-                      // `.atlas-tab-label` in globals.css.
-                      tab.closable && "atlas-tab-label",
-                    )}
-                  >
-                    {tab.title}
-                  </span>
-                  {tab.closable && (
-                    // No tooltip. An × on the tab you are hovering is not
-                    // ambiguous, and a panel opening under the pointer to say
-                    // "Close tab" is noise on the one control every user
-                    // already knows. `aria-label` still names it, since the
-                    // button's only content is an icon.
-                    <button
-                      aria-label="Close tab"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        requestCloseTab(tab.id);
-                      }}
-                      className={cn(
-                        "absolute right-1.5 top-1/2 -translate-y-1/2",
-                        "inline-flex items-center justify-center w-4 h-4 rounded-full",
-                        "text-muted-foreground opacity-0 scale-90 group-hover:opacity-100 group-hover:scale-100 focus-visible:opacity-100 focus-visible:scale-100",
-                        "hover:bg-element-hover hover:text-foreground transition-[opacity,transform] duration-150",
-                      )}
-                    >
-                      <X size={10} strokeWidth={2.2} />
-                    </button>
-                  )}
-                </div>
-              );
-            })}
+          {/* Never narrower than its controls: when space runs out it is the
+              tab strip that gives way and scrolls. */}
+          <div className="flex min-w-fit flex-1 items-center gap-0.5">
+            {!main && <SurfaceAdd groupId={groupId} />}
+            <span className="flex-1" />
+            {/* The session's controls (pins, Details), portalled in by its
+                chat panel. Only for a session tab: any other tab leaves this
+                end of the bar as it is. The window's group (the panel toggle)
+                comes after, in the header at the window's right edge
+                (`TopbarTrailing`). */}
+            {activeTab?.type === "chat" && (
+              <SessionHeaderSlot key={activeTab.id} tabId={activeTab.id} />
+            )}
+            {placementControls && <PanelPlacementControls />}
           </div>
+        </HintGroup>
+      </PaneHeader>
 
-          {/* `pr-1.5` on the group, not on the last button: the trailing gap
-              used to live on whichever action happened to be rightmost, so it
-              was 2px behind "Split right" in a single pane and 4px behind
-              "Close split" in a split one — the button sat almost flush with
-              the window edge in the common case. */}
-          <HintGroup>
-            <div className="relative flex shrink-0 items-center pr-1.5">
-              <div
-                aria-hidden
-                className="pointer-events-none absolute right-full top-0 h-full w-8"
-                style={{ background: "linear-gradient(to right, transparent, var(--background))" }}
-              />
-              {/* Selected-pane indicator: a white dot before the +/x actions. */}
-              {!soloColumn && isFocused && (
-                <span
-                  aria-hidden
-                  title="Active pane"
-                  className="self-center shrink-0 mx-1 h-1.5 w-1.5 rounded-full bg-[var(--primary)]"
-                />
-              )}
-              <NewTabDropdown addTab={addTab} groupId={groupId} />
-              {canSplit && (
-                <HintItem label={splitNewHint ? `Split right (${splitNewHint})` : "Split right"}>
-                  <button
-                    onClick={addGroup}
-                    className="self-center flex items-center justify-center w-6 h-6 text-muted-foreground hover:text-secondary-foreground hover:bg-element-hover rounded transition-colors shrink-0 cursor-pointer outline-none"
-                  >
-                    <Columns2 size={13} />
-                  </button>
-                </HintItem>
-              )}
-              {canCloseGroup && (
-                <HintItem
-                  label={splitCloseHint ? `Close split (${splitCloseHint})` : "Close split"}
-                >
-                  <button
-                    onClick={() => closeGroup(groupId)}
-                    className="self-center flex items-center justify-center w-6 h-6 text-muted-foreground hover:text-secondary-foreground hover:bg-element-hover rounded transition-colors shrink-0 cursor-pointer outline-none"
-                  >
-                    <X size={13} />
-                  </button>
-                </HintItem>
-              )}
-            </div>
-          </HintGroup>
-        </div>
-      )}
-
-      <TabContentContainer
-        groupId={groupId}
-        view={view}
-        isActive={isActive}
-        projectId={projectId}
-      />
+      <PaneTopInsetContext.Provider value={topInset}>
+        <TabContentContainer
+          groupId={groupId}
+          view={view}
+          isActive={isActive}
+          projectId={projectId}
+        />
+      </PaneTopInsetContext.Provider>
     </div>
   );
 });
+
+/** The floating header's height, tracked as the interface zoom changes it. 0
+ *  while the header is an ordinary row. */
+function useFloatingHeaderHeight(ref: React.RefObject<HTMLDivElement | null>, floating: boolean) {
+  const [height, setHeight] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!floating || !el) {
+      setHeight(0);
+      return;
+    }
+    const measure = () => setHeight(Math.round(el.getBoundingClientRect().height));
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [ref, floating]);
+  return height;
+}
+
+/** Whether the window bar names the main pane's tab after the project. An
+ *  editor tab doesn't: its breadcrumb row already ends at the file, with its
+ *  icon and unsaved dot, so the bar keeps only the project. */
+function namedInWindowBar(tab: Tab): boolean {
+  return tab.type !== "editor";
+}
+
+/** The main pane's title, the breadcrumb's last segment. A chat names its
+ *  session (the chat store is keyed by tab id) rather than the tab's generic
+ *  "Agents". It is the one place the session's name shows: the session view
+ *  itself does not repeat it. */
+function MainTitle({ tab }: { tab: Tab }) {
+  const sessionTitle = useChatStore((s) => {
+    const session = tab.type === "chat" ? s.sessions[tab.id] : undefined;
+    return session ? sessionDisplayTitle(session.title, session.firstUserContent) : null;
+  });
+  return (
+    <span className="min-w-0 truncate px-1 text-sm text-foreground">
+      {sessionTitle ?? tab.title}
+    </span>
+  );
+}
+
+/**
+ * The end of the surfaces pane's strip: Maximize, which gives the pane the
+ * whole centre (the session collapses, still mounted), so the strip sits at
+ * the window's top; again restores it. It is the strip's only control: the
+ * pane is shown and hidden by the window group's panel toggle
+ * (`RightPanelToggle`), and it always sits on the right.
+ */
+function PanelPlacementControls() {
+  const surfaces = useLayoutStore.use.surfaces();
+  const { setSurfaces } = useLayoutStore.use.actions();
+  const maximized = surfaces === "expanded";
+  const maximizeLabel = maximized ? "Restore panel size" : "Maximize panel";
+  return (
+    <>
+      <HintItem label={maximizeLabel}>
+        <IconButton
+          icon={maximized ? Minimize2 : Maximize2}
+          label={maximizeLabel}
+          size="sm"
+          iconSize="md"
+          aria-pressed={maximized}
+          onClick={() => setSurfaces(maximized ? "shown" : "expanded")}
+        />
+      </HintItem>
+    </>
+  );
+}
 
 const TabContentContainer = memo(function TabContentContainer({
   groupId,
@@ -613,7 +625,6 @@ const TabContentContainer = memo(function TabContentContainer({
   /** Handed to terminal tabs so they can record their owner. */
   projectId: string;
 }) {
-  const newTabHint = useActionShortcut("nav.newTabPalette")?.label;
   const { setActiveTab } = useLayoutStore.use.actions();
   const ref = useRef<HTMLDivElement>(null);
   const [height, setHeight] = useState(0);
@@ -679,15 +690,15 @@ const TabContentContainer = memo(function TabContentContainer({
   }, [isActive]);
   const warmChats = isActive && warmReady;
 
-  // Empty split column — invite the user to open something.
+  // An empty column offers what it can hold.
   if (tabs.length === 0) {
     return (
-      <div
-        ref={ref}
-        style={{ flex: "1 1 0%", minHeight: 0, overflow: "hidden" }}
-        className="flex items-center justify-center text-sm text-muted-foreground"
-      >
-        Empty split — open a tab with +{newTabHint ? ` or ${newTabHint}` : ""}
+      <div ref={ref} style={{ flex: "1 1 0%", minHeight: 0, overflow: "hidden" }}>
+        <SurfaceLauncher
+          groupId={groupId}
+          focused={isActive && view.focusedGroupId === groupId}
+          closable={view.groupOrder.length > 1}
+        />
       </div>
     );
   }
@@ -718,88 +729,111 @@ const TabContentContainer = memo(function TabContentContainer({
   // The explicit predicate is load-bearing: `Set.has` does not narrow, and
   // `PersistentPanel` below relies on `tab.type` being the `PersistentTabType`
   // union for its exhaustiveness check.
-  const persistentTabs = tabs.filter(
-    (t): t is PersistentTab =>
-      PERSISTENT_TYPES.has(t.type) && (isActive || !IDLE_EXPENSIVE_TYPES.has(t.type)),
-  );
+  //
+  // Mounted in id order, not strip order. Dragging a tab to a new place in the
+  // strip must not move its panel's DOM: React reorders keyed siblings with
+  // `insertBefore`, and moving an iframe reloads it. Id order never changes
+  // for the tabs already open, so a reorder touches nothing here.
+  const persistentTabs = tabs
+    .filter(
+      (t): t is PersistentTab =>
+        PERSISTENT_TYPES.has(t.type) && (isActive || !IDLE_EXPENSIVE_TYPES.has(t.type)),
+    )
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const activeIsNonPersistent = !persistentTabs.find((t) => t.id === activeTab.id);
 
+  // `@container`: the column's width is what the docked file tree and the
+  // room a file leaves for it are measured against (`FILE_DOCK_WIDTH`).
   return (
     <div
       ref={ref}
+      className="@container"
       style={{ flex: "1 1 0%", minHeight: 0, overflow: "hidden", position: "relative" }}
     >
-      <Suspense fallback={<PanelLoading />}>
-        {persistentTabs.map((tab) => {
-          const isActive = tab.id === activeTab.id;
-          if (tab.type === "chat") {
-            // Until the column has been active for an idle slice, hidden chats
-            // fall back to `display:none` (see `warmReady`).
-            const hidden = !isActive;
+      <FileDockColumn
+        projectId={projectId}
+        projectActive={isActive}
+        tabs={tabs}
+        activeTab={activeTab}
+      >
+        <Suspense fallback={<PanelLoading />}>
+          {persistentTabs.map((tab) => {
+            const isActive = tab.id === activeTab.id;
+            if (tab.type === "chat") {
+              // Until the column has been active for an idle slice, hidden chats
+              // fall back to `display:none` (see `warmReady`).
+              const hidden = !isActive;
+              return (
+                <div
+                  key={tab.id}
+                  className="absolute inset-0"
+                  inert={hidden}
+                  // Pauses the session's working shimmers while it is hidden
+                  // (`src/lib/visible-animation.ts`): `visibility:hidden` does
+                  // not stop CSS animations the way `display:none` does.
+                  data-atlas-offstage={hidden || undefined}
+                  style={{
+                    display: hidden && !warmChats ? "none" : undefined,
+                    visibility: hidden ? "hidden" : "visible",
+                    // `visibility` alone is not enough. Anything inside that
+                    // WebKit has promoted to its own compositing layer keeps
+                    // painting for ~100ms after the ancestor is hidden, and this
+                    // wrapper is positioned, so those leftovers land ON TOP of
+                    // the tab you just switched to. Ancestor opacity is applied
+                    // when the layer is composited, so a stale layer cannot
+                    // survive it. Free: opacity is not a layout or paint input.
+                    opacity: hidden ? 0 : 1,
+                    pointerEvents: hidden ? "none" : "auto",
+                    zIndex: hidden ? 0 : 1,
+                    contain: "layout style",
+                  }}
+                >
+                  <ChatPanel tabId={tab.id} />
+                </div>
+              );
+            }
+            if (tab.type === "terminal") {
+              // The chat's contract (above), minus the warm-up: a hidden terminal
+              // keeps its box. Under `display:none` WebKit dropped the render
+              // tree of every block and line, and showing the tab rebuilt all of
+              // it on the switch frame — the near-freeze when switching to a
+              // terminal that had been busy. Its sessions stop rendering while
+              // hidden anyway (`useIsTabVisible`), so the kept box costs nothing
+              // per frame.
+              const hidden = !isActive;
+              return (
+                <div
+                  key={tab.id}
+                  className="absolute inset-0"
+                  inert={hidden}
+                  style={{
+                    visibility: hidden ? "hidden" : "visible",
+                    opacity: hidden ? 0 : 1,
+                    pointerEvents: hidden ? "none" : "auto",
+                    zIndex: hidden ? 0 : 1,
+                    contain: "layout style",
+                  }}
+                >
+                  <PersistentPanel tab={tab} projectId={projectId} height={height} />
+                </div>
+              );
+            }
             return (
-              <div
-                key={tab.id}
-                className="absolute inset-0"
-                inert={hidden}
-                style={{
-                  display: hidden && !warmChats ? "none" : undefined,
-                  visibility: hidden ? "hidden" : "visible",
-                  // `visibility` alone is not enough. Anything inside that
-                  // WebKit has promoted to its own compositing layer keeps
-                  // painting for ~100ms after the ancestor is hidden, and this
-                  // wrapper is positioned, so those leftovers land ON TOP of
-                  // the tab you just switched to. Ancestor opacity is applied
-                  // when the layer is composited, so a stale layer cannot
-                  // survive it. Free: opacity is not a layout or paint input.
-                  opacity: hidden ? 0 : 1,
-                  pointerEvents: hidden ? "none" : "auto",
-                  zIndex: hidden ? 0 : 1,
-                  contain: "layout style",
-                }}
-              >
-                <ChatPanel tabId={tab.id} />
-              </div>
-            );
-          }
-          if (tab.type === "terminal") {
-            // The chat's contract (above), minus the warm-up: a hidden terminal
-            // keeps its box. Under `display:none` WebKit dropped the render
-            // tree of every block and line, and showing the tab rebuilt all of
-            // it on the switch frame — the near-freeze when switching to a
-            // terminal that had been busy. Its sessions stop rendering while
-            // hidden anyway (`useIsTabVisible`), so the kept box costs nothing
-            // per frame.
-            const hidden = !isActive;
-            return (
-              <div
-                key={tab.id}
-                className="absolute inset-0"
-                inert={hidden}
-                style={{
-                  visibility: hidden ? "hidden" : "visible",
-                  opacity: hidden ? 0 : 1,
-                  pointerEvents: hidden ? "none" : "auto",
-                  zIndex: hidden ? 0 : 1,
-                  contain: "layout style",
-                }}
-              >
+              <div key={tab.id} style={{ display: isActive ? "contents" : "none" }}>
                 <PersistentPanel tab={tab} projectId={projectId} height={height} />
               </div>
             );
-          }
-          return (
-            <div key={tab.id} style={{ display: isActive ? "contents" : "none" }}>
-              <PersistentPanel tab={tab} projectId={projectId} height={height} />
-            </div>
-          );
-        })}
+          })}
 
-        {/* Keyed by tab id: two tabs of one type (two drafts, two diffs) sit in
+          {/* Keyed by tab id: two tabs of one type (two drafts, two diffs) sit in
             the same slot here, and without a key React reuses the first tab's
             component — and its state — for the second. Two draft tabs shared
             one Y.Doc that way and wrote each other's content. */}
-        {activeIsNonPersistent && <TabContent key={activeTab.id} tab={activeTab} />}
-      </Suspense>
+          {activeIsNonPersistent && (
+            <TabContent key={activeTab.id} tab={activeTab} projectId={projectId} />
+          )}
+        </Suspense>
+      </FileDockColumn>
     </div>
   );
 });
@@ -827,14 +861,19 @@ function PersistentPanel({
   switch (tab.type) {
     case "editor":
       return (
-        <EditorPanel
+        <FileTabFrame
           tabId={tab.id}
+          projectId={projectId}
           filePath={tab.data.filePath as string | undefined}
-          containerHeight={height}
-        />
+          ownHeader
+        >
+          <EditorPanel
+            tabId={tab.id}
+            filePath={tab.data.filePath as string | undefined}
+            containerHeight={height}
+          />
+        </FileTabFrame>
       );
-    case "knowledge":
-      return <KnowledgePanel tabId={tab.id} />;
     case "browser":
       return (
         <BrowserPanel
@@ -843,14 +882,14 @@ function PersistentPanel({
           initialUrl={tab.data.url as string | undefined}
         />
       );
-    case "knowledge-graph":
-      return <KnowledgeGraph />;
     case "pdf":
-      return <PdfViewer filePath={tab.data.filePath as string} tabId={tab.id} />;
-    case "settings":
-      return <SettingsPanel initialSection={tab.data.section as string | undefined} />;
-    case "spaces":
-      return <SpacesTab convId={tab.data.convId as string} />;
+      return (
+        <FileTabFrame tabId={tab.id} projectId={projectId} filePath={tab.data.filePath as string}>
+          <PdfViewer filePath={tab.data.filePath as string} tabId={tab.id} />
+        </FileTabFrame>
+      );
+    case "team-chat":
+      return <CommsPanel />;
     // Chat is normally handled by the caller, which needs its own
     // `visibility:hidden` wrapper rather than `display:none`. Listed anyway so
     // the exhaustiveness check below is real and not a hole.
@@ -879,111 +918,58 @@ function ProjectlessCenter() {
   const tabs = useLayoutStore.use.tabs();
   const activeByGroup = useLayoutStore.use.activeByGroup();
   const focusedGroupId = useLayoutStore.use.focusedGroupId();
-  const { setActiveTab, closeTab } = useLayoutStore.use.actions();
+  const { setActiveTab } = useLayoutStore.use.actions();
+  // The only column: the leftmost and the rightmost.
+  const chrome = columnChrome(true, true);
   // Home is LOCAL state, not a store id: `setActiveTab` validates ids and
   // falls back to `tabs[0]` on a miss, so a sentinel id would re-activate
   // the very tab the user clicked away from.
   const [atHome, setAtHome] = useState(false);
 
   const allowed = tabs.filter((t) => PROJECTLESS_TYPES.has(t.type));
-  // Today's behaviour, exactly, until something project-independent opens.
-  if (allowed.length === 0) return <WelcomeScreen />;
-
   const storeActive = activeByGroup[focusedGroupId] ?? null;
   const active = atHome ? null : (allowed.find((t) => t.id === storeActive) ?? null);
 
   return (
     <div className="flex h-full w-full flex-col bg-background">
-      <div className="flex h-9 shrink-0 items-stretch border-b border-border bg-background">
-        {/* Home is a pseudo-tab, not a store tab: it cannot close and it is
-            simply "no allowed tab selected". */}
-        <div
-          role="tab"
-          tabIndex={0}
-          onClick={() => setAtHome(true)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") setAtHome(true);
-          }}
-          className={cn(
-            "flex items-center gap-1.5 border-r border-border px-3 text-sm font-medium cursor-pointer select-none",
-            active === null
-              ? "bg-background text-foreground"
-              : "bg-background text-muted-foreground hover:bg-element-hover hover:text-secondary-foreground",
-          )}
-        >
-          <House size={12} className="shrink-0" />
-          <span className="leading-none">Home</span>
-        </div>
-
-        {allowed.map((tab) => {
-          const Icon = tabIcons[tab.type] ?? MessageSquare;
-          const tabFilePath = typeof tab.data?.filePath === "string" ? tab.data.filePath : null;
-          const isActive = tab.id === active?.id;
-          return (
-            <div
-              key={tab.id}
-              role="tab"
-              tabIndex={0}
-              onClick={() => {
-                setAtHome(false);
-                setActiveTab(tab.id);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
+      {/* Always there, even with only Welcome to show: it is where the
+        window's own controls (traffic lights, account) sit. */}
+      <PaneHeader
+        leading={chrome.leading}
+        breadcrumb={chrome.breadcrumb}
+        trailing={chrome.trailing}
+      >
+        {allowed.length > 0 && (
+          <div
+            role="tablist"
+            className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto hide-scrollbar"
+          >
+            {/* Home is a pseudo-tab, not a store tab: it cannot close and it
+                is simply "no allowed tab selected". */}
+            <PaneTab
+              tab={HOME_TAB}
+              icon={House}
+              active={active === null}
+              focused
+              running={false}
+              onSelect={() => setAtHome(true)}
+            />
+            {allowed.map((tab) => (
+              <PaneTab
+                key={tab.id}
+                tab={tab}
+                active={tab.id === active?.id}
+                focused
+                running={false}
+                onSelect={() => {
                   setAtHome(false);
                   setActiveTab(tab.id);
-                }
-              }}
-              className={cn(
-                "atlas-tab group relative flex shrink-0 cursor-pointer select-none items-center gap-1.5 border-r border-border px-4 text-sm font-medium",
-                "transition-[background-color,color] duration-150",
-                isActive
-                  ? "bg-background text-foreground"
-                  : "bg-background text-muted-foreground hover:bg-element-hover hover:text-secondary-foreground",
-              )}
-            >
-              {tabFilePath ? (
-                <FileIcon path={tabFilePath} size={12} fallback={Icon} />
-              ) : (
-                <Icon
-                  size={12}
-                  className={cn(
-                    "shrink-0",
-                    isActive ? "text-secondary-foreground" : "text-muted-foreground",
-                  )}
-                />
-              )}
-              <span
-                className={cn(
-                  "max-w-[140px] truncate leading-normal",
-                  tab.closable && "atlas-tab-label",
-                )}
-              >
-                {tab.title}
-              </span>
-              {tab.closable && (
-                // No tooltip — see the note on the primary tab strip's close
-                // button above.
-                <button
-                  aria-label="Close tab"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    closeTab(tab.id);
-                  }}
-                  className={cn(
-                    "absolute right-1.5 top-1/2 -translate-y-1/2",
-                    "inline-flex h-4 w-4 items-center justify-center rounded-full",
-                    "text-muted-foreground opacity-0 scale-90 group-hover:opacity-100 group-hover:scale-100 focus-visible:opacity-100 focus-visible:scale-100",
-                    "transition-[opacity,transform] duration-150 hover:bg-element-hover hover:text-foreground",
-                  )}
-                >
-                  <X size={10} strokeWidth={2.2} />
-                </button>
-              )}
-            </div>
-          );
-        })}
-      </div>
+                }}
+              />
+            ))}
+          </div>
+        )}
+      </PaneHeader>
 
       <div className="relative min-h-0 flex-1 overflow-hidden">
         <Suspense fallback={<PanelLoading />}>
@@ -994,58 +980,87 @@ function ProjectlessCenter() {
   );
 }
 
+/** The projectless strip's Home pseudo-tab. Typed as a chat tab only so it
+ *  can borrow `PaneTab`, which is handed the House icon alongside it. */
+const HOME_TAB: Tab = {
+  id: "__home",
+  type: "chat",
+  title: "Home",
+  closable: false,
+  dirty: false,
+  data: {},
+};
+
 function PanelLoading() {
   // Structural skeleton (not centered text) so the first open of a lazy panel
   // while its JS chunk downloads reads as "loading content" rather than blank.
   return <PanelSkeleton rows={7} />;
 }
 
-function TabContent({ tab }: { tab: Tab }) {
+function TabContent({ tab, projectId = null }: { tab: Tab; projectId?: string | null }) {
+  // A file tab sits in its frame: the header band, and room for the column's
+  // docked project tree (`file-tab-frame.tsx`, `file-dock.tsx`).
+  const framed = (content: React.ReactNode) => (
+    <FileTabFrame
+      tabId={tab.id}
+      projectId={projectId}
+      filePath={tab.data.filePath as string | undefined}
+    >
+      {content}
+    </FileTabFrame>
+  );
   switch (tab.type) {
     case "chat":
       return <ChatPanel tabId={tab.id} />;
-    case "canvas":
-      return <CanvasPanel />;
-    case "knowledge":
-      return <KnowledgePanel tabId={tab.id} />;
-    case "knowledge-graph":
-      return <KnowledgeGraph />;
-    case "memory":
-      return <MemoryPanel />;
     case "browser":
       return <BrowserPanel initialUrl={tab.data.url as string | undefined} />;
-    case "settings":
-      return <SettingsPanel initialSection={tab.data.section as string | undefined} />;
     case "log":
       return <LogPanel />;
-    case "usage":
-      return <UsagePanel />;
-    case "artifacts":
-      return <ArtifactsPanel />;
+    case "source-control":
+      return <SourceControlPanel />;
+    case "files":
+      return <FilesPanel projectId={projectId} />;
     case "media":
-      return <MediaViewer filePath={tab.data.filePath as string} />;
+      return framed(<MediaViewer filePath={tab.data.filePath as string} />);
     case "svg":
-      return <SvgViewer filePath={tab.data.filePath as string} />;
+      return framed(<SvgViewer filePath={tab.data.filePath as string} />);
     case "pdf":
-      return <PdfViewer filePath={tab.data.filePath as string} tabId={tab.id} />;
+      return framed(<PdfViewer filePath={tab.data.filePath as string} tabId={tab.id} />);
     case "notebook":
-      return <NotebookViewer filePath={tab.data.filePath as string} />;
+      return framed(<NotebookViewer filePath={tab.data.filePath as string} />);
     case "diff":
-      return (
-        <GitDiffPanel
-          repoPath={tab.data.repoPath as string}
-          file={tab.data.file as string}
-          staged={!!tab.data.staged}
-          commit={(tab.data.commit as string | null | undefined) ?? null}
-        />
-      );
+      return <ReviewPanel tabId={tab.id} repoPath={tab.data.repoPath as string} />;
     case "commit":
       return <CommitView repoPath={tab.data.repoPath as string} sha={tab.data.sha as string} />;
+    case "pull-request": {
+      const pr = readPullRequestTabData(tab.data);
+      return pr ? (
+        <PullRequestPanel tabId={tab.id} repoPath={pr.repoPath} number={pr.number} />
+      ) : (
+        <PlaceholderContent tab={tab} />
+      );
+    }
+    case "pull-requests": {
+      const list = readPullRequestListTabData(tab.data);
+      return list ? (
+        <PullRequestListPanel repoPath={list.repoPath} />
+      ) : (
+        <PlaceholderContent tab={tab} />
+      );
+    }
+    case "session-pull-requests": {
+      const session = readSessionPullRequestsTabData(tab.data);
+      return session ? (
+        <SessionPullRequestsPanel tabId={tab.id} threadId={session.threadId} cwd={session.cwd} />
+      ) : (
+        <PlaceholderContent tab={tab} />
+      );
+    }
     case "session-changes":
       return (
-        <SessionChangesView
+        <ReviewPanel
           tabId={tab.id}
-          projectPath={tab.data.projectPath as string}
+          repoPath={tab.data.projectPath as string}
           sessionId={tab.data.sessionId as string}
         />
       );
@@ -1053,10 +1068,8 @@ function TabContent({ tab }: { tab: Tab }) {
       return (
         <CommsDraftTab convId={tab.data.convId as string} draftId={tab.data.draftId as string} />
       );
-    case "spaces":
-      return <SpacesTab convId={tab.data.convId as string} />;
     case "unsupported":
-      return <UnsupportedView filePath={tab.data.filePath as string} />;
+      return framed(<UnsupportedView filePath={tab.data.filePath as string} />);
     default:
       return <PlaceholderContent tab={tab} />;
   }
@@ -1079,67 +1092,140 @@ function PlaceholderContent({ tab }: { tab: Tab }) {
   );
 }
 
-const NEW_TAB_OPTIONS: Array<{ type: TabType; label: string; icon: React.ElementType }> = [
-  { type: "chat", label: "Agents", icon: AtlasIcon },
-  { type: "canvas", label: "Spaces", icon: Map },
-  { type: "terminal", label: "Terminal", icon: Terminal },
-  { type: "browser", label: "Browser", icon: Globe },
-  { type: "knowledge", label: "Knowledge", icon: Brain },
-  { type: "memory", label: "Memory", icon: BrainCircuit },
-  { type: "log", label: "Log", icon: ScrollText },
-];
+/**
+ * The surfaces pane's `+`: a menu of the surfaces for this column, each with
+ * its letter, which also picks it while the menu is open. `⌘T` opens it once
+ * the pane exists (see `tabs.openSurface` in App.tsx).
+ */
+function SurfaceAdd({ groupId }: { groupId: string }) {
+  const hint = useActionShortcut("tabs.openSurface")?.label;
+  const label = hint ? `Open a surface (${hint})` : "Open a surface";
+  const [open, setOpen] = useState(false);
 
-function NewTabDropdown({
-  addTab,
-  groupId,
-}: {
-  addTab: (tab: Tab, groupId?: string) => void;
-  groupId: string;
-}) {
-  const handleAdd = useCallback(
-    (type: TabType, label: string) => {
-      addTab(
-        {
-          id: `${type}-${Date.now()}`,
-          type,
-          title: label,
-          closable: true,
-          dirty: false,
-          data: {},
-        },
-        groupId,
-      );
-    },
-    [addTab, groupId],
-  );
+  useEffect(() => {
+    const onOpen = (e: Event) => {
+      if ((e as CustomEvent<{ groupId?: string }>).detail?.groupId === groupId) setOpen(true);
+    };
+    window.addEventListener(OPEN_SURFACE_MENU_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_SURFACE_MENU_EVENT, onOpen);
+  }, [groupId]);
 
   return (
-    <DropdownMenu.Root>
-      <HintItem label="New tab">
-        <DropdownMenu.Trigger
-          render={
-            <button className="self-center flex items-center justify-center w-6 h-6 text-muted-foreground hover:text-secondary-foreground hover:bg-element-hover rounded transition-colors shrink-0 mx-1 cursor-pointer outline-none focus:outline-none focus-visible:outline-none ring-0 focus:ring-0">
-              <Plus size={14} />
-            </button>
-          }
+    <DropdownMenu open={open} onOpenChange={setOpen}>
+      <HintItem label={label}>
+        <DropdownMenuTrigger
+          render={<IconButton icon={Plus} label="Open a surface" size="sm" iconSize="md" />}
         />
       </HintItem>
-      <DropdownMenu.Portal>
-        <DropdownMenu.Positioner className="z-popover" align="start" sideOffset={4}>
-          <DropdownMenu.Popup className="w-[160px] rounded-lg border border-border bg-card shadow-lg py-1">
-            {NEW_TAB_OPTIONS.map(({ type, label, icon: Icon }) => (
-              <DropdownMenu.Item
-                key={type}
-                onClick={() => handleAdd(type, label)}
-                className="flex items-center gap-2 px-3 h-[30px] text-xs text-secondary-foreground hover:bg-element-hover hover:text-foreground cursor-default outline-none"
-              >
-                <Icon size={12} className="text-muted-foreground" />
-                {label}
-              </DropdownMenu.Item>
-            ))}
-          </DropdownMenu.Popup>
-        </DropdownMenu.Positioner>
-      </DropdownMenu.Portal>
-    </DropdownMenu.Root>
+      {/* Opens under the `+` with their left edges in line —
+          the menu grows out of the button it came from, toward the pane. */}
+      <DropdownMenuContent
+        align="start"
+        sideOffset={4}
+        className="min-w-48"
+        // Letters pick, before the menu's own typeahead sees them.
+        onKeyDownCapture={(e) => {
+          const surface = surfaceForKey(e);
+          if (!surface) return;
+          e.preventDefault();
+          e.stopPropagation();
+          setOpen(false);
+          openSurface(surface, groupId);
+        }}
+      >
+        {SURFACES.map((surface) => (
+          <DropdownMenuItem key={surface.type} onClick={() => openSurface(surface, groupId)}>
+            <surface.icon size={14} />
+            {surface.label}
+            <DropdownMenuShortcut>{surface.key}</DropdownMenuShortcut>
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/** True while focus is somewhere typing belongs — a letter there is text. */
+function isTypingTarget(el: Element | null): boolean {
+  if (!el) return false;
+  const html = el as HTMLElement;
+  return (
+    html.isContentEditable ||
+    el.tagName === "INPUT" ||
+    el.tagName === "TEXTAREA" ||
+    el.tagName === "SELECT"
+  );
+}
+
+/**
+ * An empty column: the "Open a surface" launcher. Each row's letter
+ * picks it from anywhere while this column is focused and nothing that takes
+ * typing has focus — no ⌘ needed. Esc closes the pane, so a stray ⌘T is one
+ * key to undo.
+ */
+function SurfaceLauncher({
+  groupId,
+  focused,
+  closable,
+}: {
+  groupId: string;
+  focused: boolean;
+  closable: boolean;
+}) {
+  // Take focus when the launcher opens in the focused column. `⌘T` is
+  // pressed from wherever you were — usually the chat composer — and without
+  // this the letter that follows would be typed into it.
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (focused) rootRef.current?.focus({ preventScroll: true });
+  }, [focused]);
+
+  useEffect(() => {
+    if (!focused) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || isTypingTarget(deepActiveElement())) return;
+      // A dialog or menu owns the keyboard while it is up, and so does the
+      // Settings screen, which covers the workspace without being a dialog.
+      if (document.querySelector("[role='dialog'], [role='menu']")) return;
+      if (useSettingsNav.getState().open) return;
+      if (e.key === "Escape" && closable) {
+        e.preventDefault();
+        useLayoutStore.getState().actions.closeGroup(groupId);
+        return;
+      }
+      const surface = surfaceForKey(e);
+      if (!surface) return;
+      e.preventDefault();
+      openSurface(surface, groupId);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [focused, closable, groupId]);
+
+  return (
+    // Lifted by the bar's height so it sits at the optical centre of the
+    // window rather than the column's.
+    <div
+      ref={rootRef}
+      tabIndex={-1}
+      className="flex h-full items-center justify-center pb-(--titlebar-height) outline-none"
+    >
+      <div className="w-full max-w-xs px-4">
+        <p className="mb-3 text-center text-sm font-medium text-foreground">Open a surface</p>
+        <div className="flex flex-col gap-0.5">
+          {SURFACES.map((surface) => (
+            <button
+              key={surface.type}
+              onClick={() => openSurface(surface, groupId)}
+              className="flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-secondary-foreground transition-colors hover:bg-element-hover hover:text-foreground"
+            >
+              <surface.icon size={16} className="shrink-0" />
+              <span className="min-w-0 flex-1 truncate">{surface.label}</span>
+              <Kbd>{surface.key}</Kbd>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
   );
 }

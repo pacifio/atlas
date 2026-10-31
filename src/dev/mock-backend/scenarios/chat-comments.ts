@@ -306,3 +306,15 @@ export const chatCommentsSelection = commentScenario(
   ],
   [transcript[0], text(longResponse, t(1))],
 );
+
+/** The same chat, not shared: no cloud target, so no comments. A click on the
+ *  prose starts nothing, and neither the footer nor the selection pill offers
+ *  Comment. Cite stays, without "Share with team". */
+export const chatCommentsUnshared: Scenario = {
+  name: "chat-comments-unshared",
+  description: "A session that is not shared: nothing offers a comment.",
+  init: () => setSeedTranscript(transcript),
+  commands: {
+    chat_comment_target: () => null,
+  },
+};

@@ -10,14 +10,15 @@
 //! thread's own vocabulary, and both the external stdio connection and the
 //! native agent need these conversions:
 //!
-//! - [`compose`] / [`from_text`] / [`with_resource_links`] — build the blocks on
-//!   the way down.
+//! - [`compose`] / [`from_text`] / [`with_resource_links`] /
+//!   [`with_pasted_texts`] — build the blocks on the way down.
 //! - [`strip_unsupported`] — the capability backstop.
 //! - [`flatten_text`] — collapse them back to a string for the native agent,
 //!   which has no multimodal input path.
 
 use agent_client_protocol::schema::v1::{
-    ContentBlock, EmbeddedResourceResource, ImageContent, ResourceLink, TextContent,
+    ContentBlock, EmbeddedResource, EmbeddedResourceResource, ImageContent, ResourceLink,
+    TextContent, TextResourceContents,
 };
 
 /// One image the composer attached to a turn: raw base64 `data` plus its MIME
@@ -85,6 +86,71 @@ pub fn with_resource_links(
             .into_iter()
             .map(|l| ContentBlock::ResourceLink(ResourceLink::new(l.name, l.uri))),
     );
+    content
+}
+
+/// Text the user pasted that was too large to sit in the composer
+/// (`isLargePaste`): it rode as a chip, and its whole text goes with the turn.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PastedText {
+    /// The chip's id — the `@paste:<id>` token in the prose names it.
+    pub id: String,
+    pub text: String,
+}
+
+/// The URI an embedded paste carries. Not a file: there is nothing on disk
+/// for the agent to open, which is why a paste never rides as a resource link.
+#[must_use]
+pub fn paste_uri(id: &str) -> String {
+    format!("atlas://paste/{id}")
+}
+
+/// A paste as a plain text block: a header naming it, then the text in a
+/// fence the text itself cannot close.
+#[must_use]
+pub fn paste_as_text(paste: &PastedText) -> String {
+    let lines = paste.text.lines().count().max(1);
+    let mut longest = 0;
+    let mut run = 0;
+    for c in paste.text.chars() {
+        run = if c == '`' { run + 1 } else { 0 };
+        longest = longest.max(run);
+    }
+    let fence = "`".repeat((longest + 1).max(3));
+    let noun = if lines == 1 { "line" } else { "lines" };
+    format!(
+        "Pasted text (@paste:{}, {lines} {noun}):\n{fence}\n{}\n{fence}",
+        paste.id, paste.text
+    )
+}
+
+/// Append the turn's large pastes, every one in full whatever the agent can
+/// take.
+///
+/// ACP only guarantees `Text` and `ResourceLink`. An agent that advertised
+/// `promptCapabilities.embeddedContext` gets each paste as an embedded text
+/// resource, which it can tell apart from the user's prose; any other agent
+/// gets it as a text block (`paste_as_text`). Never a resource link: the paste
+/// is not a file the agent could read.
+#[must_use]
+pub fn with_pasted_texts(
+    mut content: Vec<ContentBlock>,
+    pastes: Vec<PastedText>,
+    embedded_context: bool,
+) -> Vec<ContentBlock> {
+    content.extend(pastes.into_iter().map(|paste| {
+        if embedded_context {
+            ContentBlock::Resource(EmbeddedResource::new(
+                EmbeddedResourceResource::TextResourceContents(
+                    TextResourceContents::new(paste.text, paste_uri(&paste.id))
+                        .mime_type("text/plain".to_string()),
+                ),
+            ))
+        } else {
+            ContentBlock::Text(TextContent::new(paste_as_text(&paste)))
+        }
+    }));
     content
 }
 
@@ -269,6 +335,57 @@ mod tests {
             }],
         );
         assert_eq!(strip_unsupported(content.clone(), false), content);
+    }
+
+    fn paste(text: &str) -> PastedText {
+        PastedText {
+            id: "p1".into(),
+            text: text.into(),
+        }
+    }
+
+    #[test]
+    fn a_paste_is_an_embedded_resource_for_an_agent_that_takes_embedded_context() {
+        let content = with_pasted_texts(from_text("see this"), vec![paste("a\nb")], true);
+        assert_eq!(content.len(), 2);
+        assert!(matches!(&content[0], ContentBlock::Text(t) if t.text == "see this"));
+        let ContentBlock::Resource(res) = &content[1] else {
+            panic!("expected an embedded resource");
+        };
+        let EmbeddedResourceResource::TextResourceContents(t) = &res.resource else {
+            panic!("expected text contents");
+        };
+        assert_eq!(t.uri, "atlas://paste/p1");
+        assert_eq!(t.mime_type.as_deref(), Some("text/plain"));
+        assert_eq!(t.text, "a\nb");
+    }
+
+    #[test]
+    fn a_paste_is_fenced_text_for_an_agent_without_embedded_context() {
+        let content = with_pasted_texts(from_text("see this"), vec![paste("a\nb")], false);
+        assert_eq!(content.len(), 2);
+        let ContentBlock::Text(t) = &content[1] else {
+            panic!("expected a text block");
+        };
+        assert_eq!(t.text, "Pasted text (@paste:p1, 2 lines):\n```\na\nb\n```");
+        // Text and ResourceLink are the baseline; nothing here needs a capability.
+        assert_eq!(strip_unsupported(content.clone(), false), content);
+    }
+
+    #[test]
+    fn the_fence_outlasts_any_backticks_in_the_paste() {
+        let text = paste_as_text(&paste("```rust\nfn main() {}\n```"));
+        assert!(text.contains("\n````\n```rust"), "{text}");
+        assert!(text.ends_with("```\n````"), "{text}");
+    }
+
+    #[test]
+    fn neither_form_ever_drops_a_byte_of_the_paste() {
+        let body = "x".repeat(10_000);
+        for embedded in [true, false] {
+            let content = with_pasted_texts(Vec::new(), vec![paste(&body)], embedded);
+            assert!(flatten_text(&content).contains(&body));
+        }
     }
 
     /// P2.1 lands `ResourceLink` blocks for @-mentions; the native agent's

@@ -18,6 +18,11 @@ use opentelemetry_otlp::LogExporter;
 use opentelemetry_otlp::OTEL_EXPORTER_OTLP_LOGS_TIMEOUT;
 use opentelemetry_otlp::OTEL_EXPORTER_OTLP_TRACES_TIMEOUT;
 use opentelemetry_otlp::Protocol;
+// Every exporter below sets `RetryPolicy::disabled()`: OTLP 0.33 retries by
+// default, and its deadline does not cancel an in-flight attempt, so a slow
+// collector could hold an export near twice the timeout. This keeps 0.31's
+// single attempt.
+use opentelemetry_otlp::RetryPolicy;
 use opentelemetry_otlp::SpanExporter;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_otlp::WithHttpConfig;
@@ -399,6 +404,7 @@ fn build_logger(
 
             let exporter = LogExporter::builder()
                 .with_tonic()
+                .with_retry_policy(RetryPolicy::disabled())
                 .with_endpoint(endpoint)
                 .with_metadata(MetadataMap::from_headers(header_map))
                 .with_tls_config(tls_config)
@@ -421,6 +427,7 @@ fn build_logger(
 
             let mut exporter_builder = LogExporter::builder()
                 .with_http()
+                .with_retry_policy(RetryPolicy::disabled())
                 .with_endpoint(endpoint)
                 .with_protocol(protocol)
                 .with_headers(headers);
@@ -466,6 +473,7 @@ fn build_tracer_provider(
 
             SpanExporter::builder()
                 .with_tonic()
+                .with_retry_policy(RetryPolicy::disabled())
                 .with_endpoint(endpoint)
                 .with_metadata(MetadataMap::from_headers(header_map))
                 .with_tls_config(tls_config)
@@ -487,6 +495,7 @@ fn build_tracer_provider(
 
                 let mut exporter_builder = SpanExporter::builder()
                     .with_http()
+                    .with_retry_policy(RetryPolicy::disabled())
                     .with_endpoint(endpoint)
                     .with_protocol(protocol)
                     .with_headers(headers);
@@ -513,6 +522,7 @@ fn build_tracer_provider(
 
             let mut exporter_builder = SpanExporter::builder()
                 .with_http()
+                .with_retry_policy(RetryPolicy::disabled())
                 .with_endpoint(endpoint)
                 .with_protocol(protocol)
                 .with_headers(headers);

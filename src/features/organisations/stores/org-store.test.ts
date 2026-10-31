@@ -11,10 +11,7 @@ vi.mock("@/features/app/stores/app-store", () => ({
   scheduleAppStateSave: () => scheduleAppStateSave(),
 }));
 vi.mock("@/features/projects/stores/project-store", () => ({
-  useProjectStore: { getState: () => ({ projects: [], groups: [], actions: {} }) },
-}));
-vi.mock("@/features/projects/stores/recent-chats-store", () => ({
-  useRecentChatsStore: { getState: () => ({ actions: {} }) },
+  useProjectStore: { getState: () => ({ projects: [], actions: {} }) },
 }));
 vi.mock("../lib/org-telemetry", () => ({ syncOrgTelemetry: () => {} }));
 vi.mock("@/features/auth/lib/auth-api", () => ({ auth: {} }));

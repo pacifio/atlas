@@ -36,9 +36,25 @@ const MAX_KEY_CHORD_STROKES: usize = 2;
 /// `pageup` -> `page-up`) and stores each stroke in its canonical form. Chord
 /// strokes are separated by one space, for example `ctrl-x ctrl-s`. Arrays of
 /// bindings remain alternatives; their entries do not form a chord together.
-#[derive(Serialize, Debug, Clone, PartialEq, Eq, JsonSchema)]
+#[derive(Serialize, Debug, Clone, PartialEq, Eq)]
 #[serde(transparent)]
-pub struct KeybindingSpec(#[schemars(with = "String")] pub String);
+pub struct KeybindingSpec(pub String);
+
+/// A plain string in the schema. Derived, schemars 1 would give it a definition of
+/// its own carrying the doc comment above, which the committed schema never had.
+impl JsonSchema for KeybindingSpec {
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "KeybindingSpec".into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        String::json_schema(generator)
+    }
+}
 
 impl KeybindingSpec {
     /// Returns the canonical key-spec string (for example `ctrl-x ctrl-s`).

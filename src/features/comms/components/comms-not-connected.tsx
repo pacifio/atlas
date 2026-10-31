@@ -129,9 +129,7 @@ function DitherBackdrop() {
       // theme-subscription-allow: re-read on every frame rather than cached at
       // construction, and this loop never parks except while the document is
       // hidden — so a switch lands within one 80ms step with nothing to
-      // subscribe to. (`dither-field` looks identical but DOES park, under
-      // `prefers-reduced-motion`, which is why that one takes `useThemeVersion`
-      // as an effect dependency.)
+      // subscribe to.
       ctx.fillStyle = themeDerived("element.emphasis");
 
       // Wind: mostly sideways, a little lift, plus a slow phase evolution so

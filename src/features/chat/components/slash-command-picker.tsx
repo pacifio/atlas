@@ -1,9 +1,9 @@
 // Floating slash-command picker. Same architecture as `mention-picker.tsx`:
 // portal-anchored, imperative handle, no DOM focus. Opens when the trigger
-// plugin (`cm-slash-extension.ts`) reports a `/` preceded by whitespace or
+// trigger (`components/composer/composer-triggers.ts`) reports a `/` preceded by whitespace or
 // start-of-line, anywhere in the composer.
 //
-// Per ADR 0003, the bound agent's own ACP `available_commands_update` is the
+// Per ADR 0005, the bound agent's own ACP `available_commands_update` is the
 // only source of commands — there is no local catalogue. `message-input.tsx`
 // merges in a few host-handled guard rows (`/login`, `/skills`, and
 // `/clear`/`/logout` dimmed-unavailable rows) alongside whatever the agent
@@ -82,7 +82,7 @@ export interface SlashCommandPickerProps {
   onSelect: (cmd: SlashCommand) => void;
   onClose: () => void;
   /** The bound agent's ACP-advertised commands, plus any host-handled guard
-   *  rows the caller merges in. ADR 0003: there is no local fallback
+   *  rows the caller merges in. ADR 0005: there is no local fallback
    *  catalogue — ACP advertisement is the only source. */
   commands: SlashCommand[];
   /** True between session start and the first `available_commands_update` —
@@ -190,7 +190,7 @@ export const SlashCommandPicker = forwardRef<SlashCommandPickerHandle, SlashComm
       const handler = (e: MouseEvent) => {
         const target = e.target as HTMLElement | null;
         if (!target) return;
-        if (target.closest(".atlas-chat-cm-host")) return;
+        if (target.closest(".atlas-chat-composer")) return;
         if (target.closest(".atlas-slash-picker")) return;
         onCloseRef.current();
       };

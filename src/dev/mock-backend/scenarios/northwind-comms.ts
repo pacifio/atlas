@@ -99,7 +99,6 @@ const DAY = 24 * 60 * MIN;
 
 /** Rust's `Err(String)`: callers branch on a bare string, never an Error. */
 function fail(message: string): never {
-  // oxlint-disable-next-line no-throw-literal -- Rust's `Err(String)`, not an Error.
   throw message;
 }
 

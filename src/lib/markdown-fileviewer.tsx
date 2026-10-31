@@ -1,10 +1,18 @@
-import { memo, useEffect, useState, type ComponentPropsWithoutRef } from "react";
-import ReactMarkdown from "react-markdown";
+import { memo, useEffect, useMemo, useState, type ComponentPropsWithoutRef } from "react";
+import ReactMarkdown, { type Options } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import rehypeRaw from "rehype-raw";
+import rehypeSanitize from "rehype-sanitize";
+import { rehypeFileChips, type FileChipPolicy } from "@/lib/file-chip-hast";
+import { openFileChipUnder, useFileChipHost } from "@/lib/file-chip-host";
+import { documentFileRoot } from "@/lib/file-links";
+import { onMarkdownClick } from "@/lib/markdown-links";
 import { cachedPreviewImage, previewImage } from "@/lib/markdown-preview-image";
+import { PREVIEW_SANITIZE_SCHEMA } from "@/lib/markdown-sanitize";
 import "@/styles/hljs.css";
+
+const REMARK_PLUGINS: NonNullable<Options["remarkPlugins"]> = [remarkGfm];
 
 const IMG_CLASS = "my-1 inline-block h-auto max-w-full rounded align-middle";
 
@@ -39,6 +47,17 @@ function PreviewImage({
   return <img {...rest} alt={alt} src={url} className={IMG_CLASS} />;
 }
 
+/**
+ * A web link opens in the system browser; nothing else may navigate the
+ * window away from the app (a relative `docs/x.md` would otherwise load
+ * `tauri://localhost/docs/x.md` over Atlas). In-page `#anchors` still scroll.
+ */
+function onPreviewLinkClick(e: React.MouseEvent<HTMLAnchorElement>) {
+  if (onMarkdownClick(e.nativeEvent)) return;
+  if (e.currentTarget.getAttribute("href")?.startsWith("#")) return;
+  e.preventDefault();
+}
+
 function handleWheel(e: React.WheelEvent<HTMLElement>) {
   const el = e.currentTarget;
   if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
@@ -65,18 +84,56 @@ interface Props {
    * CSP — instead of by the webview, which can do neither.
    */
   docPath?: string;
+  /**
+   * The project the document belongs to. File paths in it become chips that
+   * open in Atlas's viewer, inside this folder only (outside every project,
+   * the document's own folder: `documentFileRoot`). Unset, no chips.
+   */
+  projectRoot?: string | null;
   className?: string;
 }
 export const MarkdownFile = memo(function MarkdownFile({
   children,
   trusted = false,
   docPath,
+  projectRoot,
 }: Props) {
+  // File paths become chips rooted at the document's project; relative links
+  // resolve from the document's own folder. They are added after the
+  // sanitiser, so the document's raw HTML cannot forge one, and a click opens
+  // Atlas's viewer or nothing.
+  const fileRoot = projectRoot === undefined ? null : documentFileRoot(docPath, projectRoot);
+  const docDir = docPath ? documentFileRoot(docPath, null) : null;
+  const rehypePlugins = useMemo<NonNullable<Options["rehypePlugins"]>>(() => {
+    const policy: FileChipPolicy | null = fileRoot
+      ? {
+          root: fileRoot,
+          ...(docDir ? { linkBase: docDir } : {}),
+          label: "basename",
+          folders: false,
+        }
+      : null;
+    return trusted
+      ? [
+          rehypeRaw,
+          [rehypeSanitize, PREVIEW_SANITIZE_SCHEMA],
+          [rehypeFileChips, policy],
+          rehypeHighlight,
+        ]
+      : [[rehypeFileChips, policy], rehypeHighlight];
+  }, [trusted, fileRoot, docDir]);
+  const open = useMemo(() => (fileRoot ? openFileChipUnder(fileRoot) : null), [fileRoot]);
+  const host = useFileChipHost(open);
   return (
-    <div className="text-md leading-relaxed text-[var(--foreground)] break-words select-text">
+    <div
+      ref={host.ref}
+      onClick={host.onClick}
+      onKeyDown={host.onKeyDown}
+      className="text-md leading-relaxed text-[var(--foreground)] break-words select-text"
+    >
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[...(trusted ? [rehypeRaw] : []), rehypeHighlight]}
+        remarkPlugins={REMARK_PLUGINS}
+        rehypePlugins={rehypePlugins}
         components={{
           h1: (p) => (
             <h1 className="mt-8 mb-3 border-b border-[var(--border)] pb-2 text-2xl font-bold tracking-tight">
@@ -96,11 +153,12 @@ export const MarkdownFile = memo(function MarkdownFile({
 
           p: (p) => <p className="my-3">{p.children}</p>,
 
-          a: (p) => (
+          a: ({ node: _node, ...p }) => (
             <a
               {...p}
               target="_blank"
               rel="noreferrer"
+              onClick={onPreviewLinkClick}
               className="text-[var(--primary)] underline hover:opacity-80"
             />
           ),
@@ -115,7 +173,7 @@ export const MarkdownFile = memo(function MarkdownFile({
             trusted && docPath && typeof p.src === "string" ? (
               <PreviewImage {...p} docPath={docPath} src={p.src} />
             ) : (
-              // eslint-disable-next-line jsx-a11y/alt-text
+              // oxlint-disable-next-line jsx-a11y/alt-text
               <img {...p} className={IMG_CLASS} />
             ),
 

@@ -651,7 +651,7 @@ impl Store {
         // the same silence it exists to prevent.
         self.conn.execute(
             "UPDATE agent_session
-                SET needs_attention = 1, attention_reason = ?2, updated_at = ?3
+                SET needs_attention = 1, attention_reason = ?2, updated_at = ?3, flagged_at = ?3
               WHERE id = ?1",
             rusqlite::params![session_id, reason, Utc::now().to_rfc3339()],
         )?;
@@ -1820,14 +1820,10 @@ impl Store {
         // to the Organisation as finished work. The abort verdict lives only in
         // the local `turn` table, so the server could never learn otherwise.
         let mut stmt = self.conn.prepare(&format!(
-            "SELECT {MESSAGE_COLUMNS} FROM agent_message m
+            "SELECT {MESSAGE_COLUMNS} FROM agent_message x
               WHERE sync_state = 'pending'
                 AND session_id IN (SELECT id FROM agent_session WHERE workspace_id = ?1)
-                AND NOT EXISTS (
-                    SELECT 1 FROM turn t
-                     WHERE t.session_id = m.session_id
-                       AND t.turn_seq = m.turn_seq
-                       AND t.state = 'aborted')
+                {NOT_IN_ABORTED_TURN}
               ORDER BY seq LIMIT ?2"
         ))?;
         let messages = stmt
@@ -1857,14 +1853,10 @@ impl Store {
         }
 
         let mut stmt = self.conn.prepare(&format!(
-            "SELECT {TOOL_CALL_COLUMNS} FROM tool_call c
+            "SELECT {TOOL_CALL_COLUMNS} FROM tool_call x
               WHERE sync_state = 'pending'
                 AND session_id IN (SELECT id FROM agent_session WHERE workspace_id = ?1)
-                AND NOT EXISTS (
-                    SELECT 1 FROM turn t
-                     WHERE t.session_id = c.session_id
-                       AND t.turn_seq = c.turn_seq
-                       AND t.state = 'aborted')
+                {NOT_IN_ABORTED_TURN}
               ORDER BY seq LIMIT ?2"
         ))?;
         let calls = stmt
@@ -2571,12 +2563,20 @@ impl Store {
         Ok(())
     }
 
-    /// Sessions flagged during capture — a redaction or storage failure.
-    pub fn flagged_session_count(&self, workspace_id: &str) -> Result<i64> {
+    /// Sessions flagged during capture — a redaction or storage failure — at
+    /// or after `since`.
+    ///
+    /// Bounded because the flag is permanent: it is a fact about the Session,
+    /// and the Session keeps showing it. Unbounded, one lock timeout weeks ago
+    /// would hold the Project's health banner up forever. Bounded by the
+    /// flag's own time (`flagged_at`), not `updated_at`: every prompt and
+    /// message moves `updated_at`, so an old flag on a Session still in use
+    /// would count as new for as long as anyone worked in it.
+    pub fn flagged_session_count(&self, workspace_id: &str, since: DateTime<Utc>) -> Result<i64> {
         Ok(self.conn.query_row(
             "SELECT COUNT(*) FROM agent_session
-              WHERE workspace_id = ?1 AND needs_attention = 1",
-            [workspace_id],
+              WHERE workspace_id = ?1 AND needs_attention = 1 AND flagged_at >= ?2",
+            rusqlite::params![workspace_id, since.to_rfc3339()],
             |row| row.get(0),
         )?)
     }
@@ -2586,20 +2586,33 @@ impl Store {
     /// Counts Sessions, Messages, tool calls and Checkpoints together, because
     /// "3 pending" should mean three things waiting rather than three of one
     /// arbitrary kind.
+    ///
+    /// Pending excludes rows of aborted turns, which the outbox never sends
+    /// ([`NOT_IN_ABORTED_TURN`]). Counting them would report work as waiting
+    /// to sync that never will be, and the count could never reach zero.
     pub fn row_count_in_state(&self, workspace_id: &str, state: SyncState) -> Result<i64> {
+        let turn_filter = if state == SyncState::Pending {
+            NOT_IN_ABORTED_TURN
+        } else {
+            ""
+        };
         Ok(self.conn.query_row(
-            "SELECT
-               (SELECT COUNT(*) FROM agent_session
-                 WHERE workspace_id = ?1 AND sync_state = ?2)
-             + (SELECT COUNT(*) FROM agent_message
-                 WHERE sync_state = ?2
-                   AND session_id IN (SELECT id FROM agent_session WHERE workspace_id = ?1))
-             + (SELECT COUNT(*) FROM tool_call
-                 WHERE sync_state = ?2
-                   AND session_id IN (SELECT id FROM agent_session WHERE workspace_id = ?1))
-             + (SELECT COUNT(*) FROM checkpoint
-                 WHERE sync_state = ?2
-                   AND session_id IN (SELECT id FROM agent_session WHERE workspace_id = ?1))",
+            &format!(
+                "SELECT
+                   (SELECT COUNT(*) FROM agent_session
+                     WHERE workspace_id = ?1 AND sync_state = ?2)
+                 + (SELECT COUNT(*) FROM agent_message x
+                     WHERE sync_state = ?2
+                       AND session_id IN (SELECT id FROM agent_session WHERE workspace_id = ?1)
+                       {turn_filter})
+                 + (SELECT COUNT(*) FROM tool_call x
+                     WHERE sync_state = ?2
+                       AND session_id IN (SELECT id FROM agent_session WHERE workspace_id = ?1)
+                       {turn_filter})
+                 + (SELECT COUNT(*) FROM checkpoint
+                     WHERE sync_state = ?2
+                       AND session_id IN (SELECT id FROM agent_session WHERE workspace_id = ?1))"
+            ),
             rusqlite::params![workspace_id, state.as_str()],
             |row| row.get(0),
         )?)
@@ -2733,6 +2746,15 @@ pub struct AgentEditInput<'a> {
     /// **Already redacted.**
     pub patch: Option<&'a str>,
 }
+
+/// Keeps rows of aborted turns out: appended to a message or tool-call query
+/// whose table is aliased `x`. One string so the outbox and the pending count
+/// cannot disagree about what is waiting to sync.
+const NOT_IN_ABORTED_TURN: &str = "AND NOT EXISTS (
+    SELECT 1 FROM turn t
+     WHERE t.session_id = x.session_id
+       AND t.turn_seq = x.turn_seq
+       AND t.state = 'aborted')";
 
 const TOOL_CALL_COLUMNS: &str = "id, session_id, seq, turn_seq, tool_name, title, kind, status, \
      locations, arguments, arguments_ref, result, result_ref, result_binary, created_at, sync_state";

@@ -1,5 +1,5 @@
 // Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
-use rand::Rng;
+use rand::RngExt;
 use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::collections::HashSet;

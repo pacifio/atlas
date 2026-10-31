@@ -61,7 +61,7 @@ pub(in crate::commands::org_server) fn with_mentions(
         let token = format!("<@{}>", member.user_id);
         let mut found = false;
         // Longest first, so "@Sam Lee" is not taken as "@Sam".
-        let mut spellings = vec![
+        let mut spellings = [
             named.trim_start_matches('@').to_string(),
             member.name.clone(),
             member.email.clone(),

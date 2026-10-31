@@ -137,8 +137,10 @@ export const NON_RUST = [
   "docs/",
   "landing/",
   "public/",
+  "patches/",
   "scripts/",
   ".husky/",
+  ".vscode/",
   ".design-sync/",
   ".github/ISSUE_TEMPLATE/",
   ".github/pr-assets/",
@@ -149,6 +151,8 @@ export const NON_RUST = [
   ".github/workflows/release-linux.yml",
   "*.md",
   "LICENSE",
+  // The fundingjson.org manifest: project metadata, read by nothing in CI.
+  "funding.json",
   "package.json",
   "bun.lock",
   "bunfig.toml",
@@ -162,6 +166,7 @@ export const NON_RUST = [
   ".oxlintrc.json",
   ".oxfmtrc.json",
   ".gitignore",
+  ".editorconfig",
   ".env.example",
 ];
 

@@ -291,6 +291,32 @@ pub trait AgentConnection: Send + Sync {
         false
     }
 
+    /// Whether [`Self::update_session_roots`] changes what a session that is
+    /// already open may touch, from its next turn. ACP has no request for
+    /// that — a session's directories are fixed at `session/new`, `session/load`
+    /// and `session/resume` — so an external agent answers `false` and picks
+    /// new roots up the next time the session is opened. Session-independent,
+    /// and decided by what the connection can do, never by which agent it is.
+    fn supports_live_session_roots(&self) -> bool {
+        false
+    }
+
+    /// Replace the extra roots an open session may use: its attached projects
+    /// ([`SessionRoots`]). Takes effect from the session's next turn. Only
+    /// meaningful where [`Self::supports_live_session_roots`] is `true`; the
+    /// default refuses.
+    fn update_session_roots(
+        &self,
+        _session_id: &acp::SessionId,
+        _roots: SessionRoots,
+    ) -> BoxFuture<'static, Result<()>> {
+        Box::pin(async {
+            Err(anyhow::Error::msg(
+                "this agent cannot change an open session's roots",
+            ))
+        })
+    }
+
     fn auth_methods(&self) -> &[acp::AuthMethod];
 
     fn terminal_auth_command(
@@ -369,6 +395,30 @@ pub trait AgentConnection: Send + Sync {
     }
 
     fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
+}
+
+/// The folders a session may use besides its own working directories: the
+/// projects attached to it (Atlas's "projects in this session").
+///
+/// Two lists because the access differs, and the difference is the point:
+/// a read-only root may be read and never written, a read-write root is a
+/// writable root of the sandbox like the working directory is. A path is in
+/// at most one list.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SessionRoots {
+    pub read_only: Vec<PathBuf>,
+    pub read_write: Vec<PathBuf>,
+}
+
+impl SessionRoots {
+    pub fn is_empty(&self) -> bool {
+        self.read_only.is_empty() && self.read_write.is_empty()
+    }
+
+    /// Every root, read-write first.
+    pub fn all(&self) -> impl Iterator<Item = &PathBuf> {
+        self.read_write.iter().chain(self.read_only.iter())
+    }
 }
 
 impl dyn AgentConnection {

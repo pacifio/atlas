@@ -20,17 +20,21 @@ import type { OrgDirectory } from "@/features/organisations/lib/use-org-director
 
 import type { AnchorEntry } from "./comment-anchors";
 import type { MentionComment } from "./org-mentions";
+import type { MentionCitedText, MentionReviewComment } from "./mentions";
 import { useChatCommentsStore, type TabComments } from "../stores/chat-comments-store";
 
 /** How much of the body the chip shows after the author. */
 const EXCERPT_CHARS = 48;
 
-/** The window event the link button fires; the composer of `tabId` inserts. */
+/** The window event the link button fires; the composer of `tabId` inserts.
+ *  A reply passage's Cite rides the same event (`linkCiteToComposer`), and so
+ *  does a comment on diff or file lines (`review-comments.ts`): each drops one
+ *  chip, once, into one session's composer. */
 export const COMMENT_LINK_EVENT = "atlas:chat-link-comment";
 
 export interface CommentLinkDetail {
   tabId: string;
-  mention: MentionComment;
+  mention: MentionComment | MentionCitedText | MentionReviewComment;
 }
 
 /**
@@ -143,4 +147,19 @@ export function linkCommentToComposer(tabId: string, mention: MentionComment): v
   window.dispatchEvent(
     new CustomEvent<CommentLinkDetail>(COMMENT_LINK_EVENT, { detail: { tabId, mention } }),
   );
+}
+
+/** Put a cited reply passage's chip in the composer of the session it is from. */
+/**
+ * Put a cited reply passage's chip in the composer of the session it is from.
+ * True when a composer took it: the composer marks the event handled
+ * (`preventDefault`), and one that is disabled or not mounted does not, so
+ * the caller can keep the cite rather than close as if it landed.
+ */
+export function linkCiteToComposer(tabId: string, mention: MentionCitedText): boolean {
+  const event = new CustomEvent<CommentLinkDetail>(COMMENT_LINK_EVENT, {
+    detail: { tabId, mention },
+    cancelable: true,
+  });
+  return !window.dispatchEvent(event);
 }

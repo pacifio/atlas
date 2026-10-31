@@ -144,7 +144,7 @@ async fn an_agent_without_http_mcp_gets_no_server_entry() {
         "an HTTP server never reaches an agent that did not advertise HTTP MCP",
     );
     assert_eq!(
-        requests[0].1["_meta"],
+        requests[0].1["_meta"]["claudeCode"]["options"]["allowedTools"],
         serde_json::Value::Null,
         "nothing to pre-approve"
     );

@@ -47,7 +47,6 @@ import { abs, MOCK_ORG_ID } from "../project";
  * reads those messages.
  */
 function fail(message: string): never {
-  // oxlint-disable-next-line no-throw-literal -- Rust's `Err(String)`, not an Error.
   throw message;
 }
 
@@ -407,6 +406,9 @@ document.documentElement.style.setProperty("--background", tokens.color.bg.base)
 1. \`bun run build\` regenerates \`dist/\` for all four targets.
 2. \`bun run check:contrast\` fails the build on any pair under 4.5:1.
 3. Tag \`vX.Y.Z\`; CI publishes.
+
+The token source lives in \`tokens/semantic.json\`, and the generator in
+\`scripts/build-tokens.ts\`; see [the changelog](CHANGELOG.md).
 `;
 
 const SWR_README = `# SWR

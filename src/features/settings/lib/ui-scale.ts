@@ -34,6 +34,9 @@ export function clampScale(scale: number): number {
 
 /** Apply the interface zoom via the native WebView. */
 export function applyUiScale(scale: number): void {
+  // The window bar reads this to stay a constant height on screen: the macOS
+  // traffic lights it centres are drawn by the OS and never zoom.
+  document.documentElement.style.setProperty("--ui-zoom", String(clampScale(scale)));
   void getCurrentWebview()
     .setZoom(clampScale(scale))
     .catch((e) => console.warn("setZoom failed:", e));
