@@ -3404,8 +3404,11 @@ name = "atlas-security"
 version = "0.1.0"
 dependencies = [
  "atlas-checkpoint",
+ "atlas-redact",
  "regex",
+ "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
 ]
 
