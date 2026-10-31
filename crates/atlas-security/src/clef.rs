@@ -156,12 +156,14 @@ fn language_name(lang: Language) -> &'static str {
     }
 }
 
-/// The `state` for one hunk: what the scanner knows, then the hunk itself.
+/// The `state` for one hunk: what the scanner knows, the commit message's
+/// first line, then the hunk itself.
 pub fn build_state(
     file: &MappedFile,
     hunk_index: usize,
     prov: &Provenance,
     findings: &[Finding],
+    commit_message: Option<&str>,
     strip: bool,
 ) -> String {
     let path = &file.change.path;
@@ -201,6 +203,16 @@ pub fn build_state(
         hunk.old_start,
         hunk.new_start,
     );
+    // The commit message is author-written text like a comment: kept by
+    // default, dropped with the comments when stripping.
+    if let Some(message) = commit_message.filter(|m| !strip && !m.trim().is_empty()) {
+        let header = format!(
+            "commit_message: {}\n",
+            message.lines().next().unwrap_or_default()
+        );
+        let at = out.find("--- hunk ---").unwrap_or(out.len());
+        out.insert_str(at, &header);
+    }
     for line in &hunk.lines {
         let marker = match line.kind {
             LineKind::Added => '+',
