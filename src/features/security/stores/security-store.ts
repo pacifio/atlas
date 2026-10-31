@@ -24,9 +24,6 @@ interface SecurityState {
   sessions: Record<string, Record<string, SessionSecurity>>;
   /** Checkpoint results, by Project + session. */
   checkpoints: Record<string, CheckpointSecurity[]>;
-  /** Which session a commit's result belongs to, by Project then commit:
-   *  a Checkpoint card knows only its commit. */
-  byCommit: Record<string, Record<string, string>>;
   actions: {
     loadProject: (projectPath: string) => Promise<void>;
     loadSession: (projectPath: string, sessionId: string) => Promise<CheckpointSecurity[]>;
@@ -46,7 +43,6 @@ export const useSecurityStore = createSelectors(
     immer((set, get) => ({
       sessions: {},
       checkpoints: {},
-      byCommit: {},
       actions: {
         loadProject: async (projectPath) => {
           if (!projectPath) return;
@@ -62,8 +58,6 @@ export const useSecurityStore = createSelectors(
           if (!cps) return get().checkpoints[sessionKey(projectPath, sessionId)] ?? [];
           set((s) => {
             s.checkpoints[sessionKey(projectPath, sessionId)] = cps;
-            const index = (s.byCommit[projectPath] ??= {});
-            for (const cp of cps) index[cp.commitSha] = sessionId;
           });
           return cps;
         },

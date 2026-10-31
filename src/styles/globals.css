@@ -88,6 +88,18 @@
   --color-warning-muted: var(--atlas-status-warning-background);
   --color-error-muted: var(--atlas-status-error-background);
   --color-info-muted: var(--atlas-status-info-background);
+  /* Between error and warning, for a severity scale that needs a step above
+     warning (the Security Agent's High). Derived, so every theme has it. */
+  --color-severe: color-mix(
+    in oklab,
+    var(--atlas-status-error-foreground) 50%,
+    var(--atlas-status-warning-foreground)
+  );
+  --color-severe-muted: color-mix(
+    in oklab,
+    var(--atlas-status-error-background) 50%,
+    var(--atlas-status-warning-background)
+  );
 
   --font-sans: var(--font-sans);
   --font-serif: var(--font-serif);

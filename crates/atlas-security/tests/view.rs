@@ -215,3 +215,26 @@ fn a_finding_marked_not_useful_is_neither_open_nor_fixed() {
     assert!(o.open.is_empty() && o.fixed.is_empty());
     assert!(!o.blocking);
 }
+
+#[test]
+fn a_checkpoint_view_says_which_credential_files_the_agent_read() {
+    let repo = StaticRepo {
+        diff: add("src/calc.ts", 0, &["export const x = 1;"]).into_bytes(),
+        files: HashMap::new(),
+        parent: None,
+    };
+    let provenance = Provenance {
+        sensitive_reads: vec![".env".to_string()],
+        ..Provenance::default()
+    };
+    let result = scan_checkpoint(ScanInput {
+        sha: "f1f1f1f",
+        repo: &repo,
+        provenance: &provenance,
+        advisories: None,
+        limits: Limits::default(),
+        deadline: Instant::now() + Duration::from_secs(30),
+    });
+    let view = checkpoint_view("cp-f", "f1f1f1f", Utc::now(), &result, &HashSet::new());
+    assert_eq!(view.sensitive_reads, vec![".env".to_string()]);
+}

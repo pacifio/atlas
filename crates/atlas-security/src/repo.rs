@@ -63,6 +63,23 @@ impl GitCli {
         Ok(self.run(&["cat-file", "-e", &spec])?.status.success())
     }
 
+    /// The commits on `head` that `base` does not have (`git rev-list
+    /// base..head`): a branch's own commits since it left its base. `None`
+    /// when either ref is unknown here.
+    pub fn commits_since(&self, base: &str, head: &str) -> Result<Option<Vec<String>>, RepoError> {
+        let range = format!("{base}..{head}");
+        let out = self.run(&["rev-list", &range, "--"])?;
+        if !out.status.success() {
+            return Ok(None);
+        }
+        Ok(Some(
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .map(str::to_string)
+                .collect(),
+        ))
+    }
+
     fn require_commit(&self, sha: &str) -> Result<(), RepoError> {
         if self.commit_exists(sha)? {
             Ok(())

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CheckpointSecurity, SecurityFinding } from "../types";
-import { badgeVariant, levelLabel, recount, shouldShowBadge } from "./security-levels";
+import { badgeVariant, levelLabel, recount, secretLabel, shouldShowBadge } from "./security-levels";
 import { blockingNotices } from "./security-notify";
 
 const finding = (over: Partial<SecurityFinding> = {}): SecurityFinding => ({
@@ -28,6 +28,7 @@ const checkpoint = (findings: SecurityFinding[]): CheckpointSecurity => ({
   findings,
   floors: [],
   notScanned: [],
+  sensitiveReads: [],
   scannedAt: "2026-10-31T14:30:46Z",
   scanMs: 16,
 });
@@ -40,7 +41,7 @@ describe("badge levels", () => {
 
   it("colours by severity with the status roles", () => {
     expect(badgeVariant("critical")).toBe("destructive");
-    expect(badgeVariant("high")).toBe("warning");
+    expect(badgeVariant("high")).toBe("severe");
     expect(badgeVariant("medium")).toBe("warning");
     expect(badgeVariant("low")).toBe("info");
   });
@@ -73,6 +74,19 @@ describe("badge levels", () => {
   });
 });
 
+describe("secret labels", () => {
+  it("names the kind of credential a secret rule found", () => {
+    expect(secretLabel("secret.vendor.stripe-access-token")).toBe("Stripe access token");
+    expect(secretLabel("secret.vendor.aws-access-token")).toBe("AWS access token");
+    expect(secretLabel("secret.private_key")).toBe("Private key");
+    expect(secretLabel("secret.connection_string")).toBe("Database connection string");
+  });
+
+  it("has no label for findings that are not secrets", () => {
+    expect(secretLabel("ts.eval")).toBeNull();
+  });
+});
+
 describe("blocking notices", () => {
   it("announces each blocking finding once", () => {
     const cp = checkpoint([
@@ -91,7 +105,9 @@ describe("blocking notices", () => {
     const first = blockingNotices([cp], announced);
     expect(first).toHaveLength(1);
     expect(first[0].title).toBe("A credential was committed");
-    expect(first[0].body).toContain("server/pay.ts, line 2");
+    expect(first[0].body).toBe(
+      "Stripe access token in server/pay.ts, line 2, commit 159c989. Remove it and rotate the key before you push.",
+    );
     expect(first[0].body).toContain("159c989");
     expect(first[0].fingerprint).toBe("key");
     expect(blockingNotices([cp], announced)).toHaveLength(0);
@@ -120,7 +136,9 @@ describe("blocking notices", () => {
     ]);
     const [n] = blockingNotices([cp], new Set());
     expect(n.title).toBe("A blocking security issue was committed");
-    expect(n.body).toContain("Certificate checks are turned off");
+    expect(n.body).toBe(
+      "Certificate checks are turned off for a network connection. Found in src/client.rs, line 14, commit 159c989.",
+    );
   });
 
   it("skips scans that ran before it started listening", () => {

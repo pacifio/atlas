@@ -31,6 +31,7 @@ const cp: CheckpointSecurity = {
   ],
   floors: [],
   notScanned: [],
+  sensitiveReads: [],
   scannedAt: "2026-10-31T14:30:46Z",
   scanMs: 42,
 };
@@ -38,7 +39,7 @@ const cp: CheckpointSecurity = {
 describe("security store", () => {
   beforeEach(() => {
     invoke.mockReset();
-    useSecurityStore.setState({ sessions: {}, checkpoints: {}, byCommit: {} });
+    useSecurityStore.setState({ sessions: {}, checkpoints: {} });
   });
 
   it("loads a Project's badges by session", async () => {

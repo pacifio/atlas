@@ -47,6 +47,8 @@ pub struct CheckpointSecurity {
     /// Changed paths in a sensitive area. Not findings.
     pub floors: Vec<String>,
     pub not_scanned: Vec<NotScanned>,
+    /// Credential files the agent read earlier in the session.
+    pub sensitive_reads: Vec<String>,
     pub scanned_at: DateTime<Utc>,
     pub scan_ms: u64,
 }
@@ -110,6 +112,7 @@ pub fn checkpoint_view(
         findings,
         floors: result.floors.clone(),
         not_scanned: result.not_scanned.clone(),
+        sensitive_reads: result.sensitive_reads.clone(),
         scanned_at,
         scan_ms: result.timings_ms.values().sum(),
     }

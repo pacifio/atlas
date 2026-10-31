@@ -14,6 +14,7 @@
 //! is never scanned: the first pass starts a few minutes back, which takes in
 //! the commit that woke it and nothing older.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -408,18 +409,31 @@ pub(crate) fn session_checkpoints_in(
 }
 
 /// The branch's scanned checkpoints rolled up against its head; `None` when
-/// none of the branch's checkpoints has a scan.
+/// none of them has a scan. With the pull request's `base`, the checkpoints
+/// are the branch's commits since it left the base, so an older branch of the
+/// same name, or commits rebased away, do not count. Without one (or when git
+/// does not know the base), they are the checkpoints recorded on the branch.
 pub(crate) fn ship_overview_in(
     store: &Store,
     root: &Path,
     branch: &str,
+    base: Option<&str>,
 ) -> Result<Option<ShipOverview>, String> {
+    let repo = GitCli {
+        root: root.to_path_buf(),
+    };
+    let since: Option<HashSet<String>> = base
+        .and_then(|base| repo.commits_since(base, branch).ok().flatten())
+        .map(|shas| shas.into_iter().collect());
     let not_useful = store.not_useful_fingerprints().map_err(|e| e.to_string())?;
     let scans: Vec<ShipScan> = store
         .scans(SCANNER_VERSION)
         .map_err(|e| e.to_string())?
         .into_iter()
-        .filter(|(c, _)| c.branch.as_deref() == Some(branch))
+        .filter(|(c, _)| match &since {
+            Some(shas) => shas.contains(&c.commit_sha),
+            None => c.branch.as_deref() == Some(branch),
+        })
         .filter_map(|(c, row)| {
             parse_result(&row.result_json).map(|result| ShipScan {
                 commit_sha: c.commit_sha,
@@ -430,9 +444,6 @@ pub(crate) fn ship_overview_in(
     if scans.is_empty() {
         return Ok(None);
     }
-    let repo = GitCli {
-        root: root.to_path_buf(),
-    };
     let head_file = |path: &str| -> Option<String> {
         repo.file_at(branch, path)
             .ok()
@@ -508,9 +519,10 @@ pub async fn security_session_checkpoints(
 pub async fn security_ship_overview(
     project_path: String,
     branch: String,
+    base: Option<String>,
 ) -> Result<Option<ShipOverview>, String> {
     blocking(move || match project_reader(&project_path) {
-        Some(store) => ship_overview_in(&store, Path::new(&project_path), &branch),
+        Some(store) => ship_overview_in(&store, Path::new(&project_path), &branch, base.as_deref()),
         None => Ok(None),
     })
     .await
@@ -619,6 +631,11 @@ mod tests {
 
     /// Commit `content` as `path` and record a Checkpoint for it.
     fn commit_checkpoint(p: &Project, path: &str, content: &str) -> String {
+        commit_checkpoint_on(p, "main", path, content)
+    }
+
+    /// [`commit_checkpoint`], recording the Checkpoint under `branch`.
+    fn commit_checkpoint_on(p: &Project, branch: &str, path: &str, content: &str) -> String {
         std::fs::write(p.dir.path().join(path), content).unwrap();
         git(p.dir.path(), &["add", path]);
         git(p.dir.path(), &["commit", "-q", "-m", "change"]);
@@ -630,7 +647,7 @@ mod tests {
                 session_id: &p.session_id,
                 commit_sha: &sha,
                 patch_id: Some(&sha),
-                branch: Some("main"),
+                branch: Some(branch),
                 git_author_name: None,
                 git_author_email: None,
                 files_touched: &[path.to_string()],
@@ -737,7 +754,7 @@ mod tests {
     #[test]
     fn before_you_ship_reads_the_branch_at_its_head() {
         let (p, _) = scanned_project();
-        let o = ship_overview_in(&reader_of(&p), p.dir.path(), "main")
+        let o = ship_overview_in(&reader_of(&p), p.dir.path(), "main", None)
             .unwrap()
             .expect("scanned");
         assert_eq!(o.open.len(), 1);
@@ -745,17 +762,47 @@ mod tests {
         // Remove the key on the branch: the finding moves to fixed.
         std::fs::write(p.dir.path().join("pay.ts"), "const k = process.env.KEY;\n").unwrap();
         git(p.dir.path(), &["commit", "-q", "-am", "remove key"]);
-        let o = ship_overview_in(&reader_of(&p), p.dir.path(), "main")
+        let o = ship_overview_in(&reader_of(&p), p.dir.path(), "main", None)
             .unwrap()
             .unwrap();
         assert!(o.open.is_empty(), "{:?}", o.open);
         assert_eq!(o.fixed.len(), 1);
         assert!(!o.blocking);
         assert!(
-            ship_overview_in(&reader_of(&p), p.dir.path(), "no-such-branch")
+            ship_overview_in(&reader_of(&p), p.dir.path(), "no-such-branch", None)
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn before_you_ship_takes_only_the_commits_since_the_base() {
+        let p = project();
+        // An older branch of the same name, already merged into main.
+        commit_checkpoint_on(
+            &p,
+            "feat",
+            "old.ts",
+            "export const run = (x: string) => eval(x);\n",
+        );
+        git(p.dir.path(), &["checkout", "-q", "-b", "feat"]);
+        commit_checkpoint_on(
+            &p,
+            "feat",
+            "new.ts",
+            "export const go = (x: string) => eval(x);\n",
+        );
+        assert_eq!(
+            scan_project_once(&p.store, p.dir.path(), p.data.path(), true).scanned,
+            2
+        );
+        let o = ship_overview_in(&reader_of(&p), p.dir.path(), "feat", Some("main"))
+            .unwrap()
+            .expect("scanned");
+        assert_eq!(o.checkpoints, 1);
+        let paths: Vec<&str> = o.open.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(paths, vec!["new.ts"]);
+        assert!(o.fixed.is_empty(), "{:?}", o.fixed);
     }
 
     #[test]

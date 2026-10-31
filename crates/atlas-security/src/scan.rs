@@ -81,6 +81,10 @@ pub struct ScanResult {
     pub not_scanned: Vec<NotScanned>,
     pub layers: LayerStatus,
     pub timings_ms: BTreeMap<String, u64>,
+    /// Credential files the Session's agent read before this commit (the
+    /// provenance fact the card states). Empty in scans stored before it.
+    #[serde(default)]
+    pub sensitive_reads: Vec<String>,
 }
 
 pub struct ScanInput<'a> {
@@ -112,6 +116,7 @@ fn failed(reason: String) -> ScanResult {
         order: Vec::new(),
         floors: Vec::new(),
         not_scanned: Vec::new(),
+        sensitive_reads: Vec::new(),
         layers: LayerStatus {
             map: LayerState::NotRun("commit unreadable".to_string()),
             secrets: LayerState::NotRun("commit unreadable".to_string()),
@@ -247,6 +252,7 @@ pub fn scan_checkpoint(input: ScanInput<'_>) -> ScanResult {
         blocking,
         findings,
         order: map.files.iter().map(|f| f.change.path.clone()).collect(),
+        sensitive_reads: input.provenance.sensitive_reads.clone(),
         floors: map
             .files
             .iter()

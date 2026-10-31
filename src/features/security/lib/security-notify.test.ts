@@ -1,6 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+const invoke = vi.hoisted(() => vi.fn());
+vi.mock("@tauri-apps/api/core", () => ({ invoke }));
+vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async () => () => {}) }));
 import type { NotificationEnv } from "@/features/notifications/lib/decide";
+import { runNotificationAction } from "@/features/notifications/lib/notification-actions";
 import { decideSecurityFinding, type SecurityNotice } from "./security-notify";
+import "./security-notifier";
 
 const env = (over: Partial<NotificationEnv> = {}): NotificationEnv => ({
   windowFocused: false,
@@ -13,6 +19,7 @@ const env = (over: Partial<NotificationEnv> = {}): NotificationEnv => ({
 
 const notice: SecurityNotice = {
   fingerprint: "key",
+  ruleId: "secret.vendor.stripe-access-token",
   checkpointId: "cp-1",
   commitSha: "3fa91c2aaaa",
   title: "A credential was committed",
@@ -38,5 +45,19 @@ describe("the blocking-finding notification", () => {
       "security-finding": { enabled: false, native: true, sound: true },
     });
     expect(d).toBeNull();
+  });
+
+  it("offers Not useful beside Open, and pressing it marks the finding", async () => {
+    const d = decideSecurityFinding(notice, { projectPath: "/p", sessionId: "s1" }, env(), {});
+    expect(d?.actions.map((a) => a.label)).toEqual(["Open", "Not useful"]);
+    const action = d!.actions[1];
+    invoke.mockResolvedValue(undefined);
+    await runNotificationAction(action.id, { target: d!.target, args: action.args });
+    expect(invoke).toHaveBeenCalledWith("security_set_not_useful", {
+      projectPath: "/p",
+      fingerprint: "key",
+      ruleId: "secret.vendor.stripe-access-token",
+      notUseful: true,
+    });
   });
 });

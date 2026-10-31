@@ -23,7 +23,13 @@ import { resetProjectSecurityForTests } from "../lib/use-project-security";
 const { SessionSecurityBadge } = await import("./session-security-badge");
 const { SecuritySummary } = await import("./security-summary");
 const { CheckpointFindings } = await import("./checkpoint-findings");
-const { ShipOverviewCard } = await import("./ship-overview-card");
+const { ShipOverviewCard, useBranchPullRequest } = await import("./ship-overview-card");
+
+/** The card as the session header uses it: one PR lookup, shared. */
+function Ship({ branch }: { branch: string }) {
+  const pr = useBranchPullRequest("/p", branch);
+  return <ShipOverviewCard projectPath="/p" branch={branch} pr={pr} />;
+}
 
 const keyFinding = {
   fingerprint: "key",
@@ -49,6 +55,7 @@ const cp: CheckpointSecurity = {
   findings: [keyFinding],
   floors: ["package-lock.json"],
   notScanned: [],
+  sensitiveReads: [],
   scannedAt: "2026-10-31T14:30:46Z",
   scanMs: 42,
 };
@@ -62,7 +69,7 @@ beforeEach(() => {
   resetProjectSecurityForTests();
   invoke.mockReset();
   prList.mockReset();
-  useSecurityStore.setState({ sessions: {}, checkpoints: {}, byCommit: {} });
+  useSecurityStore.setState({ sessions: {}, checkpoints: {} });
   listeners.length = 0;
 });
 afterEach(cleanup);
@@ -125,16 +132,21 @@ describe("findings in a Checkpoint card", () => {
 
   it("lists the reason and exactly where it is", async () => {
     await loaded();
-    render(<CheckpointFindings projectPath="/p" commitSha="3fa91c2aaaa" />);
-    expect(screen.getByText("A credential appears in the added code.")).toBeTruthy();
+    render(<CheckpointFindings projectPath="/p" sessionId="s1" commitSha="3fa91c2aaaa" />);
+    expect(
+      screen.getByText(
+        "A credential appears in the added code. Remove it and rotate the key before you push.",
+      ),
+    ).toBeTruthy();
     expect(screen.getByRole("button", { name: "server/pay.ts, line 2" })).toBeTruthy();
+    expect(screen.getByText(", Stripe access token")).toBeTruthy();
     expect(screen.getByText("Critical")).toBeTruthy();
   });
 
   it("dims a finding marked not useful, and Undo brings it back", async () => {
     await loaded();
     answer({ security_set_not_useful: undefined });
-    render(<CheckpointFindings projectPath="/p" commitSha="3fa91c2aaaa" />);
+    render(<CheckpointFindings projectPath="/p" sessionId="s1" commitSha="3fa91c2aaaa" />);
     fireEvent.click(screen.getByRole("button", { name: "Not useful" }));
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith("security_set_not_useful", {
@@ -152,7 +164,7 @@ describe("findings in a Checkpoint card", () => {
   it("shows the committed line, with the secret hidden, on request", async () => {
     await loaded();
     answer({ security_finding_line: 'const k = "[REDACTED]";' });
-    render(<CheckpointFindings projectPath="/p" commitSha="3fa91c2aaaa" />);
+    render(<CheckpointFindings projectPath="/p" sessionId="s1" commitSha="3fa91c2aaaa" />);
     fireEvent.click(screen.getByRole("button", { name: "server/pay.ts, line 2" }));
     expect(await screen.findByText('const k = "[REDACTED]";')).toBeTruthy();
     expect(invoke).toHaveBeenCalledWith("security_finding_line", {
@@ -163,8 +175,29 @@ describe("findings in a Checkpoint card", () => {
     });
   });
 
-  it("renders nothing for a commit with no scan", () => {
-    const { container } = render(<CheckpointFindings projectPath="/p" commitSha="other" />);
+  it("says a commit was not scanned when the session's others were", async () => {
+    await loaded();
+    render(<CheckpointFindings projectPath="/p" sessionId="s1" commitSha="older" />);
+    expect(
+      screen.getByText("Not scanned: made before scanning was turned on for this project."),
+    ).toBeTruthy();
+  });
+
+  it("says when the agent read a credentials file earlier in the session", async () => {
+    answer({ security_session_checkpoints: [{ ...cp, sensitiveReads: [".env", "id_rsa"] }] });
+    await useSecurityStore.getState().actions.loadSession("/p", "s1");
+    render(<CheckpointFindings projectPath="/p" sessionId="s1" commitSha="3fa91c2aaaa" />);
+    expect(
+      screen.getByText(/^The agent read \.env and id_rsa earlier in this session\./),
+    ).toBeTruthy();
+  });
+
+  it("renders nothing for a session with no scans at all", async () => {
+    answer({ security_session_checkpoints: [] });
+    await useSecurityStore.getState().actions.loadSession("/p", "s1");
+    const { container } = render(
+      <CheckpointFindings projectPath="/p" sessionId="s1" commitSha="other" />,
+    );
     expect(container.textContent).toBe("");
   });
 });
@@ -192,7 +225,7 @@ describe("Before you ship", () => {
   it("appears only when the branch has an open pull request", async () => {
     prList.mockResolvedValue({ entries: [] });
     answer({ security_ship_overview: overview });
-    const { container } = render(<ShipOverviewCard projectPath="/p" branch="feat/payments" />);
+    const { container } = render(<Ship branch="feat/payments" />);
     await waitFor(() => expect(prList).toHaveBeenCalled());
     expect(prList).toHaveBeenCalledWith("/p", { head: "feat/payments", state: "open", limit: 1 });
     expect(container.textContent).toBe("");
@@ -201,7 +234,7 @@ describe("Before you ship", () => {
   it("appears once a pull request is opened while the session is on screen", async () => {
     prList.mockResolvedValue({ entries: [] });
     answer({ security_ship_overview: overview });
-    render(<ShipOverviewCard projectPath="/p" branch="feat/payments" />);
+    render(<Ship branch="feat/payments" />);
     await waitFor(() => expect(prList).toHaveBeenCalled());
     prList.mockResolvedValue({
       entries: [
@@ -209,6 +242,7 @@ describe("Before you ship", () => {
           number: 42,
           url: "https://example.com/pr/42",
           headBranch: "feat/payments",
+          baseBranch: "main",
           state: "open",
         },
       ],
@@ -224,13 +258,19 @@ describe("Before you ship", () => {
           number: 42,
           url: "https://example.com/pr/42",
           headBranch: "feat/payments",
+          baseBranch: "main",
           state: "open",
         },
       ],
     });
     answer({ security_ship_overview: overview });
-    render(<ShipOverviewCard projectPath="/p" branch="feat/payments" />);
+    render(<Ship branch="feat/payments" />);
     expect(await screen.findByText("Before you ship")).toBeTruthy();
+    expect(invoke).toHaveBeenCalledWith("security_ship_overview", {
+      projectPath: "/p",
+      branch: "feat/payments",
+      base: "main",
+    });
     expect(screen.getByText("PR #42")).toBeTruthy();
     expect(screen.getByText("Blocks shipping")).toBeTruthy();
     expect(screen.getByText("server/pay.ts, line 2")).toBeTruthy();

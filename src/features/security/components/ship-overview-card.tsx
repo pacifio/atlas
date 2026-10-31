@@ -36,38 +36,87 @@ function Line({ left, right }: { left: React.ReactNode; right: React.ReactNode }
   );
 }
 
-/**
- * Before you ship: when the session's branch has an open pull request, its
- * scanned checkpoints rolled into one view. Never says the branch is secure;
- * it says what was found, what was fixed, and what was not looked at.
- */
-export function ShipOverviewCard({ projectPath, branch }: { projectPath: string; branch: string }) {
-  const [pr, setPr] = useState<number | null>(null);
-  const [overview, setOverview] = useState<ShipOverview | null>(null);
+/** The branch's open pull request: its number and the branch it merges into. */
+export interface BranchPullRequest {
+  number: number;
+  base: string;
+}
 
+/**
+ * The branch's open pull request, or null. Looked up again on
+ * every stored scan, so a PR opened or closed while the session is on screen
+ * shows or hides what depends on it.
+ */
+export function useBranchPullRequest(
+  projectPath: string,
+  branch: string,
+): BranchPullRequest | null {
+  const [pr, setPr] = useState<BranchPullRequest | null>(null);
   useEffect(() => {
     let live = true;
+    setPr(null);
     if (!projectPath || !branch) return;
-    // The pull request is looked up again on every stored scan, so a PR
-    // opened or closed while the session is on screen shows or hides the card.
-    const refresh = async () => {
-      const open = (await prList(projectPath, { head: branch, state: "open", limit: 1 }))
-        .entries[0];
-      if (!live) return;
-      setPr(open?.number ?? null);
-      if (!open) return;
-      const o = await securityShipOverview(projectPath, branch);
-      if (live) setOverview(o);
-    };
-    void refresh().catch(() => {});
+    const look = () =>
+      prList(projectPath, { head: branch, state: "open", limit: 1 })
+        .then((r) => {
+          if (!live) return;
+          const open = r.entries[0];
+          // A fresh object only when the PR changed, so the card does not
+          // re-read the overview on every lookup.
+          setPr((was) =>
+            open
+              ? was?.number === open.number && was.base === open.baseBranch
+                ? was
+                : { number: open.number, base: open.baseBranch }
+              : null,
+          );
+        })
+        .catch(() => {});
+    void look();
     const stop = onSecurityScanChanged((p) => {
-      if (p === projectPath) void refresh().catch(() => {});
+      if (p === projectPath) void look();
     });
     return () => {
       live = false;
       void stop.then((f) => f()).catch(() => {});
     };
   }, [projectPath, branch]);
+  return pr;
+}
+
+/**
+ * Before you ship: when the session's branch has an open pull request, its
+ * scanned checkpoints rolled into one view. Never says the branch is secure;
+ * it says what was found, what was fixed, and what was not looked at.
+ */
+export function ShipOverviewCard({
+  projectPath,
+  branch,
+  pr,
+}: {
+  projectPath: string;
+  branch: string;
+  /** From `useBranchPullRequest`; the card shows only while one is open. */
+  pr: BranchPullRequest | null;
+}) {
+  const [overview, setOverview] = useState<ShipOverview | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    if (!projectPath || !branch || pr === null) return;
+    const load = () =>
+      securityShipOverview(projectPath, branch, pr.base)
+        .then((o) => live && setOverview(o))
+        .catch(() => {});
+    void load();
+    const stop = onSecurityScanChanged((p) => {
+      if (p === projectPath) void load();
+    });
+    return () => {
+      live = false;
+      void stop.then((f) => f()).catch(() => {});
+    };
+  }, [projectPath, branch, pr]);
 
   if (pr === null || !overview) return null;
   return (
@@ -77,7 +126,8 @@ export function ShipOverviewCard({ projectPath, branch }: { projectPath: string;
     >
       <div className="flex items-center justify-between gap-3 px-3.5 py-2.5">
         <p className="text-sm text-foreground">
-          Before you ship <span className="font-mono text-xs text-muted-foreground">PR #{pr}</span>
+          Before you ship{" "}
+          <span className="font-mono text-xs text-muted-foreground">PR #{pr.number}</span>
         </p>
         {overview.blocking ? (
           <SecurityLevelBadge level={overview.level} label="Blocks shipping" />

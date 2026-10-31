@@ -27,13 +27,16 @@ export async function securitySessionCheckpoints(
   );
 }
 
-/** The branch's scanned checkpoints rolled up against its head. */
+/** The branch's scanned checkpoints rolled up against its head; with the pull
+ *  request's `base`, only the commits since the branch left it. */
 export async function securityShipOverview(
   projectPath: string,
   branch: string,
+  base: string | null,
 ): Promise<ShipOverview | null> {
   return (
-    (await invoke<ShipOverview | null>("security_ship_overview", { projectPath, branch })) ?? null
+    (await invoke<ShipOverview | null>("security_ship_overview", { projectPath, branch, base })) ??
+    null
   );
 }
 

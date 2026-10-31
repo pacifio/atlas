@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Button } from "@/ui/button";
 import { cn } from "@/lib/utils";
 import { securityFindingLine } from "../lib/security-api";
-import { whereLabel } from "../lib/security-levels";
+import { ROTATE, secretLabel, whereLabel } from "../lib/security-levels";
 import { selectCheckpoints, useSecurityStore } from "../stores/security-store";
 import type { SecurityFinding } from "../types";
 import { SecurityLevelBadge } from "./session-security-badge";
@@ -12,6 +12,26 @@ function clock(iso: string): string {
   return Number.isNaN(d.getTime())
     ? ""
     : d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+/** `The agent read .env and id_rsa earlier in this session. `, or nothing. */
+function readNote(paths: string[]): string {
+  if (paths.length === 0) return "";
+  const list =
+    paths.length === 1
+      ? paths[0]
+      : `${paths.slice(0, -1).join(", ")} and ${paths[paths.length - 1]}`;
+  return `The agent read ${list} earlier in this session. `;
+}
+
+const NOT_SCANNED = "Not scanned: made before scanning was turned on for this project.";
+
+function Footer({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="border-t border-border px-3 py-1.5 font-mono text-2xs text-muted-foreground">
+      {children}
+    </p>
+  );
 }
 
 function FindingRow({
@@ -33,6 +53,7 @@ function FindingRow({
         .catch(() => setLine(null));
     }
   };
+  const secret = secretLabel(finding.ruleId);
   const mark = (notUseful: boolean) =>
     void useSecurityStore
       .getState()
@@ -48,7 +69,9 @@ function FindingRow({
     >
       <SecurityLevelBadge level={finding.level} />
       <div className="min-w-0">
-        <p className="text-sm text-foreground">{finding.reason}</p>
+        <p className="text-sm text-foreground">
+          {secret ? `${finding.reason} ${ROTATE}` : finding.reason}
+        </p>
         <p className="mt-0.5 font-mono text-xs text-muted-foreground">
           <button
             type="button"
@@ -57,6 +80,7 @@ function FindingRow({
           >
             {whereLabel(finding)}
           </button>
+          {secret && <span>, {secret}</span>}
           {finding.testCode && <span> in test code</span>}
           {finding.notUseful && <span> marked not useful</span>}
         </p>
@@ -76,24 +100,25 @@ function FindingRow({
 }
 
 /**
- * A Checkpoint card's security findings, under its file list. Nothing for a
- * commit that was not scanned; a quiet footer for a clean one.
+ * A Checkpoint card's security findings, under its file list, and a quiet
+ * footer: how it was scanned, or that it was not.
  */
 export function CheckpointFindings({
   projectPath,
+  sessionId,
   commitSha,
 }: {
   projectPath: string;
+  sessionId: string;
   commitSha: string;
 }) {
-  // Two stable selections, not one derived object: a fresh `{ sessionId,
-  // checkpoint }` on every read would re-render without end.
-  const sessionId = useSecurityStore((s) => s.byCommit[projectPath]?.[commitSha]);
-  const cps = useSecurityStore((s) =>
-    sessionId ? selectCheckpoints(s, projectPath, sessionId) : undefined,
-  );
+  const cps = useSecurityStore((s) => selectCheckpoints(s, projectPath, sessionId));
   const checkpoint = cps?.find((c) => c.commitSha === commitSha);
-  if (!sessionId || !checkpoint) return null;
+  if (!checkpoint) {
+    // Only said when the session has scans, so it never shows while scanning
+    // is off.
+    return cps && cps.length > 0 ? <Footer>{NOT_SCANNED}</Footer> : null;
+  }
   const at = clock(checkpoint.scannedAt);
   const notScanned = checkpoint.notScanned.length;
   return (
@@ -110,17 +135,17 @@ export function CheckpointFindings({
           ))}
         </ul>
       )}
-      <p className="border-t border-border px-3 py-1.5 font-mono text-2xs text-muted-foreground">
+      <Footer>
         {checkpoint.status === "failed"
           ? "This commit could not be scanned."
-          : `${checkpoint.findings.length === 0 ? "No security findings. " : ""}Scanned on this machine${
+          : `${readNote(checkpoint.sensitiveReads)}${checkpoint.findings.length === 0 ? "No security findings. " : ""}Scanned on this machine${
               at ? ` at ${at}` : ""
             }, in ${checkpoint.scanMs} ms.${
               notScanned > 0
                 ? ` ${notScanned} ${notScanned === 1 ? "file" : "files"} not scanned.`
                 : ""
             }`}
-      </p>
+      </Footer>
     </div>
   );
 }

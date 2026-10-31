@@ -4,11 +4,16 @@ import {
   type NotificationEnv,
   type NotificationPrefs,
 } from "@/features/notifications/lib/decide";
+import { OPEN_ACTION_ID } from "@/features/notifications/lib/catalog";
 import type { CheckpointSecurity } from "../types";
-import { whereLabel } from "./security-levels";
+import { ROTATE, secretLabel, whereLabel } from "./security-levels";
+
+/** The notification's "Not useful" button; handled in `security-notifier.ts`. */
+export const NOT_USEFUL_ACTION_ID = "security.not-useful";
 
 export interface SecurityNotice {
   fingerprint: string;
+  ruleId: string;
   checkpointId: string;
   commitSha: string;
   title: string;
@@ -34,15 +39,14 @@ export function blockingNotices(
       if (!f.blocking || f.notUseful || announced.has(f.fingerprint)) continue;
       announced.add(f.fingerprint);
       const where = `${whereLabel(f)}, commit ${cp.commitSha.slice(0, 7)}`;
-      const secret = f.class === "secret";
+      const secret = secretLabel(f.ruleId);
       out.push({
         fingerprint: f.fingerprint,
+        ruleId: f.ruleId,
         checkpointId: cp.checkpointId,
         commitSha: cp.commitSha,
         title: secret ? "A credential was committed" : "A blocking security issue was committed",
-        body: secret
-          ? `Found in ${where}. Remove it and rotate the key before you push.`
-          : `${f.reason} ${where}.`,
+        body: secret ? `${secret} in ${where}. ${ROTATE}` : `${f.reason} Found in ${where}.`,
       });
     }
   }
@@ -69,6 +73,14 @@ export function decideSecurityFinding(
         commitSha: notice.commitSha,
       },
       dedupeKey: `security:${where.projectPath}:${notice.fingerprint}`,
+      actions: [
+        { id: OPEN_ACTION_ID, label: "Open" },
+        {
+          id: NOT_USEFUL_ACTION_ID,
+          label: "Not useful",
+          args: { fingerprint: notice.fingerprint, ruleId: notice.ruleId },
+        },
+      ],
     },
     env,
     prefs,

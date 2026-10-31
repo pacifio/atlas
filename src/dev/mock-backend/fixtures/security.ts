@@ -104,6 +104,7 @@ function checkpoints(): CheckpointSecurity[] {
       findings,
       floors: [],
       notScanned: [],
+      sensitiveReads: [".env"],
       scannedAt: new Date(Date.now() - 40 * 60_000).toISOString(),
       scanMs: 118,
     },
@@ -116,6 +117,7 @@ function checkpoints(): CheckpointSecurity[] {
       findings: [],
       floors: [],
       notScanned: [{ path: "src/lib/api.generated.ts", reason: "generated" }],
+      sensitiveReads: [".env"],
       scannedAt: new Date(Date.now() - 25 * 60_000).toISOString(),
       scanMs: 64,
     },
@@ -161,7 +163,7 @@ function overview(branch: string): ShipOverview | null {
             fixedIn: SECOND,
           },
         ],
-    sensitive: [],
+    sensitive: [{ path: "src/lib/api.ts", kind: "auth" }],
     notScanned: [{ path: "src/lib/api.generated.ts", reason: "generated" }],
   };
 }

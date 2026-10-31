@@ -50,6 +50,8 @@ export interface CheckpointSecurity {
   /** Changed paths in a sensitive area. Not findings. */
   floors: string[];
   notScanned: NotScannedFile[];
+  /** Credential files the agent read earlier in the session. */
+  sensitiveReads: string[];
   scannedAt: string;
   scanMs: number;
 }
