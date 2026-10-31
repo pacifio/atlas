@@ -107,3 +107,13 @@ fn auc_is_one_for_perfect_separation_and_half_for_ties() {
     assert_eq!(auc(&[0.5], &[0.5]), 0.5);
     assert_eq!(auc(&[0.1], &[0.9]), 0.0);
 }
+
+#[test]
+fn percentile_uses_nearest_rank() {
+    use atlas_security::eval::percentile;
+    let v = [5.0, 1.0, 3.0, 2.0, 4.0];
+    assert_eq!(percentile(&v, 50.0), 3.0);
+    assert_eq!(percentile(&v, 95.0), 5.0);
+    assert_eq!(percentile(&v, 0.0), 1.0);
+    assert!(percentile(&[], 50.0).is_nan());
+}

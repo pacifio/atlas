@@ -202,3 +202,14 @@ pub fn auc(positives: &[f64], negatives: &[f64]) -> f64 {
     }
     wins / (positives.len() * negatives.len()) as f64
 }
+
+/// Nearest-rank percentile (`p` in 0..=100); NaN for no values.
+pub fn percentile(values: &[f64], p: f64) -> f64 {
+    if values.is_empty() {
+        return f64::NAN;
+    }
+    let mut sorted = values.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let rank = ((p / 100.0) * sorted.len() as f64).ceil() as usize;
+    sorted[rank.clamp(1, sorted.len()) - 1]
+}

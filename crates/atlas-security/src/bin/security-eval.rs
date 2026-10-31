@@ -6,12 +6,16 @@
 //! cargo run -p atlas-security --features eval --bin security-eval -- <command>
 //!
 //!   local                       the local layers on every case
-//!   real   [--repo DIR] [--clef] the local layers (or, with --clef, Clef) on
+//!   real   [--repo DIR] [--advisories DIR] [--clef]
+//!                               the local layers (or, with --clef, Clef) on
 //!                               every file of the merges in
 //!                               eval/real-merges.txt (presumed safe)
 //!   clef   [--provenance] [--strip-comments] [--adversarial] [--concurrency N]
 //!                               Clef on every hunk of every case; needs
 //!                               CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN
+//!   speed  [--repo DIR] [--rev REV] [--commits N] [--advisories DIR] [--clef]
+//!          [--concurrency N]   time each recent non-merge commit as a checkpoint
+//!                               scan, local layers and optionally Clef
 //!   export --project DIR --out FILE
 //!                               every stored scan of a Project, as JSON, for
 //!                               labelling shadow-mode results
@@ -31,7 +35,7 @@ use atlas_security::clef::{
     build_state, parse_answers, request_body, ESCALATE_AT, MAX_STATE_CHARS, WORTH_A_LOOK_AT,
 };
 use atlas_security::diff::parse_unified;
-use atlas_security::eval::{adversarial, auc, load_cases, Case};
+use atlas_security::eval::{adversarial, auc, load_cases, percentile, Case};
 use atlas_security::map::{build, Limits};
 use atlas_security::provenance::Provenance;
 use atlas_security::repo::{GitCli, Repo, RepoError};
@@ -73,8 +77,9 @@ fn main() -> ExitCode {
         Some("real") => real(&args),
         Some("clef") => clef(&args),
         Some("export") => export(&args),
+        Some("speed") => speed(&args),
         _ => {
-            eprintln!("usage: security-eval <local|real|clef|export> (see the module docs)");
+            eprintln!("usage: security-eval <local|real|clef|speed|export> (see the module docs)");
             return ExitCode::from(2);
         }
     };
@@ -186,6 +191,13 @@ fn real(args: &[String]) -> Result<(), String> {
     if flag(args, "--clef") {
         return real_clef(&repo, &merges, args);
     }
+    let advisories = match value(args, "--advisories") {
+        Some(dir) => Some(
+            atlas_security::deps::osv::AdvisoryDb::open(Path::new(dir))
+                .map_err(|e| e.to_string())?,
+        ),
+        None => None,
+    };
     let (mut files, mut findings, mut blocking) = (0usize, 0usize, Vec::new());
     let mut by_rule: BTreeMap<String, (usize, Vec<String>)> = BTreeMap::new();
     for sha in merges.lines().filter_map(|l| l.split_whitespace().next()) {
@@ -193,7 +205,7 @@ fn real(args: &[String]) -> Result<(), String> {
             sha,
             repo: &repo,
             provenance: &Provenance::default(),
-            advisories: None,
+            advisories: advisories.as_ref(),
             limits: Limits::default(),
             deadline: Instant::now() + Duration::from_secs(120),
         });
@@ -598,6 +610,234 @@ fn report(
     )
     .map_err(|e| e.to_string())?;
     println!("  per case: {}", path.display());
+    Ok(())
+}
+
+// ── speed ───────────────────────────────────────────────────────────────────
+
+/// One commit's timings.
+struct Timed {
+    sha: String,
+    hunks: usize,
+    lockfile: bool,
+    local_ms: f64,
+    db_ms: f64,
+    clef_ms: Option<f64>,
+    calls: usize,
+}
+
+/// Each recent non-merge commit as a checkpoint, scanned the way the app's
+/// worker does it: the commit read from git, the advisory index opened only
+/// for the ecosystems its lockfiles use, then (with `--clef`) every hunk sent
+/// at the worker's concurrency.
+fn speed(args: &[String]) -> Result<(), String> {
+    let root = PathBuf::from(value(args, "--repo").unwrap_or("."));
+    let rev = value(args, "--rev").unwrap_or("origin/0.4.1");
+    let n: usize = value(args, "--commits")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(100);
+    let advisories = value(args, "--advisories").map(PathBuf::from);
+    let with_clef = flag(args, "--clef");
+    let concurrency: usize = value(args, "--concurrency")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(2);
+
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .args(["rev-list", "--no-merges", "-n", &n.to_string(), rev])
+        .output()
+        .map_err(|e| e.to_string())?;
+    let shas: Vec<String> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::to_string)
+        .collect();
+    let git = GitCli { root: root.clone() };
+
+    let clef_env = if with_clef {
+        let account = std::env::var("CLOUDFLARE_ACCOUNT_ID")
+            .map_err(|_| "missing CLOUDFLARE_ACCOUNT_ID".to_string())?;
+        let token = std::env::var("CLOUDFLARE_API_TOKEN")
+            .map_err(|_| "missing CLOUDFLARE_API_TOKEN".to_string())?;
+        Some((
+            Arc::new(format!("https://api.cloudflare.com/client/v4/accounts/{account}/ai/run/@cf/cloudflare/clef")),
+            Arc::new(token),
+        ))
+    } else {
+        None
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| e.to_string())?;
+    let client = reqwest::Client::new();
+
+    let mut rows = Vec::new();
+    for sha in &shas {
+        let started = Instant::now();
+        // What the worker does before scanning: which lockfile ecosystems?
+        let names = Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .args([
+                "diff-tree",
+                "--no-commit-id",
+                "--name-only",
+                "-r",
+                "--root",
+                sha,
+            ])
+            .output()
+            .map_err(|e| e.to_string())?;
+        let mut ecos = Vec::new();
+        for eco in String::from_utf8_lossy(&names.stdout)
+            .lines()
+            .filter_map(atlas_security::deps::lockfiles::ecosystem_of)
+        {
+            if !ecos.contains(&eco) {
+                ecos.push(eco);
+            }
+        }
+        let db_start = Instant::now();
+        let db = match (&advisories, ecos.is_empty()) {
+            (Some(dir), false) => atlas_security::deps::osv::AdvisoryDb::open_only(dir, &ecos).ok(),
+            _ => None,
+        };
+        let db_ms = if db.is_some() {
+            db_start.elapsed().as_secs_f64() * 1000.0
+        } else {
+            0.0
+        };
+        let result = scan_checkpoint(ScanInput {
+            sha,
+            repo: &git,
+            provenance: &Provenance::default(),
+            advisories: db.as_ref(),
+            limits: Limits::default(),
+            deadline: Instant::now() + Duration::from_secs(30),
+        });
+        drop(db);
+        let local_ms = started.elapsed().as_secs_f64() * 1000.0;
+
+        // States for every hunk, built outside the timer for the local layers.
+        let diff = git.commit_diff(sha).map_err(|e| e.to_string())?;
+        let map = build(parse_unified(&diff), &Limits::default());
+        let mut states = Vec::new();
+        for file in map.files.iter().filter(|f| f.skip.is_none()) {
+            for i in 0..file.change.hunks.len() {
+                let state = build_state(
+                    file,
+                    i,
+                    &Provenance::default(),
+                    &result.findings,
+                    None,
+                    true,
+                );
+                if state.len() <= MAX_STATE_CHARS {
+                    states.push(state);
+                }
+            }
+        }
+        let hunks = states.len();
+        let clef_ms = clef_env.as_ref().map(|(url, token)| {
+            let t = Instant::now();
+            runtime.block_on(async {
+                let gate = Arc::new(tokio::sync::Semaphore::new(concurrency.max(1)));
+                let mut set = tokio::task::JoinSet::new();
+                for state in states.clone() {
+                    let (client, url, token, gate) =
+                        (client.clone(), url.clone(), token.clone(), gate.clone());
+                    set.spawn(async move {
+                        let _permit = gate.acquire_owned().await;
+                        ask(&client, &url, &token, &state).await.is_ok()
+                    });
+                }
+                while set.join_next().await.is_some() {}
+            });
+            t.elapsed().as_secs_f64() * 1000.0
+        });
+        rows.push(Timed {
+            sha: sha.clone(),
+            hunks,
+            lockfile: !ecos.is_empty(),
+            local_ms,
+            db_ms,
+            clef_ms,
+            calls: if with_clef { hunks } else { 0 },
+        });
+    }
+
+    let local: Vec<f64> = rows.iter().map(|r| r.local_ms).collect();
+    let hunks: Vec<f64> = rows.iter().map(|r| r.hunks as f64).collect();
+    println!(
+        "speed on {} commits from {rev} (release build: {})",
+        rows.len(),
+        !cfg!(debug_assertions)
+    );
+    println!(
+        "  hunks per commit: median {:.0}, p95 {:.0}, max {:.0}; {} of {} have at most 20",
+        percentile(&hunks, 50.0),
+        percentile(&hunks, 95.0),
+        percentile(&hunks, 100.0),
+        rows.iter().filter(|r| r.hunks <= 20).count(),
+        rows.len()
+    );
+    println!(
+        "  local layers: median {:.0} ms, p95 {:.0} ms, max {:.0} ms   (target: median under 1000 ms)",
+        percentile(&local, 50.0),
+        percentile(&local, 95.0),
+        percentile(&local, 100.0)
+    );
+    let with_lock: Vec<&Timed> = rows.iter().filter(|r| r.lockfile).collect();
+    if !with_lock.is_empty() {
+        let db: Vec<f64> = with_lock.iter().map(|r| r.db_ms).collect();
+        let l: Vec<f64> = with_lock.iter().map(|r| r.local_ms).collect();
+        println!(
+            "  {} commits change a lockfile: advisory open median {:.0} ms, scan median {:.0} ms, max {:.0} ms",
+            with_lock.len(),
+            percentile(&db, 50.0),
+            percentile(&l, 50.0),
+            percentile(&l, 100.0)
+        );
+    }
+    if with_clef {
+        let small: Vec<f64> = rows
+            .iter()
+            .filter(|r| r.hunks <= 20)
+            .filter_map(|r| r.clef_ms.map(|c| c + r.local_ms))
+            .collect();
+        let all: Vec<f64> = rows
+            .iter()
+            .filter_map(|r| r.clef_ms.map(|c| c + r.local_ms))
+            .collect();
+        println!(
+            "  full scan with Clef (concurrency {concurrency}): commits of at most 20 hunks median {:.0} ms, p95 {:.0} ms   (target: p95 under 10000 ms)",
+            percentile(&small, 50.0),
+            percentile(&small, 95.0)
+        );
+        println!(
+            "  all commits: median {:.0} ms, p95 {:.0} ms, max {:.0} ms; {} Clef calls",
+            percentile(&all, 50.0),
+            percentile(&all, 95.0),
+            percentile(&all, 100.0),
+            rows.iter().map(|r| r.calls).sum::<usize>()
+        );
+    }
+    let slowest = rows.iter().max_by(|a, b| a.local_ms.total_cmp(&b.local_ms));
+    if let Some(s) = slowest {
+        println!(
+            "  slowest local scan: {:.8} ({} hunks, {:.0} ms)",
+            s.sha, s.hunks, s.local_ms
+        );
+    }
+    let per: Vec<_> = rows
+        .iter()
+        .map(|r| serde_json::json!({"sha": r.sha, "hunks": r.hunks, "lockfile": r.lockfile, "local_ms": r.local_ms, "advisory_open_ms": r.db_ms, "clef_ms": r.clef_ms}))
+        .collect();
+    let path = out_dir().join(format!("speed-{}.json", stamp()));
+    std::fs::write(&path, serde_json::to_vec_pretty(&per).unwrap_or_default())
+        .map_err(|e| e.to_string())?;
+    println!("  per commit: {}", path.display());
     Ok(())
 }
 
