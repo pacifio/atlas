@@ -3400,6 +3400,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "atlas-security"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+]
+
+[[package]]
 name = "atlas-terminal"
 version = "0.1.0"
 dependencies = [

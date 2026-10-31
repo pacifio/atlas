@@ -1,0 +1,18 @@
+[package]
+name = "atlas-security"
+version = "0.1.0"
+edition = "2021"
+description = "The Atlas Security Agent's scanner (ATL-985): reads a Checkpoint's commit, maps the diff to risk, and runs local secret, sink and dependency rules. Tauri-free."
+
+[lib]
+name = "atlas_security"
+
+[dependencies]
+
+[dev-dependencies]
+tempfile = "3"
+
+# The workspace lint table is only real for members that opt in —
+# without this stanza it is dead configuration (#60).
+[lints]
+workspace = true

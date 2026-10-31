@@ -101,6 +101,11 @@
     "clippy": true
   },
   {
+    "crate": "atlas-security",
+    "clippy": true,
+    "cross": true
+  },
+  {
     "crate": "atlas-search",
     "clippy": true
   },

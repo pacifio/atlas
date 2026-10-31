@@ -46,6 +46,7 @@ members = [
   "crates/atlas-redact",
   "crates/atlas-retrieval",
   "crates/atlas-search",
+  "crates/atlas-security",
   "crates/atlas-terminal",
   "crates/atlas-theme",
   "crates/atlas-thread-metadata",
@@ -836,6 +837,8 @@ opt-level = 1
 [profile.dev.package.atlas-retrieval]
 opt-level = 1
 [profile.dev.package.atlas-search]
+opt-level = 1
+[profile.dev.package.atlas-security]
 opt-level = 1
 [profile.dev.package.atlas-terminal]
 opt-level = 1
