@@ -2309,6 +2309,45 @@ impl Store {
         Ok(out)
     }
 
+    /// Mark a finding "Not useful", or take the mark back.
+    pub fn set_not_useful(
+        &self,
+        fingerprint: &str,
+        rule_id: &str,
+        scanner_version: &str,
+        not_useful: bool,
+    ) -> Result<()> {
+        self.require_writer()?;
+        if not_useful {
+            self.conn.execute(
+                "INSERT INTO security_label (fingerprint, rule_id, scanner_version, created_at)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT (fingerprint) DO NOTHING",
+                rusqlite::params![
+                    fingerprint,
+                    rule_id,
+                    scanner_version,
+                    Utc::now().to_rfc3339()
+                ],
+            )?;
+        } else {
+            self.conn.execute(
+                "DELETE FROM security_label WHERE fingerprint = ?1",
+                [fingerprint],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Fingerprints of every finding marked "Not useful".
+    pub fn not_useful_fingerprints(&self) -> Result<std::collections::HashSet<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT fingerprint FROM security_label")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
     pub fn scan_state(&self, key: &str) -> Result<Option<String>> {
         Ok(self
             .conn

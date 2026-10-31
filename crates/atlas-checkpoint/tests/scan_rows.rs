@@ -74,14 +74,14 @@ fn ids(list: Vec<atlas_checkpoint::model::Checkpoint>) -> Vec<String> {
 }
 
 #[test]
-fn migrates_to_v12_and_creates_scan_tables() {
+fn migrates_and_creates_scan_tables() {
     let (dir, store) = store();
     drop(store);
     let conn = rusqlite::Connection::open(dir.path().join(".atlas/sessions.db")).unwrap();
     let version: i64 = conn
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 12);
+    assert!(version >= 12);
     for table in ["checkpoint_scan", "security_scan_state"] {
         let n: i64 = conn
             .query_row(
@@ -173,4 +173,48 @@ fn scan_state_round_trips() {
         store.scan_state("since").unwrap().as_deref(),
         Some("2026-10-31T00:00:00Z")
     );
+}
+
+// ── Labels: "Not useful" on a finding ───────────────────────────────────────
+
+#[test]
+fn migrates_to_v13_with_the_label_table() {
+    let (dir, store) = store();
+    drop(store);
+    let conn = rusqlite::Connection::open(dir.path().join(".atlas/sessions.db")).unwrap();
+    let version: i64 = conn
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(version, 13);
+    let n: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'security_label'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(n, 1);
+}
+
+#[test]
+fn a_finding_can_be_marked_not_useful_and_restored() {
+    let (_dir, store) = store();
+    assert!(store.not_useful_fingerprints().unwrap().is_empty());
+    store
+        .set_not_useful("fp-1", "pkg.install_script", "local-1", true)
+        .unwrap();
+    store
+        .set_not_useful("fp-2", "secret.entropy", "local-1", true)
+        .unwrap();
+    let got = store.not_useful_fingerprints().unwrap();
+    assert!(got.contains("fp-1") && got.contains("fp-2"));
+    // Marking again is idempotent; restoring removes it.
+    store
+        .set_not_useful("fp-1", "pkg.install_script", "local-1", true)
+        .unwrap();
+    store
+        .set_not_useful("fp-1", "pkg.install_script", "local-1", false)
+        .unwrap();
+    let got = store.not_useful_fingerprints().unwrap();
+    assert!(!got.contains("fp-1") && got.contains("fp-2"));
 }

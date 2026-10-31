@@ -23,7 +23,7 @@ use crate::error::{Error, Result};
 /// withdrawn; the real V9 (`file_touch.sketch_after`) then reused it. A store
 /// stamped 9 may therefore be either shape, which is why `migrate` re-runs V9
 /// tolerantly on a 9 rather than trusting the stamp — see the comment there.
-pub const SCHEMA_VERSION: i64 = 12;
+pub const SCHEMA_VERSION: i64 = 13;
 
 pub fn migrate(conn: &Connection) -> Result<()> {
     // Fast path, outside any transaction: the overwhelmingly common case is a
@@ -102,6 +102,9 @@ pub fn migrate(conn: &Connection) -> Result<()> {
         }
         if found < 12 {
             conn.execute_batch(V12)?;
+        }
+        if found < 13 {
+            conn.execute_batch(V13)?;
         }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(())
@@ -272,6 +275,18 @@ CREATE INDEX IF NOT EXISTS idx_usage_delta_recorded
     ON usage_delta (recorded_at);
 "#;
 
+const V13: &str = r#"
+-- Findings a developer marked "Not useful" (ATL-985). Keyed by the finding's
+-- fingerprint, which is stable across commits, so one mark covers the same
+-- issue on the same line wherever it is seen again. Local only: these are
+-- the labels that measure the scanner's false alarms.
+CREATE TABLE IF NOT EXISTS security_label (
+    fingerprint     TEXT PRIMARY KEY,
+    rule_id         TEXT NOT NULL,
+    scanner_version TEXT NOT NULL,
+    created_at      TEXT NOT NULL
+);
+"#;
 const V12: &str = r#"
 -- Security scans of a Checkpoint's commit (ATL-985), one row per Checkpoint
 -- and scanner version. A new scanner version rescans, so its rules and
@@ -803,7 +818,7 @@ mod tests {
 
     /// Every migration, in order, as the arm in `migrate` applies it on a
     /// fresh database. Index `n - 1` is the SQL that takes a store to `n`.
-    const STEPS: [&str; 12] = [V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12];
+    const STEPS: [&str; 13] = [V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13];
 
     /// A connection holding exactly the schema an older build left behind:
     /// V1..=`version` applied and `version` stamped.
