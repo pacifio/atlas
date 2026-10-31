@@ -11,6 +11,8 @@
 // "Not useful" is module state, so marking one dims it and lowers the badge
 // until the page reloads.
 
+import { emit } from "@tauri-apps/api/event";
+import { SECURITY_SCAN_CHANGED } from "@/features/security/lib/security-api";
 import type {
   CheckpointSecurity,
   SecurityFinding,
@@ -185,9 +187,11 @@ export const securityHandlers: TypedHandlers<SecurityResponses> = {
   security_ship_overview: ({ projectPath, branch }) =>
     inProject(projectPath) ? overview(String(branch)) : null,
   security_finding_line: ({ path, line }) => LINES[`${String(path)}:${Number(line)}`] ?? null,
-  security_set_not_useful: ({ fingerprint, notUseful: on }) => {
+  security_set_not_useful: ({ projectPath, fingerprint, notUseful: on }) => {
     if (on) notUseful.add(String(fingerprint));
     else notUseful.delete(String(fingerprint));
+    // As Rust does after the write: the roll-up and open sessions re-read.
+    void emit(SECURITY_SCAN_CHANGED, { projectPath });
     return null;
   },
 };

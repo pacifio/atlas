@@ -7,7 +7,13 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
-vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async () => () => {}) }));
+const listeners = vi.hoisted(() => [] as ((e: { payload: unknown }) => void)[]);
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn(async (_: string, handler: (e: { payload: unknown }) => void) => {
+    listeners.push(handler);
+    return () => {};
+  }),
+}));
 const prList = vi.hoisted(() => vi.fn());
 vi.mock("@/features/pull-requests/lib/pull-requests-api", () => ({ prList }));
 
@@ -57,6 +63,7 @@ beforeEach(() => {
   invoke.mockReset();
   prList.mockReset();
   useSecurityStore.setState({ sessions: {}, checkpoints: {}, byCommit: {} });
+  listeners.length = 0;
 });
 afterEach(cleanup);
 
@@ -90,6 +97,16 @@ describe("the session summary", () => {
     answer({ security_session_checkpoints: [cp] });
     render(<SecuritySummary projectPath="/p" sessionId="s1" />);
     expect(await screen.findByText("1 finding, blocks shipping")).toBeTruthy();
+  });
+
+  it("leaves a clean session looking as it did before scanning", async () => {
+    answer({
+      security_session_checkpoints: [{ ...cp, findings: [], level: "none", blocking: false }],
+    });
+    const { container } = render(<SecuritySummary projectPath="/p" sessionId="s1" />);
+    await waitFor(() => expect(invoke).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 0));
+    expect(container.textContent).toBe("");
   });
 
   it("says nothing for a session with no scans", async () => {
@@ -179,6 +196,25 @@ describe("Before you ship", () => {
     await waitFor(() => expect(prList).toHaveBeenCalled());
     expect(prList).toHaveBeenCalledWith("/p", { head: "feat/payments", state: "open", limit: 1 });
     expect(container.textContent).toBe("");
+  });
+
+  it("appears once a pull request is opened while the session is on screen", async () => {
+    prList.mockResolvedValue({ entries: [] });
+    answer({ security_ship_overview: overview });
+    render(<ShipOverviewCard projectPath="/p" branch="feat/payments" />);
+    await waitFor(() => expect(prList).toHaveBeenCalled());
+    prList.mockResolvedValue({
+      entries: [
+        {
+          number: 42,
+          url: "https://example.com/pr/42",
+          headBranch: "feat/payments",
+          state: "open",
+        },
+      ],
+    });
+    for (const l of listeners) l({ payload: { projectPath: "/p" } });
+    expect(await screen.findByText("Before you ship")).toBeTruthy();
   });
 
   it("rolls the branch up under its pull request", async () => {

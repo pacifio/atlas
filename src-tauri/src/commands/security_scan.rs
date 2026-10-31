@@ -36,7 +36,7 @@ use atlas_security::view::{
 };
 use chrono::{DateTime, Utc};
 
-use super::capture::{registered_roots, registered_store, StoreRegistry};
+use super::capture::{registered_roots, registered_store, writer_in, StoreRegistry};
 
 /// Checkpoints scanned per pass; the rest wait for the next nudge or tick.
 const BATCH: i64 = 20;
@@ -534,8 +534,16 @@ pub async fn security_set_not_useful(
     rule_id: String,
     not_useful: bool,
 ) -> Result<(), String> {
-    let store = state.writer(Path::new(&project_path))?;
-    blocking(move || set_not_useful_in(&store, &fingerprint, &rule_id, not_useful)).await
+    let stores = state.registry();
+    blocking(move || {
+        let root = Path::new(&project_path);
+        let store = writer_in(&stores, root)?;
+        set_not_useful_in(&store, &fingerprint, &rule_id, not_useful)?;
+        // The roll-up and open sessions re-read, as after a scan.
+        announce(root);
+        Ok(())
+    })
+    .await
 }
 
 #[cfg(test)]

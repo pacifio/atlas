@@ -5,12 +5,13 @@ import { onSecurityScanChanged } from "./security-api";
 const loaded = new Set<string>();
 let watching = false;
 
-/** Reload a Project's results whenever the worker stores a scan in it. */
+/** Reload a Project's badges and open sessions whenever a scan is stored. */
 function watch() {
   if (watching) return;
   watching = true;
   void onSecurityScanChanged((projectPath) => {
-    if (loaded.has(projectPath)) void useSecurityStore.getState().actions.loadProject(projectPath);
+    if (loaded.has(projectPath))
+      void useSecurityStore.getState().actions.refreshProject(projectPath);
   }).catch(() => {
     watching = false;
   });

@@ -5,7 +5,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async () => () => {}) }));
 
 import type { CheckpointSecurity } from "../types";
-import { selectByCommit, selectCheckpoints, useSecurityStore } from "./security-store";
+import { selectCheckpoints, useSecurityStore } from "./security-store";
 
 const cp: CheckpointSecurity = {
   checkpointId: "cp-1",
@@ -76,20 +76,24 @@ describe("security store", () => {
     expect(after?.[0].findings[0].notUseful).toBe(false);
     expect(after?.[0].blocking).toBe(true);
   });
-});
 
-describe("security store by commit", () => {
-  beforeEach(() => {
-    invoke.mockReset();
-    useSecurityStore.setState({ sessions: {}, checkpoints: {}, byCommit: {} });
-  });
-
-  it("finds a checkpoint's result and session from its commit", async () => {
-    invoke.mockResolvedValueOnce([cp]);
+  it("re-reads the badges and every open session when a scan lands", async () => {
+    invoke.mockResolvedValueOnce([]);
     await useSecurityStore.getState().actions.loadSession("/p", "s1");
-    const hit = selectByCommit(useSecurityStore.getState(), "/p", "3fa91c2aaaa");
-    expect(hit?.sessionId).toBe("s1");
-    expect(hit?.checkpoint.findings).toHaveLength(1);
-    expect(selectByCommit(useSecurityStore.getState(), "/p", "nope")).toBeUndefined();
+    const answers: Record<string, unknown> = {
+      security_project_sessions: [
+        { sessionId: "s1", level: "critical", blocking: true, findings: 1, scanned: 1 },
+      ],
+      security_session_checkpoints: [cp],
+    };
+    invoke.mockImplementation(async (cmd: string) => answers[cmd]);
+    await useSecurityStore.getState().actions.refreshProject("/p");
+    const state = useSecurityStore.getState();
+    expect(state.sessions["/p"].s1.level).toBe("critical");
+    expect(selectCheckpoints(state, "/p", "s1")).toEqual([cp]);
+    expect(invoke).not.toHaveBeenCalledWith("security_session_checkpoints", {
+      projectPath: "/other",
+      sessionId: "s1",
+    });
   });
 });

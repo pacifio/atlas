@@ -48,20 +48,20 @@ export function ShipOverviewCard({ projectPath, branch }: { projectPath: string;
   useEffect(() => {
     let live = true;
     if (!projectPath || !branch) return;
-    const load = () =>
-      securityShipOverview(projectPath, branch)
-        .then((o) => live && setOverview(o))
-        .catch(() => {});
-    void prList(projectPath, { head: branch, state: "open", limit: 1 })
-      .then((r) => {
-        const open = r.entries[0];
-        if (!live || !open) return;
-        setPr(open.number);
-        void load();
-      })
-      .catch(() => {});
+    // The pull request is looked up again on every stored scan, so a PR
+    // opened or closed while the session is on screen shows or hides the card.
+    const refresh = async () => {
+      const open = (await prList(projectPath, { head: branch, state: "open", limit: 1 }))
+        .entries[0];
+      if (!live) return;
+      setPr(open?.number ?? null);
+      if (!open) return;
+      const o = await securityShipOverview(projectPath, branch);
+      if (live) setOverview(o);
+    };
+    void refresh().catch(() => {});
     const stop = onSecurityScanChanged((p) => {
-      if (p === projectPath) void load();
+      if (p === projectPath) void refresh().catch(() => {});
     });
     return () => {
       live = false;

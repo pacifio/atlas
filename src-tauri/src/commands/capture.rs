@@ -492,6 +492,11 @@ pub(crate) fn registered_store(
         .map(|h| (h.store.clone(), h.is_writer))
 }
 
+/// [`CaptureState::writer`] against a registry handed off the async runtime.
+pub(crate) fn writer_in(stores: &StoreRegistry, root: &Path) -> Result<Arc<Mutex<Store>>, String> {
+    Ok(open_in(stores, root)?.store)
+}
+
 /// Every Project root this process has a store open for.
 pub(crate) fn registered_roots(stores: &StoreRegistry) -> Vec<PathBuf> {
     lock_ok(stores).keys().cloned().collect()
@@ -583,7 +588,13 @@ impl CaptureState {
     /// through this. Opening a second `Store` on the same root inside this
     /// process is what produced the phantom "another Atlas window" error.
     pub(crate) fn writer(&self, root: &Path) -> Result<Arc<Mutex<Store>>, String> {
-        Ok(open_in(&self.stores, root)?.store)
+        writer_in(&self.stores, root)
+    }
+
+    /// The open stores, for a command that opens its writer inside
+    /// `spawn_blocking` (the first open migrates the database).
+    pub(crate) fn registry(&self) -> StoreRegistry {
+        self.stores.clone()
     }
 
     /// This process's claim on the Project's writer lock.

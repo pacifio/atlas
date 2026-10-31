@@ -30,6 +30,8 @@ interface SecurityState {
   actions: {
     loadProject: (projectPath: string) => Promise<void>;
     loadSession: (projectPath: string, sessionId: string) => Promise<CheckpointSecurity[]>;
+    /** A scan landed: re-read the badges and every session already read. */
+    refreshProject: (projectPath: string) => Promise<void>;
     setNotUseful: (
       projectPath: string,
       sessionId: string,
@@ -65,6 +67,17 @@ export const useSecurityStore = createSelectors(
           });
           return cps;
         },
+        refreshProject: async (projectPath) => {
+          const prefix = sessionKey(projectPath, "");
+          const open = Object.keys(get().checkpoints)
+            .filter((k) => k.startsWith(prefix))
+            .map((k) => k.slice(prefix.length));
+          const { loadProject, loadSession } = get().actions;
+          await Promise.all([
+            loadProject(projectPath),
+            ...open.map((id) => loadSession(projectPath, id)),
+          ]);
+        },
         setNotUseful: async (projectPath, sessionId, finding, notUseful) => {
           const key = sessionKey(projectPath, sessionId);
           const apply = (value: boolean) =>
@@ -99,21 +112,4 @@ export function selectCheckpoints(
   sessionId: string,
 ): CheckpointSecurity[] | undefined {
   return state.checkpoints[sessionKey(projectPath, sessionId)];
-}
-
-/** A commit's scan result and the session it belongs to, when loaded. */
-export function selectByCommit(
-  state: {
-    checkpoints: Record<string, CheckpointSecurity[]>;
-    byCommit: Record<string, Record<string, string>>;
-  },
-  projectPath: string,
-  commitSha: string,
-): { sessionId: string; checkpoint: CheckpointSecurity } | undefined {
-  const sessionId = state.byCommit[projectPath]?.[commitSha];
-  if (!sessionId) return undefined;
-  const checkpoint = state.checkpoints[sessionKey(projectPath, sessionId)]?.find(
-    (c) => c.commitSha === commitSha,
-  );
-  return checkpoint ? { sessionId, checkpoint } : undefined;
 }
