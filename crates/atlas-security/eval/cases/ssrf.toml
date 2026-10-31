@@ -1,0 +1,15 @@
+id = "ssrf"
+kind = "synthetic"
+vulnerable = true
+class = "ssrf"
+severity = 3
+title = "Link previews"
+diff = '''
+--- a/server/routes/preview.ts
++++ b/server/routes/preview.ts
+@@ -1,0 +1,4 @@
++app.get("/api/preview", async (req, res) => {
++  const r = await fetch(String(req.query.url));
++  res.send(await r.text());
++});
+'''

@@ -1,0 +1,15 @@
+id = "authz-owned"
+kind = "synthetic"
+vulnerable = false
+class = "none"
+severity = 0
+title = "Allow deleting projects"
+diff = '''
+--- a/server/routes/projects.ts
++++ b/server/routes/projects.ts
+@@ -1,0 +1,4 @@
++app.delete("/api/projects/:id", requireLogin, async (req, res) => {
++  const r = await db.query("DELETE FROM projects WHERE id = $1 AND owner_id = $2", [req.params.id, req.user.id]);
++  res.sendStatus(r.rowCount ? 204 : 404);
++});
+'''

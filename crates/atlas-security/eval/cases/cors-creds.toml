@@ -1,0 +1,12 @@
+id = "cors-creds"
+kind = "synthetic"
+vulnerable = true
+class = "permissions"
+severity = 3
+title = "Allow the docs site to call the API"
+diff = '''
+--- a/server/app.ts
++++ b/server/app.ts
+@@ -1,0 +1,1 @@
++app.use(cors({ origin: (origin, cb) => cb(null, true), credentials: true }));
+'''

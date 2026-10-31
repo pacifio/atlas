@@ -9,6 +9,7 @@
 pub mod clef;
 pub mod deps;
 pub mod diff;
+pub mod eval;
 pub mod finding;
 pub mod map;
 pub mod provenance;

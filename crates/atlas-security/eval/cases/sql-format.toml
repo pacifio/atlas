@@ -1,0 +1,15 @@
+id = "sql-format"
+kind = "synthetic"
+vulnerable = true
+class = "injection"
+severity = 3
+title = "Add user search"
+diff = '''
+--- a/src/db/users.rs
++++ b/src/db/users.rs
+@@ -1,0 +1,4 @@
++pub fn search(conn: &Connection, name: &str) -> Result<Vec<User>> {
++    let sql = format!("SELECT * FROM users WHERE name LIKE '%{}%'", name);
++    conn.prepare(&sql)?.query_map([], User::from_row)?.collect()
++}
+'''
