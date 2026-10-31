@@ -1339,3 +1339,22 @@ first, dwell on or skip, and how long summaries should be. The guide's format
 and its coverage of every changed file stay the same.
 """
 validation = "at most 4000 bytes"
+
+[[setting]]
+key = "securityScan"
+type = "boolean"
+default = false
+status = "file-only"
+page = "privacy"
+section = "Security scan"
+title = "Scan new checkpoints for security issues"
+summary = "Check each new checkpoint's commit for leaked credentials, risky code and vulnerable dependencies, on this machine."
+doc = """
+Scan each new checkpoint's commit in the background for leaked credentials,
+risky calls and dependencies with known advisories. Runs entirely on this
+machine; only the public advisory lists are downloaded. Results are stored
+with the checkpoint and not shown yet. Commits from before it was turned on
+are not scanned. Off in released builds and on in development builds unless
+this key is set.
+"""
+validation = "—"

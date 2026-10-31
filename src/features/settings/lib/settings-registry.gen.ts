@@ -405,6 +405,14 @@ export interface AppSettings {
    * changed file stay the same.
    */
   pullRequestGuideInstructions: string;
+  /**
+   * Scan each new checkpoint's commit in the background for leaked credentials, risky calls and
+   * dependencies with known advisories. Runs entirely on this machine; only the public advisory
+   * lists are downloaded. Results are stored with the checkpoint and not shown yet. Commits
+   * from before it was turned on are not scanned. Off in released builds and on in development
+   * builds unless this key is set.
+   */
+  securityScan: boolean;
 }
 
 export type SettingKey = keyof AppSettings;
@@ -486,6 +494,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   pullRequestGuideAgent: "",
   pullRequestGuideModel: "",
   pullRequestGuideInstructions: "",
+  securityScan: false,
 };
 
 export type SettingType =
@@ -1330,5 +1339,15 @@ export const SETTINGS_REGISTRY: readonly SettingMeta[] = [
     title: "Guide instructions",
     summary: "Your preferences for review guides: what to show first, dwell on, or skip.",
     project: true,
+  },
+  {
+    key: "securityScan",
+    type: "boolean",
+    status: "file-only",
+    page: "privacy",
+    section: "Security scan",
+    title: "Scan new checkpoints for security issues",
+    summary:
+      "Check each new checkpoint's commit for leaked credentials, risky code and vulnerable dependencies, on this machine.",
   },
 ];

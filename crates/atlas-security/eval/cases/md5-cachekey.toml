@@ -1,0 +1,14 @@
+id = "md5-cachekey"
+kind = "synthetic"
+vulnerable = false
+class = "none"
+severity = 0
+title = "Cache rendered thumbnails"
+diff = '''
+--- a/server/thumbs.py
++++ b/server/thumbs.py
+@@ -1,0 +1,3 @@
++def cache_key(url: str, width: int) -> str:
++    # Not security sensitive: only used to name cache files.
++    return hashlib.md5(f"{url}:{width}".encode()).hexdigest()
+'''

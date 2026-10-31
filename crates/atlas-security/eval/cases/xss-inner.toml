@@ -1,0 +1,13 @@
+id = "xss-inner"
+kind = "synthetic"
+vulnerable = true
+class = "xss"
+severity = 3
+title = "Render comments with formatting"
+diff = '''
+--- a/src/features/comments/components/comment.tsx
++++ b/src/features/comments/components/comment.tsx
+@@ -1,1 +1,1 @@
+-      <p>{comment.body}</p>
++      <p dangerouslySetInnerHTML={{ __html: marked(comment.body) }} />
+'''

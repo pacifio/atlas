@@ -191,6 +191,42 @@ pub fn redact(input: &str) -> Redacted {
     Redacted { text, counts }
 }
 
+/// Every layer that flags something in `input`, each once, in [`Category`]
+/// order — before overlapping matches are merged into one replacement.
+///
+/// [`redact`] counts one category per replaced span, so a provider key that
+/// the entropy layer also matched is tallied as whichever layer the merge
+/// kept. A caller that grades a match by the layer that found it (the
+/// security scanner: a vendor rule is a confirmed credential, entropy alone is
+/// a guess) needs this instead. Same six detectors, nothing replaced.
+pub fn detect_categories(input: &str) -> Vec<Category> {
+    if input.is_empty() {
+        return Vec::new();
+    }
+    let mut regions = entropy::detect(input);
+    regions.extend(vendor::detect(input));
+    regions.extend(provider::detect(input));
+    regions.extend(uri::detect(input));
+    regions.extend(dsn::detect(input));
+    regions.extend(credential::detect(input));
+    let mut found: Vec<Category> = regions
+        .into_iter()
+        .filter(|r| r.start < r.end)
+        .map(|r| r.category)
+        .collect();
+    found.sort();
+    found.dedup();
+    found
+}
+
+/// Ids of the vendored betterleaks rules that match `input` (for example
+/// `stripe-access-token`), each once. Diagnostic: lets a caller name the
+/// provider a credential belongs to, and tell a provider-specific rule from
+/// a generic one.
+pub fn vendor_rule_ids(input: &str) -> Vec<&'static str> {
+    vendor::matched_ids(input)
+}
+
 /// Redact only the credential material inside a link value, keeping the link.
 ///
 /// Used by [`redact_json`] for `url`/`uri` fields. Replacing a whole URL

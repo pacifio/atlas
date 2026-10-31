@@ -673,6 +673,24 @@ pub struct Checkpoint {
     pub sync_state: SyncState,
 }
 
+/// One security scan of a Checkpoint's commit, as the scanner stored it.
+///
+/// The scanner's own result is `result_json`, opaque here: this crate stores
+/// and queues scans but does not know what a finding is. `status` is `done`,
+/// `partial` or `failed`; `level` is `none`, `low`, `medium`, `high` or
+/// `critical`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScanRow {
+    pub checkpoint_id: String,
+    pub scanner_version: String,
+    pub status: String,
+    pub level: String,
+    pub blocking: bool,
+    pub result_json: String,
+    pub attempts: i64,
+    pub created_at: DateTime<Utc>,
+}
+
 /// The patch an edit-shaped call applied. Attribution's input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentEdit {

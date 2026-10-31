@@ -25,6 +25,7 @@ import { authorOf, type AuthorDirectory } from "../lib/author-directory";
 import { hueFor } from "../lib/hue";
 import { AgentGlyph } from "./agent-glyph";
 import { SessionStatusIcon, STATE_LABEL } from "./session-status-icon";
+import { SessionSecurityBadge } from "@/features/security/components/session-security-badge";
 
 export function SessionRow({
   session: s,
@@ -110,6 +111,7 @@ export function SessionRow({
           }
           right={
             <span className="flex items-center gap-2">
+              <SessionSecurityBadge projectPath={s.projectPath} sessionId={s.id} />
               <span className="shrink-0">{checkpoints}</span>
               {s.insertions + s.deletions > 0 && (
                 <>

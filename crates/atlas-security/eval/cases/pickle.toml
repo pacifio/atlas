@@ -1,0 +1,15 @@
+id = "pickle"
+kind = "synthetic"
+vulnerable = true
+class = "deserialization"
+severity = 4
+title = "Accept saved sessions from clients"
+diff = '''
+--- a/server/sessions.py
++++ b/server/sessions.py
+@@ -1,0 +1,4 @@
++@app.post("/session/restore")
++def restore():
++    state = pickle.loads(request.get_data())
++    return jsonify(load_session(state))
+'''

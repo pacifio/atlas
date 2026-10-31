@@ -228,6 +228,7 @@ bookkeeping).
 | `pullRequestGuideAgent` | string | `""` | Pull Requests › Review guide › Guide agent (per project too) | an agent id (letters, digits, `-`, `_`, `.`), at most 64 characters; empty uses the default agent |
 | `pullRequestGuideModel` | string | `""` | Pull Requests › Review guide › Guide model (per project too) | one line, at most 200 characters; empty keeps the agent's default |
 | `pullRequestGuideInstructions` | string | `""` | Pull Requests › Review guide › Guide instructions (per project too) | at most 4000 bytes |
+| `securityScan` | boolean | `false` | file only | — |
 
 <!-- /generated:settings -->
 

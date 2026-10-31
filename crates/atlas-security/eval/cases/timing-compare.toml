@@ -1,0 +1,13 @@
+id = "timing-compare"
+kind = "synthetic"
+vulnerable = true
+class = "crypto_tls"
+severity = 2
+title = "Verify webhook signatures"
+diff = '''
+--- a/server/webhooks.ts
++++ b/server/webhooks.ts
+@@ -1,0 +1,2 @@
++const expected = crypto.createHmac("sha256", SECRET).update(rawBody).digest("hex");
++if (req.headers["x-signature"] !== expected) return res.sendStatus(401);
+'''

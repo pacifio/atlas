@@ -94,6 +94,10 @@ function jumpTo(t: NotificationTarget): unknown {
       return import("@/features/pull-requests/lib/guide-notifier").then((m) =>
         m.openPullRequestTarget(t),
       );
+    case "timeline-session":
+      return import("@/features/security/lib/open-timeline-session").then((m) =>
+        m.openTimelineSession(t),
+      );
     default: {
       // A new target type must say where "Open" goes — this fails to compile
       // until it does.
