@@ -63,7 +63,8 @@ function FindingRow({
     <li
       data-not-useful={String(finding.notUseful)}
       className={cn(
-        "grid grid-cols-[auto_1fr_auto] items-start gap-x-3 gap-y-1 border-t border-border px-3 py-2.5",
+        // A fixed level column, so every reason starts at the same place.
+        "grid grid-cols-[5rem_minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1 border-t border-border px-3 py-2.5",
         finding.notUseful && "opacity-45",
       )}
     >
@@ -81,8 +82,8 @@ function FindingRow({
             {whereLabel(finding)}
           </button>
           {secret && <span>, {secret}</span>}
-          {finding.testCode && <span> in test code</span>}
-          {finding.notUseful && <span> marked not useful</span>}
+          {finding.testCode && <span>, in test code</span>}
+          {finding.notUseful && <span>, marked not useful</span>}
         </p>
         {open && (
           <pre className="mt-1.5 overflow-x-auto rounded border border-border bg-background px-2.5 py-1.5 font-mono text-xs text-foreground">

@@ -88,7 +88,10 @@ const marked = (f: SecurityFinding): SecurityFinding => ({
 });
 
 function checkpoints(): CheckpointSecurity[] {
-  const findings = FINDINGS.map(marked);
+  // Most severe first, as `atlas_security::view` sorts them.
+  const findings = FINDINGS.map(marked).sort(
+    (a, b) => RANK.indexOf(b.level) - RANK.indexOf(a.level),
+  );
   const counted = findings.filter((f) => !f.notUseful);
   const level = counted.reduce<SecurityLevel>(
     (max, f) => (RANK.indexOf(f.level) > RANK.indexOf(max) ? f.level : max),

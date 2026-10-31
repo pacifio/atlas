@@ -157,6 +157,7 @@ describe("findings in a Checkpoint card", () => {
       }),
     );
     expect(screen.getByRole("listitem").dataset.notUseful).toBe("true");
+    expect(screen.getByText(", marked not useful")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Undo" }));
     await waitFor(() => expect(screen.getByRole("listitem").dataset.notUseful).toBe("false"));
   });

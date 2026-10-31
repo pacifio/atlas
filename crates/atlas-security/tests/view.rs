@@ -238,3 +238,21 @@ fn a_checkpoint_view_says_which_credential_files_the_agent_read() {
     let view = checkpoint_view("cp-f", "f1f1f1f", Utc::now(), &result, &HashSet::new());
     assert_eq!(view.sensitive_reads, vec![".env".to_string()]);
 }
+
+#[test]
+fn a_checkpoint_view_lists_the_most_severe_finding_first() {
+    let result = scan(
+        "aaaaaaa3",
+        &add(
+            "src/page.ts",
+            0,
+            &[
+                "el.innerHTML = input;",
+                "export const run = (x: string) => eval(x);",
+            ],
+        ),
+    );
+    let view = checkpoint_view("cp-3", "aaaaaaa3", Utc::now(), &result, &HashSet::new());
+    let levels: Vec<Level> = view.findings.iter().map(|f| f.level).collect();
+    assert_eq!(levels, vec![Level::High, Level::Medium]);
+}

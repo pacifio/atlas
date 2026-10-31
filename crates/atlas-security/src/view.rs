@@ -91,11 +91,18 @@ pub fn checkpoint_view(
     result: &ScanResult,
     not_useful: &HashSet<String>,
 ) -> CheckpointSecurity {
-    let findings: Vec<FindingView> = result
+    let mut findings: Vec<FindingView> = result
         .findings
         .iter()
         .map(|f| view_of(f, not_useful))
         .collect();
+    // Most severe first; within a level, by place in the commit.
+    findings.sort_by(|a, b| {
+        b.level
+            .cmp(&a.level)
+            .then_with(|| a.path.cmp(&b.path))
+            .then(a.line.cmp(&b.line))
+    });
     let counted = findings.iter().filter(|f| !f.not_useful);
     let level = counted
         .clone()
