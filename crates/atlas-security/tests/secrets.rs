@@ -198,3 +198,80 @@ fn a_jwt_is_high_but_not_blocking() {
     assert_eq!(f[0].level, Level::High);
     assert!(!f[0].blocking);
 }
+
+// ── Review findings (final pass) ────────────────────────────────────────────
+
+fn blocks(path: &str, lines: &[&str]) -> bool {
+    scan_secrets(SHA, &mapped(path, lines, &[]), &Provenance::default())
+        .iter()
+        .any(|f| f.blocking)
+}
+
+#[test]
+fn curl_placeholders_in_docs_do_not_block() {
+    assert!(!blocks(
+        "README.md",
+        &["curl -H \"Authorization: Bearer YOUR_API_KEY\" https://api.example.com/v1"]
+    ));
+    assert!(!blocks(
+        "docs/setup.md",
+        &["curl -u admin:changeme https://localhost:8080/api"]
+    ));
+}
+
+#[test]
+fn client_ids_do_not_block() {
+    assert!(!blocks(
+        "src/oauth.ts",
+        &["const DISCORD_CLIENT_ID = \"123456789012345678\";"]
+    ));
+    assert!(!blocks(
+        "src/oauth.ts",
+        &["const LINEAR_CLIENT_ID = \"9f8e7d6c5b4a39281706f5e4d3c2b1a0\";"]
+    ));
+}
+
+#[test]
+fn an_obviously_fake_provider_key_does_not_block() {
+    assert!(!blocks(
+        "src/redact.test.ts",
+        &["const secret = \"sk-proj-abcd1234abcd1234abcd1234abcd1234\";"]
+    ));
+}
+
+#[test]
+fn a_live_provider_key_in_a_test_file_still_blocks() {
+    // The secrets rule itself does not know about test code; the pipeline
+    // must not demote a real-looking provider key either (see scan tests).
+    assert!(blocks(
+        "tests/fixtures/env.ts",
+        &[&format!("const k = \"{LIVE_KEY}\";")]
+    ));
+}
+
+#[test]
+fn a_multi_line_pem_private_key_blocks_once() {
+    let lines = [
+        "const key = `",
+        "-----BEGIN RSA PRIVATE KEY-----",
+        "MIIEowIBAAKCAQEAu1SU1LfVLPHCozMxH2Mo4lgOEePzNm0tRgeLezV6ffAt0gun",
+        "VTLw7onLRnrq0/IzW7yWR7QkrmBL7jTKEn5u+qKhbwKfBstIs+bMY2Zkp18gnTxK",
+        "-----END RSA PRIVATE KEY-----",
+        "`;",
+    ];
+    let f = scan_secrets(
+        SHA,
+        &mapped("src/deploy.ts", &lines, &[]),
+        &Provenance::default(),
+    );
+    let pem: Vec<_> = f
+        .iter()
+        .filter(|x| x.rule_id == "secret.private_key")
+        .collect();
+    assert_eq!(pem.len(), 1, "{f:?}");
+    assert!(pem[0].blocking);
+    assert_eq!(pem[0].level, Level::Critical);
+    assert_eq!(pem[0].refs[0].start, 2);
+    // The key body lines are part of the same finding, not extra entropy noise.
+    assert!(f.iter().all(|x| x.rule_id != "secret.entropy"), "{f:?}");
+}

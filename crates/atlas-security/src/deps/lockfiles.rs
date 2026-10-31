@@ -298,10 +298,18 @@ fn requirements(text: &str) -> Vec<Pkg> {
         )
         .expect("compiles")
     });
-    text.lines()
+    // pip-compile writes `name==1.0 \` and `--hash=…` continuation lines.
+    let joined = text.replace("\\\r\n", " ").replace("\\\n", " ");
+    joined
+        .lines()
         .filter_map(|line| {
-            let line = line.split(" #").next().unwrap_or(line).trim();
-            let caps = PIN.captures(line)?;
+            let line = line.split(" #").next().unwrap_or(line);
+            let kept: Vec<&str> = line
+                .split_whitespace()
+                .filter(|t| !t.starts_with("--hash"))
+                .collect();
+            let logical = kept.join(" ");
+            let caps = PIN.captures(&logical)?;
             Some(pkg(Ecosystem::PyPI, &caps[1], &caps[3]))
         })
         .collect()

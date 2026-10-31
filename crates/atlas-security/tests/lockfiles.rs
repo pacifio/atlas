@@ -201,3 +201,20 @@ fn unsupported_and_broken_lockfiles_return_none() {
     assert!(parse_lockfile("Cargo.lock", b"[[package]\nname=").is_none());
     assert!(parse_lockfile("package-lock.json", b"{not json").is_none());
 }
+
+#[test]
+fn requirements_with_hashes_and_continuations() {
+    let req = "django==4.2.1 \\\n    --hash=sha256:aaaa \\\n    --hash=sha256:bbbb\nrequests==2.31.0 --hash=sha256:cccc\n";
+    let pkgs = parse_lockfile("requirements.txt", req.as_bytes()).unwrap();
+    assert_eq!(
+        names(&pkgs),
+        vec![pair("django", "4.2.1"), pair("requests", "2.31.0")]
+    );
+}
+
+#[test]
+fn requirements_files_are_supported_lockfiles() {
+    use atlas_security::deps::lockfiles::is_supported;
+    assert!(is_supported("requirements.txt"));
+    assert!(is_supported("deploy/requirements-prod.txt"));
+}

@@ -375,3 +375,62 @@ fn lockfile_names_map_to_their_ecosystem() {
     assert_eq!(ecosystem_of("requirements-dev.txt"), Some(Ecosystem::PyPI));
     assert_eq!(ecosystem_of("pnpm-lock.yaml"), None);
 }
+
+#[test]
+fn informational_rustsec_notices_are_not_advisories() {
+    let adv = serde_json::json!({
+        "id": "RUSTSEC-2024-0001", "summary": "paste is unmaintained",
+        "affected": [{
+            "package": { "ecosystem": "crates.io", "name": "paste" },
+            "database_specific": { "informational": "unmaintained", "categories": [] },
+            "ranges": [{ "type": "SEMVER", "events": [{ "introduced": "0.0.0-0" }] }]
+        }]
+    });
+    let (_d, db) = db_with(Ecosystem::CratesIo, &[("r.json", adv)]);
+    let p = Pkg {
+        eco: Ecosystem::CratesIo,
+        name: "paste".into(),
+        version: "1.0.15".into(),
+    };
+    assert!(db.lookup(&p).is_empty());
+}
+
+#[test]
+fn a_cvss_vector_sets_severity_when_none_is_named() {
+    let adv = serde_json::json!({
+        "id": "RUSTSEC-2099-0003", "summary": "x",
+        "severity": [{ "type": "CVSS_V3", "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H" }],
+        "affected": [{ "package": { "ecosystem": "crates.io", "name": "bar" }, "versions": ["1.0.0"] }]
+    });
+    let low = serde_json::json!({
+        "id": "RUSTSEC-2099-0004", "summary": "y",
+        "severity": [{ "type": "CVSS_V3", "score": "CVSS:3.1/AV:L/AC:H/PR:H/UI:R/S:U/C:L/I:N/A:N" }],
+        "affected": [{ "package": { "ecosystem": "crates.io", "name": "baz" }, "versions": ["1.0.0"] }]
+    });
+    let (_d, db) = db_with(Ecosystem::CratesIo, &[("a.json", adv), ("b.json", low)]);
+    let pkg = |n: &str| Pkg {
+        eco: Ecosystem::CratesIo,
+        name: n.into(),
+        version: "1.0.0".into(),
+    };
+    assert_eq!(db.lookup(&pkg("bar"))[0].severity, AdvSeverity::Critical);
+    assert_eq!(db.lookup(&pkg("baz"))[0].severity, AdvSeverity::Low);
+}
+
+#[test]
+fn cvss_base_scores_match_the_spec_examples() {
+    use atlas_security::deps::osv::cvss3_base_score;
+    assert_eq!(
+        cvss3_base_score("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"),
+        Some(9.8)
+    );
+    assert_eq!(
+        cvss3_base_score("CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N"),
+        Some(6.1)
+    );
+    assert_eq!(
+        cvss3_base_score("CVSS:3.0/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N"),
+        Some(5.5)
+    );
+    assert_eq!(cvss3_base_score("CVSS:4.0/AV:N"), None);
+}

@@ -147,6 +147,17 @@ struct OsvRecord {
     affected: Vec<OsvAffected>,
     #[serde(default)]
     database_specific: Option<OsvSeverity>,
+    /// CVSS vectors, for records that name no severity of their own
+    /// (most RUSTSEC entries).
+    #[serde(default)]
+    severity: Vec<OsvCvss>,
+}
+
+#[derive(Deserialize)]
+struct OsvCvss {
+    #[serde(rename = "type")]
+    kind: String,
+    score: String,
 }
 
 #[derive(Deserialize)]
@@ -184,6 +195,10 @@ struct OsvEvent {
 #[derive(Deserialize)]
 struct OsvSeverity {
     severity: Option<String>,
+    /// RUSTSEC's notices (`unmaintained`, `unsound`, `notice`): not a
+    /// vulnerability in the version a project uses.
+    #[serde(default)]
+    informational: Option<serde::de::IgnoredAny>,
 }
 
 fn add_advisory(index: &mut Index, eco: Ecosystem, doc: OsvRecord) {
@@ -191,13 +206,33 @@ fn add_advisory(index: &mut Index, eco: Ecosystem, doc: OsvRecord) {
         return;
     }
     let malicious = doc.id.starts_with("MAL-");
+    let cvss_severity = doc
+        .severity
+        .iter()
+        .filter(|s| s.kind == "CVSS_V3")
+        .find_map(|s| cvss3_base_score(&s.score))
+        .map(severity_from_score);
+    let top_informational = doc
+        .database_specific
+        .as_ref()
+        .is_some_and(|d| d.informational.is_some());
     let top_severity = doc.database_specific.and_then(|d| d.severity);
+    if top_informational {
+        return;
+    }
     for entry in doc.affected {
         // `PyPI` exactly; OSV also has qualified forms like `Debian:12`.
         let Some(package) = entry.package.filter(|p| p.ecosystem == eco.osv_name()) else {
             continue;
         };
-        let severity = entry
+        if entry
+            .database_specific
+            .as_ref()
+            .is_some_and(|d| d.informational.is_some())
+        {
+            continue;
+        }
+        let named = entry
             .database_specific
             .and_then(|d| d.severity)
             .or_else(|| top_severity.clone());
@@ -219,7 +254,10 @@ fn add_advisory(index: &mut Index, eco: Ecosystem, doc: OsvRecord) {
                 } else {
                     doc.aliases.clone()
                 },
-                severity: parse_severity(severity.as_deref()),
+                severity: match parse_severity(named.as_deref()) {
+                    AdvSeverity::Unknown => cvss_severity.unwrap_or(AdvSeverity::Unknown),
+                    known => known,
+                },
                 malicious,
                 versions: entry.versions,
                 ranges,
@@ -243,6 +281,89 @@ fn event(e: OsvEvent) -> Option<Event> {
             kind: EventKind::LastAffected,
             version: v,
         })
+    }
+}
+
+/// The CVSS v3.x base score of a vector, per the FIRST specification; `None`
+/// for anything that is not a complete v3 vector.
+pub fn cvss3_base_score(vector: &str) -> Option<f64> {
+    let body = vector
+        .strip_prefix("CVSS:3.0/")
+        .or_else(|| vector.strip_prefix("CVSS:3.1/"))?;
+    let mut m = HashMap::new();
+    for part in body.split('/') {
+        let (k, v) = part.split_once(':')?;
+        m.insert(k, v);
+    }
+    let changed = match *m.get("S")? {
+        "U" => false,
+        "C" => true,
+        _ => return None,
+    };
+    let av = match *m.get("AV")? {
+        "N" => 0.85,
+        "A" => 0.62,
+        "L" => 0.55,
+        "P" => 0.2,
+        _ => return None,
+    };
+    let ac = match *m.get("AC")? {
+        "L" => 0.77,
+        "H" => 0.44,
+        _ => return None,
+    };
+    let pr = match (*m.get("PR")?, changed) {
+        ("N", _) => 0.85,
+        ("L", false) => 0.62,
+        ("L", true) => 0.68,
+        ("H", false) => 0.27,
+        ("H", true) => 0.5,
+        _ => return None,
+    };
+    let ui = match *m.get("UI")? {
+        "N" => 0.85,
+        "R" => 0.62,
+        _ => return None,
+    };
+    let cia = |k: &str| -> Option<f64> {
+        match *m.get(k)? {
+            "H" => Some(0.56),
+            "L" => Some(0.22),
+            "N" => Some(0.0),
+            _ => None,
+        }
+    };
+    let iss = 1.0 - (1.0 - cia("C")?) * (1.0 - cia("I")?) * (1.0 - cia("A")?);
+    let impact = if changed {
+        7.52 * (iss - 0.029) - 3.25 * (iss - 0.02).powi(15)
+    } else {
+        6.42 * iss
+    };
+    if impact <= 0.0 {
+        return Some(0.0);
+    }
+    let exploitability = 8.22 * av * ac * pr * ui;
+    let raw = if changed {
+        (1.08 * (impact + exploitability)).min(10.0)
+    } else {
+        (impact + exploitability).min(10.0)
+    };
+    // The specification's Roundup: the smallest one-decimal number >= raw.
+    let int_input = (raw * 100_000.0).round() as i64;
+    Some(if int_input % 10_000 == 0 {
+        int_input as f64 / 100_000.0
+    } else {
+        ((int_input / 10_000) + 1) as f64 / 10.0
+    })
+}
+
+fn severity_from_score(score: f64) -> AdvSeverity {
+    match score {
+        s if s >= 9.0 => AdvSeverity::Critical,
+        s if s >= 7.0 => AdvSeverity::High,
+        s if s >= 4.0 => AdvSeverity::Medium,
+        s if s > 0.0 => AdvSeverity::Low,
+        _ => AdvSeverity::Unknown,
     }
 }
 

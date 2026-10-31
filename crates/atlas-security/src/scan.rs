@@ -12,11 +12,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::deps::lockfiles::is_supported;
 use crate::deps::osv::AdvisoryDb;
-use crate::diff::parse_unified;
+use crate::diff::{parse_unified, FileStatus};
 use crate::finding::{Finding, Level, Source};
 use crate::map::{build, Limits, SkipReason};
 use crate::provenance::Provenance;
 use crate::repo::{Repo, RepoError};
+use crate::rules::capability::scan_capability;
 use crate::rules::deps::scan_dependencies;
 use crate::rules::secrets::scan_secrets;
 use crate::rules::sinks::scan_sinks;
@@ -134,10 +135,21 @@ pub fn scan_checkpoint(input: ScanInput<'_>) -> ScanResult {
     timings.insert("map".to_string(), ms(t));
 
     // Lockfiles this version cannot read are listed, not silently passed.
+    // A file whose header said generated *before* this commit is generated;
+    // a header the commit itself adds is not trusted.
+    let parent = input.repo.parent(input.sha).ok().flatten();
     for file in &mut map.files {
         if file.skip.is_none() && is_lockfile(&file.change.path) && !is_supported(&file.change.path)
         {
             file.skip = Some(SkipReason::UnsupportedLockfile);
+        }
+        if file.skip.is_none()
+            && !matches!(file.change.status, FileStatus::Added)
+            && parent
+                .as_deref()
+                .is_some_and(|p| had_generated_header(input.repo, p, &file.change))
+        {
+            file.skip = Some(SkipReason::Generated);
         }
     }
 
@@ -149,7 +161,12 @@ pub fn scan_checkpoint(input: ScanInput<'_>) -> ScanResult {
     let (mut t_secrets, mut t_sinks, mut t_deps) = (0u64, 0u64, 0u64);
 
     for file in &mut map.files {
-        if file.skip.is_some() {
+        // Dependencies are checked from the lockfile at the commit, so a
+        // lockfile too large for the line rules is still checked.
+        let deps_apply = is_supported(&file.change.path)
+            && matches!(file.skip, None | Some(SkipReason::TooLarge { .. }));
+        let lines_apply = matches!(file.skip, None | Some(SkipReason::Generated));
+        if !deps_apply && !lines_apply {
             continue;
         }
         if Instant::now() >= input.deadline {
@@ -161,9 +178,16 @@ pub fn scan_checkpoint(input: ScanInput<'_>) -> ScanResult {
         findings.extend(scan_secrets(input.sha, file, input.provenance));
         t_secrets += ms(t);
         let t = Instant::now();
-        findings.extend(scan_sinks(input.sha, file));
+        if file.skip.is_none() {
+            findings.extend(scan_sinks(input.sha, file));
+        }
+        if file.tags.contains(&Tag::Capability) {
+            if let Some(found) = scan_capability(input.sha, file, input.repo) {
+                findings.extend(found);
+            }
+        }
         t_sinks += ms(t);
-        if file.tags.contains(&Tag::Lockfile) {
+        if deps_apply {
             deps_needed = true;
             if let Some(db) = input.advisories {
                 let t = Instant::now();
@@ -250,33 +274,112 @@ pub fn scan_checkpoint(input: ScanInput<'_>) -> ScanResult {
     }
 }
 
-/// Rule findings in test code keep their level but never block: fake keys
-/// and disabled TLS are normal in tests. Test code is a test path, or in
-/// Rust, anything after the file's `#[cfg(test)]`.
+/// Rule findings in test code keep their level but do not block: fake keys
+/// and disabled TLS are normal in tests. A provider-confirmed credential is
+/// the exception, since it is a leak wherever it is committed (the secrets
+/// rule already declines to block obviously fake values). Test code is a
+/// test path, or in Rust, an item marked `#[cfg(test)]`.
 fn mark_test_code(findings: &mut [Finding], sha: &str, repo: &dyn Repo) {
-    let mut rust_test_start: HashMap<String, Option<u32>> = HashMap::new();
+    let mut rust_spans: HashMap<String, Vec<(u32, u32)>> = HashMap::new();
     for f in findings.iter_mut().filter(|f| f.source == Source::Rule) {
         let Some(at) = f.refs.first() else { continue };
         let in_test = is_test_path(&at.path)
             || (at.path.ends_with(".rs")
-                && rust_test_start
+                && rust_spans
                     .entry(at.path.clone())
-                    .or_insert_with(|| cfg_test_line(repo, sha, &at.path))
-                    .is_some_and(|start| at.start > start));
-        if in_test {
-            f.test_code = true;
+                    .or_insert_with(|| cfg_test_spans(repo, sha, &at.path))
+                    .iter()
+                    .any(|(start, end)| (*start..=*end).contains(&at.start)));
+        if !in_test {
+            continue;
+        }
+        f.test_code = true;
+        let confirmed = [
+            "secret.vendor.",
+            "secret.provider_token",
+            "secret.private_key",
+        ]
+        .iter()
+        .any(|p| f.rule_id.starts_with(p))
+            && f.rule_id != "secret.vendor.jwt";
+        if !confirmed {
             f.blocking = false;
         }
     }
 }
 
-/// The 1-based line of the first `#[cfg(test)]` in the file at `sha`.
-fn cfg_test_line(repo: &dyn Repo, sha: &str, path: &str) -> Option<u32> {
-    let bytes = repo.file_at(sha, path).ok()??;
-    String::from_utf8_lossy(&bytes)
+/// 1-based inclusive line spans of the items marked `#[cfg(test)]` in the
+/// file at `sha`: from the attribute to the brace that closes the item. An
+/// item with no body (`mod tests;`) has no span.
+fn cfg_test_spans(repo: &dyn Repo, sha: &str, path: &str) -> Vec<(u32, u32)> {
+    let Ok(Some(bytes)) = repo.file_at(sha, path) else {
+        return Vec::new();
+    };
+    let text = String::from_utf8_lossy(&bytes);
+    let lines: Vec<&str> = text.lines().collect();
+    let mut spans = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        if !lines[i].trim_start().starts_with("#[cfg(test)]") {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        let mut depth = 0i32;
+        let mut opened = false;
+        let mut end = None;
+        'scan: for (j, line) in lines.iter().enumerate().skip(i) {
+            let code = line.split("//").next().unwrap_or(line);
+            let code = if j == start {
+                code.split_once("#[cfg(test)]")
+                    .map(|(_, r)| r)
+                    .unwrap_or("")
+            } else {
+                code
+            };
+            for c in code.chars() {
+                match c {
+                    '{' => {
+                        depth += 1;
+                        opened = true;
+                    }
+                    '}' => {
+                        depth -= 1;
+                        if opened && depth == 0 {
+                            end = Some(j);
+                            break 'scan;
+                        }
+                    }
+                    ';' if !opened => break 'scan,
+                    _ => {}
+                }
+            }
+        }
+        match end {
+            Some(e) => {
+                spans.push((start as u32 + 1, e as u32 + 1));
+                i = e + 1;
+            }
+            None => i += 1,
+        }
+    }
+    spans
+}
+
+/// The file's first lines, as they were at `parent`, carry a generated
+/// marker.
+fn had_generated_header(repo: &dyn Repo, parent: &str, change: &crate::diff::FileChange) -> bool {
+    let path = match &change.status {
+        FileStatus::Renamed { from } => from.as_str(),
+        _ => change.path.as_str(),
+    };
+    let Ok(Some(bytes)) = repo.file_at(parent, path) else {
+        return false;
+    };
+    String::from_utf8_lossy(&bytes[..bytes.len().min(2048)])
         .lines()
-        .position(|l| l.trim_start().starts_with("#[cfg(test)]"))
-        .map(|i| i as u32 + 1)
+        .take(5)
+        .any(|l| l.contains("@generated") || l.contains("DO NOT EDIT"))
 }
 
 /// One finding per fingerprint: the highest level wins, blocking if any copy

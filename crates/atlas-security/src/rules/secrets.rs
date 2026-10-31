@@ -12,34 +12,122 @@ use atlas_redact::{detect_categories, redact, vendor_rule_ids, Category};
 use regex::Regex;
 
 use crate::finding::{on_line, Class, Finding, Hit, Level, Source};
-use crate::map::MappedFile;
+use crate::map::{MappedFile, SkipReason};
 use crate::provenance::Provenance;
 use crate::tags::Tag;
 
 pub fn scan_secrets(sha: &str, file: &MappedFile, prov: &Provenance) -> Vec<Finding> {
     // Lockfiles are full of integrity hashes, which look exactly like keys.
-    if file.skip.is_some() || file.tags.contains(&Tag::Lockfile) {
+    if file.tags.contains(&Tag::Lockfile) {
         return Vec::new();
     }
+    // Generated files still get the confirmed-credential checks: a header
+    // must not be able to switch off the layer that blocks. Guesses
+    // (entropy, credential names) are skipped there, since bundles and
+    // generated code are full of them.
+    let confirmed_only = match file.skip {
+        None => false,
+        Some(SkipReason::Generated) => true,
+        Some(_) => return Vec::new(),
+    };
     let mut out = Vec::new();
+    let mut in_pem = false;
     for (line_no, text) in file.change.added_lines() {
-        let Some((level, blocking, rule_id)) = grade(text, prov) else {
+        // A PEM private key spans lines: report its BEGIN line once and skip
+        // its body, which would otherwise read as entropy.
+        if in_pem {
+            if PEM_END.is_match(text) {
+                in_pem = false;
+            }
+            continue;
+        }
+        if PEM_BEGIN.is_match(text) {
+            in_pem = !PEM_END.is_match(text);
+            out.push(finding(
+                sha,
+                file,
+                line_no,
+                text,
+                (Level::Critical, true, "secret.private_key".to_string()),
+            ));
+            continue;
+        }
+        let Some(graded) = grade(text, prov) else {
             continue;
         };
-        out.push(on_line(
-            Hit {
-                class: Class::Secret,
-                level,
-                blocking,
-                source: Source::Rule,
-                rule_id: &rule_id,
-            },
-            sha,
-            &file.change.path,
-            (line_no, &redact(text).text),
-        ));
+        if confirmed_only && !graded.1 {
+            continue;
+        }
+        out.push(finding(sha, file, line_no, text, graded));
     }
     out
+}
+
+fn finding(
+    sha: &str,
+    file: &MappedFile,
+    line_no: u32,
+    text: &str,
+    (level, blocking, rule_id): (Level, bool, String),
+) -> Finding {
+    on_line(
+        Hit {
+            class: Class::Secret,
+            level,
+            blocking,
+            source: Source::Rule,
+            rule_id: &rule_id,
+        },
+        sha,
+        &file.change.path,
+        (line_no, &redact(text).text),
+    )
+}
+
+static PEM_BEGIN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"-----BEGIN ([A-Z0-9]+ )*PRIVATE KEY( BLOCK)?-----").expect("pem pattern compiles")
+});
+static PEM_END: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"-----END ([A-Z0-9]+ )*PRIVATE KEY( BLOCK)?-----").expect("pem pattern compiles")
+});
+
+/// Placeholder words and runs that real credentials do not contain. A
+/// confirmed shape with one of these is a fixture or an example, not a key.
+fn looks_fake(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    const WORDS: &[&str] = &[
+        "your_",
+        "your-",
+        "<your",
+        "example",
+        "sample",
+        "dummy",
+        "fake",
+        "placeholder",
+        "changeme",
+        "redacted",
+        "xxxx",
+        "0000",
+        "1234",
+        "abcd",
+        "_test_",
+    ];
+    WORDS.iter().any(|w| lower.contains(w))
+}
+
+/// A vendored rule that fires on a generic shape rather than a provider's
+/// own format.
+fn is_generic_vendor_rule(id: &str, text: &str) -> bool {
+    if GENERIC_VENDOR_RULES.contains(&id) || id.starts_with("curl-") || id.ends_with("-client-id") {
+        return true;
+    }
+    // A client-secret rule is keyword + hex: on a line that names a client
+    // id, it has matched the id.
+    let lower = text.to_ascii_lowercase();
+    id.ends_with("-client-secret")
+        && ["client_id", "clientid", "client-id"]
+            .iter()
+            .any(|k| lower.contains(k))
 }
 
 /// Vendored rules that fire on generic shapes (any `password = "…"`, any
@@ -60,17 +148,18 @@ fn grade(text: &str, prov: &Provenance) -> Option<(Level, bool, String)> {
         return None;
     }
     let has = |c: Category| categories.contains(&c);
+    let fake = looks_fake(text);
     if has(Category::VendorRule) {
         let ids = vendor_rule_ids(text);
-        if let Some(id) = ids.iter().find(|id| !GENERIC_VENDOR_RULES.contains(id)) {
-            return Some((Level::Critical, true, format!("secret.vendor.{id}")));
+        if let Some(id) = ids.iter().find(|id| !is_generic_vendor_rule(id, text)) {
+            return Some((Level::Critical, !fake, format!("secret.vendor.{id}")));
         }
         if ids.iter().any(|id| id.starts_with("jwt")) {
             return Some((Level::High, false, "secret.vendor.jwt".to_string()));
         }
     }
     if has(Category::ProviderToken) {
-        return Some((Level::Critical, true, "secret.provider_token".to_string()));
+        return Some((Level::Critical, !fake, "secret.provider_token".to_string()));
     }
     for c in [Category::CredentialedUri, Category::ConnectionString] {
         if has(c) {

@@ -53,11 +53,50 @@ pub fn scan_dependencies(
             }
             continue;
         }
-        for advisory in db.lookup(&change.pkg) {
+        for advisory in collapse_twins(db.lookup(&change.pkg)) {
             out.findings.push(finding(sha, file, &change, &advisory));
         }
     }
     Ok(out)
+}
+
+/// One advisory per vulnerability: GHSA and RUSTSEC publish the same issue
+/// under ids that alias each other. The kept copy is the one with a known
+/// severity (the highest, if several are known); a malicious flag on any
+/// copy carries over.
+fn collapse_twins(advisories: Vec<Advisory>) -> Vec<Advisory> {
+    let mut groups: Vec<Vec<Advisory>> = Vec::new();
+    for adv in advisories {
+        let names: Vec<&str> = std::iter::once(adv.id.as_str())
+            .chain(adv.aliases.iter().map(String::as_str))
+            .collect();
+        let found = groups.iter().position(|g| {
+            g.iter().any(|o| {
+                names.contains(&o.id.as_str())
+                    || o.aliases.iter().any(|a| names.contains(&a.as_str()))
+            })
+        });
+        match found {
+            Some(i) => groups[i].push(adv),
+            None => groups.push(vec![adv]),
+        }
+    }
+    let rank = |s: AdvSeverity| match s {
+        AdvSeverity::Critical => 4,
+        AdvSeverity::High => 3,
+        AdvSeverity::Medium => 2,
+        AdvSeverity::Low => 1,
+        AdvSeverity::Unknown => 0,
+    };
+    groups
+        .into_iter()
+        .filter_map(|g| {
+            let malicious = g.iter().any(|a| a.malicious);
+            let mut kept = g.into_iter().max_by_key(|a| rank(a.severity))?;
+            kept.malicious |= malicious;
+            Some(kept)
+        })
+        .collect()
 }
 
 fn finding(sha: &str, file: &MappedFile, change: &DepChange, adv: &Advisory) -> Finding {
