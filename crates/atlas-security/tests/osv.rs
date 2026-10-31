@@ -261,24 +261,117 @@ fn measure_real_indexes() {
         return;
     };
     let out = tempfile::tempdir().unwrap();
-    for eco in Ecosystem::ALL {
-        let zip = std::fs::read(std::path::Path::new(&dir).join(format!("{}.zip", eco.osv_name())))
-            .unwrap();
+    let mode = std::env::var("ATLAS_OSV_MODE").unwrap_or_default();
+    if mode == "open" {
+        let idx = std::env::var("ATLAS_OSV_INDEXES").unwrap();
         let t = std::time::Instant::now();
-        let index = build_index(eco, &zip).unwrap();
+        let db = AdvisoryDb::open(std::path::Path::new(&idx)).unwrap();
+        println!(
+            "open-only {:.2}s has npm {}",
+            t.elapsed().as_secs_f64(),
+            db.has(Ecosystem::Npm)
+        );
+        return;
+    }
+    for eco in Ecosystem::ALL {
+        let zip_path = std::path::Path::new(&dir).join(format!("{}.zip", eco.osv_name()));
+        let zip_len = std::fs::metadata(&zip_path).unwrap().len() as usize;
+        let t = std::time::Instant::now();
+        let index = atlas_security::deps::osv::build_index_from(
+            eco,
+            std::io::BufReader::new(std::fs::File::open(&zip_path).unwrap()),
+        )
+        .unwrap();
         let built = t.elapsed();
         write_index(out.path(), eco, &index).unwrap();
         let size = std::fs::metadata(out.path().join(format!("{}.index.json", eco.osv_name())))
             .unwrap()
             .len();
-        let t = std::time::Instant::now();
-        let db = AdvisoryDb::open(out.path()).unwrap();
-        let opened = t.elapsed();
+        if let Ok(keep) = std::env::var("ATLAS_OSV_INDEXES") {
+            std::fs::copy(
+                out.path().join(format!("{}.index.json", eco.osv_name())),
+                std::path::Path::new(&keep).join(format!("{}.index.json", eco.osv_name())),
+            )
+            .unwrap();
+        }
         let advisories: usize = index.values().map(Vec::len).sum();
         println!(
-            "{:<10} zip {:>6.1} MB  packages {:>7}  entries {:>7}  index {:>6.1} MB  build {:>5.1}s  open-all {:>5.2}s",
-            eco.osv_name(), zip.len() as f64 / 1e6, index.len(), advisories, size as f64 / 1e6, built.as_secs_f64(), opened.as_secs_f64()
+            "{:<10} zip {:>6.1} MB  packages {:>7}  entries {:>7}  index {:>6.1} MB  build {:>5.1}s",
+            eco.osv_name(), zip_len as f64 / 1e6, index.len(), advisories, size as f64 / 1e6, built.as_secs_f64()
         );
-        drop(db);
     }
+}
+
+/// Downloads OSV's real exports through `refresh` (streamed to disk) and
+/// opens the result. Not run by default: it fetches about 260 MB.
+#[test]
+#[ignore]
+fn refresh_real_network() {
+    let dir = tempfile::tempdir().unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let client = reqwest::Client::new();
+    let t = std::time::Instant::now();
+    let outcome = rt.block_on(atlas_security::deps::osv::refresh(
+        dir.path(),
+        &client,
+        std::time::Duration::ZERO,
+    ));
+    println!(
+        "refresh took {:.1}s: {outcome:?}",
+        t.elapsed().as_secs_f64()
+    );
+    assert!(outcome.failed.is_empty(), "{outcome:?}");
+    assert_eq!(outcome.refreshed.len(), 3);
+    let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|e| e.file_name())
+        .filter(|n| n.to_string_lossy().ends_with(".part"))
+        .collect();
+    assert!(leftovers.is_empty(), "{leftovers:?}");
+    let db = AdvisoryDb::open(dir.path()).unwrap();
+    // A long-fixed lodash advisory (CVE-2021-23337) affects 4.17.20.
+    let hits = db.lookup(&npm("lodash", "4.17.20"));
+    assert!(
+        hits.iter()
+            .any(|a| a.aliases.iter().any(|x| x == "CVE-2021-23337")),
+        "{hits:?}"
+    );
+    assert!(db
+        .lookup(&npm("lodash", "4.17.21"))
+        .iter()
+        .all(|a| !a.aliases.iter().any(|x| x == "CVE-2021-23337")));
+    // And a refresh within max_age downloads nothing.
+    let again = rt.block_on(atlas_security::deps::osv::refresh(
+        dir.path(),
+        &client,
+        std::time::Duration::from_secs(3600),
+    ));
+    assert_eq!(again.fresh.len(), 3);
+}
+
+#[test]
+fn open_only_loads_just_the_named_ecosystems() {
+    let dir = tempfile::tempdir().unwrap();
+    for eco in [Ecosystem::Npm, Ecosystem::CratesIo] {
+        let index = build_index(eco, &zip_of(&[("a.json", lodash_advisory())])).unwrap();
+        write_index(dir.path(), eco, &index).unwrap();
+    }
+    let db = AdvisoryDb::open_only(dir.path(), &[Ecosystem::CratesIo]).unwrap();
+    assert!(db.has(Ecosystem::CratesIo));
+    assert!(!db.has(Ecosystem::Npm));
+}
+
+#[test]
+fn lockfile_names_map_to_their_ecosystem() {
+    use atlas_security::deps::lockfiles::ecosystem_of;
+    assert_eq!(ecosystem_of("Cargo.lock"), Some(Ecosystem::CratesIo));
+    assert_eq!(ecosystem_of("web/package-lock.json"), Some(Ecosystem::Npm));
+    assert_eq!(ecosystem_of("bun.lock"), Some(Ecosystem::Npm));
+    assert_eq!(ecosystem_of("uv.lock"), Some(Ecosystem::PyPI));
+    assert_eq!(ecosystem_of("requirements-dev.txt"), Some(Ecosystem::PyPI));
+    assert_eq!(ecosystem_of("pnpm-lock.yaml"), None);
 }

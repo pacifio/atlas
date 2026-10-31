@@ -54,6 +54,18 @@ pub fn is_supported(path: &str) -> bool {
     ) || (name.starts_with("requirements") && name.ends_with(".txt"))
 }
 
+/// The ecosystem a supported lockfile resolves packages from.
+pub fn ecosystem_of(path: &str) -> Option<Ecosystem> {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    match name {
+        "Cargo.lock" => Some(Ecosystem::CratesIo),
+        "package-lock.json" | "bun.lock" => Some(Ecosystem::Npm),
+        "uv.lock" | "poetry.lock" => Some(Ecosystem::PyPI),
+        n if n.starts_with("requirements") && n.ends_with(".txt") => Some(Ecosystem::PyPI),
+        _ => None,
+    }
+}
+
 /// The packages in a lockfile, or `None` for a format this version does not
 /// read or a file that does not parse.
 pub fn parse_lockfile(path: &str, bytes: &[u8]) -> Option<Vec<Pkg>> {

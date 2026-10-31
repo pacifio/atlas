@@ -36,7 +36,6 @@ pub struct Advisory {
     pub severity: AdvSeverity,
     /// OSV's `MAL-` entries: a package published to do harm.
     pub malicious: bool,
-    pub summary: String,
 }
 
 #[derive(Debug)]
@@ -83,8 +82,6 @@ pub struct IndexedAdvisory {
     severity: AdvSeverity,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     malicious: bool,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    summary: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     versions: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -119,131 +116,134 @@ pub fn build_index_from<R: Read + std::io::Seek>(
 ) -> Result<Index, OsvError> {
     let mut archive = zip::ZipArchive::new(reader).map_err(|e| OsvError::Zip(e.to_string()))?;
     let mut index: Index = HashMap::new();
-    let mut buf = String::new();
+    let mut buf = Vec::new();
     for i in 0..archive.len() {
         let Ok(mut file) = archive.by_index(i) else {
             continue;
         };
         buf.clear();
-        if file.read_to_string(&mut buf).is_err() {
+        if file.read_to_end(&mut buf).is_err() {
             continue;
         }
-        let Ok(doc) = serde_json::from_str::<serde_json::Value>(&buf) else {
+        // Typed, so the large fields (details, references, credits) are
+        // skipped by the parser instead of built and thrown away.
+        let Ok(doc) = serde_json::from_slice::<OsvRecord>(&buf) else {
             continue;
         };
-        add_advisory(&mut index, eco, &doc);
+        add_advisory(&mut index, eco, doc);
     }
     Ok(index)
 }
 
-fn add_advisory(index: &mut Index, eco: Ecosystem, doc: &serde_json::Value) {
-    if doc.get("withdrawn").is_some() {
+/// The fields of an OSV record that matching needs.
+#[derive(Deserialize)]
+struct OsvRecord {
+    id: String,
+    #[serde(default)]
+    withdrawn: Option<serde::de::IgnoredAny>,
+    #[serde(default)]
+    aliases: Vec<String>,
+    #[serde(default)]
+    affected: Vec<OsvAffected>,
+    #[serde(default)]
+    database_specific: Option<OsvSeverity>,
+}
+
+#[derive(Deserialize)]
+struct OsvAffected {
+    package: Option<OsvPackage>,
+    #[serde(default)]
+    versions: Vec<String>,
+    #[serde(default)]
+    ranges: Vec<OsvRange>,
+    #[serde(default)]
+    database_specific: Option<OsvSeverity>,
+}
+
+#[derive(Deserialize)]
+struct OsvPackage {
+    ecosystem: String,
+    name: String,
+}
+
+#[derive(Deserialize)]
+struct OsvRange {
+    #[serde(rename = "type")]
+    kind: String,
+    #[serde(default)]
+    events: Vec<OsvEvent>,
+}
+
+#[derive(Deserialize)]
+struct OsvEvent {
+    introduced: Option<String>,
+    fixed: Option<String>,
+    last_affected: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct OsvSeverity {
+    severity: Option<String>,
+}
+
+fn add_advisory(index: &mut Index, eco: Ecosystem, doc: OsvRecord) {
+    if doc.withdrawn.is_some() {
         return;
     }
-    let Some(id) = doc.get("id").and_then(|v| v.as_str()) else {
-        return;
-    };
-    let strings = |key: &str| -> Vec<String> {
-        doc.get(key)
-            .and_then(|v| v.as_array())
-            .map(|a| {
-                a.iter()
-                    .filter_map(|s| s.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default()
-    };
-    let top_severity = doc
-        .get("database_specific")
-        .and_then(|d| d.get("severity"))
-        .and_then(|s| s.as_str());
-    let summary = doc
-        .get("summary")
-        .and_then(|s| s.as_str())
-        .unwrap_or_default()
-        .to_string();
-    let Some(affected) = doc.get("affected").and_then(|a| a.as_array()) else {
-        return;
-    };
-    for entry in affected {
-        let package = entry.get("package");
-        let entry_eco = package
-            .and_then(|p| p.get("ecosystem"))
-            .and_then(|e| e.as_str());
+    let malicious = doc.id.starts_with("MAL-");
+    let top_severity = doc.database_specific.and_then(|d| d.severity);
+    for entry in doc.affected {
         // `PyPI` exactly; OSV also has qualified forms like `Debian:12`.
-        if entry_eco != Some(eco.osv_name()) {
-            continue;
-        }
-        let Some(name) = package.and_then(|p| p.get("name")).and_then(|n| n.as_str()) else {
+        let Some(package) = entry.package.filter(|p| p.ecosystem == eco.osv_name()) else {
             continue;
         };
-        let severity_str = entry
-            .get("database_specific")
-            .and_then(|d| d.get("severity"))
-            .and_then(|s| s.as_str())
-            .or(top_severity);
-        let versions = entry
-            .get("versions")
-            .and_then(|v| v.as_array())
-            .map(|a| {
-                a.iter()
-                    .filter_map(|s| s.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let ranges = entry
-            .get("ranges")
-            .and_then(|r| r.as_array())
-            .map(|ranges| {
-                ranges
-                    .iter()
-                    .filter(|r| {
-                        matches!(
-                            r.get("type").and_then(|t| t.as_str()),
-                            Some("SEMVER" | "ECOSYSTEM")
-                        )
-                    })
-                    .map(|r| parse_events(r.get("events")))
-                    .filter(|events: &Vec<Event>| !events.is_empty())
-                    .collect()
-            })
-            .unwrap_or_default();
+        let severity = entry
+            .database_specific
+            .and_then(|d| d.severity)
+            .or_else(|| top_severity.clone());
+        let ranges: Vec<Vec<Event>> = entry
+            .ranges
+            .into_iter()
+            .filter(|r| matches!(r.kind.as_str(), "SEMVER" | "ECOSYSTEM"))
+            .map(|r| r.events.into_iter().filter_map(event).collect::<Vec<_>>())
+            .filter(|events| !events.is_empty())
+            .collect();
         index
-            .entry(index_key(eco, name))
+            .entry(index_key(eco, &package.name))
             .or_default()
             .push(IndexedAdvisory {
-                id: id.to_string(),
-                aliases: strings("aliases"),
-                severity: parse_severity(severity_str),
-                malicious: id.starts_with("MAL-"),
-                summary: summary.clone(),
-                versions,
+                id: doc.id.clone(),
+                // A malicious package needs no cross-references.
+                aliases: if malicious {
+                    Vec::new()
+                } else {
+                    doc.aliases.clone()
+                },
+                severity: parse_severity(severity.as_deref()),
+                malicious,
+                versions: entry.versions,
                 ranges,
             });
     }
 }
 
-fn parse_events(events: Option<&serde_json::Value>) -> Vec<Event> {
-    let Some(list) = events.and_then(|e| e.as_array()) else {
-        return Vec::new();
-    };
-    list.iter()
-        .filter_map(|e| {
-            let (kind, key) = if e.get("introduced").is_some() {
-                (EventKind::Introduced, "introduced")
-            } else if e.get("fixed").is_some() {
-                (EventKind::Fixed, "fixed")
-            } else if e.get("last_affected").is_some() {
-                (EventKind::LastAffected, "last_affected")
-            } else {
-                return None;
-            };
-            Some(Event {
-                kind,
-                version: e.get(key)?.as_str()?.to_string(),
-            })
+fn event(e: OsvEvent) -> Option<Event> {
+    if let Some(v) = e.introduced {
+        Some(Event {
+            kind: EventKind::Introduced,
+            version: v,
         })
-        .collect()
+    } else if let Some(v) = e.fixed {
+        Some(Event {
+            kind: EventKind::Fixed,
+            version: v,
+        })
+    } else {
+        e.last_affected.map(|v| Event {
+            kind: EventKind::LastAffected,
+            version: v,
+        })
+    }
 }
 
 fn parse_severity(raw: Option<&str>) -> AdvSeverity {
@@ -261,8 +261,11 @@ pub fn write_index(dir: &Path, eco: Ecosystem, index: &Index) -> Result<(), OsvE
     std::fs::create_dir_all(dir).map_err(|e| OsvError::Io(e.to_string()))?;
     let path = index_file(dir, eco);
     let tmp = path.with_extension("json.tmp");
-    let bytes = serde_json::to_vec(index).map_err(|e| OsvError::Parse(e.to_string()))?;
-    std::fs::write(&tmp, bytes).map_err(|e| OsvError::Io(e.to_string()))?;
+    let file = std::fs::File::create(&tmp).map_err(|e| OsvError::Io(e.to_string()))?;
+    let mut writer = std::io::BufWriter::new(file);
+    serde_json::to_writer(&mut writer, index).map_err(|e| OsvError::Parse(e.to_string()))?;
+    std::io::Write::flush(&mut writer).map_err(|e| OsvError::Io(e.to_string()))?;
+    drop(writer);
     std::fs::rename(&tmp, &path).map_err(|e| OsvError::Io(e.to_string()))
 }
 
@@ -276,8 +279,15 @@ impl AdvisoryDb {
     /// Load every index present under `dir`. A missing directory is an empty
     /// database; an index that does not parse is an error.
     pub fn open(dir: &Path) -> Result<Self, OsvError> {
+        Self::open_only(dir, &Ecosystem::ALL)
+    }
+
+    /// [`open`](Self::open) for just these ecosystems. The npm index alone
+    /// holds over 300 MB once parsed, so a scan loads only what its
+    /// lockfiles need.
+    pub fn open_only(dir: &Path, ecosystems: &[Ecosystem]) -> Result<Self, OsvError> {
         let mut indexes = HashMap::new();
-        for eco in Ecosystem::ALL {
+        for &eco in ecosystems {
             let path = index_file(dir, eco);
             let bytes = match std::fs::read(&path) {
                 Ok(b) => b,
@@ -312,7 +322,6 @@ impl AdvisoryDb {
                 aliases: a.aliases.clone(),
                 severity: a.severity,
                 malicious: a.malicious,
-                summary: a.summary.clone(),
             })
             .collect()
     }
@@ -379,18 +388,20 @@ pub struct RefreshOutcome {
 /// Download and index each ecosystem whose index is missing or older than
 /// `max_age`. A failure for one ecosystem leaves its previous index in place.
 ///
-/// Measured 2026-10-31 (release build, Apple M-series):
+/// Measured 2026-10-31 (release build, Apple M-series, the test binary alone):
 ///
 /// | ecosystem | zip | packages | index on disk | build |
 /// |---|---|---|---|---|
-/// | crates.io | 3.8 MB | 1,681 | 1.0 MB | 0.1 s |
-/// | npm | 219.7 MB | 225,919 | 47.2 MB | 1.5 s |
-/// | PyPI | 37.6 MB | 13,583 | 20.7 MB | 0.3 s |
+/// | crates.io | 3.8 MB | 1,681 | 0.7 MB | 0.1 s |
+/// | npm | 219.7 MB | 225,919 | 32.4 MB | 1.6 s |
+/// | PyPI | 37.6 MB | 13,583 | 18.9 MB | 0.3 s |
 ///
-/// Holding the npm zip in memory while indexing peaked near 1 GB, so the
-/// download streams to a temporary file beside the index and is indexed
-/// from disk, then deleted. Callers should open [`AdvisoryDb`] only for a
-/// scan that changes a lockfile, and drop it afterwards.
+/// Building all three peaks at about 340 MB resident; opening all three, at
+/// about 330 MB, nearly all of it npm. So the download streams to a
+/// temporary file beside the index and is indexed from disk, then deleted;
+/// records are parsed into typed structs that skip OSV's large text fields;
+/// and callers open only the ecosystems a scan needs
+/// ([`AdvisoryDb::open_only`]) and drop the database afterwards.
 pub async fn refresh(dir: &Path, client: &reqwest::Client, max_age: Duration) -> RefreshOutcome {
     let mut outcome = RefreshOutcome::default();
     for eco in Ecosystem::ALL {

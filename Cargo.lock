@@ -695,6 +695,7 @@ dependencies = [
  "atlas-process",
  "atlas-profile",
  "atlas-search",
+ "atlas-security",
  "atlas-terminal",
  "atlas-theme",
  "atlas-thread-metadata",
@@ -3412,6 +3413,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "tempfile",
+ "tokio",
  "toml 0.9.12+spec-1.1.0",
  "zip 9.1.3",
 ]
