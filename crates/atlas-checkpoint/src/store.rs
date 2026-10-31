@@ -2198,6 +2198,138 @@ impl Store {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    pub fn checkpoint(&self, id: &str) -> Result<Option<Checkpoint>> {
+        Ok(self
+            .conn
+            .query_row(
+                &format!("SELECT {CHECKPOINT_COLUMNS} FROM checkpoint WHERE id = ?1"),
+                [id],
+                row_to_checkpoint,
+            )
+            .optional()?)
+    }
+
+    /// Checkpoints the security scanner still owes a result for, oldest first.
+    ///
+    /// Linked Checkpoints created at or after `since` with no finished
+    /// (`done` or `partial`) row for `scanner_version`, and fewer than
+    /// [`SCAN_MAX_ATTEMPTS`] failed attempts — so a commit that can no longer
+    /// be read is tried a bounded number of times and then left alone.
+    pub fn scan_backlog(
+        &self,
+        scanner_version: &str,
+        since: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<Vec<Checkpoint>> {
+        let columns = CHECKPOINT_COLUMNS
+            .split(", ")
+            .map(|c| format!("c.{}", c.trim()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {columns} FROM checkpoint c
+              LEFT JOIN checkpoint_scan s
+                ON s.checkpoint_id = c.id AND s.scanner_version = ?1
+              WHERE c.link_state = 'linked'
+                AND c.created_at >= ?2
+                AND (s.checkpoint_id IS NULL
+                     OR (s.status = 'failed' AND s.attempts < ?3))
+              ORDER BY c.created_at
+              LIMIT ?4"
+        ))?;
+        let rows = stmt.query_map(
+            rusqlite::params![
+                scanner_version,
+                since.to_rfc3339(),
+                SCAN_MAX_ATTEMPTS,
+                limit
+            ],
+            row_to_checkpoint,
+        )?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Store a scan result. A second write for the same Checkpoint and
+    /// scanner version replaces the first and counts one more attempt.
+    pub fn put_scan(&self, row: &ScanRow) -> Result<()> {
+        self.require_writer()?;
+        self.conn.execute(
+            "INSERT INTO checkpoint_scan
+                (checkpoint_id, scanner_version, status, level, blocking,
+                 result_json, attempts, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7)
+             ON CONFLICT (checkpoint_id, scanner_version) DO UPDATE SET
+                status = excluded.status,
+                level = excluded.level,
+                blocking = excluded.blocking,
+                result_json = excluded.result_json,
+                created_at = excluded.created_at,
+                attempts = checkpoint_scan.attempts + 1",
+            rusqlite::params![
+                row.checkpoint_id,
+                row.scanner_version,
+                row.status,
+                row.level,
+                row.blocking,
+                row.result_json,
+                row.created_at.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn scan_for(&self, checkpoint_id: &str, scanner_version: &str) -> Result<Option<ScanRow>> {
+        Ok(self
+            .conn
+            .query_row(
+                &format!(
+                    "SELECT {SCAN_COLUMNS} FROM checkpoint_scan
+                      WHERE checkpoint_id = ?1 AND scanner_version = ?2"
+                ),
+                rusqlite::params![checkpoint_id, scanner_version],
+                row_to_scan,
+            )
+            .optional()?)
+    }
+
+    /// Every stored scan of the Project's Checkpoints, with its Checkpoint.
+    pub fn scans_for_project(&self, workspace_id: &str) -> Result<Vec<(Checkpoint, ScanRow)>> {
+        let mut out = Vec::new();
+        for session in self.sessions_for_project(workspace_id)? {
+            for checkpoint in self.checkpoints_for_session(&session.id)? {
+                let mut stmt = self.conn.prepare(&format!(
+                    "SELECT {SCAN_COLUMNS} FROM checkpoint_scan WHERE checkpoint_id = ?1"
+                ))?;
+                let rows = stmt.query_map([&checkpoint.id], row_to_scan)?;
+                for row in rows {
+                    out.push((checkpoint.clone(), row?));
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    pub fn scan_state(&self, key: &str) -> Result<Option<String>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT value FROM security_scan_state WHERE key = ?1",
+                [key],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
+    pub fn set_scan_state(&self, key: &str, value: &str) -> Result<()> {
+        self.require_writer()?;
+        self.conn.execute(
+            "INSERT INTO security_scan_state (key, value) VALUES (?1, ?2)
+             ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            rusqlite::params![key, value],
+        )?;
+        Ok(())
+    }
+
     pub fn checkpoints_for_commit(&self, commit_sha: &str) -> Result<Vec<Checkpoint>> {
         let mut stmt = self.conn.prepare(&format!(
             "SELECT {CHECKPOINT_COLUMNS} FROM checkpoint WHERE commit_sha = ?1"
@@ -2930,6 +3062,26 @@ fn row_to_checkpoint(row: &rusqlite::Row<'_>) -> rusqlite::Result<Checkpoint> {
         attribution: attribution.and_then(|a| serde_json::from_str(&a).ok()),
         created_at: parse_time(row.get::<_, String>(12)?),
         sync_state: SyncState::parse(&sync_state).unwrap_or(SyncState::Local),
+    })
+}
+
+/// How many failed scans of one Checkpoint the backlog allows before it
+/// stops offering that Checkpoint.
+pub const SCAN_MAX_ATTEMPTS: i64 = 3;
+
+const SCAN_COLUMNS: &str = "checkpoint_id, scanner_version, status, level, blocking, \
+     result_json, attempts, created_at";
+
+fn row_to_scan(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScanRow> {
+    Ok(ScanRow {
+        checkpoint_id: row.get(0)?,
+        scanner_version: row.get(1)?,
+        status: row.get(2)?,
+        level: row.get(3)?,
+        blocking: row.get(4)?,
+        result_json: row.get(5)?,
+        attempts: row.get(6)?,
+        created_at: parse_time(row.get::<_, String>(7)?),
     })
 }
 
