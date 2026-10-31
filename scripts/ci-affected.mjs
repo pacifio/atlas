@@ -148,6 +148,7 @@ export const NON_RUST = [
   ".github/SECURITY.md",
   ".github/CODE_OF_CONDUCT.md",
   ".github/dependabot.yml",
+  ".coderabbit.yaml",
   ".github/workflows/release-linux.yml",
   "*.md",
   "LICENSE",
