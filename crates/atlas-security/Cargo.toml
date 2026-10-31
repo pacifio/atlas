@@ -22,6 +22,7 @@ atlas-process = { path = "../atlas-process" }
 # The harness binary only: where a Project keeps its `.atlas/` (dev profile aware).
 atlas-profile = { path = "../atlas-profile", optional = true }
 atlas-redact = { path = "../atlas-redact" }
+chrono = { version = "0.4", features = ["serde"] }
 regex = "1"
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 semver = "1"

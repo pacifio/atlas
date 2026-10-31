@@ -3408,6 +3408,7 @@ dependencies = [
  "atlas-process",
  "atlas-profile",
  "atlas-redact",
+ "chrono",
  "regex",
  "reqwest 0.13.5",
  "semver",

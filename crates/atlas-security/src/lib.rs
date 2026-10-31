@@ -17,3 +17,4 @@ pub mod repo;
 pub mod rules;
 pub mod scan;
 pub mod tags;
+pub mod view;
