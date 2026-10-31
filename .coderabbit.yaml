@@ -126,15 +126,18 @@ reviews:
 
     - path: "crates/**"
       instructions: |
-        Each crate is a standalone package with its own Cargo.lock, not a
-        workspace member. A new dependency needs discussion before it lands
-        (CONTRIBUTING.md); flag heavy ones and ones that duplicate something
-        a crate already depends on.
+        Crates are members of the root cargo workspace and share its
+        Cargo.lock and profiles; a member must not declare its own
+        `[profile.*]` or `[patch]` tables (tests/cargo-workspace.test.ts).
+        The one exception is `crates/atlas-kb-server`, which is excluded from
+        the workspace and keeps its own Cargo.lock. A new heavy dependency
+        needs discussion before it lands (CONTRIBUTING.md); flag heavy ones
+        and ones that duplicate something a crate already depends on.
 
     - path: "vendor/atlas-engine/**"
       instructions: |
-        A hard fork of an Apache-2.0 upstream that Atlas maintains
-        (ADR-0003, ADR-0011). Apache-2.0 §4(b): every source file Atlas
+        Atlas's own port of an Apache-2.0 upstream, maintained as first-party
+        code (ADR-0003, ADR-0011). Apache-2.0 §4(b): every source file Atlas
         modifies must carry the "Modified by Atlas" notice on its first line,
         or be listed in vendor/atlas-engine/ATLAS-CHANGES.md if it cannot
         carry one. Flag a modified file that has neither. Review only the
