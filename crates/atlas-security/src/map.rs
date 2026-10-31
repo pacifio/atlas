@@ -5,12 +5,15 @@
 //! are not scanned stay in the map with their reason, so nothing a commit
 //! changed silently disappears from the report.
 
+use serde::{Deserialize, Serialize};
+
 use crate::diff::{FileChange, FileStatus};
 use crate::tags::{
     adds_install_script, file_name, hunk_tags, is_floor, language_of, path_tags, Language, Tag,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SkipReason {
     Binary,
     TooLarge { added_lines: usize },

@@ -45,6 +45,15 @@ pub struct DepChange {
     pub old_version: Option<String>,
 }
 
+/// Whether this version reads the lockfile at `path` at all.
+pub fn is_supported(path: &str) -> bool {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    matches!(
+        name,
+        "Cargo.lock" | "package-lock.json" | "bun.lock" | "uv.lock" | "poetry.lock"
+    ) || (name.starts_with("requirements") && name.ends_with(".txt"))
+}
+
 /// The packages in a lockfile, or `None` for a format this version does not
 /// read or a file that does not parse.
 pub fn parse_lockfile(path: &str, bytes: &[u8]) -> Option<Vec<Pkg>> {

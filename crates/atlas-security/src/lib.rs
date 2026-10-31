@@ -13,4 +13,5 @@ pub mod map;
 pub mod provenance;
 pub mod repo;
 pub mod rules;
+pub mod scan;
 pub mod tags;
