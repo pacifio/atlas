@@ -28,6 +28,22 @@ export interface ProviderDef {
 }
 
 export const PROVIDERS: ProviderDef[] = [
+  {
+    id: "minimax",
+    name: "MiniMax",
+    env: "MINIMAX_API_KEY",
+    category: "Frontier",
+    docsUrl: "https://platform.minimax.io/docs",
+    chat: true,
+  },
+  {
+    id: "minimax-cn",
+    name: "MiniMax (CN)",
+    env: "MINIMAX_CN_API_KEY",
+    category: "Frontier",
+    docsUrl: "https://platform.minimaxi.com/docs",
+    chat: true,
+  },
   // ── Frontier labs ────────────────────────────────────────────────
   {
     id: "openai",
