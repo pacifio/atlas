@@ -116,8 +116,8 @@ describe("user_message", () => {
 describe("queue_changed", () => {
   it("mirrors Rust's queue, keeping items the window still holds locally after it", () => {
     const { actions } = useChatStore.getState();
-    actions.enqueueMessage(TAB, "typed before the bind"); // local
-    actions.enqueueMessage(TAB, "on its way", "pending:1");
+    actions.enqueueMessage(TAB, "typed before the bind", []); // local
+    actions.enqueueMessage(TAB, "on its way", [], "pending:1");
 
     apply({
       kind: "queue_changed",
@@ -134,7 +134,7 @@ describe("queue_changed", () => {
   });
 
   it("an empty queue clears the strip", () => {
-    useChatStore.getState().actions.enqueueMessage(TAB, "x", "q-9");
+    useChatStore.getState().actions.enqueueMessage(TAB, "x", [], "q-9");
     apply({ kind: "queue_changed", ...route, queue: [] });
     expect(useChatStore.getState().queues[TAB]).toBeUndefined();
     expect(useChatStore.getState().queueIds[TAB]).toBeUndefined();

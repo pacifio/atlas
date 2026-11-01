@@ -88,7 +88,6 @@ const THREADS: ThreadRow[] = [
     // Another process is writing this one: the live dot, and the composer's
     // "Send anyway" hold when it is opened.
     liveElsewhere: true,
-<<<<<<< Updated upstream
     // A sibling project attached read-only: the composer chip's access toggle
     // and the row's attached-projects data both have something to show.
     attachedProjects: [
@@ -111,9 +110,7 @@ const THREADS: ThreadRow[] = [
       fixtureLink(398, "manual", ago(30 * 60_000)),
     ],
     forkedFromSessionId: null,
-=======
     heldWorking: false,
->>>>>>> Stashed changes
     // One of the fake repo's own branches (`fixtures/git.ts`).
     branch: "feature/auth-v2",
   },
@@ -129,14 +126,11 @@ const THREADS: ThreadRow[] = [
     projectName: MOCK_PROJECT.name,
     folderPaths: [MOCK_PROJECT.path],
     liveElsewhere: false,
-<<<<<<< Updated upstream
     attachedProjects: [],
     model: null,
     pullRequests: [],
     forkedFromSessionId: null,
-=======
     heldWorking: false,
->>>>>>> Stashed changes
     branch: "main",
   },
   {
@@ -151,14 +145,11 @@ const THREADS: ThreadRow[] = [
     projectName: MOCK_PROJECT.name,
     folderPaths: [MOCK_PROJECT.path, abs("src/styles")],
     liveElsewhere: false,
-<<<<<<< Updated upstream
     attachedProjects: [],
     model: null,
     pullRequests: [],
     forkedFromSessionId: null,
-=======
     heldWorking: false,
->>>>>>> Stashed changes
     branch: "main",
   },
   {
@@ -175,14 +166,11 @@ const THREADS: ThreadRow[] = [
     projectName: OTHER_PROJECTS[0].name,
     folderPaths: [OTHER_PROJECTS[0].path],
     liveElsewhere: false,
-<<<<<<< Updated upstream
     attachedProjects: [],
     model: null,
     pullRequests: [],
     forkedFromSessionId: null,
-=======
     heldWorking: false,
->>>>>>> Stashed changes
     branch: "main",
   },
   {
@@ -199,14 +187,11 @@ const THREADS: ThreadRow[] = [
     projectName: MOCK_PROJECT.name,
     folderPaths: [MOCK_PROJECT.path],
     liveElsewhere: false,
-<<<<<<< Updated upstream
     attachedProjects: [],
     model: null,
     pullRequests: [],
     forkedFromSessionId: null,
-=======
     heldWorking: false,
->>>>>>> Stashed changes
     // Detached HEAD when it ran, so Atlas never learned a branch.
     branch: null,
   },
@@ -221,14 +206,11 @@ const THREADS: ThreadRow[] = [
     projectName: MOCK_PROJECT.name,
     folderPaths: [MOCK_PROJECT.path],
     liveElsewhere: false,
-<<<<<<< Updated upstream
     attachedProjects: [],
     model: null,
     pullRequests: [],
     forkedFromSessionId: null,
-=======
     heldWorking: false,
->>>>>>> Stashed changes
     // A branch nobody would size a column for. The card trims it rather than
     // pushing the agent's mark off its own edge — the only row here that
     // exercises that, and the reason it is this long.
@@ -248,14 +230,11 @@ const THREADS: ThreadRow[] = [
     projectName: MOCK_PROJECT.name,
     folderPaths: [MOCK_PROJECT.path],
     liveElsewhere: false,
-<<<<<<< Updated upstream
     attachedProjects: [],
     model: null,
     pullRequests: [],
     forkedFromSessionId: null,
-=======
     heldWorking: false,
->>>>>>> Stashed changes
     branch: "feature/auth-v2",
   },
   {
@@ -272,14 +251,11 @@ const THREADS: ThreadRow[] = [
     projectName: MOCK_PROJECT.name,
     folderPaths: [MOCK_PROJECT.path],
     liveElsewhere: false,
-<<<<<<< Updated upstream
     attachedProjects: [],
     model: null,
     pullRequests: [],
     forkedFromSessionId: null,
-=======
     heldWorking: false,
->>>>>>> Stashed changes
     branch: null,
   },
   {
@@ -295,14 +271,11 @@ const THREADS: ThreadRow[] = [
     projectName: MOCK_PROJECT.name,
     folderPaths: [MOCK_PROJECT.path],
     liveElsewhere: false,
-<<<<<<< Updated upstream
     attachedProjects: [],
     model: null,
     pullRequests: [],
     forkedFromSessionId: null,
-=======
     heldWorking: false,
->>>>>>> Stashed changes
     branch: "main",
   },
   {
@@ -319,14 +292,11 @@ const THREADS: ThreadRow[] = [
     projectName: MOCK_PROJECT.name,
     folderPaths: [MOCK_PROJECT.path],
     liveElsewhere: false,
-<<<<<<< Updated upstream
     attachedProjects: [],
     model: null,
     pullRequests: [],
     forkedFromSessionId: null,
-=======
     heldWorking: false,
->>>>>>> Stashed changes
     branch: "fix/checkpoint-blobs",
   },
   {
@@ -342,14 +312,11 @@ const THREADS: ThreadRow[] = [
     projectName: MOCK_PROJECT.name,
     folderPaths: [MOCK_PROJECT.path],
     liveElsewhere: false,
-<<<<<<< Updated upstream
     attachedProjects: [],
     model: null,
     pullRequests: [],
     forkedFromSessionId: null,
-=======
     heldWorking: false,
->>>>>>> Stashed changes
     branch: "main",
   },
 ];

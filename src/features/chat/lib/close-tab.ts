@@ -26,13 +26,8 @@ import {
  *
  * So: a busy chat asks first (same dialog as project close) and is cancelled
  * on confirm; either way the store session + backend actor are dropped WITH the
-<<<<<<< Updated upstream
- * tab. A file tab with unsaved edits asks Save / Don't save / Cancel, and the
- * last tab on a file drops its buffer. Other tabs close exactly as before.
-=======
  * tab — unless the session is held, in which case Rust keeps it running and
  * only the tab goes. Non-chat tabs close exactly as before.
->>>>>>> Stashed changes
  */
 export function requestCloseTab(tabId: string): void {
   const layout = useLayoutStore.getState();

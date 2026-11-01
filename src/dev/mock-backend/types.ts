@@ -12,11 +12,8 @@ import type { IntegrationsResponses } from "./fixtures/integrations";
 import type { KnowledgeResponses } from "./fixtures/knowledge";
 import type { LogResponses } from "./fixtures/log";
 import type { MemoryResponses } from "./fixtures/memory";
-<<<<<<< Updated upstream
 import type { PullRequestsResponses } from "./fixtures/pull-requests";
-=======
 import type { RcResponses } from "./fixtures/rc";
->>>>>>> Stashed changes
 import type { SettingsResponses } from "./fixtures/settings";
 import type { SkillsResponses } from "./fixtures/skills";
 import type { SpacesResponses } from "./fixtures/spaces";
@@ -74,11 +71,8 @@ export interface MockResponses
     KnowledgeResponses,
     LogResponses,
     MemoryResponses,
-<<<<<<< Updated upstream
     PullRequestsResponses,
-=======
     RcResponses,
->>>>>>> Stashed changes
     SettingsResponses,
     SkillsResponses,
     SpacesResponses,

@@ -24,12 +24,9 @@ import { knowledgeHandlers } from "../fixtures/knowledge";
 import { logHandlers } from "../fixtures/log";
 import { memoryHandlers } from "../fixtures/memory";
 import { miscHandlers } from "../fixtures/misc";
-<<<<<<< Updated upstream
 import { projectSourcesHandlers } from "../fixtures/project-sources";
 import { pullRequestsHandlers } from "../fixtures/pull-requests";
-=======
 import { rcHandlers } from "../fixtures/rc";
->>>>>>> Stashed changes
 import { settingsHandlers } from "../fixtures/settings";
 import { skillsHandlers } from "../fixtures/skills";
 import { spacesHandlers } from "../fixtures/spaces";
@@ -67,11 +64,8 @@ export const baseFixtureMaps: Readonly<Record<string, MockHandlers>> = {
   "fixtures/comms": commsHandlers,
   "fixtures/integrations": integrationsHandlers,
   "fixtures/memory": memoryHandlers,
-<<<<<<< Updated upstream
   "fixtures/pull-requests": pullRequestsHandlers,
-=======
   "fixtures/rc": rcHandlers,
->>>>>>> Stashed changes
   "fixtures/skills": skillsHandlers,
   "fixtures/spaces": spacesHandlers,
   "fixtures/terminal": terminalHandlers,
@@ -194,12 +188,9 @@ export const baseHandlers: MockHandlers = {
   ...commsHandlers,
   ...integrationsHandlers,
   ...memoryHandlers,
-<<<<<<< Updated upstream
   ...projectSourcesHandlers,
   ...pullRequestsHandlers,
-=======
   ...rcHandlers,
->>>>>>> Stashed changes
   ...skillsHandlers,
   ...spacesHandlers,
   ...terminalHandlers,

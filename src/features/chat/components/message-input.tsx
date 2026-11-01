@@ -1861,18 +1861,12 @@ export function MessageInput({
     }
     if (trimmed === "/queue" || trimmed.startsWith("/queue ")) {
       const queued = trimmed.slice("/queue".length).trim();
-<<<<<<< Updated upstream
       if (queued) {
         const mentions = inputRef.current?.getMentions() ?? [];
-        enqueueMessage(tabId, queued, mentions);
+        enqueuePrompt(tabId, queued, mentions);
         forgetSentTexts(mentions);
       }
       writeComposer("");
-=======
-      if (queued) enqueuePrompt(tabId, queued);
-      inputRef.current?.clear();
-      setValue("");
->>>>>>> Stashed changes
       return;
     }
     const mentions = inputRef.current?.getMentions() ?? [];
@@ -1881,16 +1875,11 @@ export function MessageInput({
       // strings and the agent will see whatever shortform text was in the
       // composer. Mentions are dropped here intentionally; promoting the
       // queue to a structured shape is a follow-up. Staged images likewise
-<<<<<<< Updated upstream
       // stay in the composer strip and ride the next direct send. A paste or
       // a cite is the exception: its token alone would lose what the user
       // pasted or cited, so the queue puts its text into the queued string.
-      enqueueMessage(tabId, trimmed, mentions);
+      enqueuePrompt(tabId, trimmed, mentions);
       forgetSentTexts(mentions);
-=======
-      // stay in the composer strip and ride the next direct send.
-      enqueuePrompt(tabId, trimmed);
->>>>>>> Stashed changes
     } else {
       if (modeUnrestored || heldForTerminal) return;
       // The wire shape is mime + bytes; the path stays with the composer.
@@ -1963,7 +1952,6 @@ export function MessageInput({
                   text={q}
                   onEdit={() => {
                     const cur = inputRef.current?.getValue() ?? "";
-<<<<<<< Updated upstream
                     // A paste or a cite the queue inlined comes back as its
                     // chip, not as every line it holds. Cites were written
                     // last, so they come off first.
@@ -1973,13 +1961,7 @@ export function MessageInput({
                     for (const c of uncited.cites) rememberMention(c, projectPath);
                     const merged = cur.trim() ? `${cur}\n${text}` : text;
                     writeComposer(merged);
-                    removeQueueItem(tabId, i);
-=======
-                    const merged = cur.trim() ? `${cur}\n${q}` : q;
-                    inputRef.current?.setValue(merged);
-                    setValue(merged);
                     removeQueuedPrompt(tabId, i);
->>>>>>> Stashed changes
                     requestAnimationFrame(() => inputRef.current?.focus());
                   }}
                   onRemove={() => removeQueuedPrompt(tabId, i)}

@@ -168,6 +168,7 @@ function liveRow(): ThreadRow | null {
     projectName: MOCK_PROJECT.name,
     folderPaths: [MOCK_PROJECT.path],
     liveElsewhere: false,
+    heldWorking: false,
     pullRequests: [],
     forkedFromSessionId: null,
     attachedProjects: miscHandlers.session_projects_list({ sessionId: live }) as AttachedProject[],

@@ -734,6 +734,7 @@ export interface AgentResponses {
   agents_queue_pause: Unit;
   agents_queue_drain: number | null;
   agents_queue_send_now: Unit;
+  agents_set_hold: Unit;
 }
 
 // ── The turn queue ────────────────────────────────────────────────────────
@@ -888,18 +889,19 @@ export const agentHandlers: TypedHandlers<AgentResponses> = {
     drainQueue(s);
     return null;
   },
+  // The developer hold: Rust keeps the session past its tab and says so.
+  agents_set_hold: ({ sessionId, held }) => {
+    const s = sessions.get(String(sessionId));
+    if (s) void sendDelta({ kind: "hold_changed", ...at(s), held: !!held });
+    return null;
+  },
   agents_respond_permission: ({ agentId, sessionId, requestId, decision }) => {
     void resolvePermission(agentId, sessionId, requestId, decision);
     return null;
   },
-<<<<<<< Updated upstream
   // Echo the prompt back so the composer loop is exercisable — the prompt as
   // the agent would receive it, large pastes included.
-  agents_send: async ({ key, text: sent, pastedTexts }) => {
-=======
-  // Echo the prompt back so the composer loop is exercisable.
-  agents_send: async ({ key, text, clientMessageId }) => {
->>>>>>> Stashed changes
+  agents_send: async ({ key, text: sent, pastedTexts, clientMessageId }) => {
     const s = sessions.get(key.session_id);
     if (!s) return null;
     const text = receivedText(String(sent), (pastedTexts ?? []) as { id: string; text: string }[]);

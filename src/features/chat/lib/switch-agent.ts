@@ -18,10 +18,8 @@ import {
   type TurnEnd,
 } from "./remember";
 import { projectPathForTab } from "./tab-project";
-<<<<<<< Updated upstream
 import { trustedMentionPaths } from "./picked-mentions";
 import { saveLastAgentPref } from "./last-agent-pref";
-=======
 import { rc, roomOpen } from "./rc-api";
 import { useRcStore } from "@/features/chat/stores/rc-store";
 import {
@@ -31,7 +29,6 @@ import {
   setQueueHold,
   takeQueuedPrompts,
 } from "./turn-queue";
->>>>>>> Stashed changes
 
 /** The window event a handoff fires; the composer of `tabId` inserts the
  *  previous conversation as a past-session chip. */
@@ -391,11 +388,7 @@ async function rememberThenSwitch(
       model: pending.model,
     });
     if (stillOn(tabId, from)) {
-<<<<<<< Updated upstream
-      for (const text of typed) useChatStore.getState().actions.enqueueMessage(tabId, text, []);
-=======
-      for (const text of typed) enqueuePrompt(tabId, text);
->>>>>>> Stashed changes
+      for (const text of typed) enqueuePrompt(tabId, text, []);
     }
   } finally {
     pendingSwitches.delete(tabId);

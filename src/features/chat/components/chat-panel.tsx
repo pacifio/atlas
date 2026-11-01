@@ -1367,11 +1367,7 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
     // effect sends it once the user has picked a mode. The composer already
     // refuses; this catches every other sender (chips, handoffs).
     if (bound?.unrestoredModeId) {
-<<<<<<< Updated upstream
-      useChatStore.getState().actions.enqueueMessage(tabId, actualContent, mentions);
-=======
-      enqueuePrompt(tabId, actualContent);
->>>>>>> Stashed changes
+      enqueuePrompt(tabId, actualContent, mentions);
       return;
     }
     // Fail closed on a session another process is still writing (ADR-0001
@@ -1394,11 +1390,7 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
         // Not "Starting…": nothing is starting until the user says so.
         updateSessionStatus(tabId, "idle");
       } else {
-<<<<<<< Updated upstream
-        cs.actions.enqueueMessage(tabId, actualContent, mentions);
-=======
-        enqueuePrompt(tabId, actualContent);
->>>>>>> Stashed changes
+        enqueuePrompt(tabId, actualContent, mentions);
       }
       return;
     }
@@ -1409,11 +1401,7 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
     // to the running turn's own question belongs to the turn already admitted,
     // and a message held for the bind (`recorded`) already has its bubble.
     if (grantHold && !opts?.recorded && !isBusyAgentStatus(bound?.status)) {
-<<<<<<< Updated upstream
-      useChatStore.getState().actions.enqueueMessage(tabId, actualContent, mentions);
-=======
-      enqueuePrompt(tabId, actualContent);
->>>>>>> Stashed changes
+      enqueuePrompt(tabId, actualContent, mentions);
       return;
     }
     // `resumePending` is the resume-path equivalent of "not bound yet": the
@@ -1434,11 +1422,13 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
         (cs.queues[tabId]?.length ?? 0) === 0 &&
         !isBusyAgentStatus(bound?.status);
       if (firstWhileStarting) {
-<<<<<<< Updated upstream
-        addMessage(tabId, "user", actualContent, attachments, trustedMentionPaths(mentions));
-=======
-        const clientMessageId = addMessage(tabId, "user", actualContent, attachments);
->>>>>>> Stashed changes
+        const clientMessageId = addMessage(
+          tabId,
+          "user",
+          actualContent,
+          attachments,
+          trustedMentionPaths(mentions),
+        );
         logEvent({
           source: "chat",
           kind: "send-agent",
@@ -1463,11 +1453,7 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
         bindControlRef.current?.kick();
         return;
       }
-<<<<<<< Updated upstream
-      cs.actions.enqueueMessage(tabId, actualContent, mentions);
-=======
-      enqueuePrompt(tabId, actualContent);
->>>>>>> Stashed changes
+      enqueuePrompt(tabId, actualContent, mentions);
       return;
     }
 
@@ -1489,11 +1475,13 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
       // The user-visible message keeps the prose as the user typed it,
       // including the shortform mention references (`@file:src/foo.rs` etc).
       // The context block goes only to the agent, not the local transcript.
-<<<<<<< Updated upstream
-      addMessage(tabId, "user", actualContent, attachments, trustedMentionPaths(mentions));
-=======
-      clientMessageId = addMessage(tabId, "user", actualContent, attachments);
->>>>>>> Stashed changes
+      clientMessageId = addMessage(
+        tabId,
+        "user",
+        actualContent,
+        attachments,
+        trustedMentionPaths(mentions),
+      );
       logEvent({
         source: "chat",
         kind: "send-agent",
@@ -1569,11 +1557,7 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
       session_id: bound.acpSessionId,
     };
     try {
-<<<<<<< Updated upstream
-      await agents.send(key, wirePrompt, attachments, resourceLinks, pastedTexts);
-=======
-      await agents.send(key, wirePrompt, attachments, resourceLinks, clientMessageId);
->>>>>>> Stashed changes
+      await agents.send(key, wirePrompt, attachments, resourceLinks, pastedTexts, clientMessageId);
       logEvent({
         source: "agent",
         kind: "stream-started",
@@ -1648,7 +1632,6 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
     >
       {/* `data-chat-drop-zone`: Finder drops land anywhere on the conversation
           column, not just the composer (see `attachPaths` in message-input). */}
-<<<<<<< Updated upstream
       <div
         ref={conversationRef}
         data-chat-drop-zone
@@ -1757,154 +1740,6 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
           className="relative group-data-[dock-open]/dock:ml-(--chat-dock-inset) group-data-[dock-open]/dock:mr-(--chat-dock-reserve)"
         >
           {/* Anchored to this whole stack, not to the composer: the card below
-=======
-        <div data-chat-drop-zone className="relative flex-1 flex flex-col min-w-0">
-          {/* The header FLOATS over the transcript rather than sitting above it in
-            the column. That is what lets the thread scroll underneath and be
-            progressively blurred by the band the transcript draws at its top
-            edge — a `backdrop-filter` can only blur what is painted behind it,
-            and a header that owns its own row has nothing behind it but the
-            panel background. The transcript reserves `HEADER_INSET` of top
-            padding so the first row still starts below the bar.
-
-            The welcome screen gets the same bar, in its `empty` form: the
-            overview toggle and the More menu, because remote control is
-            started from there — a room is for a chat that has not begun as
-            much as for one mid-turn. The welcome copy centres itself in the
-            full height and its dither field fades before it reaches the bar,
-            so nothing needs reserving. */}
-          <div className="relative flex-1 min-h-0 flex flex-col">
-            {/* Transcript and overview rail share one row, INSIDE the
-                conversation column. That placement is the whole point: the
-                header floats across this column, so its right-hand icons
-                land directly above the rail — the cards read as what those
-                buttons opened, the way Claude Desktop's do. A rail outside
-                this column sat a third of the window away from the button
-                that opened it, with the transcript still centred in the
-                space between. */}
-            <div className="relative flex min-h-0 flex-1 justify-center">
-              {session.messages.length === 0 ? (
-                <div className="min-w-0 flex-1 overflow-y-auto">
-                  {session.transcriptLoading ? <LoadingTranscriptState /> : <WelcomeState />}
-                </div>
-              ) : (
-                /* Capped at the transcript's own column width, so the thread
-                    and the rail read as one composition centred in whatever
-                    space there is. Left to `flex-1` the transcript took the
-                    whole remainder and centred its 760px column inside it,
-                    which opened a gutter between the last word and the first
-                    card — the rail looked parked at the far edge rather than
-                    attached to the thread it describes. Unchanged when the
-                    rail is closed: 760 is what `Column` was already giving
-                    the rows. */
-                <div className="relative flex min-h-0 w-full min-w-0 max-w-[760px] flex-1 flex-col">
-                  <Suspense fallback={<LoadingTranscriptState />}>
-                    <Transcript
-                      ref={messagesListRef}
-                      tabId={tabId}
-                      acpSessionId={acpSessionId}
-                      messages={filteredMessages}
-                      isStreaming={session.status === "running"}
-                      turnInProgress={isBusyAgentStatus(session.status)}
-                      agentType={session.agentType}
-                      topInset={HEADER_INSET}
-                      onShowJumpChange={onShowJumpChange}
-                      workingLabel={
-                        session.pendingSend
-                          ? (startingStatus ?? `Starting ${agentMeta(session.agentType).label}`)
-                          : undefined
-                      }
-                      workingEpoch={bindEpoch}
-                      onStallRestart={handleRestartAgent}
-                      onStallSwitch={handleSwitchAgent}
-                      onStallCopyDiagnostics={handleCopyDiagnostics}
-                      footer={
-                        <MemoryUpdatedCard
-                          projectPath={projectPathForTab(tabId)}
-                          sessionId={acpSessionId || null}
-                          since={memoryWritesSince}
-                        />
-                      }
-                    />
-                  </Suspense>
-                </div>
-              )}
-              {/* Reserves its own width — the conversation narrows beside it
-                  rather than being covered, so nothing the reader is
-                  following disappears under the thing describing it. Drawn
-                  beside the welcome screen too: its toggle is in that bar now,
-                  and a pressed toggle that shows nothing is a broken one. The
-                  cards say "no changes yet" rather than vanish, and the
-                  Session card's project and find are real either way. */}
-              {overviewOpen && (
-                <Suspense fallback={null}>
-                  <ThreadOverviewPanel
-                    tabId={tabId}
-                    title={headerTitle}
-                    onOpenSearch={onOpenSearchStable}
-                  />
-                </Suspense>
-              )}
-            </div>
-            <div className="absolute inset-x-0 top-0 z-20">
-              <ChatHeader
-                tabId={tabId}
-                title={headerTitle}
-                sessionId={acpSessionId}
-                roleFilter={roleFilter}
-                onRoleFilterChange={setRoleFilter}
-                pinScopeKey={pinScopeKey}
-                onJumpToPin={onJumpToPinStable}
-                bashPanelOpen={bashPanelOpen}
-                onToggleBash={onToggleBashStable}
-                plansPanelOpen={plansPanelOpen}
-                onTogglePlans={onTogglePlansStable}
-                overviewOpen={overviewOpen}
-                onToggleOverview={onToggleOverviewStable}
-                sidebarOpen={chatSidebarVisible}
-                onToggleSidebar={toggleChatSidebar}
-                // Zero-arg wrapper, NOT a bare reference: React would call
-                // openNewAgentChat(SyntheticMouseEvent) and the event object
-                // sailed through `agent?` into the store as agentType —
-                // poisoning the bind ("JSON.stringify cannot serialize cyclic
-                // structures" from agents_spawn) and killing the composer.
-                onNewSession={onNewSessionStable}
-                onForkSession={canFork ? onForkSessionStable : undefined}
-                empty={session.messages.length === 0}
-              />
-            </div>
-          </div>
-
-          <div
-            className="relative"
-            // The composer stack has to sit under the THREAD, not under the
-            // thread-plus-rail. The transcript row centres a 760px column and
-            // the rail as one group, which puts the column's centre half a
-            // rail to the left of this element's own centre — so a composer
-            // left to centre itself drifted right of the conversation it
-            // belongs to. Reserving the rail's width here makes the two
-            // centres the same number. Capped the way the rail is
-            // (`max-w-[50%]`, of this same column): reserving the stored width
-            // once the rail had hit its cap starved the composer of the
-            // difference — at a 900px window, a third of the thread's width.
-            //
-            // A MARGIN, not padding: the pill below is `absolute inset-x-0`
-            // against this element, and an absolute child is laid out
-            // against the padding box, so under padding it still spanned the
-            // full width and centred half a rail right of the composer. A
-            // margin shrinks the box itself, which every child honours.
-            //
-            // Whenever the rail is open: it is drawn beside the welcome screen
-            // as well as beside a thread, and the welcome copy centres in the
-            // width left of it — so the composer has to centre in that same
-            // width. (Before the welcome screen had the rail, "new agent"
-            // kept a tab's open flag over an empty screen that drew no rail,
-            // and a reserve made against nothing pushed that composer half a
-            // rail left of everything centred above it.)
-            style={overviewWidth > 0 ? { marginRight: `min(${overviewWidth}px, 50%)` } : undefined}
-          >
-            {/* Anchored to this whole stack, not to the composer: the card below
->>>>>>> Stashed changes
               sits directly on top of the composer, so a pill anchored there
               floated over the card's own buttons and answer field. */}
           {showJumpToBottom && (
@@ -1916,9 +1751,9 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
           {/* Mounted whether or not a question is pending: the drawer inside
               owns the enter AND exit animation, and a component the parent
               unmounts cannot animate anything out. */}
-<<<<<<< Updated upstream
           <SessionElicitation
             pending={pendingElicitation ?? null}
+            remoteDriver={elicitationRemoteDriver}
             onClose={() => {
               if (!pendingElicitation) return;
               clearAgentQuestion(tabId, pendingElicitation.requestId);
@@ -1926,18 +1761,6 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
             }}
           />
           {/* Bottom fade lives in the transcript; the centered floating
-=======
-            <SessionElicitation
-              pending={pendingElicitation ?? null}
-              remoteDriver={elicitationRemoteDriver}
-              onClose={() => {
-                if (!pendingElicitation) return;
-                clearAgentQuestion(tabId, pendingElicitation.requestId);
-                clearElicitation(tabId);
-              }}
-            />
-            {/* Bottom fade lives in the transcript; the centered floating
->>>>>>> Stashed changes
               row (setup pill + scroll-to-bottom) lives inside
               ChatComposer below. */}
           <ChatComposer

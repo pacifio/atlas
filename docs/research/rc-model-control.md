@@ -39,7 +39,7 @@ A model row on the seam is `AgentModelInfo { id, name, description, icon, is_lat
 cost, disabled, provider, legacy }` (`:631-650`); a list is `Flat` or `Grouped` by
 provider name (`:655-658`). Nothing is keyed on an agent id.
 
-### 1.2 ACP agents (Claude Code, Codex, OpenCode, …)
+### 1.2 ACP agents (Claude Code, OpenCode, …)
 
 - **Modes** come on the `modes` field of the `session/new` / `session/load` response and
   are held in an `Arc<Mutex<acp::SessionModeState>>`; `AcpSessionModes` reads and sets
@@ -357,7 +357,7 @@ Plan `docs/research/universal-rc-api-plan.md` §5.4 (`:546-589`) and §11.1 gate
 | `set_config_option` by a **member** Driver | allowed for "non-widening keys": a substring deny-list (`permission`, `approve`, `sandbox`, `bypass`, `network`, `trust`) **plus "unknown key → owner-only"** | **every** key refused `widening` for a non-owner (`gate.rs:153-160`) | implement the plan, using the ACP **category** as the "known key" signal (§4.3.1). Today a member cannot change a thinking level from their phone at all, which defeats the effort use case |
 | `set_config_option` by a **link** Driver | refused `tier` at the relay (members-only) | same (`rc-do.ts:1458`) | keep |
 | `set_mode` to bypass / full-access | **"desktop local UI only"** — nobody remote, the owner included; Claude Code's own rule ("you can't select Bypass permissions from the app", `docs/research/claude-code-remote-control.md:244-247`) | owner allowed remotely; non-owner refused `widening` (`gate.rs:145-152`; test `the_owner_steers_and_answers`, `:233-255`) | **decide.** Recommended: follow the plan — a widening mode is refused `widening` for *every* remote origin with the message "choose this on the desktop"; a phone that is left unlocked must not be able to un-sandbox the machine. The owner's remote standing grants (`rc.rs:792`) and config options stay as built (they are agent-scoped, not machine-scoped) |
-| widening words | not specified beyond "bypass / full-access" | `bypass, full, yolo, danger, unrestricted, auto` (`gate.rs:103`) | keep (Codex's `auto` genuinely auto-approves); add `dontask` / `dont_ask` for agents that advertise a "don't ask" mode; **move the list to a shared contract constant** (`RC_WIDENING_MODE_WORDS` in `packages/contracts/src/rc.ts`, transcribed in `wire.rs`, held equal by `tests/contract.rs:181-230`) so the web can pre-disable those rows instead of letting a member hit the refusal |
+| widening words | not specified beyond "bypass / full-access" | `bypass, full, yolo, danger, unrestricted, auto` (`gate.rs:103`) | keep (one ACP agent's `auto` genuinely auto-approves); add `dontask` / `dont_ask` for agents that advertise a "don't ask" mode; **move the list to a shared contract constant** (`RC_WIDENING_MODE_WORDS` in `packages/contracts/src/rc.ts`, transcribed in `wire.rs`, held equal by `tests/contract.rs:181-230`) so the web can pre-disable those rows instead of letting a member hit the refusal |
 
 #### 4.3.1 Category-based config consent (desktop)
 

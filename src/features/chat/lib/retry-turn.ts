@@ -134,11 +134,7 @@ async function runRetry(tabId: string, key: SessionKey): Promise<void> {
   // user can edit or send, and the drain effect only fires on a status or
   // binding transition, so nothing re-sends behind their back.
   const preserve = (why: string) => {
-<<<<<<< Updated upstream
-    useChatStore.getState().actions.enqueueMessage(tabId, prompt as string, []);
-=======
-    enqueuePrompt(tabId, prompt as string);
->>>>>>> Stashed changes
+    enqueuePrompt(tabId, prompt as string, []);
     toast.error(`${why} — your prompt is waiting in the composer`);
     logEvent({
       source: "agent",
@@ -199,7 +195,7 @@ async function runRetry(tabId: string, key: SessionKey): Promise<void> {
   // apart from a normal turn when reading the log back.
   try {
     await (clientMessageId
-      ? agents.send(key, prompt, undefined, undefined, clientMessageId)
+      ? agents.send(key, prompt, undefined, undefined, undefined, clientMessageId)
       : agents.send(key, prompt));
     logEvent({
       source: "agent",

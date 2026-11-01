@@ -27,6 +27,8 @@
 import { useChatStore } from "../stores/chat-store";
 import { agents } from "./agents-api";
 import { appendNextStepsDirective } from "./next-steps";
+import type { MentionData } from "./mentions";
+import { inlineQueuedText } from "./queued-text";
 import { useSettingsStore } from "@/features/settings/stores/settings-store";
 import type { SessionKey } from "@/types/agents";
 
@@ -47,7 +49,8 @@ export function queueKey(tabId: string): SessionKey | null {
 
 /** What the agent is sent for a queued prompt: what was typed, plus the hidden
  *  next-steps directive when that setting is on — what a direct send of the
- *  same text sends (`ChatPanel.handleSend`). Queued prompts carry no mentions. */
+ *  same text sends (`ChatPanel.handleSend`). `text` is already inlined
+ *  (`inlineQueuedText`): queued prompts carry no structured mentions. */
 export function queuedWirePrompt(text: string): string {
   return useSettingsStore.getState().settings.adaptiveSuggestions !== "off"
     ? appendNextStepsDirective(text)
@@ -61,16 +64,16 @@ const withdrawn = new Set<string>();
 /** Park `text` behind the running turn. Bound: into Rust's queue (shown at
  *  once, confirmed by `queue_changed`). Not bound: held locally until the
  *  bind. Never sent by itself — Rust drains it when the turn ends. */
-export function enqueuePrompt(tabId: string, text: string): void {
+export function enqueuePrompt(tabId: string, text: string, mentions: readonly MentionData[]): void {
   const { actions } = useChatStore.getState();
   const key = queueKey(tabId);
   if (!key) {
-    actions.enqueueMessage(tabId, text);
+    actions.enqueueMessage(tabId, text, mentions);
     return;
   }
   const marker = `${PENDING}${++pendingSeq}`;
-  actions.enqueueMessage(tabId, text, marker);
-  void addToRust(tabId, key, text, marker);
+  actions.enqueueMessage(tabId, text, mentions, marker);
+  void addToRust(tabId, key, inlineQueuedText(text, mentions), marker);
 }
 
 async function addToRust(

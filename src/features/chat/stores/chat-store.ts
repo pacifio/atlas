@@ -26,7 +26,6 @@ import type {
   PendingPermissionWire,
   QueuedPrompt,
 } from "@/types/agents";
-import { stripNextStepsDirective } from "../lib/next-steps";
 import { splitAtlasContext } from "../lib/atlas-context";
 import { loadCachedAcpModes, saveCachedAcpModes } from "../lib/acp-modes-cache";
 import { loadLastModePref, saveLastModePref } from "../lib/last-mode-pref";
@@ -45,11 +44,9 @@ import { saveNativeModelPref, saveNativeEffort } from "../lib/native-model-pref"
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { extractPlanMarkdown, type PlanRecord } from "../lib/plans";
-import { extractNextSteps } from "../lib/next-steps";
+import { extractNextSteps, stripNextStepsDirective } from "../lib/next-steps";
 import { turnFilesOfToolCall } from "../lib/tool-files";
-import { withPastesInline } from "../lib/pasted-text";
-import { withCitesInline } from "../lib/cited-text";
-import { withReviewCommentsInline } from "../lib/review-comments";
+import { inlineQueuedText } from "../lib/queued-text";
 import type { MentionData } from "../lib/mentions";
 import type { TurnFile, TurnInterruption } from "@/types/agent";
 
@@ -430,10 +427,9 @@ interface ChatActions {
       role: MessageRole,
       content: string,
       attachments?: ImageAttachment[],
-<<<<<<< Updated upstream
       /** See `ChatMessage.trustedMentionPaths`. */
       trustedMentionPaths?: string[],
-    ) => void;
+    ) => string | undefined;
     /** Append the prompt Atlas sent the agent of ACP session `acpSessionId`
      *  on its own (`atlas:session-prompt-injected`) to that session's tab, if
      *  one is open. A user-role message marked `injected`, so it draws as its
@@ -444,9 +440,6 @@ interface ChatActions {
       injected: InjectedPrompt,
       at: string,
     ) => void;
-=======
-    ) => string | undefined;
->>>>>>> Stashed changes
     appendToolCall: (sessionId: string, toolName: string, input: Record<string, unknown>) => void;
     updateLastAssistantMessage: (sessionId: string, content: string) => void;
     updateSessionStatus: (sessionId: string, status: AgentStatus) => void;
@@ -629,21 +622,22 @@ interface ChatActions {
     ) => void;
     /** Drop a draft (on submit, or when its tab closes). */
     clearDraft: (tabId: string) => void;
-<<<<<<< Updated upstream
     /**
-     * Queue a message. The queue holds strings, so every queued send passes
-     * the mentions it was sent with and its pastes' and cites' text goes into
-     * the string (`withPastesInline`, then `withCitesInline`): a bare
+     * Add an item to the strip. The queue holds strings, so every queued send
+     * passes the mentions it was sent with and its pastes', cites' and review
+     * comments' text goes into the string (`inlineQueuedText`): a bare
      * `@paste:<id>` or `@cite:<id>` would reach the agent with nothing behind
-     * it. Required, so no queue path can skip it.
+     * it. Required, so no queue path can skip it. `id` is the item's Rust
+     * queue id or a `pending:` marker; omitted, the item is local (held until
+     * the next bind). Pure state — `lib/turn-queue.ts` decides where an item
+     * goes.
      */
-    enqueueMessage: (sessionId: string, text: string, mentions: readonly MentionData[]) => void;
-=======
-    /** Add an item to the strip. `id` is its Rust queue id or a `pending:`
-     *  marker; omitted, the item is local (held until the next bind). Pure
-     *  state — `lib/turn-queue.ts` decides where an item goes. */
-    enqueueMessage: (sessionId: string, text: string, id?: string | null) => void;
->>>>>>> Stashed changes
+    enqueueMessage: (
+      sessionId: string,
+      text: string,
+      mentions: readonly MentionData[],
+      id?: string | null,
+    ) => void;
     removeQueueItem: (sessionId: string, index: number) => void;
     editQueueItem: (sessionId: string, index: number, text: string) => void;
     shiftQueue: (sessionId: string) => string | null;
@@ -1154,13 +1148,9 @@ export const useChatStore = createSelectors(
           set((s) => {
             s.activeSessionId = id;
           }),
-<<<<<<< Updated upstream
-        addMessage: (sessionId, role, content, attachments, trustedMentionPaths) =>
-=======
-        addMessage: (sessionId, role, content, attachments) => {
+        addMessage: (sessionId, role, content, attachments, trustedMentionPaths) => {
           const id = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
           let added = false;
->>>>>>> Stashed changes
           set((s) => {
             const session = s.sessions[sessionId];
             if (!session) return;
@@ -1208,8 +1198,9 @@ export const useChatStore = createSelectors(
               // an early scroll) — id-scoping keeps it to the actual send.
               session.justSentMessageId = msg.id;
             }
-<<<<<<< Updated upstream
-          }),
+          });
+          return added ? id : undefined;
+        },
         addInjectedPrompt: (acpSessionId, text, injected, at) =>
           set((s) => {
             const tabId = findTabByAcpSession(s.sessions, acpSessionId);
@@ -1227,11 +1218,6 @@ export const useChatStore = createSelectors(
             });
             session.updatedAt = new Date().toISOString();
           }),
-=======
-          });
-          return added ? id : undefined;
-        },
->>>>>>> Stashed changes
         appendToolCall: (sessionId, toolName, input) =>
           set((s) => {
             const session = s.sessions[sessionId];
@@ -1861,26 +1847,12 @@ export const useChatStore = createSelectors(
               chips: patch.chips ?? msg.suggestions?.chips ?? [],
             };
           }),
-<<<<<<< Updated upstream
-        enqueueMessage: (sessionId, text, mentions) =>
-=======
-        enqueueMessage: (sessionId, text, id = null) =>
->>>>>>> Stashed changes
+        enqueueMessage: (sessionId, text, mentions, id = null) =>
           set((s) => {
             const ids = queueIdsOf(s, sessionId);
             const cur = s.queues[sessionId] ?? [];
-<<<<<<< Updated upstream
-            s.queues[sessionId] = [
-              ...cur,
-              withReviewCommentsInline(
-                withCitesInline(withPastesInline(text, mentions), mentions),
-                mentions,
-              ),
-            ];
-=======
-            s.queues[sessionId] = [...cur, text];
+            s.queues[sessionId] = [...cur, inlineQueuedText(text, mentions)];
             s.queueIds[sessionId] = [...ids, id];
->>>>>>> Stashed changes
           }),
         removeQueueItem: (sessionId, index) =>
           set((s) => {
@@ -3015,7 +2987,7 @@ function applyUserMessage(
   session.justSentMessageId = msg.id;
   // A session whose first prompt came from elsewhere is titled the way the
   // composer titles one (the agent's own `title_updated` still wins later).
-  if (isFirst && session.title === "New Chat" && prose) {
+  if (isFirst && session.title === UNTITLED_SESSION && prose) {
     session.title = prose.slice(0, 40) + (prose.length > 40 ? "..." : "");
   }
 }
