@@ -19,6 +19,33 @@ import type { CheckpointSecurity, SecurityFinding, SessionSecurity } from "../ty
 
 const sessionKey = (projectPath: string, sessionId: string) => `${projectPath}\u0000${sessionId}`;
 
+/**
+ * `next`, with every row equal to the one it replaces kept as the previous
+ * object — and the previous array itself when no row changed.
+ *
+ * A stored scan re-reads the Project's badges and every open session's
+ * checkpoints, and nearly all of what comes back is what was already here.
+ * Swapping in fresh objects anyway re-rendered every Checkpoint card and
+ * every finding in the open session on each scan pass: a ~65ms hitch per pass
+ * on an 800-row session, mid-scroll. Rows are small, so comparing their JSON
+ * is cheap next to the render it saves.
+ */
+function keepUnchanged<T>(prev: readonly T[] | undefined, next: T[], key: (row: T) => string): T[] {
+  if (!prev) return next;
+  const before = new Map(prev.map((row) => [key(row), row] as const));
+  let changed = prev.length !== next.length;
+  const out = next.map((row, i) => {
+    const old = before.get(key(row));
+    if (old !== undefined && JSON.stringify(old) === JSON.stringify(row)) {
+      if (prev[i] !== old) changed = true;
+      return old;
+    }
+    changed = true;
+    return row;
+  });
+  return changed ? out : (prev as T[]);
+}
+
 interface SecurityState {
   /** Badges, by Project then session. */
   sessions: Record<string, Record<string, SessionSecurity>>;
@@ -48,17 +75,33 @@ export const useSecurityStore = createSelectors(
           if (!projectPath) return;
           const rows = await securityProjectSessions(projectPath).catch(() => null);
           if (!rows) return;
+          const prevMap = get().sessions[projectPath];
+          const kept = keepUnchanged(
+            prevMap ? Object.values(prevMap) : undefined,
+            rows,
+            (r) => r.sessionId,
+          );
+          if (
+            prevMap &&
+            Object.keys(prevMap).length === kept.length &&
+            kept.every((r) => prevMap[r.sessionId] === r)
+          )
+            return;
           set((s) => {
-            s.sessions[projectPath] = Object.fromEntries(rows.map((r) => [r.sessionId, r]));
+            s.sessions[projectPath] = Object.fromEntries(kept.map((r) => [r.sessionId, r]));
           });
         },
         loadSession: async (projectPath, sessionId) => {
           if (!projectPath) return [];
-          const cps = await securitySessionCheckpoints(projectPath, sessionId).catch(() => null);
-          if (!cps) return get().checkpoints[sessionKey(projectPath, sessionId)] ?? [];
-          set((s) => {
-            s.checkpoints[sessionKey(projectPath, sessionId)] = cps;
-          });
+          const key = sessionKey(projectPath, sessionId);
+          const fresh = await securitySessionCheckpoints(projectPath, sessionId).catch(() => null);
+          const prev = get().checkpoints[key];
+          if (!fresh) return prev ?? [];
+          const cps = keepUnchanged(prev, fresh, (c) => c.commitSha);
+          if (cps !== prev)
+            set((s) => {
+              s.checkpoints[key] = cps;
+            });
           return cps;
         },
         refreshProject: async (projectPath) => {

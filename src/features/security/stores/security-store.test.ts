@@ -51,6 +51,39 @@ describe("security store", () => {
     expect(useSecurityStore.getState().sessions["/p"].s1.level).toBe("critical");
   });
 
+  it("keeps unchanged rows' identity when a scan re-reads them", async () => {
+    const other = { ...cp, checkpointId: "cp-2", commitSha: "b00b5" };
+    invoke.mockResolvedValueOnce([cp, other]);
+    await useSecurityStore.getState().actions.loadSession("/p", "s1");
+    const first = selectCheckpoints(useSecurityStore.getState(), "/p", "s1")!;
+
+    // The same results, as fresh objects: nothing in the store moves.
+    invoke.mockResolvedValueOnce([structuredClone(cp), structuredClone(other)]);
+    await useSecurityStore.getState().actions.loadSession("/p", "s1");
+    expect(selectCheckpoints(useSecurityStore.getState(), "/p", "s1")).toBe(first);
+
+    // One checkpoint changed: only it is a new object.
+    invoke.mockResolvedValueOnce([cp, { ...other, scanMs: 99 }]);
+    await useSecurityStore.getState().actions.loadSession("/p", "s1");
+    const third = selectCheckpoints(useSecurityStore.getState(), "/p", "s1")!;
+    expect(third).not.toBe(first);
+    expect(third[0]).toBe(first[0]);
+    expect(third[1]).not.toBe(first[1]);
+  });
+
+  it("keeps the badges map when a re-read finds the same sessions", async () => {
+    const row = { sessionId: "s1", level: "critical", blocking: true, findings: 1, scanned: 1 };
+    invoke.mockResolvedValueOnce([row]);
+    await useSecurityStore.getState().actions.loadProject("/p");
+    const before = useSecurityStore.getState().sessions["/p"];
+    invoke.mockResolvedValueOnce([{ ...row }]);
+    await useSecurityStore.getState().actions.loadProject("/p");
+    expect(useSecurityStore.getState().sessions["/p"]).toBe(before);
+    invoke.mockResolvedValueOnce([]);
+    await useSecurityStore.getState().actions.loadProject("/p");
+    expect(useSecurityStore.getState().sessions["/p"]).toEqual({});
+  });
+
   it("marks a finding not useful at once and drops the badge", async () => {
     invoke.mockResolvedValueOnce([cp]);
     await useSecurityStore.getState().actions.loadSession("/p", "s1");

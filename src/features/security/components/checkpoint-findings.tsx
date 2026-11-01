@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Button } from "@/ui/button";
+import { formatTime } from "@/lib/format-time";
 import { cn } from "@/lib/utils";
 import { securityFindingLine } from "../lib/security-api";
 import { ROTATE, secretLabel, whereLabel } from "../lib/security-levels";
@@ -7,11 +8,9 @@ import { selectCheckpoints, useSecurityStore } from "../stores/security-store";
 import type { SecurityFinding } from "../types";
 import { SecurityLevelBadge } from "./session-security-badge";
 
+/** Through `formatTime`: a cached formatter, and the user's 12h/24h setting. */
 function clock(iso: string): string {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime())
-    ? ""
-    : d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return Number.isNaN(Date.parse(iso)) ? "" : formatTime(iso);
 }
 
 /** `The agent read .env and id_rsa earlier in this session. `, or nothing. */
@@ -113,12 +112,19 @@ export function CheckpointFindings({
   sessionId: string;
   commitSha: string;
 }) {
-  const cps = useSecurityStore((s) => selectCheckpoints(s, projectPath, sessionId));
-  const checkpoint = cps?.find((c) => c.commitSha === commitSha);
+  // This card's own checkpoint, not the session's list: a scan that re-reads
+  // the session re-renders only the cards whose results changed (the store
+  // keeps unchanged rows' identity), not every card in a long session.
+  const checkpoint = useSecurityStore((s) =>
+    selectCheckpoints(s, projectPath, sessionId)?.find((c) => c.commitSha === commitSha),
+  );
+  const sessionScanned = useSecurityStore(
+    (s) => (selectCheckpoints(s, projectPath, sessionId)?.length ?? 0) > 0,
+  );
   if (!checkpoint) {
     // Only said when the session has scans, so it never shows while scanning
     // is off.
-    return cps && cps.length > 0 ? <Footer>{NOT_SCANNED}</Footer> : null;
+    return sessionScanned ? <Footer>{NOT_SCANNED}</Footer> : null;
   }
   const at = clock(checkpoint.scannedAt);
   const notScanned = checkpoint.notScanned.length;

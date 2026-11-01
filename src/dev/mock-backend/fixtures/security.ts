@@ -80,6 +80,11 @@ const LINES: Record<string, string> = {
 };
 
 const notUseful = new Set<string>();
+
+// Fixed at load, as a stored scan's time is: a fresh `Date.now()` on every read
+// made each re-read look like a new result and re-rendered every card.
+const SCANNED_FIRST = new Date(Date.now() - 40 * 60_000).toISOString();
+const SCANNED_SECOND = new Date(Date.now() - 25 * 60_000).toISOString();
 const RANK: SecurityLevel[] = ["none", "low", "medium", "high", "critical"];
 
 const marked = (f: SecurityFinding): SecurityFinding => ({
@@ -108,7 +113,7 @@ function checkpoints(): CheckpointSecurity[] {
       floors: [],
       notScanned: [],
       sensitiveReads: [".env"],
-      scannedAt: new Date(Date.now() - 40 * 60_000).toISOString(),
+      scannedAt: SCANNED_FIRST,
       scanMs: 118,
     },
     {
@@ -121,7 +126,7 @@ function checkpoints(): CheckpointSecurity[] {
       floors: [],
       notScanned: [{ path: "src/lib/api.generated.ts", reason: "generated" }],
       sensitiveReads: [".env"],
-      scannedAt: new Date(Date.now() - 25 * 60_000).toISOString(),
+      scannedAt: SCANNED_SECOND,
       scanMs: 64,
     },
   ];
