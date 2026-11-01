@@ -76,15 +76,12 @@ pub mod plans;
 pub mod project_icon;
 pub mod project_scripts;
 pub mod project_session;
-<<<<<<< Updated upstream
 pub mod project_settings;
 pub mod project_sources;
 pub mod pull_request_watch;
 pub mod pull_requests;
 pub mod quit_guard;
-=======
 pub mod rc;
->>>>>>> Stashed changes
 pub mod recent_files;
 pub mod registry;
 pub mod restart_continuation;

@@ -20,9 +20,9 @@ tokio = { version = "1", features = ["sync", "time", "rt", "macros"] }
 # The workspace pin, for the reason `atlas-artifacts` gives.
 tokio-tungstenite = { workspace = true }
 futures-util = "0.3"
-reqwest = { version = "0.12", default-features = false, features = [
+reqwest = { version = "0.13", default-features = false, features = [
   "json",
-  "rustls-tls",
+  "rustls",
 ] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

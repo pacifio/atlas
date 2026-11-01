@@ -35,11 +35,8 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
-<<<<<<< Updated upstream
-use atlas_acp_thread::prompt::{self, ImageAttachment, PastedText, ResourceLinkSpec};
-=======
-use atlas_acp_thread::prompt::{ImageAttachment, ResourceLinkSpec};
->>>>>>> Stashed changes
+use agent_client_protocol::schema::v1 as acp;
+use atlas_acp_thread::prompt::{ImageAttachment, PastedText, ResourceLinkSpec};
 use atlas_agent_store::{
     AgentRegistryStore, AgentServerStore, InheritedProjectEnvironment, NodeRuntime, ReqwestClient,
 };
@@ -1002,16 +999,13 @@ pub fn install_manager(app: &AppHandle) {
     app.manage(Arc::new(super::agent_transcript::TranscriptState::new(
         config_dir.clone(),
     )));
-<<<<<<< Updated upstream
     // Managed so the session lifecycle can forget a session that ends
     // without a terminal status.
     let sleep_watch = Arc::new(crate::sleep_watch::SleepWatch::new());
     app.manage(sleep_watch.clone());
-    let sink: Arc<dyn DeltaSink> = Arc::new(TauriDeltaSink::new(app.clone(), sleep_watch));
-=======
+    // Before the sink: its constructor reads the taps off the app.
     app.manage(Arc::new(DeltaTaps::default()));
-    let sink: Arc<dyn DeltaSink> = Arc::new(TauriDeltaSink::new(app.clone()));
->>>>>>> Stashed changes
+    let sink: Arc<dyn DeltaSink> = Arc::new(TauriDeltaSink::new(app.clone(), sleep_watch));
     let data_dir = app
         .path()
         .app_data_dir()
@@ -2216,30 +2210,32 @@ pub async fn agents_send(
     // rather than flattened into the prose — the ACP-native way to hand an
     // agent a file, and every agent is required to accept it.
     resource_links: Option<Vec<ResourceLinkSpec>>,
-<<<<<<< Updated upstream
     // Large pastes the composer kept as chips. Each goes in full: an embedded
     // resource when the agent takes embedded context, a text block otherwise.
     pasted_texts: Option<Vec<PastedText>>,
+    client_message_id: Option<String>,
     host: State<'_, Arc<AgentHost>>,
-    app: AppHandle,
 ) -> Result<(), String> {
-    // `agent_turn_started` is NOT emitted here. It used to be, but this runs
-    // before `start_turn`, so it could not know the `turn_seq` that joins a
-    // start to its completion — and a send that supersedes a running turn
-    // counted twice. `AnalyticsMiddleware` emits it off `Status{Running}`
-    // instead, which is the actual turn boundary.
-
+    // `agent_turn_started` is NOT emitted here: `AnalyticsMiddleware` emits it
+    // off `Status{Running}`, the actual turn boundary, which carries the
+    // `turn_seq` that joins a start to its completion.
+    //
     // Image attachments ride WITH the turn (P0.2) rather than through a staging
-    // side-channel drained by the next send. Held here and folded into the
-    // content at the one send below, so nothing can strand images for some
-    // later turn to pick up.
-    let outgoing = OutgoingPrompt {
+    // side-channel drained by the next send, so nothing can strand images for
+    // some later turn to pick up.
+    let prompt = Prompt {
         text,
+        display: None,
         images: attachments.unwrap_or_default(),
-        links: resource_links.unwrap_or_default(),
+        resource_links: resource_links.unwrap_or_default(),
         pastes: pasted_texts.unwrap_or_default(),
+        client_message_id,
+        from_atlas: false,
     };
-    send_prompt(&app, host.inner(), &key, outgoing, PromptOrigin::User)
+    host.inner()
+        .submit(&key, prompt, Origin::Local, SubmitPolicy::Now)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 /// Who a prompt is from. The user's own words count as the user's
@@ -2400,12 +2396,13 @@ impl PromptBooks for AppBooks<'_> {
     }
 }
 
-/// Send `outgoing` to the session `key` as a turn: recorded in every book
-/// ([`record_prompt`]), then started. The one way a prompt reaches an agent,
-/// whether the user typed it ([`agents_send`]) or Atlas sends it on its own
-/// (a pull request watch's wake, `AgentHost::wake`).
+/// Send `outgoing` to the session `key` as a turn, the way Atlas does on its
+/// own (a pull request watch's wake, `AgentHost::wake`; a turn continued
+/// after a restart). One door with [`agents_send`]: the steering entry
+/// (`agent_host/steering.rs`) records it in every book through
+/// [`AppPromptHooks`] and starts the turn.
 pub(crate) fn send_prompt(
-    app: &AppHandle,
+    _app: &AppHandle,
     host: &Arc<AgentHost>,
     key: &SessionKey,
     outgoing: OutgoingPrompt,
@@ -2417,65 +2414,24 @@ pub(crate) fn send_prompt(
         links,
         pastes,
     } = outgoing;
-
-    // Resolve the project cwd. Unknown session → fail with the SAME error
-    // shape `manager.send` produces, without attempting a send that would
-    // skip session registration (one condition, one behavior — L5).
-    // Meta only — the full snapshot deep-clones the whole transcript under the
-    // SessionState mutex the streaming actor locks per chunk, and this path
-    // reads three small fields.
-    let Ok(snapshot) = host.snapshot_meta(key) else {
-        return Err(HostError::unknown_session().to_string());
-    };
-    record_prompt(
-        &AppBooks { app, host },
-        &key.session_id,
-        &PromptMeta {
-            cwd: &snapshot.cwd,
-            plugin_id: &snapshot.plugin_id,
-            model: snapshot.current_model.as_deref(),
-        },
-        &text,
-        origin,
-    );
-    let embedded_context = !pastes.is_empty()
-        && host
-            .prompt_embedded_context(key)
-            .map_err(|e| e.to_string())?;
-    host.send(
-        key,
-        prompt::with_pasted_texts(
-            prompt::with_resource_links(prompt::compose(text, images), links),
-            pastes,
-            embedded_context,
-        ),
-    )
-    .map_err(|e| e.to_string())
-=======
-    client_message_id: Option<String>,
-    host: State<'_, Arc<AgentHost>>,
-) -> Result<(), String> {
-    // `agent_turn_started` is NOT emitted here: `AnalyticsMiddleware` emits it
-    // off `Status{Running}`, the actual turn boundary, which carries the
-    // `turn_seq` that joins a start to its completion.
     let prompt = Prompt {
         text,
-        display: None,
-        images: attachments.unwrap_or_default(),
-        resource_links: resource_links.unwrap_or_default(),
-        client_message_id,
+        images,
+        resource_links: links,
+        pastes,
+        from_atlas: origin == PromptOrigin::Atlas,
+        ..Prompt::default()
     };
-    host.inner()
-        .submit(&key, prompt, Origin::Local, SubmitPolicy::Now)
+    host.submit(key, prompt, Origin::Local, SubmitPolicy::Now)
         .map(|_| ())
         .map_err(|e| e.to_string())
 }
 
 /// The send path's side effects, for every prompt the host dispatches.
 ///
-/// Moved down from `agents_send` so the steering entry owns them: a prompt
-/// that reaches the host by any other door — a drained queue item, a remote
-/// driver — is recorded exactly like a typed one.
+/// Installed on the host at startup so the steering entry owns them: a prompt
+/// that reaches the host by any door — a typed one, a drained queue item, a
+/// remote driver's, a wake — is written down the same way ([`record_prompt`]).
 pub(crate) struct AppPromptHooks {
     pub(crate) app: AppHandle,
 }
@@ -2485,50 +2441,26 @@ impl PromptHooks for AppPromptHooks {
         // Who sent it is not recorded yet: the transcript audit line for a
         // remote driver (design review slice 7) lands with the RC layer.
         tracing::debug!(target: "atlas::steering", session = sent.session_id, origin = ?sent.origin, "prompt sent");
-        // Session capture: record the prompt and bind the session. Here rather
-        // than in the delta middleware, because capture records the prompt
-        // the agent was SENT (before anything renders it), and a turn whose
-        // prompt is bound first is a Timeline row with a title. `plugin_id`,
-        // not `agent_id`: the latter is a per-process UUID; the former is what
-        // a reader wants to see and what tells capture native from ACP.
-        self.app
-            .state::<super::capture::CaptureState>()
-            .note_prompt(
-                sent.session_id,
-                sent.cwd,
-                sent.plugin_id,
-                sent.model,
-                sent.text,
-            );
-
-        if sent.cwd.is_empty() {
-            return;
-        }
-        // Atlas's own transcript, for every agent — what makes a session still
-        // exist (with its title) after the live one goes away.
-        self.app
-            .state::<Arc<super::agent_transcript::TranscriptState>>()
-            .note_prompt(
-                sent.session_id,
-                sent.cwd,
-                sent.plugin_id,
-                sent.text,
-                chrono::Utc::now().to_rfc3339(),
-            );
-
-        // Register this session so the capture path can route its deltas into
-        // the scope's record. The text itself goes to the agent untouched: a
-        // slash command stays at byte 0 (Claude Code resolves one only there),
-        // and nothing Atlas wrote can be echoed back as the user's words.
-        if self.app.state::<MemorySharingState>().is_enabled(sent.cwd) {
-            self.app.state::<SharedMemoryStore>().register_session(
-                sent.session_id,
-                sent.cwd,
-                sent.plugin_id,
-            );
-        }
+        let host = self.app.state::<Arc<AgentHost>>();
+        record_prompt(
+            &AppBooks {
+                app: &self.app,
+                host: &host,
+            },
+            sent.session_id,
+            &PromptMeta {
+                cwd: sent.cwd,
+                plugin_id: sent.plugin_id,
+                model: sent.model,
+            },
+            sent.text,
+            if sent.from_atlas {
+                PromptOrigin::Atlas
+            } else {
+                PromptOrigin::User
+            },
+        );
     }
->>>>>>> Stashed changes
 }
 
 /// Hard cap on building the briefing's first-look extras (pack + handoff +
@@ -2596,7 +2528,6 @@ async fn build_bootstrap(
     }
 }
 
-<<<<<<< Updated upstream
 /// Cancel the session's turn. `stop` is the user's Stop button: it also ends
 /// the session's pull request watches, since a Stop means "stop" and a wake
 /// landing right after it would start the agent straight back up. Every
@@ -2609,16 +2540,11 @@ pub fn agents_cancel(
     host: State<'_, Arc<AgentHost>>,
 ) -> Result<(), String> {
     if stop.unwrap_or(false) {
-        host.stop(&key)
+        host.stop(&key, Origin::Local)
     } else {
         host.interrupt(&key)
     }
     .map_err(|e| e.to_string())
-=======
-/// Stop: discard the session's queue and cancel the running turn.
-#[tauri::command]
-pub fn agents_cancel(key: SessionKey, host: State<'_, Arc<AgentHost>>) -> Result<(), String> {
-    host.stop(&key, Origin::Local).map_err(|e| e.to_string())
 }
 
 // ── The turn queue (the turn controller in `agent_host/steering.rs`) ────────
@@ -2718,7 +2644,6 @@ pub async fn agents_set_hold(
             .await
             .map_err(|e| e.to_string())
     }
->>>>>>> Stashed changes
 }
 
 /// Tear down a session's backend state when its tab closes or the project

@@ -58,12 +58,10 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-<<<<<<< Updated upstream
 mod open_turns;
 mod wake;
 pub use open_turns::OpenTurn;
 pub use wake::{PendingWake, WakeSource};
-=======
 mod steering;
 
 pub use atlas_agent_wire::{Origin, QueuedPrompt};
@@ -75,7 +73,6 @@ pub use steering::{
 // lands after this.
 #[allow(unused_imports)]
 pub use steering::Submitted;
->>>>>>> Stashed changes
 
 // ── The IPC wire shapes ─────────────────────────────────────────────────────
 //
@@ -515,7 +512,6 @@ pub struct AgentHost {
     lifecycle: Mutex<Option<Arc<dyn SessionLifecycle>>>,
     /// What each session is offered in its MCP server list.
     session_mcp: Arc<SessionMcpSlot>,
-<<<<<<< Updated upstream
     /// Project access requests on screen, by (session, folder): each one's
     /// answer, once there is one. A second request for the same folder
     /// waits on the card already up instead of raising another.
@@ -526,11 +522,6 @@ pub struct AgentHost {
     /// Turns running now, on disk, so a launch after a quit or crash knows
     /// which to continue ([`AgentHost::take_left_open_turns`]).
     open_turns: open_turns::OpenTurns,
-}
-
-/// Where an access request's answer arrives.
-type AccessAnswer = tokio::sync::watch::Receiver<Option<AccessRequestOutcome>>;
-=======
     /// Each session's turn controller: its prompt queue and whether a turn
     /// this host dispatched is in flight (`steering.rs`). Outlives the session
     /// record across an agent exit, so a queue survives the rebind; goes with
@@ -553,9 +544,11 @@ type AccessAnswer = tokio::sync::watch::Receiver<Option<AccessRequestOutcome>>;
     session_end_observers: Mutex<Vec<SessionEndObserver>>,
 }
 
+/// Where an access request's answer arrives.
+type AccessAnswer = tokio::sync::watch::Receiver<Option<AccessRequestOutcome>>;
+
 /// What [`AgentHost::observe_session_end`] registers: told a session id.
 pub type SessionEndObserver = Arc<dyn Fn(&str) + Send + Sync>;
->>>>>>> Stashed changes
 
 /// Which branch probe is the newest for each session (see
 /// [`AgentHost::refresh_branch`]).
@@ -709,16 +702,13 @@ impl AgentHost {
             },
             lifecycle: Mutex::new(None),
             session_mcp,
-<<<<<<< Updated upstream
             access_requests: Mutex::new(HashMap::new()),
             wakes: wake::Wakes::default(),
             open_turns,
-=======
             turns: Mutex::new(HashMap::new()),
             prompt_hooks: Mutex::new(None),
             seats: Mutex::new(HashMap::new()),
             session_end_observers: Mutex::new(Vec::new()),
->>>>>>> Stashed changes
         });
         // Weak, and installed after the host exists: the observer needs the
         // host to name the agent a session belongs to, and a strong reference
@@ -1589,8 +1579,8 @@ impl AgentHost {
     /// Whether the session's agent advertised
     /// `promptCapabilities.embeddedContext` at initialize — the send path's
     /// choice between an embedded resource and a text block for a paste.
-    pub fn prompt_embedded_context(&self, key: &SessionKey) -> Result<bool> {
-        let handle = self.thread(&key.session_id)?;
+    pub(super) fn prompt_embedded_context(&self, session_id: &str) -> Result<bool> {
+        let handle = self.thread(session_id)?;
         let embedded = lock_thread(&handle).prompt_capabilities().embedded_context;
         Ok(embedded)
     }
@@ -1798,107 +1788,6 @@ impl AgentHost {
         Ok(snapshot)
     }
 
-<<<<<<< Updated upstream
-    // ---- turns -----------------------------------------------------------
-
-    /// Start a turn, and return as soon as it is running.
-    ///
-    /// The command must not await the whole turn: the frontend awaits this
-    /// invoke before it stops showing the composer as busy, and a turn runs for
-    /// minutes. The turn is driven on its own task, and its failure is
-    /// announced on the wire rather than returned here — by then the caller is
-    /// long gone.
-    pub fn send(self: &Arc<Self>, key: &SessionKey, content: Vec<acp::ContentBlock>) -> Result<()> {
-        let session_id = acp::SessionId::new(key.session_id.as_str());
-        let (turn_seq, cwd) = {
-            let mut sessions = lock(&self.sessions);
-            let record = sessions
-                .get_mut(&key.session_id)
-                .ok_or_else(HostError::unknown_session)?;
-            record.turn_seq = record.turn_seq.wrapping_add(1);
-            (record.turn_seq, record.cwd.clone())
-        };
-        // Every turn start, not only the bind: the user may have switched
-        // branches since the session opened, and the row should name the
-        // branch the latest work ran on. The model likewise.
-        self.refresh_branch(&session_id, &cwd);
-        self.refresh_model(&session_id);
-        // Before the turn opens, so the `status: running` that `begin_turn`
-        // emits already carries this turn's identity.
-        self.projector.set_turn_seq(&session_id, turn_seq);
-        // Before the agent can write a byte of this turn to its transcript, so
-        // the session watcher never mistakes that write for another process.
-        self.begin_atlas_turn(&key.session_id);
-        let thread = self
-            .history()
-            .and_then(|history| history.thread_for(&session_id));
-        if let Some(thread) = thread {
-            self.open_turns.begin(thread);
-        }
-
-        let this = self.clone();
-        let session_key = key.session_id.clone();
-        tauri::async_runtime::spawn(async move {
-            let sent = this.manager.send(&session_id, content).await;
-            // Every way out of the turn ends it, a superseded one included:
-            // each send counted itself in, so each counts itself out.
-            this.end_atlas_turn(&session_key);
-            // A superseded turn's end must not write out the turn that
-            // replaced it. A session closed meanwhile ended its turn with it.
-            if let Some(thread) = thread {
-                let superseded = lock(&this.sessions)
-                    .get(&session_key)
-                    .is_some_and(|record| record.turn_seq != turn_seq);
-                if !superseded {
-                    this.open_turns.end(thread);
-                }
-            }
-            // A wake held for this turn goes out once the session is idle.
-            this.drain_wakes_later(&session_key);
-            if let Err(e) = sent {
-                // A send that was superseded reports back late, and its failure
-                // belongs to a turn that is already over. Announcing it anyway
-                // stamps the error with whatever turn is current — so the
-                // cancelled turn's error lands on the live one, and the chat
-                // shows a failure for a turn that is still streaming. Same
-                // omission as the thread's own turn guard one layer down
-                // (ATL-229).
-                if !this.is_current_turn(&session_key, turn_seq) {
-                    tracing::debug!(
-                        session = %session_id,
-                        turn_seq,
-                        "dropping a superseded turn's failure: {e:#}"
-                    );
-                    return;
-                }
-                let message = format!("{e:#}");
-                let class = classify_message(&message);
-                // A failure is a raised hand: a snoozed session wakes for it.
-                if let Some(history) = this.history() {
-                    history.note_failure(&session_id, Utc::now());
-                }
-                this.projector.note_turn_failed(
-                    &session_id,
-                    message,
-                    Some(class.wire_token().to_string()),
-                );
-            }
-        });
-        Ok(())
-    }
-
-    /// The turns the last run left running, emptied from the record. Each is
-    /// either continued (and recorded again when its turn starts) or let go.
-    pub fn take_left_open_turns(&self) -> Vec<(ThreadId, OpenTurn)> {
-        self.open_turns.take_left_open()
-    }
-
-    /// The next turn in `thread` continues one cut short by a restart, the
-    /// `count`th in a row.
-    pub fn expect_continuation(&self, thread: ThreadId, count: u32) {
-        self.open_turns.expect_continuation(thread, count);
-    }
-=======
     /// The model the agent says a session runs on when nobody picked one — the
     /// picker's default, and what a prompt is recorded against.
     fn default_model(&self, session_id: &str) -> Option<String> {
@@ -1912,7 +1801,18 @@ impl AgentHost {
     //
     // Prompts, stops, answers and settings enter through the steering entry
     // in `steering.rs`; what is left here is the bookkeeping they share.
->>>>>>> Stashed changes
+
+    /// The turns the last run left running, emptied from the record. Each is
+    /// either continued (and recorded again when its turn starts) or let go.
+    pub fn take_left_open_turns(&self) -> Vec<(ThreadId, OpenTurn)> {
+        self.open_turns.take_left_open()
+    }
+
+    /// The next turn in `thread` continues one cut short by a restart, the
+    /// `count`th in a row.
+    pub fn expect_continuation(&self, thread: ThreadId, count: u32) {
+        self.open_turns.expect_continuation(thread, count);
+    }
 
     fn begin_atlas_turn(&self, session_id: &str) {
         let mut activity = lock(&self.activity);
@@ -2127,120 +2027,9 @@ impl AgentHost {
             .is_some_and(|record| record.turn_seq == turn_seq)
     }
 
-<<<<<<< Updated upstream
-    pub fn cancel(&self, key: &SessionKey) -> Result<()> {
-        self.manager
-            .cancel(&acp::SessionId::new(key.session_id.as_str()));
-        Ok(())
-    }
-
-    /// The user pressed Stop: cancel the turn, drop any wake held for the
-    /// session, and end its pull request watches, so nothing Atlas sends on
-    /// its own starts the agent straight back up. The order matters: the held
-    /// wakes go first, so the cancelled turn's end finds none to send.
-    pub fn stop(&self, key: &SessionKey) -> Result<()> {
-        self.forget_wakes(&key.session_id);
-        if let Some(history) = self.history() {
-            if let Some(thread_id) =
-                history.thread_for(&acp::SessionId::new(key.session_id.as_str()))
-            {
-                history.store().end_pull_request_watches(thread_id);
-            }
-        }
-        self.cancel(key)
-    }
-
-    /// Cancel the turn without the user asking it to stop: the tab closed,
-    /// the project is going away, a guide run was cancelled. Held wakes are
-    /// dropped so the cancelled turn does not hand straight over to one, but
-    /// the session's watches stay on — a watch outlives its tab, and the next
-    /// thing it hears opens the session again.
-    pub fn interrupt(&self, key: &SessionKey) -> Result<()> {
-        self.forget_wakes(&key.session_id);
-        self.cancel(key)
-    }
-
-    // ---- per-session settings -------------------------------------------
-
-    pub async fn set_mode(&self, key: &SessionKey, mode_id: String) -> Result<()> {
-        let session_id = acp::SessionId::new(key.session_id.as_str());
-        let connection = lock_thread(&self.thread(&key.session_id)?)
-            .connection()
-            .clone();
-        let modes = connection
-            .session_modes(&session_id)
-            .ok_or_else(|| HostError::new("this agent has no session modes", ErrorClass::Fatal))?;
-        modes
-            .set_mode(acp::SessionModeId::new(mode_id))
-            .await
-            .map_err(HostError::from)
-    }
-
-    pub async fn set_model(&self, key: &SessionKey, model_id: String) -> Result<()> {
-        let session_id = acp::SessionId::new(key.session_id.as_str());
-        let connection = lock_thread(&self.thread(&key.session_id)?)
-            .connection()
-            .clone();
-        let selector = connection.model_selector(&session_id).ok_or_else(|| {
-            HostError::new("this agent has no model selection", ErrorClass::Fatal)
-        })?;
-        selector
-            .select_model(AgentModelId::new(model_id.clone()))
-            .await
-            .map_err(HostError::from)?;
-        if let Some(record) = lock(&self.sessions).get_mut(&key.session_id) {
-            record.current_model = Some(model_id.clone());
-        }
-        // The thread has no event for this, so the host announces it.
-        self.projector.note_model_changed(&session_id, model_id);
-        self.refresh_model(&session_id);
-        Ok(())
-    }
-
-    pub async fn set_config_option(
-        &self,
-        key: &SessionKey,
-        config_id: String,
-        value: serde_json::Value,
-    ) -> Result<()> {
-        let session_id = acp::SessionId::new(key.session_id.as_str());
-        let connection = lock_thread(&self.thread(&key.session_id)?)
-            .connection()
-            .clone();
-        let options = connection
-            .session_config_options(&session_id)
-            .ok_or_else(|| HostError::new("this agent has no config options", ErrorClass::Fatal))?;
-        // A bool maps to the wire's boolean form, anything else to the select
-        // form — the same mapping the old stack made.
-        let value = match value {
-            serde_json::Value::Bool(on) => acp::SessionConfigOptionValue::boolean(on),
-            // A string rides as-is; anything else is re-serialized so an agent
-            // that advertised, say, a numeric option still gets its own value
-            // back rather than a quoted JSON blob.
-            other => acp::SessionConfigOptionValue::value_id(
-                other
-                    .as_str()
-                    .map(str::to_string)
-                    .unwrap_or_else(|| other.to_string()),
-            ),
-        };
-        let confirmed = options
-            .set_config_option(acp::SessionConfigId::new(config_id), value)
-            .await
-            .map_err(HostError::from)?;
-        // The response is the authoritative echo — a follow-up notification is
-        // optional, and most agents never send one. Discarding this list is
-        // what made the effort pill snap back: the set WORKED on the agent and
-        // nothing ever told the frontend (#32). Same shape as
-        // `note_model_changed` below, for the same reason.
-        self.projector.note_config_options(&session_id, &confirmed);
-        Ok(())
-    }
-=======
     // ---- per-session settings -------------------------------------------
     //
     // Mode, model and config options are steering verbs (`steering.rs`).
->>>>>>> Stashed changes
 
     /// Reasoning effort — a native-agent-only knob.
     ///
@@ -2461,12 +2250,7 @@ impl AgentHost {
         // Already open in this process — the tab just needs focusing, and
         // reopening would be a second session for one conversation.
         if let Some(session_id) = thread.session_id.clone() {
-<<<<<<< Updated upstream
-            if lock(&self.sessions).contains_key(session_id.0.as_ref()) {
-=======
             if self.reclaim_for_window(session_id.0.as_ref()) {
-                history.store().unarchive(thread_id);
->>>>>>> Stashed changes
                 return Ok(ResumedThread {
                     key: SessionKey {
                         agent_id: self.handle_for(&self.agent_for(thread.agent_id.as_str())?),
@@ -2706,7 +2490,6 @@ impl AgentHost {
             modified,
             activity: self.atlas_activity(),
             now: Utc::now(),
-<<<<<<< Updated upstream
             forks: self
                 .history()
                 .map(|history| {
@@ -2718,9 +2501,7 @@ impl AgentHost {
                         .collect()
                 })
                 .unwrap_or_default(),
-=======
             held_working: self.held_working_sessions(),
->>>>>>> Stashed changes
         }
     }
 
@@ -3878,7 +3659,6 @@ pub struct ThreadRow {
     /// Another process (typically `claude` in a terminal) wrote this session
     /// within the liveness window and Atlas is not hosting it (Rule 7).
     pub live_elsewhere: bool,
-<<<<<<< Updated upstream
     /// The projects attached to the session besides its own folder, in the
     /// order they were attached. Everything a surface needs to show them, to
     /// match a project filter on them, or to split changes by them.
@@ -3892,6 +3672,9 @@ pub struct ThreadRow {
     /// its branch, linked by the user or the agent — each with the host's
     /// last reported state. Tombstones (unlinked ones) are left out.
     pub pull_requests: Vec<super::session_pull_requests::PullRequestLinkWire>,
+    /// A hold keeps this session running in Atlas (Universal RC) and a turn is
+    /// in flight — "working", even with no tab open on it.
+    pub held_working: bool,
 }
 
 /// One project attached to a session, as every surface reads it.
@@ -4029,11 +3812,6 @@ fn access_card_body(request: &ProjectAccessRequest) -> String {
          change anything."
     });
     body
-=======
-    /// A hold keeps this session running in Atlas (Universal RC) and a turn is
-    /// in flight — "working", even with no tab open on it.
-    pub held_working: bool,
->>>>>>> Stashed changes
 }
 
 /// What `thread_row` needs to decide [`ThreadRow::live_elsewhere`].
@@ -4041,14 +3819,11 @@ struct LiveContext<'a> {
     modified: &'a HashMap<String, DateTime<Utc>>,
     activity: HashMap<String, AtlasActivity>,
     now: DateTime<Utc>,
-<<<<<<< Updated upstream
     /// Branched sessions, child -> parent session id (`session_forks`), for
     /// [`ThreadRow::forked_from_session_id`].
     forks: HashMap<String, String>,
-=======
     /// Sessions a hold keeps running with an Atlas turn in flight.
     held_working: std::collections::HashSet<String>,
->>>>>>> Stashed changes
 }
 
 /// What Atlas's own turns have been doing in one session.
@@ -5991,11 +5766,8 @@ mod tests {
             modified: &EMPTY,
             activity: HashMap::new(),
             now: Utc::now(),
-<<<<<<< Updated upstream
             forks: HashMap::new(),
-=======
             held_working: std::collections::HashSet::new(),
->>>>>>> Stashed changes
         }
     }
 

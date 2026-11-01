@@ -65,7 +65,7 @@
 
 use std::collections::VecDeque;
 
-use atlas_acp_thread::prompt::{self, ImageAttachment, ResourceLinkSpec};
+use atlas_acp_thread::prompt::{self, ImageAttachment, PastedText, ResourceLinkSpec};
 use atlas_agent_wire::{Origin, QueuedPrompt};
 
 use super::*;
@@ -81,9 +81,19 @@ pub struct Prompt {
     pub display: Option<String>,
     pub images: Vec<ImageAttachment>,
     pub resource_links: Vec<ResourceLinkSpec>,
+    /// Large pastes the composer kept as chips. Each goes in full: an embedded
+    /// resource when the agent takes embedded context, a text block otherwise.
+    pub pastes: Vec<PastedText>,
     /// An id the sender minted, echoed on the prompt's `user_message` delta so
     /// a sender that already shows the prompt can match it.
     pub client_message_id: Option<String>,
+    /// Sent by Atlas on its own (a pull request watch's wake, a turn continued
+    /// after a restart), not by anyone steering the session. It passes the
+    /// seat — a driver's hold on the session is a hold on people, not on the
+    /// watches the owner set — and it is not announced as a `user_message`:
+    /// the window already draws it off `session-prompt-injected`, and a
+    /// stamped copy would draw it twice. It still reaches snapshots.
+    pub from_atlas: bool,
 }
 
 impl Prompt {
@@ -136,6 +146,9 @@ pub struct PromptSent<'a> {
     /// Exactly what the agent is sent.
     pub text: &'a str,
     pub origin: &'a Origin,
+    /// See [`Prompt::from_atlas`]: recorded like any prompt, but not as the
+    /// user's interaction with the session.
+    pub from_atlas: bool,
 }
 
 /// The side effects every prompt has on its way to the agent: session capture,
@@ -422,7 +435,9 @@ impl AgentHost {
         policy: SubmitPolicy,
     ) -> Result<Submitted> {
         note_steer("submit", &key.session_id, &origin);
-        self.seat(&key.session_id, &origin)?;
+        if !prompt.from_atlas {
+            self.seat(&key.session_id, &origin)?;
+        }
         match policy {
             SubmitPolicy::Now => self
                 .dispatch(&key.session_id, prompt, origin)
@@ -555,9 +570,33 @@ impl AgentHost {
     /// Discarding is what Stop has always meant in the window — a queued
     /// message was typed for the turn being stopped. A prompt submitted after
     /// this, while the cancelled turn winds down, queues and runs as usual.
+    ///
+    /// Stop also drops any wake held for the session and ends its pull
+    /// request watches, so nothing Atlas sends on its own starts the agent
+    /// straight back up. The order matters: the held wakes go first, so the
+    /// cancelled turn's end finds none to send.
     pub fn stop(&self, key: &SessionKey, origin: Origin) -> Result<()> {
         note_steer("stop", &key.session_id, &origin);
+        self.forget_wakes(&key.session_id);
+        if let Some(history) = self.history() {
+            if let Some(thread_id) =
+                history.thread_for(&acp::SessionId::new(key.session_id.as_str()))
+            {
+                history.store().end_pull_request_watches(thread_id);
+            }
+        }
         self.discard_queue(&key.session_id);
+        self.cancel_turn(&key.session_id);
+        Ok(())
+    }
+
+    /// Cancel the turn without the user asking it to stop: the tab closed,
+    /// the project is going away, a guide run was cancelled. Held wakes are
+    /// dropped so the cancelled turn does not hand straight over to one, but
+    /// the queue and the session's watches stay on — a watch outlives its
+    /// tab, and the next thing it hears opens the session again.
+    pub fn interrupt(&self, key: &SessionKey) -> Result<()> {
+        self.forget_wakes(&key.session_id);
         self.cancel_turn(&key.session_id);
         Ok(())
     }
@@ -735,18 +774,22 @@ impl AgentHost {
                 model: model.as_deref(),
                 text: &prompt.text,
                 origin: &origin,
+                from_atlas: prompt.from_atlas,
             });
         }
-        // `interacted_at` is the one history field the thread's own events
-        // cannot supply — a queued prompt counts when it is sent, not when it
-        // is typed (Zed's `update_interacted_at`).
-        if let Some(history) = self.history() {
-            history.note_interaction(&acp::SessionId::new(session_id), Utc::now());
-        }
+        // `interacted_at` is written by the hooks (`record_prompt`): a queued
+        // prompt counts when it is sent, not when it is typed (Zed's
+        // `update_interacted_at`), and a wake is not the user.
 
-        let content = prompt::with_resource_links(
-            prompt::compose(prompt.text, prompt.images),
-            prompt.resource_links,
+        let embedded_context =
+            !prompt.pastes.is_empty() && self.prompt_embedded_context(session_id)?;
+        let content = prompt::with_pasted_texts(
+            prompt::with_resource_links(
+                prompt::compose(prompt.text, prompt.images),
+                prompt.resource_links,
+            ),
+            prompt.pastes,
+            embedded_context,
         );
         let acp_id = acp::SessionId::new(session_id);
         let turn_seq = {
@@ -759,14 +802,24 @@ impl AgentHost {
         };
         // Every turn start, not only the bind: the user may have switched
         // branches since the session opened, and the row should name the
-        // branch the latest work ran on.
+        // branch the latest work ran on. The model likewise.
         self.refresh_branch(&acp_id, &cwd);
+        self.refresh_model(&acp_id);
         // Before the turn opens, so the `status: running` that `begin_turn`
         // emits already carries this turn's identity.
         self.projector.set_turn_seq(&acp_id, turn_seq);
+        // On disk before it runs, so a launch after a quit or crash knows
+        // which turns to continue (`take_left_open_turns`).
+        let thread = self
+            .history()
+            .and_then(|history| history.thread_for(&acp_id));
+        if let Some(thread) = thread {
+            self.open_turns.begin(thread);
+        }
         // Before the manager pushes the prompt onto the thread, so its entry
-        // is announced as this sender's `user_message`.
-        if !content.is_empty() {
+        // is announced as this sender's `user_message`. Not for a prompt
+        // Atlas sent on its own (see `Prompt::from_atlas`).
+        if !content.is_empty() && !prompt.from_atlas {
             self.projector
                 .stamp_user_message(&acp_id, origin, prompt.client_message_id);
         }
@@ -785,6 +838,18 @@ impl AgentHost {
             // Every way out of the turn ends it, a superseded one included:
             // each send counted itself in, so each counts itself out.
             this.end_atlas_turn(&session_key);
+            // A superseded turn's end must not write out the turn that
+            // replaced it. A session closed meanwhile ended its turn with it.
+            if let Some(thread) = thread {
+                let superseded = lock(&this.sessions)
+                    .get(&session_key)
+                    .is_some_and(|record| record.turn_seq != turn_seq);
+                if !superseded {
+                    this.open_turns.end(thread);
+                }
+            }
+            // A wake held for this turn goes out once the session is idle.
+            this.drain_wakes_later(&session_key);
             if let Err(e) = sent {
                 // A send that was superseded reports back late, and its failure
                 // belongs to a turn that is already over. Announcing it anyway
@@ -796,6 +861,10 @@ impl AgentHost {
                 if this.is_current_turn(&session_key, turn_seq) {
                     let message = format!("{e:#}");
                     let class = classify_message(&message);
+                    // A failure is a raised hand: a snoozed session wakes for it.
+                    if let Some(history) = this.history() {
+                        history.note_failure(&acp_id, Utc::now());
+                    }
                     this.projector.note_turn_failed(
                         &acp_id,
                         message,
@@ -1004,6 +1073,7 @@ impl AgentHost {
         // who picked it, so the window's pill and a remote viewer can say so.
         self.projector
             .note_model_changed(&session_id, model_id, Some(origin));
+        self.refresh_model(&session_id);
         Ok(())
     }
 
