@@ -780,7 +780,7 @@ async function runOp<T>(kind: string, opId: unknown, steps: OpStep[], finish: ()
   for (const step of steps) {
     await sleep(step.delay ?? 110);
     if (step.line !== undefined) {
-      send({ phase: "output", stream: step.stream ?? "stderr", line: step.line });
+      send({ phase: "output", lines: [{ stream: step.stream ?? "stderr", line: step.line }] });
     }
     if (step.percent !== undefined) {
       send({ phase: "progress", percent: step.percent, title: step.title ?? kind });

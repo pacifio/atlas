@@ -158,8 +158,10 @@ export interface ActiveGitOp {
   opId: string;
   kind: string;
   running: boolean;
-  /** Live child output (hooks included), newest last. Capped. */
-  lines: { stream: "stdout" | "stderr"; text: string }[];
+  /** Live child output (hooks included), newest last. Capped. `seq` counts
+   *  every line the op has printed, so it stays a stable key after the cap
+   *  trims the front. */
+  lines: { seq: number; stream: "stdout" | "stderr"; text: string }[];
   /** Weighted progress for network ops (`--progress` stderr parsing). */
   progress: { percent: number; title: string } | null;
   error: GitErrorPayload | null;
@@ -171,7 +173,8 @@ export type GitOpEvent = {
   kind: string;
 } & (
   | { phase: "started" }
-  | { phase: "output"; stream: "stdout" | "stderr"; line: string }
+  // Batched by Rust (`OpEmitter`): every line since the last flush, ~80ms.
+  | { phase: "output"; lines: { stream: "stdout" | "stderr"; line: string }[] }
   | { phase: "progress"; percent: number; title: string }
   | { phase: "done"; ok: boolean; error?: GitErrorPayload }
 );
@@ -284,11 +287,13 @@ function ensureGitStatusFreshListener(): void {
           };
           break;
         case "output":
+          // One store update per batch, not per line: a pre-push hook's test
+          // run or a big pull's per-file stat is thousands of lines.
           if (s.activeOp?.opId === p.opId) {
-            s.activeOp.lines.push({ stream: p.stream, text: p.line });
-            if (s.activeOp.lines.length > OP_LINES_CAP) {
-              s.activeOp.lines.splice(0, s.activeOp.lines.length - OP_LINES_CAP);
-            }
+            const prev = s.activeOp.lines;
+            let seq = prev.length ? prev[prev.length - 1].seq + 1 : 0;
+            const added = p.lines.map((l) => ({ seq: seq++, stream: l.stream, text: l.line }));
+            s.activeOp.lines = prev.concat(added).slice(-OP_LINES_CAP);
           }
           break;
         case "progress":

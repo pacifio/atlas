@@ -1153,11 +1153,30 @@ pub async fn git_inprogress(path: String) -> Result<InProgress, GitErrorPayload>
 
 // ── Streaming operations (`atlas:git:op`) ────────────────────────────────
 //
-// Long-running git commands (commit with hooks today; push/pull/clone with
-// progress in later phases) stream their output live so the UI can show a
-// busy state with real feedback instead of appearing hung. One event name,
-// discriminated by `phase`:
-//   started → output* → done{ok, error?}
+// Long-running git commands (commit, push, pull, fetch — and the hooks they
+// run) stream their output live so the UI can show a busy state with real
+// feedback instead of appearing hung. One event name, discriminated by
+// `phase`:
+//   started → (output | progress)* → done{ok, error?}
+//
+// Output is BATCHED. Every Tauri event is a `webview.eval` that runs on the
+// macOS main thread, and the webview then parses and runs a handler for it;
+// one event per line turned a pre-push hook's test run or a big pull's
+// per-file stat (thousands of lines) into thousands of main-thread hops and
+// store updates back to back, which froze the whole app. Lines collect here
+// and a flusher thread sends them every `OP_FLUSH_INTERVAL` as one `output`
+// event carrying `lines`, followed by the latest `progress` — the bar only
+// ever shows the newest one, so intermediate ones are dropped.
+
+/// How often buffered output goes to the frontend: ~12 events a second at
+/// most, whatever the child prints.
+const OP_FLUSH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(80);
+
+/// Lines kept per batch; older ones in the same batch are dropped. The output
+/// strip keeps 500 (`OP_LINES_CAP` in git-store.ts), so a batch past that
+/// could never be shown in full anyway, and this bounds the event's size when
+/// a hook floods.
+const OP_BATCH_MAX_LINES: usize = 500;
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1167,9 +1186,7 @@ struct GitOpEventPayload<'a> {
     kind: &'a str,
     phase: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    stream: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    line: Option<&'a str>,
+    lines: Option<&'a [OpLine]>,
     #[serde(skip_serializing_if = "Option::is_none")]
     ok: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1180,36 +1197,47 @@ struct GitOpEventPayload<'a> {
     title: Option<&'a str>,
 }
 
-/// Emits `atlas:git:op` events for one operation; also the `OpSink` handed
-/// to the streaming executor, so child output forwards line by line.
-pub(crate) struct OpEmitter {
+/// One line of child output in an `output` batch.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+struct OpLine {
+    stream: &'static str,
+    line: String,
+}
+
+/// What has arrived since the last flush.
+#[derive(Debug, Default)]
+struct OpBatch {
+    lines: std::collections::VecDeque<OpLine>,
+    /// Latest progress, as a percent and its step title.
+    progress: Option<(f32, String)>,
+}
+
+impl OpBatch {
+    fn push_line(&mut self, stream: &'static str, line: &str) {
+        if self.lines.len() == OP_BATCH_MAX_LINES {
+            self.lines.pop_front();
+        }
+        self.lines.push_back(OpLine {
+            stream,
+            line: line.to_string(),
+        });
+    }
+
+    fn take(&mut self) -> (Vec<OpLine>, Option<(f32, String)>) {
+        (self.lines.drain(..).collect(), self.progress.take())
+    }
+}
+
+struct OpEmitterInner {
     app: AppHandle,
     op_id: String,
     repo: String,
     kind: &'static str,
+    batch: std::sync::Mutex<OpBatch>,
 }
 
-impl OpEmitter {
-    pub(crate) fn new(app: AppHandle, op_id: String, repo: String, kind: &'static str) -> Self {
-        OpEmitter {
-            app,
-            op_id,
-            repo,
-            kind,
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn emit(
-        &self,
-        phase: &str,
-        stream: Option<&str>,
-        line: Option<&str>,
-        ok: Option<bool>,
-        error: Option<&GitErrorPayload>,
-        percent: Option<f32>,
-        title: Option<&str>,
-    ) {
+impl OpEmitterInner {
+    fn emit(&self, phase: &str, fields: GitOpFields<'_>) {
         let _ = self.app.emit(
             "atlas:git:op",
             GitOpEventPayload {
@@ -1217,39 +1245,141 @@ impl OpEmitter {
                 repo: &self.repo,
                 kind: self.kind,
                 phase,
-                stream,
-                line,
-                ok,
-                error,
-                percent,
-                title,
+                lines: fields.lines,
+                ok: fields.ok,
+                error: fields.error,
+                percent: fields.percent,
+                title: fields.title,
             },
         );
     }
 
+    /// Send what has collected: the lines as one event, then the newest
+    /// progress. Only the flusher thread and `done` (after stopping the
+    /// flusher) call this, so batches can never overtake each other.
+    fn flush(&self) {
+        let (lines, progress) = match self.batch.lock() {
+            Ok(mut batch) => batch.take(),
+            Err(_) => return,
+        };
+        if !lines.is_empty() {
+            self.emit(
+                "output",
+                GitOpFields {
+                    lines: Some(&lines),
+                    ..GitOpFields::default()
+                },
+            );
+        }
+        if let Some((percent, title)) = progress {
+            self.emit(
+                "progress",
+                GitOpFields {
+                    percent: Some(percent),
+                    title: Some(&title),
+                    ..GitOpFields::default()
+                },
+            );
+        }
+    }
+}
+
+#[derive(Default)]
+struct GitOpFields<'a> {
+    lines: Option<&'a [OpLine]>,
+    ok: Option<bool>,
+    error: Option<&'a GitErrorPayload>,
+    percent: Option<f32>,
+    title: Option<&'a str>,
+}
+
+/// Emits `atlas:git:op` events for one operation; also the `OpSink` handed
+/// to the streaming executor. Output is buffered and flushed on a timer from
+/// `started` until `done` (see the section note above).
+pub(crate) struct OpEmitter {
+    inner: std::sync::Arc<OpEmitterInner>,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    flusher: std::sync::Mutex<Option<std::thread::JoinHandle<()>>>,
+}
+
+impl OpEmitter {
+    pub(crate) fn new(app: AppHandle, op_id: String, repo: String, kind: &'static str) -> Self {
+        OpEmitter {
+            inner: std::sync::Arc::new(OpEmitterInner {
+                app,
+                op_id,
+                repo,
+                kind,
+                batch: std::sync::Mutex::new(OpBatch::default()),
+            }),
+            stop: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            flusher: std::sync::Mutex::new(None),
+        }
+    }
+
     pub(crate) fn started(&self) {
-        self.emit("started", None, None, None, None, None, None);
+        self.inner.emit("started", GitOpFields::default());
+        let inner = self.inner.clone();
+        let stop = self.stop.clone();
+        let handle = std::thread::Builder::new()
+            .name("git-op-flush".into())
+            .spawn(move || {
+                while !stop.load(std::sync::atomic::Ordering::Acquire) {
+                    std::thread::park_timeout(OP_FLUSH_INTERVAL);
+                    if stop.load(std::sync::atomic::Ordering::Acquire) {
+                        break;
+                    }
+                    inner.flush();
+                }
+            })
+            .ok();
+        if let Ok(mut slot) = self.flusher.lock() {
+            *slot = handle;
+        }
+    }
+
+    /// Stop the flusher (waking it rather than waiting out its sleep) and
+    /// join it, so nothing it sends can land after what follows.
+    fn stop_flusher(&self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Release);
+        let handle = self.flusher.lock().ok().and_then(|mut slot| slot.take());
+        if let Some(handle) = handle {
+            handle.thread().unpark();
+            let _ = handle.join();
+        }
     }
 
     pub(crate) fn done(&self, error: Option<&GitErrorPayload>) {
-        self.emit("done", None, None, Some(error.is_none()), error, None, None);
+        self.stop_flusher();
+        // Whatever arrived since the last tick goes out before `done`, so the
+        // strip holds git's last words when the operation fails.
+        self.inner.flush();
+        self.inner.emit(
+            "done",
+            GitOpFields {
+                ok: Some(error.is_none()),
+                error,
+                ..GitOpFields::default()
+            },
+        );
     }
 
     pub(crate) fn progress(&self, fraction: f32, title: &str) {
-        self.emit(
-            "progress",
-            None,
-            None,
-            None,
-            None,
-            Some(fraction * 100.0),
-            Some(title),
-        );
+        if let Ok(mut batch) = self.inner.batch.lock() {
+            batch.progress = Some((fraction * 100.0, title.to_string()));
+        }
+    }
+}
+
+impl Drop for OpEmitter {
+    /// A path that returns without `done` must not leave the thread running.
+    fn drop(&mut self) {
+        self.stop_flusher();
     }
 }
 
 /// Sink that forwards output lines AND feeds them through a weighted
-/// progress parser, emitting `progress` phases as percent advances.
+/// progress parser, recording `progress` as percent advances.
 struct ProgressSink<'a> {
     emitter: &'a OpEmitter,
     parser: std::sync::Mutex<atlas_git::progress::ProgressParser>,
@@ -1272,7 +1402,9 @@ impl atlas_git::OpSink for OpEmitter {
             atlas_git::Stream::Stdout => "stdout",
             atlas_git::Stream::Stderr => "stderr",
         };
-        self.emit("output", Some(name), Some(line), None, None, None, None);
+        if let Ok(mut batch) = self.inner.batch.lock() {
+            batch.push_line(name, line);
+        }
     }
 }
 
@@ -1754,6 +1886,50 @@ mod tests {
     }
 
     // ── push ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn op_batch_keeps_lines_in_order_and_only_the_latest_progress() {
+        let mut batch = OpBatch::default();
+        batch.push_line("stderr", "Counting objects: 50%");
+        batch.progress = Some((10.0, "Counting objects".into()));
+        batch.push_line("stdout", "done");
+        batch.progress = Some((30.0, "Compressing objects".into()));
+
+        let (lines, progress) = batch.take();
+        assert_eq!(
+            lines,
+            [
+                OpLine {
+                    stream: "stderr",
+                    line: "Counting objects: 50%".into()
+                },
+                OpLine {
+                    stream: "stdout",
+                    line: "done".into()
+                },
+            ]
+        );
+        assert_eq!(progress, Some((30.0, "Compressing objects".into())));
+
+        // Taking empties it: the next tick sends nothing.
+        let (lines, progress) = batch.take();
+        assert!(lines.is_empty() && progress.is_none());
+    }
+
+    #[test]
+    fn op_batch_drops_its_oldest_lines_past_the_cap() {
+        let mut batch = OpBatch::default();
+        for i in 0..OP_BATCH_MAX_LINES + 25 {
+            batch.push_line("stdout", &format!("line {i}"));
+        }
+        let (lines, _) = batch.take();
+        assert_eq!(lines.len(), OP_BATCH_MAX_LINES);
+        assert_eq!(lines[0].line, "line 25");
+        assert_eq!(
+            lines.last().unwrap().line,
+            format!("line {}", OP_BATCH_MAX_LINES + 24)
+        );
+    }
 
     #[test]
     fn push_args_map_each_option_to_its_flag() {
