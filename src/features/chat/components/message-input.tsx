@@ -674,8 +674,13 @@ function ComposerGroupsMenu({
         }
       >
         <AgentMark agentType={agentType} className="!h-4 !w-4 !text-3xs !rounded" />
+        {/* `leading-normal` undoes the pill's `leading-none` here: `truncate`
+            clips at the line box, and a one-em box cuts off descenders. */}
         <span
-          className={cn(composerPillLabelClass(), "max-w-[96px] truncate @[460px]:max-w-[140px]")}
+          className={cn(
+            composerPillLabelClass(),
+            "max-w-[96px] truncate leading-normal @[460px]:max-w-[140px]",
+          )}
         >
           {currentModelInfo
             ? modelLabel(currentModelInfo)
