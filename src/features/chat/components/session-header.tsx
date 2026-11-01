@@ -7,10 +7,12 @@
 // went back to the transcript.
 //
 // The header's right end reads, in order: these controls, the column's own,
-// the window group's panel toggle when the column is the rightmost
-// (`TopbarTrailing`), and last the session's `⋯` (`session-actions-menu.tsx`).
-// A `⋯` is a menu of actions and always ends its row. Here:
+// and the window group's panel toggle when the column is the rightmost
+// (`TopbarTrailing`). Here:
 //
+//  - the remote-control pill, only while the session has a room: its state,
+//    and the room's menu (`rc-header-menu.tsx`). A room is started from the
+//    Details card;
 //  - the pinned-messages pill, only while something is pinned;
 //  - Details: the session's card, docked where the chat panel keeps room at
 //    its top-right, a popover under the button anywhere else
@@ -26,6 +28,7 @@ import { SessionDetailsButton } from "@/features/session-context/components/sess
 
 import type { ChatPin } from "../stores/chat-pins-store";
 import { ChatPinnedMenu } from "./chat-pinned-menu";
+import { RcHeaderMenu } from "./rc-header-menu";
 
 interface SessionHeaderControlsProps {
   tabId: string;
@@ -54,6 +57,7 @@ export const SessionHeaderControls = memo(function SessionHeaderControls({
 }: SessionHeaderControlsProps) {
   return (
     <div data-session-controls className="flex shrink-0 items-center gap-0.5">
+      <RcHeaderMenu tabId={tabId} />
       <ChatPinnedMenu pinScopeKey={pinScopeKey} onJump={onJumpToPin} />
       <SessionDetailsButton tabId={tabId} scope={scope} docked={docked} stageRef={stageRef} />
     </div>

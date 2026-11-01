@@ -33,6 +33,7 @@ import { useSessionWorkPath } from "../lib/session-work-path";
 import { ActivitySection } from "./activity-section";
 import { LineageSection } from "./lineage-section";
 import { ProjectsSection } from "./projects-section";
+import { RemoteControlSection } from "./remote-control-section";
 import { VersionControlSection } from "./version-control-section";
 import { SessionFooter } from "./session-footer";
 import { WorkspaceSection } from "./workspace-section";
@@ -144,6 +145,7 @@ export function SessionDetailsCard({
           )}
           {density === "full" && <LineageSection tabId={tabId} projectPath={projectPath} />}
           <ActivitySection tabId={tabId} presentation={presentation} />
+          <RemoteControlSection tabId={tabId} presentation={presentation} />
         </div>
       </div>
       <SessionFooter tabId={tabId} projectPath={projectPath} />

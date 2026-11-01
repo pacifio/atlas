@@ -74,7 +74,7 @@ export function SessionElicitation({
           className="px-4 py-3 text-xs text-[var(--secondary-foreground)]"
         >
           The agent has a question. {remoteDriver} is driving from remote control, so only they can
-          answer it — take over from the chat header to answer it yourself.
+          answer it — take over at the composer to answer it yourself.
         </p>
       </ComposerDrawer>
     );

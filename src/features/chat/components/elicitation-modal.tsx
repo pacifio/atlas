@@ -211,7 +211,7 @@ export function ElicitationModal({
                 className="px-0.5 text-xs text-secondary-foreground"
               >
                 {remoteDriver} is driving from remote control — only they can answer this. Take over
-                from the chat header to answer it yourself.
+                at the composer to answer it yourself.
               </p>
             )}
             <div className="mt-0.5 flex items-center gap-2">

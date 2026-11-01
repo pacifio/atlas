@@ -40,6 +40,7 @@ function row(threadId: string, patch: Partial<ThreadRow> = {}): ThreadRow {
     projectName: "app",
     folderPaths: ["/work/app"],
     liveElsewhere: false,
+    heldWorking: false,
     branch: null,
     model: null,
     ...patch,

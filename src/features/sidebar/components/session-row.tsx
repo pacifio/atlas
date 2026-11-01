@@ -254,6 +254,7 @@ export const SessionRow = memo(function SessionRow(props: SessionRowProps) {
   const status: SessionRowStatus = resolveSessionRowStatus({
     live: props.live,
     liveElsewhere: session.liveElsewhere,
+    heldWorking: session.heldWorking,
     watching: session.pullRequests.some((p) => p.watching),
   });
   const isUnread = session.unread;
@@ -675,6 +676,7 @@ export const SessionSearchResultRow = memo(function SessionSearchResultRow(props
   const status = resolveSessionRowStatus({
     live: null,
     liveElsewhere: session.liveElsewhere,
+    heldWorking: session.heldWorking,
     watching: session.pullRequests.some((p) => p.watching),
   });
   const listScrolling = useSessionListScroll.use.scrolling();

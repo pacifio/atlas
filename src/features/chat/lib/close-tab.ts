@@ -86,7 +86,7 @@ function finishClose(tabId: string): void {
     if (s.acpSessionId) {
       chat.actions.clearPermissionsForSession(s.acpSessionId);
       clearSessionAttention(s.acpSessionId);
-      // An ended room stays in the mirror so the header can say why it ended;
+      // An ended room stays in the mirror so the title-bar pill can say why it ended;
       // with the tab gone there is no header, and a thread reopened later
       // would wear a stale "Ended" pill. A live room stays: Rust still hosts it.
       const room = useRcStore.getState().bySession[s.acpSessionId];

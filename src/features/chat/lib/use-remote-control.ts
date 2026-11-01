@@ -106,7 +106,8 @@ export function useRemoteControl(sessionId: string, title: string): RemoteContro
         .then(() => {
           if (approve && request) {
             toast.success(`${driverLabel(request)} is driving`, {
-              description: "Only they can prompt now. Take over any time from the header.",
+              description:
+                "Only they can prompt now. Take over any time from the pill in the title bar.",
             });
           }
         })

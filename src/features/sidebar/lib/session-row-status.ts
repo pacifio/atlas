@@ -18,9 +18,14 @@ export function resolveSessionRowStatus(input: {
   /** Atlas is watching one of its pull requests and will wake its agent:
    *  the session is still the agent's, not back in the user's inbox. */
   watching?: boolean;
+  /** A hold keeps the session running in Atlas with no tab on it (Universal
+   *  RC): still Atlas's, and still working. */
+  heldWorking?: boolean;
 }): SessionRowStatus {
   if (input.live === "waiting") return "input";
-  if (input.live === "running" || input.liveElsewhere || input.watching) return "working";
+  if (input.live === "running" || input.liveElsewhere || input.heldWorking || input.watching) {
+    return "working";
+  }
   if (input.live === "error") return "failed";
   return "ready";
 }

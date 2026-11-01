@@ -62,7 +62,7 @@ export function RcDriverBar({ tabId }: { tabId: string }) {
             disabled={busy}
             onClick={() => run(rc.takeOver(sessionId))}
             title="Take the seat back; only you can prompt again"
-            className={cn(COMPOSER_STRIP_ACTION, "cursor-pointer disabled:opacity-50")}
+            className={cn(COMPOSER_STRIP_ACTION, "cursor-pointer")}
           >
             <Hand size={11} />
             Take over
@@ -92,7 +92,7 @@ export function RcDriverBar({ tabId }: { tabId: string }) {
           disabled={busy}
           onClick={() => run(rc.answerControl(sessionId, request.requestId, true))}
           title="Hand them the seat"
-          className={cn(COMPOSER_STRIP_ACTION, "cursor-pointer disabled:opacity-50")}
+          className={cn(COMPOSER_STRIP_ACTION, "cursor-pointer")}
         >
           Allow
         </button>
@@ -101,7 +101,7 @@ export function RcDriverBar({ tabId }: { tabId: string }) {
           disabled={busy}
           onClick={() => run(rc.answerControl(sessionId, request.requestId, false))}
           title="Keep the seat"
-          className={cn(COMPOSER_STRIP_ACTION, "cursor-pointer disabled:opacity-50")}
+          className={cn(COMPOSER_STRIP_ACTION, "cursor-pointer")}
         >
           Decline
         </button>
