@@ -50,7 +50,7 @@ export function RemoteControlSection({
   };
 
   return (
-    <DetailsSection label="Remote control" title="Remote control" icon={RadioTower}>
+    <DetailsSection label="Remote control">
       {room && room.state !== "ended" ? (
         <DetailsRow>
           <RowIcon icon={RadioTower} />
