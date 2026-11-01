@@ -27,6 +27,7 @@ import {
   chatCommentsRepliesOnly,
   chatCommentsUnshared,
   chatCommentsTools,
+  chatCommentsLong,
 } from "./chat-comments";
 import { chatFileChips } from "./chat-file-chips";
 import { chatLinkIcons } from "./chat-link-icons";
@@ -89,6 +90,7 @@ const all: Scenario[] = [
   chatCommentsMany,
   chatCommentsRepliesOnly,
   chatCommentsTools,
+  chatCommentsLong,
   chatCommentsUnshared,
   chatCommentsError,
   chatLongPrompt,
