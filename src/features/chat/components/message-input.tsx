@@ -1,4 +1,14 @@
-import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from "react";
+import {
+  memo,
+  useState,
+  useRef,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useSyncExternalStore,
+  type Ref,
+} from "react";
 import { createPortal } from "react-dom";
 import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
 import { cn } from "@/lib/utils";
@@ -115,6 +125,7 @@ import type {
 } from "../lib/mentions";
 import { toast } from "sonner";
 import { useComposerFileDrop } from "../hooks/use-composer-file-drop";
+import { useComposerFold } from "../hooks/use-composer-fold";
 import { scratchPathForFile } from "@/lib/scratch-file";
 import { useAppStore } from "@/features/app/stores/app-store";
 // Value imports from the composer stay editor-free: anything that imports
@@ -663,8 +674,13 @@ function ComposerGroupsMenu({
         }
       >
         <AgentMark agentType={agentType} className="!h-4 !w-4 !text-3xs !rounded" />
+        {/* `leading-normal` undoes the pill's `leading-none` here: `truncate`
+            clips at the line box, and a one-em box cuts off descenders. */}
         <span
-          className={cn(composerPillLabelClass(), "max-w-[96px] truncate @[460px]:max-w-[140px]")}
+          className={cn(
+            composerPillLabelClass(),
+            "max-w-[96px] truncate leading-normal @[460px]:max-w-[140px]",
+          )}
         >
           {currentModelInfo
             ? modelLabel(currentModelInfo)
@@ -1026,15 +1042,20 @@ export function MessageInput({
   triggerRef.current = trigger;
 
   // ── Slash-command picker orchestration ────────────────────────────────
-  const [slashTrigger, setSlashTrigger] = useState<SlashTrigger | null>(null);
+  // The trigger changes on every keystroke while the picker is open, and this
+  // component is the whole composer — editor shell, toolbar, tray, both
+  // pickers. Held in React state, each keystroke re-rendered all of it. So it
+  // lives in a store only the picker subscribes to (`SlashPickerHost`), and
+  // this component re-renders on the open/close edge alone.
+  const [slashStore] = useState(() => createValueStore<SlashTrigger | null>(null));
+  const setSlashTrigger = slashStore.set;
+  const slashOpen = useSyncExternalStore(slashStore.subscribe, () => slashStore.get() !== null);
   // A picker left open across an agent switch must not inherit the open
   // state; each agent's catalogue swaps in via `agentSlashCommands` above.
   useEffect(() => {
-    setSlashTrigger(null);
-  }, [agentType]);
+    slashStore.set(null);
+  }, [agentType, slashStore]);
   const slashPickerRef = useRef<SlashCommandPickerHandle>(null);
-  const slashTriggerRef = useRef<SlashTrigger | null>(null);
-  slashTriggerRef.current = slashTrigger;
 
   /** The agent's own words from the last auth failure, so a later `/login`
    *  can pass them along — the modal uses `reason` to tell "wants a provider
@@ -1262,10 +1283,13 @@ export function MessageInput({
     stagedImages.length === 0 &&
     queue.length === 0 &&
     trigger === null &&
-    slashTrigger === null &&
+    !slashOpen &&
     githubSyncing === null &&
     !isDropTarget;
   const collapsed = collapsible && !composerFocused;
+  const inputCardRef = useRef<HTMLDivElement>(null);
+  const trayRef = useRef<HTMLDivElement>(null);
+  const trayShown = useComposerFold(collapsed, inputCardRef, trayRef);
   // What folds it: focus moving to something ELSE (Tab away), a press
   // outside it, or Esc. Not focus merely leaving: WebKit does not focus a
   // button on click, so pressing a tray pill drops focus to <body> — read as
@@ -1503,7 +1527,7 @@ export function MessageInput({
 
   const handleSlashSelect = useCallback(
     (cmd: SlashCommand) => {
-      const t = slashTriggerRef.current;
+      const t = slashStore.get();
       const input = inputRef.current;
       if (!t || !input) return;
       // An Atlas-local command leaves no literal `/login` behind.
@@ -1587,7 +1611,7 @@ export function MessageInput({
     (key: "Up" | "Down" | "Enter" | "Escape" | "Backspace" | "Tab") => {
       // Slash takes precedence when both happen to be open.
       const sp = slashPickerRef.current;
-      const st = slashTriggerRef.current;
+      const st = slashStore.get();
       if (st && sp) {
         switch (key) {
           case "Up":
@@ -2082,6 +2106,7 @@ export function MessageInput({
           {/* Inner input surface — nested card with its own border + focus
               glow, sitting proud of the muted shell. The send button lives INSIDE it. */}
           <div
+            ref={inputCardRef}
             className={cn(
               // `min-h-[44px]`: the send button is absolutely positioned 8px
               // from the top at 28px tall, so it needs 36px of field to sit
@@ -2202,77 +2227,64 @@ export function MessageInput({
               </button>
             </Hint>
           </div>
-          {/* The toolbar tray, tucked under the input card. Folding, it
-              slides up behind the card while its row closes, so the two read
-              as one bar retracting into the input; opening runs it back
-              down. The row's height animates as a grid track (0fr ↔ 1fr).
-              It clips only while folded — open, the pills' dropups are its
-              children and must not be cut off. Pill labels collapse to icons
-              as the shell narrows (`composerPillLabelClass`), so the row
+          {/* The toolbar tray, tucked under the input card. Folding, the card
+              slides down over it while it fades, so the two read as one bar
+              retracting into the input; opening runs it back. Transform and
+              opacity only, and the tray leaves the layout once, when the fold
+              lands — never a height tween, which resized the transcript above
+              every frame (`use-composer-fold.ts`). Pill labels collapse to
+              icons as the shell narrows (`composerPillLabelClass`), so the row
               never wraps or runs past the edge. */}
-          <div
-            className={cn(
-              "grid transition-[grid-template-rows] duration-base ease-out-strong motion-reduce:transition-none",
-              // Folded, the capsule keeps the room under it the tray has open:
-              // the stack's own bottom padding, nothing added.
-              collapsed ? "grid-rows-[0fr]" : "grid-rows-[1fr]",
-            )}
-          >
-            <div className={cn("min-h-0", collapsed && "overflow-hidden")}>
-              <div
-                inert={collapsed}
-                className={cn(
-                  // Fill: the panel-input background (near-black on the default
-                  // dark theme), a shade off the input card above, not a full step.
-                  "mx-5 flex items-center justify-between gap-2 rounded-b-xl border border-t-0 border-[var(--border)] bg-[var(--atlas-panel-input-background)] px-2 pb-1.5 pt-2",
-                  "transition-[translate,opacity] duration-base ease-out-strong motion-reduce:transition-none",
-                  collapsed && "-translate-y-full opacity-0",
-                )}
-              >
-                <div className="flex min-w-0 items-center gap-1">
-                  <ComposerAddMenu
-                    // `disabledProp`, NOT `disabled`: a missing org AI grant locks
-                    // the input, not the toolbar. Greying the + here made the whole
-                    // footer read as dead while the fix (switch agent, request a
-                    // grant) is one row away.
-                    disabled={disabledProp || githubSyncing !== null}
-                    projectPath={useAppStore.getState().currentProject?.path ?? null}
-                    agentId={switchableAgent}
-                    imageSupported={imageSupported}
-                    onAddFilesOrPhotos={() => void pickFilesOrPhotos()}
-                    onAttachMedia={() => void pickMedia()}
-                    onTakeScreenshot={(mode) => void handleTakeScreenshot(mode)}
-                    onCloneRepo={(repo) => void handleCloneRepo(repo)}
-                    onPickSession={handlePickSession}
-                    onPickProject={handlePickProject}
-                  />
-                  {/* Agent / mode / model as one grouped, animated picker — the
+          <div ref={trayRef} hidden={!trayShown}>
+            <div
+              inert={collapsed}
+              // Fill: the panel-input background (near-black on the default
+              // dark theme), a shade off the input card above, not a full step.
+              className="mx-5 flex items-center justify-between gap-2 rounded-b-xl border border-t-0 border-[var(--border)] bg-[var(--atlas-panel-input-background)] px-2 pb-1.5 pt-2"
+            >
+              <div className="flex min-w-0 items-center gap-1">
+                <ComposerAddMenu
+                  // `disabledProp`, NOT `disabled`: a missing org AI grant locks
+                  // the input, not the toolbar. Greying the + here made the whole
+                  // footer read as dead while the fix (switch agent, request a
+                  // grant) is one row away.
+                  disabled={disabledProp || githubSyncing !== null}
+                  projectPath={useAppStore.getState().currentProject?.path ?? null}
+                  agentId={switchableAgent}
+                  imageSupported={imageSupported}
+                  onAddFilesOrPhotos={() => void pickFilesOrPhotos()}
+                  onAttachMedia={() => void pickMedia()}
+                  onTakeScreenshot={(mode) => void handleTakeScreenshot(mode)}
+                  onCloneRepo={(repo) => void handleCloneRepo(repo)}
+                  onPickSession={handlePickSession}
+                  onPickProject={handlePickProject}
+                />
+                {/* Agent / mode / model as one grouped, animated picker — the
                   pills double as its tab strip. Cycling shortcuts (⌥/ agents,
                   ⇧⇥ Claude modes) are unchanged. The native agent's BYOK
                   pickers (ProviderModelPills etc.) stay separate below. */}
-                  <ComposerGroupsMenu
-                    tabId={tabId}
-                    currentAgent={switchableAgent}
-                    onSwitchAgent={handleSwitchAgent}
-                  />
-                  {/* The BYOK ProviderModelPills used to render here for the
+                <ComposerGroupsMenu
+                  tabId={tabId}
+                  currentAgent={switchableAgent}
+                  onSwitchAgent={handleSwitchAgent}
+                />
+                {/* The BYOK ProviderModelPills used to render here for the
                   native agent — the user's own provider keys, which the
                   gateway agent cannot use. Model choice now goes through the
                   same ACP model pill as every other agent, fed by the seam's
                   published catalogue. */}
-                  {agentType === "atlas-agent" && <EffortPill tabId={tabId} />}
-                </div>
-                {/* Right side, in this order: the session's usage, the agent's own
+                {agentType === "atlas-agent" && <EffortPill tabId={tabId} />}
+              </div>
+              {/* Right side, in this order: the session's usage, the agent's own
                 knobs, then the live
                 implementation-plan pill hard against the right edge (arc
                 progress + count; opens its own morphing task-list panel, and
                 replaces the PlanDock strip that used to sit above the
                 composer). Both are right-anchored dropups. */}
-                <div className="flex shrink-0 items-center gap-1">
-                  <UsagePill tabId={tabId} />
-                  <ComposerOptionsPill tabId={tabId} />
-                  <PlanTasksPill tabId={tabId} />
-                </div>
+              <div className="flex shrink-0 items-center gap-1">
+                <UsagePill tabId={tabId} />
+                <ComposerOptionsPill tabId={tabId} />
+                <PlanTasksPill tabId={tabId} />
               </div>
             </div>
           </div>
@@ -2296,13 +2308,11 @@ export function MessageInput({
         />
       )}
       {LazySlashPicker && (
-        <LazySlashPicker
-          ref={slashPickerRef}
-          open={slashTrigger !== null}
-          query={slashTrigger?.query ?? ""}
-          anchor={slashTrigger?.anchor ?? null}
+        <SlashPickerHost
+          Picker={LazySlashPicker}
+          store={slashStore}
+          pickerRef={slashPickerRef}
           onSelect={handleSlashSelect}
-          onClose={() => setSlashTrigger(null)}
           commands={agentSlashCommands}
           loading={slashCommandsLoading}
           // One resolver instead of an if-ladder that missed the native agent
@@ -2313,6 +2323,58 @@ export function MessageInput({
     </div>
   );
 }
+
+/** A value outside React that components subscribe to with
+ *  `useSyncExternalStore`, so a change re-renders only its subscribers. */
+function createValueStore<T>(initial: T) {
+  let value = initial;
+  const listeners = new Set<() => void>();
+  return {
+    get: () => value,
+    set: (next: T) => {
+      if (Object.is(next, value)) return;
+      value = next;
+      for (const l of listeners) l();
+    },
+    subscribe: (l: () => void) => {
+      listeners.add(l);
+      return () => {
+        listeners.delete(l);
+      };
+    },
+  };
+}
+
+type ValueStore<T> = ReturnType<typeof createValueStore<T>>;
+
+/** The slash picker, fed from the trigger store: per keystroke, only this
+ *  re-renders. Memoized so the composer's own re-renders pass it by. */
+const SlashPickerHost = memo(function SlashPickerHost({
+  Picker,
+  store,
+  pickerRef,
+  ...rest
+}: {
+  Picker: typeof SlashCommandPickerComponent;
+  store: ValueStore<SlashTrigger | null>;
+  pickerRef: Ref<SlashCommandPickerHandle>;
+  onSelect: (cmd: SlashCommand) => void;
+  commands: SlashCommand[];
+  loading: boolean;
+  footerLabel: string;
+}) {
+  const trigger = useSyncExternalStore(store.subscribe, store.get);
+  return (
+    <Picker
+      ref={pickerRef}
+      open={trigger !== null}
+      query={trigger?.query ?? ""}
+      anchor={trigger?.anchor ?? null}
+      onClose={() => store.set(null)}
+      {...rest}
+    />
+  );
+});
 
 function QueueChip({
   text,

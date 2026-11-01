@@ -496,7 +496,7 @@ async function runOp<T>(kind: string, opId: unknown, lines: string[], finish: ()
   send({ phase: "started" });
   for (const line of lines) {
     await sleep(140);
-    send({ phase: "output", stream: "stderr", line });
+    send({ phase: "output", lines: [{ stream: "stderr", line }] });
   }
   try {
     const result = finish();

@@ -531,7 +531,7 @@ export function SidebarSessions() {
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-1.5">
+    <div className="flex min-h-0 flex-1 flex-col">
       <SidebarSessionHeader
         searchInputRef={searchInputRef}
         searchQuery={search}
@@ -561,7 +561,10 @@ export function SidebarSessions() {
           {/* The list's top edge, under the search row: a short fade from the
               sidebar's colour, so rows scroll out under the header rather
               than being cut by it — the footer dock's fade, mirrored. Over the
-              scroller, not in it, so it stays put while the rows move. */}
+              scroller, not in it, so it stays put while the rows move. Flush
+              against the search row: the room between them is the scroller's
+              top padding, not a gap in the column, so rows scroll right up to
+              the header instead of vanishing a strip short of it. */}
           <div className="relative flex min-h-0 flex-1 flex-col">
             <div
               aria-hidden
@@ -571,7 +574,7 @@ export function SidebarSessions() {
               ref={scrollerRef}
               onKeyDown={onListKeyDown}
               onScroll={noteSessionListScroll}
-              className="hide-scrollbar relative min-h-0 flex-1 overflow-y-auto px-2 pb-2"
+              className="hide-scrollbar relative min-h-0 flex-1 overflow-y-auto px-2 pt-1.5 pb-2"
             >
               {isSearching ? (
                 results.length === 0 ? (

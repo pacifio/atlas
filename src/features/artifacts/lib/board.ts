@@ -13,6 +13,7 @@
 
 import { stripInjectedContext } from "@/features/chat/lib/atlas-context";
 import { agentMeta } from "@/features/agents/lib/agent-meta";
+import { formatWith } from "@/lib/format-time";
 
 import type { BoardSession, SessionSummary } from "../types";
 
@@ -222,18 +223,22 @@ function dayLabel(date: Date): string {
   const days = Math.round((startOfDay(new Date()) - startOfDay(date)) / 86_400_000);
   if (days === 0) return "Today";
   if (days === 1) return "Yesterday";
-  return date.toLocaleDateString(undefined, {
-    weekday: "long",
-    day: "numeric",
-    month: "short",
-    // The year only earns its space once it is ambiguous.
-    year: date.getFullYear() === new Date().getFullYear() ? undefined : "numeric",
-  });
+  return formatWith(
+    date,
+    {
+      weekday: "long",
+      day: "numeric",
+      month: "short",
+      // The year only earns its space once it is ambiguous.
+      year: date.getFullYear() === new Date().getFullYear() ? undefined : "numeric",
+    },
+    "date",
+  );
 }
 
 /** `Jul 29` — the muted date beside a day label. */
 function shortDate(date: Date): string {
-  return date.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  return formatWith(date, { day: "numeric", month: "short" }, "date");
 }
 
 /**
@@ -271,18 +276,22 @@ export function dayHeading(date: Date, now = new Date()): { date: string; day: s
   const days = Math.round((startOfDay(now) - startOfDay(date)) / 86_400_000);
   const sameYear = date.getFullYear() === now.getFullYear();
   return {
-    date: date.toLocaleDateString(undefined, {
-      month: "long",
-      day: "numeric",
-      // The year only earns its space once it is ambiguous.
-      year: sameYear ? undefined : "numeric",
-    }),
+    date: formatWith(
+      date,
+      {
+        month: "long",
+        day: "numeric",
+        // The year only earns its space once it is ambiguous.
+        year: sameYear ? undefined : "numeric",
+      },
+      "date",
+    ),
     day:
       days === 0
         ? "Today"
         : days === 1
           ? "Yesterday"
-          : date.toLocaleDateString(undefined, { weekday: "long" }),
+          : formatWith(date, { weekday: "long" }, "date"),
   };
 }
 
@@ -324,10 +333,14 @@ function monthLabel(date: Date): string {
   const months = (now.getFullYear() - date.getFullYear()) * 12 + (now.getMonth() - date.getMonth());
   if (months === 0) return "This month";
   if (months === 1) return "Last month";
-  return date.toLocaleDateString(undefined, {
-    month: "long",
-    year: date.getFullYear() === now.getFullYear() ? undefined : "numeric",
-  });
+  return formatWith(
+    date,
+    {
+      month: "long",
+      year: date.getFullYear() === now.getFullYear() ? undefined : "numeric",
+    },
+    "date",
+  );
 }
 
 const LABEL_OF: Record<GroupPeriod, (d: Date) => string> = {

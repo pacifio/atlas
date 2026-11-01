@@ -197,9 +197,9 @@ function MenuSlot({
   if (shift && entry && entry.state !== "merged" && !pinned) return null;
   return (
     <span
+      data-pr-menu-slot
       className={cn(
         "flex opacity-0 transition-opacity group-hover/pr-row:opacity-100 has-[:focus-visible]:opacity-100",
-        "group-has-[[data-quick-action-pending=true]]/pr-row:hidden",
         pinned && "opacity-100",
       )}
     >
@@ -237,6 +237,8 @@ function SessionPullRequestRowImpl({
       className={cn(
         "group/pr-row relative flex min-w-0 items-start gap-2 rounded py-1.5 pr-2",
         "hover:bg-element-hover has-[>button:focus-visible]:bg-element-hover",
+        // The ⋯ steps aside while a quick action runs.
+        "[&:has([data-quick-action-pending=true])_[data-pr-menu-slot]]:hidden",
         menuOpen && "bg-element-hover",
       )}
       style={{ paddingLeft: `${0.5 + Math.min(depth, 3) * 1.25}rem` }}

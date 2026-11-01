@@ -635,9 +635,10 @@ fn join_err(e: tokio::task::JoinError) -> GitErrorPayload {
 #[tauri::command]
 pub async fn git_stage(path: String, files: Vec<String>) -> Result<(), GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
-        let mut args: Vec<String> = vec!["add".into(), "--".into()];
-        args.extend(files);
-        GitCommand::new_owned(&path, args).run()?;
+        if files.is_empty() {
+            return Ok(());
+        }
+        GitCommand::new(&path, &["add"]).pathspecs(&files).run()?;
         Ok(())
     })
     .await
@@ -647,9 +648,12 @@ pub async fn git_stage(path: String, files: Vec<String>) -> Result<(), GitErrorP
 #[tauri::command]
 pub async fn git_unstage(path: String, files: Vec<String>) -> Result<(), GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
-        let mut args: Vec<String> = vec!["restore".into(), "--staged".into(), "--".into()];
-        args.extend(files);
-        GitCommand::new_owned(&path, args).run()?;
+        if files.is_empty() {
+            return Ok(());
+        }
+        GitCommand::new(&path, &["restore", "--staged"])
+            .pathspecs(&files)
+            .run()?;
         Ok(())
     })
     .await

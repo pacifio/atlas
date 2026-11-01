@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { Hint } from "@/ui/tooltip";
 import type { ChatMessage } from "@/types/agent";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
+import { usePaneTopInset } from "@/features/layout/lib/pane-top-inset";
 import { isBashToolCall, bashCommandOf } from "../lib/tool-calls";
 import { timeAgo } from "@/lib/time-ago";
 
@@ -24,6 +25,9 @@ interface BashHistoryPanelProps {
 
 export function BashHistoryPanel({ messages, onJump, onClose }: BashHistoryPanelProps) {
   const bashPanel = useLayoutStore.use.bashPanel();
+  // The session column's window bar floats over this pane (z-titlebar); start
+  // below it, or the bar covers this panel's header and eats its clicks.
+  const topInset = usePaneTopInset();
   const { setBashPanelWidth } = useLayoutStore.use.actions();
 
   // Esc closes the overlay (it's a plain div, not a Radix dialog).
@@ -104,8 +108,8 @@ export function BashHistoryPanel({ messages, onJump, onClose }: BashHistoryPanel
         aria-hidden
       />
       <div
-        style={{ width: bashPanel.width }}
-        className="absolute right-0 top-0 bottom-0 z-30 flex flex-col border-l border-[var(--border)] bg-[var(--sidebar)] shadow-md animate-slide-in-right"
+        style={{ width: bashPanel.width, top: topInset }}
+        className="absolute right-0 bottom-0 z-30 flex flex-col border-l border-[var(--border)] bg-[var(--sidebar)] shadow-md animate-slide-in-right"
       >
         {/* Left-edge resize handle */}
         <div

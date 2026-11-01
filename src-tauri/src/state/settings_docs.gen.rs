@@ -270,6 +270,14 @@ const SETTINGS_DOCS: &[(&str, &str)] = &[
         "# The turn rail: a column of short ticks down the left edge of a session's\n# transcript, one per turn. Hovering a tick previews the prompt and the start\n# of the reply; clicking it jumps to that turn. Off hides the rail. (default:\n# true)",
     ),
     (
+        "welcomeBackground",
+        "# What sits behind a new, empty session: \"glow\" is a soft radial glow from the\n# top edge in a colour from the palette (see welcomeGlowColor), \"plain\" is the\n# theme's own background. (default: \"glow\")",
+    ),
+    (
+        "welcomeGlowColor",
+        "# The colour of the new-session glow. \"random\" picks a different one from the\n# palette each time a new session opens; any other value always uses that\n# colour. Each has a dark and a light version, matched to the colour scheme.\n# Has no effect while welcomeBackground is \"plain\". (default: \"random\")",
+    ),
+    (
         "autoSettleOnMerge",
         "# Settle a session once its linked pull request merges, when the merge came\n# after you last worked in the session. A pull request that is closed without\n# merging always settles its session. Settled sessions stay listed and\n# resumable. (default: true)",
     ),

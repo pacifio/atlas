@@ -282,21 +282,32 @@ export function HintGroup({
  */
 export function HintItem({
   label,
+  reshowKey,
   className,
   children,
 }: {
   label: string;
+  /** Show the tooltip again whenever this value changes under the pointer. A
+   *  click hides it, so a label that confirms the click ("Copied") needs this
+   *  to be seen: bump it once per confirmed action, e.g. a copy counter. A
+   *  plain label change never reshows, so a toggle's flipped label (or the
+   *  confirmation reverting) doesn't pop back up. */
+  reshowKey?: number;
   className?: string;
   children: ReactElement<Record<string, unknown>>;
 }) {
   const api = useContext(GroupContext);
   const id = useId();
   const ref = useRef<HTMLSpanElement>(null);
+  const hovered = useRef(false);
+  const prevReshowKey = useRef(reshowKey);
 
   useLayoutEffect(() => {
     if (!api) return;
     api.register(id, { label, el: ref.current });
-  }, [api, id, label]);
+    if (hovered.current && prevReshowKey.current !== reshowKey) api.enter(id);
+    prevReshowKey.current = reshowKey;
+  }, [api, id, label, reshowKey]);
   useEffect(() => {
     if (!api) return;
     return () => api.unregister(id);
@@ -309,8 +320,14 @@ export function HintItem({
     <span
       ref={ref}
       className={cn("inline-flex [&>:disabled]:pointer-events-none", className)}
-      onMouseEnter={() => api.enter(id)}
-      onMouseLeave={api.leave}
+      onMouseEnter={() => {
+        hovered.current = true;
+        api.enter(id);
+      }}
+      onMouseLeave={() => {
+        hovered.current = false;
+        api.leave();
+      }}
       onFocus={(e) => {
         // Pointer focus comes with a hover already; only keyboard focus opens.
         if (isFocusVisible(e.target)) api.enter(id);

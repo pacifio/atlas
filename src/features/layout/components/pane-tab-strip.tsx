@@ -58,8 +58,12 @@ export function scrollLeftToReveal(
 }
 
 /** The fades for the edges that have tabs past them, as a mask: a mask needs
- *  no colour, so it fades into whatever the header paints. */
-function fadeMask({ canLeft, canRight }: StripScroll): string | undefined {
+ *  no colour, so it fades into whatever the header paints. The terminal's tab
+ *  strip wears the same fade (`terminal-tab-strip.tsx`). */
+export function fadeMask({
+  canLeft,
+  canRight,
+}: Pick<StripScroll, "canLeft" | "canRight">): string | undefined {
   if (!canLeft && !canRight) return undefined;
   const left = canLeft ? `transparent, black ${TAB_STRIP_FADE_PX}px` : "black, black";
   const right = canRight

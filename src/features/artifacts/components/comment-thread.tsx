@@ -373,15 +373,23 @@ function Thread({
   }, [comments]);
 
   // An open thread should land on the newest, which is where the conversation
-  // actually is — not the top, which is where it started.
-  const endRef = useRef<HTMLDivElement | null>(null);
+  // actually is — not the top, which is where it started. The list scrolls
+  // itself, in the next frame: `scrollIntoView` also scrolls every ancestor
+  // (the popup mounts unpositioned, far down `body`) and forced a synchronous
+  // style recalc of the whole app as the popover opened — ~40ms of the open on
+  // a long thread, more on longer ones.
+  const listRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
-    endRef.current?.scrollIntoView({ block: "nearest" });
+    const frame = requestAnimationFrame(() => {
+      const list = listRef.current;
+      if (list) list.scrollTop = list.scrollHeight;
+    });
+    return () => cancelAnimationFrame(frame);
   }, [comments.length]);
 
   return (
     <div className="flex max-h-[min(380px,var(--available-height))] flex-col">
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto">
         {threads.length === 0 ? (
           <p
             className="text-xs text-[var(--muted-foreground)]"
@@ -407,7 +415,6 @@ function Thread({
             />
           ))
         )}
-        <div ref={endRef} />
       </div>
 
       {/* Starting a new thread, as opposed to replying to one. Pinned below the

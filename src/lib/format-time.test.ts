@@ -4,6 +4,7 @@ import {
   formatDayAwareTime,
   formatFullTimestamp,
   formatTime,
+  formatWith,
   hourCycle,
   setTimeFormat,
 } from "./format-time";
@@ -34,6 +35,45 @@ describe("format-time", () => {
   it("forces a 12-hour clock", () => {
     setTimeFormat("12h");
     expect(formatTime(AFTERNOON, undefined, "en-GB")).toMatch(/^3:07\s?pm$/i);
+  });
+});
+
+// The cached formatters stand in for `toLocale*String` calls, which fill in
+// fields the caller left out. These pin that the stand-ins print the same.
+describe("formatWith", () => {
+  const cases: [Intl.DateTimeFormatOptions, "time" | "date" | "any"][] = [
+    [{}, "time"],
+    [{ hour: "2-digit", minute: "2-digit", second: "2-digit" }, "time"],
+    [{ month: "short" }, "time"],
+    [{}, "date"],
+    [{ weekday: "long" }, "date"],
+    [{ month: "long", day: "numeric" }, "date"],
+    [{}, "any"],
+    [{ hour: "numeric" }, "any"],
+    [{ timeStyle: "short" }, "any"],
+  ];
+
+  it.each(cases)("prints what toLocale*String prints for %j as %s", (options, kind) => {
+    const expected =
+      kind === "time"
+        ? AFTERNOON.toLocaleTimeString("en-US", options)
+        : kind === "date"
+          ? AFTERNOON.toLocaleDateString("en-US", options)
+          : AFTERNOON.toLocaleString("en-US", options);
+    expect(formatWith(AFTERNOON, options, kind, "en-US")).toBe(expected);
+    // Twice: the second call is served by the cached formatter.
+    expect(formatWith(AFTERNOON, options, kind, "en-US")).toBe(expected);
+  });
+
+  it("prints Invalid Date for an unparseable timestamp, as toLocale*String does", () => {
+    expect(formatWith("not a date", {}, "time", "en-US")).toBe("Invalid Date");
+    expect(formatTime("not a date", undefined, "en-US")).toBe("Invalid Date");
+  });
+
+  it("does not reuse a formatter across hour cycles", () => {
+    expect(formatTime(AFTERNOON, undefined, "en-US")).toBe("3:07 PM");
+    setTimeFormat("24h");
+    expect(formatTime(AFTERNOON, undefined, "en-US")).toBe("15:07");
   });
 });
 

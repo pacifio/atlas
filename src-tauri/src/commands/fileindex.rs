@@ -365,6 +365,8 @@ async fn build_project_index(
             // reported by FSEvents under its resolved path, and nothing below
             // (the ignore filter, the index, the tree's `dirs`) would match it.
             let canonical_for_watch = resolved_alias(&root_for_task);
+            // The gitignore matcher is keyed and queried by canonical path.
+            let ignore_root = std::fs::canonicalize(&root_for_task).ok();
 
             // `NoCache`, not the platform default. On macOS `RecommendedCache` is a
             // `FileIdMap`, which `stat`s every event path to correlate renames — on
@@ -388,13 +390,20 @@ async fn build_project_index(
                         // Drop anything under a directory we never index BEFORE any
                         // work happens. Without this a single `npm install` or
                         // `cargo build` turns into a sustained event storm.
+                        // Gitignored paths too: a test hook writing `coverage/`
+                        // reached here as the root watch's "directory modified",
+                        // and every listener re-read the whole repository.
                         let events: Vec<_> = events
                             .into_iter()
                             .filter(|e| {
-                                !e.event
-                                    .paths
-                                    .iter()
-                                    .all(|p| is_ignored_event_path(&root_for_watch, p))
+                                !e.event.paths.iter().all(|p| {
+                                    is_ignored_event_path(&root_for_watch, p)
+                                        || is_gitignored_event_path(
+                                            &root_for_watch,
+                                            ignore_root.as_deref(),
+                                            p,
+                                        )
+                                })
                             })
                             .collect();
                         if events.is_empty() {
@@ -825,6 +834,36 @@ fn under_given_root(path: &mut PathBuf, root: &Path, resolved: &Path) {
     };
 }
 
+/// Whether `path` (as the watcher reports it, under `root`) is gitignored, by
+/// the same matchers the explorer flags ignored entries with. `canonical` is
+/// `root` canonicalized, the form those matchers are keyed and queried by.
+fn is_gitignored_event_path(root: &Path, canonical: Option<&Path>, path: &Path) -> bool {
+    let (Some(canonical), Ok(rel)) = (canonical, path.strip_prefix(root)) else {
+        return false;
+    };
+    if rel.as_os_str().is_empty() {
+        return false;
+    }
+    let Some(ignores) = super::fs_entries::repo_ignores(canonical) else {
+        return false;
+    };
+    let abs = canonical.join(rel);
+    abs.parent().is_some_and(|d| ignores.dir_is_ignored(d))
+        || ignores.is_ignored(&abs, abs.is_dir())
+}
+
+/// A content or metadata edit, which changes no file set. notify's Windows
+/// backend reports every plain write as `Modify(Any)` (renames arrive as
+/// `Modify(Name(_))`), so there `Any` is an edit too; treating it as opaque
+/// made every saved file a full refresh and re-walk of the project.
+fn is_content_edit(kind: EventKind) -> bool {
+    match kind {
+        EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Metadata(_)) => true,
+        EventKind::Modify(ModifyKind::Any) => cfg!(windows),
+        _ => false,
+    }
+}
+
 fn is_ignored_event_path(root: &Path, path: &Path) -> bool {
     let Ok(rel) = path.strip_prefix(root) else {
         return false;
@@ -889,7 +928,7 @@ fn summarise_events(events: &[DebouncedEvent]) -> (std::collections::HashSet<Pat
             // Same reasoning as `apply_events`: an edit to a file's contents
             // changes nothing about the tree the explorer draws, so it must not
             // force it to re-walk everything it has open.
-            EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Metadata(_)) => {}
+            kind if is_content_edit(kind) => {}
             EventKind::Modify(_) => {
                 full_refresh = true;
             }
@@ -935,7 +974,7 @@ fn apply_events(
             // saved file — and every one of the thousands a build writes —
             // triggered a full `walk_project`, up to once per 150ms debounce
             // window, forever. That was the second half of the CPU burn.
-            EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Metadata(_)) => {}
+            kind if is_content_edit(kind) => {}
             EventKind::Modify(_) => {
                 // Rename or move shows up here; the cheapest correct fix is
                 // a full re-walk of the project. notify-full's rename events
@@ -1004,6 +1043,45 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    /// A test hook writing `coverage/` must not wake the explorer or git: on
+    /// Windows the root's watch reported the directory itself as modified.
+    #[test]
+    fn gitignored_event_paths_are_dropped() {
+        let t = TmpDir::new();
+        t.dir(".git");
+        t.file(".gitignore", "coverage/\n*.log\n");
+        t.file("coverage/lcov.info", "");
+        t.file("src/a.js", "");
+        let root = t.path();
+        let canonical = std::fs::canonicalize(root).unwrap();
+        let ignored = |rel: &str| is_gitignored_event_path(root, Some(&canonical), &root.join(rel));
+        assert!(ignored("coverage"));
+        assert!(ignored("coverage/lcov.info"));
+        assert!(ignored("coverage/deleted-already.tmp"));
+        assert!(ignored("src/debug.log"));
+        assert!(!ignored("src/a.js"));
+        assert!(!ignored(".gitignore"));
+        assert!(!ignored(""));
+    }
+
+    #[test]
+    fn content_edits_include_windows_plain_writes() {
+        use notify::event::{DataChange, RenameMode};
+        assert!(is_content_edit(EventKind::Modify(ModifyKind::Data(
+            DataChange::Content
+        ))));
+        assert_eq!(
+            is_content_edit(EventKind::Modify(ModifyKind::Any)),
+            cfg!(windows)
+        );
+        assert!(!is_content_edit(EventKind::Modify(ModifyKind::Name(
+            RenameMode::Any
+        ))));
+        assert!(!is_content_edit(EventKind::Create(
+            notify::event::CreateKind::File
+        )));
     }
 
     /// A project opened through a symlink: FSEvents reports the resolved path,

@@ -43,7 +43,7 @@ import { activeProjectId } from "@/features/projects/lib/active-project";
 import { useFullscreen } from "@/hooks/use-fullscreen";
 import { isDev } from "@/lib/env";
 import { isLinux, isMac, isWindows } from "@/lib/platform";
-import { MenuBar } from "@/features/menu/components/menu-bar";
+import { AppMenuButton } from "@/features/menu/components/menu-bar";
 import { OrgSwitcher } from "@/features/organisations/components/org-switcher";
 import { BreadcrumbButton, BreadcrumbSeparator } from "./breadcrumb-button";
 import { OPEN_CAPTURE_EVENT } from "@/features/capture/lib/open-capture";
@@ -200,13 +200,17 @@ export function Titlebar() {
 
 /**
  * The window's top-left corner: room for the traffic lights, the dev badge,
- * the menus on Windows and Linux, and the sidebar toggle.
+ * the application menu on Windows and Linux, and the sidebar toggle.
  *
- * It never moves. Two places draw it — the open sidebar's top band, and the
- * leftmost column header while the sidebar is closed — and both start at the
- * window's left edge with nothing before it, so the toggle sits on the same
- * pixel whether the sidebar is open or not. Anything added here has to keep
- * the two identical.
+ * On macOS it never moves. Two places draw it — the open sidebar's top band,
+ * and the leftmost column header while the sidebar is closed — and both start
+ * at the window's left edge with nothing before it, so the toggle sits on the
+ * same pixel whether the sidebar is open or not. Anything added to the macOS
+ * branch has to keep the two identical.
+ *
+ * Windows and Linux lay it out differently: the menu button holds the start,
+ * and in the open sidebar the toggle sits at the band's far end (after
+ * search), so it moves between the two states by design.
  *
  * The 78pt inset is the traffic lights (`trafficLightPosition.x` 16 + three
  * buttons) plus a gap, divided by the interface zoom like the bar's height,
@@ -233,22 +237,34 @@ export function CornerCluster({ search = false }: { search?: boolean } = {}) {
       )}
     >
       <DevBadge className="mr-1" />
-      {/* Windows and Linux: the menus macOS shows in the system menu bar. */}
-      {!isMac && <MenuBar className="mr-1" />}
-      <HintGroup>
-        {/* With no traffic lights to follow, the toggle takes the rows' own
-            padding (`px-2`), so its glyph starts where theirs do. */}
-        {/* With the traffic lights showing, the toggle and search sit
-            together at the sidebar's right end, clear of the lights. */}
-        <SidebarToggle
-          flush={search && !inset}
-          className={search && inset ? "ml-auto" : undefined}
-        />
-        {/* Beside the toggle at the right end while the traffic lights take
-            the corner's start; with the lights gone (fullscreen, or Windows
-            and Linux) the toggle holds the start and search the far end. */}
-        {search && <PaletteSearchButton className={inset ? undefined : "ml-auto"} />}
-      </HintGroup>
+      {isMac ? (
+        <HintGroup>
+          {/* With no traffic lights to follow, the toggle takes the rows' own
+              padding (`px-2`), so its glyph starts where theirs do. */}
+          {/* With the traffic lights showing, the toggle and search sit
+              together at the sidebar's right end, clear of the lights. */}
+          <SidebarToggle
+            flush={search && !inset}
+            className={search && inset ? "ml-auto" : undefined}
+          />
+          {/* Beside the toggle at the right end while the traffic lights take
+              the corner's start; with the lights gone (fullscreen) the toggle
+              holds the start and search the far end. */}
+          {search && <PaletteSearchButton className={inset ? undefined : "ml-auto"} />}
+        </HintGroup>
+      ) : (
+        <HintGroup>
+          {/* Windows and Linux: the menus macOS shows in the system menu bar,
+              behind one button where the traffic lights would be. */}
+          <AppMenuButton />
+          {/* In the sidebar's band, search and then the toggle at its far
+              end, so the toggle closes the sidebar from the edge it folds
+              toward. With the sidebar closed the corner is just the menu and
+              the toggle, side by side, ahead of the breadcrumb. */}
+          {search && <PaletteSearchButton className="ml-auto" />}
+          <SidebarToggle />
+        </HintGroup>
+      )}
     </div>
   );
 }

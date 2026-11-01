@@ -125,9 +125,8 @@ export function ProviderModelPills({
       // provider must never commit a model.
       if (viewProvider !== provider || model || ids.length === 0) return;
       const pref = prefRef.current;
-      const remembered =
-        pref && pref.provider === provider && ids.includes(pref.model) ? pref.model : null;
-      onModel(remembered ?? defaultModelFor(provider, ids) ?? ids[0]);
+      const remembered = pref?.provider === provider ? pref.model : undefined;
+      onModel(defaultModelFor(provider, ids, remembered) ?? ids[0]);
     };
     const cached = modelListCache.get(viewProvider);
     if (cached) {

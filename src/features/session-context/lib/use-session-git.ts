@@ -81,8 +81,15 @@ function useRefreshTriggers(client: QueryClient) {
     });
     void listen<GitOpEvent>("atlas:git:op", (e) => {
       const p = e.payload;
-      // The Commit row's live line: the latest output of the op it runs.
-      if (p.phase === "output") useGitActionStore.getState().actions.output(p.opId, p.line);
+      // The Commit row's live line: the latest output of the op it runs. A
+      // batch only ever shows its last non-blank line.
+      if (p.phase === "output") {
+        for (let i = p.lines.length - 1; i >= 0; i--) {
+          if (!p.lines[i].line.trim()) continue;
+          useGitActionStore.getState().actions.output(p.opId, p.lines[i].line);
+          break;
+        }
+      }
       if (p.phase === "done") void refreshSessionGit(client, p.repo);
     });
   }, [client]);

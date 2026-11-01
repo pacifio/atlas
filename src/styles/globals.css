@@ -1340,6 +1340,11 @@
       var(--background) 75%
     );
   }
+  /* A palette entry as a dot, for the glow colour setting's options. Shares
+     the glow's hue map below, so the dot is the colour you get. */
+  .atlas-welcome-swatch {
+    background-color: var(--welcome-hue);
+  }
   /* The session column's title bar floats over the glow (see
      `pane-top-inset.ts`), and its quiet greys — tuned for plain background —
      sink into a coloured one. While the glow is on screen, the bar's muted and
@@ -1351,40 +1356,40 @@
     --muted-foreground: color-mix(in oklab, var(--foreground) 62%, transparent);
     --atlas-text-disabled: color-mix(in oklab, var(--foreground) 40%, transparent);
   }
-  .atlas-welcome-glow[data-palette="ember"] {
+  :is(.atlas-welcome-glow, .atlas-welcome-swatch)[data-palette="ember"] {
     --welcome-hue: #a3281c;
   }
-  .atlas-welcome-glow[data-palette="plum"] {
+  :is(.atlas-welcome-glow, .atlas-welcome-swatch)[data-palette="plum"] {
     --welcome-hue: #6c2a92;
   }
-  .atlas-welcome-glow[data-palette="ocean"] {
+  :is(.atlas-welcome-glow, .atlas-welcome-swatch)[data-palette="ocean"] {
     --welcome-hue: #1f50a3;
   }
-  .atlas-welcome-glow[data-palette="moss"] {
+  :is(.atlas-welcome-glow, .atlas-welcome-swatch)[data-palette="moss"] {
     --welcome-hue: #2e6c3e;
   }
-  .atlas-welcome-glow[data-palette="amber"] {
+  :is(.atlas-welcome-glow, .atlas-welcome-swatch)[data-palette="amber"] {
     --welcome-hue: #9e6014;
   }
-  .atlas-welcome-glow[data-palette="teal"] {
+  :is(.atlas-welcome-glow, .atlas-welcome-swatch)[data-palette="teal"] {
     --welcome-hue: #116a6e;
   }
-  :root:not(.dark) .atlas-welcome-glow[data-palette="ember"] {
+  :root:not(.dark) :is(.atlas-welcome-glow, .atlas-welcome-swatch)[data-palette="ember"] {
     --welcome-hue: #f7b9a4;
   }
-  :root:not(.dark) .atlas-welcome-glow[data-palette="plum"] {
+  :root:not(.dark) :is(.atlas-welcome-glow, .atlas-welcome-swatch)[data-palette="plum"] {
     --welcome-hue: #dcc4f4;
   }
-  :root:not(.dark) .atlas-welcome-glow[data-palette="ocean"] {
+  :root:not(.dark) :is(.atlas-welcome-glow, .atlas-welcome-swatch)[data-palette="ocean"] {
     --welcome-hue: #b9d4f6;
   }
-  :root:not(.dark) .atlas-welcome-glow[data-palette="moss"] {
+  :root:not(.dark) :is(.atlas-welcome-glow, .atlas-welcome-swatch)[data-palette="moss"] {
     --welcome-hue: #c4e6cc;
   }
-  :root:not(.dark) .atlas-welcome-glow[data-palette="amber"] {
+  :root:not(.dark) :is(.atlas-welcome-glow, .atlas-welcome-swatch)[data-palette="amber"] {
     --welcome-hue: #f6dca2;
   }
-  :root:not(.dark) .atlas-welcome-glow[data-palette="teal"] {
+  :root:not(.dark) :is(.atlas-welcome-glow, .atlas-welcome-swatch)[data-palette="teal"] {
     --welcome-hue: #b4e2df;
   }
 
@@ -1815,11 +1820,24 @@
 
 /* The Session detail's two-pane split (detail | grounded chat).
  *
- * Width rather than transform: the detail must actually give up the space, so
- * its own layout reflows into what is left. Same easing as the stats rail, so
- * the two panels in one tab open with one motion. */
-.atlas-split {
-  transition: width 340ms cubic-bezier(0.32, 0.72, 0, 1);
+ * The detail still gives up the space — the chat's column takes its full width
+ * on the first frame, so the record reflows into what is left exactly ONCE.
+ * Only the panel's content moves, and only by transform and opacity, which the
+ * compositor animates without touching layout.
+ *
+ * This was a 340ms `width` transition. Every one of its ~20 frames re-wrapped
+ * the whole rendered timeline at a new width and repainted it (~1,700 paint
+ * records for one open on a long Session), and fired the timeline's
+ * ResizeObserver into a forced re-measure — the open felt heavy precisely
+ * because the thing being animated was the most expensive box in the tab. */
+@keyframes atlas-split-in {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+}
+.atlas-split-in {
+  animation: atlas-split-in 260ms cubic-bezier(0.32, 0.72, 0, 1) both;
 }
 .atlas-rail-body {
   transition:
@@ -2152,8 +2170,8 @@
   .atlas-radar-sweep {
     transform: rotate(-50deg);
   }
-  .atlas-split {
-    transition: none !important;
+  .atlas-split-in {
+    animation: none;
   }
 }
 

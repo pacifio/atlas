@@ -267,6 +267,31 @@ pub enum DiffPalette {
     BlueOrange,
 }
 
+/// What sits behind a new, empty session: a radial glow, or the plain
+/// background.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum WelcomeBackground {
+    #[default]
+    Glow,
+    Plain,
+}
+
+/// The new-session glow's colour: a fresh pick each time, or one fixed
+/// palette entry. The colours themselves are the frontend's (`globals.css`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum WelcomeGlowColor {
+    #[default]
+    Random,
+    Ember,
+    Plum,
+    Ocean,
+    Moss,
+    Amber,
+    Teal,
+}
+
 /// The order of chats in the session sidebar.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -572,6 +597,12 @@ pub struct AppSettings {
     /// so default ON.
     #[serde(default = "default_true")]
     pub show_turn_rail: bool,
+    /// What sits behind a new, empty session. Purely visual.
+    #[serde(default)]
+    pub welcome_background: WelcomeBackground,
+    /// The new-session glow's colour. Purely visual.
+    #[serde(default)]
+    pub welcome_glow_color: WelcomeGlowColor,
     /// A session whose linked pull request merges is settled, when the merge
     /// came after the user's last interaction with it; a closed pull request
     /// always settles its session. Read by the pull request watch (Rust).
@@ -744,6 +775,8 @@ impl Default for AppSettings {
             diff_palette: DiffPalette::default(),
             interface_contrast: default_interface_contrast(),
             show_turn_rail: true,
+            welcome_background: WelcomeBackground::default(),
+            welcome_glow_color: WelcomeGlowColor::default(),
             auto_settle_on_merge: true,
             auto_settle_keep_pull_requests: true,
             pull_request_watch_wakes: true,
@@ -1262,6 +1295,8 @@ pub struct SettingsPatch {
     pub diff_palette: Option<DiffPalette>,
     pub interface_contrast: Option<u32>,
     pub show_turn_rail: Option<bool>,
+    pub welcome_background: Option<WelcomeBackground>,
+    pub welcome_glow_color: Option<WelcomeGlowColor>,
     pub auto_settle_on_merge: Option<bool>,
     pub auto_settle_keep_pull_requests: Option<bool>,
     pub pull_request_watch_wakes: Option<bool>,
@@ -1441,6 +1476,8 @@ impl SettingsPatch {
             diff_palette,
             interface_contrast,
             show_turn_rail,
+            welcome_background,
+            welcome_glow_color,
             auto_settle_on_merge,
             auto_settle_keep_pull_requests,
             pull_request_watch_wakes,
@@ -1551,6 +1588,8 @@ impl SettingsPatch {
         set_enum!(sidebar_sort, "sidebarSort");
         set_enum!(time_format, "timeFormat");
         set_enum!(diff_palette, "diffPalette");
+        set_enum!(welcome_background, "welcomeBackground");
+        set_enum!(welcome_glow_color, "welcomeGlowColor");
         set_enum!(pull_request_merge_method, "pullRequestMergeMethod");
         if let Some(v) = self.interface_contrast {
             table["interfaceContrast"] = toml_edit::value(i64::from(v));
@@ -2770,6 +2809,8 @@ someFutureKey = \"left alone\"
             diff_palette: Some(DiffPalette::BlueOrange),
             interface_contrast: Some(150),
             show_turn_rail: Some(!defaults.show_turn_rail),
+            welcome_background: Some(WelcomeBackground::Plain),
+            welcome_glow_color: Some(WelcomeGlowColor::Plum),
             auto_settle_on_merge: Some(!defaults.auto_settle_on_merge),
             auto_settle_keep_pull_requests: Some(!defaults.auto_settle_keep_pull_requests),
             pull_request_watch_wakes: Some(!defaults.pull_request_watch_wakes),

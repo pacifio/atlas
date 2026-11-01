@@ -1170,6 +1170,41 @@ the reply; clicking it jumps to that turn. Off hides the rail.
 validation = "—"
 
 [[setting]]
+key = "welcomeBackground"
+type = "enum"
+values = ["glow", "plain"]
+default = "glow"
+status = "live"
+page = "appearance"
+section = "Interface"
+title = "New session background"
+summary = "A coloured glow behind a new session, or the plain background."
+doc = """
+What sits behind a new, empty session: "glow" is a soft radial glow from the
+top edge in a colour from the palette (see welcomeGlowColor), "plain" is the
+theme's own background.
+"""
+validation = "exactly one of these two strings"
+
+[[setting]]
+key = "welcomeGlowColor"
+type = "enum"
+values = ["random", "ember", "plum", "ocean", "moss", "amber", "teal"]
+default = "random"
+status = "live"
+page = "appearance"
+section = "Interface"
+title = "Glow colour"
+summary = "A different colour each time, or always the same one."
+doc = """
+The colour of the new-session glow. "random" picks a different one from the
+palette each time a new session opens; any other value always uses that
+colour. Each has a dark and a light version, matched to the colour scheme.
+Has no effect while welcomeBackground is "plain".
+"""
+validation = "exactly one of these seven strings"
+
+[[setting]]
 key = "autoSettleOnMerge"
 type = "boolean"
 default = true

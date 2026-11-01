@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Loader2, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useGitStore } from "../../stores/git-store";
@@ -16,12 +16,19 @@ export function GitOpOutput() {
   const [collapsed, setCollapsed] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  // Auto-scroll to the newest line while the operation is running.
+  // Auto-scroll to the newest line while the operation is running. Keyed on
+  // the newest line's `seq`, not the count: once the cap is reached the count
+  // stops changing. In a frame callback, so reading `scrollHeight` never
+  // forces a layout in the middle of a commit.
+  const newestSeq = activeOp?.lines[activeOp.lines.length - 1]?.seq;
   useEffect(() => {
     if (!activeOp?.running || collapsed) return;
-    const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [activeOp?.lines.length, activeOp?.running, collapsed]);
+    const frame = requestAnimationFrame(() => {
+      const el = scrollRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [newestSeq, activeOp?.running, collapsed]);
 
   // New operation → expand again.
   useEffect(() => {
@@ -64,21 +71,27 @@ export function GitOpOutput() {
           ref={scrollRef}
           className="max-h-[120px] overflow-y-auto hide-scrollbar bg-[var(--background)] px-2 py-1 select-text cursor-text"
         >
-          {activeOp.lines.map((l, i) => (
-            <div
-              key={i}
-              className={cn(
-                "font-mono text-2xs leading-[15px] whitespace-pre-wrap break-all",
-                l.stream === "stderr" && failed
-                  ? "text-[var(--atlas-status-error-foreground)]"
-                  : "text-secondary-foreground",
-              )}
-            >
-              {l.text}
-            </div>
+          {/* Keyed by `seq`: when the cap trims the front, existing rows
+              keep their keys and only the new ones mount. */}
+          {activeOp.lines.map((l) => (
+            <OpLineRow key={l.seq} text={l.text} error={l.stream === "stderr" && failed} />
           ))}
         </div>
       )}
     </div>
   );
 }
+
+/** One output line. Memoised, so a new batch re-renders only its own rows. */
+const OpLineRow = memo(function OpLineRow({ text, error }: { text: string; error: boolean }) {
+  return (
+    <div
+      className={cn(
+        "font-mono text-2xs leading-[15px] whitespace-pre-wrap break-all",
+        error ? "text-[var(--atlas-status-error-foreground)]" : "text-secondary-foreground",
+      )}
+    >
+      {text}
+    </div>
+  );
+});
