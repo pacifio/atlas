@@ -1,6 +1,9 @@
 # Plan: merge the Universal RC work into 0.4.1
 
-Status: plan, 2026-11-01. Nothing applied yet. The RC desktop work is `stash@{0}`
+Status: **steps 0–5 done on `feat/universal-rc-0.4.1`** (2026-11-01: `24611ee3` apply,
+`b93f070c` wire, `9e325634` host, `3a734d10` store/libs/mocks, `5918203f` UI; hooks
+green on the last). Step 6's `ci:local` and the `dev:app` run are what remain; the
+server half is still uncommitted in `~/Codes/server`. Originally: The RC desktop work is `stash@{0}`
 ("feat/universal-rc WIP (RC work) 2026-11-01"), based on `9ef484d0`; `0.4.1` is 424
 commits ahead (UI overhaul, sidebar rewrite, PR-watch wakes, sleep watch, reqwest 0.13).
 
