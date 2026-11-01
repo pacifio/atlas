@@ -1,8 +1,17 @@
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type RefObject,
+} from "react";
 import { CircleDashed, Maximize2, Plus, Rows2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { tildePath } from "@/lib/paths";
 import { HintGroup, HintItem } from "@/ui/hint-group";
+import { IconButton } from "@/ui/icon-button";
+import { fadeMask } from "@/features/layout/components/pane-tab-strip";
 import { useTerminalStore, type PaneNode } from "../stores/terminal-store";
 import { terminalSessions, type TerminalSession } from "../lib/terminal-session";
 
@@ -12,7 +21,9 @@ import { terminalSessions, type TerminalSession } from "../lib/terminal-session"
  * runs, the close button on hover), then the working directory, truncated
  * past a cap — and the strip scrolls sideways once they outgrow it.
  * The active tab takes the lifted surface, the rest a quieter solid fill.
- * What the shell is doing is in the tooltip.
+ * What the shell is doing is in the tooltip. An edge with more tabs past it
+ * fades out, as the pane header's strip does; the controls after it are round
+ * icon buttons, set apart by space rather than a divider.
  *
  * Nothing in it animates — no slide, no fade, no colour transition — except
  * the running ring. Tabs
@@ -69,9 +80,15 @@ export function TerminalTabStrip({
     reorderTerminalsInPane(tabId, pane.id, order);
   };
 
+  const stripRef = useRef<HTMLDivElement>(null);
+  const edges = useStripEdges(stripRef);
+  const mask = fadeMask(edges);
+
   return (
     <div className="flex h-8 shrink-0 items-center gap-1 border-b border-border bg-sidebar pl-1">
       <div
+        ref={stripRef}
+        style={mask ? { maskImage: mask, WebkitMaskImage: mask } : undefined}
         role="tablist"
         aria-label="Terminals"
         // Sideways scroll for a long strip; a vertical wheel scrolls it too.
@@ -100,53 +117,54 @@ export function TerminalTabStrip({
       </div>
 
       <HintGroup>
-        <div className="flex shrink-0 items-center gap-0.5 border-l border-border px-1">
+        <div className="flex shrink-0 items-center gap-0.5 pr-1">
           {zoomed && (
             <span className="shrink-0 rounded bg-element-selected px-1.5 py-px text-3xs text-muted-foreground">
               zoomed
             </span>
           )}
           <HintItem label="New terminal">
-            <button
-              type="button"
+            <IconButton
+              icon={Plus}
+              label="New terminal"
+              size="sm"
+              shape="round"
               onClick={() => {
                 addTerminalToPane(tabId, pane.id);
                 setActivePane(tabId, pane.id);
               }}
-              className={STRIP_BUTTON}
-            >
-              <Plus size={12} />
-            </button>
+            />
           </HintItem>
           <HintItem label="Split down">
-            <button
-              type="button"
+            <IconButton
+              icon={Rows2}
+              label="Split down"
+              size="sm"
+              shape="round"
               onClick={() => splitPane(tabId, pane.id, "vertical")}
-              className={STRIP_BUTTON}
-            >
-              <Rows2 size={12} />
-            </button>
+            />
           </HintItem>
           {hasSplits && (
             <HintItem label={zoomed ? "Unzoom pane" : "Zoom pane"}>
-              <button
-                type="button"
+              <IconButton
+                icon={Maximize2}
+                label={zoomed ? "Unzoom pane" : "Zoom pane"}
+                size="sm"
+                shape="round"
+                aria-pressed={!!zoomed}
                 onClick={() => toggleZoom(tabId, pane.id)}
-                className={cn(STRIP_BUTTON, zoomed && "text-foreground")}
-              >
-                <Maximize2 size={12} />
-              </button>
+              />
             </HintItem>
           )}
           {hasSplits && (
             <HintItem label="Close pane">
-              <button
-                type="button"
+              <IconButton
+                icon={X}
+                label="Close pane"
+                size="sm"
+                shape="round"
                 onClick={() => closePane(tabId, pane.id)}
-                className={STRIP_BUTTON}
-              >
-                <X size={11} />
-              </button>
+              />
             </HintItem>
           )}
         </div>
@@ -155,8 +173,45 @@ export function TerminalTabStrip({
   );
 }
 
-const STRIP_BUTTON =
-  "flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-element-hover hover:text-secondary-foreground";
+/** Sub-pixel slack: at a fractional UI scale the end of the scroll lands a
+ *  hair short of `scrollWidth`, which would leave a fade on forever. */
+const EDGE_TOLERANCE = 1;
+
+/** Which ends of the strip have tabs scrolled past them. Re-measured on
+ *  scroll and on resize of the strip or its tabs: it can start overflowing
+ *  without anyone scrolling it (the pane narrows, a tab opens, a cwd grows). */
+function useStripEdges(ref: RefObject<HTMLDivElement | null>) {
+  const [edges, setEdges] = useState({ canLeft: false, canRight: false });
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => {
+      const canLeft = el.scrollLeft > EDGE_TOLERANCE;
+      const canRight = el.scrollLeft + el.clientWidth < el.scrollWidth - EDGE_TOLERANCE;
+      // Same-value guard: `scroll` fires every frame of a scroll.
+      setEdges((cur) =>
+        cur.canLeft === canLeft && cur.canRight === canRight ? cur : { canLeft, canRight },
+      );
+    };
+    measure();
+    el.addEventListener("scroll", measure, { passive: true });
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    for (const tab of el.children) ro.observe(tab);
+    // New tabs change `scrollWidth` with no event of their own.
+    const mo = new MutationObserver(() => {
+      for (const tab of el.children) ro.observe(tab);
+      measure();
+    });
+    mo.observe(el, { childList: true });
+    return () => {
+      el.removeEventListener("scroll", measure);
+      ro.disconnect();
+      mo.disconnect();
+    };
+  }, [ref]);
+  return edges;
+}
 
 function TerminalTab({
   ptyId,

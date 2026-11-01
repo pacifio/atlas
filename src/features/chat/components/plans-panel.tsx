@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { Hint } from "@/ui/tooltip";
 import { Markdown } from "@/lib/markdown";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
+import { usePaneTopInset } from "@/features/layout/lib/pane-top-inset";
 import { useAppStore } from "@/features/app/stores/app-store";
 import { type PlanRecord, formatPlanTimestamp, planTimeAgo } from "../lib/plans";
 
@@ -21,6 +22,9 @@ interface PlansPanelProps {
  */
 export function PlansPanel({ onClose }: PlansPanelProps) {
   const plansPanel = useLayoutStore.use.plansPanel();
+  // The session column's window bar floats over this pane (z-titlebar); start
+  // below it, or the bar covers this panel's header and eats its clicks.
+  const topInset = usePaneTopInset();
   const { setPlansPanelWidth } = useLayoutStore.use.actions();
   const projectPath = useAppStore.use.currentProject()?.path ?? null;
 
@@ -95,8 +99,8 @@ export function PlansPanel({ onClose }: PlansPanelProps) {
         aria-hidden
       />
       <div
-        style={{ width: plansPanel.width }}
-        className="absolute right-0 top-0 bottom-0 z-30 flex flex-col border-l border-[var(--border)] bg-[var(--sidebar)] shadow-md animate-slide-in-right"
+        style={{ width: plansPanel.width, top: topInset }}
+        className="absolute right-0 bottom-0 z-30 flex flex-col border-l border-[var(--border)] bg-[var(--sidebar)] shadow-md animate-slide-in-right"
       >
         {/* Left-edge resize handle */}
         <div
