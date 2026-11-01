@@ -15,8 +15,9 @@
 // fit in a 460px column, so every attempt to host a diff here ended either with
 // clipped lines or with the whole box scrolling sideways.
 
-import { useCallback, useMemo, useRef, useEffect } from "react";
-import { ArrowLeft, ChevronRight, TerminalSquare, Copy } from "lucide-react";
+import { useCallback, useMemo, useRef, useEffect, useState } from "react";
+import { ArrowLeft, ChevronRight, TerminalSquare } from "lucide-react";
+import { CopyGlyph } from "@/ui/animated-icon";
 import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 import { useSubagent } from "../hooks/use-subagents";
@@ -24,6 +25,7 @@ import { elapsedMs } from "../lib/subagents";
 import { CachedMarkdown } from "@/lib/markdown-cache";
 import { settledFigure, SUBAGENT_STATE } from "./transcript-rows";
 import { HintGroup, HintItem } from "@/ui/hint-group";
+import { usePaneTopInset } from "@/features/layout/lib/pane-top-inset";
 import type { ChatMessage, ToolCallDisplay } from "@/types/agent";
 import {
   useDetailPanelStore,
@@ -31,6 +33,22 @@ import {
   DETAIL_MAX_WIDTH,
   type PanelTarget,
 } from "../stores/detail-panel-store";
+
+/** "Copied" for a moment after a copy lands, then back. `count` goes up once
+ *  per copy: it is the `HintItem` `reshowKey`, so a repeat copy re-confirms. */
+function useCopiedFlash() {
+  const [copied, setCopied] = useState(false);
+  const [count, setCount] = useState(0);
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  const flash = useCallback(() => {
+    setCopied(true);
+    setCount((n) => n + 1);
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => setCopied(false), 1500);
+  }, []);
+  return { copied, count, flash };
+}
 
 // ── Panel ──────────────────────────────────────────────────────────────────
 
@@ -50,6 +68,9 @@ export function DetailPanel({ tabId, messages }: { tabId: string; messages: Chat
   const width = useDetailPanelStore((s) => s.width);
   const { close, setWidth } = useDetailPanelStore.use.actions();
   const byId = useToolCalls(messages);
+  // The session column's window bar floats over this pane (z-titlebar); start
+  // below it, or the bar covers this panel's header and eats its clicks.
+  const topInset = usePaneTopInset();
 
   const onClose = useCallback(() => close(tabId), [close, tabId]);
 
@@ -92,8 +113,11 @@ export function DetailPanel({ tabId, messages }: { tabId: string; messages: Chat
 
   return (
     <div
-      style={{ width: Math.max(DETAIL_MIN_WIDTH, Math.min(DETAIL_MAX_WIDTH, width)) }}
-      className="absolute right-0 top-0 bottom-0 z-30 flex flex-col border-l border-[var(--border)] bg-[var(--sidebar)] shadow-md animate-slide-in-right"
+      style={{
+        width: Math.max(DETAIL_MIN_WIDTH, Math.min(DETAIL_MAX_WIDTH, width)),
+        top: topInset,
+      }}
+      className="absolute right-0 bottom-0 z-30 flex flex-col border-l border-[var(--border)] bg-[var(--sidebar)] shadow-md animate-slide-in-right"
     >
       <div
         onMouseDown={onResizeStart}
@@ -120,6 +144,7 @@ function PanelBody({
 }) {
   const tc = byId.get(target.toolCallId);
   const output = tc?.result ?? "";
+  const copy = useCopiedFlash();
 
   return (
     <>
@@ -129,13 +154,13 @@ function PanelBody({
         onClose={onClose}
         action={
           output ? (
-            <HintItem label="Copy output">
+            <HintItem label={copy.copied ? "Copied" : "Copy output"} reshowKey={copy.count}>
               <button
                 type="button"
-                onClick={() => void copyText(output)}
-                className="flex h-5 w-5 items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] cursor-pointer transition-colors"
+                onClick={() => void copyText(output).then((ok) => ok && copy.flash())}
+                className="flex h-5 w-5 items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] cursor-pointer"
               >
-                <Copy size={11} />
+                <CopyGlyph copied={copy.copied} size="sm" />
               </button>
             </HintItem>
           ) : undefined
@@ -208,6 +233,7 @@ function SubagentBody({
   onClose: () => void;
 }) {
   const child = useSubagent(tabId, toolCallId);
+  const copy = useCopiedFlash();
   // Its own calls, in transcript order. Read from the map the panel already
   // built rather than re-scanning the thread.
   const calls = useMemo(
@@ -227,7 +253,7 @@ function SubagentBody({
           type="button"
           aria-label="Back"
           onClick={onClose}
-          className="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-[var(--muted-foreground)] transition-colors hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]"
+          className="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]"
         >
           <ArrowLeft size={13} />
         </button>
@@ -314,13 +340,13 @@ function SubagentBody({
             it, and how long it took. */}
         {child.result && (
           <div className="mt-3 flex items-center gap-2">
-            <HintItem label="Copy result">
+            <HintItem label={copy.copied ? "Copied" : "Copy result"} reshowKey={copy.count}>
               <button
                 type="button"
-                onClick={() => void copyText(child.result ?? "")}
-                className="flex size-5 cursor-pointer items-center justify-center rounded text-[var(--muted-foreground)] transition-colors hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]"
+                onClick={() => void copyText(child.result ?? "").then((ok) => ok && copy.flash())}
+                className="flex size-5 cursor-pointer items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]"
               >
-                <Copy size={11} />
+                <CopyGlyph copied={copy.copied} size="sm" />
               </button>
             </HintItem>
             <span className="font-mono text-2xs text-[var(--atlas-text-disabled)] tabular-nums">
@@ -364,7 +390,7 @@ function Header({
             <button
               type="button"
               onClick={onClose}
-              className="rounded p-1 text-[var(--muted-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] cursor-pointer transition-colors"
+              className="rounded p-1 text-[var(--muted-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] cursor-pointer"
             >
               <ChevronRight size={12} />
             </button>
