@@ -1,10 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Sparkles } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 
-import { DockButton, HeaderDock } from "./header-dock";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useOrgDirectory } from "@/features/organisations/lib/use-org-directory";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
@@ -28,7 +26,6 @@ import {
   writeCachedDetail,
 } from "../lib/detail-cache";
 import { readSessionDetail } from "../lib/read-session-detail";
-import { ExportButton } from "./export-button";
 import { SessionChatPanel } from "./session-chat-panel";
 import { SessionDetail } from "./session-detail";
 import { BoardFilters } from "./board-filters";
@@ -667,9 +664,11 @@ export function ArtifactsPanel() {
 
       {/* Flat, edge to edge. This was a rounded card inset 4px on a lighter
           frame — a panel inside the column's own. The column border is the
-          edge; the board and the reader are separated by the dock's own rule. */}
+          edge; the board and the reader are separated by the dock's own rule.
+          A rule along the top, under the window's bar, so the view starts
+          where the bar ends — the team chat's (`comms-panel.tsx`). */}
       <div className="relative flex min-h-0 flex-1 flex-col">
-        <div className="relative flex min-h-0 flex-1 overflow-hidden bg-background">
+        <div className="relative flex min-h-0 flex-1 overflow-hidden border-t border-border bg-background">
           {/* `flex`, not just `flex-1`: the board is a column that sizes
               itself with `flex-1 min-h-0` so its list scrolls inside a bounded
               height. In a non-flex parent that chain never resolves, the
@@ -731,24 +730,6 @@ export function ArtifactsPanel() {
                     wide={dockWide}
                     onToggleWide={toggleTimelineSidebar}
                     onClose={() => openSession(null)}
-                    actions={
-                      detail && (
-                        <HeaderDock>
-                          {/* Grounded chat about this Session. It lived on the
-                              footer bar until that became the web's two
-                              morphs; it is an action about the record, so it
-                              belongs with Export rather than beside them. */}
-                          <DockButton
-                            label={chatOpen ? "Close chat" : "Ask about this session"}
-                            active={chatOpen}
-                            onClick={() => setChatOpen((v) => !v)}
-                          >
-                            <Sparkles size={12} />
-                          </DockButton>
-                          <ExportButton detail={detail} />
-                        </HeaderDock>
-                      )
-                    }
                   />
                   {/* `@container`: the reader's measure and its stat grid size
                     themselves against the dock, not the window, so the same
@@ -776,6 +757,11 @@ export function ArtifactsPanel() {
                             }
                             remoteProjectId={open.remoteProjectId ?? null}
                             focusCommitSha={open.commitSha}
+                            // Grounded chat about this Session. Its button is
+                            // in the reader's footer with the other actions on
+                            // the record; the panel it opens is this pane's.
+                            chatOpen={chatOpen}
+                            onToggleChat={() => setChatOpen((v) => !v)}
                           />
                         </div>
                         <aside

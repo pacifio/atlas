@@ -59,6 +59,7 @@ export function ShareMorph({
   onOpenChange,
   anchorY = "bottom",
   anchorX = "start",
+  inPill = false,
 }: {
   detail: Detail;
   /** The server Project, or `null` when this Session is local-only — there is
@@ -76,6 +77,8 @@ export function ShareMorph({
   anchorY?: "top" | "bottom";
   /** Which side the button sits on. "start" (default) grows right. */
   anchorX?: "start" | "end";
+  /** Closed, it is a button in the reader's footer pill (`footer-pill.tsx`). */
+  inPill?: boolean;
 }) {
   const s = detail.summary;
   const title = sessionTitle(s.title) ?? "Untitled session";
@@ -241,7 +244,13 @@ export function ShareMorph({
   const author = authorOf(authorId, directory);
 
   return (
-    <div ref={root} className="relative z-10">
+    <div
+      ref={root}
+      className={cn(
+        "relative z-10",
+        inPill && "size-7 shrink-0 [--morph-closed:1.75rem] [--morph-r-closed:0.875rem]",
+      )}
+    >
       <div
         data-open={open}
         data-anchor={anchorX}
@@ -249,6 +258,15 @@ export function ShareMorph({
         className={cn(
           "t-morph border border-[var(--border)] bg-[var(--popover)]/85 shadow-md backdrop-blur-xl",
           "data-[open=true]:shadow-lg",
+          // In a footer pill (`footer-pill.tsx`) the closed box IS one of the
+          // pill's buttons: the pill's size, no chrome of its own, the pill's
+          // hover. It takes the panel's chrome as it opens, and sits absolute
+          // in its slot so growing covers the pill rather than pushing it —
+          // `!` because `.t-morph`'s own `position: relative` is unlayered
+          // CSS (globals.css) and outranks any utility.
+          inPill &&
+            "absolute! bottom-0 data-[open=false]:border-transparent data-[open=false]:bg-transparent data-[open=false]:shadow-none data-[open=false]:backdrop-blur-none data-[open=false]:hover:bg-element-hover",
+          inPill && (anchorX === "start" ? "left-0" : "right-0"),
           "[--morph-open-w:min(22rem,calc(100cqw-2rem))]",
         )}
         style={
