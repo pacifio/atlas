@@ -419,6 +419,8 @@ const SHELL_BUILTINS: &[&str] = &[
 
 fn scan_commands() -> Vec<String> {
     use std::collections::BTreeSet;
+    // Only the unix PATH scan below adds to it.
+    #[cfg_attr(not(unix), allow(unused_mut))]
     let mut set: BTreeSet<String> = SHELL_BUILTINS
         .iter()
         .map(std::string::ToString::to_string)

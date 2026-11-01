@@ -147,6 +147,8 @@ pub fn validate_project_path(raw: &str) -> Result<ValidProjectPath, String> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PathStyle {
     /// `/`-separated, compared as spelled.
+    // Built only off Windows outside the tests, which run it everywhere.
+    #[cfg_attr(windows, allow(dead_code))]
     Posix,
     /// `\` or `/`-separated, case-insensitive, led by a drive or a UNC
     /// share, and possibly in the verbatim `\\?\` form `canonicalize`
@@ -181,6 +183,7 @@ pub(crate) struct PathRules {
 
 /// Top-level folders that are the system's on macOS and Linux, refused
 /// along with everything under them.
+#[cfg_attr(windows, allow(dead_code))]
 const POSIX_SYSTEM_TREES: &[&str] = &[
     "/System", "/Library", "/usr", "/bin", "/sbin", "/etc", "/var", "/private", "/dev", "/proc",
     "/sys", "/boot", "/root", "/cores", "/run", "/snap",
@@ -188,6 +191,7 @@ const POSIX_SYSTEM_TREES: &[&str] = &[
 
 /// Folders refused themselves on macOS and Linux, though a project may live
 /// under them.
+#[cfg_attr(windows, allow(dead_code))]
 const POSIX_CONTAINER_ROOTS: &[&str] = &[
     "/",
     "/Users",
@@ -202,6 +206,8 @@ const POSIX_CONTAINER_ROOTS: &[&str] = &[
 ];
 
 impl PathRules {
+    // Built only off Windows outside the tests, which run it everywhere.
+    #[cfg_attr(windows, allow(dead_code))]
     pub(crate) fn posix() -> Self {
         let parse = |path: &&str| components(path, PathStyle::Posix);
         Self {
