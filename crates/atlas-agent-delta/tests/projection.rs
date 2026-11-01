@@ -13,7 +13,9 @@ use atlas_acp_thread::{
     AcpThread, AcpThreadHandle, AgentConnection, AgentId as ThreadAgentId, AuthorizationKind,
     PermissionOptions,
 };
-use atlas_agent_delta::{AgentId, DeltaProjector, DeltaSink, SessionDelta, SessionDeltaEnvelope};
+use atlas_agent_delta::{
+    AgentId, DeltaProjector, DeltaSink, Origin, QueuedPrompt, SessionDelta, SessionDeltaEnvelope,
+};
 use futures::future::BoxFuture;
 use futures::FutureExt;
 
@@ -222,10 +224,11 @@ async fn a_thought_after_text_opens_its_own_message() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_user_message_never_reaches_the_wire() {
-    // Capture gets the prompt from the send path, with the raw text before
-    // memory prefixing. A user message on the delta stream would double-record
-    // it, and with the wrong text.
+async fn an_unstamped_user_message_never_reaches_the_wire() {
+    // Only a prompt the host stamped is announced (`stamp_user_message`). A
+    // user entry nobody stamped — history an agent replays on `session/load` —
+    // stays silent, as every user entry used to: the snapshot carries it, and
+    // announcing a replay would paint the conversation twice.
     let harness = Harness::start();
 
     lock(&harness.thread).push_user_content_block(
@@ -611,9 +614,14 @@ async fn the_host_announces_what_the_thread_cannot() {
         "the model refused",
         Some("auth".into()),
     );
-    harness
-        .projector
-        .note_model_changed(&harness.session_id, "anthropic/claude");
+    harness.projector.note_model_changed(
+        &harness.session_id,
+        "anthropic/claude",
+        Some(Origin::Remote {
+            id: "user-7".into(),
+            name: Some("Ada".into()),
+        }),
+    );
     harness
         .projector
         .note_compression_saved(&harness.session_id, 128);
@@ -640,6 +648,20 @@ async fn the_host_announces_what_the_thread_cannot() {
             assert_eq!(error_kind.as_deref(), Some("auth"));
         }
         other => panic!("expected a failure, got {other:?}"),
+    }
+    match &harness.recorder.deltas()[1] {
+        SessionDelta::ModelChanged { model_id, origin } => {
+            assert_eq!(model_id, "anthropic/claude");
+            assert_eq!(
+                origin,
+                &Some(Origin::Remote {
+                    id: "user-7".into(),
+                    name: Some("Ada".into()),
+                }),
+                "the announcement names who picked it"
+            );
+        }
+        other => panic!("expected a model change, got {other:?}"),
     }
 }
 
@@ -1128,11 +1150,11 @@ async fn the_host_announces_config_options_the_set_response_confirmed() {
 
     harness
         .projector
-        .note_config_options(&harness.session_id, &options);
+        .note_config_options(&harness.session_id, &options, None);
     harness.expect(1);
 
     match &harness.recorder.deltas()[0] {
-        SessionDelta::ConfigOptionsUpdated { config_options } => {
+        SessionDelta::ConfigOptionsUpdated { config_options, .. } => {
             assert_eq!(config_options.len(), 1);
             assert_eq!(config_options[0]["id"], "thought");
             assert_eq!(
@@ -2104,6 +2126,7 @@ async fn ordinary_tool_calls_announce_no_subagent() {
     );
 }
 
+<<<<<<< Updated upstream
 fn tool_call_of(delta: &SessionDelta) -> &atlas_agent_delta::ToolCall {
     match delta {
         SessionDelta::ToolCallUpserted { tool_call, .. } => tool_call,
@@ -2338,10 +2361,99 @@ async fn a_late_duplicate_stop_does_not_relabel_a_finished_turn() {
     harness.pump();
 
     let finished: Vec<String> = harness
+=======
+// ------------------------------------------------------- Universal RC groundwork
+
+fn user_text(text: &str) -> acp::ContentBlock {
+    acp::ContentBlock::Text(acp::TextContent::new(text.to_string()))
+}
+
+fn seqs(harness: &Harness) -> Vec<u64> {
+    harness
+        .recorder
+        .envelopes
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|envelope| envelope.seq)
+        .collect()
+}
+
+/// A prompt the host sent is the user half of the exchange on the wire, with
+/// who sent it and the id the sender minted — what lets a remote viewer see
+/// the question, and the window adopt its own optimistic row.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stamped_prompt_is_announced_with_its_sender() {
+    let harness = Harness::start();
+
+    harness.projector.stamp_user_message(
+        &harness.session_id,
+        Origin::Remote {
+            id: "guest:ab12".into(),
+            name: Some("Sam".into()),
+        },
+        Some("cm-1".into()),
+    );
+    {
+        // Pushed under one lock, as `AgentManager::send` does.
+        let mut thread = lock(&harness.thread);
+        thread.push_user_content_block(None, user_text("fix the "));
+        thread.push_user_content_block(None, user_text("build"));
+    }
+    harness.update(text_chunk("on it"));
+    harness.expect(2);
+
+    assert_eq!(
+        harness.recorder.kinds(),
+        ["user_message", "message_appended"],
+        "the whole prompt is one announcement, before the answer"
+    );
+    match &harness.recorder.deltas()[0] {
+        SessionDelta::UserMessage {
+            message,
+            origin,
+            client_message_id,
+        } => {
+            assert_eq!(message.role, atlas_agent_delta::MessageRole::User);
+            assert_eq!(message.content, "fix the build");
+            assert_eq!(client_message_id.as_deref(), Some("cm-1"));
+            assert_eq!(
+                origin,
+                &Origin::Remote {
+                    id: "guest:ab12".into(),
+                    name: Some("Sam".into())
+                }
+            );
+        }
+        other => panic!("expected the user's message, got {other:?}"),
+    }
+}
+
+/// A second prompt sent before the agent said anything merges into the first
+/// one's thread entry. It is still a send of its own, so it is still
+/// announced — with only its own text.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_prompt_that_merges_into_the_last_entry_is_still_announced() {
+    let harness = Harness::start();
+
+    harness
+        .projector
+        .stamp_user_message(&harness.session_id, Origin::Local, Some("a".into()));
+    lock(&harness.thread).push_user_content_block(None, user_text("first"));
+    harness.pump();
+    harness
+        .projector
+        .stamp_user_message(&harness.session_id, Origin::Local, Some("b".into()));
+    lock(&harness.thread).push_user_content_block(None, user_text("second"));
+    harness.pump();
+
+    let announced: Vec<(String, Option<String>)> = harness
+>>>>>>> Stashed changes
         .recorder
         .deltas()
         .into_iter()
         .filter_map(|delta| match delta {
+<<<<<<< Updated upstream
             SessionDelta::TurnFinished { stop_reason, .. } => Some(stop_reason),
             _ => None,
         })
@@ -2385,4 +2497,260 @@ async fn a_terminal_drained_late_announces_its_own_turn() {
     assert!(finished[0].1 >= 30, "{finished:?}");
     assert_eq!(finished[1].0, "cancelled");
     assert!(finished[1].1 < 30, "{finished:?}");
+=======
+            SessionDelta::UserMessage {
+                message,
+                client_message_id,
+                ..
+            } => Some((message.content, client_message_id)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        announced,
+        [
+            ("first".to_string(), Some("a".to_string())),
+            ("second".to_string(), Some("b".to_string())),
+        ]
+    );
+}
+
+/// `seq` is dense, starts at 1 and follows emit order, for thread-driven and
+/// host-announced deltas alike.
+#[tokio::test(flavor = "multi_thread")]
+async fn every_delta_is_numbered_densely_in_emit_order() {
+    let harness = Harness::start();
+
+    harness.update(text_chunk("Hel"));
+    harness
+        .projector
+        .note_model_changed(&harness.session_id, "anthropic/claude", None);
+    harness.update(text_chunk("lo"));
+    harness.projector.note_queue_changed(
+        &harness.session_id,
+        vec![QueuedPrompt {
+            id: "q-1".into(),
+            text: "next".into(),
+            origin: Origin::Local,
+        }],
+    );
+    harness
+        .projector
+        .note_hold_changed(&harness.session_id, true);
+    harness.expect(5);
+
+    assert_eq!(seqs(&harness), [1, 2, 3, 4, 5]);
+    assert_eq!(
+        harness.recorder.kinds(),
+        [
+            "message_appended",
+            "model_changed",
+            "text_chunk",
+            "queue_changed",
+            "hold_changed"
+        ]
+    );
+}
+
+/// The joiner's contract: a snapshot reflects exactly the deltas at or below
+/// its `as_of_seq`. The thread here runs ahead of the projection (events not
+/// yet drained, as under load); the snapshot catches the projection up first,
+/// and nothing it contains is announced again afterwards.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_snapshot_reflects_exactly_the_deltas_at_or_below_its_seq() {
+    let harness = Harness::start();
+
+    harness.update(text_chunk("Hello"));
+    // Into the thread, NOT drained: the projection is behind.
+    for chunk in [", wor", "ld"] {
+        let update: acp::SessionUpdate = serde_json::from_value(text_chunk(chunk)).unwrap();
+        lock(&harness.thread).handle_session_update(update).unwrap();
+    }
+
+    let snapshot = harness
+        .projector
+        .snapshot(&harness.session_id, true, None)
+        .expect("the session is projected");
+    assert_eq!(
+        Some(snapshot.as_of_seq),
+        seqs(&harness).last().copied(),
+        "the catch-up was announced, and the snapshot is as of it"
+    );
+    assert_eq!(snapshot.messages.len(), 1);
+    assert_eq!(snapshot.messages[0].content, "Hello, world");
+
+    // Draining the stale events now says nothing new...
+    harness.pump();
+    assert_eq!(Some(snapshot.as_of_seq), seqs(&harness).last().copied());
+
+    // ...and what comes later is above it, and applies on top cleanly.
+    harness.update(text_chunk("!"));
+    let after: Vec<SessionDeltaEnvelope> = harness
+        .recorder
+        .envelopes
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|envelope| envelope.seq > snapshot.as_of_seq)
+        .cloned()
+        .collect();
+    let mut text = snapshot.messages[0].content.clone();
+    for envelope in after {
+        if let SessionDelta::TextChunk { delta, .. } = envelope.delta {
+            text.push_str(&delta);
+        }
+    }
+    assert_eq!(
+        text, "Hello, world!",
+        "nothing applied twice, nothing missed"
+    );
+}
+
+/// A client that joins (or a window that reloads) while the agent waits on a
+/// permission must be able to answer it: the snapshot hands back the open
+/// prompt by the id its delta carried, and forgets it once answered.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_snapshot_hands_back_the_open_permission_prompt() {
+    let harness = Harness::start();
+    harness.update(serde_json::json!({
+        "sessionUpdate": "tool_call",
+        "toolCallId": "call-1",
+        "title": "Write a.txt",
+        "kind": "edit",
+        "status": "pending",
+        "rawInput": { "path": "a.txt" },
+    }));
+    let waiter = lock(&harness.thread)
+        .request_tool_call_authorization(
+            acp::ToolCallUpdate::new(
+                acp::ToolCallId::new("call-1"),
+                acp::ToolCallUpdateFields::default(),
+            ),
+            PermissionOptions::Flat(vec![acp::PermissionOption::new(
+                "allow_once",
+                "Allow once",
+                acp::PermissionOptionKind::AllowOnce,
+            )]),
+            AuthorizationKind::PermissionGrant,
+        )
+        .expect("the prompt opens");
+    harness.pump();
+
+    let request_id = harness
+        .recorder
+        .deltas()
+        .into_iter()
+        .find_map(|delta| match delta {
+            SessionDelta::PermissionRequest { request_id, .. } => Some(request_id),
+            _ => None,
+        })
+        .expect("a permission request");
+
+    let snapshot = harness
+        .projector
+        .snapshot(&harness.session_id, false, None)
+        .expect("projected");
+    assert_eq!(snapshot.pending_permissions.len(), 1);
+    let pending = &snapshot.pending_permissions[0];
+    assert_eq!(pending.request_id, request_id);
+    assert_eq!(pending.tool_call["toolCallId"], "call-1");
+    assert_eq!(pending.options[0]["optionId"], "allow_once");
+
+    lock(&harness.thread).authorize_tool_call(
+        acp::ToolCallId::new("call-1"),
+        atlas_acp_thread::SelectedPermissionOutcome::new(
+            acp::PermissionOptionId::new("allow_once"),
+            acp::PermissionOptionKind::AllowOnce,
+        ),
+    );
+    waiter.await;
+    harness.pump();
+    let snapshot = harness
+        .projector
+        .snapshot(&harness.session_id, false, None)
+        .expect("projected");
+    assert!(snapshot.pending_permissions.is_empty());
+}
+
+/// The elicitation counterpart: the newest unanswered one comes back with the
+/// id the wire carried.
+#[test]
+fn a_snapshot_hands_back_the_waiting_elicitation() {
+    let harness = Harness::start();
+    let request: acp::CreateElicitationRequest = serde_json::from_value(serde_json::json!({
+        "mode": "form",
+        "sessionId": "sess-1",
+        "message": "Which environment?",
+        "requestedSchema": { "type": "object" },
+    }))
+    .unwrap();
+    let (entry_id, _response) = lock(&harness.thread).request_elicitation(request).unwrap();
+    harness.pump();
+    let request_id = harness
+        .recorder
+        .deltas()
+        .into_iter()
+        .find_map(|delta| match delta {
+            SessionDelta::ElicitationRequested { request_id, .. } => Some(request_id),
+            _ => None,
+        })
+        .unwrap();
+
+    let pending = harness
+        .projector
+        .snapshot(&harness.session_id, false, None)
+        .unwrap()
+        .pending_elicitation
+        .expect("still waiting");
+    assert_eq!(pending.request_id, request_id);
+    assert_eq!(pending.message, "Which environment?");
+
+    lock(&harness.thread).cancel_elicitation(&entry_id);
+    assert!(harness
+        .projector
+        .snapshot(&harness.session_id, false, None)
+        .unwrap()
+        .pending_elicitation
+        .is_none());
+}
+
+/// The native agent raises no event for a mode it was set to; an ACP agent
+/// echoes one. The host announces the change either way, and the echo is not
+/// a second change.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_mode_change_is_said_once_whoever_says_it() {
+    let harness = Harness::start();
+
+    harness
+        .projector
+        .note_mode_changed(&harness.session_id, "plan", Some(Origin::Local));
+    harness.update(serde_json::json!({
+        "sessionUpdate": "current_mode_update",
+        "currentModeId": "plan",
+    }));
+    harness.update(serde_json::json!({
+        "sessionUpdate": "current_mode_update",
+        "currentModeId": "default",
+    }));
+    harness.pump();
+
+    let modes: Vec<(String, Option<Origin>)> = harness
+        .recorder
+        .deltas()
+        .into_iter()
+        .filter_map(|delta| match delta {
+            SessionDelta::ModeChanged { mode_id, origin } => Some((mode_id, origin)),
+            _ => None,
+        })
+        .collect();
+    // The host's announcement names who set it; the agent's own change
+    // (nobody through the host) names nobody.
+    assert_eq!(
+        modes,
+        [
+            ("plan".to_string(), Some(Origin::Local)),
+            ("default".to_string(), None)
+        ]
+    );
+>>>>>>> Stashed changes
 }

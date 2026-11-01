@@ -468,6 +468,7 @@ describe("subagents: Rust Subagent ↔ the renderer's Subagent (#8)", () => {
   });
 });
 
+<<<<<<< Updated upstream
 describe("slept_mid_turn: Rust SleptMidTurn ↔ the renderer's delta (#9)", () => {
   // The host names a turn the computer slept through (`sleep_watch.rs`). Both
   // fields are read by the chat store — `turn_seq` is its stale guard — so a
@@ -872,5 +873,145 @@ describe("linked pull requests: session row, store and commands (#15)", () => {
     expect([...tsInvokeArgKeys(prApi, "pr_create")].sort()).toEqual(
       [...rustCommandArgKeys(create, "pr_create")].sort(),
     );
+=======
+describe("Universal RC: the room as the window sees it (#10)", () => {
+  // `rc.rs` serialises every `atlas:rc` payload and every `rc_*` answer with
+  // `rename_all = "camelCase"`; `rc-api.ts` declares the mirrors by hand. A
+  // renamed field on either side compiles and arrives as `undefined`.
+  const rust = read("src-tauri", "src", "commands", "rc.rs");
+  const ts = read("src", "features", "chat", "lib", "rc-api.ts");
+
+  it.each([
+    ["RcRoomWire", "RcRoom"],
+    ["RcStarted", "RcStarted"],
+    ["RcDriverWire", "RcDriver"],
+    ["RcControlRequestWire", "RcControlRequest"],
+    ["RcScopeWire", "RcScope"],
+  ])("%s ↔ %s, field for field", (rustName, tsName) => {
+    const { attrs, body } = rustItem(rust, "struct", rustName);
+    expect(attrs, `${rustName} must be camelCase on the wire`).toMatch(/rename_all = "camelCase"/);
+    const rustWire = rustStructFields(body).map(snakeToCamel);
+    expect([...tsInterfaceProps(ts, tsName)].sort()).toEqual([...rustWire].sort());
+  });
+
+  it("the end reasons and link states the window branches on are the crate's", () => {
+    const wire = read("crates", "atlas-remote-control", "src", "wire.rs");
+    const host = read("crates", "atlas-remote-control", "src", "host.rs");
+    // `wire_enum!` lists each variant as `Name => "wire"`.
+    const block = /EndReason \{([\s\S]*?)\}/.exec(wire)?.[1] ?? "";
+    const endReasons = [...block.matchAll(/=> "([^"]+)"/g)].map((m) => m[1]);
+    expect(endReasons.length).toBeGreaterThan(0);
+    expect(tsUnionLiterals(ts, "RcEndReason").sort()).toEqual([...endReasons].sort());
+    const link = rustItem(host, "enum", "LinkState");
+    expect(link.attrs).toMatch(/rename_all = "snake_case"/);
+    expect(tsUnionLiterals(ts, "RcLinkState").sort()).toEqual(
+      rustEnumVariants(link.body).map(pascalToSnake).sort(),
+    );
+  });
+
+  it("the window's event channel is the one Rust emits on", () => {
+    const channel = /pub const RC_EVENT: &str = "([^"]+)"/.exec(rust)?.[1];
+    expect(channel).toBeTruthy();
+    expect(ts).toContain(`export const RC_EVENT = "${channel}"`);
+  });
+});
+
+describe("Universal RC groundwork: user prompts, the queue, holds and seq (#9)", () => {
+  // The session-delta wire grew additively for remote control: a prompt is a
+  // `user_message` delta (with who sent it and the window's client id), the
+  // turn queue lives in Rust and travels as `queue_changed`, a hold that keeps
+  // a session past its tab is `hold_changed`, and every envelope carries a
+  // per-session `seq` that a snapshot's `as_of_seq` refers to. Each of these
+  // is a field name on one side read as a string on the other; a rename on
+  // either side arrives as `undefined` and nothing else notices. Rust's own
+  // half is pinned by `crates/atlas-agent-wire/tests/contract.rs`.
+  const delta = read("crates", "atlas-agent-wire", "src", "delta.rs");
+  const types = read("crates", "atlas-agent-wire", "src", "types.rs");
+  const host = read("src-tauri", "src", "commands", "agent_host.rs");
+  const steering = read("src-tauri", "src", "commands", "agent_host", "steering.rs");
+  const wireTs = read("src", "types", "agents.ts");
+  const store = read("src", "features", "chat", "stores", "chat-store.ts");
+  const api = read("src", "features", "chat", "lib", "agents-api.ts");
+  const agentsRs = read("src-tauri", "src", "commands", "agents.rs");
+
+  it("the envelope carries seq on both sides", () => {
+    expect(rustStructFields(rustItem(delta, "struct", "SessionDeltaEnvelope").body)).toContain(
+      "seq",
+    );
+    expect(wireTs).toMatch(/export type AgentDelta = AgentDeltaBody & \{ seq\?: number \};/);
+  });
+
+  it("the three new kinds exist on both sides, and the store reduces each", () => {
+    for (const [variant, kind] of [
+      ["UserMessage", "user_message"],
+      ["QueueChanged", "queue_changed"],
+      ["HoldChanged", "hold_changed"],
+    ]) {
+      expect(delta).toMatch(new RegExp(`\\n\\s+${variant} \\{`));
+      expect(wireTs).toContain(`kind: "${kind}";`);
+      expect(store).toContain(`case "${kind}":`);
+    }
+  });
+
+  it("user_message's fields reach the reducer by the names Rust sends", () => {
+    expect(delta).toMatch(
+      /UserMessage \{\s*message: Message,\s*origin: Origin,[\s\S]*?client_message_id: Option<String>,/,
+    );
+    expect(store).toMatch(/env\.client_message_id/);
+    expect(store).toMatch(/env\.origin/);
+  });
+
+  it("Origin and QueuedPrompt read the same on both sides", () => {
+    const origin = rustItem(types, "enum", "Origin");
+    expect(origin.attrs).toMatch(/tag\s*=\s*"kind",\s*rename_all\s*=\s*"snake_case"/);
+    expect(wireTs).toMatch(
+      /export type Origin = \{ kind: "local" \} \| \{ kind: "remote"; id: string; name\?: string \};/,
+    );
+    const rustFields = rustStructFields(rustItem(types, "struct", "QueuedPrompt").body);
+    expect(rustFields).toEqual(["id", "text", "origin"]);
+    expect(tsInterfaceProps(wireTs, "QueuedPrompt").sort()).toEqual([...rustFields].sort());
+  });
+
+  it("the snapshot's live fields are on the frontend's SessionSnapshot", () => {
+    const rustFields = rustStructFields(rustItem(host, "struct", "SessionSnapshot").body);
+    const live = ["as_of_seq", "pending_permissions", "pending_elicitation", "queue", "held"];
+    expect(rustFields).toEqual(expect.arrayContaining(live));
+    expect(tsInterfaceProps(wireTs, "SessionSnapshot")).toEqual(expect.arrayContaining(live));
+    expect(rustStructFields(rustItem(steering, "struct", "PendingPermissionWire").body)).toEqual(
+      tsInterfaceProps(wireTs, "PendingPermissionWire"),
+    );
+    expect(rustStructFields(rustItem(steering, "struct", "PendingElicitationWire").body)).toEqual(
+      tsInterfaceProps(wireTs, "PendingElicitationWire"),
+    );
+  });
+
+  it("agents_send takes the client message id the window mints", () => {
+    expect(agentsRs).toMatch(/pub async fn agents_send\([\s\S]*?client_message_id: Option<String>/);
+    expect(api).toMatch(/invoke<void>\("agents_send",\s*\{[^}]*clientMessageId/);
+  });
+
+  it("a setting change names who made it, optionally, on both sides", () => {
+    // `origin` on the three setting deltas is additive: the steering entry
+    // stamps it, the agent's own echo omits it, and a frontend that does not
+    // read it sees the same payload as before. Serde must skip `None` (the TS
+    // side declares `origin?`, never `origin: null`), and the TS union must
+    // declare it on exactly these three kinds.
+    for (const [variant, field, kind] of [
+      ["ModeChanged", "mode_id", "mode_changed"],
+      ["ModelChanged", "model_id", "model_changed"],
+      ["ConfigOptionsUpdated", "config_options", "config_options_updated"],
+    ]) {
+      expect(delta).toMatch(
+        new RegExp(
+          `${variant} \\{\\s*${field}: [^,]+,\\s*#\\[serde\\(default, skip_serializing_if = "Option::is_none"\\)\\]\\s*origin: Option<Origin>,`,
+        ),
+      );
+      expect(wireTs).toMatch(
+        new RegExp(
+          `kind: "${kind}";[\\s\\S]*?${field}: [^;]+;\\s*(?:/\\*\\*[\\s\\S]*?\\*/\\s*)?origin\\?: Origin;`,
+        ),
+      );
+    }
+>>>>>>> Stashed changes
   });
 });

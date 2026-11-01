@@ -820,6 +820,55 @@ async fn a_rejected_session_is_cleared_and_signs_the_user_out() {
     );
 }
 
+/// The hosted-rooms hook (CC-1): a rejection tells its observers **while the
+/// credential is still on disk** — the close door needs a bearer — and only
+/// then clears it. A verdict that costs nothing (a 500, a 403) tells no one.
+#[tokio::test]
+async fn a_rejection_tells_its_observers_before_the_credential_goes() {
+    let stub = Stub::start().await;
+    let dir = TempDir::new();
+    scripted_grant(&stub);
+
+    let auth = core(&stub, &dir);
+    sign_in(&auth).await;
+
+    // A second view of the same credential file, for the observer to read.
+    let on_disk = Arc::new(AuthCore::new(
+        stub.base(),
+        dir.path(),
+        reqwest::Client::new(),
+    ));
+    let seen: Arc<Mutex<Vec<bool>>> = Arc::default();
+    {
+        let seen = seen.clone();
+        let on_disk = on_disk.clone();
+        auth.on_credential_rejected(Arc::new(move || {
+            let seen = seen.clone();
+            let on_disk = on_disk.clone();
+            Box::pin(async move {
+                seen.lock().unwrap().push(on_disk.stored().is_some());
+            })
+        }));
+    }
+
+    // A server error is not a verdict: nothing is cleared, no one is told.
+    stub.on("/token", vec![Reply::err(500, "down")]);
+    assert!(matches!(
+        auth.validate_once().await,
+        Validation::Indeterminate { .. }
+    ));
+    assert!(seen.lock().unwrap().is_empty());
+
+    stub.on("/token", vec![Reply::err(401, "unauthorized")]);
+    assert_eq!(auth.validate_once().await, Validation::Rejected);
+    assert_eq!(
+        seen.lock().unwrap().clone(),
+        [true],
+        "told once, with the credential still there"
+    );
+    assert!(auth.stored().is_none(), "and then it went");
+}
+
 #[tokio::test]
 async fn a_server_error_never_costs_the_credential() {
     let stub = Stub::start().await;

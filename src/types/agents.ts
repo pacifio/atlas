@@ -176,6 +176,47 @@ export interface SessionSnapshot {
   usage: Usage;
   created_at: string;
   updated_at: string;
+  /** The `seq` of the last delta this snapshot reflects. A client that
+   *  buffered the stream applies only deltas above it. */
+  as_of_seq?: number;
+  /** Permission prompts still waiting, oldest first — what lets a reload (or a
+   *  late joiner) mid-prompt still answer. */
+  pending_permissions?: PendingPermissionWire[];
+  /** The newest elicitation still waiting, if any. */
+  pending_elicitation?: PendingElicitationWire | null;
+  /** The session's turn queue (owned by Rust; the composer strip mirrors it). */
+  queue?: QueuedPrompt[];
+  /** A hold keeps this session running without its tab (Universal RC). */
+  held?: boolean;
+}
+
+/** Who caused something in a session: the window's own user, or a remote
+ *  principal steering it (Universal RC). Mirrors `atlas_agent_wire::Origin`. */
+export type Origin = { kind: "local" } | { kind: "remote"; id: string; name?: string };
+
+/** One prompt parked in a session's turn queue. `text` is what the strip shows. */
+export interface QueuedPrompt {
+  id: string;
+  text: string;
+  origin: Origin;
+}
+
+/** A still-open permission prompt on a snapshot — the `permission_request`
+ *  delta's fields. */
+export interface PendingPermissionWire {
+  request_id: string;
+  tool_call: unknown;
+  options: unknown;
+}
+
+/** A still-open elicitation on a snapshot — the `elicitation_requested`
+ *  delta's fields. */
+export interface PendingElicitationWire {
+  request_id: string;
+  mode: "form" | "url";
+  message: string;
+  requested_schema?: unknown;
+  url?: string | null;
 }
 
 /**
@@ -215,8 +256,12 @@ export type AgentStreamEvent = AgentDelta | LoadingStatusEvent | AgentUpdateEven
 /**
  * Single multiplexed delta stream emitted on the `atlas:agents` window event.
  * `kind` discriminates; `agent_id` + `session_id` route to the right tab.
+ * Every delta also carries `seq`, its dense per-session stream position (see
+ * `SessionSnapshot.as_of_seq`).
  */
-export type AgentDelta =
+export type AgentDelta = AgentDeltaBody & { seq?: number };
+
+type AgentDeltaBody =
   | {
       kind: "status";
       agent_id: AgentId;
@@ -284,16 +329,23 @@ export type AgentDelta =
       turns: number;
     }
   | {
+      /** The session's mode changed. `origin` names who set it — the window
+       *  or a remote driver — when it went through the host's steering entry;
+       *  absent when the agent changed it on its own. */
       kind: "mode_changed";
       agent_id: AgentId;
       session_id: AcpSessionId;
       mode_id: string;
+      origin?: Origin;
     }
   | {
+      /** The session's model changed through the host. `origin` names who
+       *  picked it (see `mode_changed`). */
       kind: "model_changed";
       agent_id: AgentId;
       session_id: AcpSessionId;
       model_id: string;
+      origin?: Origin;
     }
   | {
       kind: "available_commands";
@@ -334,6 +386,9 @@ export type AgentDelta =
       agent_id: AgentId;
       session_id: AcpSessionId;
       config_options: unknown[];
+      /** Who set the option, when the list is the confirmed echo of a set
+       *  through the host; absent when the agent changed it on its own. */
+      origin?: Origin;
     }
   | {
       kind: "context_usage";
@@ -427,4 +482,31 @@ export type AgentDelta =
       agent_id: AgentId;
       session_id: AcpSessionId;
       reason: string;
+    }
+  | {
+      /** A prompt reached the agent — sent from this window, a queue, or a
+       *  remote driver. `client_message_id` echoes the id the sender minted,
+       *  so the window adopts its own optimistic row instead of drawing a
+       *  second. `message.content` is what the agent was sent. */
+      kind: "user_message";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      message: SessionMessage;
+      origin: Origin;
+      client_message_id?: string;
+    }
+  | {
+      /** The session's whole turn queue, after a change. */
+      kind: "queue_changed";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      queue: QueuedPrompt[];
+    }
+  | {
+      /** A hold (Universal RC) now keeps — or no longer keeps — this session
+       *  running without its tab. */
+      kind: "hold_changed";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      held: boolean;
     };

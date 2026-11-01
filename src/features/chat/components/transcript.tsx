@@ -46,7 +46,11 @@ import { useTranscriptScroll } from "../lib/use-transcript-scroll";
 import { useThawed } from "../lib/use-thawed";
 import { useChatStore } from "../stores/chat-store";
 import { sessionCanRetry } from "../lib/retry-gate";
+<<<<<<< Updated upstream
 import { latestResponseRowId } from "../lib/message-footer";
+=======
+import { useRcRemoteDriver } from "../stores/rc-store";
+>>>>>>> Stashed changes
 import { pinScope } from "../stores/chat-pins-store";
 import { projectPathForTab } from "../lib/tab-project";
 import { cn } from "@/lib/utils";
@@ -371,6 +375,7 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
   // Discovered, not inferred from the agent id (ADR-0002) — the same catalog
   // flag `supportsFork` uses, computed from the live connection.
   const supportsRewind = agentCatalogEntry(agent)?.supportsRewind === true;
+<<<<<<< Updated upstream
   const canRetry = useChatStore((s) => sessionCanRetry(s.sessions[tabId], supportsRewind));
   // Whether a new message could go out now — an interrupted turn's Continue.
   // Same O(1) bargain as `canRetry`. A disconnected session counts: sending
@@ -393,6 +398,14 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
       !session.stopping
     );
   });
+=======
+  // The seat is read in its own subscription (its store, not the chat store's
+  // selector), so the chat selector stays O(1) per streaming write.
+  const remoteDriving = useRcRemoteDriver(acpSessionId) !== null;
+  const canRetry = useChatStore((s) =>
+    sessionCanRetry(s.sessions[tabId], supportsRewind, remoteDriving),
+  );
+>>>>>>> Stashed changes
 
   // Delegated children, keyed by their launching call. A stable reference —
   // immer re-identifies it only when a child changes — so this subscription

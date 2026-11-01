@@ -21,6 +21,9 @@ import type { SessionKey } from "@/types/agents";
 import { useChatStore } from "../stores/chat-store";
 import { agents } from "./agents-api";
 import { sessionCanRetry } from "./retry-gate";
+import { drivenElsewhere } from "./rc-api";
+import { useRcStore } from "../stores/rc-store";
+import { enqueuePrompt } from "./turn-queue";
 import { catalogEntry } from "@/features/agents/lib/agent-meta";
 import { logEvent } from "@/features/log/lib/log";
 
@@ -74,7 +77,13 @@ export async function retryLastTurn(tabId: string): Promise<void> {
   if (!session?.acpAgentId || !session.acpSessionId) return;
   // Re-checked at click time, not just at render time: the turn may have
   // started streaming between the hover and the click.
-  if (!sessionCanRetry(session, catalogEntry(session.agentType)?.supportsRewind === true)) {
+  if (
+    !sessionCanRetry(
+      session,
+      catalogEntry(session.agentType)?.supportsRewind === true,
+      drivenElsewhere(useRcStore.getState().bySession[session.acpSessionId ?? ""]) !== null,
+    )
+  ) {
     return;
   }
 
@@ -125,7 +134,11 @@ async function runRetry(tabId: string, key: SessionKey): Promise<void> {
   // user can edit or send, and the drain effect only fires on a status or
   // binding transition, so nothing re-sends behind their back.
   const preserve = (why: string) => {
+<<<<<<< Updated upstream
     useChatStore.getState().actions.enqueueMessage(tabId, prompt as string, []);
+=======
+    enqueuePrompt(tabId, prompt as string);
+>>>>>>> Stashed changes
     toast.error(`${why} — your prompt is waiting in the composer`);
     logEvent({
       source: "agent",
@@ -170,7 +183,9 @@ async function runRetry(tabId: string, key: SessionKey): Promise<void> {
   // when edited. Nothing here relies on the mention registry, which forgets a
   // paste once it is sent.
   const actions = useChatStore.getState().actions;
-  actions.addMessage(tabId, "user", prompt);
+  // The bubble's id rides with the prompt, so its `user_message` delta adopts
+  // this bubble instead of drawing a second one.
+  const clientMessageId = actions.addMessage(tabId, "user", prompt);
   actions.updateSessionStatus(tabId, "running");
   logEvent({
     source: "chat",
@@ -183,7 +198,9 @@ async function runRetry(tabId: string, key: SessionKey): Promise<void> {
   // an error, and a retry that is invisible past its first line cannot be told
   // apart from a normal turn when reading the log back.
   try {
-    await agents.send(key, prompt);
+    await (clientMessageId
+      ? agents.send(key, prompt, undefined, undefined, clientMessageId)
+      : agents.send(key, prompt));
     logEvent({
       source: "agent",
       kind: "stream-started",

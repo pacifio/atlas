@@ -147,21 +147,56 @@ export const agents = {
     attachments?: ImageAttachment[],
     /** `@`-mentioned files, sent as ACP `ResourceLink` blocks (P2.1). */
     resourceLinks?: { uri: string; name: string }[],
+<<<<<<< Updated upstream
     /** Large pastes, each in full. Rust sends an embedded resource when the
      *  agent advertised `embeddedContext`, a fenced text block otherwise. */
     pastedTexts?: { id: string; text: string }[],
+=======
+    /** The optimistic user row's id. The prompt's `user_message` delta echoes
+     *  it, and the reducer adopts that row instead of drawing a second. */
+    clientMessageId?: string,
+>>>>>>> Stashed changes
   ) =>
     invoke<void>("agents_send", {
       key,
       text,
       attachments: attachments?.length ? attachments : null,
       resourceLinks: resourceLinks?.length ? resourceLinks : null,
+<<<<<<< Updated upstream
       pastedTexts: pastedTexts?.length ? pastedTexts : null,
     }),
   /** Cancel the turn. `stop` is the user's Stop: it also ends the session's
    *  pull request watches. A tab or project closing leaves them on. */
   cancel: (key: SessionKey, opts?: { stop?: boolean }) =>
     invoke<void>("agents_cancel", { key, stop: opts?.stop ?? false }),
+=======
+      clientMessageId: clientMessageId ?? null,
+    }),
+  /** Stop: Rust discards the session's queue and cancels the running turn. */
+  cancel: (key: SessionKey) => invoke<void>("agents_cancel", { key }),
+
+  // ── The turn queue (Rust's turn controller; the strip mirrors
+  //    `queue_changed`) ───────────────────────────────────────────────────
+  /** Park a prompt behind the running turn. `text` is what the strip shows;
+   *  `prompt` what the agent will be sent. Resolves to the item's id. */
+  queueAdd: (key: SessionKey, text: string, prompt?: string) =>
+    invoke<string>("agents_queue_add", { key, text, prompt: prompt ?? null }),
+  queueRemove: (key: SessionKey, itemId: string) =>
+    invoke<boolean>("agents_queue_remove", { key, itemId }),
+  queueClear: (key: SessionKey) => invoke<void>("agents_queue_clear", { key }),
+  /** Close (`true`) or open the queue's drain gate. Opening drains an idle
+   *  session's head. */
+  queuePause: (key: SessionKey, paused: boolean) =>
+    invoke<void>("agents_queue_pause", { key, paused }),
+  /** Start the queue's head if the session is idle and not paused. */
+  queueDrain: (key: SessionKey) => invoke<number | null>("agents_queue_drain", { key }),
+  /** Run one queued prompt next, interrupting the running turn. */
+  queueSendNow: (key: SessionKey, itemId: string) =>
+    invoke<void>("agents_queue_send_now", { key, itemId }),
+  /** Developer toggle (debug builds): hold a session open past its tab. */
+  setHold: (sessionId: AcpSessionId, held: boolean) =>
+    invoke<void>("agents_set_hold", { sessionId, held }),
+>>>>>>> Stashed changes
   /** Answer an elicitation the agent raised (P3.3). */
   respondElicitation: (
     agentId: AgentId,

@@ -170,7 +170,11 @@ pub enum ConnEvent {
 /// The pinned fork validates the server's echo against this list, so a server
 /// echoing something else fails the handshake rather than proceeding on a
 /// protocol nobody agreed to.
-fn ticket_request(
+///
+/// Public so the other sockets on the ingest door (the Universal RC host
+/// socket in `atlas-remote-control`) dial with exactly this handshake rather
+/// than a second hand-written copy of it.
+pub fn ticket_request(
     url: String,
     token: &str,
 ) -> Result<tokio_tungstenite::tungstenite::handshake::client::Request> {

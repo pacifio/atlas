@@ -48,7 +48,7 @@ pub use model::{
     InboxPage, RemoteEntry, RemoteEntryCounts, RemoteProject, RemoteSession, RemoteToolTally,
     SessionBoardPage, SessionDetailPage,
 };
-pub use socket::{ClientFrame, ExitReason, Keepalive, ServerFrame};
+pub use socket::{ticket_request, ClientFrame, ExitReason, Keepalive, ServerFrame};
 
 use std::future::Future;
 use std::pin::Pin;
@@ -82,16 +82,66 @@ pub fn ingest_base() -> String {
 /// The override ladder — runtime, then compile-time, then the default — with
 /// the environment already read. Pure so the tests never touch the process
 /// environment: `set_var` from parallel test threads races every other read.
+///
+/// A release build takes a plaintext override (`http://`, `ws://`) only for
+/// a loopback host: every bearer this crate and the sockets on its door send
+/// rides on the base, and an override that points a shipped binary at a
+/// remote plaintext host would send them in the clear. Such an override is
+/// refused in favour of the default, and said so. A debug build is
+/// permissive: the local dev server is `http://localhost:8787`, and a dev may
+/// well run it on another machine on the LAN.
 fn resolve_base(runtime: Option<String>, compiled: Option<&str>, default: &str) -> String {
-    runtime
+    let base = runtime
         .or_else(|| compiled.map(str::to_string))
         .unwrap_or_else(|| default.to_string())
         .trim_end_matches('/')
-        .to_string()
+        .to_string();
+    checked_base(base, default, cfg!(debug_assertions))
 }
 
-/// `ingest_base()` with the scheme rewritten for a WebSocket dial.
-fn ws_base() -> String {
+/// `base`, or `default` when `base` is a plaintext override to a host that is
+/// not loopback and the build is not permissive.
+fn checked_base(base: String, default: &str, permissive: bool) -> String {
+    if permissive || !plaintext_to_remote_host(&base) {
+        return base;
+    }
+    tracing::error!(
+        target: "atlas_artifacts",
+        %base,
+        "a plaintext base is accepted only for a loopback host; using the default"
+    );
+    default.trim_end_matches('/').to_string()
+}
+
+/// Whether `base` is `http://` or `ws://` to a host other than loopback
+/// (`127.0.0.0/8`, `::1`, `localhost`).
+fn plaintext_to_remote_host(base: &str) -> bool {
+    let Some(rest) = base
+        .strip_prefix("http://")
+        .or_else(|| base.strip_prefix("ws://"))
+    else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    // Past any userinfo, then without the port.
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    let host = match host.strip_prefix('[') {
+        Some(v6) => v6.split(']').next().unwrap_or(""),
+        None => host.split(':').next().unwrap_or(""),
+    };
+    let loopback = host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback());
+    !loopback
+}
+
+/// `ingest_base()` with the scheme rewritten for a WebSocket dial. Public for
+/// the other sockets on the same door (`atlas-remote-control`'s host socket),
+/// so every dial resolves the base through one ladder.
+pub fn ws_base() -> String {
     ws_base_for(ingest_base())
 }
 
@@ -214,6 +264,54 @@ mod tests {
             DEFAULT_INGEST_BASE,
         );
         assert_eq!(base, "https://ingest.example.invalid");
+    }
+
+    /// A release build sends its bearers over plaintext to loopback only: a
+    /// remote `http://` override falls back to the default; a debug build
+    /// takes it.
+    #[test]
+    fn a_plaintext_base_is_refused_in_release_unless_loopback() {
+        let release = |base: &str| checked_base(base.into(), DEFAULT_INGEST_BASE, false);
+        let debug = |base: &str| checked_base(base.into(), DEFAULT_INGEST_BASE, true);
+        for ok in [
+            "http://localhost:8787",
+            "http://LOCALHOST",
+            "http://127.0.0.1:8787",
+            "http://127.0.0.2",
+            "http://[::1]:8787",
+            "ws://127.0.0.1:8788/",
+            "http://user:pw@localhost:8787/path",
+            "https://ingest.example.invalid",
+            "wss://ingest.example.invalid",
+        ] {
+            assert_eq!(release(ok), ok, "{ok} is fine in release");
+        }
+        for bad in [
+            "http://ingest.example.invalid",
+            "http://10.0.0.5:8787",
+            "ws://192.168.1.20:8788",
+            "http://[2001:db8::1]:8787",
+            "http://localhost.evil.invalid",
+            "http://user:pw@10.0.0.5",
+        ] {
+            assert_eq!(
+                release(bad),
+                DEFAULT_INGEST_BASE,
+                "{bad} must fall back in release"
+            );
+            assert_eq!(debug(bad), bad, "{bad} is a dev's business in debug");
+        }
+        // Through the ladder, so the check is not a function nobody calls.
+        let base = resolve_base(
+            Some("http://10.0.0.5:8787".into()),
+            None,
+            DEFAULT_INGEST_BASE,
+        );
+        if cfg!(debug_assertions) {
+            assert_eq!(base, "http://10.0.0.5:8787");
+        } else {
+            assert_eq!(base, DEFAULT_INGEST_BASE);
+        }
     }
 
     #[test]

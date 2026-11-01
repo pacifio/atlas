@@ -158,6 +158,12 @@ pub async fn auth_sign_in(
     state: State<'_, AuthState>,
 ) -> Result<AuthSnapshot, String> {
     let core = state.core();
+    // Who was signed in before, if anyone: a grant that lands as another
+    // account closes the rooms the previous one hosted (CC-1, below).
+    let previous_user = core
+        .stored()
+        .and_then(|s| s.identity)
+        .map(|identity| identity.id);
 
     let grant = core.start_grant().await.map_err(|e| e.user_message())?;
 
@@ -177,6 +183,16 @@ pub async fn auth_sign_in(
     tauri::async_runtime::spawn(async move {
         match core.run_grant(&grant).await {
             Ok(()) => {
+                // A remote-control room belongs to the account that was
+                // signed in when it started. Signed in as someone else now,
+                // every room this desktop hosts closes; the sessions run on.
+                let now_user = core
+                    .stored()
+                    .and_then(|s| s.identity)
+                    .map(|identity| identity.id);
+                if previous_user.is_some() && previous_user != now_user {
+                    super::rc::close_all_rooms(&task_app).await;
+                }
                 let snap = core.snapshot();
                 // Broadcast first: it identifies, so `auth_signed_in` lands on
                 // the account person rather than the device one.
@@ -260,6 +276,10 @@ pub async fn auth_set_active_org(
 #[tauri::command]
 pub async fn auth_sign_out(app: AppHandle, state: State<'_, AuthState>) -> Result<bool, String> {
     let core = state.core();
+    // Every remote-control room this desktop hosts belongs to the account
+    // leaving: close them while the bearer still mints (the close door needs
+    // it), and leave the sessions themselves running (CC-1).
+    super::rc::close_all_rooms(&app).await;
     let ticket = core.sign_out();
     // The native agent's connection caches an access JWT that outlives the
     // revoked session token — the JWT verifies statelessly against JWKS — and

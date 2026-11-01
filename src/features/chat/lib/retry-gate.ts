@@ -41,13 +41,19 @@ import { isBusyAgentStatus, type ChatSession } from "@/types/agent";
  * @param agentSupportsRewind `agentCatalogEntry(agentType)?.supportsRewind`.
  *   False before the agent's first handshake, which is correct: unknown is not
  *   a licence to offer a destructive action.
+ * @param remoteDriving someone other than this account holds the session's
+ *   remote-control seat (`drivenElsewhere`). Retry re-sends a prompt, which
+ *   only the driver may do, and rewinds a turn that may be theirs; neither is
+ *   one of the owner's master powers (stop, kick, take over, close).
  */
 export function sessionCanRetry(
   session: ChatSession | undefined,
   agentSupportsRewind: boolean,
+  remoteDriving = false,
 ): boolean {
   if (!session) return false;
   if (!agentSupportsRewind) return false;
+  if (remoteDriving) return false;
   if (session.disconnected || session.resumePending || session.unrestoredModeId) return false;
   // `isBusyAgentStatus` rather than a status set of our own: it also covers
   // `waiting`, the turn that is paused on a permission or plan approval.

@@ -35,7 +35,11 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
+<<<<<<< Updated upstream
 use atlas_acp_thread::prompt::{self, ImageAttachment, PastedText, ResourceLinkSpec};
+=======
+use atlas_acp_thread::prompt::{ImageAttachment, ResourceLinkSpec};
+>>>>>>> Stashed changes
 use atlas_agent_store::{
     AgentRegistryStore, AgentServerStore, InheritedProjectEnvironment, NodeRuntime, ReqwestClient,
 };
@@ -47,8 +51,8 @@ use atlas_bus::{OutboundMiddleware, OutboundPipeline};
 
 use super::agent_analytics::AnalyticsState;
 use super::agent_host::{
-    AgentHost, AgentInfo, AuthMethodWire, HostError, PermissionDecision, SessionInit, SessionKey,
-    SessionSnapshot,
+    AgentHost, AgentInfo, AuthMethodWire, HostError, Origin, PermissionDecision, Prompt,
+    PromptHooks, PromptSent, SessionInit, SessionKey, SessionSnapshot, SubmitPolicy,
 };
 use super::catalog::emit_catalog_changed;
 use super::memory_indexer::MemoryRegistry;
@@ -56,7 +60,6 @@ use super::memory_pack;
 use super::memory_sharing::MemorySharingState;
 use super::memory_summarize;
 use super::shared_memory::SharedMemoryStore;
-use agent_client_protocol::schema::v1 as acp;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -119,8 +122,13 @@ impl TauriDeltaSink {
             // unlike `capture` (opt-in, git-backed).
             .with(Arc::new(TranscriptMiddleware { app: app.clone() }))
             .with(Arc::new(MemoryIngestMiddleware {
-                app,
+                app: app.clone(),
                 queue: super::memory_delta::IngestQueue::new("atlas-memory-ingest"),
+            }))
+            // Last: in-process subscribers that must not lose a delta (the
+            // Universal RC relay). See [`DeltaTaps`].
+            .with(Arc::new(TapMiddleware {
+                taps: app.state::<Arc<DeltaTaps>>().inner().clone(),
             }));
         let inner = Arc::new(SinkInner {
             pipeline,
@@ -143,6 +151,70 @@ impl TauriDeltaSink {
             tracing::warn!(target: "atlas::sleep_watch", "the sleep-watch tick did not start: {e}");
         }
         Self { inner }
+    }
+}
+
+/// A lossless, in-process subscription to every session delta, after the
+/// window has had it.
+pub type DeltaTap = Arc<dyn Fn(&SessionDeltaEnvelope) + Send + Sync>;
+
+/// The pipeline's last stage: whoever registered a tap gets every envelope, in
+/// emit order, with its `seq`.
+///
+/// The projector's broadcast bus is the other in-process tap, and it is lossy
+/// by design — a lagging subscriber drops events. That is wrong for a remote
+/// view, where a dropped `permission_request` is a turn stuck for the remote
+/// driver. A tap here runs synchronously on the emit thread with the session's
+/// emit order held, exactly like `CaptureMiddleware`, so it must only enqueue:
+/// never block, never call back into the host for the same session.
+///
+/// The Universal RC layer registers one per live RC session: register, then
+/// take `AgentHost::snapshot` and drop buffered envelopes with
+/// `seq <= as_of_seq` — nothing twice, nothing missed.
+#[derive(Default)]
+pub struct DeltaTaps {
+    taps: std::sync::RwLock<Vec<(u64, DeltaTap)>>,
+    next: std::sync::atomic::AtomicU64,
+}
+
+// `add` / `remove` are the Universal RC layer's subscription API
+// (`commands::rc`): one tap per hosted room.
+impl DeltaTaps {
+    /// Register a tap. The returned id removes it.
+    pub fn add(&self, tap: DeltaTap) -> u64 {
+        let id = self.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.taps
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push((id, tap));
+        id
+    }
+
+    pub fn remove(&self, id: u64) {
+        self.taps
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .retain(|(tap, _)| *tap != id);
+    }
+
+    fn run(&self, envelope: &SessionDeltaEnvelope) {
+        let taps = self
+            .taps
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for (_, tap) in taps.iter() {
+            tap(envelope);
+        }
+    }
+}
+
+struct TapMiddleware {
+    taps: Arc<DeltaTaps>,
+}
+
+impl OutboundMiddleware<SessionDeltaEnvelope> for TapMiddleware {
+    fn on_event(&self, envelope: &SessionDeltaEnvelope) {
+        self.taps.run(envelope);
     }
 }
 
@@ -306,7 +378,7 @@ impl OutboundMiddleware<SessionDeltaEnvelope> for AnalyticsMiddleware {
             SessionDelta::CompressionSaved { saved_tokens } => {
                 st.with_turn(sid, |a| a.note_compression_saved(*saved_tokens))
             }
-            SessionDelta::ModelChanged { model_id } => {
+            SessionDelta::ModelChanged { model_id, .. } => {
                 st.with_turn(sid, |a| a.note_model(model_id))
             }
             SessionDelta::ModeChanged { .. } => {
@@ -466,6 +538,10 @@ impl OutboundMiddleware<SessionDeltaEnvelope> for TranscriptMiddleware {
                 self.flush(&envelope.session_id)
             }
             SessionDelta::AgentDisconnected { .. } => self.flush(&envelope.session_id),
+            // Recorded from the send path (`note_prompt`, through the host's
+            // prompt hooks) for every prompt the host dispatches, queued and
+            // remote ones included; the echo would be a second copy.
+            SessionDelta::UserMessage { .. } => {}
             _ => {}
         }
     }
@@ -926,11 +1002,16 @@ pub fn install_manager(app: &AppHandle) {
     app.manage(Arc::new(super::agent_transcript::TranscriptState::new(
         config_dir.clone(),
     )));
+<<<<<<< Updated upstream
     // Managed so the session lifecycle can forget a session that ends
     // without a terminal status.
     let sleep_watch = Arc::new(crate::sleep_watch::SleepWatch::new());
     app.manage(sleep_watch.clone());
     let sink: Arc<dyn DeltaSink> = Arc::new(TauriDeltaSink::new(app.clone(), sleep_watch));
+=======
+    app.manage(Arc::new(DeltaTaps::default()));
+    let sink: Arc<dyn DeltaSink> = Arc::new(TauriDeltaSink::new(app.clone()));
+>>>>>>> Stashed changes
     let data_dir = app
         .path()
         .app_data_dir()
@@ -959,6 +1040,7 @@ pub fn install_manager(app: &AppHandle) {
         AgentHost::new(sink, config_dir, store.clone(), registry.clone())
     };
     app.manage(host.clone());
+    host.set_prompt_hooks(Arc::new(AppPromptHooks { app: app.clone() }));
     app.manage(super::session_watcher::SessionWatcher::new(
         host.clone(),
         app.clone(),
@@ -1627,7 +1709,7 @@ pub fn agents_respond_elicitation(
     host: State<'_, Arc<AgentHost>>,
 ) -> Result<(), String> {
     let _ = agent_id;
-    host.respond_elicitation(request_id, &action, content)
+    host.answer_elicitation(request_id, &action, content, Origin::Local)
         .map_err(|e| e.to_string())
 }
 
@@ -1679,7 +1761,7 @@ pub async fn agents_set_config_option(
     value: serde_json::Value,
     host: State<'_, Arc<AgentHost>>,
 ) -> Result<(), String> {
-    host.set_config_option(&key, config_id, value)
+    host.set_config_option(&key, config_id, value, Origin::Local)
         .await
         .map_err(|e| e.to_string())
 }
@@ -2113,10 +2195,18 @@ pub fn agents_snapshot_meta(
 
 /// Send a user message to an agent session, exactly as typed.
 ///
+/// A one-liner onto the steering entry (`AgentHost::submit`), which carries
+/// everything a prompt does on its way to the agent — capture, transcript,
+/// history, the shared-memory registration (see [`AppPromptHooks`]) — so a
+/// remote driver's prompt does exactly the same. `Now`: the window's composer
+/// already queues while a turn runs, so a direct send is one it chose to make.
+///
 /// Shared memory is never prepended here (ADR-0010): the agent pulls it
-/// through the `atlas_memory` tools its session was offered. What this path
-/// owns on the memory side is the write half — registering the session so
-/// its deltas are captured into the scope's record.
+/// through the `atlas_memory` tools its session was offered.
+///
+/// `client_message_id` is the id of the window's optimistic user row; the
+/// prompt's `user_message` delta echoes it so the row is adopted, not drawn
+/// twice.
 #[tauri::command]
 pub async fn agents_send(
     key: SessionKey,
@@ -2126,6 +2216,7 @@ pub async fn agents_send(
     // rather than flattened into the prose — the ACP-native way to hand an
     // agent a file, and every agent is required to accept it.
     resource_links: Option<Vec<ResourceLinkSpec>>,
+<<<<<<< Updated upstream
     // Large pastes the composer kept as chips. Each goes in full: an embedded
     // resource when the agent takes embedded context, a text block otherwise.
     pasted_texts: Option<Vec<PastedText>>,
@@ -2360,6 +2451,84 @@ pub(crate) fn send_prompt(
         ),
     )
     .map_err(|e| e.to_string())
+=======
+    client_message_id: Option<String>,
+    host: State<'_, Arc<AgentHost>>,
+) -> Result<(), String> {
+    // `agent_turn_started` is NOT emitted here: `AnalyticsMiddleware` emits it
+    // off `Status{Running}`, the actual turn boundary, which carries the
+    // `turn_seq` that joins a start to its completion.
+    let prompt = Prompt {
+        text,
+        display: None,
+        images: attachments.unwrap_or_default(),
+        resource_links: resource_links.unwrap_or_default(),
+        client_message_id,
+    };
+    host.inner()
+        .submit(&key, prompt, Origin::Local, SubmitPolicy::Now)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// The send path's side effects, for every prompt the host dispatches.
+///
+/// Moved down from `agents_send` so the steering entry owns them: a prompt
+/// that reaches the host by any other door — a drained queue item, a remote
+/// driver — is recorded exactly like a typed one.
+pub(crate) struct AppPromptHooks {
+    pub(crate) app: AppHandle,
+}
+
+impl PromptHooks for AppPromptHooks {
+    fn prompt_sent(&self, sent: &PromptSent<'_>) {
+        // Who sent it is not recorded yet: the transcript audit line for a
+        // remote driver (design review slice 7) lands with the RC layer.
+        tracing::debug!(target: "atlas::steering", session = sent.session_id, origin = ?sent.origin, "prompt sent");
+        // Session capture: record the prompt and bind the session. Here rather
+        // than in the delta middleware, because capture records the prompt
+        // the agent was SENT (before anything renders it), and a turn whose
+        // prompt is bound first is a Timeline row with a title. `plugin_id`,
+        // not `agent_id`: the latter is a per-process UUID; the former is what
+        // a reader wants to see and what tells capture native from ACP.
+        self.app
+            .state::<super::capture::CaptureState>()
+            .note_prompt(
+                sent.session_id,
+                sent.cwd,
+                sent.plugin_id,
+                sent.model,
+                sent.text,
+            );
+
+        if sent.cwd.is_empty() {
+            return;
+        }
+        // Atlas's own transcript, for every agent — what makes a session still
+        // exist (with its title) after the live one goes away.
+        self.app
+            .state::<Arc<super::agent_transcript::TranscriptState>>()
+            .note_prompt(
+                sent.session_id,
+                sent.cwd,
+                sent.plugin_id,
+                sent.text,
+                chrono::Utc::now().to_rfc3339(),
+            );
+
+        // Register this session so the capture path can route its deltas into
+        // the scope's record. The text itself goes to the agent untouched: a
+        // slash command stays at byte 0 (Claude Code resolves one only there),
+        // and nothing Atlas wrote can be echoed back as the user's words.
+        if self.app.state::<MemorySharingState>().is_enabled(sent.cwd) {
+            self.app.state::<SharedMemoryStore>().register_session(
+                sent.session_id,
+                sent.cwd,
+                sent.plugin_id,
+            );
+        }
+    }
+>>>>>>> Stashed changes
 }
 
 /// Hard cap on building the briefing's first-look extras (pack + handoff +
@@ -2427,6 +2596,7 @@ async fn build_bootstrap(
     }
 }
 
+<<<<<<< Updated upstream
 /// Cancel the session's turn. `stop` is the user's Stop button: it also ends
 /// the session's pull request watches, since a Stop means "stop" and a wake
 /// landing right after it would start the agent straight back up. Every
@@ -2444,6 +2614,111 @@ pub fn agents_cancel(
         host.interrupt(&key)
     }
     .map_err(|e| e.to_string())
+=======
+/// Stop: discard the session's queue and cancel the running turn.
+#[tauri::command]
+pub fn agents_cancel(key: SessionKey, host: State<'_, Arc<AgentHost>>) -> Result<(), String> {
+    host.stop(&key, Origin::Local).map_err(|e| e.to_string())
+}
+
+// ── The turn queue (the turn controller in `agent_host/steering.rs`) ────────
+//
+// The window's queued-message strip mirrors the session's queue through
+// `queue_changed` deltas; these verbs change it. Each is a one-liner onto the
+// host, which a remote driver reaches the same way.
+
+/// Park a prompt behind the running turn. `text` is what the strip shows;
+/// `prompt` is what the agent will be sent (the window may append hidden
+/// directives), defaulting to `text`. Returns the queued item's id.
+#[tauri::command]
+pub fn agents_queue_add(
+    key: SessionKey,
+    text: String,
+    prompt: Option<String>,
+    host: State<'_, Arc<AgentHost>>,
+) -> Result<String, String> {
+    let item = Prompt {
+        display: Some(text.clone()),
+        ..Prompt::text(prompt.unwrap_or(text))
+    };
+    host.enqueue(&key, item, Origin::Local)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn agents_queue_remove(
+    key: SessionKey,
+    item_id: String,
+    host: State<'_, Arc<AgentHost>>,
+) -> Result<bool, String> {
+    host.remove_queued(&key, &item_id, Origin::Local)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn agents_queue_clear(key: SessionKey, host: State<'_, Arc<AgentHost>>) -> Result<(), String> {
+    host.clear_queue(&key, Origin::Local)
+        .map_err(|e| e.to_string())
+}
+
+/// Close or open the queue's drain gate — the window's send gates (a resume
+/// loading, a session live elsewhere, no AI grant, a pending agent switch).
+#[tauri::command]
+pub fn agents_queue_pause(
+    key: SessionKey,
+    paused: bool,
+    host: State<'_, Arc<AgentHost>>,
+) -> Result<(), String> {
+    host.inner()
+        .set_queue_paused(&key, paused)
+        .map_err(|e| e.to_string())
+}
+
+/// Start the head of the queue if the session is idle and the gate is open.
+#[tauri::command]
+pub fn agents_queue_drain(
+    key: SessionKey,
+    host: State<'_, Arc<AgentHost>>,
+) -> Result<Option<u64>, String> {
+    host.inner().drain_queue(&key).map_err(|e| e.to_string())
+}
+
+/// Run one queued prompt next, interrupting the running turn.
+#[tauri::command]
+pub fn agents_queue_send_now(
+    key: SessionKey,
+    item_id: String,
+    host: State<'_, Arc<AgentHost>>,
+) -> Result<(), String> {
+    host.inner()
+        .send_now(&key, &item_id, Origin::Local)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// Take or release the developer's hold on a session (Universal RC
+/// groundwork): a held session keeps running when its tab closes. Debug
+/// builds only — the real holder is the RC layer, which calls
+/// `AgentHost::hold_session` directly.
+#[tauri::command]
+pub async fn agents_set_hold(
+    session_id: String,
+    held: bool,
+    host: State<'_, Arc<AgentHost>>,
+) -> Result<(), String> {
+    if !cfg!(debug_assertions) {
+        return Err("session holds are a developer tool in this build".into());
+    }
+    const DEV_HOLDER: &str = "dev";
+    if held {
+        host.hold_session(&session_id, DEV_HOLDER)
+            .map_err(|e| e.to_string())
+    } else {
+        host.release_session(&session_id, DEV_HOLDER)
+            .await
+            .map_err(|e| e.to_string())
+    }
+>>>>>>> Stashed changes
 }
 
 /// Tear down a session's backend state when its tab closes or the project
@@ -2471,7 +2746,7 @@ pub async fn agents_set_mode(
     mode_id: String,
     host: State<'_, Arc<AgentHost>>,
 ) -> Result<(), String> {
-    host.set_mode(&key, mode_id)
+    host.set_mode(&key, mode_id, Origin::Local)
         .await
         .map_err(|e| e.to_string())
 }
@@ -2482,7 +2757,7 @@ pub async fn agents_set_model(
     model_id: String,
     host: State<'_, Arc<AgentHost>>,
 ) -> Result<(), String> {
-    host.set_model(&key, model_id)
+    host.set_model(&key, model_id, Origin::Local)
         .await
         .map_err(|e| e.to_string())
 }
@@ -2510,7 +2785,7 @@ pub fn agents_respond_permission(
     host: State<'_, Arc<AgentHost>>,
 ) -> Result<(), String> {
     let _ = agent_id;
-    host.respond_permission(&session_id, request_id, decision)
+    host.answer_permission(&session_id, request_id, decision, Origin::Local)
         .map_err(|e| e.to_string())
 }
 

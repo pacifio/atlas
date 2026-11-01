@@ -29,10 +29,20 @@ import { appendNextStepsDirective } from "../lib/next-steps";
 import { agents, ensureAgent, resetAgent } from "../lib/agents-api";
 import { isDeadlineError, progressSince, withDeadline } from "../lib/with-deadline";
 import { drainEdge } from "../lib/drain-gate";
+import {
+  adoptQueueAsLocal,
+  clearQueuedPrompts,
+  enqueuePrompt,
+  flushLocalQueue,
+  setQueueHold,
+  syncQueuePause,
+} from "../lib/turn-queue";
 import { isSendHeldElsewhere, useSendHeldForTerminal } from "../stores/live-elsewhere-store";
 import { useSessionProjectsStore } from "../stores/session-projects-store";
 import { attachMentionedProjects, isProjectMention } from "../lib/attach-mentioned-projects";
 import { CHAT_STOP_EVENT, cycleChatAgent, isSwitchPending } from "../lib/switch-agent";
+import { drivenElsewhere, driverLabel } from "../lib/rc-api";
+import { useRcRemoteDriver, useRcStore } from "../stores/rc-store";
 import { loadCachedAcpModes } from "../lib/acp-modes-cache";
 import { configOptionPushes, loadConfigOptionPrefs } from "../lib/config-option-prefs";
 import type { ImageAttachment, SessionKey } from "@/types/agents";
@@ -302,6 +312,10 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
     useChatStore.use.actions();
   // Narrow subscription — an unanswered `elicitation/create` (P3.3).
   const pendingElicitation = useChatStore((s) => s.sessions[tabId]?.pendingElicitation);
+  // Answering a question is steering: while someone else drives from remote
+  // control the card says so instead of sending (Rust refuses it anyway).
+  const elicitationSeat = useRcRemoteDriver(useChatStore((s) => s.sessions[tabId]?.acpSessionId));
+  const elicitationRemoteDriver = elicitationSeat ? driverLabel(elicitationSeat) : null;
 
   // Opened from the Details card's Activity section, so kept by tab in a
   // store rather than here (`session-side-panel-store.ts`).
@@ -1017,11 +1031,12 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
         content: string,
         mentions: MentionData[],
         attachments?: ImageAttachment[],
-        opts?: { recorded?: boolean },
-      ) => void)
+        opts?: { recorded?: boolean; clientMessageId?: string },
+      ) => Promise<void> | void)
     | null
   >(null);
   const handleStopRef = useRef<(() => void) | null>(null);
+  const releaseQueueRef = useRef<(() => Promise<void>) | null>(null);
   // STABLE wrappers passed to the memoized <ChatComposer> so it doesn't
   // re-render on every ChatPanel render (i.e. every streaming chunk). The real
   // handlers are reassigned to the refs each render, so the wrappers always call
@@ -1110,29 +1125,31 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
     if (justBound || justResumed) {
       // The first message held while the session was starting goes out
       // ahead of the queue — it was recorded in the transcript at send time,
-      // so it is dispatched without being recorded again.
+      // so it is dispatched without being recorded again. Anything typed
+      // meanwhile is handed to the session's queue after it, parked: Rust
+      // drains it when that first turn ends.
       const state = useChatStore.getState();
       const held = state.sessions[tabId]?.pendingSend;
       if (held) {
         state.actions.setPendingSend(tabId, undefined);
-        Promise.resolve().then(() =>
-          handleSendRef.current?.(held.content, held.mentions, held.attachments, {
-            recorded: true,
-          }),
-        );
+        Promise.resolve()
+          .then(() =>
+            handleSendRef.current?.(held.content, held.mentions, held.attachments, {
+              recorded: true,
+              clientMessageId: held.clientMessageId,
+            }),
+          )
+          .then(() => flushLocalQueue(tabId, { drain: false }));
         return;
       }
     }
-    // A switch waiting on `/remember` holds the queue: what was typed during
-    // the save is for the agent the tab switches to (`switch-agent.ts`).
+    // The queue is Rust's (the turn controller drains it when a turn ends);
+    // what is left here is handing it what only the window knows. A switch
+    // waiting on `/remember` holds the queue: what was typed during the save
+    // is for the agent the tab switches to (`switch-agent.ts`).
     if (drainQueue && !isSwitchPending(tabId)) {
-      const next = useChatStore.getState().actions.shiftQueue(tabId);
-      if (next && handleSendRef.current) {
-        // Defer one microtask so the React commit completes first.
-        // Queued messages don't carry their original mentions yet — empty
-        // array here is intentional (see MessageInput.submit).
-        Promise.resolve().then(() => handleSendRef.current?.(next, []));
-      }
+      // Defer one microtask so the React commit completes first.
+      Promise.resolve().then(() => releaseQueueRef.current?.());
     }
     // Next-step chips are extracted from the agent's own `<next_steps>` block in
     // the chat-store `turn_finished` reducer — nothing to do here.
@@ -1144,6 +1161,27 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
     heldElsewhere,
     grantHold,
     tabId,
+  ]);
+
+  // The window's send gates hold the session's queue in Rust: a resume still
+  // loading, a mode it could not restore, a session another process is
+  // writing, the no-AI-grant lock. Rust drains nothing while held, and drains
+  // an idle session's head the moment the last hold lifts — the falling edges
+  // `drainEdge` used to drain the React queue on. Re-told on every rebind: a
+  // new session starts unpaused.
+  useEffect(() => {
+    const gated =
+      !!session?.resumePending || !!session?.unrestoredModeId || heldElsewhere || grantHold;
+    setQueueHold(tabId, "gate", gated);
+    syncQueuePause(tabId);
+  }, [
+    tabId,
+    session?.acpSessionId,
+    session?.resumePending,
+    session?.unrestoredModeId,
+    session?.disconnected,
+    heldElsewhere,
+    grantHold,
   ]);
 
   // Suggestion chips (and other adaptive affordances) send as the next message.
@@ -1262,7 +1300,7 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
     // so we record it ourselves, which is also what raises the Restart banner.
     if (s.stopping) {
       cs.actions.noteAgentKilled(tabId);
-      cs.actions.clearQueue(tabId);
+      clearQueuedPrompts(tabId);
       cs.actions.clearPermissionsForSession(s.acpSessionId);
       agents.kill(s.acpAgentId).catch(() => {});
       return;
@@ -1275,6 +1313,9 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
     // also clears the flag. Sends typed meanwhile queue exactly as they do
     // during a running turn; the backend actor also queues defensively.
     cs.actions.setStopping(tabId, true);
+    // Rust's Stop discards the session's queue itself (and says so with
+    // `queue_changed`); clearing the strip now just saves the round trip, and
+    // takes any items still held locally with it.
     cs.actions.clearQueue(tabId);
     // Drop any permission modal that was awaiting the user's click.
     // The Rust side has already resolved the in-flight request as
@@ -1295,8 +1336,9 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
     mentions: MentionData[],
     attachments?: ImageAttachment[],
     /** `recorded`: the user bubble, title and running status were already
-     *  applied when this message was held as `pendingSend`; only dispatch. */
-    opts?: { recorded?: boolean },
+     *  applied when this message was held as `pendingSend`; only dispatch.
+     *  `clientMessageId`: that bubble's id, when the caller knows it. */
+    opts?: { recorded?: boolean; clientMessageId?: string },
   ) => {
     const actualContent = content;
 
@@ -1325,7 +1367,11 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
     // effect sends it once the user has picked a mode. The composer already
     // refuses; this catches every other sender (chips, handoffs).
     if (bound?.unrestoredModeId) {
+<<<<<<< Updated upstream
       useChatStore.getState().actions.enqueueMessage(tabId, actualContent, mentions);
+=======
+      enqueuePrompt(tabId, actualContent);
+>>>>>>> Stashed changes
       return;
     }
     // Fail closed on a session another process is still writing (ADR-0001
@@ -1339,11 +1385,20 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
     if (isSendHeldElsewhere(bound?.acpSessionId)) {
       const cs = useChatStore.getState();
       if (opts?.recorded) {
-        cs.actions.setPendingSend(tabId, { content: actualContent, mentions, attachments });
+        cs.actions.setPendingSend(tabId, {
+          content: actualContent,
+          mentions,
+          attachments,
+          clientMessageId: opts.clientMessageId,
+        });
         // Not "Starting…": nothing is starting until the user says so.
         updateSessionStatus(tabId, "idle");
       } else {
+<<<<<<< Updated upstream
         cs.actions.enqueueMessage(tabId, actualContent, mentions);
+=======
+        enqueuePrompt(tabId, actualContent);
+>>>>>>> Stashed changes
       }
       return;
     }
@@ -1354,7 +1409,11 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
     // to the running turn's own question belongs to the turn already admitted,
     // and a message held for the bind (`recorded`) already has its bubble.
     if (grantHold && !opts?.recorded && !isBusyAgentStatus(bound?.status)) {
+<<<<<<< Updated upstream
       useChatStore.getState().actions.enqueueMessage(tabId, actualContent, mentions);
+=======
+      enqueuePrompt(tabId, actualContent);
+>>>>>>> Stashed changes
       return;
     }
     // `resumePending` is the resume-path equivalent of "not bound yet": the
@@ -1375,7 +1434,11 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
         (cs.queues[tabId]?.length ?? 0) === 0 &&
         !isBusyAgentStatus(bound?.status);
       if (firstWhileStarting) {
+<<<<<<< Updated upstream
         addMessage(tabId, "user", actualContent, attachments, trustedMentionPaths(mentions));
+=======
+        const clientMessageId = addMessage(tabId, "user", actualContent, attachments);
+>>>>>>> Stashed changes
         logEvent({
           source: "chat",
           kind: "send-agent",
@@ -1393,21 +1456,44 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
           content: actualContent,
           mentions,
           attachments,
+          clientMessageId,
         });
         // A bind that was abandoned (Stop while starting) is not re-run by
         // anything but composer focus; make sure this send has one to wait on.
         bindControlRef.current?.kick();
         return;
       }
+<<<<<<< Updated upstream
       cs.actions.enqueueMessage(tabId, actualContent, mentions);
+=======
+      enqueuePrompt(tabId, actualContent);
+>>>>>>> Stashed changes
       return;
     }
 
+    // The optimistic bubble's id rides with the prompt: Rust echoes it on the
+    // prompt's `user_message` delta, and the reducer adopts this bubble rather
+    // than drawing the prompt a second time. A held send's bubble was drawn
+    // when it was held; the caller passes its id, or it is the newest one.
+    let clientMessageId = opts?.clientMessageId;
+    if (opts?.recorded && !clientMessageId) {
+      const rows = useChatStore.getState().sessions[tabId]?.messages ?? [];
+      for (let i = rows.length - 1; i >= 0; i--) {
+        if (rows[i].role === "user") {
+          clientMessageId = rows[i].clientMessageId;
+          break;
+        }
+      }
+    }
     if (!opts?.recorded) {
       // The user-visible message keeps the prose as the user typed it,
       // including the shortform mention references (`@file:src/foo.rs` etc).
       // The context block goes only to the agent, not the local transcript.
+<<<<<<< Updated upstream
       addMessage(tabId, "user", actualContent, attachments, trustedMentionPaths(mentions));
+=======
+      clientMessageId = addMessage(tabId, "user", actualContent, attachments);
+>>>>>>> Stashed changes
       logEvent({
         source: "chat",
         kind: "send-agent",
@@ -1483,7 +1569,11 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
       session_id: bound.acpSessionId,
     };
     try {
+<<<<<<< Updated upstream
       await agents.send(key, wirePrompt, attachments, resourceLinks, pastedTexts);
+=======
+      await agents.send(key, wirePrompt, attachments, resourceLinks, clientMessageId);
+>>>>>>> Stashed changes
       logEvent({
         source: "agent",
         kind: "stream-started",
@@ -1507,9 +1597,43 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
     }
   };
 
+  /** A drain edge on a bound session: hand Rust whatever the window still
+   *  holds and ask it to start the head (a no-op if it already did, or is
+   *  busy, or held). A session whose agent process died is respawned first —
+   *  the queue survives the restart in Rust, and the turn that left it there
+   *  is what the old drain re-sent through a rebind. */
+  const releaseQueue = async () => {
+    const s = useChatStore.getState().sessions[tabId];
+    if (!s?.acpSessionId) return;
+    if (s.disconnected) {
+      if ((useChatStore.getState().queues[tabId]?.length ?? 0) === 0) return;
+      const before = s.acpSessionId;
+      if (!(await rebindDisconnectedSession(tabId))) {
+        addMessage(
+          tabId,
+          "assistant",
+          "The agent could not be restarted. Check its runtime (Node/npx) and try again.",
+        );
+        return;
+      }
+      // Restarted onto a different session: the ids named the old one's queue.
+      if (useChatStore.getState().sessions[tabId]?.acpSessionId !== before) {
+        adoptQueueAsLocal(tabId);
+      }
+    }
+    // While someone else holds the remote-control seat the owner's items wait
+    // (R4: only the driver prompts). Rust's drain skips them too; not asking
+    // keeps the window from racing a seat change. They run once the seat is
+    // back — the next drain edge, or Rust's own when the seat returns.
+    const sessionId = useChatStore.getState().sessions[tabId]?.acpSessionId;
+    const remoteDriving = drivenElsewhere(useRcStore.getState().bySession[sessionId ?? ""]);
+    await flushLocalQueue(tabId, { drain: remoteDriving === null });
+  };
+
   // Keep the queue-drain effect pointing at the latest handleSend closure.
   handleSendRef.current = handleSend;
   handleStopRef.current = handleStop;
+  releaseQueueRef.current = releaseQueue;
 
   return (
     // Flat, edge to edge. This used to be a rounded card inset 4px on a
@@ -1524,6 +1648,7 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
     >
       {/* `data-chat-drop-zone`: Finder drops land anywhere on the conversation
           column, not just the composer (see `attachPaths` in message-input). */}
+<<<<<<< Updated upstream
       <div
         ref={conversationRef}
         data-chat-drop-zone
@@ -1632,6 +1757,154 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
           className="relative group-data-[dock-open]/dock:ml-(--chat-dock-inset) group-data-[dock-open]/dock:mr-(--chat-dock-reserve)"
         >
           {/* Anchored to this whole stack, not to the composer: the card below
+=======
+        <div data-chat-drop-zone className="relative flex-1 flex flex-col min-w-0">
+          {/* The header FLOATS over the transcript rather than sitting above it in
+            the column. That is what lets the thread scroll underneath and be
+            progressively blurred by the band the transcript draws at its top
+            edge — a `backdrop-filter` can only blur what is painted behind it,
+            and a header that owns its own row has nothing behind it but the
+            panel background. The transcript reserves `HEADER_INSET` of top
+            padding so the first row still starts below the bar.
+
+            The welcome screen gets the same bar, in its `empty` form: the
+            overview toggle and the More menu, because remote control is
+            started from there — a room is for a chat that has not begun as
+            much as for one mid-turn. The welcome copy centres itself in the
+            full height and its dither field fades before it reaches the bar,
+            so nothing needs reserving. */}
+          <div className="relative flex-1 min-h-0 flex flex-col">
+            {/* Transcript and overview rail share one row, INSIDE the
+                conversation column. That placement is the whole point: the
+                header floats across this column, so its right-hand icons
+                land directly above the rail — the cards read as what those
+                buttons opened, the way Claude Desktop's do. A rail outside
+                this column sat a third of the window away from the button
+                that opened it, with the transcript still centred in the
+                space between. */}
+            <div className="relative flex min-h-0 flex-1 justify-center">
+              {session.messages.length === 0 ? (
+                <div className="min-w-0 flex-1 overflow-y-auto">
+                  {session.transcriptLoading ? <LoadingTranscriptState /> : <WelcomeState />}
+                </div>
+              ) : (
+                /* Capped at the transcript's own column width, so the thread
+                    and the rail read as one composition centred in whatever
+                    space there is. Left to `flex-1` the transcript took the
+                    whole remainder and centred its 760px column inside it,
+                    which opened a gutter between the last word and the first
+                    card — the rail looked parked at the far edge rather than
+                    attached to the thread it describes. Unchanged when the
+                    rail is closed: 760 is what `Column` was already giving
+                    the rows. */
+                <div className="relative flex min-h-0 w-full min-w-0 max-w-[760px] flex-1 flex-col">
+                  <Suspense fallback={<LoadingTranscriptState />}>
+                    <Transcript
+                      ref={messagesListRef}
+                      tabId={tabId}
+                      acpSessionId={acpSessionId}
+                      messages={filteredMessages}
+                      isStreaming={session.status === "running"}
+                      turnInProgress={isBusyAgentStatus(session.status)}
+                      agentType={session.agentType}
+                      topInset={HEADER_INSET}
+                      onShowJumpChange={onShowJumpChange}
+                      workingLabel={
+                        session.pendingSend
+                          ? (startingStatus ?? `Starting ${agentMeta(session.agentType).label}`)
+                          : undefined
+                      }
+                      workingEpoch={bindEpoch}
+                      onStallRestart={handleRestartAgent}
+                      onStallSwitch={handleSwitchAgent}
+                      onStallCopyDiagnostics={handleCopyDiagnostics}
+                      footer={
+                        <MemoryUpdatedCard
+                          projectPath={projectPathForTab(tabId)}
+                          sessionId={acpSessionId || null}
+                          since={memoryWritesSince}
+                        />
+                      }
+                    />
+                  </Suspense>
+                </div>
+              )}
+              {/* Reserves its own width — the conversation narrows beside it
+                  rather than being covered, so nothing the reader is
+                  following disappears under the thing describing it. Drawn
+                  beside the welcome screen too: its toggle is in that bar now,
+                  and a pressed toggle that shows nothing is a broken one. The
+                  cards say "no changes yet" rather than vanish, and the
+                  Session card's project and find are real either way. */}
+              {overviewOpen && (
+                <Suspense fallback={null}>
+                  <ThreadOverviewPanel
+                    tabId={tabId}
+                    title={headerTitle}
+                    onOpenSearch={onOpenSearchStable}
+                  />
+                </Suspense>
+              )}
+            </div>
+            <div className="absolute inset-x-0 top-0 z-20">
+              <ChatHeader
+                tabId={tabId}
+                title={headerTitle}
+                sessionId={acpSessionId}
+                roleFilter={roleFilter}
+                onRoleFilterChange={setRoleFilter}
+                pinScopeKey={pinScopeKey}
+                onJumpToPin={onJumpToPinStable}
+                bashPanelOpen={bashPanelOpen}
+                onToggleBash={onToggleBashStable}
+                plansPanelOpen={plansPanelOpen}
+                onTogglePlans={onTogglePlansStable}
+                overviewOpen={overviewOpen}
+                onToggleOverview={onToggleOverviewStable}
+                sidebarOpen={chatSidebarVisible}
+                onToggleSidebar={toggleChatSidebar}
+                // Zero-arg wrapper, NOT a bare reference: React would call
+                // openNewAgentChat(SyntheticMouseEvent) and the event object
+                // sailed through `agent?` into the store as agentType —
+                // poisoning the bind ("JSON.stringify cannot serialize cyclic
+                // structures" from agents_spawn) and killing the composer.
+                onNewSession={onNewSessionStable}
+                onForkSession={canFork ? onForkSessionStable : undefined}
+                empty={session.messages.length === 0}
+              />
+            </div>
+          </div>
+
+          <div
+            className="relative"
+            // The composer stack has to sit under the THREAD, not under the
+            // thread-plus-rail. The transcript row centres a 760px column and
+            // the rail as one group, which puts the column's centre half a
+            // rail to the left of this element's own centre — so a composer
+            // left to centre itself drifted right of the conversation it
+            // belongs to. Reserving the rail's width here makes the two
+            // centres the same number. Capped the way the rail is
+            // (`max-w-[50%]`, of this same column): reserving the stored width
+            // once the rail had hit its cap starved the composer of the
+            // difference — at a 900px window, a third of the thread's width.
+            //
+            // A MARGIN, not padding: the pill below is `absolute inset-x-0`
+            // against this element, and an absolute child is laid out
+            // against the padding box, so under padding it still spanned the
+            // full width and centred half a rail right of the composer. A
+            // margin shrinks the box itself, which every child honours.
+            //
+            // Whenever the rail is open: it is drawn beside the welcome screen
+            // as well as beside a thread, and the welcome copy centres in the
+            // width left of it — so the composer has to centre in that same
+            // width. (Before the welcome screen had the rail, "new agent"
+            // kept a tab's open flag over an empty screen that drew no rail,
+            // and a reserve made against nothing pushed that composer half a
+            // rail left of everything centred above it.)
+            style={overviewWidth > 0 ? { marginRight: `min(${overviewWidth}px, 50%)` } : undefined}
+          >
+            {/* Anchored to this whole stack, not to the composer: the card below
+>>>>>>> Stashed changes
               sits directly on top of the composer, so a pill anchored there
               floated over the card's own buttons and answer field. */}
           {showJumpToBottom && (
@@ -1643,6 +1916,7 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
           {/* Mounted whether or not a question is pending: the drawer inside
               owns the enter AND exit animation, and a component the parent
               unmounts cannot animate anything out. */}
+<<<<<<< Updated upstream
           <SessionElicitation
             pending={pendingElicitation ?? null}
             onClose={() => {
@@ -1652,6 +1926,18 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
             }}
           />
           {/* Bottom fade lives in the transcript; the centered floating
+=======
+            <SessionElicitation
+              pending={pendingElicitation ?? null}
+              remoteDriver={elicitationRemoteDriver}
+              onClose={() => {
+                if (!pendingElicitation) return;
+                clearAgentQuestion(tabId, pendingElicitation.requestId);
+                clearElicitation(tabId);
+              }}
+            />
+            {/* Bottom fade lives in the transcript; the centered floating
+>>>>>>> Stashed changes
               row (setup pill + scroll-to-bottom) lives inside
               ChatComposer below. */}
           <ChatComposer

@@ -54,6 +54,8 @@ import { openNewAgentChat } from "@/features/chat/lib/open-agent-session";
 import { settleAndAdvance } from "@/features/chat/lib/settle-and-advance";
 import { requestCloseTab } from "@/features/chat/lib/close-tab";
 import { pruneContextUsageCache } from "@/features/chat/lib/context-usage-cache";
+import { installDevSessionHold } from "@/features/chat/lib/dev-session-hold";
+import { isDev } from "@/lib/env";
 import { isScrollHot } from "@/lib/scroll-hot";
 import { useAppProfile } from "@/lib/app-profile";
 import { useNativeContextMenu } from "@/lib/native-context-menu";
@@ -156,6 +158,9 @@ import { toggleFiles } from "@/features/layout/lib/files-surface";
 import { refreshProjectTree } from "@/features/explorer/lib/project-tree-model";
 import { toggleTeamChat } from "@/features/layout/lib/team-chat";
 import { toggleDestination } from "@/features/layout/lib/destinations";
+
+// Developer console toggle for session holds (Universal RC groundwork).
+if (isDev) installDevSessionHold();
 
 /** Minimum gap between two wake-triggered account re-pulls. Long enough that a
  *  burst of focus edges (Space switches) costs one pull; short enough that a

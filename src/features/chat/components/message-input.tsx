@@ -32,6 +32,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useChatStore } from "../stores/chat-store";
 import { useNativeModelsOrgRefresh, useNativeModelsStore } from "../stores/native-models-store";
 import { agents } from "../lib/agents-api";
+import { enqueuePrompt, removeQueuedPrompt } from "../lib/turn-queue";
 import {
   CLAUDE_PERMISSION_MODE_LABEL,
   CLAUDE_PERMISSION_MODES,
@@ -98,6 +99,8 @@ import { RemovedAgentBar } from "./removed-agent-bar";
 import { BranchChangedBar } from "./branch-changed-bar";
 import { ModeRestoreBar, OPEN_MODE_PICKER_EVENT } from "./mode-restore-bar";
 import { LiveElsewhereBar } from "./live-elsewhere-bar";
+import { RcDriverBar } from "./rc-driver-bar";
+import { useRcRemoteDriver } from "../stores/rc-store";
 import { useSendHeldForTerminal } from "../stores/live-elsewhere-store";
 import { useSessionProjectsStore } from "../stores/session-projects-store";
 import { SessionProjectsContext } from "../hooks/use-session-projects";
@@ -728,8 +731,7 @@ export function MessageInput({
   disabled: disabledProp = false,
   placeholder = "Message Atlas... (@ to mention, / for commands)",
 }: MessageInputProps) {
-  const { enqueueMessage, removeQueueItem, setAcpModes, setAcpModesPending, setNativeEffort } =
-    useChatStore.use.actions();
+  const { setAcpModes, setAcpModesPending, setNativeEffort } = useChatStore.use.actions();
   // Show the picker as soon as the agent is non-Claude — even before its modes
   // load — so the composer can render a loading pill instead of nothing during
   // the agent spawn + new_session boot.
@@ -842,6 +844,11 @@ export function MessageInput({
   // project chips' access toggles (`session-projects-store`).
   useLiveElsewhereFeed(!!acpSessionId);
   const heldForTerminal = useSendHeldForTerminal(acpSessionId);
+  // Someone else holds the session's remote-control seat (`RcDriverBar`):
+  // nothing sends or queues from here until the owner takes over. Rust's
+  // steering entry refuses it too; this is what lets the composer say so
+  // rather than bounce an error. Stop stays live — it is the owner's.
+  const remoteDriving = useRcRemoteDriver(acpSessionId) !== null;
   // The BYOK provider/model bindings for the native agent stood here — the
   // provider pick, the model re-push on bind, the whole BYOK selection path.
   // Gone: the native agent's model comes from the seam's published catalogue
@@ -1840,6 +1847,11 @@ export function MessageInput({
       if (running) onStop?.();
       return;
     }
+    // Someone else holds the seat: nothing typed here sends or queues, not
+    // even `/queue` (which used to slip past this check and park the prompt
+    // locally, to be drained under the remote driver's seat later). The
+    // strip above says who is driving and offers Take over.
+    if (remoteDriving) return;
     // Atlas-surface commands, typed in full (the picker's Enter lands here
     // too). They drive app affordances, so they never reach the agent.
     if (trimmed === "/fork" && agentCatalogEntry(agentType)?.supportsFork === true) {
@@ -1849,12 +1861,18 @@ export function MessageInput({
     }
     if (trimmed === "/queue" || trimmed.startsWith("/queue ")) {
       const queued = trimmed.slice("/queue".length).trim();
+<<<<<<< Updated upstream
       if (queued) {
         const mentions = inputRef.current?.getMentions() ?? [];
         enqueueMessage(tabId, queued, mentions);
         forgetSentTexts(mentions);
       }
       writeComposer("");
+=======
+      if (queued) enqueuePrompt(tabId, queued);
+      inputRef.current?.clear();
+      setValue("");
+>>>>>>> Stashed changes
       return;
     }
     const mentions = inputRef.current?.getMentions() ?? [];
@@ -1863,11 +1881,16 @@ export function MessageInput({
       // strings and the agent will see whatever shortform text was in the
       // composer. Mentions are dropped here intentionally; promoting the
       // queue to a structured shape is a follow-up. Staged images likewise
+<<<<<<< Updated upstream
       // stay in the composer strip and ride the next direct send. A paste or
       // a cite is the exception: its token alone would lose what the user
       // pasted or cited, so the queue puts its text into the queued string.
       enqueueMessage(tabId, trimmed, mentions);
       forgetSentTexts(mentions);
+=======
+      // stay in the composer strip and ride the next direct send.
+      enqueuePrompt(tabId, trimmed);
+>>>>>>> Stashed changes
     } else {
       if (modeUnrestored || heldForTerminal) return;
       // The wire shape is mime + bytes; the path stays with the composer.
@@ -1886,7 +1909,6 @@ export function MessageInput({
     running,
     onSend,
     onStop,
-    enqueueMessage,
     tabId,
     agentType,
     disabled,
@@ -1894,17 +1916,22 @@ export function MessageInput({
     githubSyncing,
     modeUnrestored,
     heldForTerminal,
+    remoteDriving,
   ]);
   submitRef.current = submit;
 
   // Tri-state button:
   //   running + empty   → STOP
-  //   running + text    → QUEUE
+  //   running + text    → QUEUE  (STOP while someone else drives: queueing is
+  //                               theirs, Stop is the owner's, and a draft
+  //                               must not hide the one control that works)
   //   not running + any → SEND
   type Mode = "send" | "queue" | "stop";
-  const mode: Mode = running ? (hasText ? "queue" : "stop") : "send";
+  const mode: Mode = running ? (hasText && !remoteDriving ? "queue" : "stop") : "send";
   const buttonEnabled =
-    disabled || (mode === "send" && (modeUnrestored || heldForTerminal))
+    disabled ||
+    (mode === "send" && (modeUnrestored || heldForTerminal)) ||
+    (mode !== "stop" && remoteDriving)
       ? false
       : mode === "stop"
         ? true
@@ -1925,6 +1952,9 @@ export function MessageInput({
           <div className="mb-2 flex flex-col gap-1">
             <div className="text-2xs uppercase tracking-wider text-[var(--muted-foreground)] px-1">
               Queued · {queue.length}
+              {/* The owner's queued prompts wait while someone else drives
+                  (R4): Rust's drain skips them until the seat is back. */}
+              {remoteDriving && " · runs when you take over"}
             </div>
             <div className="flex flex-wrap gap-1.5">
               {queue.map((q, i) => (
@@ -1933,6 +1963,7 @@ export function MessageInput({
                   text={q}
                   onEdit={() => {
                     const cur = inputRef.current?.getValue() ?? "";
+<<<<<<< Updated upstream
                     // A paste or a cite the queue inlined comes back as its
                     // chip, not as every line it holds. Cites were written
                     // last, so they come off first.
@@ -1943,9 +1974,15 @@ export function MessageInput({
                     const merged = cur.trim() ? `${cur}\n${text}` : text;
                     writeComposer(merged);
                     removeQueueItem(tabId, i);
+=======
+                    const merged = cur.trim() ? `${cur}\n${q}` : q;
+                    inputRef.current?.setValue(merged);
+                    setValue(merged);
+                    removeQueuedPrompt(tabId, i);
+>>>>>>> Stashed changes
                     requestAnimationFrame(() => inputRef.current?.focus());
                   }}
-                  onRemove={() => removeQueueItem(tabId, i)}
+                  onRemove={() => removeQueuedPrompt(tabId, i)}
                 />
               ))}
             </div>
@@ -1979,6 +2016,9 @@ export function MessageInput({
 
         {/* Another process is writing this session: sending would fork it. */}
         {!grantBarShown && <LiveElsewhereBar tabId={tabId} />}
+
+        {/* Someone else holds the remote-control seat, or asks for it. */}
+        {!grantBarShown && <RcDriverBar tabId={tabId} />}
 
         {/* Live plan docked on top of the input bar (JetBrains-Air style). */}
 

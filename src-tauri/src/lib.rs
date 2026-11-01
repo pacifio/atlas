@@ -370,6 +370,8 @@ pub fn run() {
                 // manager that is not yet managed would miss the first one.
                 commands::comms::install(app.handle());
                 commands::artifacts_cloud::install(app.handle());
+                // Universal RC: nothing dials until a room is started.
+                commands::rc::install(app.handle());
                 commands::auth::restore_on_launch(app.handle());
 
                 // Seed the Organisation every event is attributed to, from the
@@ -751,6 +753,14 @@ pub fn run() {
             commands::artifacts_cloud::artifacts_cloud_session,
             commands::artifacts_cloud::artifacts_cloud_payload,
             commands::artifacts_cloud::artifacts_cloud_session_url,
+            commands::rc::rc_start,
+            commands::rc::rc_stop,
+            commands::rc::rc_status,
+            commands::rc::rc_set_scope,
+            commands::rc::rc_take_over,
+            commands::rc::rc_answer_control,
+            commands::rc::rc_grant_control,
+            commands::rc::rc_kick,
             commands::artifacts_cloud::artifacts_cloud_session_share,
             commands::artifacts_cloud::artifacts_cloud_share_create,
             commands::artifacts_cloud::artifacts_cloud_share_revoke,
@@ -934,6 +944,13 @@ pub fn run() {
             commands::agents::agents_snapshot_meta,
             commands::agents::agents_send,
             commands::agents::agents_cancel,
+            commands::agents::agents_queue_add,
+            commands::agents::agents_queue_remove,
+            commands::agents::agents_queue_clear,
+            commands::agents::agents_queue_pause,
+            commands::agents::agents_queue_drain,
+            commands::agents::agents_queue_send_now,
+            commands::agents::agents_set_hold,
             commands::agents::agents_set_mode,
             commands::agents::agents_set_model,
             commands::agents::agents_set_effort,

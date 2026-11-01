@@ -76,6 +76,9 @@ export interface ThreadRow {
   /** Another process (typically `claude` in a terminal) wrote this session
    *  within the last ~90s and Atlas is not hosting it. Decided in Rust. */
   liveElsewhere: boolean;
+  /** A hold keeps this session running in Atlas (Universal RC) and a turn is
+   *  in flight — working even with no tab open on it. Decided in Rust. */
+  heldWorking: boolean;
   /**
    * The git branch the thread's working directory was on when it last started
    * a turn (or was opened). `null` when Atlas never saw one — a detached HEAD,

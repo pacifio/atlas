@@ -3,6 +3,8 @@ import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useTerminalStore } from "@/features/terminal/stores/terminal-store";
 import { useChatStore } from "@/features/chat/stores/chat-store";
 import { agents } from "./agents-api";
+import { forgetQueueHolds } from "./turn-queue";
+import { useRcStore } from "@/features/chat/stores/rc-store";
 import { clearSessionAttention } from "@/features/notifications/lib/agent-notifier";
 import { isBusyAgentStatus } from "@/types/agent";
 import { useStopAgentsConfirmStore } from "@/features/projects/lib/stop-agents-confirm";
@@ -24,8 +26,13 @@ import {
  *
  * So: a busy chat asks first (same dialog as project close) and is cancelled
  * on confirm; either way the store session + backend actor are dropped WITH the
+<<<<<<< Updated upstream
  * tab. A file tab with unsaved edits asks Save / Don't save / Cancel, and the
  * last tab on a file drops its buffer. Other tabs close exactly as before.
+=======
+ * tab — unless the session is held, in which case Rust keeps it running and
+ * only the tab goes. Non-chat tabs close exactly as before.
+>>>>>>> Stashed changes
  */
 export function requestCloseTab(tabId: string): void {
   const layout = useLayoutStore.getState();
@@ -56,7 +63,10 @@ export function requestCloseTab(tabId: string): void {
   }
 
   const s = useChatStore.getState().sessions[tabId];
-  if (s && isBusyAgentStatus(s.status)) {
+  // A held session (Universal RC, or the developer toggle) keeps running past
+  // its tab: Rust's drop honours the hold, so there is nothing to stop and
+  // nothing to ask. Reopening the thread rebinds to it.
+  if (s && isBusyAgentStatus(s.status) && !s.held) {
     void (async () => {
       const ok = await useStopAgentsConfirmStore.getState().actions.ask({
         count: 1,
@@ -81,8 +91,14 @@ function finishClose(tabId: string): void {
     if (s.acpSessionId) {
       chat.actions.clearPermissionsForSession(s.acpSessionId);
       clearSessionAttention(s.acpSessionId);
+      // An ended room stays in the mirror so the header can say why it ended;
+      // with the tab gone there is no header, and a thread reopened later
+      // would wear a stale "Ended" pill. A live room stays: Rust still hosts it.
+      const room = useRcStore.getState().bySession[s.acpSessionId];
+      if (room?.state === "ended") useRcStore.getState().actions.forget(s.acpSessionId);
     }
     chat.actions.removeSession(tabId);
+    forgetQueueHolds(tabId);
     // The closed chat's live row was the sidebar's only handle on it — re-list
     // from disk so it lands in history instead of vanishing.
     if (s.workingDirectory) {

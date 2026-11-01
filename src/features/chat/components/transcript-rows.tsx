@@ -15,7 +15,11 @@
 //     arrives as props; actions are fired imperatively via `getState()`.
 
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+<<<<<<< Updated upstream
 import { Brain, ChevronRight, Files, Paperclip } from "lucide-react";
+=======
+import { Brain, ChevronRight, Code2, FileDiff, Files, Paperclip, RadioTower } from "lucide-react";
+>>>>>>> Stashed changes
 import { cn } from "@/lib/utils";
 import { CachedMarkdown } from "@/lib/markdown-cache";
 import { StreamingMarkdown } from "./streaming-markdown";
@@ -172,7 +176,25 @@ export const UserRowView = memo(function UserRowView({
             {row.contextBlocks} attached
           </button>
         )}
+<<<<<<< Updated upstream
         {overflows && <ExpandToggle row={row} onToggleExpand={onToggleExpand} />}
+=======
+        {/* A prompt sent by whoever held the remote-control seat, not this
+            window: the thread names them, the same caption row as the
+            attached-context chip. Only the live row knows — a snapshot
+            carries no origin, so after a reload the caption is gone. */}
+        {row.remoteAuthor && (
+          <span
+            data-testid="user-row-remote-author"
+            className="mt-1 flex items-center gap-1 text-2xs text-[var(--muted-foreground)]"
+            title="Sent from remote control"
+          >
+            <RadioTower size={10} />
+            {row.remoteAuthor} · remote control
+          </span>
+        )}
+        <ExpandToggle row={row} onToggleExpand={onToggleExpand} />
+>>>>>>> Stashed changes
         <UserRowActions
           tabId={tabId}
           text={row.text}

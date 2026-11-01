@@ -3,7 +3,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // The action reaches IPC, toasts and the log store; none of that is what is
 // under test. What IS under test is the ordering around the destructive call.
 const rewindLastTurn = vi.fn<(key: unknown) => Promise<string | null>>();
+<<<<<<< Updated upstream
 const send = vi.fn<(key: unknown, prompt: string) => Promise<void>>();
+=======
+const send = vi.fn<() => Promise<void>>();
+const queueAdd = vi.fn(async () => "q-1");
+>>>>>>> Stashed changes
 const enqueueMessage = vi.fn();
 const addMessage = vi.fn();
 const updateSessionStatus = vi.fn();
@@ -14,8 +19,16 @@ let subscriber: (() => void) | undefined;
 vi.mock("./agents-api", () => ({
   agents: {
     rewindLastTurn: (key: unknown) => rewindLastTurn(key),
+<<<<<<< Updated upstream
     send: (key: unknown, prompt: string) => send(key, prompt),
+=======
+    send: () => send(),
+    queueAdd: (...args: unknown[]) => queueAdd(...(args as [])),
+>>>>>>> Stashed changes
   },
+}));
+vi.mock("@/features/settings/stores/settings-store", () => ({
+  useSettingsStore: { getState: () => ({ settings: { adaptiveSuggestions: "off" } }) },
 }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 vi.mock("@/features/log/lib/log", () => ({ logEvent: vi.fn() }));
@@ -26,7 +39,7 @@ vi.mock("../stores/chat-store", () => ({
   useChatStore: {
     getState: () => ({
       sessions: { tab: session },
-      actions: { addMessage, updateSessionStatus, enqueueMessage },
+      actions: { addMessage, updateSessionStatus, enqueueMessage, setQueueItemId: vi.fn() },
     }),
     subscribe: (cb: () => void) => {
       subscriber = cb;
@@ -170,7 +183,18 @@ describe("retrying the last turn", () => {
     vi.useRealTimers();
 
     expect(send).not.toHaveBeenCalled();
+<<<<<<< Updated upstream
     expect(enqueueMessage).toHaveBeenCalledWith("tab", "hello", []);
+=======
+    // Handed back to the session's queue — in Rust, which owns it now; the
+    // strip shows it at once, marked pending until `queue_changed` confirms.
+    expect(enqueueMessage).toHaveBeenCalledWith("tab", "hello", expect.stringMatching(/^pending:/));
+    expect(queueAdd).toHaveBeenCalledWith(
+      expect.objectContaining({ session_id: expect.any(String) }),
+      "hello",
+      "hello",
+    );
+>>>>>>> Stashed changes
   });
 
   it("does not send into a session the tab switched to mid-rewind", async () => {
@@ -186,7 +210,17 @@ describe("retrying the last turn", () => {
     await run;
 
     expect(send).not.toHaveBeenCalled();
+<<<<<<< Updated upstream
     expect(enqueueMessage).toHaveBeenCalledWith("tab", "hello", []);
+=======
+    expect(enqueueMessage).toHaveBeenCalledWith("tab", "hello", expect.stringMatching(/^pending:/));
+    // Into the session the tab is on NOW: the hand-back is for the user.
+    expect(queueAdd).toHaveBeenCalledWith(
+      expect.objectContaining({ session_id: "a-different-session" }),
+      "hello",
+      "hello",
+    );
+>>>>>>> Stashed changes
   });
 
   it("sends nothing and enqueues nothing when there was no turn to rewind", async () => {

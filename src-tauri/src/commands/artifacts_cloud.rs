@@ -63,9 +63,10 @@ impl ArtifactsCloudState {
 /// Mints the access JWT from the account session.
 ///
 /// Resolves `AuthState` per call rather than holding it: this source is built
-/// during `setup`, where registration order is not guaranteed.
-struct AppTokenSource {
-    app: AppHandle,
+/// during `setup`, where registration order is not guaranteed. Shared with
+/// Universal RC (`commands::rc`), whose doors are on the same ingest service.
+pub(crate) struct AppTokenSource {
+    pub(crate) app: AppHandle,
 }
 
 impl atlas_artifacts::TokenSource for AppTokenSource {

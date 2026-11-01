@@ -504,6 +504,7 @@ function seedThreads(): ThreadRow[] {
       branch: s.content.branch,
       // The demo's own sessions: no other process is writing any of them.
       liveElsewhere: false,
+<<<<<<< Updated upstream
       attachedProjects: [],
       model: "Claude Sonnet 4.5",
       // The run on `server-discounts` went up as pull request 353, found on its branch.
@@ -535,6 +536,9 @@ function seedThreads(): ThreadRow[] {
             ]
           : [],
       forkedFromSessionId: null,
+=======
+      heldWorking: false,
+>>>>>>> Stashed changes
     }));
 }
 

@@ -501,10 +501,14 @@ pub fn stop_reason_token(reason: acp::StopReason) -> String {
 /// a run the stream announces and the snapshot skips is a bubble that vanishes
 /// on reload (ATL-224). Both skip empty runs.
 ///
-/// User messages DO appear here, unlike on the delta stream: a snapshot is the
-/// conversation, and one with the user's half missing is not one. The wire
-/// convention that user messages never arrive as *deltas* is about the live
-/// stream, where the frontend already added them optimistically.
+/// User messages DO appear here, every one of them: a snapshot is the
+/// conversation, and one with the user's half missing is not one. On the live
+/// stream only prompts the host sent are announced (`user_message`), not the
+/// history an agent replays.
+///
+/// The host's own snapshot reads the projection's announced view
+/// (`DeltaProjector::snapshot`) so it can say which `seq` it is as of; this
+/// thread-built list is its fallback for a session with no projection.
 pub fn snapshot_messages(
     thread: &atlas_acp_thread::AcpThread,
     model: Option<&str>,

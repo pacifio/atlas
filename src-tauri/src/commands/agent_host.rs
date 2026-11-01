@@ -26,7 +26,7 @@
 //! in-process; every other agent exists only because the installed map says so.
 //! [`AgentHost::agent_for`] is the whole of that policy, and it is four lines.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -58,10 +58,24 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+<<<<<<< Updated upstream
 mod open_turns;
 mod wake;
 pub use open_turns::OpenTurn;
 pub use wake::{PendingWake, WakeSource};
+=======
+mod steering;
+
+pub use atlas_agent_wire::{Origin, QueuedPrompt};
+pub use steering::{
+    PendingElicitationWire, PendingPermissionWire, Prompt, PromptHooks, PromptSent, RemoteDriver,
+    SessionControls, SubmitPolicy,
+};
+// What `submit` / `send_now` answer; named by the Universal RC layer, which
+// lands after this.
+#[allow(unused_imports)]
+pub use steering::Submitted;
+>>>>>>> Stashed changes
 
 // ── The IPC wire shapes ─────────────────────────────────────────────────────
 //
@@ -176,6 +190,26 @@ pub struct SessionSnapshot {
     pub usage: Usage,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// The `seq` of the last delta this snapshot reflects (see
+    /// `SessionDeltaEnvelope::seq`). A client that buffered the stream before
+    /// asking applies only the envelopes above it. With `messages`, exact:
+    /// the transcript is read off what the stream announced.
+    #[serde(default)]
+    pub as_of_seq: u64,
+    /// Permission prompts still waiting, oldest first, by the `request_id`
+    /// their deltas carried — so a window that reloads, or a client that
+    /// joins, mid-prompt can still answer.
+    #[serde(default)]
+    pub pending_permissions: Vec<PendingPermissionWire>,
+    /// The newest elicitation still waiting, if any.
+    #[serde(default)]
+    pub pending_elicitation: Option<PendingElicitationWire>,
+    /// The session's turn queue (the turn controller's, in Rust).
+    #[serde(default)]
+    pub queue: Vec<QueuedPrompt>,
+    /// Whether a hold keeps this session running without its tab.
+    #[serde(default)]
+    pub held: bool,
 }
 
 /// Frontend-friendly permission outcome. Struct variant, not tuple: serde's
@@ -260,6 +294,13 @@ struct SessionRecord {
     /// drop a terminal that belongs to a superseded turn (touchpoint #6).
     turn_seq: u64,
     created_at: DateTime<Utc>,
+    /// Who is keeping this session open without its tab (Universal RC, or the
+    /// dev toggle). While any is, the window's drop only marks
+    /// `released_by_window`; see [`AgentHost::hold_session`].
+    holds: BTreeSet<String>,
+    /// The window let this session go while it was held. The last hold's
+    /// release finishes the drop.
+    released_by_window: bool,
 }
 
 /// Build an elicitation response, or `None` for the answers that cancel.
@@ -474,6 +515,7 @@ pub struct AgentHost {
     lifecycle: Mutex<Option<Arc<dyn SessionLifecycle>>>,
     /// What each session is offered in its MCP server list.
     session_mcp: Arc<SessionMcpSlot>,
+<<<<<<< Updated upstream
     /// Project access requests on screen, by (session, folder): each one's
     /// answer, once there is one. A second request for the same folder
     /// waits on the card already up instead of raising another.
@@ -488,6 +530,32 @@ pub struct AgentHost {
 
 /// Where an access request's answer arrives.
 type AccessAnswer = tokio::sync::watch::Receiver<Option<AccessRequestOutcome>>;
+=======
+    /// Each session's turn controller: its prompt queue and whether a turn
+    /// this host dispatched is in flight (`steering.rs`). Outlives the session
+    /// record across an agent exit, so a queue survives the rebind; goes with
+    /// the session's drop.
+    turns: Mutex<HashMap<String, steering::TurnControl>>,
+    /// The send-path side effects (capture, transcript, shared memory),
+    /// installed at startup.
+    prompt_hooks: Mutex<Option<Arc<dyn PromptHooks>>>,
+    /// Each session's remote-control seat (`steering.rs`, "the seat"): the
+    /// room's account and, while someone other than this desktop's account
+    /// drives, who. While a driver is recorded the window's own steering is
+    /// refused and only the driver's parked prompts drain; the room's host
+    /// task maintains it from the roster.
+    seats: Mutex<HashMap<String, steering::Seat>>,
+    /// Told the id of every session that ended, however it ended — the tab's
+    /// drop, the agent's process going away, a kill. What a room hosting the
+    /// session uses to end itself (`commands::rc`): the record and its holds
+    /// are gone with the session, so a room left open would retry a snapshot
+    /// of a session that no longer exists forever.
+    session_end_observers: Mutex<Vec<SessionEndObserver>>,
+}
+
+/// What [`AgentHost::observe_session_end`] registers: told a session id.
+pub type SessionEndObserver = Arc<dyn Fn(&str) + Send + Sync>;
+>>>>>>> Stashed changes
 
 /// Which branch probe is the newest for each session (see
 /// [`AgentHost::refresh_branch`]).
@@ -641,9 +709,16 @@ impl AgentHost {
             },
             lifecycle: Mutex::new(None),
             session_mcp,
+<<<<<<< Updated upstream
             access_requests: Mutex::new(HashMap::new()),
             wakes: wake::Wakes::default(),
             open_turns,
+=======
+            turns: Mutex::new(HashMap::new()),
+            prompt_hooks: Mutex::new(None),
+            seats: Mutex::new(HashMap::new()),
+            session_end_observers: Mutex::new(Vec::new()),
+>>>>>>> Stashed changes
         });
         // Weak, and installed after the host exists: the observer needs the
         // host to name the agent a session belongs to, and a strong reference
@@ -668,11 +743,26 @@ impl AgentHost {
         lock(&self.lifecycle).clone()
     }
 
+    /// Hear the id of every session that ends, whichever way it ends (see
+    /// `session_end_observers`). Called on the thread that ended it; do the
+    /// work elsewhere. Like [`SessionLifecycle::session_ended`], it may be
+    /// called more than once for one session (a process exit is reported on
+    /// the thread and again when the manager drops the connection); keep it
+    /// to one end.
+    pub fn observe_session_end(&self, observer: SessionEndObserver) {
+        lock(&self.session_end_observers).push(observer);
+    }
+
     /// Record the end of every session in `ended`.
     fn end_sessions(&self, ended: impl IntoIterator<Item = String>) {
-        if let Some(lifecycle) = self.lifecycle() {
-            for session_id in ended {
+        let lifecycle = self.lifecycle();
+        let observers = lock(&self.session_end_observers).clone();
+        for session_id in ended {
+            if let Some(lifecycle) = &lifecycle {
                 lifecycle.session_ended(&session_id);
+            }
+            for observer in &observers {
+                observer(&session_id);
             }
         }
     }
@@ -688,6 +778,11 @@ impl AgentHost {
             }
             keep
         });
+        // A turn controller with prompts still parked survives the process: the
+        // tab's rebind (same session id) picks the queue up again. An empty one
+        // has nothing to carry over.
+        lock(&self.turns)
+            .retain(|session_id, control| !ended.contains(session_id) || control.has_queue());
         self.end_sessions(ended);
     }
 
@@ -1299,7 +1394,7 @@ impl AgentHost {
             agent_id,
             session_id: session_id.clone(),
         };
-        if lock(&self.sessions).contains_key(&session_id) {
+        if self.reclaim_for_window(&session_id) {
             return Ok(key);
         }
         let acp_id = acp::SessionId::new(session_id.as_str());
@@ -1372,6 +1467,8 @@ impl AgentHost {
                 current_model: None,
                 turn_seq: 0,
                 created_at: Utc::now(),
+                holds: BTreeSet::new(),
+                released_by_window: false,
             },
         );
         if let Some(lifecycle) = self.lifecycle() {
@@ -1417,12 +1514,57 @@ impl AgentHost {
         )
     }
 
-    /// Tear down a session. Idempotent — a tab can close twice.
-    pub async fn drop_session(&self, session_id: &str) -> Result<()> {
+    /// The window lets a session go: its tab closed, or its project left the
+    /// hot set. Idempotent — a tab can close twice.
+    ///
+    /// A held session ([`AgentHost::hold_session`]) keeps running: the drop is
+    /// remembered, and the last hold's release finishes it. Every frontend
+    /// path that lets a session go ends here, so the hold is honoured by all
+    /// of them without the window having to know.
+    pub async fn drop_session(self: &Arc<Self>, session_id: &str) -> Result<()> {
+        let held = {
+            let mut sessions = lock(&self.sessions);
+            let Some(record) = sessions.get_mut(session_id) else {
+                return Ok(());
+            };
+            let held = !record.holds.is_empty();
+            if held {
+                record.released_by_window = true;
+            }
+            held
+        };
+        if !held {
+            return self.teardown_session(session_id).await;
+        }
+        tracing::info!(session = session_id, "held session outlives its tab");
+        // The window's send gate went with the tab: a queue it had paused
+        // would otherwise never drain for the holder.
+        self.unpause_queue(session_id);
+        Ok(())
+    }
+
+    /// The window is showing a live session again (a history row reopened, a
+    /// rebind). Answers whether the session is bound; if it was let go while
+    /// held, it is the window's again, so a later release does not tear it
+    /// down under the tab.
+    fn reclaim_for_window(&self, session_id: &str) -> bool {
+        match lock(&self.sessions).get_mut(session_id) {
+            Some(record) => {
+                record.released_by_window = false;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// End a session for real: the record, its queue, its history binding, its
+    /// projection and the agent's side.
+    async fn teardown_session(&self, session_id: &str) -> Result<()> {
         let removed = lock(&self.sessions).remove(session_id).is_some();
         if !removed {
             return Ok(());
         }
+        lock(&self.turns).remove(session_id);
         self.end_sessions([session_id.to_string()]);
         // Only the live binding goes. The history row is the record of the
         // conversation and outlives the tab that showed it.
@@ -1473,6 +1615,17 @@ impl AgentHost {
         self.build_snapshot(key, true)
     }
 
+    /// The window's key for a live session, from its id alone — what a
+    /// caller holding only the session id (Universal RC's `rc_start`) needs
+    /// to reach the steering entry. `None` when the session is not open.
+    pub fn session_key(&self, session_id: &str) -> Option<SessionKey> {
+        let agent = lock(&self.sessions).get(session_id)?.agent.clone();
+        Some(SessionKey {
+            agent_id: self.handle_for(&agent),
+            session_id: session_id.to_owned(),
+        })
+    }
+
     fn build_snapshot(&self, key: &SessionKey, with_messages: bool) -> Result<SessionSnapshot> {
         let (plugin_id, cwd, current_model, created_at) = {
             let sessions = lock(&self.sessions);
@@ -1504,13 +1657,7 @@ impl AgentHost {
         let picker_model = current_model.clone().or_else(|| {
             selector
                 .as_ref()
-                .and_then(|selector| {
-                    futures::executor::block_on(async { selector.selected_model().await.ok() })
-                })
-                .map(|model| model.id.as_str().to_string())
-                // The native runtime names a session with no BYOK provider
-                // configured "/" — a joined pair of empty strings, not a model.
-                .filter(|id| !id.is_empty() && id != "/")
+                .and_then(|s| selected_model_id(s.as_ref()))
         });
         let available_models = selector
             .and_then(|selector| {
@@ -1543,6 +1690,18 @@ impl AgentHost {
                 models.iter().map(SessionModeInfo::from_model).collect()
             })
             .unwrap_or_default();
+
+        // Before the thread is locked below: the projector takes its own lock
+        // and then the thread's, and the order must not invert. With messages
+        // this catches the projection up and reads the transcript off it, so
+        // `as_of_seq` is exact (see `DeltaProjector::snapshot`).
+        let projected =
+            self.projector
+                .snapshot(&session_id, with_messages, current_model.as_deref());
+        let (held, queue) = (
+            self.is_held(&key.session_id),
+            self.queue_of(&key.session_id),
+        );
 
         let thread = lock_thread(&handle);
         let status = if thread.had_error() {
@@ -1593,10 +1752,11 @@ impl AgentHost {
                 .unwrap_or_default(),
             prompt_image_supported: thread.prompt_capabilities().image,
             plan: project::plan_entries(&thread.plan().entries),
-            messages: if with_messages {
-                project::snapshot_messages(&thread, current_model.as_deref())
-            } else {
-                Vec::new()
+            messages: match (&projected, with_messages) {
+                (_, false) => Vec::new(),
+                (Some(projected), true) => projected.messages.clone(),
+                // No projection (never attached): the thread is all there is.
+                (None, true) => project::snapshot_messages(&thread, current_model.as_deref()),
             },
             subagents: if with_messages {
                 // The snapshot's message ids are positional (`msg-{ix}`), and
@@ -1618,10 +1778,27 @@ impl AgentHost {
             usage,
             created_at,
             updated_at: Utc::now(),
+            as_of_seq: projected.as_ref().map_or(0, |p| p.as_of_seq),
+            pending_permissions: projected
+                .as_ref()
+                .map(|p| {
+                    p.pending_permissions
+                        .iter()
+                        .cloned()
+                        .map(PendingPermissionWire::from)
+                        .collect()
+                })
+                .unwrap_or_default(),
+            pending_elicitation: projected
+                .and_then(|p| p.pending_elicitation)
+                .map(PendingElicitationWire::from),
+            queue,
+            held,
         };
         Ok(snapshot)
     }
 
+<<<<<<< Updated upstream
     // ---- turns -----------------------------------------------------------
 
     /// Start a turn, and return as soon as it is running.
@@ -1721,6 +1898,21 @@ impl AgentHost {
     pub fn expect_continuation(&self, thread: ThreadId, count: u32) {
         self.open_turns.expect_continuation(thread, count);
     }
+=======
+    /// The model the agent says a session runs on when nobody picked one — the
+    /// picker's default, and what a prompt is recorded against.
+    fn default_model(&self, session_id: &str) -> Option<String> {
+        let handle = self.thread(session_id).ok()?;
+        let connection = lock_thread(&handle).connection().clone();
+        let selector = connection.model_selector(&acp::SessionId::new(session_id))?;
+        selected_model_id(selector.as_ref())
+    }
+
+    // ---- turns -----------------------------------------------------------
+    //
+    // Prompts, stops, answers and settings enter through the steering entry
+    // in `steering.rs`; what is left here is the bookkeeping they share.
+>>>>>>> Stashed changes
 
     fn begin_atlas_turn(&self, session_id: &str) {
         let mut activity = lock(&self.activity);
@@ -1935,6 +2127,7 @@ impl AgentHost {
             .is_some_and(|record| record.turn_seq == turn_seq)
     }
 
+<<<<<<< Updated upstream
     pub fn cancel(&self, key: &SessionKey) -> Result<()> {
         self.manager
             .cancel(&acp::SessionId::new(key.session_id.as_str()));
@@ -2043,6 +2236,11 @@ impl AgentHost {
         self.projector.note_config_options(&session_id, &confirmed);
         Ok(())
     }
+=======
+    // ---- per-session settings -------------------------------------------
+    //
+    // Mode, model and config options are steering verbs (`steering.rs`).
+>>>>>>> Stashed changes
 
     /// Reasoning effort — a native-agent-only knob.
     ///
@@ -2051,6 +2249,9 @@ impl AgentHost {
     /// authored catalogue advertises no effort levels and the picker offers
     /// none. Kept because the engine still honours it on any other provider.
     pub fn set_effort(&self, key: &SessionKey, effort: String) -> Result<()> {
+        // The window's knob, so seat-gated like the other steering verbs:
+        // while someone else drives, the owner's composer is refused whole.
+        self.seat(&key.session_id, &Origin::Local)?;
         let session_id = acp::SessionId::new(key.session_id.as_str());
         let native = self.native_connection(&key.session_id)?;
         let control = native.session_effort(&session_id).ok_or_else(|| {
@@ -2129,36 +2330,6 @@ impl AgentHost {
     }
 
     // ---- permissions and elicitations ------------------------------------
-
-    pub fn respond_permission(
-        &self,
-        session_id: &str,
-        request_id: Uuid,
-        decision: PermissionDecision,
-    ) -> Result<()> {
-        let key = self.projector.permission_key(&request_id).ok_or_else(|| {
-            HostError::new("permission request is not pending", ErrorClass::Fatal)
-        })?;
-        let handle = self.thread(session_id)?;
-        match decision {
-            PermissionDecision::Selected { option_id } => {
-                // The option's kind decides what the thread does with the tool
-                // call, so it is read back off the pending request rather than
-                // trusted from the frontend.
-                let kind = pending_option_kind(&handle, &key.tool_call_id, &option_id).ok_or_else(
-                    || HostError::new("permission option is not offered", ErrorClass::Fatal),
-                )?;
-                lock_thread(&handle).authorize_tool_call(
-                    key.tool_call_id,
-                    SelectedPermissionOutcome::new(acp::PermissionOptionId::new(option_id), kind),
-                );
-            }
-            PermissionDecision::Cancelled => {
-                lock_thread(&handle).cancel_tool_call_authorization(&key.tool_call_id);
-            }
-        }
-        Ok(())
-    }
 
     /// The stream of request-scoped elicitations, taken once.
     ///
@@ -2259,56 +2430,6 @@ impl AgentHost {
             .retain(|_, (agent, _)| agent != agent_id);
     }
 
-    pub fn respond_elicitation(
-        &self,
-        request_id: Uuid,
-        action: &str,
-        content: Option<serde_json::Value>,
-    ) -> Result<()> {
-        // Connection-level first: these belong to no session, so the
-        // projector has never heard of them.
-        //
-        // The lookup is its own statement so the `answered_by` guard is
-        // DROPPED before anything else is locked. As an `if let` scrutinee it
-        // would live to the end of the block, held across the manager's entry
-        // mutexes and the elicitation store's — a lock order nothing else
-        // takes, and one that would only ever be discovered by deadlocking.
-        let request_scoped = self
-            .request_elicitations
-            .answered_by
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(&request_id);
-        if let Some((agent_id, entry_id)) = request_scoped {
-            let Some(connection) = self.manager.connection_by_agent_id(&agent_id) else {
-                return Ok(());
-            };
-            let Some(store) = connection.request_elicitations() else {
-                return Ok(());
-            };
-            let mut store = store
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            match elicitation_response(action, content)? {
-                Some(response) => store.respond_to_elicitation(&entry_id, response),
-                None => store.cancel_elicitation(&entry_id),
-            }
-            return Ok(());
-        }
-        // An unknown id is a no-op, not an error: the user can answer a dialog
-        // whose agent already died.
-        let Some(key) = self.projector.elicitation_key(&request_id) else {
-            return Ok(());
-        };
-        let handle = self.thread(&key.session_id.to_string())?;
-        let mut thread = lock_thread(&handle);
-        match elicitation_response(action, content)? {
-            Some(response) => thread.respond_to_elicitation(&key.entry_id, response),
-            None => thread.cancel_elicitation(&key.entry_id),
-        }
-        Ok(())
-    }
-
     // ---- history -----------------------------------------------------------
 
     /// Turn a history row into a live session.
@@ -2340,7 +2461,12 @@ impl AgentHost {
         // Already open in this process — the tab just needs focusing, and
         // reopening would be a second session for one conversation.
         if let Some(session_id) = thread.session_id.clone() {
+<<<<<<< Updated upstream
             if lock(&self.sessions).contains_key(session_id.0.as_ref()) {
+=======
+            if self.reclaim_for_window(session_id.0.as_ref()) {
+                history.store().unarchive(thread_id);
+>>>>>>> Stashed changes
                 return Ok(ResumedThread {
                     key: SessionKey {
                         agent_id: self.handle_for(&self.agent_for(thread.agent_id.as_str())?),
@@ -2580,6 +2706,7 @@ impl AgentHost {
             modified,
             activity: self.atlas_activity(),
             now: Utc::now(),
+<<<<<<< Updated upstream
             forks: self
                 .history()
                 .map(|history| {
@@ -2591,6 +2718,9 @@ impl AgentHost {
                         .collect()
                 })
                 .unwrap_or_default(),
+=======
+            held_working: self.held_working_sessions(),
+>>>>>>> Stashed changes
         }
     }
 
@@ -3748,6 +3878,7 @@ pub struct ThreadRow {
     /// Another process (typically `claude` in a terminal) wrote this session
     /// within the liveness window and Atlas is not hosting it (Rule 7).
     pub live_elsewhere: bool,
+<<<<<<< Updated upstream
     /// The projects attached to the session besides its own folder, in the
     /// order they were attached. Everything a surface needs to show them, to
     /// match a project filter on them, or to split changes by them.
@@ -3898,6 +4029,11 @@ fn access_card_body(request: &ProjectAccessRequest) -> String {
          change anything."
     });
     body
+=======
+    /// A hold keeps this session running in Atlas (Universal RC) and a turn is
+    /// in flight — "working", even with no tab open on it.
+    pub held_working: bool,
+>>>>>>> Stashed changes
 }
 
 /// What `thread_row` needs to decide [`ThreadRow::live_elsewhere`].
@@ -3905,9 +4041,14 @@ struct LiveContext<'a> {
     modified: &'a HashMap<String, DateTime<Utc>>,
     activity: HashMap<String, AtlasActivity>,
     now: DateTime<Utc>,
+<<<<<<< Updated upstream
     /// Branched sessions, child -> parent session id (`session_forks`), for
     /// [`ThreadRow::forked_from_session_id`].
     forks: HashMap<String, String>,
+=======
+    /// Sessions a hold keeps running with an Atlas turn in flight.
+    held_working: std::collections::HashSet<String>,
+>>>>>>> Stashed changes
 }
 
 /// What Atlas's own turns have been doing in one session.
@@ -4045,6 +4186,9 @@ fn thread_row(thread: &ThreadMetadata, live: &LiveContext<'_>) -> ThreadRow {
         .session_id
         .as_ref()
         .map(std::string::ToString::to_string);
+    let held_working = session_id
+        .as_deref()
+        .is_some_and(|id| live.held_working.contains(id));
     let live_elsewhere = session_id.as_deref().is_some_and(|id| {
         live_elsewhere(
             live.modified.get(id).copied(),
@@ -4075,6 +4219,7 @@ fn thread_row(thread: &ThreadMetadata, live: &LiveContext<'_>) -> ThreadRow {
         project_name: project_name(thread.main_worktree_paths()),
         folder_paths: paths_of(thread.folder_paths()),
         live_elsewhere,
+        held_working,
         branch: thread.branch.as_deref().map(str::to_string),
         model: thread.model.as_deref().map(str::to_string),
         attached_projects: thread
@@ -4420,6 +4565,18 @@ fn pending_option_kind(
         return None;
     };
     options.option_by_id(option_id).map(|option| option.kind)
+}
+
+/// The id of the model a selector says is selected, if it names a real one.
+///
+/// `AgentModelSelector` is an async interface; both implementations resolve
+/// from state already in memory, which is what makes a `block_on` safe here.
+fn selected_model_id(selector: &dyn atlas_acp_thread::AgentModelSelector) -> Option<String> {
+    futures::executor::block_on(async { selector.selected_model().await.ok() })
+        .map(|model| model.id.as_str().to_string())
+        // The native runtime names a session with no BYOK provider configured
+        // "/" — a joined pair of empty strings, not a model.
+        .filter(|id| !id.is_empty() && id != "/")
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -4936,6 +5093,61 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A session held by a room whose agent process dies is gone, holds and
+    /// all — and the end observers hear it, which is how the room ends
+    /// instead of retrying a snapshot of a session that no longer exists.
+    #[tokio::test]
+    async fn an_agent_process_exit_ends_a_held_session_and_tells_the_observers() {
+        let (host, dir, project, _record) = recording_host(LiveNative::new("s-exit-held"));
+        let ended: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+        let heard = ended.clone();
+        host.observe_session_end(Arc::new(move |session_id: &str| {
+            heard.lock().unwrap().push(session_id.to_string());
+        }));
+        let agent_id = host.spawn(ATLAS_AGENT_ID).await.expect("spawn").agent_id;
+        host.new_session(agent_id, project.clone(), Vec::new())
+            .await
+            .expect("a session opens");
+        host.hold_session("s-exit-held", "rc:01ROOM").expect("held");
+        assert!(host.is_held("s-exit-held"));
+
+        let thread = host.thread("s-exit-held").expect("live");
+        lock_thread(&thread).emit_load_error(atlas_acp_thread::LoadError::Exited {
+            status: Some(1),
+            stderr: "".into(),
+        });
+        for _ in 0..100 {
+            if !ended.lock().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert_eq!(
+            ended.lock().unwrap().clone(),
+            ["s-exit-held".to_string()],
+            "the exit on the thread is the first notice"
+        );
+
+        // Then the manager's `ConnectionExited` takes the record — and with
+        // it the room's hold. The observers may hear the same session again
+        // (as the lifecycle does); a room is ended once whichever came first.
+        host.agent_exited(&Agent::Native);
+        assert!(
+            !lock(&host.sessions).contains_key("s-exit-held"),
+            "the record, and its hold, went with the process"
+        );
+        assert!(!host.is_held("s-exit-held"));
+        assert!(ended.lock().unwrap().iter().all(|id| id == "s-exit-held"));
+
+        // Releasing the room's hold afterwards is a no-op, not a second end.
+        let before = ended.lock().unwrap().len();
+        host.release_session("s-exit-held", "rc:01ROOM")
+            .await
+            .expect("release");
+        assert_eq!(ended.lock().unwrap().len(), before);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Issue #81: an agent process that exits ends its sessions — the
     /// connection announces the exit on every live thread as a load error.
     #[tokio::test]
@@ -5074,7 +5286,13 @@ mod tests {
             opened
         ));
 
-        host.send(&init.key, Vec::new()).expect("send");
+        host.submit(
+            &init.key,
+            Prompt::default(),
+            Origin::Local,
+            SubmitPolicy::Now,
+        )
+        .expect("send");
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         let ended = loop {
             let activity = host.atlas_activity().get(&id).copied().unwrap_or_default();
@@ -5672,10 +5890,12 @@ mod tests {
             ErrorClass::ProcessDead
         );
         assert!(host.snapshot(&key).is_err());
-        assert!(host.send(&key, Vec::new()).is_err());
+        assert!(host
+            .submit(&key, Prompt::default(), Origin::Local, SubmitPolicy::Now)
+            .is_err());
         // Cancel and drop are idempotent by design: a tab can close twice, and
         // a stop pressed after a turn ended must not raise.
-        assert!(host.cancel(&key).is_ok());
+        assert!(host.stop(&key, Origin::Local).is_ok());
         assert!(host.drop_session(&key.session_id).await.is_ok());
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -5771,7 +5991,11 @@ mod tests {
             modified: &EMPTY,
             activity: HashMap::new(),
             now: Utc::now(),
+<<<<<<< Updated upstream
             forks: HashMap::new(),
+=======
+            held_working: std::collections::HashSet::new(),
+>>>>>>> Stashed changes
         }
     }
 
@@ -6139,6 +6363,40 @@ pub(crate) mod test_support {
             Some(registry.clone()),
         ));
         let host = AgentHost::with_native(Arc::new(Discard), dir.clone(), store, registry, native);
+        (host, dir)
+    }
+
+    /// [`fresh_host_with_native`], with the deltas going to the caller's sink.
+    pub(crate) fn fresh_host_with_native_and_sink(
+        native: Arc<dyn AgentServer>,
+        sink: Arc<dyn DeltaSink>,
+    ) -> (Arc<AgentHost>, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("atlas-host-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        struct Offline;
+        impl atlas_agent_store::HttpClient for Offline {
+            fn get(
+                &self,
+                _url: &str,
+            ) -> futures::future::BoxFuture<'static, anyhow::Result<atlas_agent_store::HttpResponse>>
+            {
+                use futures::FutureExt;
+                async { Err(anyhow::anyhow!("offline in tests")) }.boxed()
+            }
+        }
+        let http: Arc<dyn atlas_agent_store::HttpClient> = Arc::new(Offline);
+        let registry = Arc::new(atlas_agent_store::AgentRegistryStore::new(
+            dir.clone(),
+            http.clone(),
+        ));
+        let store = Arc::new(AgentServerStore::new(
+            dir.clone(),
+            http,
+            atlas_agent_store::NodeRuntime::unavailable("not needed in this test"),
+            Arc::new(atlas_agent_store::InheritedProjectEnvironment),
+            Some(registry.clone()),
+        ));
+        let host = AgentHost::with_native(sink, dir.clone(), store, registry, native);
         (host, dir)
     }
 }
