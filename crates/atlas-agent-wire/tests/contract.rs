@@ -374,6 +374,9 @@ fn sample_user_message() -> Message {
             data: "iVBORw0K".into(),
         }],
         timestamp: "2026-01-02T03:04:05Z".parse().unwrap(),
+        timestamp_approximate: false,
+        worked_ms: None,
+        stop_reason: None,
     }
 }
 
@@ -832,7 +835,6 @@ fn optional_fields_are_omitted_rather_than_null() {
     .unwrap();
     assert!(value.get("error_kind").is_none());
 
-<<<<<<< Updated upstream
     let value = serde_json::to_value(SessionDelta::TurnFinished {
         stop_reason: "end_turn".into(),
         turn_seq: 0,
@@ -854,7 +856,7 @@ fn optional_fields_are_omitted_rather_than_null() {
     assert!(value.get("stop_reason").is_none());
     // A timed message (every live one) serializes exactly as before the flag.
     assert!(value.get("timestamp_approximate").is_none());
-=======
+
     // A user message nobody minted an id for (a remote prompt, a queued one)
     // says nothing about it, rather than `null`.
     let value = serde_json::to_value(SessionDelta::UserMessage {
@@ -885,7 +887,6 @@ fn optional_fields_are_omitted_rather_than_null() {
         let value = serde_json::to_value(&delta).unwrap();
         assert!(value.get("origin").is_none(), "{value}");
     }
->>>>>>> Stashed changes
 
     let mut tool_call = sample_tool_call();
     tool_call.raw_output = None;

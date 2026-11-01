@@ -2126,7 +2126,6 @@ async fn ordinary_tool_calls_announce_no_subagent() {
     );
 }
 
-<<<<<<< Updated upstream
 fn tool_call_of(delta: &SessionDelta) -> &atlas_agent_delta::ToolCall {
     match delta {
         SessionDelta::ToolCallUpserted { tool_call, .. } => tool_call,
@@ -2361,7 +2360,55 @@ async fn a_late_duplicate_stop_does_not_relabel_a_finished_turn() {
     harness.pump();
 
     let finished: Vec<String> = harness
-=======
+        .recorder
+        .deltas()
+        .into_iter()
+        .filter_map(|delta| match delta {
+            SessionDelta::TurnFinished { stop_reason, .. } => Some(stop_reason),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(finished, ["end_turn"], "one terminal, the real one");
+    let messages = atlas_agent_delta::project::snapshot_messages(&lock(&harness.thread), None);
+    assert_eq!(
+        messages.last().unwrap().stop_reason.as_deref(),
+        Some("end_turn")
+    );
+}
+
+/// The terminal carries the turn it closed, not whatever the thread's newest
+/// record is when the projector gets to it: here a whole second turn runs
+/// before the first stop is drained.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_terminal_drained_late_announces_its_own_turn() {
+    let harness = Harness::start();
+    lock(&harness.thread).begin_turn();
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    lock(&harness.thread).end_turn(acp::StopReason::EndTurn);
+    lock(&harness.thread).begin_turn();
+    lock(&harness.thread).end_turn(acp::StopReason::Cancelled);
+    harness.pump();
+
+    let finished: Vec<(String, u64)> = harness
+        .recorder
+        .deltas()
+        .into_iter()
+        .filter_map(|delta| match delta {
+            SessionDelta::TurnFinished {
+                stop_reason,
+                worked_ms,
+                ..
+            } => Some((stop_reason, worked_ms.unwrap())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(finished.len(), 2);
+    assert_eq!(finished[0].0, "end_turn");
+    assert!(finished[0].1 >= 30, "{finished:?}");
+    assert_eq!(finished[1].0, "cancelled");
+    assert!(finished[1].1 < 30, "{finished:?}");
+}
+
 // ------------------------------------------------------- Universal RC groundwork
 
 fn user_text(text: &str) -> acp::ContentBlock {
@@ -2448,56 +2495,10 @@ async fn a_prompt_that_merges_into_the_last_entry_is_still_announced() {
     harness.pump();
 
     let announced: Vec<(String, Option<String>)> = harness
->>>>>>> Stashed changes
         .recorder
         .deltas()
         .into_iter()
         .filter_map(|delta| match delta {
-<<<<<<< Updated upstream
-            SessionDelta::TurnFinished { stop_reason, .. } => Some(stop_reason),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(finished, ["end_turn"], "one terminal, the real one");
-    let messages = atlas_agent_delta::project::snapshot_messages(&lock(&harness.thread), None);
-    assert_eq!(
-        messages.last().unwrap().stop_reason.as_deref(),
-        Some("end_turn")
-    );
-}
-
-/// The terminal carries the turn it closed, not whatever the thread's newest
-/// record is when the projector gets to it: here a whole second turn runs
-/// before the first stop is drained.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_terminal_drained_late_announces_its_own_turn() {
-    let harness = Harness::start();
-    lock(&harness.thread).begin_turn();
-    std::thread::sleep(std::time::Duration::from_millis(30));
-    lock(&harness.thread).end_turn(acp::StopReason::EndTurn);
-    lock(&harness.thread).begin_turn();
-    lock(&harness.thread).end_turn(acp::StopReason::Cancelled);
-    harness.pump();
-
-    let finished: Vec<(String, u64)> = harness
-        .recorder
-        .deltas()
-        .into_iter()
-        .filter_map(|delta| match delta {
-            SessionDelta::TurnFinished {
-                stop_reason,
-                worked_ms,
-                ..
-            } => Some((stop_reason, worked_ms.unwrap())),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(finished.len(), 2);
-    assert_eq!(finished[0].0, "end_turn");
-    assert!(finished[0].1 >= 30, "{finished:?}");
-    assert_eq!(finished[1].0, "cancelled");
-    assert!(finished[1].1 < 30, "{finished:?}");
-=======
             SessionDelta::UserMessage {
                 message,
                 client_message_id,
@@ -2752,5 +2753,52 @@ async fn a_mode_change_is_said_once_whoever_says_it() {
             ("default".to_string(), None)
         ]
     );
->>>>>>> Stashed changes
+}
+
+/// The host serves the projection's announced view as its snapshot whenever a
+/// projection exists, and the thread-built list only as a fallback. The two
+/// must agree on everything a reload reads — in particular a turn's
+/// "Worked for" / "Stopped after" — or the RC path silently loses it.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_announced_snapshot_carries_turn_timing_like_the_thread_built_one() {
+    let harness = Harness::start();
+    lock(&harness.thread).push_user_content_block(None, user_text("first"));
+    lock(&harness.thread).begin_turn();
+    harness.update(serde_json::json!({
+        "sessionUpdate": "tool_call",
+        "toolCallId": "call-1",
+        "title": "Read a.rs",
+        "kind": "read",
+        "status": "completed",
+    }));
+    harness.update(serde_json::json!({
+        "sessionUpdate": "agent_message_chunk",
+        "content": { "type": "text", "text": "done" },
+    }));
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    lock(&harness.thread).end_turn(acp::StopReason::EndTurn);
+    harness.pump();
+
+    let announced = harness
+        .projector
+        .snapshot(&harness.session_id, true, None)
+        .expect("the session is projected")
+        .messages;
+    let built = atlas_agent_delta::project::snapshot_messages(&lock(&harness.thread), None);
+
+    let timing =
+        |messages: &[atlas_agent_delta::Message]| -> Vec<(bool, Option<u64>, Option<String>)> {
+            messages
+                .iter()
+                .map(|m| (m.timestamp_approximate, m.worked_ms, m.stop_reason.clone()))
+                .collect()
+        };
+    assert_eq!(
+        timing(&announced),
+        timing(&built),
+        "{announced:#?}\nvs\n{built:#?}"
+    );
+    let last = announced.last().expect("the reply is a message");
+    assert!(last.worked_ms.unwrap() >= 5, "{last:?}");
+    assert_eq!(last.stop_reason.as_deref(), Some("end_turn"));
 }

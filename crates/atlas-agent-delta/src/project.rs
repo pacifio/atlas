@@ -602,7 +602,11 @@ pub fn snapshot_messages(
 ///
 /// `entry_of` is ascending (messages are emitted in entry order), so each
 /// turn's last message is one binary search away rather than a scan.
-fn stamp_turns(out: &mut [Message], entry_of: &[usize], turns: &[atlas_acp_thread::TurnRecord]) {
+pub(crate) fn stamp_turns(
+    out: &mut [Message],
+    entry_of: &[usize],
+    turns: &[atlas_acp_thread::TurnRecord],
+) {
     for turn in turns {
         let after = entry_of.partition_point(|ix| *ix < turn.entries.end);
         let Some(last) = after.checked_sub(1) else {

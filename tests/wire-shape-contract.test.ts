@@ -468,7 +468,6 @@ describe("subagents: Rust Subagent ↔ the renderer's Subagent (#8)", () => {
   });
 });
 
-<<<<<<< Updated upstream
 describe("slept_mid_turn: Rust SleptMidTurn ↔ the renderer's delta (#9)", () => {
   // The host names a turn the computer slept through (`sleep_watch.rs`). Both
   // fields are read by the chat store — `turn_seq` is its stale guard — so a
@@ -873,7 +872,9 @@ describe("linked pull requests: session row, store and commands (#15)", () => {
     expect([...tsInvokeArgKeys(prApi, "pr_create")].sort()).toEqual(
       [...rustCommandArgKeys(create, "pr_create")].sort(),
     );
-=======
+  });
+});
+
 describe("Universal RC: the room as the window sees it (#10)", () => {
   // `rc.rs` serialises every `atlas:rc` payload and every `rc_*` answer with
   // `rename_all = "camelCase"`; `rc-api.ts` declares the mirrors by hand. A
@@ -1012,6 +1013,5 @@ describe("Universal RC groundwork: user prompts, the queue, holds and seq (#9)",
         ),
       );
     }
->>>>>>> Stashed changes
   });
 });

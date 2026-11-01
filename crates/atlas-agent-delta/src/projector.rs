@@ -933,7 +933,11 @@ impl SessionProjection {
         let thread = lock_thread(&self.thread);
         let entries = thread.entries();
         let mut out = Vec::new();
+        // The entry each message came from, so a turn's timing can find the
+        // message that ends it (as in `snapshot_messages`).
+        let mut entry_of: Vec<usize> = Vec::new();
         for (ix, projected) in self.entries.iter().enumerate() {
+            let before = out.len();
             let at = thread.entry_created_at(ix).unwrap_or_else(chrono::Utc::now);
             match (projected, entries.get(ix)) {
                 (Projected::User { chunks }, Some(AgentThreadEntry::UserMessage(message))) => {
@@ -950,6 +954,9 @@ impl SessionProjection {
                         model: None,
                         images,
                         timestamp: at,
+                        timestamp_approximate: false,
+                        worked_ms: None,
+                        stop_reason: None,
                     });
                 }
                 (
@@ -999,7 +1006,18 @@ impl SessionProjection {
                 // left to the deltas that will describe it.
                 _ => {}
             }
+            // A replayed entry's time is when Atlas replayed it; say so
+            // rather than pass it off as when it was said.
+            if thread.entry_time_approximate(ix) {
+                for message in &mut out[before..] {
+                    message.timestamp_approximate = true;
+                }
+            }
+            entry_of.resize(entry_of.len() + (out.len() - before), ix);
         }
+        // "Worked for" / "Stopped after" must survive a reload through this
+        // path exactly as through the thread-built fallback.
+        project::stamp_turns(&mut out, &entry_of, thread.turns());
         out
     }
 
@@ -1252,12 +1270,6 @@ impl SessionProjection {
             if ix >= thread.entries().len() {
                 break;
             }
-<<<<<<< Updated upstream
-            let (projected, mut new) = self.project_new(&thread, ix);
-            if thread.entry_time_approximate(ix) {
-                mark_time_approximate(&mut new);
-            }
-=======
             let (projected, mut new) = match &thread.entries()[ix] {
                 AgentThreadEntry::UserMessage(message) => {
                     let delta = self.pending_users.pop_front().map(|stamp| {
@@ -1276,7 +1288,9 @@ impl SessionProjection {
                 }
                 _ => self.project_new(&thread, ix),
             };
->>>>>>> Stashed changes
+            if thread.entry_time_approximate(ix) {
+                mark_time_approximate(&mut new);
+            }
             drop(thread);
             self.entries.push(projected);
             deltas.append(&mut new);
@@ -1907,6 +1921,9 @@ fn user_message_delta(
             model: None,
             images,
             timestamp,
+            timestamp_approximate: false,
+            worked_ms: None,
+            stop_reason: None,
         },
         origin: stamp.origin,
         client_message_id: stamp.client_message_id,
