@@ -8,6 +8,8 @@ import {
   useRef,
   useContext,
   useState,
+  startTransition,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 import { Popover } from "@base-ui/react/popover";
@@ -121,6 +123,29 @@ import { formatTime } from "@/lib/format-time";
  */
 const WINDOW_CHUNK = 40;
 
+/**
+ * How many groups the FIRST paint of a Session renders.
+ *
+ * A viewport holds about eight, and the click that opened the Session waits on
+ * every one rendered before it paints — forty of them was most of a 200ms
+ * open. The rest follow straight after without blocking: the scroll loop sees
+ * the bottom inside its grow margin and tops the window up to a full chunk as
+ * a transition.
+ */
+const FIRST_PAINT = 12;
+
+/**
+ * How many groups one step of a jump's window growth mounts.
+ *
+ * A jump to a thread near the end of a long Session has to mount every row
+ * above it — seven hundred, on a busy one. In one update that was a single
+ * second-long task: the comments popup froze half-closed on the first frames
+ * and nothing moved until the whole lot was laid out. In steps of this size,
+ * each rendered as a transition (so React yields while it builds them), no one
+ * frame carries more than a step's worth of style and layout.
+ */
+const JUMP_STEP = 120;
+
 /** Half the tallest rail node — where the hairline starts and stops. */
 const NODE_CENTRE = 16;
 
@@ -169,6 +194,9 @@ interface Props {
   /** The masthead is painted from the board row and the timeline is still on
    *  its way. Without it an empty `entries` reads as "nothing was recorded". */
   entriesPending?: boolean;
+  /** Part of the timeline is here and the rest is still arriving (a remote
+   *  Session streamed page by page). */
+  entriesStreaming?: boolean;
   /** Set only for a Session with no local copy — see [`RemoteSourceContext`]. */
   remote?: RemoteSource | null;
   /**
@@ -215,13 +243,50 @@ const RemoteSourceContext = createContext<RemoteSource | null>(null);
  * memoised components several levels down (`Row`, `CallRow`); threading a prop
  * through every level would re-render the whole reader on each jump, and the
  * levels in between have no business knowing about comments.
+ *
+ * A **store** in the context, not the value itself. A context value re-renders
+ * every consumer when it changes, and every row consumes this one — so each
+ * jump re-rendered every mounted row, every call row and every comment button
+ * to tell exactly one of them to open (~600ms on a long Session, on the click).
+ * Through `useSyncExternalStore` each row's snapshot is only its own number,
+ * so the rows a request is not for compare equal and skip the render.
  */
-const FocusThreadContext = createContext<{ anchorId: string; n: number } | null>(null);
+type FocusRequest = { anchorId: string; n: number } | null;
+
+interface FocusStore {
+  get: () => FocusRequest;
+  set: (next: FocusRequest | ((prev: FocusRequest) => FocusRequest)) => void;
+  subscribe: (listener: () => void) => () => void;
+}
+
+function createFocusStore(): FocusStore {
+  let value: FocusRequest = null;
+  const listeners = new Set<() => void>();
+  return {
+    get: () => value,
+    set: (next) => {
+      const resolved = typeof next === "function" ? next(value) : next;
+      if (resolved === value) return;
+      value = resolved;
+      listeners.forEach((listener) => listener());
+    },
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+}
+
+const NO_FOCUS: FocusStore = createFocusStore();
+const FocusThreadContext = createContext<FocusStore>(NO_FOCUS);
 
 /** The open signal for one anchor: a new number each time it is asked for. */
 function useOpenSignal(anchorId: string) {
-  const focus = useContext(FocusThreadContext);
-  return focus?.anchorId === anchorId ? focus.n : undefined;
+  const store = useContext(FocusThreadContext);
+  return useSyncExternalStore(store.subscribe, () => {
+    const focus = store.get();
+    return focus?.anchorId === anchorId ? focus.n : undefined;
+  });
 }
 
 export function SessionDetail({
@@ -229,6 +294,7 @@ export function SessionDetail({
   projectPath,
   comments = null,
   entriesPending = false,
+  entriesStreaming = false,
   remote = null,
   remoteProjectId = null,
   focusCommitSha,
@@ -246,7 +312,7 @@ export function SessionDetail({
   const [foldResponses, setFoldResponses] = useState(false);
   /** Free-text narrowing of the timeline. */
   const [search, setSearch] = useState("");
-  const [renderCount, setRenderCount] = useState(WINDOW_CHUNK);
+  const [renderCount, setRenderCount] = useState(FIRST_PAINT);
   const entryRefs = useRef(new Map<string, HTMLDivElement>());
   const scrollRef = useRef<HTMLDivElement | null>(null);
   /** Cancels the jump animation in flight, if any. */
@@ -277,7 +343,8 @@ export function SessionDetail({
   const [landed, setLanded] = useState<string | null>(null);
   /** Which entry's comment thread to open, from the comments panel. The
    *  counter is what lets the same thread be asked for twice. */
-  const [focusThread, setFocusThread] = useState<{ anchorId: string; n: number } | null>(null);
+  const [focusStore] = useState(createFocusStore);
+  const setFocusThread = focusStore.set;
   const contentRef = useRef<HTMLDivElement | null>(null);
 
   const s = detail.summary;
@@ -431,8 +498,13 @@ export function SessionDetail({
     anchorRefs,
     anchorCount: anchors.length,
     canGrow: renderCount < groups.length,
+    // A transition, so mounting the next chunk yields to the scroll that asked
+    // for it instead of stalling it mid-fling.
     onGrow: useCallback(
-      () => setRenderCount((count) => Math.min(count + WINDOW_CHUNK, groups.length)),
+      () =>
+        startTransition(() =>
+          setRenderCount((count) => Math.min(count + WINDOW_CHUNK, groups.length)),
+        ),
       [groups.length],
     ),
   });
@@ -442,12 +514,24 @@ export function SessionDetail({
   // to — resetting on the raw keystroke scrolled to top a beat before the list
   // changed.
   useEffect(() => {
-    setRenderCount(WINDOW_CHUNK);
+    setRenderCount(FIRST_PAINT);
     scrollRef.current?.scrollTo({ top: 0 });
     // The list was swapped wholesale; a same-height replacement would not trip
     // the ResizeObserver and every cached offset would describe the old rows.
     invalidate();
   }, [detail.summary.id, filters, failedOnly, tools, deferredSearch, foldResponses, invalidate]);
+
+  // …and straight after that first paint, top the window up to a full chunk
+  // without blocking (see `FIRST_PAINT`). Not left to the scroll loop alone:
+  // twelve long rows can already overrun its grow margin, and then nothing
+  // past them would mount until the reader scrolled — a fling would hit the
+  // end of the window.
+  useEffect(() => {
+    if (renderCount >= WINDOW_CHUNK || renderCount >= groups.length) return;
+    startTransition(() =>
+      setRenderCount((count) => Math.max(count, Math.min(WINDOW_CHUNK, groups.length))),
+    );
+  }, [renderCount, groups.length]);
 
   // Memoised, and load-bearing: this array is `Timeline`'s only changing prop,
   // so a fresh slice on every render would fail its memo comparison every time
@@ -472,6 +556,10 @@ export function SessionDetail({
       // and no error. A dead click, permanently.
       const target = detail.entries.find((e) => e.id === pendingJump);
       if (!target) {
+        // Not arrived yet, on a Session still streaming in: hold the request.
+        // This effect re-runs as each page lands (`groups` moves), and the
+        // jump goes through once its entry is here.
+        if (entriesStreaming) return;
         setPendingJump(null);
         return;
       }
@@ -490,7 +578,11 @@ export function SessionDetail({
       return;
     }
     if (index >= renderCount) {
-      setRenderCount(index + 40);
+      // Stepped and as a transition — see `JUMP_STEP`. Each commit re-runs
+      // this effect (`renderCount` is a dependency), which takes the next
+      // step until the target is mounted.
+      const next = Math.min(index + 40, renderCount + JUMP_STEP);
+      startTransition(() => setRenderCount(next));
       return;
     }
     // Only a group's HEAD is registered — a run of tool calls is one row on
@@ -507,7 +599,7 @@ export function SessionDetail({
       setLanded(pendingJump);
       setPendingJump(null);
     }
-  }, [pendingJump, groups, renderCount, jumpTo]);
+  }, [pendingJump, groups, renderCount, jumpTo, entriesStreaming]);
 
   useEffect(() => {
     if (!landed) return;
@@ -572,6 +664,34 @@ export function SessionDetail({
     }
   }, [focusCommitSha, detail.summary.id, detail.entries]);
 
+  /**
+   * Scroll to the entry AND open the thread hanging off it. Landing beside a
+   * remark without showing it makes you hunt for the thing you just clicked.
+   *
+   * `setPendingJump` rather than `jumpToAnchor`: the settling effect above is
+   * what reveals a kind the filters are hiding, grows the render window and
+   * unfolds a run of tool calls — so a remark on the fourth call of a run
+   * arrives with its own button mounted to hang the popover off. `jumpToAnchor`
+   * only scrolls, and would have opened nothing in every one of those cases.
+   *
+   * Stable, so the memoised `CommentsMorph` is not rebuilt on every render of
+   * this pane.
+   */
+  const sessionId = detail.summary.id;
+  const jumpToThread = useCallback(
+    (anchorId: string) => {
+      setFocusThread((prev) => ({ anchorId, n: (prev?.n ?? 0) + 1 }));
+      // The whole-Session thread hangs off the masthead, which is no entry and
+      // is already at the top.
+      if (anchorId === sessionId) {
+        scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+        return;
+      }
+      setPendingJump(anchorId);
+    },
+    [sessionId, setFocusThread],
+  );
+
   const activeFilters =
     (filters.prompts ? 0 : 1) +
     (filters.responses ? 0 : 1) +
@@ -613,7 +733,7 @@ export function SessionDetail({
 
   return (
     <RemoteSourceContext.Provider value={remote}>
-      <FocusThreadContext.Provider value={focusThread}>
+      <FocusThreadContext.Provider value={focusStore}>
         <div className="relative flex h-full min-h-0">
           <div
             ref={scrollRef}
@@ -641,10 +761,16 @@ export function SessionDetail({
                     register={register}
                     comments={comments}
                   />
-                  {renderCount < groups.length && (
+                  {renderCount < groups.length ? (
                     <p className="py-6 text-center font-mono text-xs text-[var(--muted-foreground)]">
                       {groups.length - renderCount} more…
                     </p>
+                  ) : (
+                    entriesStreaming && (
+                      <p className="py-6 text-center font-mono text-xs text-[var(--muted-foreground)]">
+                        Loading the rest of this session…
+                      </p>
+                    )
                   )}
                 </div>
               )}
@@ -724,32 +850,7 @@ export function SessionDetail({
                   </HintItem>
                 )}
                 {comments && (
-                  <CommentsMorph
-                    detail={detail}
-                    comments={comments}
-                    inPill
-                    onJump={(anchorId) => {
-                      // Scroll to the entry AND open the thread hanging off it.
-                      // Landing beside a remark without showing it makes you hunt
-                      // for the thing you just clicked.
-                      //
-                      // `setPendingJump` rather than `jumpToAnchor`: the settling
-                      // effect below is what reveals a kind the filters are hiding,
-                      // grows the render window and unfolds a run of tool calls — so
-                      // a remark on the fourth call of a run arrives with its own
-                      // button mounted to hang the popover off. `jumpToAnchor` only
-                      // scrolls, and would have opened nothing in every one of those
-                      // cases.
-                      setFocusThread((prev) => ({ anchorId, n: (prev?.n ?? 0) + 1 }));
-                      // The whole-Session thread hangs off the masthead, which is no
-                      // entry and is already at the top.
-                      if (anchorId === detail.summary.id) {
-                        scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
-                        return;
-                      }
-                      setPendingJump(anchorId);
-                    }}
-                  />
+                  <CommentsMorph detail={detail} comments={comments} inPill onJump={jumpToThread} />
                 )}
               </FooterPill>
             )}

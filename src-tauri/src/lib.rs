@@ -749,6 +749,7 @@ pub fn run() {
             commands::artifacts_cloud::artifacts_cloud_unfollow,
             commands::artifacts_cloud::chat_comment_target,
             commands::artifacts_cloud::artifacts_cloud_session,
+            commands::artifacts_cloud::artifacts_cloud_session_stream,
             commands::artifacts_cloud::artifacts_cloud_payload,
             commands::artifacts_cloud::artifacts_cloud_session_url,
             commands::artifacts_cloud::artifacts_cloud_session_share,

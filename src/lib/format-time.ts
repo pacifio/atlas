@@ -35,13 +35,77 @@ type DateInput = Date | number | string;
 
 const SHORT_TIME: Intl.DateTimeFormatOptions = { hour: "numeric", minute: "2-digit" };
 
+const TIME_FIELDS = ["hour", "minute", "second", "dayPeriod", "fractionalSecondDigits"] as const;
+const DATE_FIELDS = ["weekday", "year", "month", "day"] as const;
+
+/**
+ * The fields `toLocaleTimeString` / `toLocaleDateString` / `toLocaleString`
+ * fill in when the caller names none (ECMA-402 `ToDateTimeOptions`), so a
+ * cached formatter prints exactly what the `toLocale*` call it replaces did.
+ */
+function withDefaults(
+  options: Intl.DateTimeFormatOptions,
+  kind: "time" | "date" | "any",
+): Intl.DateTimeFormatOptions {
+  if (options.dateStyle || options.timeStyle) return options;
+  const hasTime = TIME_FIELDS.some((f) => options[f] !== undefined);
+  const hasDate = DATE_FIELDS.some((f) => options[f] !== undefined);
+  if (kind === "time" && !hasTime)
+    return { ...options, hour: "numeric", minute: "numeric", second: "numeric" };
+  if (kind === "date" && !hasDate)
+    return { ...options, year: "numeric", month: "numeric", day: "numeric" };
+  if (kind === "any" && !hasTime && !hasDate)
+    return {
+      ...options,
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+      hour: "numeric",
+      minute: "numeric",
+      second: "numeric",
+    };
+  return options;
+}
+
+const adhocFormatters = new Map<string, Intl.DateTimeFormat>();
+
+/**
+ * A `toLocale*String` call, with its `Intl.DateTimeFormat` built once.
+ *
+ * Every `toLocale*String` constructs a formatter, and constructing one costs
+ * far more than calling one — ~0.25ms each. That is invisible for one label
+ * and was the single largest cost of mounting a long Session's timeline:
+ * every row prints its time, and a comment jump that mounted seven hundred
+ * rows spent ~200ms in this function alone. The key carries the options and
+ * the locale, and the caller's hour cycle is already folded into the options,
+ * so flipping the 12h/24h setting builds a new formatter rather than reusing a
+ * stale one.
+ */
+export function formatWith(
+  at: DateInput,
+  options: Intl.DateTimeFormatOptions,
+  kind: "time" | "date" | "any",
+  locale?: string | string[],
+): string {
+  const date = new Date(at);
+  // What `toLocale*String` prints for an invalid date; `format` would throw.
+  if (Number.isNaN(date.getTime())) return "Invalid Date";
+  const key = `${kind}|${String(locale ?? "")}|${JSON.stringify(options)}`;
+  let formatter = adhocFormatters.get(key);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat(locale, withDefaults(options, kind));
+    adhocFormatters.set(key, formatter);
+  }
+  return formatter.format(date);
+}
+
 /** A time of day, e.g. "3:07 PM" or "15:07". `options` picks the fields. */
 export function formatTime(
   at: DateInput,
   options: Intl.DateTimeFormatOptions = SHORT_TIME,
   locale?: string | string[],
 ): string {
-  return new Date(at).toLocaleTimeString(locale, { ...options, ...hourCycle() });
+  return formatWith(at, { ...options, ...hourCycle() }, "time", locale);
 }
 
 /** A date with its time, e.g. "Oct 22, 2026, 3:07 PM". */
@@ -50,7 +114,7 @@ export function formatDateTime(
   options?: Intl.DateTimeFormatOptions,
   locale?: string | string[],
 ): string {
-  return new Date(at).toLocaleString(locale, { ...options, ...hourCycle() });
+  return formatWith(at, { ...options, ...hourCycle() }, "any", locale);
 }
 
 /**

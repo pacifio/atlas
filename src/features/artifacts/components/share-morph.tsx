@@ -98,12 +98,17 @@ export function ShareMorph({
   // The sheet's height is its content's, measured — the public half appears
   // and disappears, so a fixed height would be wrong in one state or the
   // other. The menu's padding and border sit outside the measure.
+  //
+  // Only through the observer, which reports every observed element once when
+  // it starts — after layout, when reading the height is free. A synchronous
+  // `offsetHeight` here forced a layout of the whole document from a mount
+  // effect, and this mounts with the Session reader: ~40ms of the open, spent
+  // laying out a timeline that had not painted yet.
   useEffect(() => {
     const el = measure.current;
     if (!el) return;
     const ro = new ResizeObserver(() => setContentHeight(el.offsetHeight));
     ro.observe(el);
-    setContentHeight(el.offsetHeight);
     return () => ro.disconnect();
   }, [open]);
 

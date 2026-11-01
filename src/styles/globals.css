@@ -1808,11 +1808,24 @@
 
 /* The Session detail's two-pane split (detail | grounded chat).
  *
- * Width rather than transform: the detail must actually give up the space, so
- * its own layout reflows into what is left. Same easing as the stats rail, so
- * the two panels in one tab open with one motion. */
-.atlas-split {
-  transition: width 340ms cubic-bezier(0.32, 0.72, 0, 1);
+ * The detail still gives up the space — the chat's column takes its full width
+ * on the first frame, so the record reflows into what is left exactly ONCE.
+ * Only the panel's content moves, and only by transform and opacity, which the
+ * compositor animates without touching layout.
+ *
+ * This was a 340ms `width` transition. Every one of its ~20 frames re-wrapped
+ * the whole rendered timeline at a new width and repainted it (~1,700 paint
+ * records for one open on a long Session), and fired the timeline's
+ * ResizeObserver into a forced re-measure — the open felt heavy precisely
+ * because the thing being animated was the most expensive box in the tab. */
+@keyframes atlas-split-in {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+}
+.atlas-split-in {
+  animation: atlas-split-in 260ms cubic-bezier(0.32, 0.72, 0, 1) both;
 }
 .atlas-rail-body {
   transition:
@@ -2145,8 +2158,8 @@
   .atlas-radar-sweep {
     transform: rotate(-50deg);
   }
-  .atlas-split {
-    transition: none !important;
+  .atlas-split-in {
+    animation: none;
   }
 }
 
