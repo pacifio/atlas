@@ -11,6 +11,7 @@
 
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -92,13 +93,25 @@ export interface SlashCommandPickerProps {
   footerLabel?: string;
 }
 
-/** Highlight every case-insensitive occurrence of `query` in `text`. */
-function highlightMatches(text: string, query: string) {
+/** Highlight the first `max` case-insensitive occurrences of `query` in
+ *  `text`.
+ *
+ *  Descriptions pass `max = 1`. A skill's description runs to a thousand
+ *  characters, and a one-letter query (`/u`) occurs in it dozens of times:
+ *  marking every occurrence across a few hundred rows built ~20k `<mark>`
+ *  nodes per keystroke and froze the window, all for a span truncated to one
+ *  line. */
+function highlightMatches(text: string, query: string, max = Infinity) {
   const q = query.trim();
   if (!q) return text;
   const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const parts = text.split(new RegExp(`(${escaped})`, "gi"));
   if (parts.length === 1) return text;
+  // `split` with a capture group alternates text, match, text, …; keep `max`
+  // matches and fold the remainder back into one plain tail.
+  if (parts.length > 2 * max + 1) {
+    parts.splice(2 * max, parts.length, parts.slice(2 * max).join(""));
+  }
   return parts.map((part, i) =>
     i % 2 === 1 ? (
       <mark
@@ -116,6 +129,8 @@ function highlightMatches(text: string, query: string) {
 // ── Component ───────────────────────────────────────────────────────────────
 
 const PICKER_WIDTH = 460;
+const MAX_HEIGHT = 360;
+const ROW_HEIGHT = 26;
 const GAP = 6;
 
 export const SlashCommandPicker = forwardRef<SlashCommandPickerHandle, SlashCommandPickerProps>(
@@ -156,6 +171,28 @@ export const SlashCommandPicker = forwardRef<SlashCommandPickerHandle, SlashComm
     }, [active, rows.length]);
 
     const activeRow = rows[active];
+
+    // Only the rows in view are rendered. An agent with a few hundred skills
+    // advertises a few hundred commands, and a one-letter query matches nearly
+    // all of them by description: rendering every row re-built the whole list
+    // on each keystroke and each hover. The list shows ~13 rows at a time.
+    const scrollRef = useRef<HTMLDivElement>(null);
+    const virtualizer = useVirtualizer({
+      count: rows.length,
+      getScrollElement: () => scrollRef.current,
+      estimateSize: () => ROW_HEIGHT,
+      overscan: 8,
+      paddingStart: 4,
+      paddingEnd: 4,
+      // Before the first measure (and in tests, which never lay out).
+      initialRect: { width: PICKER_WIDTH, height: MAX_HEIGHT },
+      getItemKey: (i) => rows[i]?.name ?? i,
+    });
+    // Keyboard navigation keeps the highlighted row in view; a no-op when
+    // it already is (a hover).
+    useEffect(() => {
+      if (open && active < rows.length) virtualizer.scrollToIndex(active, { align: "auto" });
+    }, [open, active, rows.length, virtualizer]);
 
     const onSelectRef = useRef(onSelect);
     onSelectRef.current = onSelect;
@@ -220,51 +257,57 @@ export const SlashCommandPicker = forwardRef<SlashCommandPickerHandle, SlashComm
           left,
           bottom,
           width: PICKER_WIDTH,
-          maxHeight: 360,
+          maxHeight: MAX_HEIGHT,
         }}
       >
-        <div className="flex-1 overflow-y-auto py-1">
+        <div ref={scrollRef} className="flex-1 overflow-y-auto">
           {rows.length === 0 ? (
             <div className="px-3 py-6 text-center text-xs text-[var(--muted-foreground)] leading-snug">
               {loading ? "Loading commands…" : `No commands match "/${query}".`}
             </div>
           ) : (
-            rows.map((cmd, i) => {
-              const isActive = i === active;
-              const needsArgs = commandRequiresArgs(cmd);
-              return (
-                <button
-                  key={cmd.name}
-                  onMouseEnter={() => setActive(i)}
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    onSelectRef.current(cmd);
-                  }}
-                  className={cn(
-                    "w-full text-left px-3 h-[26px] flex items-center gap-2 text-sm",
-                    isActive
-                      ? "bg-[var(--atlas-element-selected)] text-[var(--foreground)]"
-                      : "text-[var(--secondary-foreground)] hover:bg-[var(--atlas-element-hover)]",
-                  )}
-                  title={cmd.description}
-                >
-                  <span className="font-mono text-[var(--foreground)] shrink-0 min-w-[80px]">
-                    /{highlightMatches(cmd.name, query)}
-                  </span>
-                  <span className="truncate text-xs text-[var(--muted-foreground)] min-w-0 flex-1">
-                    {highlightMatches(cmd.description, query)}
-                  </span>
-                  {needsArgs && (
-                    <span
-                      className="shrink-0 text-3xs uppercase tracking-wider text-[var(--muted-foreground)] border border-[var(--border)] rounded-full px-1.5 py-px"
-                      title="This command takes arguments — type them after the command, then press Enter."
-                    >
-                      {argsHint(cmd)}
+            <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
+              {virtualizer.getVirtualItems().map((item) => {
+                const i = item.index;
+                const cmd = rows[i];
+                if (!cmd) return null;
+                const isActive = i === active;
+                const needsArgs = commandRequiresArgs(cmd);
+                return (
+                  <button
+                    key={item.key}
+                    style={{ transform: `translateY(${item.start}px)` }}
+                    onMouseEnter={() => setActive(i)}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      onSelectRef.current(cmd);
+                    }}
+                    className={cn(
+                      "absolute top-0 left-0 w-full text-left px-3 h-[26px] flex items-center gap-2 text-sm",
+                      isActive
+                        ? "bg-[var(--atlas-element-selected)] text-[var(--foreground)]"
+                        : "text-[var(--secondary-foreground)] hover:bg-[var(--atlas-element-hover)]",
+                    )}
+                    title={cmd.description}
+                  >
+                    <span className="font-mono text-[var(--foreground)] shrink-0 min-w-[80px]">
+                      /{highlightMatches(cmd.name, query)}
                     </span>
-                  )}
-                </button>
-              );
-            })
+                    <span className="truncate text-xs text-[var(--muted-foreground)] min-w-0 flex-1">
+                      {highlightMatches(cmd.description, query, 1)}
+                    </span>
+                    {needsArgs && (
+                      <span
+                        className="shrink-0 text-3xs uppercase tracking-wider text-[var(--muted-foreground)] border border-[var(--border)] rounded-full px-1.5 py-px"
+                        title="This command takes arguments — type them after the command, then press Enter."
+                      >
+                        {argsHint(cmd)}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
           )}
           {/* `/login` is usually present (S1 left it as the only synthetic
               row), so the empty-state "Loading commands…" branch above rarely

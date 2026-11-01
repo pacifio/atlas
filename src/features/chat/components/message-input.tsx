@@ -1,4 +1,14 @@
-import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from "react";
+import {
+  memo,
+  useState,
+  useRef,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useSyncExternalStore,
+  type Ref,
+} from "react";
 import { createPortal } from "react-dom";
 import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
 import { cn } from "@/lib/utils";
@@ -1026,15 +1036,20 @@ export function MessageInput({
   triggerRef.current = trigger;
 
   // ── Slash-command picker orchestration ────────────────────────────────
-  const [slashTrigger, setSlashTrigger] = useState<SlashTrigger | null>(null);
+  // The trigger changes on every keystroke while the picker is open, and this
+  // component is the whole composer — editor shell, toolbar, tray, both
+  // pickers. Held in React state, each keystroke re-rendered all of it. So it
+  // lives in a store only the picker subscribes to (`SlashPickerHost`), and
+  // this component re-renders on the open/close edge alone.
+  const [slashStore] = useState(() => createValueStore<SlashTrigger | null>(null));
+  const setSlashTrigger = slashStore.set;
+  const slashOpen = useSyncExternalStore(slashStore.subscribe, () => slashStore.get() !== null);
   // A picker left open across an agent switch must not inherit the open
   // state; each agent's catalogue swaps in via `agentSlashCommands` above.
   useEffect(() => {
-    setSlashTrigger(null);
-  }, [agentType]);
+    slashStore.set(null);
+  }, [agentType, slashStore]);
   const slashPickerRef = useRef<SlashCommandPickerHandle>(null);
-  const slashTriggerRef = useRef<SlashTrigger | null>(null);
-  slashTriggerRef.current = slashTrigger;
 
   /** The agent's own words from the last auth failure, so a later `/login`
    *  can pass them along — the modal uses `reason` to tell "wants a provider
@@ -1262,7 +1277,7 @@ export function MessageInput({
     stagedImages.length === 0 &&
     queue.length === 0 &&
     trigger === null &&
-    slashTrigger === null &&
+    !slashOpen &&
     githubSyncing === null &&
     !isDropTarget;
   const collapsed = collapsible && !composerFocused;
@@ -1503,7 +1518,7 @@ export function MessageInput({
 
   const handleSlashSelect = useCallback(
     (cmd: SlashCommand) => {
-      const t = slashTriggerRef.current;
+      const t = slashStore.get();
       const input = inputRef.current;
       if (!t || !input) return;
       // An Atlas-local command leaves no literal `/login` behind.
@@ -1587,7 +1602,7 @@ export function MessageInput({
     (key: "Up" | "Down" | "Enter" | "Escape" | "Backspace" | "Tab") => {
       // Slash takes precedence when both happen to be open.
       const sp = slashPickerRef.current;
-      const st = slashTriggerRef.current;
+      const st = slashStore.get();
       if (st && sp) {
         switch (key) {
           case "Up":
@@ -2296,13 +2311,11 @@ export function MessageInput({
         />
       )}
       {LazySlashPicker && (
-        <LazySlashPicker
-          ref={slashPickerRef}
-          open={slashTrigger !== null}
-          query={slashTrigger?.query ?? ""}
-          anchor={slashTrigger?.anchor ?? null}
+        <SlashPickerHost
+          Picker={LazySlashPicker}
+          store={slashStore}
+          pickerRef={slashPickerRef}
           onSelect={handleSlashSelect}
-          onClose={() => setSlashTrigger(null)}
           commands={agentSlashCommands}
           loading={slashCommandsLoading}
           // One resolver instead of an if-ladder that missed the native agent
@@ -2313,6 +2326,58 @@ export function MessageInput({
     </div>
   );
 }
+
+/** A value outside React that components subscribe to with
+ *  `useSyncExternalStore`, so a change re-renders only its subscribers. */
+function createValueStore<T>(initial: T) {
+  let value = initial;
+  const listeners = new Set<() => void>();
+  return {
+    get: () => value,
+    set: (next: T) => {
+      if (Object.is(next, value)) return;
+      value = next;
+      for (const l of listeners) l();
+    },
+    subscribe: (l: () => void) => {
+      listeners.add(l);
+      return () => {
+        listeners.delete(l);
+      };
+    },
+  };
+}
+
+type ValueStore<T> = ReturnType<typeof createValueStore<T>>;
+
+/** The slash picker, fed from the trigger store: per keystroke, only this
+ *  re-renders. Memoized so the composer's own re-renders pass it by. */
+const SlashPickerHost = memo(function SlashPickerHost({
+  Picker,
+  store,
+  pickerRef,
+  ...rest
+}: {
+  Picker: typeof SlashCommandPickerComponent;
+  store: ValueStore<SlashTrigger | null>;
+  pickerRef: Ref<SlashCommandPickerHandle>;
+  onSelect: (cmd: SlashCommand) => void;
+  commands: SlashCommand[];
+  loading: boolean;
+  footerLabel: string;
+}) {
+  const trigger = useSyncExternalStore(store.subscribe, store.get);
+  return (
+    <Picker
+      ref={pickerRef}
+      open={trigger !== null}
+      query={trigger?.query ?? ""}
+      anchor={trigger?.anchor ?? null}
+      onClose={() => store.set(null)}
+      {...rest}
+    />
+  );
+});
 
 function QueueChip({
   text,
