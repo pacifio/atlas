@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
  *
  * This is the one check that can, and only where it can: on a machine that has
  * the server checkout beside this one (`../server`), the two copies must be
- * byte-identical. Elsewhere — CI included — it passes trivially; the point is
+ * identical, line endings aside. Elsewhere — CI included — it passes trivially; the point is
  * that a developer re-copying one fixture and not the other hears about it
  * before the drift ships. Any mismatch is fixed by re-copying from the server.
  */
@@ -29,8 +29,10 @@ describe("RC wire fixtures are the server's, byte for byte", () => {
 
   it.skipIf(!serverPresent)("every fixture matches its server copy", () => {
     for (const f of FIXTURES) {
-      const ours = readFileSync(path.join(LOCAL, f), "utf8");
-      const theirs = readFileSync(path.join(SERVER, f), "utf8");
+      // Line endings aside: a Windows checkout with `core.autocrlf` writes
+      // CRLF into the working tree while git holds the same LF bytes.
+      const ours = readFileSync(path.join(LOCAL, f), "utf8").replace(/\r\n/g, "\n");
+      const theirs = readFileSync(path.join(SERVER, f), "utf8").replace(/\r\n/g, "\n");
       expect(ours, `${f} differs from the server's — re-copy it`).toBe(theirs);
     }
   });

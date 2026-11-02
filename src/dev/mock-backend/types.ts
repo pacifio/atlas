@@ -9,6 +9,7 @@ import type { FsResponses } from "./fixtures/files";
 import type { GitResponses } from "./fixtures/git";
 import type { IconThemeResponses } from "./fixtures/icon-themes";
 import type { InboxResponses } from "./fixtures/inbox";
+import type { OrgAgentResponses } from "./fixtures/org-agent";
 import type { IntegrationsResponses } from "./fixtures/integrations";
 import type { KnowledgeResponses } from "./fixtures/knowledge";
 import type { LogResponses } from "./fixtures/log";
@@ -70,6 +71,7 @@ export interface MockResponses
     GitResponses,
     IconThemeResponses,
     InboxResponses,
+    OrgAgentResponses,
     IntegrationsResponses,
     KnowledgeResponses,
     LogResponses,

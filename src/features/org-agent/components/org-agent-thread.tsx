@@ -1,15 +1,15 @@
-// One conversation with the Organisation agent: its messages and the
-// composer under them. Shared by the side panel, the floating messenger and
-// the full page, so a conversation reads the same wherever it is — only the
-// measure changes.
+// One conversation with the Organisation agent: its turns and the composer
+// under them. Shared by the side panel, the floating messenger and the full
+// page, so a conversation reads the same wherever it is — only the measure
+// changes.
 //
-// Data-driven, like the coding agent's thread: an answer draws exactly what
-// the server says about it and nothing it does not — how long the agent
-// thought, the sources it read — then the answer as prose on the page, then
-// what you can do with it (copy, rate, ask again). Your question is the coding
-// chat's bubble.
+// Drawn from the conversation's event log on the server
+// (`org-agent-log.ts`): every turn exactly as the server recorded it — the
+// tools Atlas ran and the records they returned, the approvals it asked for,
+// the answer streaming in — so this window, another window and the web all
+// show the same thing.
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Popover } from "@base-ui/react/popover";
 import { BorderBeam } from "border-beam";
 import {
@@ -19,41 +19,37 @@ import {
   CalendarDays,
   Check,
   ChevronDown,
-  ChevronRight,
-  Copy,
-  FileText,
-  FolderKanban,
   Gauge,
-  Lightbulb,
   MessageSquare,
   MessagesSquare,
-  RotateCcw,
+  Square,
   Telescope,
-  ThumbsDown,
-  ThumbsUp,
   Users,
+  X,
   type LucideIcon,
 } from "lucide-react";
 
 import { useAuthStore } from "@/features/auth/stores/auth-store";
-import { ChatInput, type ChatInputHandle } from "@/features/chat/components/chat-input";
 import { useComposerFold } from "@/features/chat/hooks/use-composer-fold";
 import { useSettingsStore } from "@/features/settings/stores/settings-store";
-import { copyText } from "@/lib/clipboard";
-import { CachedMarkdown } from "@/lib/markdown-cache";
 import { cn } from "@/lib/utils";
+import { Button } from "@/ui/button";
 import { HintGroup, HintItem } from "@/ui/hint-group";
 import { Hint } from "@/ui/tooltip";
 
+import { handleIndex, type OrgAgentTarget } from "../lib/org-agent-links";
+import { durationWords, foldAsk, lastOf } from "../lib/org-agent-log";
+import { openTarget } from "../lib/org-agent-navigate";
+import { ATLAS_EFFORTS, type AtlasEffort } from "../lib/org-agent-types";
 import {
-  ORG_AGENT_DAILY_LIMIT,
-  ORG_AGENT_DEEP_RESEARCH_DAILY,
-  type OrgAgentConversation,
-  type OrgAgentEffort,
-  type OrgAgentMessage,
-  type OrgAgentSource,
-} from "../lib/org-agent-api";
-import { usageToday, useOrgAgentStore } from "../stores/org-agent-store";
+  askBusy,
+  askWaiting,
+  isTempAsk,
+  pendingFor,
+  useOrgAgentStore,
+} from "../stores/org-agent-store";
+import { OrgAgentInput, type OrgAgentInputHandle } from "./org-agent-input";
+import { Notice, PendingTurn, TurnView } from "./org-agent-turn";
 
 /** The starters: the web's three, and the one a team lead asks first. */
 const STARTERS: { text: string; Icon: LucideIcon }[] = [
@@ -63,27 +59,26 @@ const STARTERS: { text: string; Icon: LucideIcon }[] = [
   { text: "Summarise this week's team chat", Icon: MessagesSquare },
 ];
 
-const SOURCE_ICON: Record<OrgAgentSource["kind"], LucideIcon> = {
-  session: FileText,
-  project: FolderKanban,
-  comment: MessageSquare,
-  chat: MessagesSquare,
-  page: FileText,
+/** The levels before the server has said: the contract's own words. */
+const FALLBACK_LEVELS: Record<AtlasEffort, { label: string; blurb: string }> = {
+  low: { label: "Low", blurb: "Quick answer from a few lookups." },
+  medium: { label: "Medium", blurb: "Balanced. Checks the main sources." },
+  high: { label: "High", blurb: "Thorough. Follows more leads." },
+  max: { label: "Max", blurb: "Slowest. Thinks hardest and reads widest." },
 };
 
-const EFFORTS: { value: OrgAgentEffort; label: string; hint: string }[] = [
-  { value: "low", label: "Low", hint: "Quick answers from what is at hand" },
-  { value: "medium", label: "Medium", hint: "Reads around before answering" },
-  { value: "high", label: "High", hint: "Takes its time, reads widely" },
-];
+/** How close to the end still counts as "at the end" for following. */
+const FOLLOW_SLACK_PX = 80;
+
+const EMPTY_VOTES: Record<number, "up" | "down"> = {};
 
 export function OrgAgentThread({
-  conversation,
+  askId,
   size,
   topInset,
   autoFocus,
 }: {
-  conversation: OrgAgentConversation;
+  askId: string;
   /** `compact` in the side panel and the messenger, `page` full page. */
   size: "compact" | "page";
   /** A header floating over the top (any CSS length): the content starts
@@ -91,74 +86,188 @@ export function OrgAgentThread({
   topInset?: string;
   autoFocus?: boolean;
 }) {
-  const pending = useOrgAgentStore((s) => s.pending.includes(conversation.id));
-  const { send } = useOrgAgentStore.use.actions();
+  const log = useOrgAgentStore((s) => s.logs[askId]);
+  const summary = useOrgAgentStore((s) => s.asks[askId]);
+  const outbox = useOrgAgentStore.use.outbox();
+  const loading = useOrgAgentStore((s) => s.loading.includes(askId));
+  const loadError = useOrgAgentStore((s) => s.loadErrors[askId]);
+  const votes = useOrgAgentStore((s) => s.votes[askId] ?? EMPTY_VOTES);
+  const { send, openAsk, stop } = useOrgAgentStore.use.actions();
   const scroller = useRef<HTMLDivElement>(null);
+  const atEnd = useRef(true);
   const page = size === "page";
   const measure = page ? "mx-auto w-full max-w-[760px] px-6" : "px-4";
+  const temp = isTempAsk(askId);
 
-  // Follow the end: a new message, or the answer landing.
+  // Read the conversation the first time it is shown here.
+  useEffect(() => {
+    if (!temp && !log) void openAsk(askId);
+  }, [askId, temp, log, openAsk]);
+
+  const view = useMemo(() => foldAsk(log?.events ?? []), [log?.events]);
+  const handles = useMemo(() => handleIndex(view.cards), [view.cards]);
+  const pending = useMemo(() => pendingFor(outbox, askId), [outbox, askId]);
+  const status = log?.ask.status ?? summary?.status ?? "idle";
+  const running = useOrgAgentStore((s) => askBusy(s, askId) || askWaiting(s, askId));
+  const lastTurn = lastOf(view.turns);
+  const onOpen = useCallback((target: OrgAgentTarget) => openTarget(target), []);
+
+  // Follow the end while the reader is there; leave them be once they have
+  // scrolled up to read.
   useLayoutEffect(() => {
     const el = scroller.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [conversation.messages.length, pending]);
+    if (el && atEnd.current) el.scrollTop = el.scrollHeight;
+  }, [log?.events.length, pending.length, status]);
+  const onScroll = () => {
+    const el = scroller.current;
+    if (el) atEnd.current = el.scrollHeight - el.scrollTop - el.clientHeight < FOLLOW_SLACK_PX;
+  };
 
-  const empty = conversation.messages.length === 0;
-  const lastAnswer = [...conversation.messages].reverse().find((m) => m.role === "assistant");
+  const empty = view.turns.length === 0 && pending.length === 0;
+  const onSend = (text: string, mentions: ReturnType<OrgAgentInputHandle["getMentions"]>) => {
+    const s = useOrgAgentStore.getState();
+    atEnd.current = true;
+    send(askId, text, { mentions, effort: s.effort, deepResearch: s.deepResearch });
+  };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div
         ref={scroller}
+        onScroll={onScroll}
         className="hide-scrollbar flex min-h-0 flex-1 flex-col overflow-y-auto"
         // Past the header and its blur band, or the first message sits under
         // the bar, permanently blurred.
         style={topInset ? { paddingTop: `calc(${topInset} + ${page ? 34 : 8}px)` } : undefined}
       >
         {empty ? (
-          <Welcome onPick={(q) => send(conversation.id, q)} />
+          temp ? (
+            <Welcome onPick={(q) => onSend(q, [])} />
+          ) : loadError ? (
+            <div className={cn(measure, "py-6")}>
+              <Notice tone="error">
+                <span className="min-w-0 flex-1">{loadError}</span>
+                <Button size="xs" variant="outline" onClick={() => void openAsk(askId)}>
+                  Try again
+                </Button>
+              </Notice>
+            </div>
+          ) : (
+            <ThreadSkeleton measure={measure} busy={loading || !log} />
+          )
         ) : (
-          <div className={cn(measure, "flex flex-col gap-6", page ? "py-8" : "py-5")}>
-            {conversation.messages.map((m) =>
-              m.role === "user" ? (
-                <Question key={m.id} message={m} />
-              ) : (
-                <Answer
-                  key={m.id}
-                  conversationId={conversation.id}
-                  message={m}
-                  last={m.id === lastAnswer?.id && !pending}
-                />
-              ),
+          <div className={cn(measure, "flex flex-col gap-7", page ? "py-8" : "py-5")}>
+            {view.compactedThrough !== null && (
+              <p className="text-center text-2xs text-muted-foreground">
+                Earlier messages were summarised for Atlas; they are all still here.
+              </p>
             )}
-            {pending && <Thinking />}
+            {view.turns.map((turn) => (
+              <TurnView
+                key={turn.key}
+                askId={askId}
+                turn={turn}
+                status={status}
+                live={turn === lastTurn}
+                last={turn === lastTurn && pending.length === 0}
+                handles={handles}
+                vote={turn.doneSeq !== null ? (votes[turn.doneSeq] ?? null) : null}
+                onOpen={onOpen}
+              />
+            ))}
+            {pending.map((p) => (
+              <PendingTurn key={p.clientMsgId} pending={p} />
+            ))}
           </div>
         )}
       </div>
       <div
         className={cn("shrink-0", page ? "mx-auto w-full max-w-[760px] px-6 pb-5" : "px-3 pb-3")}
       >
+        <ConnectionLine />
         <Composer
           compact={!page}
-          working={pending}
+          working={running}
+          canStop={!temp && status !== "idle"}
+          onStop={() => stop(askId)}
           autoFocus={autoFocus}
-          onSend={(text) => send(conversation.id, text)}
+          onSend={onSend}
         />
       </div>
     </div>
   );
 }
 
+function ThreadSkeleton({ measure, busy }: { measure: string; busy: boolean }) {
+  return (
+    <div
+      className={cn(measure, "flex flex-col gap-4 py-8", busy && "animate-pulse")}
+      aria-busy={busy}
+    >
+      <div className="ml-auto h-9 w-1/2 rounded-xl bg-element-hover" />
+      <div className="h-3 w-2/3 rounded bg-element-hover" />
+      <div className="h-3 w-5/6 rounded bg-element-hover" />
+      <div className="h-3 w-1/2 rounded bg-element-hover" />
+    </div>
+  );
+}
+
+/** Why the agent cannot answer right now, when it cannot. */
+function ConnectionLine() {
+  const connection = useOrgAgentStore.use.connection();
+  const atlas = useOrgAgentStore.use.atlas();
+  const error = useOrgAgentStore.use.error();
+  const { clearError } = useOrgAgentStore.use.actions();
+  const signedIn = useAuthStore((s) => s.snapshot.status === "signed-in");
+
+  let line: React.ReactNode = null;
+  if (!signedIn)
+    line = <Notice tone="info">Sign in to Atlas to ask about your team's work.</Notice>;
+  else if (connection === "disconnected")
+    line = <Notice tone="info">Choose an organisation to ask Atlas about its work.</Notice>;
+  else if (atlas && !atlas.enabled)
+    line = <Notice tone="warning">Atlas is turned off for this organisation.</Notice>;
+  else if (connection === "unavailable")
+    line = (
+      <Notice tone="warning">
+        <span className="min-w-0 flex-1">Atlas is not available to you in this organisation.</span>
+        <Button
+          size="xs"
+          variant="outline"
+          onClick={() => void import("../lib/org-agent-api").then((m) => m.orgAgent.reconnect())}
+        >
+          Try again
+        </Button>
+      </Notice>
+    );
+  else if (connection === "connecting" || connection === "backoff")
+    line = <p className="px-1 pb-2 text-2xs text-muted-foreground">Connecting to Atlas…</p>;
+  else if (error)
+    line = (
+      <Notice tone="error">
+        <span className="min-w-0 flex-1">{error.message}</span>
+        <button
+          type="button"
+          aria-label="Dismiss"
+          onClick={clearError}
+          className="cursor-pointer text-muted-foreground hover:text-foreground"
+        >
+          <X size={12} />
+        </button>
+      </Notice>
+    );
+  if (!line) return null;
+  return <div className="pb-2">{line}</div>;
+}
+
 // ── The empty conversation ──────────────────────────────────────────────────
 
-/** The coding agent's welcome (`chat-panel.tsx`), asked of the Organisation:
- *  the greeting, the question, and four places to start — stacked, so each
- *  reads as a whole sentence at the side panel's width. */
 function Welcome({ onPick }: { onPick: (question: string) => void }) {
   const snapshot = useAuthStore.use.snapshot();
   const firstName =
     snapshot.status === "signed-in" ? snapshot.user?.name.trim().split(/\s+/)[0] : undefined;
   const greeting = firstName ? `Hi, ${firstName} 👋` : "Welcome back 👋";
+  const ready = useOrgAgentStore((s) => s.connection === "open");
 
   return (
     <div className="flex flex-1 items-center justify-center px-5 py-8">
@@ -172,8 +281,9 @@ function Welcome({ onPick }: { onPick: (question: string) => void }) {
             <button
               key={text}
               type="button"
+              disabled={!ready}
               onClick={() => onPick(text)}
-              className="group flex cursor-pointer items-center gap-3 rounded-xl border border-border bg-card p-2.5 text-left transition-all duration-150 hover:border-border-strong hover:bg-muted"
+              className="group flex cursor-pointer items-center gap-3 rounded-xl border border-border bg-card p-2.5 text-left transition-all duration-150 hover:border-border-strong hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
             >
               <span className="grid size-7 shrink-0 place-items-center rounded-lg border border-border-subtle bg-card text-muted-foreground transition-colors group-hover:text-foreground">
                 <Icon size={13} />
@@ -193,195 +303,8 @@ function Welcome({ onPick }: { onPick: (question: string) => void }) {
   );
 }
 
-// ── Messages ────────────────────────────────────────────────────────────────
-
-function Question({ message }: { message: OrgAgentMessage }) {
-  return (
-    <div className="flex justify-end pl-10">
-      <div
-        className={cn(
-          // The coding chat's bubble (`transcript-rows.tsx`).
-          // ratchet-allow: 20px sits above the `rounded-*` scale (xl = 12px), and a
-          // full radius would turn a many-line bubble into an ellipse.
-          "min-w-0 max-w-full rounded-[20px] bg-[var(--atlas-primary-muted)] px-4 py-2.5 select-text",
-        )}
-      >
-        <CachedMarkdown source={message.text} unstyled className="atlas-prose atlas-prose--user" />
-      </div>
-    </div>
-  );
-}
-
-function Answer({
-  conversationId,
-  message,
-  last,
-}: {
-  conversationId: string;
-  message: OrgAgentMessage;
-  /** The newest answer: the only one that can be asked again. */
-  last: boolean;
-}) {
-  const { setFeedback, retry } = useOrgAgentStore.use.actions();
-  const [copied, setCopied] = useState(false);
-  useEffect(() => {
-    if (!copied) return;
-    const t = setTimeout(() => setCopied(false), 1400);
-    return () => clearTimeout(t);
-  }, [copied]);
-
-  const thought =
-    message.thoughtMs !== undefined ? Math.max(1, Math.round(message.thoughtMs / 1000)) : null;
-  const sources = message.sources ?? [];
-
-  return (
-    <div className="flex flex-col gap-2">
-      {(thought !== null || sources.length > 0) && (
-        <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-          {thought !== null ? (
-            <span className="flex items-center gap-1.5">
-              <Lightbulb size={12} />
-              Thought for {thought} {thought === 1 ? "second" : "seconds"}
-              <ChevronRight size={11} />
-            </span>
-          ) : (
-            <span />
-          )}
-          {sources.length > 0 && <Sources sources={sources} />}
-        </div>
-      )}
-      <div className="min-w-0 select-text">
-        <CachedMarkdown source={message.text} unstyled className="atlas-prose" />
-      </div>
-      <HintGroup side="bottom">
-        <div className="-ml-1.5 flex items-center gap-0.5 text-muted-foreground">
-          <Action
-            label={copied ? "Copied" : "Copy"}
-            icon={copied ? Check : Copy}
-            onClick={() => void copyText(message.text).then(setCopied)}
-          />
-          <Action
-            label="Good answer"
-            icon={ThumbsUp}
-            on={message.feedback === "up"}
-            onClick={() =>
-              setFeedback(conversationId, message.id, message.feedback === "up" ? null : "up")
-            }
-          />
-          <Action
-            label="Bad answer"
-            icon={ThumbsDown}
-            on={message.feedback === "down"}
-            onClick={() =>
-              setFeedback(conversationId, message.id, message.feedback === "down" ? null : "down")
-            }
-          />
-          {last && (
-            <Action label="Ask again" icon={RotateCcw} onClick={() => retry(conversationId)} />
-          )}
-        </div>
-      </HintGroup>
-    </div>
-  );
-}
-
-function Action({
-  label,
-  icon: Glyph,
-  on,
-  onClick,
-}: {
-  label: string;
-  icon: LucideIcon;
-  on?: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <HintItem label={label}>
-      <button
-        type="button"
-        aria-label={label}
-        aria-pressed={on}
-        onClick={onClick}
-        className={cn(
-          "flex size-6 cursor-pointer items-center justify-center rounded-md transition-colors duration-fast hover:bg-element-hover hover:text-foreground",
-          on && "text-foreground",
-        )}
-      >
-        <Glyph size={13} fill={on ? "currentColor" : "none"} />
-      </button>
-    </HintItem>
-  );
-}
-
-/** "N sources", their glyphs stacked, opening the list of what was read. */
-function Sources({ sources }: { sources: OrgAgentSource[] }) {
-  return (
-    <Popover.Root>
-      <Popover.Trigger
-        render={
-          <button
-            type="button"
-            className="flex cursor-pointer items-center gap-1.5 rounded-full border border-border bg-card py-0.5 pr-2 pl-1 transition-colors hover:text-foreground"
-          >
-            <span className="flex -space-x-1">
-              {sources.slice(0, 3).map((source, i) => {
-                const Glyph = SOURCE_ICON[source.kind] ?? FileText;
-                return (
-                  <span
-                    key={i}
-                    className="grid size-4 place-items-center rounded-full bg-element-active ring-1 ring-card"
-                  >
-                    <Glyph size={9} />
-                  </span>
-                );
-              })}
-            </span>
-            {sources.length} {sources.length === 1 ? "source" : "sources"}
-          </button>
-        }
-      />
-      <Popover.Portal>
-        <Popover.Positioner className="z-popover" side="bottom" align="end" sideOffset={6}>
-          <Popover.Popup className="w-[260px] origin-[var(--transform-origin)] overflow-hidden rounded-xl border border-border bg-background p-1 text-foreground shadow-lg data-closed:animate-scale-out data-open:animate-scale-in">
-            {sources.map((source, i) => {
-              const Glyph = SOURCE_ICON[source.kind] ?? FileText;
-              return (
-                <a
-                  key={i}
-                  href={source.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-secondary-foreground transition-colors hover:bg-element-hover hover:text-foreground"
-                >
-                  <Glyph size={12} className="shrink-0 text-muted-foreground" />
-                  <span className="truncate">{source.title}</span>
-                </a>
-              );
-            })}
-          </Popover.Popup>
-        </Popover.Positioner>
-      </Popover.Portal>
-    </Popover.Root>
-  );
-}
-
-function Thinking() {
-  return (
-    <div
-      className="flex animate-pulse items-center gap-1.5 text-sm text-muted-foreground"
-      aria-live="polite"
-    >
-      <Lightbulb size={12} />
-      Thinking…
-    </div>
-  );
-}
-
 // ── Composer ────────────────────────────────────────────────────────────────
 
-/** The capsule's radius: half the card's 46px (44px of field and a 1px rim
- *  either side), the coding composer's `rounded-composer`. */
 const CAPSULE_RADIUS = 23;
 const CARD_RADIUS = 12;
 
@@ -397,28 +320,28 @@ function pill(on: boolean): string {
 }
 
 /**
- * The coding agent's composer (`message-input.tsx`), built from its own
- * parts: the same editor (`ChatInput`), the same input card — a capsule while
- * it is empty and away, a card while in use, the corner easing between — the
- * same send button pinned in its corner, and the same toolbar tray tucked
- * under it, folding away behind the card (`use-composer-fold.ts`). Only the
- * tray's contents are the agent's: mention, effort and deep research, and
- * today's count. While the agent works, a beam rides the card's bottom edge
- * (libraries.dev's `border-beam`).
+ * The coding agent's composer, built from its parts: the same input card — a
+ * capsule while empty and away, a card in use — the same send button, and the
+ * same tray folding away under it. The tray is the agent's: mention, the
+ * effort level, Deep research, and today's count. While the agent works, a
+ * beam rides the card's edge and the send button becomes Stop.
  */
 function Composer({
   compact,
   working,
+  canStop,
+  onStop,
   autoFocus,
   onSend,
 }: {
-  /** The side panel's and the messenger's width: a lighter tray. */
   compact: boolean;
   working: boolean;
+  canStop: boolean;
+  onStop: () => void;
   autoFocus?: boolean;
-  onSend: (text: string) => void;
+  onSend: (text: string, mentions: ReturnType<OrgAgentInputHandle["getMentions"]>) => void;
 }) {
-  const input = useRef<ChatInputHandle>(null);
+  const input = useRef<OrgAgentInputHandle>(null);
   const root = useRef<HTMLDivElement>(null);
   const card = useRef<HTMLDivElement>(null);
   const tray = useRef<HTMLDivElement>(null);
@@ -428,6 +351,9 @@ function Composer({
   const collapsed = empty && !focused;
   const trayShown = useComposerFold(collapsed, card, tray);
   const enterToSend = useSettingsStore((s) => s.settings.enterToSend);
+  const orgId = useOrgAgentStore.use.orgId();
+  const connected = useOrgAgentStore((s) => s.connection === "open");
+  const deepResearch = useOrgAgentStore.use.deepResearch();
 
   useEffect(() => {
     if (autoFocus) input.current?.focus();
@@ -435,17 +361,14 @@ function Composer({
 
   const submit = () => {
     const text = input.current?.getValue().trim() ?? "";
-    if (!text || working) return;
-    onSend(text);
+    if (!text || !connected) return;
+    onSend(text, input.current?.getMentions() ?? []);
     input.current?.clear();
   };
 
-  // What folds it, as in the coding composer (`message-input.tsx`): focus
-  // moving to something ELSE, a press outside it, or Esc. Not focus merely
-  // dropping to <body> — WebKit does not focus a pressed button, so that
-  // would fold the tray out from under its own pill. Never while one of its
-  // menus is open (they live in a portal), nor when the window lost focus.
-  const menuOpen = () => !!root.current?.querySelector("[data-popup-open], [aria-expanded='true']");
+  const menuOpen = () =>
+    !!root.current?.querySelector("[data-popup-open], [aria-expanded='true']") ||
+    !!document.querySelector("[data-slot='org-agent-mention-picker']");
   const onBlur = () =>
     requestAnimationFrame(() => {
       if (!document.hasFocus()) return;
@@ -467,13 +390,15 @@ function Composer({
     return () => document.removeEventListener("pointerdown", onPointerDown, true);
   }, [focused]);
 
+  const stopping = working && canStop && empty;
+  const sendLabel = deepResearch ? "Start research" : "Send";
+
   return (
     <div
       ref={root}
       onFocusCapture={() => setFocused(true)}
       onBlurCapture={onBlur}
       onPointerDownCapture={() => setFocused(true)}
-      // A press on the composer's own surface keeps focus where it is.
       onMouseDown={(e) => {
         const target = e.target as Element;
         if (
@@ -507,32 +432,37 @@ function Composer({
             )}
           >
             <div className="pr-[40px]">
-              <ChatInput
+              <OrgAgentInput
                 ref={input}
-                placeholder="Ask Atlas about your team's work…"
+                orgId={orgId}
+                placeholder={
+                  deepResearch ? "What should Atlas research?" : "Ask Atlas about your team's work…"
+                }
                 enterToSend={enterToSend}
                 onSubmit={submit}
                 onEmptyChange={setEmpty}
               />
             </div>
-            {/* No wrapping span: it would sit in flow under the absolute
-                button and grow the card. */}
-            <Hint side="top" wrap={false} label="Send">
+            <Hint side="top" wrap={false} label={stopping ? "Stop" : sendLabel}>
               <button
                 type="button"
-                onClick={submit}
-                disabled={empty || working}
-                aria-label="Send"
-                // The coding composer's send, in px: centred on the first
-                // line at any UI scale.
+                onClick={stopping ? onStop : submit}
+                disabled={!stopping && (empty || !connected)}
+                aria-label={stopping ? "Stop" : sendLabel}
                 className={cn(
                   "absolute top-[8px] right-[8px] flex h-[28px] w-[28px] items-center justify-center rounded-lg border transition-colors",
-                  empty || working
+                  !stopping && (empty || !connected)
                     ? "cursor-not-allowed border-transparent text-[var(--muted-foreground)]"
                     : "cursor-pointer border-transparent text-[var(--foreground)] hover:border-[var(--border)] hover:bg-[var(--atlas-element-hover)]",
                 )}
               >
-                <ArrowUp size={15} strokeWidth={2.5} />
+                {stopping ? (
+                  <Square size={11} fill="currentColor" />
+                ) : deepResearch ? (
+                  <Telescope size={14} />
+                ) : (
+                  <ArrowUp size={15} strokeWidth={2.5} />
+                )}
               </button>
             </Hint>
           </div>
@@ -550,103 +480,127 @@ function Composer({
   );
 }
 
-/** The tray's contents: mention, effort and deep research on the left;
- *  today's count on the right. */
+/** The tray: mention, the level and Deep research on the left; today's
+ *  count on the right. */
 function Tray({ compact, onMention }: { compact: boolean; onMention: () => void }) {
   const effort = useOrgAgentStore.use.effort();
   const deepResearch = useOrgAgentStore.use.deepResearch();
-  const conversations = useOrgAgentStore.use.conversations();
-  const { setEffort, setDeepResearch } = useOrgAgentStore.use.actions();
+  const info = useOrgAgentStore.use.effortInfo();
+  const atlas = useOrgAgentStore.use.atlas();
+  const { setEffort, setDeepResearch, refreshEffort } = useOrgAgentStore.use.actions();
   const [open, setOpen] = useState(false);
-  const { asked, deep } = usageToday(conversations);
-  const deepLeft = Math.max(0, ORG_AGENT_DEEP_RESEARCH_DAILY - deep);
-  const current = EFFORTS.find((e) => e.value === effort) ?? EFFORTS[1];
+
+  // The picker's data, read when the composer opens.
+  useEffect(() => {
+    void refreshEffort();
+  }, [refreshEffort]);
+
+  const levels = ATLAS_EFFORTS.map((e) => {
+    const server = info?.levels.find((l) => l.effort === e);
+    return {
+      value: e,
+      label: server?.label ?? FALLBACK_LEVELS[e].label,
+      blurb: server?.blurb ?? FALLBACK_LEVELS[e].blurb,
+      eta: server ? durationWords(server.eta_seconds) : null,
+    };
+  });
+  const current = levels.find((l) => l.value === effort) ?? levels[1]!;
+  const dr = info?.deep_research;
+  const deepLeft = dr ? dr.remaining : null;
+  const deepAllowed = dr ? dr.allowed && dr.remaining > 0 : true;
+  const deepReason = !dr
+    ? "Deep research"
+    : !dr.allowed
+      ? "Deep research is not available in this organisation"
+      : dr.remaining === 0
+        ? "You have used today's Deep research. It resets at midnight UTC."
+        : `Deep research: ${dr.remaining} of ${dr.per_day} left today · ${durationWords(dr.eta_seconds)}`;
 
   const deepPill = (
-    <HintItem
-      label={
-        deepLeft > 0
-          ? `Deep Research: ${deepLeft} of ${ORG_AGENT_DEEP_RESEARCH_DAILY} left today`
-          : "No Deep Research left today"
-      }
-    >
+    <HintItem label={deepReason}>
       <button
         type="button"
         aria-pressed={deepResearch}
-        disabled={deepLeft === 0 && !deepResearch}
+        disabled={!deepAllowed && !deepResearch}
         onClick={() => setDeepResearch(!deepResearch)}
         className={pill(deepResearch)}
       >
         <Telescope size={11} />
         Deep Research
-        <span className="tabular-nums text-[var(--muted-foreground)]">{deepLeft}</span>
+        {deepLeft !== null && (
+          <span className="tabular-nums text-[var(--muted-foreground)]">{deepLeft}</span>
+        )}
       </button>
     </HintItem>
   );
 
   return (
-    <>
-      <HintGroup side="top">
-        <div className="flex min-w-0 items-center gap-1">
-          <HintItem label="Mention a session, project or person">
-            <button
-              type="button"
-              aria-label="Mention a session, project or person"
-              onClick={onMention}
-              className={cn(pill(false), "w-6.5 justify-center px-0")}
-            >
-              <AtSign size={12} />
-            </button>
-          </HintItem>
-          <Popover.Root open={open} onOpenChange={setOpen}>
-            <Popover.Trigger
-              render={
-                <button type="button" className={pill(false)}>
-                  <Gauge size={11} />
-                  {current.label}
-                  <ChevronDown size={10} />
-                </button>
-              }
-            />
-            <Popover.Portal>
-              <Popover.Positioner className="z-popover" side="top" align="start" sideOffset={6}>
-                <Popover.Popup className="w-[240px] origin-[var(--transform-origin)] overflow-hidden rounded-xl border border-border bg-background p-1 text-foreground shadow-lg data-closed:animate-scale-out data-open:animate-scale-in">
-                  {EFFORTS.map((e) => (
-                    <button
-                      key={e.value}
-                      type="button"
-                      onClick={() => {
-                        setEffort(e.value);
-                        setOpen(false);
-                      }}
-                      className="flex w-full cursor-pointer items-start gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-element-hover"
-                    >
-                      <span className="flex size-4 shrink-0 items-center justify-center pt-0.5">
-                        {e.value === effort && <Check size={12} />}
+    <HintGroup side="top">
+      <div className="flex min-w-0 items-center gap-1">
+        <HintItem label="Mention a person, conversation, session or project">
+          <button
+            type="button"
+            aria-label="Mention"
+            onClick={onMention}
+            className={cn(pill(false), "w-6.5 justify-center px-0")}
+          >
+            <AtSign size={12} />
+          </button>
+        </HintItem>
+        <Popover.Root open={open} onOpenChange={setOpen}>
+          <Popover.Trigger
+            disabled={deepResearch}
+            render={
+              <button type="button" className={pill(false)} aria-label={`Effort: ${current.label}`}>
+                <Gauge size={11} />
+                {current.label}
+                <ChevronDown size={10} />
+              </button>
+            }
+          />
+          <Popover.Portal>
+            <Popover.Positioner className="z-popover" side="top" align="start" sideOffset={6}>
+              <Popover.Popup className="w-[260px] origin-[var(--transform-origin)] overflow-hidden rounded-xl border border-border bg-background p-1 text-foreground shadow-lg data-closed:animate-scale-out data-open:animate-scale-in">
+                {levels.map((e) => (
+                  <button
+                    key={e.value}
+                    type="button"
+                    onClick={() => {
+                      setEffort(e.value);
+                      setOpen(false);
+                    }}
+                    className="flex w-full cursor-pointer items-start gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-element-hover"
+                  >
+                    <span className="flex size-4 shrink-0 items-center justify-center pt-0.5">
+                      {e.value === effort && <Check size={12} />}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-baseline justify-between gap-2">
+                        <span className="text-sm text-foreground">{e.label}</span>
+                        {e.eta && (
+                          <span className="text-2xs tabular-nums text-muted-foreground">
+                            {e.eta}
+                          </span>
+                        )}
                       </span>
-                      <span className="min-w-0">
-                        <span className="block text-sm text-foreground">{e.label}</span>
-                        <span className="block text-xs text-muted-foreground">{e.hint}</span>
-                      </span>
-                    </button>
-                  ))}
-                </Popover.Popup>
-              </Popover.Positioner>
-            </Popover.Portal>
-          </Popover.Root>
-          {!compact && deepPill}
-        </div>
-        {/* At the side panel's width, today's count gives way: Deep
-            Research takes the right end on its own. */}
-        {compact ? (
-          deepPill
-        ) : (
-          <span className="shrink-0 text-2xs text-[var(--muted-foreground)] tabular-nums">
-            {asked} of {ORG_AGENT_DAILY_LIMIT} today
-          </span>
-        )}
-      </HintGroup>
-    </>
+                      <span className="block text-xs text-muted-foreground">{e.blurb}</span>
+                    </span>
+                  </button>
+                ))}
+              </Popover.Popup>
+            </Popover.Positioner>
+          </Popover.Portal>
+        </Popover.Root>
+        {!compact && deepPill}
+      </div>
+      {compact
+        ? deepPill
+        : atlas && (
+            <span className="shrink-0 text-2xs tabular-nums text-[var(--muted-foreground)]">
+              {atlas.limits.turns_today} of {atlas.limits.turns_per_day} today
+            </span>
+          )}
+    </HintGroup>
   );
 }
 

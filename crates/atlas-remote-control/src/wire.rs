@@ -583,6 +583,11 @@ pub struct RosterFull {
     /// re-badges the members; absent from a room server that predates it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub member_tier: Option<Tier>,
+    /// Whether members may ask to drive (the owner's Accept requests switch).
+    /// On the roster for the same reason as `member_tier`; absent from a room
+    /// server that predates it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accept_requests: Option<bool>,
     pub driver: DriverRef,
     pub peers: Vec<Peer>,
 }

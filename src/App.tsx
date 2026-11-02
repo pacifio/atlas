@@ -160,6 +160,7 @@ import { refreshProjectTree } from "@/features/explorer/lib/project-tree-model";
 import { toggleTeamChat } from "@/features/layout/lib/team-chat";
 import { toggleDestination } from "@/features/layout/lib/destinations";
 import { toggleAgentPanel } from "@/features/layout/lib/org-agent";
+import { startOrgAgentBridge } from "@/features/org-agent/lib/org-agent-bridge";
 
 // Developer console toggle for session holds (Universal RC groundwork).
 if (isDev) installDevSessionHold();
@@ -405,6 +406,9 @@ export function App() {
   // the roster is only re-sent when somebody comes or goes: a listener that
   // mounted with the panel would miss the one sent when the sockets opened.
   useEffect(() => startTeamPresenceListener(), []);
+  // The organisation agent's socket, into its store, before any of its
+  // views mount: an answer landing with the panel closed is still kept.
+  useEffect(() => startOrgAgentBridge(), []);
   /** The Organisation the presence rosters were heard under. */
   const presenceOrgRef = useRef<string | null>(null);
   useEffect(() => {

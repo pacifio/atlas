@@ -100,8 +100,11 @@ pub fn install(app: &AppHandle) {
     let spaces = {
         let handle = tauri::async_runtime::handle();
         let _guard = handle.inner().enter();
-        atlas_comms::spaces::SpacesManager::new(tokens)
+        atlas_comms::spaces::SpacesManager::new(tokens.clone())
     };
+    // Atlas, the Organisation's agent: its own socket, on the same token
+    // source, following the same Organisation (`retarget`).
+    crate::commands::org_agent::install(app, tokens);
     app.manage(crate::commands::spaces::SpacesState(spaces.clone()));
     let spaces_app = app.clone();
     let mut spaces_rx = spaces.subscribe();
@@ -222,6 +225,7 @@ pub fn retarget(app: &AppHandle, snapshot: &crate::auth::AuthSnapshot) {
             spaces.0.disconnect_all();
         }
     }
+    crate::commands::org_agent::retarget(app, target.as_ref().map(|t| t.org_id.clone()));
     state.0.set_target(target);
 }
 

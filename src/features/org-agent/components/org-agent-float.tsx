@@ -14,23 +14,21 @@ import { EASE_PANEL } from "@/lib/motion";
 import { HintGroup, HintItem } from "@/ui/hint-group";
 import { IconButton } from "@/ui/icon-button";
 
-import { useOrgAgentStore } from "../stores/org-agent-store";
+import { askTitle, useOrgAgentStore } from "../stores/org-agent-store";
 import { OrgAgentThread } from "./org-agent-thread";
 
 export function OrgAgentFloat() {
   const floatingId = useOrgAgentStore.use.floatingId();
-  const conversation = useOrgAgentStore((s) =>
-    s.floatingId ? s.conversations[s.floatingId] : undefined,
-  );
+  const title = useOrgAgentStore((s) => (s.floatingId ? askTitle(s, s.floatingId) : ""));
   const { restoreToPanel, closeFloating } = useOrgAgentStore.use.actions();
 
   return (
     <AnimatePresence>
-      {floatingId && conversation && (
+      {floatingId && (
         <motion.section
           key={floatingId}
           role="dialog"
-          aria-label={conversation.title}
+          aria-label={title}
           initial={{ opacity: 0, y: 12, scale: 0.98 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: 12, scale: 0.98 }}
@@ -39,9 +37,7 @@ export function OrgAgentFloat() {
           className="absolute right-4 bottom-4 z-drawer flex h-[min(600px,calc(100svh-6rem))] w-[400px] flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-lg"
         >
           <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border pr-1.5 pl-4">
-            <p className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
-              {conversation.title}
-            </p>
+            <p className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{title}</p>
             <HintGroup side="top">
               <span className="flex shrink-0 items-center">
                 <HintItem label="Maximise to the side panel">
@@ -50,7 +46,7 @@ export function OrgAgentFloat() {
                     label="Maximise to the side panel"
                     size="md"
                     onClick={() => {
-                      restoreToPanel(conversation.id);
+                      restoreToPanel(floatingId);
                       revealAgentPanel();
                     }}
                   />
@@ -61,7 +57,7 @@ export function OrgAgentFloat() {
               </span>
             </HintGroup>
           </header>
-          <OrgAgentThread conversation={conversation} size="compact" autoFocus />
+          <OrgAgentThread askId={floatingId} size="compact" autoFocus />
         </motion.section>
       )}
     </AnimatePresence>

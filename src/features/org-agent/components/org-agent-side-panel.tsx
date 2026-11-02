@@ -22,16 +22,15 @@ import { cn } from "@/lib/utils";
 import { HintGroup, HintItem } from "@/ui/hint-group";
 import { IconButton } from "@/ui/icon-button";
 
-import { useOrgAgentStore } from "../stores/org-agent-store";
+import { askBusy, askTitle, askWaiting, useOrgAgentStore } from "../stores/org-agent-store";
 import { OrgAgentThread } from "./org-agent-thread";
 
 export function OrgAgentSidePanel() {
-  const conversations = useOrgAgentStore.use.conversations();
   const activeId = useOrgAgentStore.use.activeId();
   const floatingId = useOrgAgentStore.use.floatingId();
   const pageId = useOrgAgentStore.use.pageId();
   const { newChat } = useOrgAgentStore.use.actions();
-  const active = activeId ? conversations[activeId] : undefined;
+  const active = activeId;
 
   // Opened with nothing in it: a fresh conversation, so the panel never
   // opens onto an empty strip.
@@ -40,9 +39,9 @@ export function OrgAgentSidePanel() {
   }, [active, newChat]);
 
   const elsewhere = active
-    ? active.id === floatingId
+    ? active === floatingId
       ? "floating"
-      : active.id === pageId
+      : active === pageId
         ? "page"
         : null
     : null;
@@ -65,12 +64,12 @@ export function OrgAgentSidePanel() {
       />
       {active && elsewhere ? (
         <div className="flex flex-1 flex-col" style={{ paddingTop: "var(--titlebar-height)" }}>
-          <Elsewhere id={active.id} where={elsewhere} />
+          <Elsewhere id={active} where={elsewhere} />
         </div>
       ) : active ? (
         <OrgAgentThread
-          key={active.id}
-          conversation={active}
+          key={active}
+          askId={active}
           size="compact"
           topInset="var(--titlebar-height)"
         />
@@ -83,13 +82,11 @@ export function OrgAgentSidePanel() {
  *  (`pane-tab.tsx`) — icon and title, the selected one filled — with New
  *  right after the last; Minimise and Full screen at the end, plain icons. */
 function TabStrip() {
-  const conversations = useOrgAgentStore.use.conversations();
   const tabs = useOrgAgentStore.use.tabs();
   const activeId = useOrgAgentStore.use.activeId();
   const floatingId = useOrgAgentStore.use.floatingId();
   const pageId = useOrgAgentStore.use.pageId();
   const unread = useOrgAgentStore.use.unread();
-  const pending = useOrgAgentStore.use.pending();
   const { activate, closeTab, newChat, minimise, fullScreen } = useOrgAgentStore.use.actions();
   const stripRef = useRef<HTMLDivElement>(null);
   const edges = useStripEdges(stripRef);
@@ -115,63 +112,66 @@ function TabStrip() {
           className="hide-scrollbar flex min-w-0 shrink items-center gap-0.5 overflow-x-auto"
         >
           {tabs.map((id) => {
-            const conversation = conversations[id];
-            if (!conversation) return null;
             const active = id === activeId;
             const away = id === floatingId ? "floating" : id === pageId ? "full page" : null;
             return (
-              <div
-                key={id}
-                role="tab"
-                tabIndex={0}
-                aria-selected={active}
-                title={away ? `${conversation.title} — open in the ${away}` : conversation.title}
-                onClick={() => activate(id)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    activate(id);
-                  }
-                }}
-                className={cn(
-                  // The window's tab (`pane-tab.tsx`): a status mark on the
-                  // left that turns into the close button on hover, then the
-                  // title.
-                  "group/tab flex h-6 max-w-44 shrink-0 cursor-pointer items-center gap-1.5 rounded-md pr-2 pl-1 text-xs outline-none transition-colors select-none",
-                  "focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset",
-                  active
-                    ? "bg-element-selected text-foreground"
-                    : "text-muted-foreground hover:bg-element-hover hover:text-foreground",
-                )}
-              >
-                <span className="relative flex size-4 shrink-0 items-center justify-center">
-                  <span className="flex items-center justify-center group-hover/tab:invisible">
-                    {pending.includes(id) ? (
-                      <span className="size-1.5 animate-pulse rounded-full bg-foreground" />
-                    ) : unread.includes(id) ? (
-                      <span className="size-1.5 rounded-full bg-primary" />
-                    ) : away === "floating" ? (
-                      <PictureInPicture2 size={14} />
-                    ) : away ? (
-                      <Maximize2 size={13} />
-                    ) : (
-                      <MessageSquare size={14} />
-                    )}
-                  </span>
-                  <button
-                    type="button"
-                    aria-label={`Close ${conversation.title}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      closeTab(id);
+              <TabTitle key={id} id={id}>
+                {(title, busy, waiting) => (
+                  <div
+                    role="tab"
+                    tabIndex={0}
+                    aria-selected={active}
+                    title={away ? `${title} — open in the ${away}` : title}
+                    onClick={() => activate(id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        activate(id);
+                      }
                     }}
-                    className="absolute inset-0 hidden items-center justify-center rounded-sm text-muted-foreground group-hover/tab:flex hover:bg-element-selected hover:text-foreground"
+                    className={cn(
+                      // The window's tab (`pane-tab.tsx`): a status mark on the
+                      // left that turns into the close button on hover, then the
+                      // title.
+                      "group/tab flex h-6 max-w-44 shrink-0 cursor-pointer items-center gap-1.5 rounded-md pr-2 pl-1 text-xs outline-none transition-colors select-none",
+                      "focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset",
+                      active
+                        ? "bg-element-selected text-foreground"
+                        : "text-muted-foreground hover:bg-element-hover hover:text-foreground",
+                    )}
                   >
-                    <X size={12} />
-                  </button>
-                </span>
-                <span className="truncate">{conversation.title}</span>
-              </div>
+                    <span className="relative flex size-4 shrink-0 items-center justify-center">
+                      <span className="flex items-center justify-center group-hover/tab:invisible">
+                        {waiting ? (
+                          <span className="size-1.5 rounded-full bg-warning" />
+                        ) : busy ? (
+                          <span className="size-1.5 animate-pulse rounded-full bg-foreground" />
+                        ) : unread.includes(id) ? (
+                          <span className="size-1.5 rounded-full bg-primary" />
+                        ) : away === "floating" ? (
+                          <PictureInPicture2 size={14} />
+                        ) : away ? (
+                          <Maximize2 size={13} />
+                        ) : (
+                          <MessageSquare size={14} />
+                        )}
+                      </span>
+                      <button
+                        type="button"
+                        aria-label={`Close ${title}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          closeTab(id);
+                        }}
+                        className="absolute inset-0 hidden items-center justify-center rounded-sm text-muted-foreground group-hover/tab:flex hover:bg-element-selected hover:text-foreground"
+                      >
+                        <X size={12} />
+                      </button>
+                    </span>
+                    <span className="truncate">{title}</span>
+                  </div>
+                )}
+              </TabTitle>
             );
           })}
         </div>
@@ -212,6 +212,21 @@ function TabStrip() {
       </div>
     </HintGroup>
   );
+}
+
+/** One tab's title and marks, subscribed per tab so a frame streaming into
+ *  one conversation redraws only its own tab. */
+function TabTitle({
+  id,
+  children,
+}: {
+  id: string;
+  children: (title: string, busy: boolean, waiting: boolean) => React.ReactNode;
+}) {
+  const title = useOrgAgentStore((s) => askTitle(s, id));
+  const busy = useOrgAgentStore((s) => askBusy(s, id));
+  const waiting = useOrgAgentStore((s) => askWaiting(s, id));
+  return <>{children(title, busy, waiting)}</>;
 }
 
 /** What the panel shows for a conversation that is open somewhere else —

@@ -13,7 +13,7 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { Minimize2, PanelLeft, Pin, PinOff, Plus, Share, Trash2 } from "lucide-react";
+import { Minimize2, PanelLeft, Pin, PinOff, Plus, Repeat, Share, Trash2 } from "lucide-react";
 
 import { GradualBlur } from "@/components/gradual-blur";
 import { OrgAvatar } from "@/features/organisations/components/org-switcher";
@@ -29,35 +29,52 @@ import { DestinationActions } from "@/features/layout/components/destination-act
 import { revealAgentPanel } from "@/features/layout/lib/org-agent";
 import { cn } from "@/lib/utils";
 
-import type { OrgAgentConversation } from "../lib/org-agent-api";
-import { conversationsByRecent, useOrgAgentStore } from "../stores/org-agent-store";
+import type { AskSummary } from "../lib/org-agent-types";
+import {
+  askBusy,
+  askTitle,
+  askWaiting,
+  asksByRecent,
+  isTempAsk,
+  useOrgAgentStore,
+} from "../stores/org-agent-store";
+import { OrgAgentLoops } from "./org-agent-loops";
 import { OrgAgentThread } from "./org-agent-thread";
 
 /** The history rail: 90% of the app sidebar's 244px (`app-layout.tsx`). */
 const HISTORY_WIDTH = Math.round(244 * 0.9);
 
 export function OrgAgentPanel() {
-  const conversations = useOrgAgentStore.use.conversations();
+  const asks = useOrgAgentStore.use.asks();
   const pageId = useOrgAgentStore.use.pageId();
+  const pageView = useOrgAgentStore.use.pageView();
   const pinned = useOrgAgentStore.use.pinned();
-  const { newChat, restoreToPanel } = useOrgAgentStore.use.actions();
+  const asksLoaded = useOrgAgentStore.use.asksLoaded();
+  const asksCursor = useOrgAgentStore.use.asksCursor();
+  const asksError = useOrgAgentStore.use.asksError();
+  const connection = useOrgAgentStore.use.connection();
+  const { newChat, restoreToPanel, loadAsks, loadMoreAsks, setPageView } =
+    useOrgAgentStore.use.actions();
   const [collapsed, setCollapsed] = useState(false);
   const reduceMotion = useReducedMotion();
   const org = useOrgStore((s) => s.organisations.find((o) => o.id === s.activeOrganisationId));
-  const selected = pageId ? conversations[pageId] : undefined;
+  const selected = pageId;
+  const selectedTitle = useOrgAgentStore((s) => (pageId ? askTitle(s, pageId) : ""));
+  const loops = pageView === "loops";
 
-  const pinnedList = pinned
-    .map((id) => conversations[id])
-    .filter((c): c is OrgAgentConversation => !!c);
-  const recents = conversationsByRecent(conversations).filter(
-    (c) => !pinned.includes(c.id) && (c.messages.length > 0 || c.id === pageId),
-  );
+  const pinnedList = pinned.map((id) => asks[id]).filter((a): a is AskSummary => !!a);
+  const recents = asksByRecent(asks).filter((a) => !pinned.includes(a.id));
+
+  // The history, read when the page opens on a live socket.
+  useEffect(() => {
+    if (connection === "open" && !asksLoaded) void loadAsks();
+  }, [connection, asksLoaded, loadAsks]);
 
   // Arriving with nothing chosen: a fresh conversation, as the web opens on
   // "New conversation".
   useEffect(() => {
-    if (!selected) newChat({ on: "page" });
-  }, [selected, newChat]);
+    if (!selected && !loops) newChat({ on: "page" });
+  }, [selected, loops, newChat]);
 
   return (
     // A rule along the top, under the window's bar, as the Timeline has.
@@ -66,13 +83,13 @@ export function OrgAgentPanel() {
     // it, so the two read as a rail and the thing it holds.
     // The top rule matches the divider below it: the rail divider's colour.
     <div className="flex h-full min-h-0 border-t border-[var(--atlas-rail-divider)] bg-sidebar">
-      {selected && (
+      {selected && !loops && (
         <DestinationActions>
           <GlassIconButton
             icon={Minimize2}
             label="Back to the side panel"
             onClick={() => {
-              restoreToPanel(selected.id);
+              restoreToPanel(selected);
               revealAgentPanel();
             }}
           />
@@ -105,6 +122,20 @@ export function OrgAgentPanel() {
             />
           </div>
           <div className="hide-scrollbar flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-2 pt-2 pb-4">
+            <button
+              type="button"
+              onClick={() => setPageView(loops ? "chat" : "loops")}
+              aria-current={loops ? "page" : undefined}
+              className={cn(
+                "flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors duration-fast",
+                loops
+                  ? "bg-element-active text-foreground"
+                  : "text-secondary-foreground hover:bg-element-hover",
+              )}
+            >
+              <Repeat size={13} className="shrink-0 text-muted-foreground" />
+              Loops
+            </button>
             {pinnedList.length > 0 && (
               <Section label="Pinned">
                 {pinnedList.map((c) => (
@@ -121,13 +152,26 @@ export function OrgAgentPanel() {
                 ))}
               </Section>
             ) : recents.length === 0 ? (
-              <p className="px-2 py-1 text-sm text-muted-foreground">No conversations yet.</p>
+              <p className="px-2 py-1 text-sm text-muted-foreground">
+                {!asksLoaded && connection === "open"
+                  ? "Loading…"
+                  : (asksError ?? "No conversations yet.")}
+              </p>
             ) : (
               <ul className="flex flex-col gap-px">
                 {recents.map((c) => (
                   <Row key={c.id} conversation={c} pinned={false} />
                 ))}
               </ul>
+            )}
+            {asksCursor && (
+              <button
+                type="button"
+                onClick={() => void loadMoreAsks()}
+                className="cursor-pointer self-start px-2.5 text-xs text-muted-foreground hover:text-foreground"
+              >
+                Show older
+              </button>
             )}
           </div>
         </div>
@@ -168,16 +212,21 @@ export function OrgAgentPanel() {
             )}
           </AnimatePresence>
           <p className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
-            {selected && selected.messages.length > 0 ? selected.title : "New conversation"}
+            {loops
+              ? "Loops"
+              : selected && !isTempAsk(selected)
+                ? selectedTitle
+                : "New conversation"}
           </p>
-          {selected && selected.messages.length > 0 && (
+          {!loops && selected && !isTempAsk(selected) && (
             <GlassIconButton
               icon={Share}
               label="Copy link"
               onClick={() => {
-                // The web's conversation, by id — the server's link once it
-                // holds the history (`org-agent-api.ts`).
-                void copyText(`https://app.tryatlas.cc/agent?c=${selected.id}`).then((ok) =>
+                // The same conversation on the web: only its owner can open it.
+                void copyText(
+                  `https://app.tryatlas.cc/agent?ask=${encodeURIComponent(selected)}`,
+                ).then((ok) =>
                   ok ? toast.success("Link copied") : toast.error("Could not copy the link"),
                 );
               }}
@@ -193,8 +242,15 @@ export function OrgAgentPanel() {
           tint="color-mix(in srgb, var(--background) 90%, transparent)"
           className="z-panel"
         />
-        {selected && (
-          <OrgAgentThread key={selected.id} conversation={selected} size="page" topInset="48px" />
+        {loops ? (
+          <div
+            // Clear of the header and its blur band, as the thread is.
+            className="hide-scrollbar min-h-0 flex-1 overflow-y-auto pt-16"
+          >
+            <OrgAgentLoops />
+          </div>
+        ) : (
+          selected && <OrgAgentThread key={selected} askId={selected} size="page" topInset="48px" />
         )}
       </section>
     </div>
@@ -215,15 +271,20 @@ function Section({ label, children }: { label: string; children: React.ReactNode
   );
 }
 
-function Row({ conversation: c, pinned }: { conversation: OrgAgentConversation; pinned: boolean }) {
+function Row({ conversation: c, pinned }: { conversation: AskSummary; pinned: boolean }) {
   const pageId = useOrgAgentStore.use.pageId();
+  const pageView = useOrgAgentStore.use.pageView();
   const unread = useOrgAgentStore((s) => s.unread.includes(c.id));
-  const pending = useOrgAgentStore((s) => s.pending.includes(c.id));
+  const busy = useOrgAgentStore((s) => askBusy(s, c.id));
+  const waiting = useOrgAgentStore((s) => askWaiting(s, c.id));
+  const title = useOrgAgentStore((s) => askTitle(s, c.id));
   const { openOnPage, togglePin, deleteConversation } = useOrgAgentStore.use.actions();
-  const active = c.id === pageId;
+  const [confirming, setConfirming] = useState(false);
+  const active = c.id === pageId && pageView === "chat";
+  const temp = isTempAsk(c.id);
 
   return (
-    <li className="group/item relative">
+    <li className="group/item relative" data-slot="org-agent-history-row">
       <button
         type="button"
         onClick={() => openOnPage(c.id)}
@@ -243,10 +304,15 @@ function Row({ conversation: c, pinned }: { conversation: OrgAgentConversation; 
               active ? "text-foreground" : "text-secondary-foreground",
             )}
           >
-            {c.title}
+            {title}
           </span>
           <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            {pending ? (
+            {waiting ? (
+              <span
+                aria-label="Waiting for you"
+                className="size-1.5 shrink-0 rounded-full bg-warning"
+              />
+            ) : busy ? (
               <span
                 aria-hidden
                 className="size-1.5 shrink-0 animate-pulse rounded-full bg-foreground"
@@ -254,32 +320,67 @@ function Row({ conversation: c, pinned }: { conversation: OrgAgentConversation; 
             ) : unread ? (
               <span aria-label="Unread" className="size-1.5 shrink-0 rounded-full bg-primary" />
             ) : null}
-            <span title={formatDateTime(c.updatedAt)}>
-              {pending
-                ? "Thinking…"
-                : timeAgo(new Date(c.updatedAt).toISOString(), { suffix: true })}
+            <span title={formatDateTime(c.updated_at)}>
+              {waiting
+                ? "Waiting for you"
+                : busy
+                  ? "Working…"
+                  : timeAgo(new Date(c.updated_at).toISOString(), { suffix: true })}
             </span>
           </span>
         </span>
       </button>
-      {c.messages.length > 0 && (
-        <span className="absolute top-1.5 right-1.5 flex items-center opacity-0 transition-opacity group-hover/item:opacity-100 focus-within:opacity-100">
-          <button
-            type="button"
-            aria-label={pinned ? `Unpin ${c.title}` : `Pin ${c.title}`}
-            onClick={() => togglePin(c.id)}
-            className="flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-element-hover hover:text-foreground"
-          >
-            {pinned ? <PinOff size={12} /> : <Pin size={12} />}
-          </button>
-          <button
-            type="button"
-            aria-label={`Delete ${c.title}`}
-            onClick={() => deleteConversation(c.id)}
-            className="flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-element-hover hover:text-foreground"
-          >
-            <Trash2 size={12} />
-          </button>
+      {!temp && (
+        <span
+          className={cn(
+            "absolute top-1.5 right-1.5 flex items-center transition-opacity group-hover/item:opacity-100 focus-within:opacity-100",
+            confirming ? "opacity-100" : "opacity-0",
+          )}
+        >
+          {confirming ? (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirming(false);
+                  void deleteConversation(c.id).catch((e) =>
+                    toast.error(
+                      e instanceof Error ? e.message : "Could not delete the conversation",
+                    ),
+                  );
+                }}
+                className="flex h-6 cursor-pointer items-center rounded-md bg-error-muted px-1.5 text-2xs text-error hover:opacity-90"
+              >
+                Delete
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirming(false)}
+                className="flex h-6 cursor-pointer items-center rounded-md px-1.5 text-2xs text-muted-foreground hover:bg-element-hover"
+              >
+                Keep
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                aria-label={pinned ? `Unpin ${title}` : `Pin ${title}`}
+                onClick={() => togglePin(c.id)}
+                className="flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-element-hover hover:text-foreground"
+              >
+                {pinned ? <PinOff size={12} /> : <Pin size={12} />}
+              </button>
+              <button
+                type="button"
+                aria-label={`Delete ${title}`}
+                onClick={() => setConfirming(true)}
+                className="flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-element-hover hover:text-foreground"
+              >
+                <Trash2 size={12} />
+              </button>
+            </>
+          )}
         </span>
       )}
     </li>

@@ -226,6 +226,31 @@ impl RestClient {
         }
     }
 
+    /// One call answered as plain JSON, for a door whose shapes are the
+    /// renderer's to read (the org agent's REST surface): `Null` for a `204`
+    /// or an empty body. A `401` is retried once with a fresh token, since the
+    /// cached one may have been minted just before it expired.
+    pub async fn raw(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        org: &str,
+        body: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        let mut res = self
+            .request(method.clone(), path, org, body.clone())
+            .await?;
+        if res.status() == reqwest::StatusCode::UNAUTHORIZED {
+            res = self.request(method, path, org, body).await?;
+        }
+        let res = Self::check(res).await?;
+        let bytes = res.bytes().await?;
+        if bytes.iter().all(u8::is_ascii_whitespace) {
+            return Ok(serde_json::Value::Null);
+        }
+        serde_json::from_slice(&bytes).map_err(|e| CommsError::Protocol(e.to_string()))
+    }
+
     async fn json<T: serde::de::DeserializeOwned>(
         &self,
         method: reqwest::Method,

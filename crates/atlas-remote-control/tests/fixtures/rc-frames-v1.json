@@ -537,6 +537,7 @@
         "driverEpoch": 1,
         "ownerOnline": true,
         "memberTier": "steer",
+        "acceptRequests": true,
         "driver": {
           "id": "user_owner",
           "kind": "user",
