@@ -396,6 +396,19 @@ impl Unstarted {
         on_status: StatusSink,
     ) {
         let (results_tx, results_rx) = mpsc::unbounded_channel();
+        // One worker per room runs the commands that passed the gates, one
+        // at a time, in the order the room relayed them: "run the tests" then
+        // "now commit" must not swap, nor a stop and the submit after it. A
+        // task per command would let the runtime pick their order. It ends
+        // with the supervisor, which holds the only sender.
+        let (commands_tx, mut commands_rx) = mpsc::unbounded_channel::<HostCommand>();
+        let worker_port = port.clone();
+        let worker_results = results_tx.clone();
+        tokio::spawn(async move {
+            while let Some(command) = commands_rx.recv().await {
+                run_command(&worker_port, &worker_results, command).await;
+            }
+        });
         let supervisor = Supervisor {
             cfg: self.config,
             tokens,
@@ -413,6 +426,7 @@ impl Unstarted {
             driver_id: String::new(),
             results_tx,
             results_rx,
+            commands_tx,
             controls_rx: self.controls_rx,
         };
         tokio::spawn(supervisor.run());
@@ -472,6 +486,8 @@ struct Supervisor {
     driver_id: String,
     results_tx: mpsc::UnboundedSender<HostCommandResult>,
     results_rx: mpsc::UnboundedReceiver<HostCommandResult>,
+    /// The room's command worker: accepted commands, in relay order.
+    commands_tx: mpsc::UnboundedSender<HostCommand>,
     /// The owner's control frames, from the handle.
     controls_rx: mpsc::UnboundedReceiver<ToServer>,
 }
@@ -966,41 +982,10 @@ impl Supervisor {
             ));
             return;
         }
-        let port = self.port.clone();
-        let results = self.results_tx.clone();
-        tokio::spawn(async move {
-            let HostCommand {
-                command_id,
-                from,
-                command,
-                ..
-            } = command;
-            let from_id = from.id.clone();
-            let kind = command.kind();
-            let outcome = tokio::time::timeout(COMMAND_DEADLINE, port.execute(from, command)).await;
-            let result = match outcome {
-                Ok(Ok(())) => HostCommandResult::accepted(&command_id, &from_id),
-                // The words may be the agent's own error text, which can
-                // quote what it was working on: scrubbed like every other
-                // byte that leaves this desktop.
-                Ok(Err(refusal)) => HostCommandResult::refused(
-                    &command_id,
-                    &from_id,
-                    refusal.gate,
-                    &refusal.code,
-                    &atlas_redact::redact(&refusal.message).text,
-                ),
-                Err(_) => HostCommandResult::refused(
-                    &command_id,
-                    &from_id,
-                    Gate::InFlight,
-                    "desktop_timeout",
-                    "the desktop is still working on it",
-                ),
-            };
-            tracing::info!(target: "atlas_rc", kind = kind.as_str(), ok = result.ok, "remote command");
-            let _ = results.send(result);
-        });
+        // Run in relay order (`run_command`); each is bounded by
+        // `COMMAND_DEADLINE`, so one slow command delays the next by at most
+        // that.
+        let _ = self.commands_tx.send(command);
     }
 
     /// A snapshot, redacted and fitted. Drains whatever the queue held first,
@@ -1265,6 +1250,45 @@ fn unit_random() -> f64 {
             .map_or(0, |d| d.as_nanos()),
     );
     (hasher.finish() >> 11) as f64 / (1u64 << 53) as f64
+}
+
+/// Run one command that passed the gates, and report its result.
+async fn run_command(
+    port: &Arc<dyn SessionPort>,
+    results: &mpsc::UnboundedSender<HostCommandResult>,
+    command: HostCommand,
+) {
+    let HostCommand {
+        command_id,
+        from,
+        command,
+        ..
+    } = command;
+    let from_id = from.id.clone();
+    let kind = command.kind();
+    let outcome = tokio::time::timeout(COMMAND_DEADLINE, port.execute(from, command)).await;
+    let result = match outcome {
+        Ok(Ok(())) => HostCommandResult::accepted(&command_id, &from_id),
+        // The words may be the agent's own error text, which can
+        // quote what it was working on: scrubbed like every other
+        // byte that leaves this desktop.
+        Ok(Err(refusal)) => HostCommandResult::refused(
+            &command_id,
+            &from_id,
+            refusal.gate,
+            &refusal.code,
+            &atlas_redact::redact(&refusal.message).text,
+        ),
+        Err(_) => HostCommandResult::refused(
+            &command_id,
+            &from_id,
+            Gate::InFlight,
+            "desktop_timeout",
+            "the desktop is still working on it",
+        ),
+    };
+    tracing::info!(target: "atlas_rc", kind = kind.as_str(), ok = result.ok, "remote command");
+    let _ = results.send(result);
 }
 
 #[cfg(test)]

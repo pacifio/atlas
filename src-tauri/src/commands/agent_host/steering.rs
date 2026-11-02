@@ -288,6 +288,10 @@ impl RemoteDriver {
 pub(super) struct Seat {
     owner_id: String,
     driver: Option<RemoteDriver>,
+    /// A remote driver whose room link is down (offline, reconnecting): not
+    /// seated — the window steers meanwhile — but their parked prompts are
+    /// kept, unrun, for when the link comes back with them still driving.
+    held: Option<String>,
 }
 
 impl Seat {
@@ -310,7 +314,9 @@ impl Seat {
         match origin {
             Origin::Local => true,
             Origin::Remote { id, .. } => {
-                *id == self.owner_id || self.driver.as_ref().is_some_and(|d| d.id == *id)
+                *id == self.owner_id
+                    || self.driver.as_ref().is_some_and(|d| d.id == *id)
+                    || self.held.as_deref() == Some(id.as_str())
             }
         }
     }
@@ -363,9 +369,24 @@ impl AgentHost {
         owner_id: &str,
         driver: Option<RemoteDriver>,
     ) {
+        self.set_remote_seat(session_id, owner_id, driver, None);
+    }
+
+    /// [`Self::set_remote_driver`], while the room's link is down: `held` is
+    /// the remote driver the room last named, whose parked prompts survive
+    /// the blip — kept and not run — rather than being discarded as a former
+    /// driver's. Whoever the room names once it is back decides their fate.
+    pub fn set_remote_seat(
+        self: &Arc<Self>,
+        session_id: &str,
+        owner_id: &str,
+        driver: Option<RemoteDriver>,
+        held: Option<String>,
+    ) {
         let seat = Seat {
             owner_id: owner_id.to_owned(),
             driver,
+            held,
         };
         {
             let mut seats = lock(&self.seats);
@@ -763,6 +784,20 @@ impl AgentHost {
     fn dispatch(self: &Arc<Self>, session_id: &str, prompt: Prompt, origin: Origin) -> Result<u64> {
         let (plugin_id, cwd, model) = self.send_meta(session_id)?;
 
+        // Every lookup that can fail comes before the side effects: a dispatch
+        // that fails after them is put back on the queue (`maybe_drain`), and
+        // its next attempt would record the same prompt twice.
+        let embedded_context =
+            !prompt.pastes.is_empty() && self.prompt_embedded_context(session_id)?;
+        let turn_seq = {
+            let mut sessions = lock(&self.sessions);
+            let record = sessions
+                .get_mut(session_id)
+                .ok_or_else(HostError::unknown_session)?;
+            record.turn_seq = record.turn_seq.wrapping_add(1);
+            record.turn_seq
+        };
+
         // The side effects, before the turn opens — capture binds the turn to
         // its prompt at `note_prompt`, and a delta-only recorder would see a
         // turn with no question (`user_message` is not what they record from).
@@ -781,8 +816,6 @@ impl AgentHost {
         // prompt counts when it is sent, not when it is typed (Zed's
         // `update_interacted_at`), and a wake is not the user.
 
-        let embedded_context =
-            !prompt.pastes.is_empty() && self.prompt_embedded_context(session_id)?;
         let content = prompt::with_pasted_texts(
             prompt::with_resource_links(
                 prompt::compose(prompt.text, prompt.images),
@@ -792,14 +825,6 @@ impl AgentHost {
             embedded_context,
         );
         let acp_id = acp::SessionId::new(session_id);
-        let turn_seq = {
-            let mut sessions = lock(&self.sessions);
-            let record = sessions
-                .get_mut(session_id)
-                .ok_or_else(HostError::unknown_session)?;
-            record.turn_seq = record.turn_seq.wrapping_add(1);
-            record.turn_seq
-        };
         // Every turn start, not only the bind: the user may have switched
         // branches since the session opened, and the row should name the
         // branch the latest work ran on. The model likewise.
@@ -1472,6 +1497,52 @@ mod tests {
                 .is_some_and(|c| c.running.is_none())
         })
         .await;
+    }
+
+    /// The room's link dropping is not the driver losing the seat: while it
+    /// is down their parked prompts are kept — and not run under nobody's
+    /// watch — and they are still there when the link comes back with them
+    /// driving. Only a real seat change discards them.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_drivers_queued_prompts_survive_the_rooms_link_dropping() {
+        let f = fixture("s-blip").await;
+        f.host
+            .set_remote_driver(&f.key.session_id, OWNER, ada_drives());
+        f.host
+            .submit(
+                &f.key,
+                Prompt::text("ada one"),
+                ada(),
+                SubmitPolicy::QueueIfBusy,
+            )
+            .expect("the driver prompts");
+        until("turn one runs", || f.native.prompts().len() == 1).await;
+        f.host
+            .submit(
+                &f.key,
+                Prompt::text("ada two"),
+                ada(),
+                SubmitPolicy::QueueIfBusy,
+            )
+            .unwrap();
+        assert_eq!(f.recorder.last_queue(), Some(vec!["ada two".into()]));
+
+        // The link drops: nobody drives, but Ada's seat is held.
+        f.host
+            .set_remote_seat(&f.key.session_id, OWNER, None, ada_drives().map(|d| d.id));
+        assert_eq!(f.recorder.last_queue(), Some(vec!["ada two".into()]));
+        f.native.release.notify_one();
+        idle(&f).await;
+        assert_eq!(f.native.prompts(), ["ada one"], "held, not run");
+
+        // Back, with Ada still driving: her prompt goes.
+        f.host
+            .set_remote_driver(&f.key.session_id, OWNER, ada_drives());
+        until("ada two runs", || f.native.prompts().len() == 2).await;
+        assert_eq!(f.native.prompts(), ["ada one", "ada two"]);
+        f.native.release.notify_one();
+        idle(&f).await;
+        let _ = std::fs::remove_dir_all(&f.dir);
     }
 
     /// A driver who loses the seat — kicked, superseded, released — takes

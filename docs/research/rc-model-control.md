@@ -16,9 +16,9 @@ model list, the mode list and the config options. What is missing is almost enti
 on the *reading* side: the web viewer reads only `current_mode` / `current_model` off
 the snapshot and ignores `config_options_updated`, has no picker UI, and has no
 pending/confirmed state for a setting command. Three small desktop corrections and
-one consent decision round it out. Nothing new needs to be invented on the wire; one
-optional additive field (`origin` on the two change deltas) is proposed for a later
-slice.
+one consent decision round it out. Nothing new needs to be invented on the wire; the
+one additive field this proposed, an optional `origin`, has shipped in this slice — on
+`mode_changed`, `model_changed` and `config_options_updated`.
 
 ---
 

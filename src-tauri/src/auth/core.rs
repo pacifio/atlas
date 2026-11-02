@@ -286,11 +286,14 @@ impl AuthCore {
 
     /// Hear that the server rejected the stored credential, before it is
     /// cleared. The observer runs and is awaited (within a deadline) with the
-    /// credential still on disk, so it can still mint a bearer — the one
-    /// moment a Universal RC room can be closed through the REST door the
-    /// way sign-out closes it (CC-1: a sign-in change on the host ends the
-    /// remote session at once, leaving the local one running). This module
-    /// knows nothing about rooms; `commands::rc::install` registers the hook.
+    /// credential still on disk — but the server has just refused it, so a
+    /// bearer minted from it now will normally be refused too. What the hook
+    /// can rely on is local: a Universal RC room is torn down on this side at
+    /// once (CC-1: a sign-in change on the host ends the remote session,
+    /// leaving the local one running), and the room itself ends on the server
+    /// when the owner-offline grace runs out. A REST close is best effort.
+    /// This module knows nothing about rooms; `commands::rc::install`
+    /// registers the hook.
     ///
     /// Fired only from [`Self::validate_once`], the one path that destroys a
     /// credential. A 401 on [`Self::mint_access_token`] from any other caller

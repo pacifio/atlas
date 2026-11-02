@@ -502,15 +502,12 @@ timestamp the working clock counts from; `turn_finished.stop_reason` /
 `plan_updated`, `queue_changed`, `retry_status` are all relayed verbatim and already
 reduced; the snapshot carries `rc_trimmed_messages`.
 
-One **optional, additive** field, only if a tool call's elapsed clock should be right
-for a viewer who joined mid-call: `ToolCall.started_at: Option<DateTime<Utc>>`
-(`crates/atlas-agent-wire/src/types.rs:60-90`), stamped by the projector on first
-sight, `skip_serializing_if = "Option::is_none"`. It is additive (old readers ignore
-it), travels on both `tool_call_upserted` and the snapshot, and must land with
-`crates/atlas-agent-wire/tests/contract.rs`, `tests/wire-shape-contract.test.ts`,
-`src/types/agents.ts`, and the web's `toolCallOf`. Without it the viewer stamps
-`Date.now()` on first sight exactly as the desktop store does, which is right for
-every call that starts while the page is open.
+A tool call's elapsed clock for a viewer who joined mid-call needs **no new field**:
+`ToolCall.started_at_ms` / `ended_at_ms` (`crates/atlas-agent-wire/src/types.rs`) are
+already stamped by the projector on first sight and on settling, travel on both
+`tool_call_upserted` and the snapshot, and are covered by the wire contract tests. The
+web's `toolCallOf` reads them; without them it would stamp `Date.now()` on first sight
+as the desktop store once did.
 
 Do not change `is_streamed_text` (`batch.rs:22-29`), the coalescing constants, or the
 snapshot's `EXPENDABLE` list; the viewer draws none of what they drop.

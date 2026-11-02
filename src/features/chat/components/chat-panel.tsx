@@ -1314,9 +1314,10 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
     // during a running turn; the backend actor also queues defensively.
     cs.actions.setStopping(tabId, true);
     // Rust's Stop discards the session's queue itself (and says so with
-    // `queue_changed`); clearing the strip now just saves the round trip, and
-    // takes any items still held locally with it.
-    cs.actions.clearQueue(tabId);
+    // `queue_changed`); clearing the strip now saves the round trip, takes
+    // any items still held locally with it, and withdraws any add still on
+    // its way to Rust — which would otherwise land after the Stop and drain.
+    clearQueuedPrompts(tabId);
     // Drop any permission modal that was awaiting the user's click.
     // The Rust side has already resolved the in-flight request as
     // `Cancelled` (see registry.cancel_turn); leaving the modal up

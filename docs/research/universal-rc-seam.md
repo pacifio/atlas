@@ -89,7 +89,7 @@ flowchart TB
   rcin["RC INBOUND injection point<br/>= the one send/stop/answer entry both the IPC verb<br/>and RC call (today split across agents_send + AgentHost)"]:::rc
   rctap["RC OUTBOUND tap<br/>= new OutboundMiddleware stage after Broadcast<br/>(lossless; enqueue to relay task)"]:::rc
   rcsock["RC relay socket<br/>one WS per RC session, same ticket handshake as<br/>artifacts/comms; frames: rc.delta ↑ rc.command ↓ rc.roster"]:::rc
-  userdelta["NEW additive delta: UserMessage{origin, client_id}<br/>emitted from the send path for BOTH local and remote"]:::gap
+  userdelta["NEW additive delta: UserMessage{origin, client_message_id}<br/>emitted from the send path for BOTH local and remote"]:::gap
   turnctl["ATL-852 turn controller (queue, Stop, send-now in Rust)<br/>needed for mid-turn queueing from remote"]:::gap
 
   rcsock -- "rc.command" --> rcctl

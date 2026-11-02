@@ -665,12 +665,13 @@ fn on_status(app: &AppHandle, session_id: &str, status: HostStatus) {
         return;
     };
     let ended = status.state == LinkState::Ended;
-    let (wire, owner, remote_driver) = {
+    let (wire, owner, remote_driver, held) = {
         let mut rooms = rc.rooms();
         let Some(room) = rooms.get_mut(session_id) else {
             return;
         };
         let owner = room.owner_user_id.clone();
+        let previous_driver = room.wire.driver.clone();
         let driver = status.driver.as_ref().map(|d| RcDriverWire {
             id: d.id.clone(),
             name: d.name.clone(),
@@ -678,6 +679,13 @@ fn on_status(app: &AppHandle, session_id: &str, status: HostStatus) {
             lost: d.lost.unwrap_or(false),
         });
         let remote_driver = remote_driver_for(status.state, driver.as_ref());
+        // A blip is not a seat change: while the link is down the remote
+        // driver the room last named keeps their parked prompts.
+        let held = matches!(status.state, LinkState::Offline | LinkState::Connecting)
+            .then(|| driver.as_ref().or(previous_driver.as_ref()))
+            .flatten()
+            .filter(|d| !d.is_owner)
+            .map(|d| d.id.clone());
         room.wire.state = status.state;
         room.wire.owner_online = status.owner_online;
         room.wire.viewers = status.viewers;
@@ -702,12 +710,12 @@ fn on_status(app: &AppHandle, session_id: &str, status: HostStatus) {
         }
         room.wire.last_error = status.last_error.clone();
         room.wire.end_reason = status.end_reason;
-        (room.wire.clone(), owner, remote_driver)
+        (room.wire.clone(), owner, remote_driver, held)
     };
     // The steering entry hears the seat before the window does, so a send
     // the window fires on this very event is already refused.
     if let Some(host) = app.try_state::<Arc<AgentHost>>() {
-        host.set_remote_driver(session_id, &owner, remote_driver);
+        host.set_remote_seat(session_id, &owner, remote_driver, held);
     }
     emit(app, &wire);
     if ended {

@@ -271,8 +271,9 @@ From RC, MOBILE, PERM, W34 and CHANGELOG:
   supported." (RC) Feature table: Pro ✓, Max ✓, Team "Admin-enabled", Enterprise
   "Admin-enabled". (AVAIL) Help center: "Pro, Max, Team, and Enterprise plans on CLI
   v2.1.51+". (HC-TIPS)
-- **Needs a claude.ai subscription sign-in, not an org.** Pro/Max are individual plans
-  and work with no org. (AVAIL, RC) Internally there *is* always an org record — the
+- **Needs a claude.ai subscription sign-in, not an org.** Available on Pro, Max, Ultra,
+  Team and Enterprise (API keys are not supported); Pro, Max and Ultra are individual
+  plans and work with no org. (AVAIL, RC) Internally there *is* always an org record — the
   error "Unable to determine your organization for Remote Control eligibility" exists
   even for individuals, and a Pro/Max user can be wrongly checked against a stale
   Team/Enterprise org from an earlier login. (RC)
@@ -291,8 +292,8 @@ From RC, MOBILE, PERM, W34 and CHANGELOG:
 - **Telemetry/feature-flag coupling:** `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` or
   `DISABLE_GROWTHBOOK` makes RC unavailable; `DISABLE_TELEMETRY` / `DO_NOT_TRACK` only
   block it when Trusted Devices is required. (RC, DATA)
-- **Trusted Devices** (beta) is a further per-org (Owner) or per-account (Pro/Max)
-  opt-in, "off by default". (RC)
+- **Trusted Devices** (beta) is a further per-org (Owner) or per-account (Pro, Max,
+  Ultra) opt-in, "off by default". (RC)
 
 ## 6. Multiple viewers, sharing, handing control
 
@@ -384,7 +385,7 @@ where Atlas intentionally goes further.
 
 **Gating**
 
-18. Individual paid plans get it with no org; Team/Enterprise are **off by default
+18. Individual paid plans (Pro, Max, Ultra) get it with no org; Team/Enterprise are **off by default
     with an Owner toggle** that is server-side and re-checked by the host roughly
     hourly; a per-device managed `disableRemoteControl` kill switch sits underneath;
     compliance modes (ZDR/HIPAA equivalents) hard-disable it. (RC, AVAIL, SETTINGS)

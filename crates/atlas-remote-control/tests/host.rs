@@ -522,3 +522,86 @@ async fn an_overflowing_queue_is_answered_with_a_resync_not_a_gap() {
     })
     .await;
 }
+
+/// Records a command when it *finishes*, and takes its time over the first:
+/// with a task per command the runtime may finish the second one first.
+#[derive(Default)]
+struct OrderedSession {
+    finished: Arc<Mutex<Vec<String>>>,
+}
+
+impl SessionPort for OrderedSession {
+    fn snapshot(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<SnapshotDoc, String>> + Send + 'static>> {
+        Box::pin(async {
+            Ok(SnapshotDoc {
+                as_of_seq: 0,
+                document: json!({ "as_of_seq": 0, "messages": [], "status": "idle" }),
+            })
+        })
+    }
+
+    fn execute(
+        &self,
+        _from: PrincipalRef,
+        command: Command,
+    ) -> Pin<Box<dyn Future<Output = Result<(), Refusal>> + Send + 'static>> {
+        let finished = self.finished.clone();
+        Box::pin(async move {
+            let label = match command {
+                Command::Submit { content, .. } => content,
+                other => other.kind().as_str().to_string(),
+            };
+            if label.starts_with("slow") {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+            finished.lock().unwrap().push(label);
+            Ok(())
+        })
+    }
+}
+
+/// Commands run in the order the room relayed them: a driver's "run the
+/// tests" then "now commit" must not swap, nor a stop and the prompt after it.
+#[tokio::test(flavor = "multi_thread")]
+async fn commands_run_in_the_order_the_room_relayed_them() {
+    let (base, mut accepted) = listen().await;
+    let session = Arc::new(OrderedSession::default());
+    let finished = session.finished.clone();
+    let handle = spawn(
+        config(base, vec![Capability::Steer, Capability::Approve]),
+        Arc::new(StaticToken),
+        session,
+        Arc::new(|_| {}),
+    );
+    let (mut ws, _) = timeout(Duration::from_secs(5), accepted.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(next_text(&mut ws).await["t"], "rc.hello");
+    send(&mut ws, welcome(0, "nothing")).await;
+    until("live", || handle.status().state == LinkState::Live).await;
+
+    for (id, content) in [
+        ("01JB8Z5G7Q2W3E4R5T6Y7V8XB1", "slow: run the tests"),
+        ("01JB8Z5G7Q2W3E4R5T6Y7V8XB2", "now commit"),
+    ] {
+        send(
+            &mut ws,
+            json!({
+                "t": "rc.command", "commandId": id, "driverEpoch": 1,
+                "from": { "id": "user_owner", "kind": "user", "name": null },
+                "command": { "kind": "submit", "content": content }
+            }),
+        )
+        .await;
+    }
+    for _ in 0..2 {
+        assert_eq!(next_text(&mut ws).await["t"], "rc.command_result");
+    }
+    assert_eq!(
+        *finished.lock().unwrap(),
+        ["slow: run the tests", "now commit"]
+    );
+}
