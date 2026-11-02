@@ -25,6 +25,9 @@ export type RcEndReason =
   | "erased"
   | "retention";
 
+/** The tier invited members connect under (Rust `Tier`). */
+export type RcTier = "view" | "steer" | "steer_approve";
+
 /** Mirror of Rust `RcScopeWire`: whom the owner may invite. `null` = solo. */
 export interface RcScope {
   orgId: string;
@@ -55,6 +58,9 @@ export interface RcRoom {
   sessionId: string;
   roomId: string;
   scope: RcScope | null;
+  /** What invited members may do: watch (`view`), or prompt and ask for the
+   *  seat (`steer`). Changed from the title-bar pill or the web room page. */
+  memberTier: RcTier;
   /** The web page a phone opens to watch and steer. */
   viewerUrl: string;
   state: RcLinkState;
@@ -89,6 +95,9 @@ export const rc = {
   status: () => invoke<RcRoom[]>("rc_status"),
   /** Share a solo room with the organisation Atlas now targets. Set once. */
   setScope: (sessionId: string) => invoke<RcScope | null>("rc_set_scope", { sessionId }),
+  /** Owner: what invited members may do. Refused on a solo room. */
+  setMemberTier: (sessionId: string, tier: RcTier) =>
+    invoke<RcTier>("rc_set_member_tier", { sessionId, tier }),
   /** Owner: take the seat back from whoever drives. */
   takeOver: (sessionId: string) => invoke<void>("rc_take_over", { sessionId }),
   /** Owner: answer a visitor's request to drive. */

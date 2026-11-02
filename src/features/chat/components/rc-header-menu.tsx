@@ -1,7 +1,8 @@
 // The room's pill in the title bar, and its menu — the session's remote
 // control while it has a room: Take over (while someone else drives), Copy
 // viewer link, Share with the organisation Atlas targets (a solo room, once),
-// Stop. On a room that has ended, Dismiss. Nothing until a room exists: the
+// Let teammates drive (a shared room), Stop. On a room that has ended,
+// Dismiss. Nothing until a room exists: the
 // title bar's session group is Details alone, joined by a pill only while
 // there is something to say (the pins pill follows the same rule). Starting a
 // room is the Details card's (`remote-control-section.tsx`).
@@ -14,6 +15,7 @@ import { Hand, Link as LinkIcon, Square, Users, X } from "lucide-react";
 import { Button } from "@/ui/button";
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
@@ -77,6 +79,18 @@ export function RcHeaderMenu({ tabId }: { tabId: string }) {
                 <Users size={14} />
                 Share with {remote.shareWith.name}
               </DropdownMenuItem>
+            )}
+            {room.scope && (
+              // A shared room: whether the invited teammates may prompt and
+              // ask for the seat, or only watch. Answering permission prompts
+              // stays the owner's either way.
+              <DropdownMenuCheckboxItem
+                checked={remote.membersDrive}
+                onCheckedChange={remote.setMembersDrive}
+                disabled={remote.busy}
+              >
+                Let teammates drive
+              </DropdownMenuCheckboxItem>
             )}
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={remote.stop} disabled={remote.busy}>

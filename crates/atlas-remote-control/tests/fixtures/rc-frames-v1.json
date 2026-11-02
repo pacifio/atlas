@@ -534,6 +534,7 @@
         "scope": "full",
         "driverEpoch": 1,
         "ownerOnline": true,
+        "memberTier": "steer",
         "driver": {
           "id": "user_owner",
           "kind": "user",

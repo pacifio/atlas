@@ -123,6 +123,10 @@ pub struct RcRoomWire {
     pub room_id: String,
     /// `None` for a solo room.
     pub scope: Option<RcScopeWire>,
+    /// The tier invited members connect under: `view` (watch) or `steer`
+    /// (prompt, and ask for the seat). Set at create, by `rc_set_member_tier`,
+    /// and by the roster when it is changed on another surface.
+    pub member_tier: Tier,
     pub viewer_url: String,
     /// `connecting` | `live` | `offline` | `ended`.
     pub state: LinkState,
@@ -385,6 +389,7 @@ pub async fn rc_start(
         session_id: session_id.clone(),
         room_id: room.id.clone(),
         scope: scope.map(RcScopeWire::from),
+        member_tier: room.member_tier,
         viewer_url: viewer_url.clone(),
         state: LinkState::Connecting,
         owner_online: false,
@@ -622,6 +627,58 @@ pub async fn rc_set_scope(
     Ok(wire.scope)
 }
 
+/// Owner: the tier every invited member connects under — `view` (watch) or
+/// `steer` (prompt, and ask for the seat); `steer_approve` is not offered
+/// here, answering permission prompts stays the owner's. The room re-badges
+/// the members it holds and, if a member drives on a tier that no longer
+/// steers, returns the seat to the owner; the roster that follows reaches
+/// `on_status` as usual. Refused on a solo room: nobody is invited to one.
+#[tauri::command]
+pub async fn rc_set_member_tier(
+    session_id: String,
+    tier: Tier,
+    app: AppHandle,
+    rc: State<'_, RcState>,
+) -> Result<Tier, String> {
+    let (room_id, current, shared) = {
+        let rooms = rc.rooms();
+        let room = rooms
+            .get(&session_id)
+            .ok_or("Remote control is not on for this session.")?;
+        (
+            room.wire.room_id.clone(),
+            room.wire.member_tier,
+            room.wire.scope.is_some(),
+        )
+    };
+    if !shared {
+        return Err("Share the room with an organisation first.".into());
+    }
+    if current == tier {
+        return Ok(current);
+    }
+    rc.client(&app)?
+        .update_room(
+            &room_id,
+            &UpdateRoomRequest {
+                member_tier: Some(tier),
+                ..UpdateRoomRequest::default()
+            },
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    let wire = {
+        let mut rooms = rc.rooms();
+        let Some(room) = rooms.get_mut(&session_id) else {
+            return Ok(tier);
+        };
+        room.wire.member_tier = tier;
+        room.wire.clone()
+    };
+    emit(&app, &wire);
+    Ok(tier)
+}
+
 /// Owner: take the seat back from whoever drives.
 #[tauri::command]
 pub fn rc_take_over(session_id: String, rc: State<'_, RcState>) -> Result<(), String> {
@@ -688,6 +745,10 @@ fn on_status(app: &AppHandle, session_id: &str, status: HostStatus) {
             .map(|d| d.id.clone());
         room.wire.state = status.state;
         room.wire.owner_online = status.owner_online;
+        // Changed on the web, say: the roster carries it back here.
+        if let Some(tier) = status.member_tier {
+            room.wire.member_tier = tier;
+        }
         room.wire.viewers = status.viewers;
         room.wire.driver = driver;
         room.wire.pending = status
@@ -1233,6 +1294,7 @@ mod tests {
             session_id: "s".into(),
             room_id: "r".into(),
             scope: None,
+            member_tier: Tier::View,
             viewer_url: "u".into(),
             state: LinkState::Connecting,
             owner_online: false,
@@ -1268,6 +1330,7 @@ mod tests {
         let wire = RcRoomWire {
             session_id: "s".into(),
             room_id: "r".into(),
+            member_tier: Tier::View,
             scope: Some(RcScopeWire {
                 org_id: "o".into(),
                 workspace_id: None,

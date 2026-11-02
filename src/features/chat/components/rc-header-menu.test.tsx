@@ -44,6 +44,7 @@ function room(patch: Partial<RcRoom> = {}): RcRoom {
     viewers: 2,
     driver: { id: "user_owner", name: null, isOwner: true, lost: false },
     pending: [],
+    memberTier: "view",
     lastError: null,
     endReason: null,
     ...patch,
@@ -111,6 +112,34 @@ describe("RcHeaderMenu", () => {
     await userEvent.click(screen.getByRole("button", { name: "Remote control" }));
     await userEvent.click(screen.getByRole("menuitem", { name: "Stop remote control" }));
     expect(invoked).toEqual([["rc_stop", { sessionId: SESSION }]]);
+  });
+
+  it("offers 'Let teammates drive' only once the room is shared, and sets the tier through Rust", async () => {
+    useRcStore.getState().actions.upsert(room());
+    const { unmount } = mount();
+    await userEvent.click(screen.getByRole("button", { name: "Remote control" }));
+    expect(screen.queryByRole("menuitemcheckbox", { name: "Let teammates drive" })).toBeNull();
+    unmount();
+
+    useRcStore.getState().actions.upsert(room({ scope: { orgId: "org_1", workspaceId: null } }));
+    mount();
+    await userEvent.click(screen.getByRole("button", { name: "Remote control" }));
+    const item = screen.getByRole("menuitemcheckbox", { name: "Let teammates drive" });
+    expect(item.getAttribute("aria-checked")).toBe("false");
+    await userEvent.click(item);
+    expect(invoked).toEqual([["rc_set_member_tier", { sessionId: SESSION, tier: "steer" }]]);
+  });
+
+  it("shows the tier the room carries, and turns it back to watching", async () => {
+    useRcStore
+      .getState()
+      .actions.upsert(room({ scope: { orgId: "org_1", workspaceId: null }, memberTier: "steer" }));
+    mount();
+    await userEvent.click(screen.getByRole("button", { name: "Remote control" }));
+    const item = screen.getByRole("menuitemcheckbox", { name: "Let teammates drive" });
+    expect(item.getAttribute("aria-checked")).toBe("true");
+    await userEvent.click(item);
+    expect(invoked).toEqual([["rc_set_member_tier", { sessionId: SESSION, tier: "view" }]]);
   });
 
   it("only offers to dismiss a room that has ended", async () => {

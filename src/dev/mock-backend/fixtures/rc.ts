@@ -9,7 +9,13 @@
 // with the mock organisation.
 
 import { emit } from "@tauri-apps/api/event";
-import type { RcControlRequest, RcRoom, RcScope, RcStarted } from "@/features/chat/lib/rc-api";
+import type {
+  RcControlRequest,
+  RcRoom,
+  RcScope,
+  RcStarted,
+  RcTier,
+} from "@/features/chat/lib/rc-api";
 import type { TypedHandlers, Unit } from "../types";
 
 export interface RcResponses {
@@ -17,6 +23,7 @@ export interface RcResponses {
   rc_stop: Unit;
   rc_status: RcRoom[];
   rc_set_scope: RcScope | null;
+  rc_set_member_tier: RcTier;
   rc_take_over: Unit;
   rc_answer_control: Unit;
   rc_grant_control: Unit;
@@ -58,6 +65,7 @@ export const rcHandlers: TypedHandlers<RcResponses> = {
       sessionId: sessionId as string,
       roomId,
       scope: null,
+      memberTier: "view",
       viewerUrl: `https://app.tryatlas.cc/rc/rooms/${roomId}`,
       state: "connecting",
       ownerOnline: false,
@@ -116,6 +124,14 @@ export const rcHandlers: TypedHandlers<RcResponses> = {
     if (!room) throw new Error("Remote control is not on for this session.");
     if (!room.scope) announce({ ...room, scope: MOCK_SCOPE });
     return rooms.get(sessionId as string)?.scope ?? null;
+  },
+  rc_set_member_tier: ({ sessionId, tier }) => {
+    const room = open(sessionId as string);
+    if (!room) throw new Error("Remote control is not on for this session.");
+    if (!room.scope) throw new Error("Share the room with an organisation first.");
+    const memberTier = tier as RcTier;
+    if (room.memberTier !== memberTier) announce({ ...room, memberTier });
+    return memberTier;
   },
   rc_take_over: ({ sessionId }) => {
     const room = open(sessionId as string);

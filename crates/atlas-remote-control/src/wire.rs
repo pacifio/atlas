@@ -577,6 +577,11 @@ pub enum Welcome {
 pub struct RosterFull {
     pub driver_epoch: u64,
     pub owner_online: bool,
+    /// The tier every invited member connects under. On the roster so a
+    /// change made on any surface reaches this desktop on the same frame that
+    /// re-badges the members; absent from a room server that predates it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub member_tier: Option<Tier>,
     pub driver: DriverRef,
     pub peers: Vec<Peer>,
 }

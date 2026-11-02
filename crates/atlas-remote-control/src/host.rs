@@ -68,7 +68,7 @@ use crate::rest::Scope;
 use crate::wire::{
     Capability, Command, ControlRequest, ControlRequestStatus, DriverRef, EndReason, FromServer,
     Gate, Hello, HostCommand, HostCommandResult, HostHello, PrincipalRef, RefusalCode, Roster,
-    ToServer, Wants, Welcome,
+    Tier, ToServer, Wants, Welcome,
 };
 use crate::{RC_COMMAND_TIMEOUT_MS, RC_HOST_PING_MS, RC_HOST_SILENT_MS, RC_PROTOCOL_VERSION};
 
@@ -141,6 +141,9 @@ pub struct HostStatus {
     pub pending: Vec<ControlRequest>,
     /// The room's scope as the welcome named it; `None` for a solo room.
     pub scope: Option<Scope>,
+    /// The tier invited members connect under, from the last roster that
+    /// named it; `None` until one has.
+    pub member_tier: Option<Tier>,
     pub last_error: Option<String>,
     pub end_reason: Option<EndReason>,
 }
@@ -162,6 +165,7 @@ impl Default for HostStatus {
             driver: None,
             pending: Vec::new(),
             scope: None,
+            member_tier: None,
             last_error: None,
             end_reason: None,
         }
@@ -906,6 +910,9 @@ impl Supervisor {
                     s.owner_online = roster.owner_online;
                     s.viewers = viewers;
                     s.driver = Some(driver);
+                    if let Some(tier) = roster.member_tier {
+                        s.member_tier = Some(tier);
+                    }
                 });
             }
             FromServer::ControlRequest { request } => {

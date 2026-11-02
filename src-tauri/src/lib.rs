@@ -757,6 +757,7 @@ pub fn run() {
             commands::rc::rc_stop,
             commands::rc::rc_status,
             commands::rc::rc_set_scope,
+            commands::rc::rc_set_member_tier,
             commands::rc::rc_take_over,
             commands::rc::rc_answer_control,
             commands::rc::rc_grant_control,

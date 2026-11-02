@@ -50,6 +50,7 @@ function room(patch: Partial<RcRoom> = {}): RcRoom {
     viewers: 1,
     driver: { id: "user_owner", name: null, isOwner: true, lost: false },
     pending: [],
+    memberTier: "view",
     lastError: null,
     endReason: null,
     ...patch,

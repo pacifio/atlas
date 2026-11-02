@@ -37,6 +37,11 @@ export interface RemoteControl {
   /** Owner: share the solo room with `shareWith`. Set once; Rust refuses a
    *  second scope. */
   share: () => void;
+  /** Invited members may prompt and ask for the seat (tier `steer`), not
+   *  only watch. Meaningful once the room is shared. */
+  membersDrive: boolean;
+  /** Owner: turn that on or off for this room. */
+  setMembersDrive: (on: boolean) => void;
   dismiss: () => void;
 }
 
@@ -135,6 +140,19 @@ export function useRemoteControl(sessionId: string, title: string): RemoteContro
       .finally(() => setBusy(false));
   }, [sessionId, busy, shareWith]);
 
+  const membersDrive = !!room && room.memberTier !== "view";
+  const setMembersDrive = useCallback(
+    (on: boolean) => {
+      if (!sessionId || busy) return;
+      setBusy(true);
+      rc.setMemberTier(sessionId, on ? "steer" : "view")
+        .then(() => toast.success(on ? "Teammates can drive" : "Teammates can watch"))
+        .catch((e) => toast.error(errInfo(e).message))
+        .finally(() => setBusy(false));
+    },
+    [sessionId, busy],
+  );
+
   const dismiss = useCallback(() => {
     if (sessionId) useRcStore.getState().actions.forget(sessionId);
   }, [sessionId]);
@@ -151,6 +169,8 @@ export function useRemoteControl(sessionId: string, title: string): RemoteContro
     answerControl,
     shareWith,
     share,
+    membersDrive,
+    setMembersDrive,
     dismiss,
   };
 }

@@ -13,6 +13,7 @@ function room(sessionId: string, patch: Partial<RcRoom> = {}): RcRoom {
     viewers: 0,
     driver: { id: "user_owner", name: null, isOwner: true, lost: false },
     pending: [],
+    memberTier: "view",
     lastError: null,
     endReason: null,
     ...patch,

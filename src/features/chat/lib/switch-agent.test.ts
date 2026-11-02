@@ -217,6 +217,7 @@ describe("switchAgentForTab on an idle chat", () => {
       sessionId: "acp-1",
       roomId: "01ROOM",
       scope: null,
+      memberTier: "view",
       viewerUrl: "https://app.example.invalid/rc/rooms/01ROOM",
       state: "live",
       ownerOnline: true,

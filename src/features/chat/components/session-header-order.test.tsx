@@ -65,6 +65,7 @@ describe("the session group", () => {
       viewers: 0,
       driver: { id: "owner", name: null, isOwner: true, lost: false },
       pending: [],
+      memberTier: "view",
       lastError: null,
       endReason: null,
     });
