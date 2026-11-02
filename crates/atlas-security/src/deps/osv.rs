@@ -88,9 +88,6 @@ pub struct IndexedAdvisory {
     ranges: Vec<Vec<Event>>,
 }
 
-/// Package name → its advisories, for one ecosystem.
-pub type Index = HashMap<String, Vec<IndexedAdvisory>>;
-
 fn index_file(dir: &Path, eco: Ecosystem) -> PathBuf {
     dir.join(format!("{}.index.json", eco.osv_name()))
 }
@@ -446,7 +443,72 @@ pub fn write_index(dir: &Path, eco: Ecosystem, index: &BuiltIndex) -> Result<(),
 /// The local advisory data, for whichever ecosystems have an index.
 #[derive(Debug, Default)]
 pub struct AdvisoryDb {
-    indexes: HashMap<Ecosystem, Index>,
+    indexes: HashMap<Ecosystem, OpenIndex>,
+}
+
+/// One ecosystem's index file as read, and where each package's advisories
+/// sit in it. A package's entries are parsed only when a lookup asks for
+/// them: a scan looks up the few packages a lockfile change touched, and
+/// parsing all of npm's 226k packages up front held about 200 MB for that.
+#[derive(Debug)]
+struct OpenIndex {
+    bytes: Vec<u8>,
+    /// Package name → the byte range of its JSON array in `bytes`.
+    at: HashMap<Box<str>, (u32, u32)>,
+}
+
+impl OpenIndex {
+    fn read(bytes: Vec<u8>) -> Result<Self, OsvError> {
+        use serde::de::{DeserializeSeed, Deserializer, MapAccess, Visitor};
+        use serde_json::value::RawValue;
+
+        /// Records each value's byte range instead of building it. The whole
+        /// file is still parsed, so a malformed one fails here as before.
+        struct Ranges<'b>(&'b [u8]);
+        impl<'de> Visitor<'de> for Ranges<'de> {
+            type Value = HashMap<Box<str>, (u32, u32)>;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a map of package name to advisories")
+            }
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+                let base = self.0.as_ptr() as usize;
+                let mut at = HashMap::with_capacity(map.size_hint().unwrap_or(0));
+                while let Some((name, raw)) = map.next_entry::<String, &'de RawValue>()? {
+                    let value = raw.get();
+                    let start = value.as_ptr() as usize - base;
+                    let range = u32::try_from(start)
+                        .ok()
+                        .zip(u32::try_from(value.len()).ok())
+                        .ok_or_else(|| serde::de::Error::custom("index over 4 GB"))?;
+                    at.insert(name.into_boxed_str(), range);
+                }
+                Ok(at)
+            }
+        }
+        impl<'de> DeserializeSeed<'de> for Ranges<'de> {
+            type Value = HashMap<Box<str>, (u32, u32)>;
+            fn deserialize<D: Deserializer<'de>>(self, d: D) -> Result<Self::Value, D::Error> {
+                d.deserialize_map(self)
+            }
+        }
+
+        let parse = |e: serde_json::Error| OsvError::Parse(e.to_string());
+        let mut de = serde_json::Deserializer::from_slice(&bytes);
+        let at = Ranges(&bytes).deserialize(&mut de).map_err(parse)?;
+        de.end().map_err(parse)?;
+        Ok(Self { bytes, at })
+    }
+
+    fn entries(&self, key: &str) -> Vec<IndexedAdvisory> {
+        let Some(&(start, len)) = self.at.get(key) else {
+            return Vec::new();
+        };
+        let (start, len) = (start as usize, len as usize);
+        self.bytes
+            .get(start..start + len)
+            .and_then(|raw| serde_json::from_slice(raw).ok())
+            .unwrap_or_default()
+    }
 }
 
 impl AdvisoryDb {
@@ -456,9 +518,8 @@ impl AdvisoryDb {
         Self::open_only(dir, &Ecosystem::ALL)
     }
 
-    /// [`open`](Self::open) for just these ecosystems. The npm index alone
-    /// holds over 300 MB once parsed, so a scan loads only what its
-    /// lockfiles need.
+    /// [`open`](Self::open) for just these ecosystems, so a scan reads only
+    /// the indexes its lockfiles need.
     pub fn open_only(dir: &Path, ecosystems: &[Ecosystem]) -> Result<Self, OsvError> {
         let mut indexes = HashMap::new();
         for &eco in ecosystems {
@@ -468,9 +529,7 @@ impl AdvisoryDb {
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
                 Err(e) => return Err(OsvError::Io(e.to_string())),
             };
-            let index: Index =
-                serde_json::from_slice(&bytes).map_err(|e| OsvError::Parse(e.to_string()))?;
-            indexes.insert(eco, index);
+            indexes.insert(eco, OpenIndex::read(bytes)?);
         }
         Ok(Self { indexes })
     }
@@ -481,19 +540,16 @@ impl AdvisoryDb {
 
     /// Advisories that affect exactly this package version.
     pub fn lookup(&self, pkg: &Pkg) -> Vec<Advisory> {
-        let Some(entries) = self
-            .indexes
-            .get(&pkg.eco)
-            .and_then(|i| i.get(&index_key(pkg.eco, &pkg.name)))
-        else {
+        let Some(index) = self.indexes.get(&pkg.eco) else {
             return Vec::new();
         };
-        entries
-            .iter()
+        index
+            .entries(&index_key(pkg.eco, &pkg.name))
+            .into_iter()
             .filter(|a| affects(a, pkg.eco, &pkg.version))
             .map(|a| Advisory {
-                id: a.id.clone(),
-                aliases: a.aliases.clone(),
+                id: a.id,
+                aliases: a.aliases,
                 severity: a.severity,
                 malicious: a.malicious,
             })
@@ -571,15 +627,18 @@ pub struct RefreshOutcome {
 /// | PyPI | 37.6 MB | 13,583 | 18.9 MB | 0.3 s |
 ///
 /// Building all three peaked at about 340 MB resident while the index was
-/// held as structs; opening all three, at about 330 MB, nearly all of it npm.
+/// held as structs; opening all three, at about 330 MB, nearly all of it npm,
+/// while every package was parsed on open.
 /// So the download streams to a temporary file beside the index and is
 /// indexed from disk, then deleted; records are parsed into typed structs
 /// that skip OSV's large text fields; the index is held as serialized JSON
 /// while it is built ([`BuiltIndex`]: npm's build peaked at 283 MB before
 /// that, 108 MB after, measured 2026-11-02 on Windows, of which about 50 MB
-/// is the zip's own directory of 231k entries); and callers open only the
-/// ecosystems a scan needs ([`AdvisoryDb::open_only`]) and drop the database
-/// afterwards.
+/// is the zip's own directory of 231k entries); an open index keeps the
+/// file's bytes and parses a package only when it is looked up (npm's open
+/// peaked at 197 MB and took 378 ms before that, 50 MB and 216 ms after,
+/// same date and machine); and callers open only the ecosystems a scan needs
+/// ([`AdvisoryDb::open_only`]) and drop the database afterwards.
 pub async fn refresh(dir: &Path, client: &reqwest::Client, max_age: Duration) -> RefreshOutcome {
     let mut outcome = RefreshOutcome::default();
     for eco in Ecosystem::ALL {

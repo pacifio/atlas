@@ -434,3 +434,24 @@ fn cvss_base_scores_match_the_spec_examples() {
     );
     assert_eq!(cvss3_base_score("CVSS:4.0/AV:N"), None);
 }
+
+/// An open index parses a package's entries when it is looked up, not on
+/// open. A package whose entries are malformed costs only its own lookup;
+/// a file that is not JSON still fails to open.
+#[test]
+fn one_malformed_package_does_not_hide_the_rest() {
+    let dir = tempfile::tempdir().unwrap();
+    let index = build_index(Ecosystem::Npm, &zip_of(&[("a.json", lodash_advisory())])).unwrap();
+    write_index(dir.path(), Ecosystem::Npm, &index).unwrap();
+    let path = dir.path().join("npm.index.json");
+    let good = std::fs::read_to_string(&path).unwrap();
+    let mixed = format!(
+        "{{\"left-pad\":[{{\"id\":7}}],{}",
+        good.strip_prefix('{').unwrap()
+    );
+    std::fs::write(&path, mixed).unwrap();
+    let db = AdvisoryDb::open(dir.path()).unwrap();
+    assert!(db.lookup(&npm("left-pad", "1.3.0")).is_empty());
+    assert_eq!(db.lookup(&npm("lodash", "4.17.20")).len(), 1);
+    assert!(db.lookup(&npm("lodash", "4.17.21")).is_empty());
+}
