@@ -1,8 +1,11 @@
 // The room's pill in the title bar, and its menu — the session's remote
 // control while it has a room: Take over (while someone else drives), Copy
 // viewer link, Share with the organisation Atlas targets (a solo room, once),
-// Let teammates drive (a shared room), Stop. On a room that has ended,
-// Dismiss. Nothing until a room exists: the
+// Let teammates drive (a shared room), Stop, Delete room. On a room that has
+// ended, Dismiss and Delete room. Stop closes the door — the next start
+// reopens the same room, link and invites — where Delete demolishes it; both
+// are offered so the difference is a choice, not a surprise. Nothing until a
+// room exists: the
 // title bar's session group is Details alone, joined by a pill only while
 // there is something to say (the pins pill follows the same rule). Starting a
 // room is the Details card's (`remote-control-section.tsx`).
@@ -10,7 +13,7 @@
 // Same trigger as the pinned-messages pill, same menu as the surfaces `+`:
 // no new treatment, only the room's words in them.
 
-import { Hand, Link as LinkIcon, Square, Users, X } from "lucide-react";
+import { Hand, Link as LinkIcon, Square, Trash2, Users, X } from "lucide-react";
 
 import { Button } from "@/ui/button";
 import {
@@ -55,10 +58,18 @@ export function RcHeaderMenu({ tabId }: { tabId: string }) {
       </HintItem>
       <DropdownMenuContent align="end" sideOffset={4} className="min-w-48">
         {ended ? (
-          <DropdownMenuItem onClick={remote.dismiss}>
-            <X size={14} />
-            Dismiss
-          </DropdownMenuItem>
+          <>
+            <DropdownMenuItem onClick={remote.dismiss}>
+              <X size={14} />
+              Dismiss
+            </DropdownMenuItem>
+            {room.endReason !== "deleted" && (
+              <DropdownMenuItem onClick={remote.remove} disabled={remote.busy}>
+                <Trash2 size={14} />
+                Delete room…
+              </DropdownMenuItem>
+            )}
+          </>
         ) : (
           <>
             {remote.remoteDriver && (
@@ -96,6 +107,10 @@ export function RcHeaderMenu({ tabId }: { tabId: string }) {
             <DropdownMenuItem onClick={remote.stop} disabled={remote.busy}>
               <Square size={14} />
               Stop remote control
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={remote.remove} disabled={remote.busy}>
+              <Trash2 size={14} />
+              Delete room…
             </DropdownMenuItem>
           </>
         )}

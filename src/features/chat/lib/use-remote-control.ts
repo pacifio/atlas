@@ -5,9 +5,10 @@
  * and reports.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { copyText } from "@/lib/clipboard";
+import { confirm } from "@/lib/confirm";
 import { useAuthStore } from "@/features/auth/stores/auth-store";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
 import { errInfo } from "./agent-signin";
@@ -24,6 +25,10 @@ export interface RemoteControl {
   busy: boolean;
   start: () => void;
   stop: () => void;
+  /** Owner: delete the room outright (asks first). Stop closes the door and
+   *  the next start reopens the same room; delete demolishes it — the link
+   *  dies, invites go, and the next start makes a new room. */
+  remove: () => void;
   copyLink: () => void;
   /** Owner: take the seat back. */
   takeOver: () => void;
@@ -89,6 +94,49 @@ export function useRemoteControl(sessionId: string, title: string): RemoteContro
       .catch((e) => toast.error(errInfo(e).message))
       .finally(() => setBusy(false));
   }, [sessionId, busy]);
+
+  const remove = useCallback(() => {
+    if (!sessionId || busy) return;
+    const watching = room && room.state !== "ended" ? room.viewers : 0;
+    void confirm({
+      title: "Delete this room?",
+      body:
+        (watching > 0
+          ? `${watching} ${watching === 1 ? "person" : "people"} watching will be disconnected. `
+          : "") +
+        "The viewer link stops working, and starting remote control on this session again makes a new room with a new link. The session itself is untouched.",
+      confirmLabel: "Delete room",
+      destructive: true,
+    }).then((ok) => {
+      if (!ok) return;
+      setBusy(true);
+      rc.delete(sessionId)
+        .then(() => {
+          useRcStore.getState().actions.forget(sessionId);
+          toast.success("Room deleted");
+        })
+        .catch((e) => toast.error(errInfo(e).message))
+        .finally(() => setBusy(false));
+    });
+  }, [sessionId, busy, room]);
+
+  // The room's title follows the session's: a rename, or the agent's own
+  // title landing after the first turn. Sent when the room comes up here
+  // (the start carried a title, but the agent's may have landed during the
+  // round-trip — one idempotent PATCH covers it) and on every change after,
+  // while the room stands.
+  const sentTitle = useRef<string | null>(null);
+  useEffect(() => {
+    if (!active || !sessionId) {
+      sentTitle.current = null;
+      return;
+    }
+    if (title === sentTitle.current) return;
+    sentTitle.current = title;
+    rc.setTitle(sessionId, title).catch(() => {
+      // Best effort: the list shows the old name until the next change.
+    });
+  }, [active, sessionId, title]);
 
   const copyLink = useCallback(() => {
     if (room) void copyViewerLink(room.viewerUrl);
@@ -164,6 +212,7 @@ export function useRemoteControl(sessionId: string, title: string): RemoteContro
     busy,
     start,
     stop,
+    remove,
     copyLink,
     takeOver,
     answerControl,

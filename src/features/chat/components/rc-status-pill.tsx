@@ -29,6 +29,8 @@ export function hintFor(control: RemoteControl): string {
   const room = control.room;
   if (!room) return "";
   if (room.state === "ended") {
+    if (room.endReason === "deleted")
+      return "The room was deleted. Start remote control again for a new one.";
     return room.lastError ? `Remote control ended: ${room.lastError}` : "Remote control ended";
   }
   if (room.state === "offline") {

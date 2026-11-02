@@ -56,11 +56,15 @@ export const useRcStore = createSelectors(
     bySession: {},
     actions: {
       upsert: (room) =>
-        set((s) =>
-          same(s.bySession[room.sessionId], room)
+        set((s) => {
+          const current = s.bySession[room.sessionId];
+          // A deleted room the window already forgot (the delete's answer
+          // landed before its event): not brought back as a dead pill.
+          if (!current && room.state === "ended" && room.endReason === "deleted") return s;
+          return same(current, room)
             ? s
-            : { bySession: { ...s.bySession, [room.sessionId]: room } },
-        ),
+            : { bySession: { ...s.bySession, [room.sessionId]: room } };
+        }),
       seed: (rooms) =>
         set((s) => {
           const next: Record<string, RcRoom> = {};

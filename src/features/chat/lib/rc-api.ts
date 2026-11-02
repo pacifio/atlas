@@ -23,7 +23,8 @@ export type RcEndReason =
   | "owner_timeout"
   | "never_hosted"
   | "erased"
-  | "retention";
+  | "retention"
+  | "deleted";
 
 /** The tier invited members connect under (Rust `Tier`). */
 export type RcTier = "view" | "steer" | "steer_approve";
@@ -91,6 +92,12 @@ export const rc = {
     invoke<RcStarted>("rc_start", { sessionId, title: title ?? null }),
   /** End the session's room. Idempotent. */
   stop: (sessionId: string) => invoke<void>("rc_stop", { sessionId }),
+  /** Delete the session's room, open or ended: everyone in it is cut, the
+   *  link dies, and the next `start` makes a new room. Idempotent. */
+  delete: (sessionId: string) => invoke<void>("rc_delete", { sessionId }),
+  /** The session's title changed; the room's follows. Nothing without a room. */
+  setTitle: (sessionId: string, title: string) =>
+    invoke<void>("rc_set_title", { sessionId, title }),
   /** Every room this desktop hosts — the seed for a window that just loaded. */
   status: () => invoke<RcRoom[]>("rc_status"),
   /** Share a solo room with the organisation Atlas now targets. Set once. */

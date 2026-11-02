@@ -7,16 +7,25 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const invoked = vi.hoisted(() => [] as [string, unknown][]);
+const titled = vi.hoisted(() => [] as unknown[]);
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn((cmd: string, args: unknown) => {
     // The mirror asks for every room on mount; the menu's own calls are
     // what the tests read.
     if (cmd === "rc_status") return Promise.resolve([]);
+    // The hook keeps the room's title in step with the session's on its own;
+    // the title tests read it, the menu tests do not.
+    if (cmd === "rc_set_title") {
+      titled.push(args);
+      return Promise.resolve(undefined);
+    }
     invoked.push([cmd, args]);
     return Promise.resolve(undefined);
   }),
 }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn(), info: vi.fn() } }));
+const confirmed = vi.hoisted(() => ({ answer: true }));
+vi.mock("@/lib/confirm", () => ({ confirm: vi.fn(() => Promise.resolve(confirmed.answer)) }));
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(async () => () => {}),
   emit: vi.fn(async () => {}),
@@ -55,6 +64,7 @@ const ada = { id: "user_member", name: "Ada", isOwner: false, lost: false };
 
 beforeEach(() => {
   invoked.length = 0;
+  titled.length = 0;
   useRcStore.setState({ bySession: {} });
   useChatStore.setState({
     sessions: {},
@@ -114,6 +124,41 @@ describe("RcHeaderMenu", () => {
     expect(invoked).toEqual([["rc_stop", { sessionId: SESSION }]]);
   });
 
+  it("deletes a live room through Rust once confirmed, and forgets it", async () => {
+    confirmed.answer = true;
+    useRcStore.getState().actions.upsert(room());
+    mount();
+    await userEvent.click(screen.getByRole("button", { name: "Remote control" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Delete room…" }));
+    await vi.waitFor(() => expect(invoked).toEqual([["rc_delete", { sessionId: SESSION }]]));
+    await vi.waitFor(() => expect(useRcStore.getState().bySession[SESSION]).toBeUndefined());
+  });
+
+  it("offers Delete on a room that has ended too — the next start would reopen it otherwise", async () => {
+    confirmed.answer = true;
+    useRcStore.getState().actions.upsert(room({ state: "ended", endReason: "closed_by_owner" }));
+    mount();
+    await userEvent.click(screen.getByRole("button", { name: "Remote control" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Delete room…" }));
+    await vi.waitFor(() => expect(invoked).toEqual([["rc_delete", { sessionId: SESSION }]]));
+  });
+
+  it("does nothing when the delete is not confirmed, and offers no delete on a room already deleted", async () => {
+    confirmed.answer = false;
+    useRcStore.getState().actions.upsert(room());
+    mount();
+    await userEvent.click(screen.getByRole("button", { name: "Remote control" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Delete room…" }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(invoked).toEqual([]);
+    expect(useRcStore.getState().bySession[SESSION]).toBeDefined();
+
+    useRcStore.getState().actions.upsert(room({ state: "ended", endReason: "deleted" }));
+    await userEvent.click(screen.getByRole("button", { name: "Remote control" }));
+    expect(screen.queryByRole("menuitem", { name: "Delete room…" })).toBeNull();
+    expect(screen.getByRole("menuitem", { name: "Dismiss" })).toBeTruthy();
+  });
+
   it("offers 'Let teammates drive' only once the room is shared, and sets the tier through Rust", async () => {
     useRcStore.getState().actions.upsert(room());
     const { unmount } = mount();
@@ -140,6 +185,21 @@ describe("RcHeaderMenu", () => {
     expect(item.getAttribute("aria-checked")).toBe("true");
     await userEvent.click(item);
     expect(invoked).toEqual([["rc_set_member_tier", { sessionId: SESSION, tier: "view" }]]);
+  });
+
+  it("keeps the room's title in step with the session's while the room stands, and not after it ended", async () => {
+    useRcStore.getState().actions.upsert(room());
+    mount();
+    // Once as the room comes up (the agent's title may have landed during the
+    // start), then on every change.
+    await vi.waitFor(() => expect(titled).toHaveLength(1));
+    useChatStore.getState().actions.setSessionTitle(TAB, "Fix the flaky test");
+    await vi.waitFor(() => expect(titled).toHaveLength(2));
+    expect(titled[1]).toEqual({ sessionId: SESSION, title: "Fix the flaky test" });
+    useRcStore.getState().actions.upsert(room({ state: "ended", endReason: "closed_by_owner" }));
+    useChatStore.getState().actions.setSessionTitle(TAB, "Renamed after the end");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(titled).toHaveLength(2);
   });
 
   it("only offers to dismiss a room that has ended", async () => {

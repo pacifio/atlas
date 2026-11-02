@@ -757,6 +757,8 @@ pub fn run() {
             commands::artifacts_cloud::artifacts_cloud_session_url,
             commands::rc::rc_start,
             commands::rc::rc_stop,
+            commands::rc::rc_delete,
+            commands::rc::rc_set_title,
             commands::rc::rc_status,
             commands::rc::rc_set_scope,
             commands::rc::rc_set_member_tier,
