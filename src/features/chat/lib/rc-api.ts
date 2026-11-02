@@ -53,6 +53,30 @@ export interface RcControlRequest {
   expiresAt: number;
 }
 
+/** Where a person has the room open (`Surface`). */
+export type RcSurface = "web" | "mobile" | "desktop";
+
+/** Mirror of Rust `RcPeerWire`: one person connected to the room, their
+ *  sockets folded together. `name` is set for guests only — the server never
+ *  names a user; resolve faces with `useRcPeople`. */
+export interface RcPeer {
+  id: string;
+  kind: "user" | "guest" | "link";
+  name: string | null;
+  surfaces: RcSurface[];
+  role: "owner" | "driver" | "visitor";
+  tier: RcTier;
+  since: number;
+}
+
+/** Mirror of Rust `RcMemberWire`: a teammate invited to a shared room. */
+export interface RcMember {
+  userId: string;
+  invitedAt: number;
+  /** `null` until they first open the room. */
+  joinedAt: number | null;
+}
+
 /** Mirror of Rust `RcRoomWire`. */
 export interface RcRoom {
   sessionId: string;
@@ -63,11 +87,17 @@ export interface RcRoom {
   memberTier: RcTier;
   /** The web page a phone opens to watch and steer. */
   viewerUrl: string;
+  /** When the room was created (epoch ms) — the panel's "live for" clock. */
+  startedAt: number;
   state: RcLinkState;
   /** The room's own view of this desktop. */
   ownerOnline: boolean;
   /** Distinct people connected, from the room's roster. */
   viewers: number;
+  /** Who is connected, one row per person; empty while the link is down. */
+  peers: RcPeer[];
+  /** Whether visitors may ask to drive (what this desktop last set). */
+  acceptRequests: boolean;
   /** `null` before the room's first welcome. */
   driver: RcDriver | null;
   pending: RcControlRequest[];
@@ -98,6 +128,18 @@ export const rc = {
   /** Owner: what invited members may do. Refused on a solo room. */
   setMemberTier: (sessionId: string, tier: RcTier) =>
     invoke<RcTier>("rc_set_member_tier", { sessionId, tier }),
+  /** Who is invited. On demand only — the read wakes the room on the server,
+   *  so call it when a panel opens and after an invite, never on a timer. */
+  members: (sessionId: string) => invoke<RcMember[]>("rc_members", { sessionId }),
+  /** Owner: invite a teammate from the room's organisation. */
+  invite: (sessionId: string, userId: string) =>
+    invoke<RcMember>("rc_invite", { sessionId, userId }),
+  /** Owner: withdraw an invite; the room drops their open sockets too. */
+  revokeInvite: (sessionId: string, userId: string) =>
+    invoke<void>("rc_revoke_invite", { sessionId, userId }),
+  /** Owner: whether visitors may ask to drive. Off declines every open ask. */
+  setAcceptRequests: (sessionId: string, accept: boolean) =>
+    invoke<void>("rc_set_accept_requests", { sessionId, accept }),
   /** Owner: take the seat back from whoever drives. */
   takeOver: (sessionId: string) => invoke<void>("rc_take_over", { sessionId }),
   /** Owner: answer a visitor's request to drive. */
@@ -125,6 +167,11 @@ export function drivenElsewhere(room: RcRoom | undefined): RcDriver | null {
 /** Whether the room is still open — any state but `ended`. */
 export function roomOpen(room: RcRoom | undefined): room is RcRoom {
   return !!room && room.state !== "ended";
+}
+
+/** Whether a tier may prompt — who "Hand control" can be offered to. */
+export function tierSteers(tier: RcTier): boolean {
+  return tier !== "view";
 }
 
 /** What to call the driver in a sentence. */

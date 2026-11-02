@@ -167,6 +167,35 @@ pub struct UpdateRoomRequest {
     pub scope: Option<Scope>,
 }
 
+/// One invited teammate (`RcMember` on the server): `joined_at` stays `None`
+/// until they first open the room.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Member {
+    pub user_id: String,
+    pub invited_by: String,
+    pub invited_at: u64,
+    #[serde(default)]
+    pub joined_at: Option<u64>,
+}
+
+#[derive(Deserialize)]
+struct RoomWithMembersWire {
+    #[serde(default)]
+    members: Vec<Member>,
+}
+
+#[derive(Deserialize)]
+struct InviteResponseWire {
+    member: Member,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InviteRequest<'a> {
+    user_id: &'a str,
+}
+
 #[derive(Deserialize)]
 struct ErrorBody {
     error: Option<ErrorInner>,
@@ -245,6 +274,55 @@ impl RcClient {
         self.send(
             |http, token| http.post(url.clone()).bearer_auth(token),
             "close room",
+        )
+        .await
+        .map(|_| ())
+    }
+
+    /// Who is invited to a room (owner or member). `GET /rc/rooms/{id}`
+    /// WAKES the room's object on the server, so this is for a panel being
+    /// opened, never a poll.
+    pub async fn room_members(&self, room_id: &str) -> Result<Vec<Member>, RestError> {
+        let url = self.url(&["rc", "rooms", room_id])?;
+        let response = self
+            .send(
+                |http, token| http.get(url.clone()).bearer_auth(token),
+                "read room",
+            )
+            .await?;
+        let wire: RoomWithMembersWire = response
+            .json()
+            .await
+            .map_err(|e| RestError::Protocol(format!("read room: {e}")))?;
+        Ok(wire.members)
+    }
+
+    /// Invite a teammate from the room's scope (owner only). The server
+    /// answers `409 rc_no_scope` on a solo room and `409 limit_reached` past
+    /// the room's member cap.
+    pub async fn invite(&self, room_id: &str, user_id: &str) -> Result<Member, RestError> {
+        let url = self.url(&["rc", "rooms", room_id, "invites"])?;
+        let body = InviteRequest { user_id };
+        let response = self
+            .send(
+                |http, token| http.post(url.clone()).bearer_auth(token).json(&body),
+                "invite",
+            )
+            .await?;
+        let wire: InviteResponseWire = response
+            .json()
+            .await
+            .map_err(|e| RestError::Protocol(format!("invite: {e}")))?;
+        Ok(wire.member)
+    }
+
+    /// Withdraw an invite (owner only). The server also cuts that person's
+    /// open sockets, so a revoked teammate watching now is dropped.
+    pub async fn revoke_invite(&self, room_id: &str, user_id: &str) -> Result<(), RestError> {
+        let url = self.url(&["rc", "rooms", room_id, "invites", user_id])?;
+        self.send(
+            |http, token| http.delete(url.clone()).bearer_auth(token),
+            "revoke invite",
         )
         .await
         .map(|_| ())

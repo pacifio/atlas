@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { copyText } from "@/lib/clipboard";
+import { TOAST_GLYPHS } from "@/components/toast-icons";
 import { useAuthStore } from "@/features/auth/stores/auth-store";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
 import { errInfo } from "./agent-signin";
@@ -42,6 +43,17 @@ export interface RemoteControl {
   membersDrive: boolean;
   /** Owner: turn that on or off for this room. */
   setMembersDrive: (on: boolean) => void;
+  /** Owner: hand the seat to a connected person, without their asking. */
+  grant: (principalId: string, label: string) => void;
+  /** Owner: drop a person's connections; a driver so removed loses the seat. */
+  kick: (principalId: string, label: string) => void;
+  /** Owner: whether visitors may ask to drive. Off declines every open ask. */
+  setAcceptRequests: (on: boolean) => void;
+  /** Owner: invite a teammate from the room's Organisation. Resolves when the
+   *  server has the invite, so the caller can re-read who is invited. */
+  invite: (userId: string, label: string) => Promise<boolean>;
+  /** Owner: withdraw an invite (and drop them if they are here). */
+  revokeInvite: (userId: string, label: string) => Promise<boolean>;
   dismiss: () => void;
 }
 
@@ -73,6 +85,10 @@ export function useRemoteControl(sessionId: string, title: string): RemoteContro
         toast.success("Remote control is on", {
           description: "Open the viewer link on your phone to watch and steer this session.",
           action: { label: "Copy link", onClick: () => void copyViewerLink(started.viewerUrl) },
+          // The bare glyph, which drops the toaster's copy-the-message button
+          // (`toast-icons.tsx`): beside "Copy link" it read as a second way to
+          // copy the link, and copied the sentence instead.
+          icon: TOAST_GLYPHS.success,
         });
         // The room opened; only the sharing did not. Said, never blocking.
         if (started.note) toast.info(started.note);
@@ -153,6 +169,77 @@ export function useRemoteControl(sessionId: string, title: string): RemoteContro
     [sessionId, busy],
   );
 
+  const grant = useCallback(
+    (principalId: string, label: string) => {
+      if (!sessionId || busy) return;
+      setBusy(true);
+      rc.grantControl(sessionId, principalId)
+        .then(() =>
+          toast.success(`${label} is driving`, {
+            description: "Only they can prompt now. Take back control any time from this panel.",
+          }),
+        )
+        .catch((e) => toast.error(errInfo(e).message))
+        .finally(() => setBusy(false));
+    },
+    [sessionId, busy],
+  );
+
+  const kick = useCallback(
+    (principalId: string, label: string) => {
+      if (!sessionId || busy) return;
+      setBusy(true);
+      rc.kick(sessionId, principalId)
+        .then(() => toast.success(`Removed ${label} from the room`))
+        .catch((e) => toast.error(errInfo(e).message))
+        .finally(() => setBusy(false));
+    },
+    [sessionId, busy],
+  );
+
+  const setAcceptRequests = useCallback(
+    (on: boolean) => {
+      if (!sessionId || busy) return;
+      setBusy(true);
+      rc.setAcceptRequests(sessionId, on)
+        .catch((e) => toast.error(errInfo(e).message))
+        .finally(() => setBusy(false));
+    },
+    [sessionId, busy],
+  );
+
+  const invite = useCallback(
+    async (userId: string, label: string) => {
+      if (!sessionId) return false;
+      try {
+        await rc.invite(sessionId, userId);
+        toast.success(`Invited ${label}`, {
+          description: "They can open the viewer link now.",
+        });
+        return true;
+      } catch (e) {
+        toast.error(errInfo(e).message);
+        return false;
+      }
+    },
+    [sessionId],
+  );
+
+  const revokeInvite = useCallback(
+    async (userId: string, label: string) => {
+      if (!sessionId) return false;
+      try {
+        await rc.revokeInvite(sessionId, userId);
+        toast.success(`${label} is no longer invited`);
+        return true;
+      } catch (e) {
+        toast.error(errInfo(e).message);
+        return false;
+      }
+    },
+    [sessionId],
+  );
+
   const dismiss = useCallback(() => {
     if (sessionId) useRcStore.getState().actions.forget(sessionId);
   }, [sessionId]);
@@ -171,6 +258,11 @@ export function useRemoteControl(sessionId: string, title: string): RemoteContro
     share,
     membersDrive,
     setMembersDrive,
+    grant,
+    kick,
+    setAcceptRequests,
+    invite,
+    revokeInvite,
     dismiss,
   };
 }

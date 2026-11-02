@@ -74,6 +74,7 @@ describe("latestResponseRowId", () => {
     text: "q",
     contextBlocks: 0,
     remoteAuthor: null,
+    remoteAuthorId: null,
     expanded: false,
     attachments: [],
     timestamp: "2026-10-24T09:00:00Z",

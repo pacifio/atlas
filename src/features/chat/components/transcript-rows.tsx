@@ -15,7 +15,7 @@
 //     arrives as props; actions are fired imperatively via `getState()`.
 
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Brain, ChevronRight, Files, Paperclip, RadioTower } from "lucide-react";
+import { Brain, ChevronRight, Files, Paperclip } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CachedMarkdown } from "@/lib/markdown-cache";
 import { StreamingMarkdown } from "./streaming-markdown";
@@ -48,6 +48,7 @@ import { userRowMessageId } from "../lib/turn-rows";
 import { CONTENT_COLUMN, M } from "../lib/row-metrics";
 import { formatTime } from "@/lib/format-time";
 import { useVisibleAnimation } from "@/lib/visible-animation";
+import { RemoteAuthor } from "./remote-author";
 
 /** Shared by every row: the centred content column. */
 function Column({ children, className }: { children: React.ReactNode; className?: string }) {
@@ -177,14 +178,7 @@ export const UserRowView = memo(function UserRowView({
             attached-context chip. Only the live row knows — a snapshot
             carries no origin, so after a reload the caption is gone. */}
         {row.remoteAuthor && (
-          <span
-            data-testid="user-row-remote-author"
-            className="mt-1 flex items-center gap-1 text-2xs text-[var(--muted-foreground)]"
-            title="Sent from remote control"
-          >
-            <RadioTower size={10} />
-            {row.remoteAuthor} · remote control
-          </span>
+          <RemoteAuthor tabId={tabId} id={row.remoteAuthorId} fallback={row.remoteAuthor} />
         )}
         {overflows && <ExpandToggle row={row} onToggleExpand={onToggleExpand} />}
         <UserRowActions

@@ -4,27 +4,7 @@ import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcu
 import { Popover } from "@base-ui/react/popover";
 import { useAppStore } from "@/features/app/stores/app-store";
 import { useProjectStore } from "@/features/projects/stores/project-store";
-import {
-  useNotificationsStore,
-  hasUnread,
-  isErrorKind,
-} from "@/features/notifications/stores/notifications-store";
-import {
-  useTerminalAttention,
-  anyTerminalNeedsAttention,
-} from "@/features/terminal/lib/terminal-notifier";
-import { useChatStore } from "@/features/chat/stores/chat-store";
-import {
-  Bell,
-  ArrowDownToLine,
-  Hammer,
-  Loader2,
-  Minus,
-  Search,
-  Square,
-  Copy,
-  X,
-} from "lucide-react";
+import { ArrowDownToLine, Hammer, Loader2, Minus, Search, Square, Copy, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppProfile } from "@/lib/app-profile";
 import { HintGroup, HintItem } from "@/ui/hint-group";
@@ -128,7 +108,7 @@ export function useWindowDrag() {
  * borders running through it. The window's own controls then have to live in
  * whichever column is at the window's edge: `leading` (the corner cluster
  * while the sidebar is closed, the `org / project` label) goes in the leftmost
- * header and `trailing` (update, notifications, the right panel toggle, and
+ * header and `trailing` (update, the right panel toggle, and
  * the Windows/Linux window buttons) in the rightmost. See `columnChrome` for
  * which column that is. *
  * Every stretch of it drags the window.
@@ -182,7 +162,7 @@ export function PaneHeader({
 /**
  * The window's top bar: the leading cluster (the corner cluster, then
  * `org / project`), and the
- * trailing dock (update, notifications, account, and the
+ * trailing dock (update, account, and the
  * Windows/Linux window buttons). Every stretch of it drags the window.
  */
 export function Titlebar() {
@@ -451,11 +431,11 @@ export function WindowControls() {
  */
 function ActionDock() {
   const update = useUpdateItem();
-  const notifications = useNotificationItem();
-  // The bar's resting state is layout controls only. Update and notifications
-  // step in only while they have something to say; the bell lives
-  // permanently in the sidebar's footer.
-  const items = [update, notifications].filter((i): i is DockItem => i !== null);
+  // The bar's resting state is layout controls only. The update steps in only
+  // while it has something to say. Notifications do NOT: the bell lives in
+  // the sidebar's footer, and a second one popping into the bar on every
+  // unread item shifted the panel toggle and the avatar under the pointer.
+  const items = [update].filter((i): i is DockItem => i !== null);
   // Nothing to say, nothing drawn: an empty dock would still take a gap.
   if (items.length === 0) return null;
   return <TitlebarDock items={items} />;
@@ -768,47 +748,6 @@ function useUpdateItem(): DockItem | null {
       <ArrowDownToLine size={14} />
     ),
     badge: ready ? <DockBadge className="bg-[var(--primary)]" /> : undefined,
-  };
-}
-
-/** Notifications in the bar only while something is unread or waiting on you;
- *  the sidebar footer has the bell at all times. */
-function useNotificationItem(): DockItem | null {
-  const { toggle } = useNotificationsStore.use.actions();
-  const activeOrgId = useOrgStore.use.activeOrganisationId();
-  // Select PRIMITIVES (booleans) — returning a filtered array from the selector
-  // would create a new reference every render and trigger an infinite loop.
-  // Scoped to the active organisation: another org's unread items are its own.
-  const unread = useNotificationsStore((s) => hasUnread(s.items, activeOrgId));
-  const hasError = useNotificationsStore((s) => hasUnread(s.items, activeOrgId, isErrorKind));
-  // LIVE attention state: any session (any project) blocked on a permission
-  // decision, or any terminal waiting on input. Derived from live stores
-  // rather than unread flags so it shows even after the panel was opened, and
-  // clears itself the moment the prompt is answered.
-  const chatAttention = useChatStore((s) =>
-    Object.values(s.pendingPermissions).some((reqs) => reqs.length > 0),
-  );
-  const terminalAttention = useTerminalAttention(anyTerminalNeedsAttention);
-  const needsAttention = chatAttention || terminalAttention;
-  if (!unread && !needsAttention) return null;
-
-  return {
-    label: "Notifications",
-    onClick: () => toggle(activeOrgId),
-    icon: <Bell size={14} />,
-    badge: (
-      <DockBadge
-        // Priority: error > needs-attention (green) > plain unread.
-        className={cn(
-          hasError
-            ? "bg-[var(--atlas-status-error-foreground)]"
-            : needsAttention
-              ? "bg-[var(--atlas-status-success-foreground)] animate-pulse"
-              : "bg-foreground",
-        )}
-        label={needsAttention ? "Something needs your attention" : "Unread notifications"}
-      />
-    ),
   };
 }
 

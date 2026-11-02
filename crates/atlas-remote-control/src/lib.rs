@@ -40,7 +40,7 @@ pub use host::{
     StatusSink, Unstarted, HOST_KEEPALIVE,
 };
 pub use rest::{
-    CreateRoomRequest, CreatedRoom, RcClient, RestError, Room, Scope, UpdateRoomRequest,
+    CreateRoomRequest, CreatedRoom, Member, RcClient, RestError, Room, Scope, UpdateRoomRequest,
 };
 
 // ---------------------------------------------------------------------------

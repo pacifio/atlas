@@ -52,10 +52,13 @@ use std::sync::{Arc, Mutex};
 use agent_client_protocol::schema::v1 as acp;
 use atlas_remote_control::gate::Refusal;
 use atlas_remote_control::host::BoxFuture;
-use atlas_remote_control::wire::{Capability, Command, EndReason, Gate, PrincipalRef, Tier};
+use atlas_remote_control::wire::{
+    Capability, Command, EndReason, Gate, Peer, PrincipalKind, PrincipalRef, RosterRole, Surface,
+    Tier,
+};
 use atlas_remote_control::{
-    CreateRoomRequest, HostConfig, HostStatus, LinkState, RcClient, RoomHandle, Scope, SessionPort,
-    SnapshotDoc, UpdateRoomRequest,
+    CreateRoomRequest, HostConfig, HostStatus, LinkState, Member, RcClient, RoomHandle, Scope,
+    SessionPort, SnapshotDoc, UpdateRoomRequest,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -115,6 +118,95 @@ pub struct RcControlRequestWire {
     pub expires_at: u64,
 }
 
+/// The server stamps rows in epoch ms; read a seconds value as seconds rather
+/// than as a date in January 1970.
+fn epoch_ms(stamp: u64) -> u64 {
+    if stamp < 100_000_000_000 {
+        stamp * 1000
+    } else {
+        stamp
+    }
+}
+
+/// One person in the room — the roster's sockets folded by principal id, so
+/// someone on a phone and a laptop is one row with both surfaces. The server
+/// never sends a user's name (only a guest's); the window resolves faces and
+/// names from the organisation's directory.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RcPeerWire {
+    pub id: String,
+    pub kind: PrincipalKind,
+    pub name: Option<String>,
+    /// Every surface they have open, in first-seen order.
+    pub surfaces: Vec<Surface>,
+    /// The strongest role across their sockets: owner, then driver, then
+    /// visitor.
+    pub role: RosterRole,
+    pub tier: Tier,
+    /// The earliest of their sockets' join times (ms).
+    pub since: u64,
+}
+
+/// Fold the roster's per-socket peers into one row per person, in the order
+/// they first joined.
+fn fold_peers(peers: &[Peer]) -> Vec<RcPeerWire> {
+    fn rank(role: RosterRole) -> u8 {
+        match role {
+            RosterRole::Owner => 0,
+            RosterRole::Driver => 1,
+            RosterRole::Visitor => 2,
+        }
+    }
+    let mut out: Vec<RcPeerWire> = Vec::new();
+    for peer in peers {
+        if let Some(row) = out.iter_mut().find(|row| row.id == peer.id) {
+            if !row.surfaces.contains(&peer.surface) {
+                row.surfaces.push(peer.surface);
+            }
+            if rank(peer.role) < rank(row.role) {
+                row.role = peer.role;
+            }
+            if row.name.is_none() {
+                row.name.clone_from(&peer.name);
+            }
+            row.since = row.since.min(peer.since);
+            continue;
+        }
+        out.push(RcPeerWire {
+            id: peer.id.clone(),
+            kind: peer.kind,
+            name: peer.name.clone(),
+            surfaces: vec![peer.surface],
+            role: peer.role,
+            tier: peer.tier,
+            since: peer.since,
+        });
+    }
+    out.sort_by_key(|row| row.since);
+    out
+}
+
+/// One invited teammate, as `rc_members` answers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RcMemberWire {
+    pub user_id: String,
+    pub invited_at: u64,
+    /// `None` until they first open the room.
+    pub joined_at: Option<u64>,
+}
+
+impl From<Member> for RcMemberWire {
+    fn from(member: Member) -> Self {
+        Self {
+            user_id: member.user_id,
+            invited_at: member.invited_at,
+            joined_at: member.joined_at,
+        }
+    }
+}
+
 /// One room, as the window sees it.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -128,11 +220,21 @@ pub struct RcRoomWire {
     /// and by the roster when it is changed on another surface.
     pub member_tier: Tier,
     pub viewer_url: String,
+    /// When the room was created (epoch ms, the server's clock) — what the
+    /// panel's "live for" counts from. A room this desktop re-keyed after a
+    /// restart keeps its original start.
+    pub started_at: u64,
     /// `connecting` | `live` | `offline` | `ended`.
     pub state: LinkState,
     pub owner_online: bool,
     /// Distinct people connected to the room, from its roster.
     pub viewers: usize,
+    /// Who is connected, one row per person (`fold_peers`). Empty while the
+    /// link is down: a roster the desktop cannot hear is not current.
+    pub peers: Vec<RcPeerWire>,
+    /// Whether visitors may ask to drive. The server holds it but never
+    /// echoes it, so this is what this desktop last set (rooms start open).
+    pub accept_requests: bool,
     /// `None` before the room's first welcome.
     pub driver: Option<RcDriverWire>,
     pub pending: Vec<RcControlRequestWire>,
@@ -388,12 +490,15 @@ pub async fn rc_start(
     let wire = RcRoomWire {
         session_id: session_id.clone(),
         room_id: room.id.clone(),
+        started_at: epoch_ms(room.created_at),
         scope: scope.map(RcScopeWire::from),
         member_tier: room.member_tier,
         viewer_url: viewer_url.clone(),
         state: LinkState::Connecting,
         owner_online: false,
         viewers: 0,
+        peers: Vec::new(),
+        accept_requests: true,
         driver: None,
         pending: Vec::new(),
         last_error: None,
@@ -532,6 +637,7 @@ async fn stop_room(app: &AppHandle, rc: &RcState, session_id: &str) {
     wire.state = LinkState::Ended;
     wire.owner_online = false;
     wire.viewers = 0;
+    wire.peers.clear();
     wire.driver = None;
     wire.pending.clear();
     // A room the server already ended keeps its reason; one this desktop
@@ -679,6 +785,115 @@ pub async fn rc_set_member_tier(
     Ok(tier)
 }
 
+/// The room's id, and whether it is shared — what every invite door needs.
+fn shared_room(rc: &RcState, session_id: &str) -> Result<String, String> {
+    let rooms = rc.rooms();
+    let room = rooms
+        .get(session_id)
+        .ok_or("Remote control is not on for this session.")?;
+    if room.wire.scope.is_none() {
+        return Err("Share the room with an organisation first.".into());
+    }
+    Ok(room.wire.room_id.clone())
+}
+
+/// Who is invited to the session's room. On demand only — the read wakes the
+/// room's object on the server — so the panel calls it when it opens and
+/// after its own invite or revoke, never on a timer. A solo room has no one.
+#[tauri::command]
+pub async fn rc_members(
+    session_id: String,
+    app: AppHandle,
+    rc: State<'_, RcState>,
+) -> Result<Vec<RcMemberWire>, String> {
+    let room_id = {
+        let rooms = rc.rooms();
+        let room = rooms
+            .get(&session_id)
+            .ok_or("Remote control is not on for this session.")?;
+        if room.wire.scope.is_none() {
+            return Ok(Vec::new());
+        }
+        room.wire.room_id.clone()
+    };
+    let members = rc
+        .client(&app)?
+        .room_members(&room_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(members.into_iter().map(RcMemberWire::from).collect())
+}
+
+/// Owner: invite a teammate from the room's organisation. They can open the
+/// viewer link once invited; what they may do there is the member tier.
+#[tauri::command]
+pub async fn rc_invite(
+    session_id: String,
+    user_id: String,
+    app: AppHandle,
+    rc: State<'_, RcState>,
+) -> Result<RcMemberWire, String> {
+    let room_id = shared_room(&rc, &session_id)?;
+    rc.client(&app)?
+        .invite(&room_id, &user_id)
+        .await
+        .map(RcMemberWire::from)
+        .map_err(|e| e.to_string())
+}
+
+/// Owner: withdraw an invite. The room also drops that person's open
+/// sockets, so a teammate watching right now is cut off.
+#[tauri::command]
+pub async fn rc_revoke_invite(
+    session_id: String,
+    user_id: String,
+    app: AppHandle,
+    rc: State<'_, RcState>,
+) -> Result<(), String> {
+    let room_id = shared_room(&rc, &session_id)?;
+    rc.client(&app)?
+        .revoke_invite(&room_id, &user_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Owner: whether visitors may ask to drive at all. Turning it off declines
+/// every open request at once (the server's `acceptRequests`); the roster and
+/// request frames that follow reach `on_status` as usual.
+#[tauri::command]
+pub async fn rc_set_accept_requests(
+    session_id: String,
+    accept: bool,
+    app: AppHandle,
+    rc: State<'_, RcState>,
+) -> Result<(), String> {
+    let room_id = rc
+        .rooms()
+        .get(&session_id)
+        .map(|room| room.wire.room_id.clone())
+        .ok_or("Remote control is not on for this session.")?;
+    rc.client(&app)?
+        .update_room(
+            &room_id,
+            &UpdateRoomRequest {
+                accept_requests: Some(accept),
+                ..UpdateRoomRequest::default()
+            },
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    let wire = {
+        let mut rooms = rc.rooms();
+        let Some(room) = rooms.get_mut(&session_id) else {
+            return Ok(());
+        };
+        room.wire.accept_requests = accept;
+        room.wire.clone()
+    };
+    emit(&app, &wire);
+    Ok(())
+}
+
 /// Owner: take the seat back from whoever drives.
 #[tauri::command]
 pub fn rc_take_over(session_id: String, rc: State<'_, RcState>) -> Result<(), String> {
@@ -750,6 +965,11 @@ fn on_status(app: &AppHandle, session_id: &str, status: HostStatus) {
             room.wire.member_tier = tier;
         }
         room.wire.viewers = status.viewers;
+        room.wire.peers = if status.state == LinkState::Live {
+            fold_peers(&status.peers)
+        } else {
+            Vec::new()
+        };
         room.wire.driver = driver;
         room.wire.pending = status
             .pending
@@ -1296,9 +1516,12 @@ mod tests {
             scope: None,
             member_tier: Tier::View,
             viewer_url: "u".into(),
+            started_at: 0,
             state: LinkState::Connecting,
             owner_online: false,
             viewers: 0,
+            peers: Vec::new(),
+            accept_requests: true,
             driver: None,
             pending: Vec::new(),
             last_error: None,
@@ -1336,9 +1559,12 @@ mod tests {
                 workspace_id: None,
             }),
             viewer_url: "u".into(),
+            started_at: 0,
             state: LinkState::Live,
             owner_online: true,
             viewers: 2,
+            peers: Vec::new(),
+            accept_requests: true,
             driver: Some(RcDriverWire {
                 id: "user_member".into(),
                 name: Some("Ada".into()),
@@ -1364,6 +1590,9 @@ mod tests {
             "state",
             "ownerOnline",
             "viewers",
+            "peers",
+            "acceptRequests",
+            "memberTier",
             "driver",
             "pending",
             "lastError",
@@ -1392,5 +1621,40 @@ mod tests {
         let json = serde_json::to_value(&solo).unwrap();
         assert!(json["scope"].is_null());
         assert!(json["driver"].is_null());
+    }
+
+    fn peer(id: &str, surface: Surface, role: RosterRole, since: u64) -> Peer {
+        Peer {
+            peer_id: format!("{id}-{}", surface.as_str()),
+            id: id.into(),
+            kind: PrincipalKind::User,
+            name: None,
+            surface,
+            role,
+            tier: Tier::Steer,
+            since,
+        }
+    }
+
+    /// The roster is per socket; the window wants one row per person, with
+    /// every surface they have open and their strongest role.
+    #[test]
+    fn fold_peers_folds_a_persons_sockets_into_one_row() {
+        let rows = fold_peers(&[
+            peer("u_priya", Surface::Web, RosterRole::Visitor, 30),
+            peer("u_owner", Surface::Mobile, RosterRole::Owner, 20),
+            peer("u_priya", Surface::Mobile, RosterRole::Driver, 10),
+            peer("u_priya", Surface::Web, RosterRole::Visitor, 40),
+        ]);
+        assert_eq!(rows.len(), 2);
+        let priya = &rows[0];
+        assert_eq!(priya.id, "u_priya");
+        assert_eq!(priya.surfaces, vec![Surface::Web, Surface::Mobile]);
+        assert_eq!(priya.role, RosterRole::Driver);
+        assert_eq!(priya.since, 10);
+        assert_eq!(rows[1].id, "u_owner");
+        let json = serde_json::to_value(priya).unwrap();
+        assert_eq!(json["surfaces"][1], "mobile");
+        assert_eq!(json["role"], "driver");
     }
 }

@@ -44,6 +44,17 @@ export interface SelectProps<T extends string> {
   "aria-label"?: string;
   /** Applied to the trigger. */
   className?: string;
+  /**
+   * Draw the selected item's check, and the gutter that holds it (default).
+   * `false` for a picker whose choice is acted on and cleared — "invite this
+   * person" — where nothing stays selected and the gutter is only a gap.
+   */
+  indicator?: boolean;
+  /** `pill` rounds the trigger's ends — a picker sitting beside round
+   *  controls (the sidebar's search row, a glass `+`). */
+  shape?: "default" | "pill";
+  /** A glyph before the value, inside the trigger. */
+  leading?: React.ReactNode;
 }
 
 const POPUP = [
@@ -72,6 +83,9 @@ export function Select<T extends string>({
   size = "md",
   variant = "bordered",
   className,
+  indicator = true,
+  shape = "default",
+  leading,
   ...props
 }: SelectProps<T>) {
   const selected = options.find((option) => option.value === value);
@@ -89,9 +103,11 @@ export function Select<T extends string>({
         data-slot="select-trigger"
         data-size={size}
         data-variant={variant}
+        data-shape={shape}
         aria-label={props["aria-label"]}
         className={cn(
           "flex w-fit min-w-0 cursor-pointer items-center justify-between gap-1.5 rounded-md px-2",
+          "data-[shape=pill]:rounded-full data-[shape=pill]:pr-2 data-[shape=pill]:pl-2.5",
           "text-xs whitespace-nowrap select-none outline-none",
           "transition-colors duration-fast ease-out-strong",
           "data-[size=md]:h-control-md data-[size=sm]:h-control-sm",
@@ -111,6 +127,9 @@ export function Select<T extends string>({
             placeholder !== undefined && "text-muted-foreground",
           )}
         >
+          {leading && (
+            <span className="flex shrink-0 items-center text-muted-foreground">{leading}</span>
+          )}
           {placeholder === undefined && selected?.icon}
           <span className="truncate">{shown}</span>
         </span>
@@ -130,13 +149,15 @@ export function Select<T extends string>({
                 key={option.value}
                 value={option.value}
                 data-slot="select-item"
-                className={cn(ITEM)}
+                className={cn(ITEM, !indicator && "pl-2")}
               >
-                <span className="pointer-events-none absolute left-2 flex size-3.5 items-center justify-center">
-                  <SelectPrimitive.ItemIndicator>
-                    <Check className="size-3.5" />
-                  </SelectPrimitive.ItemIndicator>
-                </span>
+                {indicator && (
+                  <span className="pointer-events-none absolute left-2 flex size-3.5 items-center justify-center">
+                    <SelectPrimitive.ItemIndicator>
+                      <Check className="size-3.5" />
+                    </SelectPrimitive.ItemIndicator>
+                  </span>
+                )}
                 {option.icon}
                 <span className="flex min-w-0 flex-col">
                   <SelectPrimitive.ItemText>{option.label}</SelectPrimitive.ItemText>

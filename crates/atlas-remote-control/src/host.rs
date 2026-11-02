@@ -67,8 +67,8 @@ use crate::gate::{self, GateView, RecentCommands, Refusal};
 use crate::rest::Scope;
 use crate::wire::{
     Capability, Command, ControlRequest, ControlRequestStatus, DriverRef, EndReason, FromServer,
-    Gate, Hello, HostCommand, HostCommandResult, HostHello, PrincipalRef, RefusalCode, Roster,
-    Tier, ToServer, Wants, Welcome,
+    Gate, Hello, HostCommand, HostCommandResult, HostHello, Peer, PrincipalRef, RefusalCode,
+    Roster, Tier, ToServer, Wants, Welcome,
 };
 use crate::{RC_COMMAND_TIMEOUT_MS, RC_HOST_PING_MS, RC_HOST_SILENT_MS, RC_PROTOCOL_VERSION};
 
@@ -133,6 +133,9 @@ pub struct HostStatus {
     pub owner_online: bool,
     /// Distinct people watching, from the last roster.
     pub viewers: usize,
+    /// The last roster's peers as the room sent them — one per SOCKET, so a
+    /// person on a phone and a laptop is two. Callers de-dupe by `id`.
+    pub peers: Vec<Peer>,
     pub driver_epoch: u64,
     /// Who holds the seat, from the last welcome or roster. `None` before the
     /// first welcome.
@@ -161,6 +164,7 @@ impl Default for HostStatus {
             state: LinkState::Connecting,
             owner_online: false,
             viewers: 0,
+            peers: Vec::new(),
             driver_epoch: 1,
             driver: None,
             pending: Vec::new(),
@@ -905,10 +909,12 @@ impl Supervisor {
                     ids.len()
                 };
                 let driver = roster.driver.clone();
+                let peers = roster.peers.clone();
                 self.report(|s| {
                     s.driver_epoch = roster.driver_epoch;
                     s.owner_online = roster.owner_online;
                     s.viewers = viewers;
+                    s.peers = peers;
                     s.driver = Some(driver);
                     if let Some(tier) = roster.member_tier {
                         s.member_tier = Some(tier);
