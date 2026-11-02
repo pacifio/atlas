@@ -147,6 +147,9 @@ pub struct HostStatus {
     /// The tier invited members connect under, from the last roster that
     /// named it; `None` until one has.
     pub member_tier: Option<Tier>,
+    /// Whether the owner takes requests for the seat, from the last roster
+    /// that named it; `None` until one has.
+    pub accept_requests: Option<bool>,
     pub last_error: Option<String>,
     pub end_reason: Option<EndReason>,
 }
@@ -170,6 +173,7 @@ impl Default for HostStatus {
             pending: Vec::new(),
             scope: None,
             member_tier: None,
+            accept_requests: None,
             last_error: None,
             end_reason: None,
         }
@@ -306,6 +310,27 @@ impl RoomHandle {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
+    }
+
+    /// The owner set the members' tier from this desktop (the REST door
+    /// took it): the status says so at once, so a report that lands before
+    /// the next roster — a request, a refusal, a seat change — does not
+    /// carry the *last* roster's tier back over the change. The roster that
+    /// follows restates it.
+    pub fn note_member_tier(&self, tier: Tier) {
+        self.status
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .member_tier = Some(tier);
+    }
+
+    /// The owner set whether requests for the seat are taken, from this
+    /// desktop (the REST door took it). Same reason as `note_member_tier`.
+    pub fn note_accept_requests(&self, accept: bool) {
+        self.status
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .accept_requests = Some(accept);
     }
 
     /// Owner: take the seat back from whoever drives. A no-op at the object
@@ -918,6 +943,9 @@ impl Supervisor {
                     s.driver = Some(driver);
                     if let Some(tier) = roster.member_tier {
                         s.member_tier = Some(tier);
+                    }
+                    if let Some(accept) = roster.accept_requests {
+                        s.accept_requests = Some(accept);
                     }
                 });
             }

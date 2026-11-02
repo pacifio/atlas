@@ -264,6 +264,9 @@ struct LiveRoom {
     wire: RcRoomWire,
 }
 
+/// Numbers each start's hold name (see `rc_start`).
+static START_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 /// Every room this desktop hosts, by session id.
 pub struct RcState {
     /// This desktop's replica id, minted per process. The room is bound to
@@ -477,7 +480,14 @@ pub async fn rc_start(
         return Err("The room could not be created; try again.".into());
     };
 
-    let holder = format!("rc:{}", room.id);
+    // Unique per start, not per room: the room keeps its id across a stop
+    // and a start (and the server's own end and a start), so a cleanup still
+    // releasing the *previous* start's hold must not release this one's.
+    let holder = format!(
+        "rc:{}:{}",
+        room.id,
+        START_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
     if let Err(e) = host.hold_session(&session_id, &holder) {
         let _ = client.close_room(&room.id).await;
         return Err(e.to_string());
@@ -500,7 +510,9 @@ pub async fn rc_start(
         owner_online: false,
         viewers: 0,
         peers: Vec::new(),
-        accept_requests: true,
+        // The room's, not a default: a reopened room keeps what the owner
+        // set, and a room server that does not say is one that takes them.
+        accept_requests: room.accept_requests.unwrap_or(true),
         driver: None,
         pending: Vec::new(),
         last_error: None,
@@ -851,6 +863,11 @@ pub async fn rc_set_member_tier(
         return Err("Share the room with an organisation first.".into());
     }
     if current == tier {
+        // Nothing to send — but the window asked, so it is told the room as
+        // it stands: a mirror that fell behind resyncs from the toggle.
+        if let Some(room) = rc.rooms().get(&session_id) {
+            emit(&app, &room.wire);
+        }
         return Ok(current);
     }
     rc.client(&app)?
@@ -868,6 +885,9 @@ pub async fn rc_set_member_tier(
         let Some(room) = rooms.get_mut(&session_id) else {
             return Ok(tier);
         };
+        // The host task's status too, or its next report — before the
+        // roster that restates the tier — would put the old one back.
+        room.handle.note_member_tier(tier);
         room.wire.member_tier = tier;
         room.wire.clone()
     };
@@ -977,6 +997,8 @@ pub async fn rc_set_accept_requests(
         let Some(room) = rooms.get_mut(&session_id) else {
             return Ok(());
         };
+        // The host task's status too (see `rc_set_member_tier`).
+        room.handle.note_accept_requests(accept);
         room.wire.accept_requests = accept;
         room.wire.clone()
     };
@@ -1050,9 +1072,12 @@ fn on_status(app: &AppHandle, session_id: &str, status: HostStatus) {
             .map(|d| d.id.clone());
         room.wire.state = status.state;
         room.wire.owner_online = status.owner_online;
-        // Changed on the web, say: the roster carries it back here.
+        // Changed on the web, say: the roster carries them back here.
         if let Some(tier) = status.member_tier {
             room.wire.member_tier = tier;
+        }
+        if let Some(accept) = status.accept_requests {
+            room.wire.accept_requests = accept;
         }
         room.wire.viewers = status.viewers;
         room.wire.peers = if status.state == LinkState::Live {
@@ -1109,11 +1134,15 @@ fn on_status(app: &AppHandle, session_id: &str, status: HostStatus) {
             let Some(room) = room else {
                 return;
             };
-            // Idempotent: a room that ended server-side answers 204 again; one
-            // this desktop was refused as host is ended rather than left to
+            // A room the server ended needs no close — and must not get one:
+            // the room keeps its id across an end and a start, so by now it
+            // may be the next start's, live. One this desktop was refused as
+            // host (no reason from the server) is ended rather than left to
             // time out.
-            if let Ok(client) = rc.client(&app) {
-                let _ = client.close_room(&room.wire.room_id).await;
+            if room.wire.end_reason.is_none() {
+                if let Ok(client) = rc.client(&app) {
+                    let _ = client.close_room(&room.wire.room_id).await;
+                }
             }
             release(
                 &app,

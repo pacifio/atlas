@@ -59,6 +59,46 @@ describe("rc-store", () => {
     expect(useRcStore.getState().bySession).not.toBe(withRequest);
   });
 
+  it("the owner's switches and the people in the room each count as a change", () => {
+    // What the Seat card's switches draw: a room event that differs only in
+    // the tier or in acceptRequests used to be dropped as a repeat, and the
+    // switch flipped back.
+    const { upsert } = useRcStore.getState().actions;
+    upsert(room("s1"));
+    upsert(room("s1", { memberTier: "steer" }));
+    expect(useRcStore.getState().bySession.s1.memberTier).toBe("steer");
+    upsert(room("s1", { memberTier: "steer", acceptRequests: false }));
+    expect(useRcStore.getState().bySession.s1.acceptRequests).toBe(false);
+    const peer = {
+      id: "user_member",
+      kind: "user" as const,
+      name: "Ada",
+      surfaces: ["web" as const],
+      role: "visitor" as const,
+      tier: "view" as const,
+      since: 1,
+    };
+    upsert(room("s1", { memberTier: "steer", acceptRequests: false, peers: [peer] }));
+    expect(useRcStore.getState().bySession.s1.peers).toHaveLength(1);
+    upsert(
+      room("s1", {
+        memberTier: "steer",
+        acceptRequests: false,
+        peers: [{ ...peer, role: "driver" }],
+      }),
+    );
+    expect(useRcStore.getState().bySession.s1.peers[0].role).toBe("driver");
+    upsert(
+      room("s1", {
+        memberTier: "steer",
+        acceptRequests: false,
+        peers: [{ ...peer, role: "driver" }],
+        startedAt: 5,
+      }),
+    );
+    expect(useRcStore.getState().bySession.s1.startedAt).toBe(5);
+  });
+
   it("a seed drops rooms Rust no longer has, but keeps an ended one so its reason shows", () => {
     const { upsert, seed } = useRcStore.getState().actions;
     upsert(room("gone"));

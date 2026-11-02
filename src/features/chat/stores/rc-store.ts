@@ -34,6 +34,28 @@ function samePending(a: RcRoom["pending"], b: RcRoom["pending"]): boolean {
   return a.length === b.length && a.every((r, i) => r.requestId === b[i].requestId);
 }
 
+function samePeers(a: RcRoom["peers"], b: RcRoom["peers"]): boolean {
+  return (
+    a.length === b.length &&
+    a.every((p, i) => {
+      const q = b[i];
+      return (
+        p.id === q.id &&
+        p.name === q.name &&
+        p.role === q.role &&
+        p.tier === q.tier &&
+        p.since === q.since &&
+        p.surfaces.length === q.surfaces.length &&
+        p.surfaces.every((s, j) => s === q.surfaces[j])
+      );
+    })
+  );
+}
+
+// Every field the window draws. A field left out here is a change the
+// window never sees: Rust sends the room whole, so an event that differs
+// only in that field is dropped as a repeat — the switch flips back, the
+// list stays stale.
 function same(a: RcRoom | undefined, b: RcRoom): boolean {
   return (
     !!a &&
@@ -41,13 +63,17 @@ function same(a: RcRoom | undefined, b: RcRoom): boolean {
     a.state === b.state &&
     a.ownerOnline === b.ownerOnline &&
     a.viewers === b.viewers &&
+    a.memberTier === b.memberTier &&
+    a.acceptRequests === b.acceptRequests &&
+    a.startedAt === b.startedAt &&
     a.lastError === b.lastError &&
     a.endReason === b.endReason &&
     a.viewerUrl === b.viewerUrl &&
     a.scope?.orgId === b.scope?.orgId &&
     a.scope?.workspaceId === b.scope?.workspaceId &&
     sameDriver(a.driver, b.driver) &&
-    samePending(a.pending, b.pending)
+    samePending(a.pending, b.pending) &&
+    samePeers(a.peers, b.peers)
   );
 }
 
