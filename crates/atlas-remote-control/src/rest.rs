@@ -328,6 +328,21 @@ impl RcClient {
         .map(|_| ())
     }
 
+    /// Delete the account's room for one session, open or ended: it ends
+    /// `deleted` for everyone in it and is purged at once, so the session's
+    /// next start makes a new room. By session, because after a stop this
+    /// desktop no longer holds the room id. Idempotent: `204` when there is
+    /// nothing.
+    pub async fn delete_session_room(&self, session_id: &str) -> Result<(), RestError> {
+        let url = self.url(&["rc", "sessions", session_id, "room"])?;
+        self.send(
+            |http, token| http.delete(url.clone()).bearer_auth(token),
+            "delete room",
+        )
+        .await
+        .map(|_| ())
+    }
+
     /// `segments` as one path segment each (an id can never add a segment or
     /// start a query). No query: the doors are the account's.
     fn url(&self, segments: &[&str]) -> Result<reqwest::Url, RestError> {

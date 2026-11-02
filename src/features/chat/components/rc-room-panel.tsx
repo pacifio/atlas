@@ -35,6 +35,7 @@ import {
   Hand,
   Square,
   Timer,
+  Trash2,
   UserPlus,
   UserX,
   Users,
@@ -94,6 +95,7 @@ const END_WORD: Record<string, string> = {
   never_hosted: "This desktop never connected to it.",
   erased: "It was erased.",
   retention: "It expired.",
+  deleted: "It was deleted; starting remote control again makes a new room.",
 };
 
 /** The scroll fades inside the panel: a ramp from its own ground. */
@@ -253,28 +255,53 @@ export function RcRoomPanel({ sessionId, remote }: { sessionId: string; remote: 
       <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-border px-4 py-3">
         <LiveFor startedAt={room.startedAt} ended={ended} />
         {ended ? (
-          <Button variant="outline" size="sm" onClick={remote.dismiss}>
-            <X size={12} />
-            Dismiss
-          </Button>
-        ) : (
-          <button
-            type="button"
-            disabled={remote.busy}
-            onClick={remote.stop}
-            // The label is short for the eye; the name stays whole for the ear.
-            aria-label="Stop remote control"
-            className={cn(
-              "flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-full bg-destructive px-3.5 text-xs font-medium",
-              // ratchet-allow: white ink on the saturated red fill in every theme; the theme's
-              // destructive-foreground is black in the dark themes, which made the label unreadable.
-              "text-white",
-              "transition-opacity duration-fast hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50",
+          <span className="flex items-center gap-1.5">
+            {/* Stop closes the door and the next start reopens the same room;
+                Delete demolishes it. Offered after a stop too, or the next
+                start would bring the old link and invites back. */}
+            {room.endReason !== "deleted" && (
+              <Button variant="ghost" size="sm" disabled={remote.busy} onClick={remote.remove}>
+                <Trash2 size={12} />
+                Delete room…
+              </Button>
             )}
-          >
-            <Square size={10} fill="currentColor" />
-            Stop RC
-          </button>
+            <Button variant="outline" size="sm" onClick={remote.dismiss}>
+              <X size={12} />
+              Dismiss
+            </Button>
+          </span>
+        ) : (
+          <span className="flex items-center gap-1.5">
+            <HintGroup side="top">
+              <HintItem label="Delete room…">
+                <IconButton
+                  icon={Trash2}
+                  label="Delete room…"
+                  size="md"
+                  shape="round"
+                  disabled={remote.busy}
+                  onClick={remote.remove}
+                />
+              </HintItem>
+            </HintGroup>
+            <button
+              type="button"
+              disabled={remote.busy}
+              onClick={remote.stop}
+              // The label is short for the eye; the name stays whole for the ear.
+              aria-label="Stop remote control"
+              className={cn(
+                "flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-full bg-destructive px-3.5 text-xs font-medium",
+                // ratchet-allow: white ink on the saturated red fill in every theme; the theme's
+                // destructive-foreground is black in the dark themes, which made the label unreadable.
+                "text-white",
+                "transition-opacity duration-fast hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50",
+              )}
+            >
+              <Square size={10} fill="currentColor" />
+              Stop RC
+            </button>
+          </span>
         )}
       </footer>
     </div>

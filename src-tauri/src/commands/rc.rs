@@ -8,7 +8,9 @@
 //!
 //! # Lifecycle (design review D7)
 //!
-//! `rc_start(sessionId)`: create the room (`POST /rc/rooms`), hold the
+//! `rc_start(sessionId)`: create the room (`POST /rc/rooms`) — or, the room
+//! being the session's for its life, reopen the one its last stop ended:
+//! same id, same link, same members, a new secret — hold the
 //! session so closing its tab or switching project leaves it running, register
 //! the tap, start the host task. `rc_stop(sessionId)` undoes all four, ending
 //! the room with the REST close door. A room the server ends on its own
@@ -674,6 +676,94 @@ pub async fn close_all_rooms(app: &AppHandle) {
 /// room whose cleanup has not run yet is not.
 fn reusable(wire: &RcRoomWire) -> bool {
     wire.state != LinkState::Ended
+}
+
+/// Delete the session's room, open or ended — the owner demolishing it, as
+/// against stopping it: the room ends `deleted` for everyone in it and is
+/// purged at once, so the next `rc_start` on this session makes a new room
+/// with a new link and nobody invited. By session, because after a stop this
+/// desktop no longer holds the room id. A live room is torn down here first
+/// (the host task, the hold, the tap), and the delete door ends it rather
+/// than the close door. Idempotent — a session with no room answers `Ok`.
+#[tauri::command]
+pub async fn rc_delete(
+    session_id: String,
+    app: AppHandle,
+    rc: State<'_, RcState>,
+) -> Result<(), String> {
+    let client = rc.client(&app)?;
+    let live = rc.rooms().remove(&session_id);
+    if let Some(room) = &live {
+        room.handle.stop();
+    }
+    let deleted = client
+        .delete_session_room(&session_id)
+        .await
+        .map_err(|e| e.to_string());
+    if let Some(room) = live {
+        release(
+            &app,
+            &session_id,
+            room.tap,
+            &room.holder,
+            &room.owner_user_id,
+        )
+        .await;
+        let mut wire = room.wire;
+        wire.state = LinkState::Ended;
+        wire.owner_online = false;
+        wire.viewers = 0;
+        wire.peers.clear();
+        wire.driver = None;
+        wire.pending.clear();
+        match &deleted {
+            Ok(()) => wire.end_reason = Some(EndReason::Deleted),
+            Err(e) => {
+                // Torn down here either way, but the room stands on the
+                // server until its grace runs out — and the next start would
+                // reopen it — so it is reported as stopped, not deleted, and
+                // the menu keeps offering Delete.
+                tracing::warn!(target: "atlas_rc", room = %wire.room_id, "deleting the room failed: {e}");
+                wire.end_reason = wire.end_reason.or(Some(EndReason::ClosedByOwner));
+                wire.last_error = Some(format!(
+                    "The room could not be deleted now; it ends on its own shortly. ({e})"
+                ));
+            }
+        }
+        emit(&app, &wire);
+    }
+    deleted?;
+    tracing::info!(target: "atlas_rc", session = %session_id, "remote-control room deleted");
+    Ok(())
+}
+
+/// The session was renamed (by the user, or by the agent's own title landing
+/// after the first turn): the room's title follows, so the web's list never
+/// shows a name the session no longer has. Only while the session has a room
+/// that has not ended; a session without one answers `Ok` and sends nothing.
+#[tauri::command]
+pub async fn rc_set_title(
+    session_id: String,
+    title: String,
+    app: AppHandle,
+    rc: State<'_, RcState>,
+) -> Result<(), String> {
+    let room_id = {
+        let rooms = rc.rooms();
+        match rooms.get(&session_id) {
+            Some(room) if reusable(&room.wire) => room.wire.room_id.clone(),
+            _ => return Ok(()),
+        }
+    };
+    let title: String = title.trim().chars().take(TITLE_MAX).collect();
+    let body = UpdateRoomRequest {
+        title: Some((!title.is_empty()).then_some(title)),
+        ..UpdateRoomRequest::default()
+    };
+    rc.client(&app)?
+        .update_room(&room_id, &body)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Every room this desktop hosts, for a window that just loaded.

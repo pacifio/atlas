@@ -27,6 +27,8 @@ import type { TypedHandlers, Unit } from "../types";
 export interface RcResponses {
   rc_start: RcStarted;
   rc_stop: Unit;
+  rc_delete: Unit;
+  rc_set_title: Unit;
   rc_status: RcRoom[];
   rc_set_scope: RcScope | null;
   rc_set_member_tier: RcTier;
@@ -176,6 +178,24 @@ export const rcHandlers: TypedHandlers<RcResponses> = {
     }
     return null;
   },
+  rc_delete: ({ sessionId }) => {
+    const room = rooms.get(sessionId as string);
+    if (room) {
+      announce({
+        ...room,
+        state: "ended",
+        ownerOnline: false,
+        viewers: 0,
+        peers: [],
+        driver: null,
+        pending: [],
+        endReason: "deleted",
+      });
+      rooms.delete(sessionId as string);
+    }
+    return null;
+  },
+  rc_set_title: () => null,
   rc_status: () => [...rooms.values()].filter((room) => room.state !== "ended"),
   rc_set_scope: ({ sessionId }) => {
     const room = open(sessionId as string);

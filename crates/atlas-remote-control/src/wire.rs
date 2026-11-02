@@ -108,6 +108,7 @@ wire_enum!(
         NeverHosted => "never_hosted",
         Erased => "erased",
         Retention => "retention",
+        Deleted => "deleted",
     }
 );
 
