@@ -8,6 +8,8 @@ import {
   useRef,
   useContext,
   useState,
+  startTransition,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 import { Popover } from "@base-ui/react/popover";
@@ -17,15 +19,17 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  ChevronUp,
   MessageSquare,
   Download,
   GitCommitHorizontal,
+  GitPullRequest,
   Loader2,
   Search,
+  SlidersHorizontal,
   Sparkles,
   TriangleAlert,
   User,
-  X,
 } from "lucide-react";
 
 import { AtlasIcon } from "@/components/atlas-icon";
@@ -44,8 +48,12 @@ import { cn } from "@/lib/utils";
 import { ContextMeter } from "./context-meter";
 import { CommentsMorph } from "./comments-morph";
 import { ShareMorph } from "./share-morph";
+import { ExportButton } from "./export-button";
+import { FooterPill, PILL_BUTTON, PILL_BUTTON_ACTIVE, PILL_ICON } from "./footer-pill";
+import { HintItem } from "@/ui/hint-group";
+import { GlassIconButton } from "@/features/sidebar/components/glass-icon-button";
+import { ScrollFade, useScrollEdges } from "@/ui/scroll-fade";
 import { EMPTY_DIRECTORY } from "../lib/author-directory";
-import { Hint } from "@/ui/tooltip";
 
 import {
   DEFAULT_FILTERS,
@@ -78,7 +86,13 @@ import { avatarUser, CommentButton, type CommentActions } from "./comment-thread
 import { filterKeyForKind } from "../lib/comment-threads";
 import { JUMP_EVENT, type JumpDetail } from "./session-chat-message";
 import { AgentGlyph } from "./agent-glyph";
-import { formatDateTime, formatTime } from "@/lib/format-time";
+import { formatTime } from "@/lib/format-time";
+import { CheckpointFindings } from "@/features/security/components/checkpoint-findings";
+import { SecuritySummary } from "@/features/security/components/security-summary";
+import {
+  ShipOverviewCard,
+  useBranchPullRequest,
+} from "@/features/security/components/ship-overview-card";
 
 /**
  * One Session, as the ordered record of what happened.
@@ -115,6 +129,29 @@ import { formatDateTime, formatTime } from "@/lib/format-time";
  * about eight. The rest arrive on scroll, well ahead of the fold.
  */
 const WINDOW_CHUNK = 40;
+
+/**
+ * How many groups the FIRST paint of a Session renders.
+ *
+ * A viewport holds about eight, and the click that opened the Session waits on
+ * every one rendered before it paints — forty of them was most of a 200ms
+ * open. The rest follow straight after without blocking: the scroll loop sees
+ * the bottom inside its grow margin and tops the window up to a full chunk as
+ * a transition.
+ */
+const FIRST_PAINT = 12;
+
+/**
+ * How many groups one step of a jump's window growth mounts.
+ *
+ * A jump to a thread near the end of a long Session has to mount every row
+ * above it — seven hundred, on a busy one. In one update that was a single
+ * second-long task: the comments popup froze half-closed on the first frames
+ * and nothing moved until the whole lot was laid out. In steps of this size,
+ * each rendered as a transition (so React yields while it builds them), no one
+ * frame carries more than a step's worth of style and layout.
+ */
+const JUMP_STEP = 120;
 
 /** Half the tallest rail node — where the hairline starts and stops. */
 const NODE_CENTRE = 16;
@@ -164,6 +201,9 @@ interface Props {
   /** The masthead is painted from the board row and the timeline is still on
    *  its way. Without it an empty `entries` reads as "nothing was recorded". */
   entriesPending?: boolean;
+  /** Part of the timeline is here and the rest is still arriving (a remote
+   *  Session streamed page by page). */
+  entriesStreaming?: boolean;
   /** Set only for a Session with no local copy — see [`RemoteSourceContext`]. */
   remote?: RemoteSource | null;
   /**
@@ -177,8 +217,11 @@ interface Props {
   remoteProjectId?: string | null;
   /** Opened from a commit: land on that Checkpoint rather than at the top. */
   focusCommitSha?: string;
-  /** Whether the grounded chat occupies the other half of the split. */
-  /** Whether the comments panel does. The two share one slot. */
+  /** Whether the grounded chat is open beside the record. The panel is the
+   *  pane's; the button that opens it is in this footer. */
+  chatOpen?: boolean;
+  /** Open or close it. Absent, the footer has no Ask button. */
+  onToggleChat?: () => void;
 }
 
 /**
@@ -207,13 +250,50 @@ const RemoteSourceContext = createContext<RemoteSource | null>(null);
  * memoised components several levels down (`Row`, `CallRow`); threading a prop
  * through every level would re-render the whole reader on each jump, and the
  * levels in between have no business knowing about comments.
+ *
+ * A **store** in the context, not the value itself. A context value re-renders
+ * every consumer when it changes, and every row consumes this one — so each
+ * jump re-rendered every mounted row, every call row and every comment button
+ * to tell exactly one of them to open (~600ms on a long Session, on the click).
+ * Through `useSyncExternalStore` each row's snapshot is only its own number,
+ * so the rows a request is not for compare equal and skip the render.
  */
-const FocusThreadContext = createContext<{ anchorId: string; n: number } | null>(null);
+type FocusRequest = { anchorId: string; n: number } | null;
+
+interface FocusStore {
+  get: () => FocusRequest;
+  set: (next: FocusRequest | ((prev: FocusRequest) => FocusRequest)) => void;
+  subscribe: (listener: () => void) => () => void;
+}
+
+function createFocusStore(): FocusStore {
+  let value: FocusRequest = null;
+  const listeners = new Set<() => void>();
+  return {
+    get: () => value,
+    set: (next) => {
+      const resolved = typeof next === "function" ? next(value) : next;
+      if (resolved === value) return;
+      value = resolved;
+      listeners.forEach((listener) => listener());
+    },
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+}
+
+const NO_FOCUS: FocusStore = createFocusStore();
+const FocusThreadContext = createContext<FocusStore>(NO_FOCUS);
 
 /** The open signal for one anchor: a new number each time it is asked for. */
 function useOpenSignal(anchorId: string) {
-  const focus = useContext(FocusThreadContext);
-  return focus?.anchorId === anchorId ? focus.n : undefined;
+  const store = useContext(FocusThreadContext);
+  return useSyncExternalStore(store.subscribe, () => {
+    const focus = store.get();
+    return focus?.anchorId === anchorId ? focus.n : undefined;
+  });
 }
 
 export function SessionDetail({
@@ -221,23 +301,25 @@ export function SessionDetail({
   projectPath,
   comments = null,
   entriesPending = false,
+  entriesStreaming = false,
   remote = null,
   remoteProjectId = null,
   focusCommitSha,
+  chatOpen = false,
+  onToggleChat,
 }: Props) {
   const [filters, setFilters] = useState<TimelineFilters>(DEFAULT_FILTERS);
   /** Narrow tool calls to failed ones — the "which calls failed" question. */
   const [failedOnly, setFailedOnly] = useState(false);
   /** Which canonical tool names are selected. Empty means all. */
   const [tools, setTools] = useState<Set<string>>(new Set());
-  const [filtersOpen, setFiltersOpen] = useState(false);
   /** Keep every tool-call group open. Off by default — see `Calls`. */
   const [expandTools, setExpandTools] = useState(false);
   /** Show every response, or only the last of each consecutive run. */
   const [foldResponses, setFoldResponses] = useState(false);
   /** Free-text narrowing of the timeline. */
   const [search, setSearch] = useState("");
-  const [renderCount, setRenderCount] = useState(WINDOW_CHUNK);
+  const [renderCount, setRenderCount] = useState(FIRST_PAINT);
   const entryRefs = useRef(new Map<string, HTMLDivElement>());
   const scrollRef = useRef<HTMLDivElement | null>(null);
   /** Cancels the jump animation in flight, if any. */
@@ -268,7 +350,8 @@ export function SessionDetail({
   const [landed, setLanded] = useState<string | null>(null);
   /** Which entry's comment thread to open, from the comments panel. The
    *  counter is what lets the same thread be asked for twice. */
-  const [focusThread, setFocusThread] = useState<{ anchorId: string; n: number } | null>(null);
+  const [focusStore] = useState(createFocusStore);
+  const setFocusThread = focusStore.set;
   const contentRef = useRef<HTMLDivElement | null>(null);
 
   const s = detail.summary;
@@ -422,8 +505,13 @@ export function SessionDetail({
     anchorRefs,
     anchorCount: anchors.length,
     canGrow: renderCount < groups.length,
+    // A transition, so mounting the next chunk yields to the scroll that asked
+    // for it instead of stalling it mid-fling.
     onGrow: useCallback(
-      () => setRenderCount((count) => Math.min(count + WINDOW_CHUNK, groups.length)),
+      () =>
+        startTransition(() =>
+          setRenderCount((count) => Math.min(count + WINDOW_CHUNK, groups.length)),
+        ),
       [groups.length],
     ),
   });
@@ -433,12 +521,24 @@ export function SessionDetail({
   // to — resetting on the raw keystroke scrolled to top a beat before the list
   // changed.
   useEffect(() => {
-    setRenderCount(WINDOW_CHUNK);
+    setRenderCount(FIRST_PAINT);
     scrollRef.current?.scrollTo({ top: 0 });
     // The list was swapped wholesale; a same-height replacement would not trip
     // the ResizeObserver and every cached offset would describe the old rows.
     invalidate();
   }, [detail.summary.id, filters, failedOnly, tools, deferredSearch, foldResponses, invalidate]);
+
+  // …and straight after that first paint, top the window up to a full chunk
+  // without blocking (see `FIRST_PAINT`). Not left to the scroll loop alone:
+  // twelve long rows can already overrun its grow margin, and then nothing
+  // past them would mount until the reader scrolled — a fling would hit the
+  // end of the window.
+  useEffect(() => {
+    if (renderCount >= WINDOW_CHUNK || renderCount >= groups.length) return;
+    startTransition(() =>
+      setRenderCount((count) => Math.max(count, Math.min(WINDOW_CHUNK, groups.length))),
+    );
+  }, [renderCount, groups.length]);
 
   // Memoised, and load-bearing: this array is `Timeline`'s only changing prop,
   // so a fresh slice on every render would fail its memo comparison every time
@@ -463,6 +563,10 @@ export function SessionDetail({
       // and no error. A dead click, permanently.
       const target = detail.entries.find((e) => e.id === pendingJump);
       if (!target) {
+        // Not arrived yet, on a Session still streaming in: hold the request.
+        // This effect re-runs as each page lands (`groups` moves), and the
+        // jump goes through once its entry is here.
+        if (entriesStreaming) return;
         setPendingJump(null);
         return;
       }
@@ -481,7 +585,11 @@ export function SessionDetail({
       return;
     }
     if (index >= renderCount) {
-      setRenderCount(index + 40);
+      // Stepped and as a transition — see `JUMP_STEP`. Each commit re-runs
+      // this effect (`renderCount` is a dependency), which takes the next
+      // step until the target is mounted.
+      const next = Math.min(index + 40, renderCount + JUMP_STEP);
+      startTransition(() => setRenderCount(next));
       return;
     }
     // Only a group's HEAD is registered — a run of tool calls is one row on
@@ -498,7 +606,7 @@ export function SessionDetail({
       setLanded(pendingJump);
       setPendingJump(null);
     }
-  }, [pendingJump, groups, renderCount, jumpTo]);
+  }, [pendingJump, groups, renderCount, jumpTo, entriesStreaming]);
 
   useEffect(() => {
     if (!landed) return;
@@ -563,6 +671,34 @@ export function SessionDetail({
     }
   }, [focusCommitSha, detail.summary.id, detail.entries]);
 
+  /**
+   * Scroll to the entry AND open the thread hanging off it. Landing beside a
+   * remark without showing it makes you hunt for the thing you just clicked.
+   *
+   * `setPendingJump` rather than `jumpToAnchor`: the settling effect above is
+   * what reveals a kind the filters are hiding, grows the render window and
+   * unfolds a run of tool calls — so a remark on the fourth call of a run
+   * arrives with its own button mounted to hang the popover off. `jumpToAnchor`
+   * only scrolls, and would have opened nothing in every one of those cases.
+   *
+   * Stable, so the memoised `CommentsMorph` is not rebuilt on every render of
+   * this pane.
+   */
+  const sessionId = detail.summary.id;
+  const jumpToThread = useCallback(
+    (anchorId: string) => {
+      setFocusThread((prev) => ({ anchorId, n: (prev?.n ?? 0) + 1 }));
+      // The whole-Session thread hangs off the masthead, which is no entry and
+      // is already at the top.
+      if (anchorId === sessionId) {
+        scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+        return;
+      }
+      setPendingJump(anchorId);
+    },
+    [sessionId, setFocusThread],
+  );
+
   const activeFilters =
     (filters.prompts ? 0 : 1) +
     (filters.responses ? 0 : 1) +
@@ -570,11 +706,41 @@ export function SessionDetail({
     (filters.toolCalls ? 0 : 1) +
     (filters.checkpoints ? 0 : 1) +
     (failedOnly ? 1 : 0) +
-    tools.size;
+    tools.size +
+    (search.trim() ? 1 : 0);
+
+  /**
+   * Where the reader is among the Checkpoints, for the filter menu's
+   * previous / next: the index of the one at the middle of the viewport, or
+   * the half-step between the two either side of it (`1.5` = between the
+   * second and the third). Read from the rows on screen when asked, never
+   * tracked per scroll.
+   *
+   * A Checkpoint with no row is one the render window has not reached yet —
+   * below everything on screen — or one a filter hides, which a jump reveals.
+   */
+  const currentCheckpoint = useCallback((): number => {
+    const scroller = scrollRef.current;
+    if (!scroller) return -0.5;
+    const view = scroller.getBoundingClientRect();
+    const middle = view.top + view.height / 2;
+    let before = -1;
+    for (let i = 0; i < checkpoints.length; i += 1) {
+      const node = entryRefs.current.get(checkpoints[i].id);
+      if (!node) continue;
+      const rect = node.getBoundingClientRect();
+      // A jump centres its target, so "at the middle" is within a row's
+      // height of it.
+      if (rect.top <= middle && rect.bottom >= middle - 8) return i;
+      if (rect.bottom < middle) before = i;
+      else break;
+    }
+    return before + 0.5;
+  }, [checkpoints]);
 
   return (
     <RemoteSourceContext.Provider value={remote}>
-      <FocusThreadContext.Provider value={focusThread}>
+      <FocusThreadContext.Provider value={focusStore}>
         <div className="relative flex h-full min-h-0">
           <div
             ref={scrollRef}
@@ -582,7 +748,7 @@ export function SessionDetail({
             className="hide-scrollbar min-h-0 flex-1 overflow-y-auto"
           >
             <div ref={contentRef} className={cn(MEASURE, "pb-28 pt-14")}>
-              <Masthead detail={detail} comments={comments} />
+              <Masthead detail={detail} comments={comments} projectPath={projectPath} />
 
               {groups.length === 0 ? (
                 <Empty
@@ -596,16 +762,23 @@ export function SessionDetail({
                   <Timeline
                     groups={rendered}
                     projectPath={projectPath}
+                    sessionId={s.id}
                     agent={s.agent}
                     expandTools={expandTools}
                     landed={landed}
                     register={register}
                     comments={comments}
                   />
-                  {renderCount < groups.length && (
+                  {renderCount < groups.length ? (
                     <p className="py-6 text-center font-mono text-xs text-[var(--muted-foreground)]">
                       {groups.length - renderCount} more…
                     </p>
+                  ) : (
+                    entriesStreaming && (
+                      <p className="py-6 text-center font-mono text-xs text-[var(--muted-foreground)]">
+                        Loading the rest of this session…
+                      </p>
+                    )
                   )}
                 </div>
               )}
@@ -632,76 +805,64 @@ export function SessionDetail({
             }}
           />
 
-          {/* The action bar: hand this Session on, or read what was said about
-           *  it. Two round buttons in opposite corners, each growing into its
-           *  own panel — the web reader's footer, which this now matches.
+          {/* The action bar: every action on the open Session, in two pills
+           *  (`footer-pill.tsx`). Left, hand it on and narrow it — share,
+           *  export, filter; right, talk about it — ask, comments. Share and
+           *  comments are morphs whose closed box is a button in the pill, so
+           *  each panel still grows out of its own button.
            *
-           *  `items-end` so each button grows UP out of its corner while the
-           *  bar holds both to the bottom edge.
-           *
-           *  The filter drawer and the in-session search that used to live here
-           *  are gone with it. */}
+           *  `items-end` so a morph grows UP out of its pill while the bar
+           *  holds both pills to the bottom edge. */}
           <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 flex items-end justify-between gap-3 px-4 pb-3.5 *:pointer-events-auto">
-            <ShareMorph
-              detail={detail}
-              projectId={remoteProjectId}
-              directory={comments?.directory ?? EMPTY_DIRECTORY}
-            />
-            {comments && (
-              <CommentsMorph
+            <FooterPill>
+              <ShareMorph
                 detail={detail}
-                comments={comments}
-                onJump={(anchorId) => {
-                  // Scroll to the entry AND open the thread hanging off it.
-                  // Landing beside a remark without showing it makes you hunt
-                  // for the thing you just clicked.
-                  //
-                  // `setPendingJump` rather than `jumpToAnchor`: the settling
-                  // effect below is what reveals a kind the filters are hiding,
-                  // grows the render window and unfolds a run of tool calls — so
-                  // a remark on the fourth call of a run arrives with its own
-                  // button mounted to hang the popover off. `jumpToAnchor` only
-                  // scrolls, and would have opened nothing in every one of those
-                  // cases.
-                  setFocusThread((prev) => ({ anchorId, n: (prev?.n ?? 0) + 1 }));
-                  // The whole-Session thread hangs off the masthead, which is no
-                  // entry and is already at the top.
-                  if (anchorId === detail.summary.id) {
-                    scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
-                    return;
-                  }
-                  setPendingJump(anchorId);
-                }}
+                projectId={remoteProjectId}
+                directory={comments?.directory ?? EMPTY_DIRECTORY}
+                inPill
               />
+              <ExportButton detail={detail} />
+              <FilterMenu
+                detail={detail}
+                filters={filters}
+                setFilters={setFilters}
+                failedOnly={failedOnly}
+                setFailedOnly={setFailedOnly}
+                failedCount={failedCount}
+                tools={tools}
+                setTools={setTools}
+                expandTools={expandTools}
+                setExpandTools={setExpandTools}
+                foldResponses={foldResponses}
+                setFoldResponses={setFoldResponses}
+                search={search}
+                setSearch={setSearch}
+                activeFilters={activeFilters}
+                checkpoints={checkpoints}
+                currentCheckpoint={currentCheckpoint}
+                onJump={setPendingJump}
+              />
+            </FooterPill>
+            {(onToggleChat || comments) && (
+              <FooterPill>
+                {onToggleChat && (
+                  <HintItem label={chatOpen ? "Close chat" : "Ask about this session"}>
+                    <button
+                      type="button"
+                      aria-pressed={chatOpen}
+                      onClick={onToggleChat}
+                      className={cn(PILL_BUTTON, chatOpen && PILL_BUTTON_ACTIVE)}
+                    >
+                      <Sparkles size={PILL_ICON} strokeWidth={1.7} />
+                    </button>
+                  </HintItem>
+                )}
+                {comments && (
+                  <CommentsMorph detail={detail} comments={comments} inPill onJump={jumpToThread} />
+                )}
+              </FooterPill>
             )}
           </div>
-
-          {filtersOpen && (
-            <FilterDrawer
-              detail={detail}
-              filters={filters}
-              setFilters={setFilters}
-              failedOnly={failedOnly}
-              setFailedOnly={setFailedOnly}
-              failedCount={failedCount}
-              tools={tools}
-              setTools={setTools}
-              expandTools={expandTools}
-              setExpandTools={setExpandTools}
-              foldResponses={foldResponses}
-              setFoldResponses={setFoldResponses}
-              activeFilters={activeFilters}
-              checkpoints={checkpoints}
-              onJump={(entryId) => {
-                // The drawer closes on jump. It covers the right third of the
-                // measure, and landing behind it would mean the reader has to
-                // dismiss it to see what they asked for.
-                setFiltersOpen(false);
-                setPendingJump(entryId);
-              }}
-              onClose={() => setFiltersOpen(false)}
-            />
-          )}
         </div>
       </FocusThreadContext.Provider>
     </RemoteSourceContext.Provider>
@@ -719,10 +880,19 @@ export function SessionDetail({
  * around it rather than three rows that happen to be stacked. Export is not
  * here; it lives in the header dock with the tab's other actions.
  */
-function Masthead({ detail, comments }: { detail: Detail; comments: RowComments | null }) {
+function Masthead({
+  detail,
+  comments,
+  projectPath,
+}: {
+  detail: Detail;
+  comments: RowComments | null;
+  projectPath: string;
+}) {
   const openSignal = useOpenSignal(detail.summary.id);
   const s = detail.summary;
   const branch = s.branches[0];
+  const pr = useBranchPullRequest(projectPath, branch ?? "");
   const tokens = tokenLabel(s);
 
   // Pricing is cached by Rust and refreshed in the background; a consumer has
@@ -794,6 +964,12 @@ function Masthead({ detail, comments }: { detail: Detail; comments: RowComments 
             {branch}
           </Chip>
         )}
+        {pr !== null && (
+          <Chip>
+            <GitPullRequest size={11} />
+            PR #{pr.number} open
+          </Chip>
+        )}
         <span className="font-mono text-xs text-[var(--muted-foreground)]">
           {timeAgo(s.lastActivityAt, { suffix: true })} · {formatDuration(s.activeSeconds)}
         </span>
@@ -807,6 +983,8 @@ function Masthead({ detail, comments }: { detail: Detail; comments: RowComments 
           </span>
         )}
       </div>
+
+      {branch && <ShipOverviewCard projectPath={projectPath} branch={branch} pr={pr} />}
 
       <div
         className={cn(
@@ -855,6 +1033,7 @@ function Masthead({ detail, comments }: { detail: Detail; comments: RowComments 
           />
         )}
       </div>
+      <SecuritySummary projectPath={projectPath} sessionId={s.id} />
     </>
   );
 }
@@ -1023,6 +1202,7 @@ function groupEntries(entries: TimelineEntry[]): Group[] {
 const Timeline = memo(function Timeline({
   groups,
   projectPath,
+  sessionId,
   agent,
   expandTools,
   landed,
@@ -1031,6 +1211,7 @@ const Timeline = memo(function Timeline({
 }: {
   groups: Group[];
   projectPath: string;
+  sessionId: string;
   agent: string | null;
   expandTools: boolean;
   landed: string | null;
@@ -1046,6 +1227,7 @@ const Timeline = memo(function Timeline({
           first={i === 0}
           last={i === groups.length - 1}
           projectPath={projectPath}
+          sessionId={sessionId}
           agent={agent}
           expandTools={expandTools}
           isLanded={group.entries.some((e) => e.id === landed)}
@@ -1079,6 +1261,7 @@ const Row = memo(function Row({
   first,
   last,
   projectPath,
+  sessionId,
   agent,
   expandTools,
   isLanded,
@@ -1090,6 +1273,7 @@ const Row = memo(function Row({
   first: boolean;
   last: boolean;
   projectPath: string;
+  sessionId: string;
   agent: string | null;
   /** The global "always expand" switch from the filter drawer. */
   expandTools: boolean;
@@ -1212,7 +1396,7 @@ const Row = memo(function Row({
             revealId={landedCallId}
           />
         ) : group.kind === "checkpoint" ? (
-          <Checkpoint entry={head} />
+          <Checkpoint entry={head} projectPath={projectPath} sessionId={sessionId} />
         ) : group.kind === "prompt" ? (
           <Prompt entry={head} projectPath={projectPath} />
         ) : (
@@ -1829,7 +2013,15 @@ const CallRow = memo(function CallRow({
  * paths and a diffstat, never the patch. A diff viewer here would need the
  * commit re-read from git, which is a different feature.
  */
-function Checkpoint({ entry }: { entry: TimelineEntry }) {
+function Checkpoint({
+  entry,
+  projectPath,
+  sessionId,
+}: {
+  entry: TimelineEntry;
+  projectPath: string;
+  sessionId: string;
+}) {
   const orphaned = entry.linkState === "orphaned";
   return (
     <div
@@ -1902,6 +2094,14 @@ function Checkpoint({ entry }: { entry: TimelineEntry }) {
         </ul>
       )}
 
+      {entry.commitSha && !orphaned && (
+        <CheckpointFindings
+          projectPath={projectPath}
+          sessionId={sessionId}
+          commitSha={entry.commitSha}
+        />
+      )}
+
       {/* Suppressed when orphaned: the branch no longer contains this commit,
        *  so showing it would assert exactly the link that was lost. */}
       {entry.branch && !orphaned && (
@@ -1916,13 +2116,19 @@ function Checkpoint({ entry }: { entry: TimelineEntry }) {
 // ── Filters ─────────────────────────────────────────────────────────────────
 
 /**
- * The filter drawer.
+ * The filter menu: what the timeline shows, and a way through its Checkpoints.
  *
- * A drawer rather than a permanent rail: filtering is something you do
- * occasionally, and a 340px column present at all times took a quarter of the
- * reading measure to say "everything is shown".
+ * A popover off the footer's filter button (`footer-pill.tsx`), opening up
+ * out of the bottom-left. It was a 340px drawer over the right of the reader,
+ * which nothing opened once the footer became two morphs; a menu keeps the
+ * reader in view while you narrow it, so a toggle's effect shows as you make
+ * it.
+ *
+ * Checkpoints come first, because "take me to the commit" is the question
+ * the menu is most often opened with: previous / next step from wherever the
+ * reader is, and the list jumps to any one of them.
  */
-function FilterDrawer({
+function FilterMenu({
   detail,
   filters,
   setFilters,
@@ -1935,10 +2141,12 @@ function FilterDrawer({
   setExpandTools,
   foldResponses,
   setFoldResponses,
+  search,
+  setSearch,
   activeFilters,
   checkpoints,
+  currentCheckpoint,
   onJump,
-  onClose,
 }: {
   detail: Detail;
   filters: TimelineFilters;
@@ -1952,24 +2160,20 @@ function FilterDrawer({
   setExpandTools: (v: boolean) => void;
   foldResponses: boolean;
   setFoldResponses: (v: boolean) => void;
+  search: string;
+  setSearch: (v: string) => void;
   activeFilters: number;
   /** Every Checkpoint in the Session, in timeline order. */
   checkpoints: TimelineEntry[];
+  /** Where the reader is among them — see `currentCheckpoint` in the pane. */
+  currentCheckpoint: () => number;
   onJump: (entryId: string) => void;
-  onClose: () => void;
 }) {
-  // Escape closes it, like every other overlay in Atlas. Bound to the window
-  // rather than to the drawer so it works wherever focus happens to be — this
-  // is not a focus trap, and the reader may still be scrolling the timeline
-  // behind it.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
+  const [open, setOpen] = useState(false);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  // Re-measured on open: the popup mounts with it, and a closed one has no
+  // geometry to read.
+  const bodyEdges = useScrollEdges(bodyRef, [open, checkpoints.length, detail.tools.length]);
   const s = detail.summary;
   const kinds: Array<[keyof TimelineFilters, string, number]> = [
     ["prompts", "Prompts", detail.counts.prompts],
@@ -1979,177 +2183,209 @@ function FilterDrawer({
     ["checkpoints", "Checkpoints", detail.counts.checkpoints],
   ];
 
+  const step = (direction: -1 | 1) => {
+    const at = currentCheckpoint();
+    // On a Checkpoint (a whole index), step off it; between two (a half), the
+    // nearer one in that direction is the next whole index that way.
+    const target = Number.isInteger(at)
+      ? at + direction
+      : direction === 1
+        ? Math.ceil(at)
+        : Math.floor(at);
+    const checkpoint = checkpoints[target];
+    if (checkpoint) onJump(checkpoint.id);
+  };
+
   return (
-    <>
-      {/* Scrim — subtle; the blurred panel carries the depth, as in the
-       *  notification centre. Clicking it dismisses. */}
-      <div
-        className="animate-fade-in absolute inset-0 z-overlay scrim-soft"
-        onClick={onClose}
-        aria-hidden
-      />
-      <aside
-        role="dialog"
-        aria-label="Filters"
-        className="animate-slide-in-right absolute bottom-0 right-0 top-0 z-modal flex w-[340px] flex-col border-l border-[var(--border)] bg-[var(--card)]/60 shadow-md backdrop-blur-2xl"
-      >
-        {/* No header row at all. With no active filters it was an empty strip
-         *  holding one X — the close button floats over the content instead,
-         *  and the "N active · Reset" affordance rides as the content's first
-         *  row only when there is something to reset. */}
-        <Hint label="Close filters">
-          <button
-            type="button"
-            onClick={onClose}
-            className="absolute right-2 top-2 z-10 flex size-6 cursor-pointer items-center justify-center rounded text-[var(--muted-foreground)] transition-colors hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]"
-          >
-            <X size={14} />
-          </button>
-        </Hint>
-
-        <div className="hide-scrollbar flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4 pb-8 pt-4">
-          {activeFilters > 0 && (
-            <div className="flex items-center gap-2 pr-8">
-              <span className="font-mono text-2xs text-[var(--muted-foreground)]">
-                {activeFilters} active
-              </span>
-              <button
-                type="button"
-                onClick={() => {
-                  setFilters(() => DEFAULT_FILTERS);
-                  setFailedOnly(false);
-                  setTools(() => new Set());
-                }}
-                className="h-[22px] cursor-pointer rounded-full border border-[var(--border)] bg-[var(--card)] px-2.5 font-mono text-2xs uppercase tracking-[0.06em] text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)]"
-              >
-                Reset
-              </button>
-            </div>
-          )}
-          {checkpoints.length > 0 && (
-            <Section label="Checkpoints" hint={`${checkpoints.length} commits`}>
-              <CheckpointJump checkpoints={checkpoints} onJump={onJump} />
-            </Section>
-          )}
-
-          <Section label="Event types" hint={`${detail.entries.length} events`}>
-            {kinds.map(([key, label, count]) => (
-              <FilterChip
-                key={key}
-                label={label}
-                count={count}
-                on={filters[key]}
-                enabled={count > 0}
-                onClick={() => setFilters((c) => ({ ...c, [key]: !c[key] }))}
-              />
-            ))}
-          </Section>
-
-          {detail.tools.length > 0 && (
-            <Section label="Tool" hint={`${s.toolCallCount} calls`}>
-              {detail.tools.map((tally) => (
-                <FilterChip
-                  key={tally.toolName}
-                  label={tally.toolName}
-                  count={tally.count}
-                  on={tools.has(tally.toolName)}
-                  enabled
-                  onClick={() =>
-                    setTools((current) => {
-                      const next = new Set(current);
-                      if (next.has(tally.toolName)) next.delete(tally.toolName);
-                      else next.add(tally.toolName);
-                      return next;
-                    })
-                  }
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <HintItem label={activeFilters > 0 ? `Filters · ${activeFilters} active` : "Filter and jump"}>
+        <Popover.Trigger
+          render={
+            <button
+              type="button"
+              className={cn(PILL_BUTTON, activeFilters > 0 && PILL_BUTTON_ACTIVE)}
+            >
+              <SlidersHorizontal size={PILL_ICON} strokeWidth={1.7} />
+              {activeFilters > 0 && (
+                <span
+                  aria-hidden
+                  className="pointer-events-none absolute right-1 top-1 size-1.5 rounded-full bg-foreground"
                 />
-              ))}
-            </Section>
-          )}
-
-          {/* A display preference, not a filter — it hides nothing, so it is not
-           *  counted in the active-filter badge and Reset leaves it alone. */}
-          <Section label="View">
-            <FilterChip
-              label="Expand tool calls"
-              count={detail.counts.toolCalls}
-              on={expandTools}
-              enabled={detail.counts.toolCalls > 0}
-              onClick={() => setExpandTools(!expandTools)}
-            />
-            <FilterChip
-              label="Final response only"
-              count={detail.counts.responses}
-              on={foldResponses}
-              enabled={detail.counts.responses > 1}
-              onClick={() => setFoldResponses(!foldResponses)}
-            />
-          </Section>
-
-          <Section label="Outcome">
-            <FilterChip
-              label="Failed only"
-              count={failedCount}
-              on={failedOnly}
-              enabled={failedCount > 0}
-              dot="var(--atlas-status-error-foreground)"
-              onClick={() => setFailedOnly(!failedOnly)}
-            />
-          </Section>
-
-          <div className="border-t border-dashed border-[var(--atlas-border-subtle)] pt-4">
-            <p className="text-2xs font-semibold uppercase tracking-[0.08em] text-[var(--muted-foreground)]">
-              Session
-            </p>
-            <dl className="mt-2.5 flex flex-col gap-2">
-              <Meta label="Model" value={prettyModel(s.model) ?? "—"} />
-              <Meta label="Agent" value={s.agent ? agentLabel(s.agent) : "—"} />
-              <Meta label="Branch" value={s.branches[0] ?? "—"} />
-              <Meta label="Started" value={formatDateTime(s.startedAt)} />
-              <Meta label="Messages" value={String(s.messageCount)} />
-              <Meta
-                label="Changes"
-                value={
-                  s.insertions || s.deletions
-                    ? `+${s.insertions} / −${s.deletions} in ${s.filesTouched} file${s.filesTouched === 1 ? "" : "s"}`
-                    : "—"
-                }
+              )}
+            </button>
+          }
+        />
+      </HintItem>
+      <Popover.Portal>
+        <Popover.Positioner className="z-popover" side="top" align="start" sideOffset={8}>
+          {/* Opaque, in the page's own appearance — black on a dark theme,
+              light on a light one. The ground is the theme's background and
+              what sits on it — the Checkpoint cards — the raised popover grey,
+              so the cards pop rather than the menu. It was the card colour at
+              90% under a blur, which let the timeline's text show through. */}
+          <Popover.Popup
+            aria-label="Filter the timeline"
+            className="flex max-h-[min(36rem,calc(100svh-8rem))] w-[340px] origin-[var(--transform-origin)] flex-col overflow-hidden rounded-2xl border border-border bg-background text-foreground shadow-lg data-closed:animate-scale-out data-open:animate-scale-in"
+          >
+            <label className="flex h-9 shrink-0 items-center gap-2 border-b border-[var(--border)] px-3">
+              <Search size={13} className="shrink-0 text-[var(--muted-foreground)]" />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Find in this session…"
+                aria-label="Find in this session"
+                spellCheck={false}
+                className="min-w-0 flex-1 border-0 bg-transparent p-0 text-sm text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]"
               />
-              <Meta label="Session id" value={s.id.slice(-8)} />
-            </dl>
+              {activeFilters > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFilters(() => DEFAULT_FILTERS);
+                    setFailedOnly(false);
+                    setTools(() => new Set());
+                    setSearch("");
+                  }}
+                  className="h-[22px] shrink-0 cursor-pointer rounded-full border border-[var(--border)] px-2.5 text-2xs text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)]"
+                >
+                  Reset {activeFilters}
+                </button>
+              )}
+            </label>
 
-            {s.source === "external_jsonl" && (
-              <p className="mt-4 rounded-md border border-dashed border-[var(--border)] px-3 py-2.5 text-sm leading-[1.55] text-[var(--muted-foreground)]">
-                Imported session — read from a transcript on disk. Commits aren&apos;t linked to
-                imported history, and token usage wasn&apos;t recorded.
-              </p>
-            )}
-          </div>
-        </div>
-      </aside>
-    </>
+            <div className="relative flex min-h-0 flex-1 flex-col">
+              <ScrollFade at="top" visible={bodyEdges.top} className={POPOVER_FADE} />
+              <ScrollFade at="bottom" visible={bodyEdges.bottom} className={POPOVER_FADE} />
+              <div
+                ref={bodyRef}
+                className="hide-scrollbar flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-3.5 pb-4 pt-3.5"
+              >
+                {checkpoints.length > 0 && (
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-2xs font-semibold uppercase tracking-[0.08em] text-secondary-foreground">
+                        Checkpoints
+                      </span>
+                      <span className="font-mono text-2xs text-muted-foreground">
+                        {checkpoints.length}
+                      </span>
+                      <span className="flex-1" />
+                      {/* The sidebar's outlined round buttons (its +): stepping
+                        is the menu's one verb, so it reads as a control
+                        rather than a glyph in a label row. */}
+                      <span className="flex items-center gap-1.5">
+                        <GlassIconButton
+                          icon={ChevronUp}
+                          label="Previous checkpoint"
+                          onClick={() => step(-1)}
+                        />
+                        <GlassIconButton
+                          icon={ChevronDown}
+                          label="Next checkpoint"
+                          onClick={() => step(1)}
+                        />
+                      </span>
+                    </div>
+                    <CheckpointList
+                      checkpoints={checkpoints}
+                      onJump={(id) => {
+                        // The menu covers the reader's lower left, and a jump
+                        // centres its target; close it so the landing is seen.
+                        setOpen(false);
+                        onJump(id);
+                      }}
+                    />
+                  </div>
+                )}
+
+                <Section label="Show" hint={`${detail.entries.length} events`}>
+                  {kinds.map(([key, label, count]) => (
+                    <FilterChip
+                      key={key}
+                      label={label}
+                      count={count}
+                      on={filters[key]}
+                      enabled={count > 0}
+                      onClick={() => setFilters((c) => ({ ...c, [key]: !c[key] }))}
+                    />
+                  ))}
+                </Section>
+
+                {detail.tools.length > 0 && (
+                  <Section label="Tool" hint={`${s.toolCallCount} calls`}>
+                    {detail.tools.map((tally) => (
+                      <FilterChip
+                        key={tally.toolName}
+                        label={tally.toolName}
+                        count={tally.count}
+                        on={tools.has(tally.toolName)}
+                        enabled
+                        onClick={() =>
+                          setTools((current) => {
+                            const next = new Set(current);
+                            if (next.has(tally.toolName)) next.delete(tally.toolName);
+                            else next.add(tally.toolName);
+                            return next;
+                          })
+                        }
+                      />
+                    ))}
+                  </Section>
+                )}
+
+                {/* A display preference, not a filter — it hides nothing, so it is
+                 *  not counted in the active badge and Reset leaves it alone. */}
+                <Section label="View">
+                  <FilterChip
+                    label="Expand tool calls"
+                    count={detail.counts.toolCalls}
+                    on={expandTools}
+                    enabled={detail.counts.toolCalls > 0}
+                    onClick={() => setExpandTools(!expandTools)}
+                  />
+                  <FilterChip
+                    label="Final response only"
+                    count={detail.counts.responses}
+                    on={foldResponses}
+                    enabled={detail.counts.responses > 1}
+                    onClick={() => setFoldResponses(!foldResponses)}
+                  />
+                </Section>
+
+                <Section label="Outcome">
+                  <FilterChip
+                    label="Failed only"
+                    count={failedCount}
+                    on={failedOnly}
+                    enabled={failedCount > 0}
+                    dot="var(--atlas-status-error-foreground)"
+                    onClick={() => setFailedOnly(!failedOnly)}
+                  />
+                </Section>
+              </div>
+            </div>
+          </Popover.Popup>
+        </Popover.Positioner>
+      </Popover.Portal>
+    </Popover.Root>
   );
 }
 
 /**
- * Jump straight to any commit this Session produced.
+ * Every commit this Session produced, as a list to jump into.
  *
- * A searchable combo rather than a plain list: a long Session can produce a
- * dozen Checkpoints, and by the time you are looking for one you usually know a
- * word from its subject. Searching a subject beats scrolling a list of shas.
- *
- * The trigger keeps saying "Jump to" rather than showing the last selection —
- * this is a *verb*, not a setting. Nothing here is part of the filter state,
- * which is why Reset leaves it alone.
+ * Inline in the menu rather than the searchable dropdown it was in the
+ * drawer: a popover inside a popover fights over focus and dismissal. Past
+ * a handful, a filter field narrows it — by the time you look for a commit
+ * in a long Session you usually know a word of its subject.
  */
-function CheckpointJump({
+function CheckpointList({
   checkpoints,
   onJump,
 }: {
   checkpoints: TimelineEntry[];
   onJump: (entryId: string) => void;
 }) {
-  const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
 
   const matches = useMemo(() => {
@@ -2164,111 +2400,90 @@ function CheckpointJump({
   }, [checkpoints, query]);
 
   /** Position in the FULL list — `#3` must mean the third Checkpoint of the
-   *  Session even when the search has narrowed what's shown. (Also drops the
-   *  `indexOf` inside the render map, which was quadratic.) */
+   *  Session even when the search has narrowed what's shown. */
   const ordinal = useMemo(() => new Map(checkpoints.map((c, i) => [c.id, i + 1])), [checkpoints]);
 
-  return (
-    <Popover.Root
-      open={open}
-      onOpenChange={(v) => {
-        setOpen(v);
-        if (!v) setQuery("");
-      }}
-    >
-      <Popover.Trigger
-        render={
-          <button
-            type="button"
-            className="flex h-9 w-full cursor-pointer items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 text-left text-base text-[var(--secondary-foreground)] transition-colors hover:border-[var(--atlas-border-strong)] hover:text-[var(--foreground)]"
-          >
-            <span className="flex-1">Jump to</span>
-            <ChevronDown size={13} className="shrink-0 text-[var(--muted-foreground)]" />
-          </button>
-        }
-      />
-      <Popover.Portal>
-        <Popover.Positioner className="z-popover" align="start" sideOffset={6}>
-          <Popover.Popup className="flex max-h-[320px] w-[var(--anchor-width)] origin-[var(--transform-origin)] flex-col overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--card)]/95 shadow-md backdrop-blur-2xl data-closed:animate-scale-out data-open:animate-scale-in">
-            {/* The search only appears when there is enough to search. */}
-            {checkpoints.length > 4 && (
-              <div className="flex h-8 shrink-0 items-center gap-2 border-b border-[var(--border)] px-2.5">
-                <Search size={12} className="shrink-0 text-[var(--muted-foreground)]" />
-                <input
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Find a commit…"
-                  spellCheck={false}
-                  autoFocus
-                  className="min-w-0 flex-1 border-0 bg-transparent p-0 text-sm text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]"
-                />
-              </div>
-            )}
+  const listRef = useRef<HTMLDivElement>(null);
+  const edges = useScrollEdges(listRef, [matches.length]);
 
-            <div className="hide-scrollbar min-h-0 flex-1 overflow-y-auto p-1">
-              {matches.length === 0 ? (
-                <p className="px-2 py-3 text-center text-sm text-[var(--muted-foreground)]">
-                  No match.
-                </p>
-              ) : (
-                matches.map((checkpoint, i) => {
-                  const sha = checkpoint.commitSha ?? "";
-                  const changed = checkpoint.insertions + checkpoint.deletions;
-                  return (
-                    <button
-                      key={checkpoint.id}
-                      type="button"
-                      onClick={() => {
-                        onJump(checkpoint.id);
-                        setOpen(false);
-                      }}
-                      className="flex w-full cursor-pointer flex-col gap-0.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-[var(--atlas-element-hover)]"
-                    >
-                      <span className="truncate text-base text-[var(--secondary-foreground)]">
-                        {checkpoint.commitSubject ?? (
-                          <span className="text-[var(--muted-foreground)]">
-                            Subject unavailable
-                          </span>
-                        )}
-                      </span>
-                      <span className="flex items-center gap-1.5 font-mono text-xs text-[var(--atlas-text-disabled)]">
-                        <span>
-                          #{ordinal.get(checkpoint.id) ?? i + 1} · {sha.slice(0, 7)}
+  return (
+    <div className="mt-2.5 flex flex-col gap-2">
+      {checkpoints.length > 4 && (
+        <label className="flex h-8 shrink-0 items-center gap-2 rounded-lg border border-border bg-popover px-2.5 transition-colors focus-within:border-foreground/25">
+          <Search size={12} className="shrink-0 text-muted-foreground" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Find a commit…"
+            aria-label="Find a commit"
+            spellCheck={false}
+            className="min-w-0 flex-1 border-0 bg-transparent p-0 text-xs text-foreground outline-none placeholder:text-muted-foreground"
+          />
+        </label>
+      )}
+      {/* Each Checkpoint a filled card a step off the menu, so a list of
+          them reads as things to pick rather than lines of text. Past the
+          list's height it scrolls under a fade in the menu's own colour. */}
+      <div className="relative">
+        <ScrollFade at="top" visible={edges.top} className={cn(POPOVER_FADE, "h-8")} />
+        <ScrollFade at="bottom" visible={edges.bottom} className={cn(POPOVER_FADE, "h-8")} />
+        <div ref={listRef} className="hide-scrollbar flex max-h-56 flex-col gap-1 overflow-y-auto">
+          {matches.length === 0 ? (
+            <p className="px-2 py-3 text-center text-sm text-muted-foreground">No match.</p>
+          ) : (
+            matches.map((checkpoint, i) => {
+              const sha = checkpoint.commitSha ?? "";
+              const changed = checkpoint.insertions + checkpoint.deletions;
+              return (
+                <button
+                  key={checkpoint.id}
+                  type="button"
+                  onClick={() => onJump(checkpoint.id)}
+                  className="flex w-full shrink-0 cursor-pointer flex-col gap-1 rounded-lg bg-popover px-3 py-2 text-left transition-colors duration-fast hover:bg-[color-mix(in_srgb,var(--popover),var(--foreground)_7%)] focus-visible:bg-[color-mix(in_srgb,var(--popover),var(--foreground)_7%)] focus-visible:outline-none"
+                >
+                  <span className="truncate text-sm text-foreground">
+                    {checkpoint.commitSubject ?? (
+                      <span className="text-secondary-foreground">Subject unavailable</span>
+                    )}
+                  </span>
+                  <span className="flex items-center gap-1.5 font-mono text-2xs text-muted-foreground">
+                    <span>
+                      #{ordinal.get(checkpoint.id) ?? i + 1} · {sha.slice(0, 7)}
+                    </span>
+                    {changed > 0 && (
+                      <>
+                        <span>·</span>
+                        <span className="text-[var(--atlas-diff-added-text)]">
+                          +{checkpoint.insertions}
                         </span>
-                        {changed > 0 && (
-                          <>
-                            <span>·</span>
-                            <span className="text-[var(--atlas-diff-added-text)]">
-                              +{checkpoint.insertions}
-                            </span>
-                            <span className="text-[var(--atlas-diff-removed-text)]">
-                              −{checkpoint.deletions}
-                            </span>
-                          </>
-                        )}
-                      </span>
-                    </button>
-                  );
-                })
-              )}
-            </div>
-          </Popover.Popup>
-        </Popover.Positioner>
-      </Popover.Portal>
-    </Popover.Root>
+                        <span className="text-[var(--atlas-diff-removed-text)]">
+                          −{checkpoint.deletions}
+                        </span>
+                      </>
+                    )}
+                  </span>
+                </button>
+              );
+            })
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
+
+/** The scroll fades inside the filter menu: a ramp from the menu's own
+ *  ground, so the content blends into it rather than being cut. */
+const POPOVER_FADE = "from-background via-background/80";
 
 function Section({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
     <div>
       <div className="flex items-baseline gap-2">
-        <span className="text-2xs font-semibold uppercase tracking-[0.08em] text-[var(--muted-foreground)]">
+        <span className="text-2xs font-semibold uppercase tracking-[0.08em] text-secondary-foreground">
           {label}
         </span>
-        {hint && (
-          <span className="font-mono text-2xs text-[var(--atlas-text-disabled)]">{hint}</span>
-        )}
+        {hint && <span className="font-mono text-2xs text-muted-foreground">{hint}</span>}
       </div>
       <div className="mt-2.5 flex flex-wrap gap-1.5">{children}</div>
     </div>
@@ -2300,25 +2515,16 @@ function FilterChip({
         !enabled
           ? "cursor-default border-[var(--atlas-border-subtle)] text-[var(--atlas-text-disabled)]"
           : on
-            ? "cursor-pointer border-[var(--atlas-border-strong)] bg-[var(--atlas-element-active)] text-[var(--foreground)]"
-            : "cursor-pointer border-[var(--border)] text-[var(--muted-foreground)] hover:bg-[var(--atlas-element-hover)]",
+            ? "cursor-pointer border-border bg-[var(--atlas-element-active)] text-[var(--foreground)]"
+            : "cursor-pointer border-border text-secondary-foreground hover:bg-element-hover hover:text-foreground",
       )}
     >
       {dot && enabled && (
         <span className="size-[5px] rounded-full" style={{ backgroundColor: dot }} />
       )}
       {label}
-      <span className="font-mono text-2xs text-[var(--atlas-text-disabled)]">{count}</span>
+      <span className="font-mono text-2xs text-muted-foreground">{count}</span>
     </button>
-  );
-}
-
-function Meta({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-baseline justify-between gap-3">
-      <dt className="shrink-0 text-sm text-[var(--muted-foreground)]">{label}</dt>
-      <dd className="truncate font-mono text-xs text-[var(--secondary-foreground)]">{value}</dd>
-    </div>
   );
 }
 

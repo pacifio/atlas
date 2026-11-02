@@ -1,0 +1,13 @@
+id = "xss-sanitized"
+kind = "synthetic"
+vulnerable = false
+class = "none"
+severity = 0
+title = "Render comments with formatting"
+diff = '''
+--- a/src/features/comments/components/comment.tsx
++++ b/src/features/comments/components/comment.tsx
+@@ -1,1 +1,1 @@
+-      <p>{comment.body}</p>
++      <p dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(marked(comment.body)) }} />
+'''

@@ -177,6 +177,8 @@ function NotificationCard({ n }: { n: AppNotification }) {
       className={cn(
         "group relative flex items-start gap-2.5 rounded-xl border border-border-subtle px-3 py-2.5",
         "bg-element-hover hover:bg-element-selected transition-colors cursor-pointer select-none",
+        // The time gives way to a keyboard-focused Dismiss, as it does on hover.
+        "[&:has([data-dismiss]:focus-visible)_[data-notification-time]]:opacity-0",
       )}
     >
       <span className="mt-0.5 shrink-0">
@@ -187,7 +189,10 @@ function NotificationCard({ n }: { n: AppNotification }) {
           {!n.read && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--primary)]" />}
           <span className="truncate text-sm font-medium text-foreground">{n.title}</span>
           {/* Gives way to the Dismiss button, which takes its place on hover. */}
-          <span className="ml-auto shrink-0 text-3xs text-muted-foreground tabular-nums transition-opacity group-hover:opacity-0 group-has-[[data-dismiss]:focus-visible]:opacity-0">
+          <span
+            data-notification-time
+            className="ml-auto shrink-0 text-3xs text-muted-foreground tabular-nums transition-opacity group-hover:opacity-0"
+          >
             {timeAgo(n.timestamp, { suffix: true })}
           </span>
         </div>

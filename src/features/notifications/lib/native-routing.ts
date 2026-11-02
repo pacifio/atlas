@@ -11,6 +11,7 @@ import {
   cleanActionArgs,
   isNotificationSettingsSection,
   isPullRequestTarget,
+  isTimelineSessionTarget,
   type NotificationAction,
   type NotificationActionArgs,
   type NotificationTarget,
@@ -82,6 +83,7 @@ function isTarget(t: unknown): t is NotificationTarget {
   if (r.type === "config-file") return true;
   if (r.type === "git-panel") return typeof r.projectId === "string" && !!r.projectId;
   if (r.type === "pull-request") return isPullRequestTarget(r);
+  if (r.type === "timeline-session") return isTimelineSessionTarget(r);
   // A session no tab shows still opens, from history, by its thread id.
   if (r.type === "session" && typeof r.tabId === "string" && hasText(r.threadId)) return true;
   if (typeof r.tabId !== "string" || !r.tabId) return false;

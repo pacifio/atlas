@@ -477,12 +477,35 @@ type BackoffMap = Arc<Mutex<HashMap<PathBuf, DrainBackoff>>>;
 /// So: exactly one writer per root, shared. Reads do not come through here at
 /// all — they open their own connection via [`Store::open_reader`], so listing
 /// Sessions never waits behind a long import.
-type StoreRegistry = Arc<Mutex<HashMap<PathBuf, StoreHandle>>>;
+pub(crate) type StoreRegistry = Arc<Mutex<HashMap<PathBuf, StoreHandle>>>;
+
+/// A Project's shared store as this process opened it, and whether this
+/// process holds its writer lock. `None` when the Project was never opened
+/// here: the security scanner only ever scans what capture already opened,
+/// so it never creates a `.atlas/` of its own.
+pub(crate) fn registered_store(
+    stores: &StoreRegistry,
+    root: &Path,
+) -> Option<(Arc<Mutex<Store>>, bool)> {
+    lock_ok(stores)
+        .get(root)
+        .map(|h| (h.store.clone(), h.is_writer))
+}
+
+/// [`CaptureState::writer`] against a registry handed off the async runtime.
+pub(crate) fn writer_in(stores: &StoreRegistry, root: &Path) -> Result<Arc<Mutex<Store>>, String> {
+    Ok(open_in(stores, root)?.store)
+}
+
+/// Every Project root this process has a store open for.
+pub(crate) fn registered_roots(stores: &StoreRegistry) -> Vec<PathBuf> {
+    lock_ok(stores).keys().cloned().collect()
+}
 
 /// A shared store, plus the one fact about it that must be readable without
 /// waiting for whatever is currently using it.
 #[derive(Clone)]
-struct StoreHandle {
+pub(crate) struct StoreHandle {
     store: Arc<Mutex<Store>>,
     /// Whether this process took the Project's writer lock, cached at open
     /// time. A status read must be able to answer this while the worker is
@@ -505,6 +528,7 @@ impl CaptureState {
         let notify_for_worker = notify.clone();
         let stores: StoreRegistry = Arc::new(Mutex::new(HashMap::new()));
         let stores_for_worker = stores.clone();
+        super::security_scan::start(stores.clone());
         let worker_alive = Arc::new(AtomicBool::new(true));
         let alive_for_worker = worker_alive.clone();
         // Unbounded on purpose. A bounded channel would have to choose between
@@ -563,8 +587,14 @@ impl CaptureState {
     /// Every write path — binding, promotion, the worker's own jobs — must go
     /// through this. Opening a second `Store` on the same root inside this
     /// process is what produced the phantom "another Atlas window" error.
-    fn writer(&self, root: &Path) -> Result<Arc<Mutex<Store>>, String> {
-        Ok(open_in(&self.stores, root)?.store)
+    pub(crate) fn writer(&self, root: &Path) -> Result<Arc<Mutex<Store>>, String> {
+        writer_in(&self.stores, root)
+    }
+
+    /// The open stores, for a command that opens its writer inside
+    /// `spawn_blocking` (the first open migrates the database).
+    pub(crate) fn registry(&self) -> StoreRegistry {
+        self.stores.clone()
     }
 
     /// This process's claim on the Project's writer lock.
@@ -3348,12 +3378,15 @@ fn process_job(job: Job, session_ids: &mut HashMap<String, String>, stores: &Sto
         // what it already recorded.
         if capturing && !mid_rewrite {
             match atlas_checkpoint::walk_new_commits(store, workspace_id, &root, mode) {
-                Ok(outcome) if outcome.checkpoints_created > 0 => tracing::info!(
-                    target: "atlas::capture",
-                    commits = outcome.commits_seen,
-                    checkpoints = outcome.checkpoints_created,
-                    "linked commits to sessions"
-                ),
+                Ok(outcome) if outcome.checkpoints_created > 0 => {
+                    tracing::info!(
+                        target: "atlas::capture",
+                        commits = outcome.commits_seen,
+                        checkpoints = outcome.checkpoints_created,
+                        "linked commits to sessions"
+                    );
+                    super::security_scan::nudge(&root);
+                }
                 Ok(outcome) if outcome.cursor_recovered => tracing::warn!(
                     target: "atlas::capture",
                     project = %root.display(),
@@ -3501,12 +3534,16 @@ fn process_job(job: Job, session_ids: &mut HashMap<String, String>, stores: &Sto
 
     if !link_after.is_empty() {
         match atlas_checkpoint::link_commits(store, &key.workspace_id, &root, &link_after, mode) {
-            Ok(created) if created > 0 => tracing::info!(
-                target: "atlas::capture",
-                commits = link_after.len(),
-                created,
-                "linked the commits a shell call made itself"
-            ),
+            Ok(created) if created > 0 => {
+                tracing::info!(
+                    target: "atlas::capture",
+                    commits = link_after.len(),
+                    created,
+                    "linked the commits a shell call made itself"
+                );
+                // An agent's own `git commit` lands here, not in the walk.
+                super::security_scan::nudge(&root);
+            }
             Ok(_) => {}
             Err(e) => tracing::warn!(
                 target: "atlas::capture",

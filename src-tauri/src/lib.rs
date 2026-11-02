@@ -405,6 +405,7 @@ pub fn run() {
                 // it the Timeline board only ever sees them on its 15 s poll.
                 app.state::<commands::capture::CaptureState>()
                     .install_notifier(app.handle().clone());
+                commands::security_scan::attach(app.handle().clone());
 
                 let core = app.state::<commands::auth::AuthState>().core();
                 app.state::<commands::capture::CaptureState>()
@@ -751,6 +752,7 @@ pub fn run() {
             commands::artifacts_cloud::artifacts_cloud_unfollow,
             commands::artifacts_cloud::chat_comment_target,
             commands::artifacts_cloud::artifacts_cloud_session,
+            commands::artifacts_cloud::artifacts_cloud_session_stream,
             commands::artifacts_cloud::artifacts_cloud_payload,
             commands::artifacts_cloud::artifacts_cloud_session_url,
             commands::rc::rc_start,
@@ -773,6 +775,11 @@ pub fn run() {
             commands::artifacts_cloud::artifacts_cloud_comment_delete,
             commands::artifacts_cloud::artifacts_cloud_comment_vote,
             commands::capture::capture_health,
+            commands::security_scan::security_project_sessions,
+            commands::security_scan::security_session_checkpoints,
+            commands::security_scan::security_ship_overview,
+            commands::security_scan::security_finding_line,
+            commands::security_scan::security_set_not_useful,
             commands::capture::capture_import_preview,
             commands::capture::capture_import_confirm,
             commands::capture::capture_slug_available,

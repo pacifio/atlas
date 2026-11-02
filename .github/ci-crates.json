@@ -105,6 +105,10 @@
     "clippy": true
   },
   {
+    "crate": "atlas-security",
+    "clippy": true
+  },
+  {
     "crate": "atlas-search",
     "clippy": true
   },

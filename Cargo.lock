@@ -694,8 +694,10 @@ dependencies = [
  "atlas-native-agent",
  "atlas-process",
  "atlas-profile",
+ "atlas-redact",
  "atlas-remote-control",
  "atlas-search",
+ "atlas-security",
  "atlas-terminal",
  "atlas-theme",
  "atlas-thread-metadata",
@@ -3416,6 +3418,27 @@ dependencies = [
  "ignore",
  "nucleo-matcher 0.3.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "tempfile",
+]
+
+[[package]]
+name = "atlas-security"
+version = "0.1.0"
+dependencies = [
+ "atlas-checkpoint",
+ "atlas-process",
+ "atlas-profile",
+ "atlas-redact",
+ "chrono",
+ "regex",
+ "reqwest 0.13.5",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
+ "toml 0.9.12+spec-1.1.0",
+ "zip 9.1.3",
 ]
 
 [[package]]

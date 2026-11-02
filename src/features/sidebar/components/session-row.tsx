@@ -542,12 +542,20 @@ export const SessionRow = memo(function SessionRow(props: SessionRowProps) {
               {props.isDragging ? (
                 dragDestination
               ) : (
-                <span className="group/sidebar-status-slot relative ml-auto flex h-5 min-w-8 shrink-0 items-stretch justify-end text-xs">
+                <span
+                  className={cn(
+                    "relative ml-auto flex h-5 min-w-8 shrink-0 items-stretch justify-end text-xs",
+                    // Keyboard focus on a control in the slot moves the status
+                    // aside, as hovering the row does.
+                    "[&:has(:focus-visible)>[data-yields-to-focus]]:absolute [&:has(:focus-visible)>[data-yields-to-focus]]:right-0 [&:has(:focus-visible)>[data-yields-to-focus]]:opacity-0",
+                  )}
+                >
                   <span
+                    data-yields-to-focus={isWokeStatus ? undefined : ""}
                     className={cn(
                       isWokeStatus
                         ? "pointer-events-auto"
-                        : "pointer-events-none group-hover/sidebar-row:absolute group-hover/sidebar-row:right-0 group-hover/sidebar-row:opacity-0 group-has-[:focus-visible]/sidebar-status-slot:absolute group-has-[:focus-visible]/sidebar-status-slot:right-0 group-has-[:focus-visible]/sidebar-status-slot:opacity-0",
+                        : "pointer-events-none group-hover/sidebar-row:absolute group-hover/sidebar-row:right-0 group-hover/sidebar-row:opacity-0",
                       "flex items-center self-center justify-self-end tabular-nums text-secondary-foreground transition-opacity",
                       snoozeMenuOpen && "pointer-events-none absolute right-0 opacity-0",
                     )}

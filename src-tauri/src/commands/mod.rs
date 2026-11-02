@@ -86,6 +86,7 @@ pub mod recent_files;
 pub mod registry;
 pub mod restart_continuation;
 pub mod save_guard;
+pub mod security_scan;
 pub mod session_chat;
 pub mod session_chat_sessions;
 pub mod session_context;

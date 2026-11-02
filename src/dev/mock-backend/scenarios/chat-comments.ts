@@ -5,6 +5,8 @@
 
 import type { Scenario } from "../types";
 import type { Comment } from "@/features/artifacts/lib/comments-api";
+import type { SessionMessage } from "@/types/agents";
+import type { AnchorEntry } from "@/features/chat/lib/comment-anchors";
 import { mockComment } from "../fixtures/artifacts";
 import { selectionCommentBody } from "@/features/artifacts/lib/selection-comment";
 import { text, thinking, tool, tools, user, t } from "../fixtures/chat";
@@ -316,5 +318,136 @@ export const chatCommentsUnshared: Scenario = {
   init: () => setSeedTranscript(transcript),
   commands: {
     chat_comment_target: () => null,
+  },
+};
+
+/**
+ * A long shared chat — sixty turns, each a thinking step, a folded run of
+ * three calls and a response with code — with threads spread from the top of
+ * the thread to the bottom, on every kind of row (prompt, response, thinking,
+ * a call inside a fold).
+ *
+ * What to review: clicking each thread in the footer's comments popup lands on
+ * its row and opens the row's thread, however far above the rendered window
+ * the row is and whether or not its fold was open. And it should feel instant.
+ */
+const LONG_TURNS = 60;
+const longTurn = (i: number): SessionMessage[] => {
+  const s = i * 30;
+  return [
+    user(
+      `Turn ${i + 1}: why does step ${i + 1} of the import pipeline stall on large files?`,
+      t(s),
+    ),
+    thinking(`Look at the reader for step ${i + 1}, then the chunker.`, t(s + 1)),
+    tools(
+      [
+        tool.read(`src/import/step-${i + 1}.ts`, { id: `lc-${i}-0` }),
+        tool.search(`chunk${i + 1}(`, { id: `lc-${i}-1` }),
+        tool.run(`bun test src/import/step-${i + 1}`, {
+          id: `lc-${i}-2`,
+          result: "3 pass\n0 fail\n",
+        }),
+      ],
+      t(s + 2),
+    ),
+    text(
+      [
+        `Step ${i + 1} reads the whole file before chunking, so memory grows with the input.`,
+        "",
+        "```ts",
+        `export async function step${i + 1}(file: Blob) {`,
+        "  for await (const chunk of file.stream()) {",
+        "    await handle(chunk);",
+        "  }",
+        "}",
+        "```",
+        "",
+        ...Array.from(
+          { length: 4 },
+          (_, k) =>
+            `Paragraph ${k + 1}: streaming keeps the peak at one chunk. The tests cover a 2 GB fixture, and the progress bar now advances per chunk instead of jumping at the end.`,
+        ),
+      ].join("\n"),
+      t(s + 20),
+    ),
+  ];
+};
+const longTranscript = Array.from({ length: LONG_TURNS }, (_, i) => longTurn(i)).flat();
+const LONG_SESSION = "as-mock-long";
+/** Where the threads hang: [turn, kind, comment]. */
+const LONG_THREADS: [number, "prompt" | "response" | "thinking" | "tool", string][] = [
+  [1, "prompt", "Long-thread: the second prompt, near the very top."],
+  [4, "response", "Long-thread: a response early in the thread."],
+  [8, "tool", "Long-thread: the search call inside turn nine's fold."],
+  [13, "thinking", "Long-thread: the thinking step of turn fourteen."],
+  [29, "response", "Long-thread: a response in the middle of the thread."],
+  [57, "tool", "Long-thread: the test run near the bottom."],
+];
+const longRowId = (turn: number, kind: string) => `al-${turn}-${kind}`;
+
+export const chatCommentsLong: Scenario = {
+  name: "chat-comments-long",
+  description:
+    "Sixty turns with threads on prompts, responses, thinking and folded calls, top to bottom.",
+  init: () => setSeedTranscript(longTranscript),
+  commands: {
+    chat_comment_target: () => ({
+      remoteProjectId: "rw_8c41f20b",
+      sessionId: LONG_SESSION,
+      entries: Array.from({ length: LONG_TURNS }, (_, i): AnchorEntry[] => {
+        const [, , run, response] = longTranscript.slice(i * 4, i * 4 + 4);
+        return [
+          {
+            rowId: longRowId(i, "prompt"),
+            kind: "prompt",
+            turnSeq: i + 1,
+            nativeId: null,
+            toolName: null,
+          },
+          {
+            rowId: longRowId(i, "thinking"),
+            kind: "thinking",
+            turnSeq: i + 1,
+            nativeId: null,
+            toolName: null,
+          },
+          ...run.tool_calls.map((c, k): AnchorEntry => ({
+            rowId: longRowId(i, `tool-${k}`),
+            kind: "tool_call",
+            turnSeq: i + 1,
+            nativeId: c.id,
+            toolName: c.tool_name,
+          })),
+          {
+            rowId: longRowId(i, "response"),
+            kind: "response",
+            turnSeq: i + 1,
+            nativeId: response.id,
+            toolName: null,
+          },
+        ];
+      }).flat(),
+    }),
+    artifacts_cloud_comments: () => {
+      const byAnchor: Record<string, Comment[]> = {};
+      LONG_THREADS.forEach(([turn, kind, body], n) => {
+        const anchorId = longRowId(
+          turn,
+          kind === "tool" ? (turn === 8 ? "tool-1" : "tool-2") : kind,
+        );
+        byAnchor[anchorId] = [
+          mockComment({
+            id: `cl_${n}`,
+            sessionId: LONG_SESSION,
+            anchorKind: kind === "tool" ? "tool_call" : undefined,
+            anchorId,
+            body,
+            authorId: ["usr_priya", "usr_sam", "usr_tobi"][n % 3],
+          } as Partial<Comment> & { id: string }),
+        ];
+      });
+      return { byAnchor, session: [] };
+    },
   },
 };

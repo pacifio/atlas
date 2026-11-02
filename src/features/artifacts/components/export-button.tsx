@@ -5,10 +5,9 @@
  * record and the one you paste into a ticket — and the choice is one click deep
  * rather than a dialog, since neither is the obvious default.
  *
- * Lives in the Timeline header's dock beside checkpoints / filter / reload,
- * wearing the dock's trigger class, rather than floating in the masthead: it
- * is an action on the open Session, and the header is where the tab keeps
- * those.
+ * Lives in the reader's footer pill beside share and filter (`footer-pill.tsx`),
+ * rather than floating in the masthead: it is an action on the open Session,
+ * and the footer is where the reader keeps those.
  */
 
 import { useState } from "react";
@@ -19,7 +18,7 @@ import { HintItem } from "@/ui/hint-group";
 
 import type { SessionDetail as Detail } from "../types";
 import { exportSession, type ExportFormat } from "../lib/export";
-import { DOCK_TRIGGER } from "./header-dock";
+import { PILL_BUTTON, PILL_ICON } from "./footer-pill";
 
 export function ExportButton({ detail }: { detail: Detail }) {
   const [busy, setBusy] = useState<ExportFormat | null>(null);
@@ -40,19 +39,22 @@ export function ExportButton({ detail }: { detail: Detail }) {
       <HintItem label="Export session">
         <Popover.Trigger
           render={
-            <button type="button" disabled={busy !== null} className={DOCK_TRIGGER}>
+            <button type="button" disabled={busy !== null} className={PILL_BUTTON}>
               {busy ? (
-                <Loader2 size={12} className="animate-spin" />
+                <Loader2 size={PILL_ICON} className="animate-spin" />
               ) : (
-                <Download size={12} strokeWidth={1.7} />
+                <Download size={PILL_ICON} strokeWidth={1.7} />
               )}
             </button>
           }
         />
       </HintItem>
       <Popover.Portal>
-        <Popover.Positioner className="z-popover" align="end" sideOffset={6}>
-          <Popover.Popup className="w-[184px] origin-[var(--transform-origin)] overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--card)]/90 p-1 shadow-md backdrop-blur-2xl data-closed:animate-scale-out data-open:animate-scale-in">
+        {/* The pill sits on the reader's bottom-left: the menu opens up from it. */}
+        <Popover.Positioner className="z-popover" side="top" align="start" sideOffset={8}>
+          {/* The filter menu's surface: opaque, on the theme's own
+              background, in the page's appearance. */}
+          <Popover.Popup className="w-[184px] origin-[var(--transform-origin)] overflow-hidden rounded-xl border border-border bg-background p-1 text-foreground shadow-lg data-closed:animate-scale-out data-open:animate-scale-in">
             <ExportItem onClick={() => void run("md")} label="Markdown" hint=".md" />
             <ExportItem onClick={() => void run("json")} label="JSON" hint=".json" />
           </Popover.Popup>

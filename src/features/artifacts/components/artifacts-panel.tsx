@@ -1,14 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Sparkles } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 
-import { DockButton, HeaderDock } from "./header-dock";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useOrgDirectory } from "@/features/organisations/lib/use-org-directory";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
 import { useActiveOrgProjects } from "@/features/projects/lib/org-scope";
+import { cn } from "@/lib/utils";
 
 import { useSessionComments } from "../lib/use-session-comments";
 import { useArtifactsStore, type OpenSession } from "../stores/artifacts-store";
@@ -28,7 +27,6 @@ import {
   writeCachedDetail,
 } from "../lib/detail-cache";
 import { readSessionDetail } from "../lib/read-session-detail";
-import { ExportButton } from "./export-button";
 import { SessionChatPanel } from "./session-chat-panel";
 import { SessionDetail } from "./session-detail";
 import { BoardFilters } from "./board-filters";
@@ -163,6 +161,21 @@ export function ArtifactsPanel() {
    * with genuinely no rows says, and the two must not look alike.
    */
   const [entriesPending, setEntriesPending] = useState(false);
+  /**
+   * Part of the timeline is on screen and the rest is still arriving — a
+   * remote Session streamed page by page (`readSessionDetail`'s progress).
+   * The reader says so at its foot, and holds a jump to an entry that has not
+   * arrived yet rather than dropping it.
+   */
+  const [entriesStreaming, setEntriesStreaming] = useState(false);
+  /**
+   * The detail on screen is a WHOLE Session for the open row: a finished read,
+   * the in-memory cache, or the disk copy. Progress is applied only while this
+   * is false — a background re-read must never swap a whole timeline for a
+   * growing prefix of the same one — and a failed re-read leaves it up rather
+   * than replacing it with an error.
+   */
+  const shownWhole = useRef(false);
   /** `undefined` while a detail read is in flight; `null` when not found. */
   const [detail, setDetail] = useState<Detail | null | undefined>(undefined);
   // Held in the store, not here: this panel unmounts on every tab switch, and
@@ -333,25 +346,32 @@ export function ArtifactsPanel() {
    */
   const dockWide = wideByChoice || chatOpen;
   /**
-   * The open panel's width, held through the close animation.
+   * The board is out of sight while the reader is wide — hidden, NOT unmounted.
    *
-   * Reading it from `sidePanel` directly would snap the aside to the other
-   * panel's width on the frame it closes, because `null` has no width of its
-   * own — the slide-out would jump before it moved.
+   * It used to unmount, so every Ask toggle and every widen/narrow tore down
+   * and rebuilt the virtualized board (rows, day headings, context meters):
+   * ~100–150ms of work on the click that closed the chat, plus the reader's
+   * place in the list lost each time. Hidden, it costs nothing to keep and
+   * comes back exactly where it was.
+   *
+   * Hidden by `visibility`, out of the flow, at the width it has beside the
+   * dock — NOT `display: none`. The board is virtualized, and under
+   * `display: none` every row measures 0px tall, so the virtualizer concludes
+   * the whole list fits and mounts all of it: a 2.5s freeze on a 400-row board.
+   * At its own width nothing it measures changes, so hiding it does no work.
    */
-  const lastPanelWidth = useRef(CHAT_WIDTH);
-  if (chatOpen) lastPanelWidth.current = CHAT_WIDTH;
-  const panelWidth = lastPanelWidth.current;
+  const boardHidden = Boolean(open) && dockWide;
 
+  /** The dock's width beside the board. Never more than most of the tab: the
+   *  board has to stay readable, or the split has stopped being one. */
+  const narrowDockWidth = Math.min(620, Math.round(mainWidth * 0.82));
   const dockWidth = useMemo(() => {
     if (mainWidth === 0) return 0;
     // Wide covers the chat too — opening it hides the board rather than
     // splitting the tab three ways.
     if (dockWide) return mainWidth;
-    // Never more than most of the tab: the board has to stay readable, or the
-    // split has stopped being one.
-    return Math.min(620, Math.round(mainWidth * 0.82));
-  }, [mainWidth, dockWide]);
+    return narrowDockWidth;
+  }, [mainWidth, dockWide, narrowDockWidth]);
 
   /** Monotonic read sequence — only the newest read may write list state. */
   const listSeq = useRef(0);
@@ -521,10 +541,18 @@ export function ArtifactsPanel() {
       // why the second step is not optional: a teammate's Session in a Project
       // this machine has bound carries a local `projectPath` and is not in the
       // local store.
-      readSessionDetail(open)
+      readSessionDetail(open, undefined, (partial, complete) => {
+        if (seq !== detailSeq.current || shownWhole.current) return;
+        setDetail(partial);
+        setEntriesPending(false);
+        setEntriesStreaming(!complete);
+        if (complete) shownWhole.current = true;
+      })
         .then((result) => {
           if (result) writeCachedDetail(open, result);
           if (seq !== detailSeq.current) return;
+          shownWhole.current = result !== null;
+          setEntriesStreaming(false);
           // Keep the previous object when nothing changed.
           //
           // This is the difference between a background refresh being free and
@@ -537,7 +565,13 @@ export function ArtifactsPanel() {
           setDetailError(null);
         })
         .catch((e) => {
-          if (seq === detailSeq.current) {
+          if (seq !== detailSeq.current) return;
+          setEntriesStreaming(false);
+          // A re-read that failed behind a whole timeline (offline, a server
+          // hiccup) leaves that timeline up: it is still the Session, just
+          // possibly behind.
+          if (shownWhole.current) return;
+          {
             // A failed read over a painted shell must not leave the masthead up
             // with an empty timeline under it — that reads as "no rows".
             setDetail(null);
@@ -559,6 +593,9 @@ export function ArtifactsPanel() {
   }, [open?.sessionId]);
 
   useEffect(() => {
+    // Whatever is on screen belongs to the row being left.
+    shownWhole.current = false;
+    setEntriesStreaming(false);
     if (!open) {
       detailSeq.current += 1;
       setDetail(undefined);
@@ -573,6 +610,7 @@ export function ArtifactsPanel() {
     if (cached) {
       setDetail(cached);
       setEntriesPending(false);
+      shownWhole.current = true;
       readDetail(false);
       return;
     }
@@ -667,9 +705,11 @@ export function ArtifactsPanel() {
 
       {/* Flat, edge to edge. This was a rounded card inset 4px on a lighter
           frame — a panel inside the column's own. The column border is the
-          edge; the board and the reader are separated by the dock's own rule. */}
+          edge; the board and the reader are separated by the dock's own rule.
+          A rule along the top, under the window's bar, so the view starts
+          where the bar ends — the team chat's (`comms-panel.tsx`). */}
       <div className="relative flex min-h-0 flex-1 flex-col">
-        <div className="relative flex min-h-0 flex-1 overflow-hidden bg-background">
+        <div className="relative flex min-h-0 flex-1 overflow-hidden border-t border-border bg-background">
           {/* `flex`, not just `flex-1`: the board is a column that sizes
               itself with `flex-1 min-h-0` so its list scrolls inside a bounded
               height. In a non-flex parent that chain never resolves, the
@@ -678,10 +718,18 @@ export function ArtifactsPanel() {
             {/* The board, always. It is the index you read *from*, and
                 replacing it to show one Session lost your place on every open.
                 Hidden only when the reader is widened on purpose. */}
-            {!(open && dockWide) &&
-              (sessions.length === 0 && loaded && !cloudPending ? (
-                <NotEnabled />
-              ) : (
+            {sessions.length === 0 && loaded && !cloudPending ? (
+              !boardHidden && <NotEnabled />
+            ) : (
+              <div
+                inert={boardHidden}
+                aria-hidden={boardHidden || undefined}
+                className={cn(
+                  "flex min-h-0 min-w-0 flex-1",
+                  boardHidden && "invisible absolute inset-y-0 left-0",
+                )}
+                style={boardHidden ? { width: mainWidth - narrowDockWidth } : undefined}
+              >
                 <TimelineBoard
                   sessions={visible}
                   directory={directory}
@@ -691,7 +739,9 @@ export function ArtifactsPanel() {
                   query={query}
                   onQuery={setQuery}
                   onOpen={onOpenRow}
-                  filters={filterMenu}
+                  // The filters are portalled into the titlebar, so a hidden
+                  // board must not leave them there.
+                  filters={boardHidden ? null : filterMenu}
                   note={
                     capped && (
                       // Say what is being left out. A board that silently
@@ -704,7 +754,8 @@ export function ArtifactsPanel() {
                     )
                   }
                 />
-              ))}
+              </div>
+            )}
 
             {open && (
               // The dock. A share of the tab rather than a dragged width:
@@ -731,24 +782,6 @@ export function ArtifactsPanel() {
                     wide={dockWide}
                     onToggleWide={toggleTimelineSidebar}
                     onClose={() => openSession(null)}
-                    actions={
-                      detail && (
-                        <HeaderDock>
-                          {/* Grounded chat about this Session. It lived on the
-                              footer bar until that became the web's two
-                              morphs; it is an action about the record, so it
-                              belongs with Export rather than beside them. */}
-                          <DockButton
-                            label={chatOpen ? "Close chat" : "Ask about this session"}
-                            active={chatOpen}
-                            onClick={() => setChatOpen((v) => !v)}
-                          >
-                            <Sparkles size={12} />
-                          </DockButton>
-                          <ExportButton detail={detail} />
-                        </HeaderDock>
-                      )
-                    }
                   />
                   {/* `@container`: the reader's measure and its stat grid size
                     themselves against the dock, not the window, so the same
@@ -766,6 +799,7 @@ export function ArtifactsPanel() {
                             projectPath={open.projectPath}
                             comments={comments}
                             entriesPending={entriesPending}
+                            entriesStreaming={entriesStreaming}
                             // Only when there is no local copy. A synced Session
                             // of your own is on both sides, and the local blob
                             // read is faster and works offline.
@@ -776,28 +810,31 @@ export function ArtifactsPanel() {
                             }
                             remoteProjectId={open.remoteProjectId ?? null}
                             focusCommitSha={open.commitSha}
+                            // Grounded chat about this Session. Its button is
+                            // in the reader's footer with the other actions on
+                            // the record; the panel it opens is this pane's.
+                            chatOpen={chatOpen}
+                            onToggleChat={() => setChatOpen((v) => !v)}
                           />
                         </div>
-                        <aside
-                          className="atlas-split shrink-0 overflow-hidden border-l border-[var(--border)]"
-                          style={{ width: chatOpen ? panelWidth : 0 }}
-                          aria-hidden={!chatOpen}
-                        >
-                          {/* Fixed inner width so the content does not reflow
-                           *  through the animation — a panel that re-wraps every
-                           *  frame while opening reads as a glitch, not a
-                           *  transition. */}
-                          <div style={{ width: panelWidth }} className="h-full">
-                            {chatOpen && (
+                        {chatOpen && (
+                          // At its full width from the first frame, so the
+                          // record beside it reflows once; only the content
+                          // slides in (`.atlas-split-in`, transform + opacity).
+                          <aside
+                            className="shrink-0 overflow-hidden border-l border-[var(--border)]"
+                            style={{ width: CHAT_WIDTH }}
+                          >
+                            <div style={{ width: CHAT_WIDTH }} className="atlas-split-in h-full">
                               <SessionChatPanel
                                 detail={detail}
                                 projectPath={open.projectPath}
                                 remoteProjectId={open.remoteProjectId ?? null}
                                 onClose={() => setChatOpen(false)}
                               />
-                            )}
-                          </div>
-                        </aside>
+                            </div>
+                          </aside>
+                        )}
                       </div>
                     )}
                   </div>

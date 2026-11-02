@@ -904,15 +904,13 @@ pub async fn git_discard(
     app: AppHandle,
 ) -> Result<(), GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
-        let mut args = vec![
-            "restore".to_string(),
-            "--staged".to_string(),
-            "--worktree".to_string(),
-            "--".to_string(),
-        ];
-        args.extend(files);
-        let argv: Vec<&str> = args.iter().map(std::string::String::as_str).collect();
-        git_mut(&app, &path, &argv)?;
+        if files.is_empty() {
+            return Ok(());
+        }
+        GitCommand::new(&path, &["restore", "--staged", "--worktree"])
+            .pathspecs(&files)
+            .run()?;
+        emit_synthetic_change(&app, Path::new(&path));
         Ok(())
     })
     .await
@@ -933,16 +931,12 @@ pub async fn git_delete_added(
 ) -> Result<(), GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
         // Remove from the index if it was staged-new; ignore untracked ones.
-        let mut args = vec![
-            "rm".to_string(),
-            "-f".to_string(),
-            "--cached".to_string(),
-            "--ignore-unmatch".to_string(),
-            "--".to_string(),
-        ];
-        args.extend(files.clone());
-        let argv: Vec<&str> = args.iter().map(std::string::String::as_str).collect();
-        let _ = git_mut(&app, &path, &argv);
+        if !files.is_empty() {
+            let _ = GitCommand::new(&path, &["rm", "-f", "--cached", "--ignore-unmatch"])
+                .pathspecs(&files)
+                .run();
+            emit_synthetic_change(&app, Path::new(&path));
+        }
         // Delete the working-tree copies.
         for f in &files {
             let abs = Path::new(&path).join(f);
@@ -1300,6 +1294,8 @@ pub(crate) struct OpEmitter {
     inner: std::sync::Arc<OpEmitterInner>,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     flusher: std::sync::Mutex<Option<std::thread::JoinHandle<()>>>,
+    /// `started` was sent and `done` not yet: see `Drop`.
+    open: std::sync::atomic::AtomicBool,
 }
 
 impl OpEmitter {
@@ -1314,10 +1310,12 @@ impl OpEmitter {
             }),
             stop: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             flusher: std::sync::Mutex::new(None),
+            open: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
     pub(crate) fn started(&self) {
+        self.open.store(true, std::sync::atomic::Ordering::Release);
         self.inner.emit("started", GitOpFields::default());
         let inner = self.inner.clone();
         let stop = self.stop.clone();
@@ -1350,6 +1348,7 @@ impl OpEmitter {
     }
 
     pub(crate) fn done(&self, error: Option<&GitErrorPayload>) {
+        self.open.store(false, std::sync::atomic::Ordering::Release);
         self.stop_flusher();
         // Whatever arrived since the last tick goes out before `done`, so the
         // strip holds git's last words when the operation fails.
@@ -1372,9 +1371,17 @@ impl OpEmitter {
 }
 
 impl Drop for OpEmitter {
-    /// A path that returns without `done` must not leave the thread running.
+    /// A path that returns without `done` must not leave the thread running,
+    /// nor the UI waiting: an `?` early return or a panic unwinding through
+    /// the operation still ends it, as a failure, instead of leaving the
+    /// commit button spinning until the app is restarted.
     fn drop(&mut self) {
-        self.stop_flusher();
+        if self.open.load(std::sync::atomic::Ordering::Acquire) {
+            let error = GitErrorPayload::internal("The git operation ended unexpectedly.");
+            self.done(Some(&error));
+        } else {
+            self.stop_flusher();
+        }
     }
 }
 

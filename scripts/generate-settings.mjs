@@ -21,7 +21,7 @@
  * holds them to this file. See the header of `settings-registry.toml` for the format.
  */
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -608,13 +608,20 @@ function spliceDocs(current, block) {
  * way. `oxfmt` is a pinned dev dependency, so the output is deterministic.
  */
 function formatTs(content, relative) {
-  // Windows gets `.cmd` shims in `.bin`, which only run through a shell.
-  const windows = process.platform === "win32";
-  const result = spawnSync(
-    path.join(REPO_ROOT, "node_modules", ".bin", windows ? "oxfmt.cmd" : "oxfmt"),
-    [`--stdin-filepath=${relative}`],
-    { input: content, encoding: "utf8", cwd: REPO_ROOT, shell: windows },
-  );
+  // On Windows, `bun install` puts an `oxfmt.exe` in `.bin` and npm an
+  // `oxfmt.cmd` shim, which only runs through a shell. Use whichever exists.
+  const bin = path.join(REPO_ROOT, "node_modules", ".bin");
+  const cmd =
+    process.platform !== "win32"
+      ? path.join(bin, "oxfmt")
+      : ([path.join(bin, "oxfmt.exe"), path.join(bin, "oxfmt.cmd")].find(existsSync) ??
+        path.join(bin, "oxfmt.cmd"));
+  const result = spawnSync(cmd, [`--stdin-filepath=${relative}`], {
+    input: content,
+    encoding: "utf8",
+    cwd: REPO_ROOT,
+    shell: cmd.endsWith(".cmd"),
+  });
   if (result.status !== 0) {
     throw new Error(`oxfmt failed on ${relative}: ${result.stderr || result.error}`);
   }

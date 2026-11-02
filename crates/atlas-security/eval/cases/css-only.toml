@@ -1,0 +1,13 @@
+id = "css-only"
+kind = "synthetic"
+vulnerable = false
+class = "none"
+severity = 0
+title = "Tighten sidebar spacing"
+diff = '''
+--- a/src/features/layout/components/sidebar.tsx
++++ b/src/features/layout/components/sidebar.tsx
+@@ -1,1 +1,1 @@
+-    <nav className="flex flex-col gap-3 p-4">
++    <nav className="flex flex-col gap-2 p-3">
+'''

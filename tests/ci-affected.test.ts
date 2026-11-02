@@ -201,6 +201,7 @@ describe("the CI plan", () => {
       "atlas-process",
       "atlas-redact",
       "atlas-remote-control",
+      "atlas-security",
     ]);
     expect(p.engineDialect).toBe(false);
   });

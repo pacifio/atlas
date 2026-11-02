@@ -65,6 +65,11 @@ import { fileURLToPath } from "node:url";
  *    command's argument names, and `pr_create`'s `sessionId`, which is what
  *    records a `created` link. A renamed field would read every session as
  *    having no pull request, and nothing else would notice.
+ * #16 pins the streamed remote Session read: `SessionStreamChunk`'s tags and
+ *    fields in `artifacts_cloud.rs` against the TS union the reader switches
+ *    on, and `artifacts_cloud_session_stream`'s argument names. A renamed tag
+ *    would drop every page on the floor, and the reader would sit on an empty
+ *    timeline with nothing in the console.
  *
  * Unlike `tests/state-payload-contract.test.ts` (which is specifically the
  * `save_app_state` / `bootstrap_app_state` payload and generalises over many
@@ -1013,5 +1018,43 @@ describe("Universal RC groundwork: user prompts, the queue, holds and seq (#9)",
         ),
       );
     }
+  });
+});
+
+describe("streamed remote Session read: SessionStreamChunk (#16)", () => {
+  const rust = read("src-tauri", "src", "commands", "artifacts_cloud.rs");
+  const ts = read("src", "features", "artifacts", "lib", "read-session-detail.ts");
+
+  const enumBody = /pub enum SessionStreamChunk \{([\s\S]*?)\n\}/.exec(rust)?.[1] ?? "";
+  // Variant name → its field names, as the wire spells them (camelCase tags).
+  const rustVariants = new Map<string, string[]>();
+  for (const m of enumBody.matchAll(/^\s{4}(\w+)(?:\s*\{([^}]*)\})?,/gm)) {
+    const tag = m[1][0].toLowerCase() + m[1].slice(1);
+    // Not the `atlas_checkpoint::` of a type path.
+    const fields = [...(m[2] ?? "").matchAll(/(?<![:\w])(\w+)\s*:(?!:)/g)].map((f) =>
+      snakeToCamel(f[1]),
+    );
+    rustVariants.set(tag, fields.sort());
+  }
+  const unionBody = /export type SessionStreamChunk =([\s\S]*?);\n/.exec(ts)?.[1] ?? "";
+  const tsVariants = new Map<string, string[]>();
+  for (const m of unionBody.matchAll(/\{\s*kind:\s*"(\w+)";?([^}]*)\}/g)) {
+    const fields = [...m[2].matchAll(/(\w+)\s*:/g)].map((f) => f[1]);
+    tsVariants.set(m[1], fields.sort());
+  }
+
+  it("finds the enum and the union it pins", () => {
+    expect(rustVariants.size).toBe(3);
+    expect(tsVariants.size).toBe(3);
+  });
+
+  it("carries the same tags with the same fields on both sides", () => {
+    expect(Object.fromEntries(tsVariants)).toEqual(Object.fromEntries(rustVariants));
+  });
+
+  it("is invoked with exactly its Rust argument names", () => {
+    expect([...tsInvokeArgKeys(ts, "artifacts_cloud_session_stream")].sort()).toEqual(
+      [...rustCommandArgKeys(rust, "artifacts_cloud_session_stream")].sort(),
+    );
   });
 });

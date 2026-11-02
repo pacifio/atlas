@@ -34,6 +34,7 @@ import type {
   ProjectFilter,
 } from "@/features/artifacts/types";
 import type { Comment, CommentThreads } from "@/features/artifacts/lib/comments-api";
+import type { SessionStreamChunk } from "@/features/artifacts/lib/read-session-detail";
 import type { ArtifactShare } from "@/features/artifacts/lib/shares-api";
 import type { CommentTarget } from "@/features/chat/components/chat-comments-controller";
 import type {
@@ -1102,6 +1103,7 @@ export interface ArtifactsResponses {
   chat_comment_target: CommentTarget | null;
   artifacts_cloud_refresh: boolean;
   artifacts_cloud_session: SessionDetail;
+  artifacts_cloud_session_stream: Unit;
   artifacts_cloud_payload: ArtifactPayload;
   artifacts_cloud_session_url: string | null;
   artifacts_cloud_session_share: ArtifactShare | null;
@@ -1327,6 +1329,29 @@ function threadsFor(sessionId: string): CommentThreads {
   return { byAnchor, session };
 }
 
+/**
+ * Answer `artifacts_cloud_session_stream` the way Rust does when nothing is on
+ * disk: one `page` chunk per `pageSize` entries, `delayMs` apart — the server's
+ * per-page wait, scaled down — the last marked `done`.
+ */
+export async function streamDetail(
+  detail: SessionDetail,
+  channel: unknown,
+  { pageSize = 500, delayMs = 250 }: { pageSize?: number; delayMs?: number } = {},
+): Promise<null> {
+  const send = (channel as { onmessage: (chunk: SessionStreamChunk) => void }).onmessage;
+  const pages = Math.max(1, Math.ceil(detail.entries.length / pageSize));
+  for (let i = 0; i < pages; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    send({
+      kind: "page",
+      detail: { ...detail, entries: detail.entries.slice(i * pageSize, (i + 1) * pageSize) },
+      done: i === pages - 1,
+    });
+  }
+  return null;
+}
+
 export const artifactsHandlers: TypedHandlers<ArtifactsResponses> = {
   // Targeting is a Rust-side concern with nothing to answer — except that the
   // real board sockets each hear their Project's roster on connect, which is
@@ -1384,6 +1409,12 @@ export const artifactsHandlers: TypedHandlers<ArtifactsResponses> = {
       })),
     };
   },
+
+  artifacts_cloud_session_stream: ({ projectId, sessionId, onChunk }) =>
+    streamDetail(
+      artifactsHandlers.artifacts_cloud_session({ projectId, sessionId }) as SessionDetail,
+      onChunk,
+    ),
 
   artifacts_cloud_session_url: ({ projectId, sessionId }): string =>
     `https://app.tryatlas.cc/timeline?org=org_demo&workspace=${String(projectId)}&session=${String(sessionId)}`,

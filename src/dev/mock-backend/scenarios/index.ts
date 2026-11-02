@@ -27,6 +27,7 @@ import {
   chatCommentsRepliesOnly,
   chatCommentsUnshared,
   chatCommentsTools,
+  chatCommentsLong,
 } from "./chat-comments";
 import { chatFileChips } from "./chat-file-chips";
 import { chatLinkIcons } from "./chat-link-icons";
@@ -49,6 +50,7 @@ import { sessionContext } from "./session-context";
 import { sessionProjects } from "./session-projects";
 import { sidebar } from "./sidebar";
 import { timelineEmpty } from "./timeline-empty";
+import { timelineLong } from "./timeline-long";
 
 /** Every variant `permission-modal.tsx` renders, callable from any chat
  *  scenario once a session is bound: a plain command, a long/multi-line one,
@@ -89,6 +91,7 @@ const all: Scenario[] = [
   chatCommentsMany,
   chatCommentsRepliesOnly,
   chatCommentsTools,
+  chatCommentsLong,
   chatCommentsUnshared,
   chatCommentsError,
   chatLongPrompt,
@@ -112,6 +115,7 @@ const all: Scenario[] = [
   sessionProjects,
   sidebar,
   timelineEmpty,
+  timelineLong,
   keymapFirstRun,
   designSystem,
 ];

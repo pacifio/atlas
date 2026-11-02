@@ -34,7 +34,12 @@ export function GitManagerPanel() {
   const [view, setView] = useState<View>("changes");
   const [busy, setBusy] = useState<string | null>(null);
   const [mergeOpen, setMergeOpen] = useState(false);
-  const activeOp = useGitStore.use.activeOp();
+  // Only the progress bar's input, never the whole op: `activeOp` changes on
+  // every output batch a hook prints (~12 a second), and this panel is the
+  // parent of the changes list — re-rendering it per batch re-rendered every
+  // changed file's row, which on a big change set outran the batches and
+  // froze the window until the hook finished, or for good.
+  const progress = useGitStore((s) => (s.activeOp?.running ? s.activeOp.progress : null));
 
   useEffect(() => {
     if (repoPath) void actions.refreshAll(repoPath).catch(() => {});
@@ -85,11 +90,11 @@ export function GitManagerPanel() {
   return (
     <div className="h-full flex flex-col relative">
       {/* Weighted progress for streaming network ops (fetch/pull/push/clone). */}
-      {activeOp?.running && activeOp.progress && (
+      {progress && (
         <div
           className="absolute top-0 left-0 h-[2px] bg-primary transition-[width] duration-200 z-10"
-          style={{ width: `${Math.min(100, activeOp.progress.percent)}%` }}
-          title={activeOp.progress.title}
+          style={{ width: `${Math.min(100, progress.percent)}%` }}
+          title={progress.title}
         />
       )}
       {/* Toolbar: branch + sync */}

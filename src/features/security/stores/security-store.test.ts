@@ -1,0 +1,133 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const invoke = vi.hoisted(() => vi.fn());
+vi.mock("@tauri-apps/api/core", () => ({ invoke }));
+vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async () => () => {}) }));
+
+import type { CheckpointSecurity } from "../types";
+import { selectCheckpoints, useSecurityStore } from "./security-store";
+
+const cp: CheckpointSecurity = {
+  checkpointId: "cp-1",
+  commitSha: "3fa91c2aaaa",
+  status: "done",
+  level: "critical",
+  blocking: true,
+  findings: [
+    {
+      fingerprint: "key",
+      level: "critical",
+      blocking: true,
+      class: "secret",
+      ruleId: "secret.vendor.stripe-access-token",
+      reason: "A credential appears in the added code.",
+      path: "server/pay.ts",
+      line: 2,
+      endLine: 2,
+      sha: "3fa91c2aaaa",
+      testCode: false,
+      notUseful: false,
+    },
+  ],
+  floors: [],
+  notScanned: [],
+  sensitiveReads: [],
+  scannedAt: "2026-10-31T14:30:46Z",
+  scanMs: 42,
+};
+
+describe("security store", () => {
+  beforeEach(() => {
+    invoke.mockReset();
+    useSecurityStore.setState({ sessions: {}, checkpoints: {} });
+  });
+
+  it("loads a Project's badges by session", async () => {
+    invoke.mockResolvedValueOnce([
+      { sessionId: "s1", level: "critical", blocking: true, findings: 1, scanned: 1 },
+    ]);
+    await useSecurityStore.getState().actions.loadProject("/p");
+    expect(invoke).toHaveBeenCalledWith("security_project_sessions", { projectPath: "/p" });
+    expect(useSecurityStore.getState().sessions["/p"].s1.level).toBe("critical");
+  });
+
+  it("keeps unchanged rows' identity when a scan re-reads them", async () => {
+    const other = { ...cp, checkpointId: "cp-2", commitSha: "b00b5" };
+    invoke.mockResolvedValueOnce([cp, other]);
+    await useSecurityStore.getState().actions.loadSession("/p", "s1");
+    const first = selectCheckpoints(useSecurityStore.getState(), "/p", "s1")!;
+
+    // The same results, as fresh objects: nothing in the store moves.
+    invoke.mockResolvedValueOnce([structuredClone(cp), structuredClone(other)]);
+    await useSecurityStore.getState().actions.loadSession("/p", "s1");
+    expect(selectCheckpoints(useSecurityStore.getState(), "/p", "s1")).toBe(first);
+
+    // One checkpoint changed: only it is a new object.
+    invoke.mockResolvedValueOnce([cp, { ...other, scanMs: 99 }]);
+    await useSecurityStore.getState().actions.loadSession("/p", "s1");
+    const third = selectCheckpoints(useSecurityStore.getState(), "/p", "s1")!;
+    expect(third).not.toBe(first);
+    expect(third[0]).toBe(first[0]);
+    expect(third[1]).not.toBe(first[1]);
+  });
+
+  it("keeps the badges map when a re-read finds the same sessions", async () => {
+    const row = { sessionId: "s1", level: "critical", blocking: true, findings: 1, scanned: 1 };
+    invoke.mockResolvedValueOnce([row]);
+    await useSecurityStore.getState().actions.loadProject("/p");
+    const before = useSecurityStore.getState().sessions["/p"];
+    invoke.mockResolvedValueOnce([{ ...row }]);
+    await useSecurityStore.getState().actions.loadProject("/p");
+    expect(useSecurityStore.getState().sessions["/p"]).toBe(before);
+    invoke.mockResolvedValueOnce([]);
+    await useSecurityStore.getState().actions.loadProject("/p");
+    expect(useSecurityStore.getState().sessions["/p"]).toEqual({});
+  });
+
+  it("marks a finding not useful at once and drops the badge", async () => {
+    invoke.mockResolvedValueOnce([cp]);
+    await useSecurityStore.getState().actions.loadSession("/p", "s1");
+    invoke.mockResolvedValueOnce(undefined);
+    await useSecurityStore.getState().actions.setNotUseful("/p", "s1", cp.findings[0], true);
+    const state = useSecurityStore.getState();
+    expect(selectCheckpoints(state, "/p", "s1")?.[0].findings[0].notUseful).toBe(true);
+    expect(selectCheckpoints(state, "/p", "s1")?.[0].level).toBe("none");
+    expect(state.sessions["/p"].s1.findings).toBe(0);
+    expect(invoke).toHaveBeenLastCalledWith("security_set_not_useful", {
+      projectPath: "/p",
+      fingerprint: "key",
+      ruleId: "secret.vendor.stripe-access-token",
+      notUseful: true,
+    });
+  });
+
+  it("puts the mark back when the write fails", async () => {
+    invoke.mockResolvedValueOnce([cp]);
+    await useSecurityStore.getState().actions.loadSession("/p", "s1");
+    invoke.mockRejectedValueOnce(new Error("store locked"));
+    await useSecurityStore.getState().actions.setNotUseful("/p", "s1", cp.findings[0], true);
+    const after = selectCheckpoints(useSecurityStore.getState(), "/p", "s1");
+    expect(after?.[0].findings[0].notUseful).toBe(false);
+    expect(after?.[0].blocking).toBe(true);
+  });
+
+  it("re-reads the badges and every open session when a scan lands", async () => {
+    invoke.mockResolvedValueOnce([]);
+    await useSecurityStore.getState().actions.loadSession("/p", "s1");
+    const answers: Record<string, unknown> = {
+      security_project_sessions: [
+        { sessionId: "s1", level: "critical", blocking: true, findings: 1, scanned: 1 },
+      ],
+      security_session_checkpoints: [cp],
+    };
+    invoke.mockImplementation(async (cmd: string) => answers[cmd]);
+    await useSecurityStore.getState().actions.refreshProject("/p");
+    const state = useSecurityStore.getState();
+    expect(state.sessions["/p"].s1.level).toBe("critical");
+    expect(selectCheckpoints(state, "/p", "s1")).toEqual([cp]);
+    expect(invoke).not.toHaveBeenCalledWith("security_session_checkpoints", {
+      projectPath: "/other",
+      sessionId: "s1",
+    });
+  });
+});

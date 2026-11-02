@@ -93,6 +93,7 @@ import {
   notifyUpdateReady,
 } from "@/features/notifications/lib/outcome-notifier";
 import { logEvent } from "@/features/log/lib/log";
+import { startSecurityNotifier } from "@/features/security/lib/security-notifier";
 import { warmMarkdownWorker, primeMarkdownRenderer } from "@/lib/markdown-cache";
 import { primeMarkdown } from "@/lib/markdown";
 import { NotificationPanel } from "@/features/notifications/components/notification-panel";
@@ -190,6 +191,9 @@ export function App() {
 
   // App warnings (auto-fetch failing, behind remote, config.toml errors).
   useEffect(() => startAppWarnings(), []);
+
+  // Blocking Security Agent findings (ATL-985); the rest stays on the Timeline.
+  useEffect(() => startSecurityNotifier(), []);
 
   // The first idle sweep that settles a pile of sessions at once says so,
   // once ever (Rust keeps the flag): otherwise a long list just vanishes.

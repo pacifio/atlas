@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   Plus,
@@ -73,7 +73,11 @@ function statusBadge(status: string): { letter: string; cls: string } {
   return { letter: "M", cls: "text-[var(--atlas-status-warning-foreground)]" };
 }
 
-function FileRow({
+/** One changed file. Memoised, with callbacks that take the file rather than
+ *  closing over it, so the list's parent re-rendering (a keystroke in the
+ *  summary, a refresh that changed nothing) re-renders no rows: a big change
+ *  set is thousands of them. */
+const FileRow = memo(function FileRow({
   file,
   selected,
   onSelect,
@@ -85,19 +89,19 @@ function FileRow({
 }: {
   file: GitFileStatus;
   selected: boolean;
-  onSelect: () => void;
+  onSelect: (path: string) => void;
   action: "stage" | "unstage";
-  onAction: () => void;
-  onDiscard?: () => void;
-  onOpenDiff?: () => void;
-  onOpenInEditor?: () => void;
+  onAction: (file: GitFileStatus) => void;
+  onDiscard?: (file: GitFileStatus) => void;
+  onOpenDiff?: (file: GitFileStatus) => void;
+  onOpenInEditor?: (path: string) => void;
 }) {
   const badge = statusBadge(file.status);
   const name = file.path.split("/").pop() ?? file.path;
   const dir = file.path.slice(0, file.path.length - name.length);
   return (
     <div
-      onClick={onSelect}
+      onClick={() => onSelect(file.path)}
       className={cn(
         "group flex items-center gap-1.5 h-control-sm px-2 cursor-pointer text-xs",
         selected ? "bg-element-selected" : "hover:bg-element-hover",
@@ -117,7 +121,7 @@ function FileRow({
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  onOpenDiff();
+                  onOpenDiff(file);
                 }}
                 className="p-0.5 rounded text-muted-foreground hover:text-foreground"
               >
@@ -130,7 +134,7 @@ function FileRow({
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  onOpenInEditor();
+                  onOpenInEditor(file.path);
                 }}
                 className="p-0.5 rounded text-muted-foreground hover:text-foreground"
               >
@@ -143,7 +147,7 @@ function FileRow({
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  onDiscard();
+                  onDiscard(file);
                 }}
                 className="p-0.5 rounded text-muted-foreground hover:text-[var(--atlas-status-error-foreground)]"
               >
@@ -155,7 +159,7 @@ function FileRow({
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                onAction();
+                onAction(file);
               }}
               className="p-0.5 rounded text-muted-foreground hover:text-foreground"
             >
@@ -166,6 +170,14 @@ function FileRow({
       </HintGroup>
     </div>
   );
+});
+
+async function run(fn: () => Promise<void>) {
+  try {
+    await fn();
+  } catch (e) {
+    handleGitError(e);
+  }
 }
 
 export function ChangesView() {
@@ -209,14 +221,6 @@ export function ChangesView() {
     };
   }, [selected, repoPath, files]);
 
-  const run = async (fn: () => Promise<void>) => {
-    try {
-      await fn();
-    } catch (e) {
-      handleGitError(e);
-    }
-  };
-
   // Revert button. Tracked changes → `git restore` (back to HEAD). Added/
   // untracked files have no HEAD to restore to, so reverting deletes them:
   // text additions delete directly; binary additions (e.g. `.png`, no diff to
@@ -232,16 +236,19 @@ export function ChangesView() {
       if (tracked.length) await actions.discard(tracked);
       if (added.length) await actions.discardAdded(added);
     });
-  const handleRevert = (f: GitFileStatus) => {
-    if (!isAddedStatus(f.status)) {
-      void run(() => actions.discard([f.path]));
-      return;
-    }
-    const kind = classifyFile(f.path);
-    const isText = kind === "text" || kind === "svg";
-    if (isText) void run(() => actions.discardAdded([f.path]));
-    else setConfirmDelete(f);
-  };
+  const handleRevert = useCallback(
+    (f: GitFileStatus) => {
+      if (!isAddedStatus(f.status)) {
+        void run(() => actions.discard([f.path]));
+        return;
+      }
+      const kind = classifyFile(f.path);
+      const isText = kind === "text" || kind === "svg";
+      if (isText) void run(() => actions.discardAdded([f.path]));
+      else setConfirmDelete(f);
+    },
+    [actions],
+  );
 
   // Hunk / line-level staging: send the hunk exactly as displayed; Rust
   // re-diffs fresh, matches it by content, synthesizes the patch and runs
@@ -287,8 +294,10 @@ export function ChangesView() {
   // (lint-staged & co.) used to look like a hung app because the button
   // gave no feedback. The live output strip below the form shows what the
   // hook is doing meanwhile.
-  const activeOp = useGitStore.use.activeOp();
-  const committing = activeOp?.kind === "commit" && activeOp.running;
+  // A boolean, not the op: the op changes on every output batch the hook
+  // prints, and re-rendering this view per batch re-rendered every file row
+  // (see `GitManagerPanel`).
+  const committing = useGitStore((s) => s.activeOp?.kind === "commit" && s.activeOp.running);
 
   const doCommit = () =>
     run(async () => {
@@ -312,10 +321,33 @@ export function ChangesView() {
       setShowCoAuthors(false);
     });
 
-  const openFile = (p: string) => {
-    if (!currentProject) return;
-    void openFileTab(`${currentProject.path}/${p}`);
-  };
+  const openFile = useCallback(
+    (p: string) => {
+      if (!currentProject) return;
+      void openFileTab(`${currentProject.path}/${p}`);
+    },
+    [currentProject],
+  );
+
+  // Row callbacks, stable so the memoised rows skip re-rendering.
+  const toggleSelected = useCallback(
+    (p: string) => setSelected((cur) => (cur === p ? null : p)),
+    [],
+  );
+  const stageOne = useCallback(
+    (f: GitFileStatus) => void run(() => actions.stageFiles([f.path])),
+    [actions],
+  );
+  const unstageOne = useCallback(
+    (f: GitFileStatus) => void run(() => actions.unstageFiles([f.path])),
+    [actions],
+  );
+  const openDiff = useCallback(
+    (f: GitFileStatus) => {
+      if (repoPath) openGitDiff(repoPath, f.path, f.staged);
+    },
+    [repoPath],
+  );
 
   const inProgressLabel = inProgress
     ? inProgress.merge
@@ -393,11 +425,11 @@ export function ChangesView() {
                 key={f.path}
                 file={f}
                 selected={selected === f.path}
-                onSelect={() => setSelected((cur) => (cur === f.path ? null : f.path))}
+                onSelect={toggleSelected}
                 action="unstage"
-                onAction={() => run(() => actions.unstageFiles([f.path]))}
-                onOpenDiff={repoPath ? () => openGitDiff(repoPath, f.path, true) : undefined}
-                onOpenInEditor={() => openFile(f.path)}
+                onAction={unstageOne}
+                onOpenDiff={repoPath ? openDiff : undefined}
+                onOpenInEditor={openFile}
               />
             ))}
           </div>
@@ -433,12 +465,12 @@ export function ChangesView() {
               key={f.path}
               file={f}
               selected={selected === f.path}
-              onSelect={() => setSelected((cur) => (cur === f.path ? null : f.path))}
+              onSelect={toggleSelected}
               action="stage"
-              onAction={() => run(() => actions.stageFiles([f.path]))}
-              onDiscard={() => handleRevert(f)}
-              onOpenDiff={repoPath ? () => openGitDiff(repoPath, f.path, false) : undefined}
-              onOpenInEditor={() => openFile(f.path)}
+              onAction={stageOne}
+              onDiscard={handleRevert}
+              onOpenDiff={repoPath ? openDiff : undefined}
+              onOpenInEditor={openFile}
             />
           ))}
           {files.length === 0 && (

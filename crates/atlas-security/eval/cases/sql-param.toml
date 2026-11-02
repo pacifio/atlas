@@ -1,0 +1,16 @@
+id = "sql-param"
+kind = "synthetic"
+vulnerable = false
+class = "none"
+severity = 0
+title = "Add user search"
+diff = '''
+--- a/src/db/users.rs
++++ b/src/db/users.rs
+@@ -1,0 +1,5 @@
++pub fn search(conn: &Connection, name: &str) -> Result<Vec<User>> {
++    let pattern = format!("%{}%", name);
++    conn.prepare("SELECT * FROM users WHERE name LIKE ?1")?
++        .query_map([pattern], User::from_row)?.collect()
++}
+'''
