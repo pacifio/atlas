@@ -29,6 +29,9 @@ const ArtifactsPanel = lazy(() =>
     default: m.ArtifactsPanel,
   })),
 );
+const InboxPanel = lazy(() =>
+  import("@/features/inbox/components/inbox-panel").then((m) => ({ default: m.InboxPanel })),
+);
 const CanvasPanel = lazy(() =>
   import("@/features/canvas/components/canvas-panel").then((m) => ({ default: m.CanvasPanel })),
 );
@@ -117,6 +120,8 @@ function DestinationBody({ tab, type }: { tab: Tab; type: DestinationType }) {
   switch (type) {
     case "artifacts":
       return <ArtifactsPanel />;
+    case "inbox":
+      return <InboxPanel />;
     case "usage":
       return <UsagePanel />;
     case "knowledge":

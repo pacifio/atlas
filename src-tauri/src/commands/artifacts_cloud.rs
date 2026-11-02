@@ -25,7 +25,7 @@ use std::sync::Arc;
 
 use atlas_artifacts::{
     AnchorKind, ArtifactShare, ArtifactsClient, ArtifactsEvent, ArtifactsManager, CloudBoard,
-    Comment,
+    Comment, InboxKind, InboxPage, InboxRead,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
@@ -1132,6 +1132,68 @@ pub async fn artifacts_cloud_comment_vote(
     let (client, org_id) = reader(&app)?;
     client
         .vote_comment(&org_id, &project_id, &session_id, &comment_id, value)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+// ── The inbox ───────────────────────────────────────────────────────────────
+//
+// The signed-in person's mentions, replies and comments on their Sessions in
+// the active synced Organisation — the web's /inbox, on the same ingest doors.
+// Nothing pushes it; the window polls the unread count and reads pages on
+// demand.
+
+/// One page of the inbox. `filter` is the window's segmented control:
+/// `all`, `unread` or `mentions`. `cursor` continues a previous page.
+#[tauri::command]
+pub async fn artifacts_cloud_inbox(
+    filter: String,
+    cursor: Option<String>,
+    app: AppHandle,
+) -> Result<InboxPage, String> {
+    let (client, org_id) = reader(&app)?;
+    let (unread, kind) = match filter.as_str() {
+        "unread" => (true, None),
+        "mentions" => (false, Some(InboxKind::Mention)),
+        _ => (false, None),
+    };
+    client
+        .inbox_page(&org_id, unread, kind, cursor.as_deref(), Some(50))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// How many entries are unread — the sidebar's dot. One entry's page: the
+/// count is the Organisation's total whatever the page holds.
+#[tauri::command]
+pub async fn artifacts_cloud_inbox_unread(app: AppHandle) -> Result<u64, String> {
+    let (client, org_id) = reader(&app)?;
+    client
+        .inbox_page(&org_id, true, None, None, Some(1))
+        .await
+        .map(|page| page.unread)
+        .map_err(|e| e.to_string())
+}
+
+/// Mark entries read: these `ids`, or with `all` every entry in the active
+/// Organisation. The person's own act — the agent's org tools read the inbox
+/// and can never call this.
+#[tauri::command]
+pub async fn artifacts_cloud_inbox_read(
+    ids: Vec<String>,
+    all: bool,
+    app: AppHandle,
+) -> Result<(), String> {
+    let (client, org_id) = reader(&app)?;
+    let target = if all {
+        InboxRead::All { org_id: &org_id }
+    } else if ids.is_empty() {
+        return Ok(());
+    } else {
+        InboxRead::Ids(&ids)
+    };
+    client
+        .mark_inbox_read(target)
         .await
         .map_err(|e| e.to_string())
 }

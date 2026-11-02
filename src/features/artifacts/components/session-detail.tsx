@@ -217,6 +217,8 @@ interface Props {
   remoteProjectId?: string | null;
   /** Opened from a commit: land on that Checkpoint rather than at the top. */
   focusCommitSha?: string;
+  /** Opened from the inbox: land on this comment's thread and open it. */
+  focusAnchor?: { kind: string; id: string };
   /** Whether the grounded chat is open beside the record. The panel is the
    *  pane's; the button that opens it is in this footer. */
   chatOpen?: boolean;
@@ -305,6 +307,7 @@ export function SessionDetail({
   remote = null,
   remoteProjectId = null,
   focusCommitSha,
+  focusAnchor,
   chatOpen = false,
   onToggleChat,
 }: Props) {
@@ -698,6 +701,25 @@ export function SessionDetail({
     },
     [sessionId, setFocusThread],
   );
+
+  // Arrived from the inbox. Honoured once per arrival, and only once the
+  // anchored row is here — a Session read from the server streams in, and a
+  // jump to a row still on its way would find nothing.
+  const honouredAnchor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!focusAnchor) return;
+    const arrival = `${detail.summary.id}:${focusAnchor.kind}:${focusAnchor.id}`;
+    if (honouredAnchor.current === arrival) return;
+    if (focusAnchor.kind === "session") {
+      honouredAnchor.current = arrival;
+      jumpToThread(sessionId);
+      return;
+    }
+    if (detail.entries.some((entry) => entry.id === focusAnchor.id)) {
+      honouredAnchor.current = arrival;
+      jumpToThread(focusAnchor.id);
+    }
+  }, [focusAnchor, detail.summary.id, detail.entries, jumpToThread, sessionId]);
 
   const activeFilters =
     (filters.prompts ? 0 : 1) +

@@ -38,8 +38,8 @@ mod socket;
 
 pub use board::{CloudBoard, OrgBoard, ProjectKey, SessionKey};
 pub use client::{
-    ArtifactsClient, BoardQuery, CommentTarget, NewComment, BOARD_PAGE_MAX, ENTRY_PAGE_MAX,
-    SEARCH_MAX_CHARS,
+    ArtifactsClient, BoardQuery, CommentTarget, InboxRead, NewComment, BOARD_PAGE_MAX,
+    ENTRY_PAGE_MAX, SEARCH_MAX_CHARS,
 };
 pub use error::{Error, Result};
 pub use manager::{ArtifactsEvent, ArtifactsManager, ManagerConfig};

@@ -24,6 +24,7 @@ export const TAB_TYPES = [
   "unsupported",
   "usage",
   "artifacts",
+  "inbox",
   "comms-draft",
   "spaces",
   "team-chat",
@@ -42,6 +43,8 @@ export const PROJECTLESS_TYPES: ReadonlySet<TabType> = new Set<TabType>([
   "spaces",
   "usage",
   "team-chat",
+  // The Organisation's inbox: whose comments, on whose Sessions — no project.
+  "inbox",
 ]);
 
 /**
@@ -145,6 +148,7 @@ export const TAB_PLACEMENT = {
   tasks: { kind: "surface", minWidth: 240 },
 
   artifacts: { kind: "destination" },
+  inbox: { kind: "destination" },
   usage: { kind: "destination" },
   knowledge: { kind: "destination" },
   "knowledge-graph": { kind: "destination" },

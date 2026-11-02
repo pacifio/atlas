@@ -32,6 +32,7 @@ import {
   MemoryButton,
   NotificationsButton,
   SourceControlButton,
+  InboxButton,
   TeamChatButton,
   TimelineButton,
   UsageButton,
@@ -67,7 +68,10 @@ export function AppSidebar({ className }: { className?: string }) {
       <div className="px-[8px] pt-[0.35rem]">
         <SidebarProjectPicker />
       </div>
-      <div className="mb-2 mt-1">
+      {/* More room below than above: the Organisation's destinations are a
+          block of their own, and the session search under them starts the
+          next one. */}
+      <div className="mt-1 mb-4">
         <Destinations />
       </div>
       <SidebarSessions />
@@ -80,6 +84,7 @@ export function AppSidebar({ className }: { className?: string }) {
 function Destinations() {
   return (
     <nav aria-label="Destinations" className="flex shrink-0 flex-col items-start gap-0.5 px-[8px]">
+      <InboxButton />
       <TeamChatButton />
       <TimelineButton />
     </nav>

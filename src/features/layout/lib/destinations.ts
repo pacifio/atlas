@@ -3,6 +3,7 @@ import {
   BrainCircuit,
   Frame,
   Gauge,
+  Inbox,
   Layers,
   Map,
   MessagesSquare,
@@ -28,6 +29,7 @@ export interface DestinationMeta {
  *  does not compile. */
 export const DESTINATIONS: Record<DestinationType, DestinationMeta> = {
   artifacts: { title: "Timeline", icon: Layers },
+  inbox: { title: "Inbox", icon: Inbox },
   usage: { title: "Usage", icon: Gauge },
   knowledge: { title: "Knowledge", icon: Brain },
   "knowledge-graph": { title: "Knowledge graph", icon: Network },
