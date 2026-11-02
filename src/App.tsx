@@ -159,6 +159,7 @@ import { toggleFiles } from "@/features/layout/lib/files-surface";
 import { refreshProjectTree } from "@/features/explorer/lib/project-tree-model";
 import { toggleTeamChat } from "@/features/layout/lib/team-chat";
 import { toggleDestination } from "@/features/layout/lib/destinations";
+import { toggleAgentPanel } from "@/features/layout/lib/org-agent";
 
 // Developer console toggle for session holds (Universal RC groundwork).
 if (isDev) installDevSessionHold();
@@ -1349,6 +1350,8 @@ export function App() {
     "panels.teamChat": toggleTeamChat,
     "panels.sessionDetails": toggleSessionDetails,
     "panels.terminal": toggleTerminal,
+    // ⌘⌥A — the Organisation agent, in the side panel.
+    "panels.agent": toggleAgentPanel,
     // ⌥J — Knowledge, a destination: opens it, or goes back to the session
     // when it is the one on screen.
     "panels.knowledge": () => toggleDestination("knowledge"),

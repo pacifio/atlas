@@ -106,6 +106,11 @@ const SourceControlPanel = lazy(() =>
   })),
 );
 // Team chat is a surface tab (ADR-0024); it used to be the right slot.
+const OrgAgentSidePanel = lazy(() =>
+  import("@/features/org-agent/components/org-agent-side-panel").then((m) => ({
+    default: m.OrgAgentSidePanel,
+  })),
+);
 const CommsPanel = lazy(() =>
   import("@/features/comms/components/comms-panel").then((m) => ({ default: m.CommsPanel })),
 );
@@ -147,6 +152,9 @@ export const PERSISTENT_TYPES_LIST = [
   // open conversation keeps its scroll and its half-typed message.
   "chat",
   "team-chat",
+  // The Organisation agent's panel: its conversations keep their scroll and
+  // their half-typed questions across tab switches, as team chat's do.
+  "agent-panel",
   // Knowledge, the knowledge graph and Spaces were here too; they are
   // destinations now (ADR-0024), kept mounted by the destination screen.
 ] as const satisfies readonly TabType[];
@@ -890,6 +898,8 @@ function PersistentPanel({
       );
     case "team-chat":
       return <CommsPanel />;
+    case "agent-panel":
+      return <OrgAgentSidePanel />;
     // Chat is normally handled by the caller, which needs its own
     // `visibility:hidden` wrapper rather than `display:none`. Listed anyway so
     // the exhaustiveness check below is real and not a hole.

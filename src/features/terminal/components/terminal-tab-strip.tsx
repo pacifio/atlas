@@ -180,7 +180,7 @@ const EDGE_TOLERANCE = 1;
 /** Which ends of the strip have tabs scrolled past them. Re-measured on
  *  scroll and on resize of the strip or its tabs: it can start overflowing
  *  without anyone scrolling it (the pane narrows, a tab opens, a cwd grows). */
-function useStripEdges(ref: RefObject<HTMLDivElement | null>) {
+export function useStripEdges(ref: RefObject<HTMLDivElement | null>) {
   const [edges, setEdges] = useState({ canLeft: false, canRight: false });
   useEffect(() => {
     const el = ref.current;

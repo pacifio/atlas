@@ -3,6 +3,7 @@ import { useProjectStore } from "@/features/projects/stores/project-store";
 import { AppSidebar, SidebarPeek } from "@/features/sidebar/components/app-sidebar";
 import { useProjectGitPrefetch } from "@/features/projects/lib/use-project-prefetch";
 import { useSettingsNav } from "@/features/settings/stores/settings-nav-store";
+import { OrgAgentFloat } from "@/features/org-agent/components/org-agent-float";
 import { CenterPanel } from "./center-panel";
 import { DestinationScreen } from "./destination-screen";
 
@@ -72,6 +73,10 @@ export function AppLayout() {
           <DestinationScreen />
         </div>
       </div>
+
+      {/* The Organisation agent's floating messenger: a conversation
+          minimised out of its side panel, over the bottom-right corner. */}
+      <OrgAgentFloat />
 
       {settingsMounted && (
         <Suspense fallback={null}>

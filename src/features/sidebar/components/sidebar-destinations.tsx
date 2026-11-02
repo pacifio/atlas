@@ -1,5 +1,5 @@
 // The sidebar's destinations, one component each, so each subscribes to its
-// own slice of the layout store. Inbox, Team chat and Timeline are labelled rows;
+// own slice of the layout store. Inbox, Team chat, Timeline and Agent are labelled rows;
 // Usage sits icon-only beside search, and Memory, Knowledge, Source control
 // and the bell are the footer's icon dock (`app-sidebar.tsx`). Each toggles what it opens (back to the
 // session when it is already on screen) and lights while its view is the one
@@ -22,6 +22,7 @@ import {
   toggleDestination,
 } from "@/features/layout/lib/destinations";
 import { sourceControlShown, toggleSourceControl } from "@/features/layout/lib/source-control";
+import { agentPageShown, toggleAgentPage } from "@/features/layout/lib/org-agent";
 import {
   teamChatDestinationShown,
   toggleTeamChatDestination,
@@ -170,6 +171,20 @@ export function TimelineButton() {
       label="Timeline"
       active={open}
       onClick={() => toggleDestination("artifacts")}
+    />
+  );
+}
+
+/** The Organisation agent, full page: every conversation, and the open one
+ *  given the room. Its home is the side panel (⌘⌥A, `org-agent.ts`). */
+export function AgentButton() {
+  const open = useLayoutStore(agentPageShown);
+  return (
+    <DestinationButton
+      icon={DESTINATIONS.agent.icon}
+      label="Agent"
+      active={open}
+      onClick={toggleAgentPage}
     />
   );
 }

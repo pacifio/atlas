@@ -30,6 +30,7 @@ import {
   GitBranch,
   GitPullRequest,
   Globe,
+  type LucideIcon,
   Map as MapIcon,
   Maximize2,
   MessageSquare,
@@ -43,8 +44,8 @@ import {
   SquarePen,
   Terminal,
   TextSearch,
-  type LucideIcon,
 } from "lucide-react";
+import { AgentIcon } from "@/features/org-agent/lib/agent-icon";
 import { Icon } from "@/ui/icon";
 import { CommandDialog, CommandDialogPopup } from "@/ui/command";
 import type { TabType } from "@/lib/constants";
@@ -99,6 +100,8 @@ import {
   useAddProjectFlow,
 } from "../lib/palette-add-project";
 import { usePaletteThemeItems } from "../lib/palette-theme-items";
+import { useOrgAgentStore } from "@/features/org-agent/stores/org-agent-store";
+import { revealAgentPanel, toggleAgentPanel } from "@/features/layout/lib/org-agent";
 import {
   CommandEscapeContext,
   CommandPaletteContent,
@@ -472,6 +475,13 @@ function OpenCommandPalette(props: {
         }),
         action("layout:team-chat", "Toggle team chat", MessageSquare, toggleTeamChat, {
           shortcutAction: "panels.teamChat",
+        }),
+        action("layout:agent", "Toggle Ask Atlas", AgentIcon, toggleAgentPanel, {
+          shortcutAction: "panels.agent",
+        }),
+        action("layout:agent-new", "New chat with Atlas", AgentIcon, () => {
+          useOrgAgentStore.getState().actions.newChat();
+          revealAgentPanel();
         }),
         action(
           "layout:sidebar",

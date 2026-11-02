@@ -32,6 +32,7 @@ import {
   MemoryButton,
   NotificationsButton,
   SourceControlButton,
+  AgentButton,
   InboxButton,
   TeamChatButton,
   TimelineButton,
@@ -87,6 +88,7 @@ function Destinations() {
       <InboxButton />
       <TeamChatButton />
       <TimelineButton />
+      <AgentButton />
     </nav>
   );
 }

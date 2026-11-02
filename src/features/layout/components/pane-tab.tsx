@@ -30,6 +30,7 @@ import {
   Terminal,
   X,
 } from "lucide-react";
+import { AgentIcon } from "@/features/org-agent/lib/agent-icon";
 import { cn } from "@/lib/utils";
 import { copyText } from "@/lib/clipboard";
 import { requestCloseTab } from "@/features/chat/lib/close-tab";
@@ -75,6 +76,8 @@ export const tabIcons: Record<TabType, FallbackIcon> = {
   usage: Gauge,
   artifacts: Layers,
   inbox: Inbox,
+  agent: AgentIcon,
+  "agent-panel": AgentIcon,
   "comms-draft": FileText,
   spaces: Frame,
   "team-chat": MessagesSquare,

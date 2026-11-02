@@ -9,6 +9,7 @@ import {
   ScrollText,
   Terminal,
 } from "lucide-react";
+import { AgentIcon } from "@/features/org-agent/lib/agent-icon";
 import { AtlasIcon } from "@/components/atlas-icon";
 import type { TabType } from "@/lib/constants";
 import { useLayoutStore } from "../stores/layout-store";
@@ -47,6 +48,7 @@ export const SURFACES: readonly Surface[] = [
   { type: "source-control", label: "Source control", icon: GitBranch, key: "G" },
   { type: "pull-requests", label: "Pull requests", icon: GitPullRequest, key: "P" },
   { type: "team-chat", label: "Team chat", icon: MessagesSquare, key: "C" },
+  { type: "agent-panel", label: "Ask Atlas", icon: AgentIcon, key: "O" },
   { type: "log", label: "Log", icon: ScrollText, key: "L" },
 ];
 
@@ -83,6 +85,7 @@ export function openSurface(surface: Surface, groupId: string): void {
       id:
         surface.type === "source-control" ||
         surface.type === "team-chat" ||
+        surface.type === "agent-panel" ||
         surface.type === "files"
           ? surface.type
           : `${surface.type}-${ts}`,

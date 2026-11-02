@@ -25,6 +25,8 @@ export const TAB_TYPES = [
   "usage",
   "artifacts",
   "inbox",
+  "agent",
+  "agent-panel",
   "comms-draft",
   "spaces",
   "team-chat",
@@ -45,6 +47,9 @@ export const PROJECTLESS_TYPES: ReadonlySet<TabType> = new Set<TabType>([
   "team-chat",
   // The Organisation's inbox: whose comments, on whose Sessions — no project.
   "inbox",
+  // The Organisation agent: conversation over the whole Organisation.
+  "agent",
+  "agent-panel",
 ]);
 
 /**
@@ -52,13 +57,14 @@ export const PROJECTLESS_TYPES: ReadonlySet<TabType> = new Set<TabType>([
  * they follow the user from project to project instead of staying behind in
  * the project they were opened in.
  *
- * Team chat is the one: it is the same conversation whichever project is
- * open. It is not org-scoped — nothing in the tab names an org, and the panel
+ * Team chat and the Organisation agent's panel are the two: each is the same
+ * conversation whichever project is open. Team chat is the archetype:
+ * it is not org-scoped — nothing in the tab names an org, and the panel
  * retargets with the socket — so an org switch leaves it open. It is never
  * written to the per-project editor state; whether it was open is a layout
  * preference (`teamChat.open`), restored on boot.
  */
-export const WINDOW_TYPES: ReadonlySet<TabType> = new Set<TabType>(["team-chat"]);
+export const WINDOW_TYPES: ReadonlySet<TabType> = new Set<TabType>(["team-chat", "agent-panel"]);
 
 /**
  * Tab types whose CONTENT belongs to one Organisation — their ids and data
@@ -137,6 +143,8 @@ export const TAB_PLACEMENT = {
   // destination of its own (reading the team's conversations full width).
   // ADR-0024's 2026-10-24 amendment.
   "team-chat": { kind: "surface-or-destination", minWidth: 320 },
+  // The Organisation agent at home: the side panel, its conversations as tabs.
+  "agent-panel": { kind: "surface", minWidth: 320 },
   "comms-draft": { kind: "surface", minWidth: 320 },
   log: { kind: "surface", minWidth: 300 },
   pdf: { kind: "surface", minWidth: 320 },
@@ -149,6 +157,11 @@ export const TAB_PLACEMENT = {
 
   artifacts: { kind: "destination" },
   inbox: { kind: "destination" },
+  // The Organisation agent's full page: every conversation, or one given the
+  // room. Its home is the side panel (`agent-panel`), which stays put while a
+  // conversation is up here and says so — two types, not one dual one,
+  // because a dual type LEAVES its column for its page (`org-agent.ts`).
+  agent: { kind: "destination" },
   usage: { kind: "destination" },
   knowledge: { kind: "destination" },
   "knowledge-graph": { kind: "destination" },
