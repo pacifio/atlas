@@ -48,9 +48,16 @@ export interface PendingElicitation {
 export function ElicitationModal({
   pending,
   onClose,
+  remoteDriver = null,
 }: {
   pending: PendingElicitation;
   onClose: () => void;
+  /** Who holds the session's remote-control seat when it is not this
+   *  account. An elicitation is steering (design review §4.4): Rust refuses
+   *  the local answer while someone else drives, so the dialog says so and
+   *  waits instead of bouncing an error. `null` when the seat is ours or the
+   *  question is not a session's (a sign-in, which stays desktop-only). */
+  remoteDriver?: string | null;
 }) {
   const fields = useMemo(
     () => (pending.mode === "form" ? parseElicitationSchema(pending.requestedSchema) : []),
@@ -198,16 +205,25 @@ export function ElicitationModal({
               </div>
             ))}
 
+            {remoteDriver && (
+              <p
+                data-testid="elicitation-seat-notice"
+                className="px-0.5 text-xs text-secondary-foreground"
+              >
+                {remoteDriver} is driving from remote control — only they can answer this. Take over
+                at the composer to answer it yourself.
+              </p>
+            )}
             <div className="mt-0.5 flex items-center gap-2">
               <button
-                disabled={busy || !complete}
+                disabled={busy || !complete || remoteDriver !== null}
                 onClick={() => void respond("accept", pending.mode === "form" ? values : {})}
                 className="h-7 rounded-sm border border-border px-2.5 text-xs text-foreground hover:bg-element-hover disabled:opacity-50 disabled:hover:bg-transparent"
               >
                 {pending.mode === "url" ? "I'm done" : "Send"}
               </button>
               <button
-                disabled={busy}
+                disabled={busy || remoteDriver !== null}
                 onClick={() => void respond("decline")}
                 className="h-7 rounded-sm px-2 text-xs text-muted-foreground hover:text-foreground"
               >

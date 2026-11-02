@@ -26,6 +26,7 @@ import { memoryHandlers } from "../fixtures/memory";
 import { miscHandlers } from "../fixtures/misc";
 import { projectSourcesHandlers } from "../fixtures/project-sources";
 import { pullRequestsHandlers } from "../fixtures/pull-requests";
+import { rcHandlers } from "../fixtures/rc";
 import { securityHandlers } from "../fixtures/security";
 import { settingsHandlers } from "../fixtures/settings";
 import { skillsHandlers } from "../fixtures/skills";
@@ -65,6 +66,7 @@ export const baseFixtureMaps: Readonly<Record<string, MockHandlers>> = {
   "fixtures/integrations": integrationsHandlers,
   "fixtures/memory": memoryHandlers,
   "fixtures/pull-requests": pullRequestsHandlers,
+  "fixtures/rc": rcHandlers,
   "fixtures/security": securityHandlers,
   "fixtures/skills": skillsHandlers,
   "fixtures/spaces": spacesHandlers,
@@ -190,6 +192,7 @@ export const baseHandlers: MockHandlers = {
   ...memoryHandlers,
   ...projectSourcesHandlers,
   ...pullRequestsHandlers,
+  ...rcHandlers,
   ...securityHandlers,
   ...skillsHandlers,
   ...spacesHandlers,

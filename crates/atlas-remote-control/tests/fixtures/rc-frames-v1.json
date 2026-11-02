@@ -1,0 +1,795 @@
+{
+  "protocol": 1,
+  "enums": {
+    "tiers": [
+      "view",
+      "steer",
+      "steer_approve"
+    ],
+    "linkTiers": [
+      "view",
+      "steer"
+    ],
+    "capabilities": [
+      "steer",
+      "approve",
+      "mode",
+      "model",
+      "config"
+    ],
+    "surfaces": [
+      "web",
+      "mobile",
+      "desktop"
+    ],
+    "principalKinds": [
+      "user",
+      "guest",
+      "link"
+    ],
+    "clientRoles": [
+      "owner",
+      "member",
+      "link"
+    ],
+    "rosterRoles": [
+      "owner",
+      "driver",
+      "visitor"
+    ],
+    "endReasons": [
+      "closed_by_owner",
+      "closed_by_admin",
+      "owner_timeout",
+      "never_hosted",
+      "erased",
+      "retention"
+    ],
+    "gates": [
+      "platform_flag",
+      "org_setting",
+      "org_policy",
+      "room_closed",
+      "owner_offline",
+      "link_revoked",
+      "link_expired",
+      "member_removed",
+      "tier",
+      "not_driver",
+      "epoch_stale",
+      "rate_limited",
+      "owner_only",
+      "option_standing",
+      "widening",
+      "in_flight",
+      "not_pending"
+    ],
+    "refusals": [
+      "hello_required",
+      "already_hello",
+      "bad_frame",
+      "payload_too_large",
+      "not_host",
+      "room_full",
+      "seq_regressed",
+      "snapshot_required",
+      "snapshot_unavailable",
+      "tier",
+      "not_driver",
+      "epoch_stale",
+      "owner_offline",
+      "identity_required",
+      "link_expired",
+      "cooldown",
+      "rate_limited",
+      "request_unknown",
+      "request_closed",
+      "not_accepting",
+      "room_closed",
+      "command_unknown",
+      "relay_timeout"
+    ],
+    "errors": [
+      "protocol_unsupported"
+    ],
+    "commandKinds": [
+      "submit",
+      "stop",
+      "answer_permission",
+      "answer_elicitation",
+      "set_mode",
+      "set_model",
+      "set_config_option"
+    ],
+    "auditEvents": [
+      "room_created",
+      "settings_changed",
+      "link_created",
+      "link_revoked",
+      "password_set",
+      "password_cleared",
+      "password_locked",
+      "invite_sent",
+      "invite_removed",
+      "member_joined",
+      "host_online",
+      "host_offline",
+      "host_refused",
+      "host_superseded",
+      "resync",
+      "control_requested",
+      "control_granted",
+      "control_declined",
+      "control_timed_out",
+      "control_released",
+      "driver_kicked",
+      "taken_over",
+      "visitor_kicked",
+      "command_relayed",
+      "command_refused",
+      "command_result",
+      "command_timed_out",
+      "room_closed",
+      "room_ended",
+      "member_revoked",
+      "link_visitor_revoked",
+      "scope_set",
+      "scope_revoked"
+    ]
+  },
+  "commandMinTier": {
+    "submit": "steer",
+    "stop": "steer",
+    "answer_permission": "steer_approve",
+    "answer_elicitation": "steer_approve",
+    "set_mode": "steer",
+    "set_model": "steer",
+    "set_config_option": "steer"
+  },
+  "membersOnlyCommands": [
+    "set_config_option"
+  ],
+  "closeCodes": {
+    "Idle": 1001,
+    "Revoked": 1008,
+    "TryAgainLater": 1013,
+    "ProtocolUnsupported": 4400,
+    "Forbidden": 4403,
+    "Superseded": 4409,
+    "RoomClosed": 4410
+  },
+  "frameKinds": {
+    "DeltaBatch": 1,
+    "Snapshot": 2
+  },
+  "flagMore": 1,
+  "constants": {
+    "RC_SOCKETS_MAX": 64,
+    "RC_SOCKETS_PER_PRINCIPAL": 4,
+    "RC_DELTA_MAX_BYTES": 262144,
+    "RC_FRAME_HEADER_MAX_BYTES": 19,
+    "RC_SNAPSHOT_PART_MAX_BYTES": 262125,
+    "RC_SNAPSHOT_MAX_BYTES": 1048576,
+    "RC_HOST_PING_MS": 15000,
+    "RC_HOST_SILENT_MS": 45000,
+    "RC_CLIENT_PING_MS": 25000,
+    "RC_COALESCE_MS": 33,
+    "RC_COALESCE_BYTES": 8192,
+    "RC_COMMAND_TIMEOUT_MS": 30000,
+    "RC_PROMPT_MAX": 32768,
+    "RC_COMMAND_FRAME_MAX_BYTES": 36864,
+    "RC_COMMAND_VALUE_MAX_BYTES": 8192,
+    "RC_CONTROL_MAX_BYTES": 4096,
+    "RC_REHELLO_MAX": 3,
+    "RC_HELLO_TIMEOUT_MS": 10000,
+    "RC_KICK_MS": 600000,
+    "RC_CONTROL_REQUEST_TIMEOUT_MS": 60000,
+    "RC_CONTROL_COOLDOWN_MS": 30000,
+    "RC_VIEWER_LAG_BYTES": 2097152,
+    "RC_VIEWER_LAG_MS": 10000,
+    "RC_WIDENING_MODE_WORDS": [
+      "bypass",
+      "full",
+      "yolo",
+      "danger",
+      "unrestricted",
+      "auto",
+      "trust",
+      "skip",
+      "unsafe",
+      "always"
+    ]
+  },
+  "toServer": [
+    {
+      "name": "host hello",
+      "from": "host",
+      "frame": {
+        "t": "rc.hello",
+        "protocol": 1,
+        "role": "host",
+        "clientId": "desk-7f3a9c21",
+        "hostSecret": "9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b9b",
+        "as_of_seq": 42,
+        "capabilities": [
+          "steer",
+          "approve",
+          "mode",
+          "model",
+          "config"
+        ],
+        "agent": "atlas-agent",
+        "model": "claude-opus-5"
+      }
+    },
+    {
+      "name": "client hello",
+      "from": "client",
+      "frame": {
+        "t": "rc.hello",
+        "protocol": 1,
+        "role": "client",
+        "clientId": "web-tab-0001",
+        "since": 0,
+        "surface": "web"
+      }
+    },
+    {
+      "name": "ack",
+      "from": "client",
+      "frame": {
+        "t": "rc.ack",
+        "seq": 42
+      }
+    },
+    {
+      "name": "host resync",
+      "from": "host",
+      "frame": {
+        "t": "rc.resync",
+        "as_of_seq": 57
+      }
+    },
+    {
+      "name": "command: submit",
+      "from": "client",
+      "frame": {
+        "t": "rc.command",
+        "commandId": "01JB8Z5G7Q2W3E4R5T6Y7V8X9Z",
+        "driverEpoch": 1,
+        "command": {
+          "kind": "submit",
+          "content": "Run the tests again",
+          "clientMessageId": "msg-0001"
+        }
+      }
+    },
+    {
+      "name": "command: stop",
+      "from": "client",
+      "frame": {
+        "t": "rc.command",
+        "commandId": "01JB8Z5G7Q2W3E4R5T6Y7V8X9Z",
+        "driverEpoch": 1,
+        "command": {
+          "kind": "stop"
+        }
+      }
+    },
+    {
+      "name": "command: answer_permission",
+      "from": "client",
+      "frame": {
+        "t": "rc.command",
+        "commandId": "01JB8Z5G7Q2W3E4R5T6Y7V8X9Z",
+        "driverEpoch": 2,
+        "command": {
+          "kind": "answer_permission",
+          "requestId": "perm-1",
+          "optionId": "allow_once"
+        }
+      }
+    },
+    {
+      "name": "command: answer_elicitation",
+      "from": "client",
+      "frame": {
+        "t": "rc.command",
+        "commandId": "01JB8Z5G7Q2W3E4R5T6Y7V8X9Z",
+        "driverEpoch": 2,
+        "command": {
+          "kind": "answer_elicitation",
+          "requestId": "elic-1",
+          "answer": {
+            "branch": "main"
+          }
+        }
+      }
+    },
+    {
+      "name": "command: set_mode",
+      "from": "client",
+      "frame": {
+        "t": "rc.command",
+        "commandId": "01JB8Z5G7Q2W3E4R5T6Y7V8X9Z",
+        "driverEpoch": 1,
+        "command": {
+          "kind": "set_mode",
+          "modeId": "plan"
+        }
+      }
+    },
+    {
+      "name": "command: set_model",
+      "from": "client",
+      "frame": {
+        "t": "rc.command",
+        "commandId": "01JB8Z5G7Q2W3E4R5T6Y7V8X9Z",
+        "driverEpoch": 1,
+        "command": {
+          "kind": "set_model",
+          "modelId": "claude-sonnet-5"
+        }
+      }
+    },
+    {
+      "name": "command: set_config_option",
+      "from": "client",
+      "frame": {
+        "t": "rc.command",
+        "commandId": "01JB8Z5G7Q2W3E4R5T6Y7V8X9Z",
+        "driverEpoch": 1,
+        "command": {
+          "kind": "set_config_option",
+          "key": "thinking_budget",
+          "value": 8000
+        }
+      }
+    },
+    {
+      "name": "command result: accepted",
+      "from": "host",
+      "frame": {
+        "t": "rc.command_result",
+        "commandId": "01JB8Z5G7Q2W3E4R5T6Y7V8X9Z",
+        "fromId": "user_owner",
+        "ok": true
+      }
+    },
+    {
+      "name": "command result: refused by the desktop",
+      "from": "host",
+      "frame": {
+        "t": "rc.command_result",
+        "commandId": "01JB8Z5G7Q2W3E4R5T6Y7V8X9Z",
+        "fromId": "user_member",
+        "ok": false,
+        "refusedBy": "desktop",
+        "gate": "in_flight",
+        "code": "in_flight",
+        "message": "a turn is already running"
+      }
+    },
+    {
+      "name": "request control",
+      "from": "client",
+      "frame": {
+        "t": "rc.request_control"
+      }
+    },
+    {
+      "name": "control answer",
+      "from": "host",
+      "frame": {
+        "t": "rc.control_answer",
+        "requestId": "01JB8Z5G7Q2W3E4R5T6Y7V8X9Z",
+        "approve": true
+      }
+    },
+    {
+      "name": "release control",
+      "from": "client",
+      "frame": {
+        "t": "rc.release_control"
+      }
+    },
+    {
+      "name": "kick",
+      "from": "host",
+      "frame": {
+        "t": "rc.kick",
+        "target": "guest:3f2a9c0d4b1e8f7a6c5d4e3f2a1b0c9d"
+      }
+    },
+    {
+      "name": "take over",
+      "from": "host",
+      "frame": {
+        "t": "rc.take_over"
+      }
+    },
+    {
+      "name": "grant control",
+      "from": "host",
+      "frame": {
+        "t": "rc.grant_control",
+        "target": "user_member"
+      }
+    },
+    {
+      "name": "close",
+      "from": "host",
+      "frame": {
+        "t": "rc.close"
+      }
+    }
+  ],
+  "fromServer": [
+    {
+      "name": "host welcome",
+      "to": "host",
+      "frame": {
+        "t": "rc.welcome",
+        "protocol": 1,
+        "roomId": "01JB8Z5G7Q2W3E4R5T6Y7V8X9Z",
+        "orgId": "org_01",
+        "workspaceId": "01JB8Z5G7Q2W3E4R5T6Y7V8WS1",
+        "role": "host",
+        "head": 40,
+        "driverEpoch": 1,
+        "driver": {
+          "id": "user_owner",
+          "kind": "user",
+          "name": null
+        },
+        "snapshotAsOf": 12,
+        "wants": "snapshot"
+      }
+    },
+    {
+      "name": "host welcome (solo room)",
+      "to": "host",
+      "frame": {
+        "t": "rc.welcome",
+        "protocol": 1,
+        "roomId": "01JB8Z5G7Q2W3E4R5T6Y7V8X9Z",
+        "orgId": null,
+        "workspaceId": null,
+        "role": "host",
+        "head": 0,
+        "driverEpoch": 1,
+        "driver": {
+          "id": "user_owner",
+          "kind": "user",
+          "name": null
+        },
+        "snapshotAsOf": null,
+        "wants": "nothing"
+      }
+    },
+    {
+      "name": "client welcome (member)",
+      "to": "client",
+      "frame": {
+        "t": "rc.welcome",
+        "protocol": 1,
+        "roomId": "01JB8Z5G7Q2W3E4R5T6Y7V8X9Z",
+        "role": "member",
+        "principal": {
+          "id": "user_member",
+          "kind": "user",
+          "name": null
+        },
+        "tier": "steer",
+        "driverEpoch": 1,
+        "driver": {
+          "id": "user_owner",
+          "kind": "user",
+          "name": null
+        },
+        "ownerOnline": true,
+        "head": 40,
+        "tailFloor": 13,
+        "pending": []
+      }
+    },
+    {
+      "name": "client welcome (link visitor)",
+      "to": "client",
+      "frame": {
+        "t": "rc.welcome",
+        "protocol": 1,
+        "role": "link",
+        "principal": {
+          "id": "guest:3f2a9c0d4b1e8f7a6c5d4e3f2a1b0c9d",
+          "kind": "guest",
+          "name": "Ada"
+        },
+        "tier": "view",
+        "driverEpoch": 1,
+        "driver": {
+          "id": "user_owner",
+          "kind": "user",
+          "name": null
+        },
+        "ownerOnline": false,
+        "head": 40,
+        "tailFloor": 13,
+        "pending": []
+      }
+    },
+    {
+      "name": "synced",
+      "to": "client",
+      "frame": {
+        "t": "rc.synced",
+        "head": 40
+      }
+    },
+    {
+      "name": "roster (full)",
+      "to": "client",
+      "frame": {
+        "t": "rc.roster",
+        "scope": "full",
+        "driverEpoch": 1,
+        "ownerOnline": true,
+        "memberTier": "steer",
+        "driver": {
+          "id": "user_owner",
+          "kind": "user",
+          "name": null
+        },
+        "peers": [
+          {
+            "peerId": "phone-0001",
+            "id": "user_owner",
+            "kind": "user",
+            "name": null,
+            "surface": "mobile",
+            "role": "owner",
+            "tier": "steer_approve",
+            "since": 1761200000000
+          },
+          {
+            "peerId": "web-tab-0001",
+            "id": "user_member",
+            "kind": "user",
+            "name": null,
+            "surface": "web",
+            "role": "visitor",
+            "tier": "steer",
+            "since": 1761200001000
+          },
+          {
+            "peerId": "guest-tab-01",
+            "id": "guest:3f2a9c0d4b1e8f7a6c5d4e3f2a1b0c9d",
+            "kind": "guest",
+            "name": "Ada",
+            "surface": "web",
+            "role": "visitor",
+            "tier": "view",
+            "since": 1761200002000
+          }
+        ]
+      }
+    },
+    {
+      "name": "roster (guest)",
+      "to": "client",
+      "frame": {
+        "t": "rc.roster",
+        "scope": "guest",
+        "driverEpoch": 1,
+        "ownerOnline": true,
+        "driver": {
+          "kind": "user",
+          "name": null
+        },
+        "you": "visitor",
+        "counts": {
+          "members": 2,
+          "visitors": 1
+        }
+      }
+    },
+    {
+      "name": "owner offline",
+      "to": "client",
+      "frame": {
+        "t": "rc.owner",
+        "online": false,
+        "graceEndsAt": 1761200600000
+      }
+    },
+    {
+      "name": "owner online",
+      "to": "client",
+      "frame": {
+        "t": "rc.owner",
+        "online": true
+      }
+    },
+    {
+      "name": "control request",
+      "to": "host",
+      "frame": {
+        "t": "rc.control_request",
+        "request": {
+          "requestId": "01JB8Z5G7Q2W3E4R5T6Y7V8X9Z",
+          "from": {
+            "id": "guest:3f2a9c0d4b1e8f7a6c5d4e3f2a1b0c9d",
+            "kind": "guest",
+            "name": "Ada"
+          },
+          "status": "pending",
+          "requestedAt": 1761200003000,
+          "expiresAt": 1761200063000,
+          "answeredAt": null,
+          "reason": null
+        }
+      }
+    },
+    {
+      "name": "command to the host",
+      "to": "host",
+      "frame": {
+        "t": "rc.command",
+        "commandId": "01JB8Z5G7Q2W3E4R5T6Y7V8X9Z",
+        "driverEpoch": 1,
+        "from": {
+          "id": "user_owner",
+          "kind": "user",
+          "name": null
+        },
+        "command": {
+          "kind": "submit",
+          "content": "Run the tests again"
+        }
+      }
+    },
+    {
+      "name": "command result: ok",
+      "to": "client",
+      "frame": {
+        "t": "rc.command_result",
+        "commandId": "01JB8Z5G7Q2W3E4R5T6Y7V8X9Z",
+        "ok": true
+      }
+    },
+    {
+      "name": "command result: pending (a resend)",
+      "to": "client",
+      "frame": {
+        "t": "rc.command_result",
+        "commandId": "01JB8Z5G7Q2W3E4R5T6Y7V8X9Z",
+        "ok": null,
+        "status": "pending"
+      }
+    },
+    {
+      "name": "command result: refused by the relay",
+      "to": "client",
+      "frame": {
+        "t": "rc.command_result",
+        "commandId": "01JB8Z5G7Q2W3E4R5T6Y7V8X9Z",
+        "ok": false,
+        "refusedBy": "relay",
+        "gate": "owner_offline",
+        "code": "owner_offline",
+        "message": "the owner's desktop is offline"
+      }
+    },
+    {
+      "name": "command result: refused by the relay, the owner while somebody else drives",
+      "to": "client",
+      "frame": {
+        "t": "rc.command_result",
+        "commandId": "01JB8Z5G7Q2W3E4R5T6Y7V8X9Z",
+        "ok": false,
+        "refusedBy": "relay",
+        "gate": "not_driver",
+        "code": "not_driver",
+        "message": "somebody else is driving; take over to steer",
+        "takeOver": true
+      }
+    },
+    {
+      "name": "command result: refused by the desktop",
+      "to": "client",
+      "frame": {
+        "t": "rc.command_result",
+        "commandId": "01JB8Z5G7Q2W3E4R5T6Y7V8X9Z",
+        "ok": false,
+        "refusedBy": "desktop",
+        "gate": "not_pending",
+        "code": "not_pending",
+        "message": "that prompt was already answered"
+      }
+    },
+    {
+      "name": "command result: relay timeout",
+      "to": "client",
+      "frame": {
+        "t": "rc.command_result",
+        "commandId": "01JB8Z5G7Q2W3E4R5T6Y7V8X9Z",
+        "ok": false,
+        "refusedBy": "relay",
+        "code": "relay_timeout",
+        "message": "the desktop did not answer in time; it may still have acted"
+      }
+    },
+    {
+      "name": "snapshot request",
+      "to": "host",
+      "frame": {
+        "t": "rc.snapshot_request",
+        "reason": "joiner"
+      }
+    },
+    {
+      "name": "resync (host)",
+      "to": "client",
+      "frame": {
+        "t": "rc.resync",
+        "as_of_seq": 57,
+        "reason": "host"
+      }
+    },
+    {
+      "name": "resync (ahead)",
+      "to": "client",
+      "frame": {
+        "t": "rc.resync",
+        "as_of_seq": 0,
+        "reason": "ahead"
+      }
+    },
+    {
+      "name": "resync (lagging)",
+      "to": "client",
+      "frame": {
+        "t": "rc.resync",
+        "as_of_seq": 40,
+        "reason": "lagging"
+      }
+    },
+    {
+      "name": "closed",
+      "to": "client",
+      "frame": {
+        "t": "rc.closed",
+        "reason": "closed_by_owner"
+      }
+    },
+    {
+      "name": "refused",
+      "to": "client",
+      "frame": {
+        "t": "rc.refused",
+        "ref": "01JB8Z5G7Q2W3E4R5T6Y7V8X9Z",
+        "code": "rate_limited",
+        "message": "slow down"
+      }
+    },
+    {
+      "name": "refused (cooldown)",
+      "to": "client",
+      "frame": {
+        "t": "rc.refused",
+        "code": "cooldown",
+        "message": "wait before asking again",
+        "retryAt": 1761200093000
+      }
+    },
+    {
+      "name": "error",
+      "to": "host",
+      "frame": {
+        "t": "rc.error",
+        "code": "protocol_unsupported",
+        "message": "this server speaks rc protocol 1"
+      }
+    }
+  ]
+}

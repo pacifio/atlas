@@ -4400,6 +4400,11 @@ impl OutboundMiddleware<SessionDeltaEnvelope> for CaptureMiddleware {
                 state.flush_session_end(&envelope.session_id, &binding);
             }
 
+            // The prompt is recorded from the send path (`note_prompt`, via the
+            // host's prompt hooks), with exactly the text the agent was sent.
+            // Its `user_message` echo would record it twice.
+            SessionDelta::UserMessage { .. } => {}
+
             _ => {}
         }
     }

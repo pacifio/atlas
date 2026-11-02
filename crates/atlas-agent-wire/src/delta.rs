@@ -15,7 +15,10 @@ use atlas_bus::EventBus;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-use crate::types::{Message, PlanEntry, RateLimitWindow, SessionStatus, Subagent, ToolCall, Usage};
+use crate::types::{
+    Message, Origin, PlanEntry, QueuedPrompt, RateLimitWindow, SessionStatus, Subagent, ToolCall,
+    Usage,
+};
 use crate::AgentId;
 
 /// One change to one session. Tagged on the wire by `kind`.
@@ -81,8 +84,15 @@ pub enum SessionDelta {
     HistoryRewound {
         turns: u32,
     },
+    /// The session's mode changed. `origin` says who changed it — the
+    /// window, or a remote driver through Universal RC — when the change went
+    /// through the host's steering entry; absent when the agent changed it on
+    /// its own (an ACP `current_mode_update` echo). Additive: old frontends
+    /// ignore the field.
     ModeChanged {
         mode_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        origin: Option<Origin>,
     },
     /// A transient model-call failure is being retried after a backoff
     /// (native agent). Additive: old frontends ignore unknown kinds.
@@ -92,8 +102,12 @@ pub enum SessionDelta {
         delay_ms: u64,
         last_error: String,
     },
+    /// The session's model changed through the host's steering entry.
+    /// `origin` says who picked it (see [`SessionDelta::ModeChanged`]).
     ModelChanged {
         model_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        origin: Option<Origin>,
     },
     AvailableCommands {
         commands: Vec<serde_json::Value>,
@@ -124,8 +138,14 @@ pub enum SessionDelta {
     /// never emitted, so the UI only learned about a change if something
     /// happened to refetch a snapshot — a knob toggled agent-side stayed
     /// visually wrong indefinitely.
+    ///
+    /// `origin` says who set the option when the list is the confirmed echo
+    /// of a `set_config_option` through the host; absent when the agent
+    /// changed it on its own (see [`SessionDelta::ModeChanged`]).
     ConfigOptionsUpdated {
         config_options: Vec<serde_json::Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        origin: Option<Origin>,
     },
     /// Cumulative context-window usage from an ACP `usage_update` notification:
     /// `used`/`size` tokens (of the model's window) + optional cost. ACP agents
@@ -212,6 +232,36 @@ pub enum SessionDelta {
     AgentDisconnected {
         reason: String,
     },
+    /// A prompt reached the agent: the user half of an exchange, projected
+    /// from the thread entry the send pushed, so the stream and the snapshot
+    /// agree on user rows.
+    ///
+    /// Only prompts sent through the host's steering entry are announced —
+    /// history an agent replays on `session/load` is not, exactly as before
+    /// (the snapshot carries it). `message.content` is what the agent was
+    /// sent, which can carry Atlas's hidden directives; renderers strip them
+    /// as they do on a reloaded transcript. `client_message_id` echoes the id
+    /// the sender minted, so a window that already shows its own optimistic
+    /// row adopts this one instead of drawing a second. Additive: old
+    /// frontends ignore unknown kinds.
+    UserMessage {
+        message: Message,
+        origin: Origin,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        client_message_id: Option<String>,
+    },
+    /// The session's turn queue changed (a prompt parked, removed, started or
+    /// discarded). The whole queue travels, like a plan, so a client never
+    /// merges. Additive.
+    QueueChanged {
+        queue: Vec<QueuedPrompt>,
+    },
+    /// The session gained or lost a hold that keeps it running without a tab
+    /// (Universal RC). A held session survives its tab closing and a project
+    /// switch. Additive.
+    HoldChanged {
+        held: bool,
+    },
 }
 
 /// Envelope shipped through the Tauri event channel — keys for routing.
@@ -219,6 +269,14 @@ pub enum SessionDelta {
 pub struct SessionDeltaEnvelope {
     pub agent_id: AgentId,
     pub session_id: String,
+    /// This delta's position in its session's stream: dense and monotonic per
+    /// session, starting at 1, stamped by the projector in emit order. A
+    /// snapshot carries the `as_of_seq` it reflects, so a late joiner that
+    /// buffered the stream drops every envelope at or below it and applies the
+    /// rest — nothing twice, nothing missed. 0 only on an envelope built
+    /// outside the projector (tests). Additive.
+    #[serde(default)]
+    pub seq: u64,
     #[serde(flatten)]
     pub delta: SessionDelta,
 }

@@ -110,6 +110,7 @@ const THREADS: ThreadRow[] = [
       fixtureLink(398, "manual", ago(30 * 60_000)),
     ],
     forkedFromSessionId: null,
+    heldWorking: false,
     // One of the fake repo's own branches (`fixtures/git.ts`).
     branch: "feature/auth-v2",
   },
@@ -129,6 +130,7 @@ const THREADS: ThreadRow[] = [
     model: null,
     pullRequests: [],
     forkedFromSessionId: null,
+    heldWorking: false,
     branch: "main",
   },
   {
@@ -147,6 +149,7 @@ const THREADS: ThreadRow[] = [
     model: null,
     pullRequests: [],
     forkedFromSessionId: null,
+    heldWorking: false,
     branch: "main",
   },
   {
@@ -167,6 +170,7 @@ const THREADS: ThreadRow[] = [
     model: null,
     pullRequests: [],
     forkedFromSessionId: null,
+    heldWorking: false,
     branch: "main",
   },
   {
@@ -187,6 +191,7 @@ const THREADS: ThreadRow[] = [
     model: null,
     pullRequests: [],
     forkedFromSessionId: null,
+    heldWorking: false,
     // Detached HEAD when it ran, so Atlas never learned a branch.
     branch: null,
   },
@@ -205,6 +210,7 @@ const THREADS: ThreadRow[] = [
     model: null,
     pullRequests: [],
     forkedFromSessionId: null,
+    heldWorking: false,
     // A branch nobody would size a column for. The card trims it rather than
     // pushing the agent's mark off its own edge — the only row here that
     // exercises that, and the reason it is this long.
@@ -228,6 +234,7 @@ const THREADS: ThreadRow[] = [
     model: null,
     pullRequests: [],
     forkedFromSessionId: null,
+    heldWorking: false,
     branch: "feature/auth-v2",
   },
   {
@@ -248,6 +255,7 @@ const THREADS: ThreadRow[] = [
     model: null,
     pullRequests: [],
     forkedFromSessionId: null,
+    heldWorking: false,
     branch: null,
   },
   {
@@ -267,6 +275,7 @@ const THREADS: ThreadRow[] = [
     model: null,
     pullRequests: [],
     forkedFromSessionId: null,
+    heldWorking: false,
     branch: "main",
   },
   {
@@ -287,6 +296,7 @@ const THREADS: ThreadRow[] = [
     model: null,
     pullRequests: [],
     forkedFromSessionId: null,
+    heldWorking: false,
     branch: "fix/checkpoint-blobs",
   },
   {
@@ -306,6 +316,7 @@ const THREADS: ThreadRow[] = [
     model: null,
     pullRequests: [],
     forkedFromSessionId: null,
+    heldWorking: false,
     branch: "main",
   },
 ];

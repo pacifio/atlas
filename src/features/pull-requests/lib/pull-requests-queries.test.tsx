@@ -144,7 +144,9 @@ describe("viewed files, kept by GitHub", () => {
     act(() => result.current?.setViewed("a.ts", true));
     expect(result.current?.isViewed("a.ts")).toBe(true);
     await waitFor(() => expect(toastError).toHaveBeenCalledTimes(1));
-    expect(result.current?.isViewed("a.ts")).toBe(false);
+    // The revert and the toast leave the same callback, but the toast is
+    // recorded at once and the re-render can land a tick later.
+    await waitFor(() => expect(result.current?.isViewed("a.ts")).toBe(false));
   });
 
   it("sends what was pressed when the pull request is left inside the pause", async () => {

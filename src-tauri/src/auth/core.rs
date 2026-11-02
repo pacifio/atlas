@@ -256,7 +256,20 @@ pub struct AuthCore {
     /// exercise the loop without sleeping through a real schedule; production
     /// always uses [`backoff::BASE`].
     backoff_base: Duration,
+    /// Told, and awaited, **before** a rejected credential is cleared — see
+    /// [`Self::on_credential_rejected`].
+    rejection_observers: Mutex<Vec<RejectionObserver>>,
 }
+
+/// What [`AuthCore::on_credential_rejected`] registers: work to finish while
+/// the rejected credential is still on disk.
+pub type RejectionObserver =
+    Arc<dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + Sync>;
+
+/// The longest a rejection observer may hold the sign-out up. Generous for
+/// what it does (ending a few rooms over REST) and still bounded: a stuck
+/// observer must not keep a dead credential on disk, or the user signed in.
+const REJECTION_OBSERVER_DEADLINE: Duration = Duration::from_secs(15);
 
 impl AuthCore {
     pub fn new(base: impl Into<String>, dir: impl Into<PathBuf>, http: reqwest::Client) -> Self {
@@ -267,6 +280,45 @@ impl AuthCore {
             pending: Mutex::new(None),
             file: Mutex::new(()),
             backoff_base: backoff::BASE,
+            rejection_observers: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Hear that the server rejected the stored credential, before it is
+    /// cleared. The observer runs and is awaited (within a deadline) with the
+    /// credential still on disk — but the server has just refused it, so a
+    /// bearer minted from it now will normally be refused too. What the hook
+    /// can rely on is local: a Universal RC room is torn down on this side at
+    /// once (CC-1: a sign-in change on the host ends the remote session,
+    /// leaving the local one running), and the room itself ends on the server
+    /// when the owner-offline grace runs out. A REST close is best effort.
+    /// This module knows nothing about rooms; `commands::rc::install`
+    /// registers the hook.
+    ///
+    /// Fired only from [`Self::validate_once`], the one path that destroys a
+    /// credential. A 401 on [`Self::mint_access_token`] from any other caller
+    /// is not a judgement on the credential here and clears nothing, so it
+    /// tells no one either.
+    pub fn on_credential_rejected(&self, observer: RejectionObserver) {
+        self.rejection_observers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(observer);
+    }
+
+    async fn credential_rejected(&self) {
+        let observers: Vec<RejectionObserver> = self
+            .rejection_observers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        for observer in observers {
+            if tokio::time::timeout(REJECTION_OBSERVER_DEADLINE, observer())
+                .await
+                .is_err()
+            {
+                tracing::warn!(target: "atlas::auth", "a credential-rejected observer did not finish in time; signing out anyway");
+            }
         }
     }
 
@@ -1385,8 +1437,11 @@ impl AuthCore {
                 Validation::Confirmed
             }
             Err(AuthFailure::NoCredential) => Validation::NoCredential,
-            // The one branch permitted to destroy a credential.
+            // The one branch permitted to destroy a credential. Whoever needs
+            // the bearer one last time (the rooms this desktop hosts) goes
+            // first; then the credential.
             Err(AuthFailure::Rejected) => {
+                self.credential_rejected().await;
                 let _ = self.clear_session();
                 Validation::Rejected
             }

@@ -1,6 +1,6 @@
 //! The stateful half: what changed, and therefore which delta to send.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use agent_client_protocol::schema::v1 as acp;
@@ -10,8 +10,9 @@ use atlas_acp_thread::{
 };
 use atlas_agent_servers::ThreadEventSink;
 use atlas_agent_wire::{
-    AgentId, DeltaSink, Emitter, RateLimitWindow, SessionDelta, SessionDeltaEnvelope,
-    SessionStatus, SubagentStatus, ToolCall, Usage,
+    AgentId, DeltaSink, Emitter, Message, MessageMode, MessageRole, Origin, QueuedPrompt,
+    RateLimitWindow, SessionDelta, SessionDeltaEnvelope, SessionStatus, SubagentStatus, ToolCall,
+    Usage,
 };
 use uuid::Uuid;
 
@@ -46,6 +47,44 @@ pub struct ElicitationWire {
     pub message: String,
     pub requested_schema: Option<serde_json::Value>,
     pub url: Option<String>,
+}
+
+/// A permission prompt still waiting for an answer, exactly as it was
+/// announced on the wire — what a snapshot hands a client that joined (or
+/// reloaded) after the `permission_request` delta went by.
+#[derive(Debug, Clone)]
+pub struct PendingPermission {
+    pub request_id: Uuid,
+    pub tool_call: serde_json::Value,
+    pub options: serde_json::Value,
+}
+
+/// An elicitation still waiting for an answer, in the same four fields its
+/// `elicitation_requested` delta carried, plus the id that answers it.
+#[derive(Debug, Clone)]
+pub struct PendingElicitation {
+    pub request_id: Uuid,
+    pub mode: String,
+    pub message: String,
+    pub requested_schema: Option<serde_json::Value>,
+    pub url: Option<String>,
+}
+
+/// What a session's projection can say about itself at one point of its
+/// stream: everything a delta at or below `as_of_seq` announced is reflected
+/// here, and nothing a later one will announce is.
+#[derive(Debug, Clone, Default)]
+pub struct ProjectedSnapshot {
+    /// The `seq` of the last delta this snapshot reflects; 0 before any.
+    pub as_of_seq: u64,
+    /// The conversation as the stream has announced it. Empty unless asked
+    /// for (see [`DeltaProjector::snapshot`]).
+    pub messages: Vec<Message>,
+    /// Open permission prompts, oldest first.
+    pub pending_permissions: Vec<PendingPermission>,
+    /// The newest unanswered elicitation, if any. One at a time, as the
+    /// window renders them.
+    pub pending_elicitation: Option<PendingElicitation>,
 }
 
 /// Flatten an elicitation for the wire.
@@ -103,7 +142,7 @@ pub struct DeltaProjector {
     /// Set once, before any session exists. Not a list: there is one history
     /// store, and a second observer would be a second thing to keep correct.
     observer: Mutex<Option<Arc<dyn ThreadObserver>>>,
-    sessions: Mutex<HashMap<acp::SessionId, Arc<Mutex<SessionProjection>>>>,
+    sessions: Mutex<HashMap<acp::SessionId, Arc<SessionSlot>>>,
     /// Event streams for sessions whose thread does not exist yet.
     ///
     /// `ConnectOptions` asks for a session's sink while `session/new` is still
@@ -219,15 +258,14 @@ impl DeltaProjector {
             return None;
         };
 
-        let projection = Arc::new(Mutex::new(SessionProjection::new(
-            agent_id,
-            session_id.clone(),
-            thread,
-        )));
+        let slot = Arc::new(SessionSlot {
+            emit: Mutex::new(()),
+            projection: Mutex::new(SessionProjection::new(agent_id, session_id.clone(), thread)),
+        });
         self.sessions
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(session_id, projection);
+            .insert(session_id, slot);
 
         Some(events)
     }
@@ -329,7 +367,7 @@ impl DeltaProjector {
         &self,
         session_id: &acp::SessionId,
         event: &AcpThreadEvent,
-        projection: &Arc<Mutex<SessionProjection>>,
+        slot: &SessionSlot,
     ) {
         let observer = self
             .observer
@@ -343,9 +381,7 @@ impl DeltaProjector {
         // thread itself, and holding the projection's lock across that call
         // would put the history store behind the wire projection's lock.
         let (agent_id, thread) = {
-            let projection = projection
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let projection = lock(&slot.projection);
             (projection.agent_id, projection.thread.clone())
         };
         observer.on_thread_event(agent_id, session_id, event, &thread);
@@ -389,7 +425,7 @@ impl DeltaProjector {
 
     // ---- host-announced deltas ------------------------------------------
     //
-    // Four deltas have no thread event behind them; see the crate docs.
+    // These deltas have no thread event behind them; see the crate docs.
 
     /// The turn failed. The error text lives with whoever awaited `prompt`.
     pub fn note_turn_failed(
@@ -408,13 +444,20 @@ impl DeltaProjector {
         });
     }
 
-    pub fn note_model_changed(&self, session_id: &acp::SessionId, model_id: impl Into<String>) {
+    /// The session's model changed through the host. `origin` is who picked
+    /// it, so both the window's pill and a remote viewer can say so.
+    pub fn note_model_changed(
+        &self,
+        session_id: &acp::SessionId,
+        model_id: impl Into<String>,
+        origin: Option<Origin>,
+    ) {
         let model_id = model_id.into();
         self.with_session(session_id, |projection| {
             projection.model = Some(model_id.clone())
         });
         self.emit_for(session_id, |_| {
-            vec![SessionDelta::ModelChanged { model_id }]
+            vec![SessionDelta::ModelChanged { model_id, origin }]
         });
     }
 
@@ -423,17 +466,24 @@ impl DeltaProjector {
     /// follow-up `config_option_update` notification is optional — so the host
     /// announces it the way it announces a model change: the thread has no
     /// event for something the thread never saw (#32).
+    ///
+    /// `origin` is who set the option; the agent's own notification carries
+    /// none (see [`SessionDelta::ConfigOptionsUpdated`]).
     pub fn note_config_options(
         &self,
         session_id: &acp::SessionId,
         options: &[acp::SessionConfigOption],
+        origin: Option<Origin>,
     ) {
         let config_options: Vec<serde_json::Value> = options
             .iter()
             .map(|option| serde_json::to_value(option).unwrap_or(serde_json::Value::Null))
             .collect();
         self.emit_for(session_id, |_| {
-            vec![SessionDelta::ConfigOptionsUpdated { config_options }]
+            vec![SessionDelta::ConfigOptionsUpdated {
+                config_options,
+                origin,
+            }]
         });
     }
 
@@ -450,18 +500,167 @@ impl DeltaProjector {
         });
     }
 
+    /// The session's mode changed through the host (`session/set_mode`).
+    ///
+    /// The native agent records a mode on its connection and raises no thread
+    /// event, while an ACP agent echoes `current_mode_update`; announcing from
+    /// the host makes both kinds say it on the wire. Deduplicated against the
+    /// last mode announced either way, so an agent that does echo is not
+    /// counted twice.
+    ///
+    /// `origin` is who set the mode, so the announcement can say so.
+    pub fn note_mode_changed(
+        &self,
+        session_id: &acp::SessionId,
+        mode_id: impl Into<String>,
+        origin: Option<Origin>,
+    ) {
+        let mode_id = mode_id.into();
+        self.emit_for(session_id, |projection| {
+            projection.mode_deltas(mode_id, origin)
+        });
+    }
+
+    /// The session's turn queue, whole, after a change (the host's turn
+    /// controller owns it; the thread knows nothing of prompts not yet sent).
+    pub fn note_queue_changed(&self, session_id: &acp::SessionId, queue: Vec<QueuedPrompt>) {
+        self.emit_for(session_id, |_| vec![SessionDelta::QueueChanged { queue }]);
+    }
+
+    /// The session gained its first hold, or lost its last.
+    pub fn note_hold_changed(&self, session_id: &acp::SessionId, held: bool) {
+        self.emit_for(session_id, |_| vec![SessionDelta::HoldChanged { held }]);
+    }
+
+    /// Say who is sending the prompt the host is about to push onto this
+    /// session's thread.
+    ///
+    /// The next user entry the projection sees (or the next growth of the last
+    /// one, when the agent's previous turn produced nothing and the prompt
+    /// merges into it) is announced as a `user_message` carrying this origin
+    /// and client id. A user entry with no stamp waiting — history replayed by
+    /// `session/load`, anything an agent pushes on its own — stays silent, as
+    /// every user entry was before: the snapshot carries those.
+    pub fn stamp_user_message(
+        &self,
+        session_id: &acp::SessionId,
+        origin: Origin,
+        client_message_id: Option<String>,
+    ) {
+        self.with_session(session_id, |projection| {
+            projection.pending_users.push_back(UserStamp {
+                origin,
+                client_message_id,
+            });
+        });
+    }
+
+    /// What this session's stream has said so far, as of one `seq`.
+    ///
+    /// `with_messages` asks for the conversation too. Then the projection is
+    /// first caught up with its thread — whatever the thread holds that has not
+    /// been announced yet is announced now, numbered and emitted like any other
+    /// delta — and the messages are read off the projection's own record of
+    /// what it announced, not off the thread. That is what makes `as_of_seq`
+    /// exact: the thread may have moved on while this ran, and anything it
+    /// moved on to is announced later, above `as_of_seq`, and is not in these
+    /// messages. A joiner that applies the snapshot and then every buffered
+    /// delta above `as_of_seq` sees each change once.
+    ///
+    /// Without messages it is a cheap read: the seq and the open prompts.
+    /// `None` when the session has no projection (never attached, or closed).
+    pub fn snapshot(
+        &self,
+        session_id: &acp::SessionId,
+        with_messages: bool,
+        model: Option<&str>,
+    ) -> Option<ProjectedSnapshot> {
+        let slot = self.session(session_id)?;
+        // Numbering and emitting stay one step for the catch-up deltas, as
+        // for every other batch (see `SessionSlot::emit`).
+        let _emit = lock(&slot.emit);
+        let (envelopes, mut snapshot, announced) = {
+            let mut projection = lock(&slot.projection);
+            let envelopes = if with_messages {
+                let deltas = projection.catch_up();
+                projection.wrap(deltas)
+            } else {
+                Vec::new()
+            };
+            let snapshot = ProjectedSnapshot {
+                as_of_seq: projection.seq,
+                messages: if with_messages {
+                    projection.announced_messages(model)
+                } else {
+                    Vec::new()
+                },
+                pending_permissions: projection.pending_permissions(),
+                pending_elicitation: None,
+            };
+            (
+                envelopes,
+                snapshot,
+                (
+                    projection.thread.clone(),
+                    projection.announced_elicitations.clone(),
+                ),
+            )
+        };
+        snapshot.pending_elicitation =
+            self.pending_elicitation(session_id, &announced.0, &announced.1);
+        for envelope in envelopes {
+            self.emitter.emit(envelope);
+        }
+        Some(snapshot)
+    }
+
+    /// The newest announced elicitation of this session that is still waiting.
+    fn pending_elicitation(
+        &self,
+        session_id: &acp::SessionId,
+        thread: &AcpThreadHandle,
+        announced: &[ElicitationEntryId],
+    ) -> Option<PendingElicitation> {
+        let routes: Vec<(Uuid, ElicitationEntryId)> = self
+            .elicitations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .filter(|(_, key)| &key.session_id == session_id)
+            .map(|(request_id, key)| (*request_id, key.entry_id.clone()))
+            .collect();
+        let thread = lock_thread(thread);
+        announced.iter().rev().find_map(|entry_id| {
+            let (request_id, _) = routes.iter().find(|(_, id)| id == entry_id)?;
+            let (_, elicitation) = thread.elicitations().elicitation(entry_id)?;
+            if !matches!(
+                elicitation.status,
+                atlas_acp_thread::ElicitationStatus::Pending { .. }
+            ) {
+                return None;
+            }
+            let wire = elicitation_wire(elicitation);
+            Some(PendingElicitation {
+                request_id: *request_id,
+                mode: wire.mode,
+                message: wire.message,
+                requested_schema: wire.requested_schema,
+                url: wire.url,
+            })
+        })
+    }
+
     // ---- the projection --------------------------------------------------
 
     /// Apply one thread event, emitting whatever it changed.
     pub fn apply(&self, session_id: &acp::SessionId, event: AcpThreadEvent) {
-        let Some(projection) = self.session(session_id) else {
+        let Some(slot) = self.session(session_id) else {
             return;
         };
-        self.notify_observer(session_id, &event, &projection);
+        self.notify_observer(session_id, &event, &slot);
+        let _emit = lock(&slot.emit);
         let (envelopes, permissions, elicitations) = {
-            let mut projection = projection
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut projection = lock(&slot.projection);
             let deltas = projection.apply(event);
             let envelopes = projection.wrap(deltas);
             (
@@ -493,7 +692,7 @@ impl DeltaProjector {
         }
     }
 
-    fn session(&self, session_id: &acp::SessionId) -> Option<Arc<Mutex<SessionProjection>>> {
+    fn session(&self, session_id: &acp::SessionId) -> Option<Arc<SessionSlot>> {
         self.sessions
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -506,26 +705,24 @@ impl DeltaProjector {
         session_id: &acp::SessionId,
         f: impl FnOnce(&mut SessionProjection) -> R,
     ) -> Option<R> {
-        let projection = self.session(session_id)?;
-        let mut projection = projection
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let slot = self.session(session_id)?;
+        let mut projection = lock(&slot.projection);
         Some(f(&mut projection))
     }
 
     fn emit_for(
         &self,
         session_id: &acp::SessionId,
-        f: impl FnOnce(&SessionProjection) -> Vec<SessionDelta>,
+        f: impl FnOnce(&mut SessionProjection) -> Vec<SessionDelta>,
     ) {
-        let Some(projection) = self.session(session_id) else {
+        let Some(slot) = self.session(session_id) else {
             return;
         };
+        let _emit = lock(&slot.emit);
         let envelopes = {
-            let projection = projection
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            projection.wrap(f(&projection))
+            let mut projection = lock(&slot.projection);
+            let deltas = f(&mut projection);
+            projection.wrap(deltas)
         };
         for envelope in envelopes {
             self.emitter.emit(envelope);
@@ -533,12 +730,57 @@ impl DeltaProjector {
     }
 }
 
+/// One session's projection and the order its deltas leave in.
+struct SessionSlot {
+    /// Held from the moment a batch of deltas is numbered until the last of
+    /// them has been handed to the emitter.
+    ///
+    /// Deltas are numbered (`seq`) under the projection lock, but emitted
+    /// after it is released — the pipeline must not run with the projection
+    /// locked, or every snapshot would wait on the slowest middleware. Two
+    /// writers (the event task and a host announcement) could then number 5
+    /// and 6 and emit 6 first. This lock is what keeps emit order equal to
+    /// `seq` order. Always taken before `projection`, never after.
+    emit: Mutex<()>,
+    projection: Mutex<SessionProjection>,
+}
+
+/// Who sent the prompt the next user entry carries (see
+/// [`DeltaProjector::stamp_user_message`]).
+#[derive(Debug)]
+struct UserStamp {
+    origin: Origin,
+    client_message_id: Option<String>,
+}
+
+/// A permission prompt announced and not yet resolved, kept with the payload
+/// it was announced with so a snapshot can hand it out again.
+#[derive(Debug)]
+struct OpenPermission {
+    request_id: Uuid,
+    tool_call: serde_json::Value,
+    options: serde_json::Value,
+    /// Announcement order, for a snapshot's oldest-first list.
+    opened: u64,
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// What one entry of the thread has already been emitted as.
 #[derive(Debug)]
 enum Projected {
-    /// A user message. Mirrored so indices line up, and never emitted — the
-    /// prompt reaches capture through the send path, not the delta stream.
-    User,
+    /// A user message, and how many of its chunks have been seen. Announced as
+    /// a `user_message` only when the host stamped the send that pushed it
+    /// (see [`DeltaProjector::stamp_user_message`]); mirrored either way so
+    /// indices line up. The count is what finds a follow-up prompt that merged
+    /// into this entry rather than opening a new one.
+    User {
+        chunks: usize,
+    },
     Assistant {
         runs: Vec<ProjectedRun>,
     },
@@ -592,7 +834,10 @@ struct SessionProjection {
     rate_limits: Option<serde_json::Value>,
     /// Permission prompts announced on the wire, so an answer can be routed
     /// back and a resolution can name the same request.
-    open_permissions: HashMap<acp::ToolCallId, Uuid>,
+    open_permissions: HashMap<acp::ToolCallId, OpenPermission>,
+    /// How many permission prompts have been opened, ever — the order a
+    /// snapshot lists the open ones in.
+    permissions_opened: u64,
     new_permissions: Vec<(Uuid, PermissionKey)>,
     announced_elicitations: Vec<ElicitationEntryId>,
     new_elicitations: Vec<(Uuid, ElicitationKey)>,
@@ -606,6 +851,14 @@ struct SessionProjection {
     /// back terminal — and kept, because every later sync re-derives the
     /// child and would otherwise fall back to `project`'s floor.
     subagent_ends: HashMap<String, i64>,
+    /// The `seq` of the last delta numbered for this session (0 = none yet).
+    seq: u64,
+    /// Senders of prompts the host has pushed or is about to push, oldest
+    /// first, waiting for their user entry.
+    pending_users: VecDeque<UserStamp>,
+    /// The mode as last announced, so an agent's echo of a change the host
+    /// already announced is not said twice.
+    mode: Option<String>,
 }
 
 impl SessionProjection {
@@ -626,7 +879,146 @@ impl SessionProjection {
             new_elicitations: Vec::new(),
             subagents: HashMap::new(),
             subagent_ends: HashMap::new(),
+            permissions_opened: 0,
+            seq: 0,
+            pending_users: VecDeque::new(),
+            mode: None,
         }
+    }
+
+    fn mode_deltas(&mut self, mode_id: String, origin: Option<Origin>) -> Vec<SessionDelta> {
+        if self.mode.as_deref() == Some(mode_id.as_str()) {
+            return Vec::new();
+        }
+        self.mode = Some(mode_id.clone());
+        vec![SessionDelta::ModeChanged { mode_id, origin }]
+    }
+
+    /// Announce everything the thread holds that this projection has not —
+    /// new entries, and growth of the ones it already announced. The same
+    /// diff every event triggers, run for all of them at once, so it is safe
+    /// whenever: what the event task later drains finds nothing new.
+    fn catch_up(&mut self) -> Vec<SessionDelta> {
+        let mut deltas = self.sync_entries();
+        for ix in 0..self.entries.len() {
+            deltas.extend(self.update_entry(ix));
+        }
+        deltas.extend(self.sync_subagents());
+        deltas
+    }
+
+    /// The open permission prompts, oldest first.
+    fn pending_permissions(&self) -> Vec<PendingPermission> {
+        let mut open: Vec<&OpenPermission> = self.open_permissions.values().collect();
+        open.sort_by_key(|permission| permission.opened);
+        open.into_iter()
+            .map(|permission| PendingPermission {
+                request_id: permission.request_id,
+                tool_call: permission.tool_call.clone(),
+                options: permission.options.clone(),
+            })
+            .collect()
+    }
+
+    /// The conversation as this projection announced it — the wire's message
+    /// list, built from the mirror rather than the thread.
+    ///
+    /// Same shapes, ids and timestamps as [`project::snapshot_messages`]
+    /// (positional ids, the entry's own time), but each entry only as far as
+    /// the stream has said it: a run's text up to the bytes announced, a tool
+    /// call as its last announced snapshot, a user message up to the chunks
+    /// seen. Entries the mirror has not reached are left out; they arrive as
+    /// deltas.
+    fn announced_messages(&self, model: Option<&str>) -> Vec<Message> {
+        let thread = lock_thread(&self.thread);
+        let entries = thread.entries();
+        let mut out = Vec::new();
+        // The entry each message came from, so a turn's timing can find the
+        // message that ends it (as in `snapshot_messages`).
+        let mut entry_of: Vec<usize> = Vec::new();
+        for (ix, projected) in self.entries.iter().enumerate() {
+            let before = out.len();
+            let at = thread.entry_created_at(ix).unwrap_or_else(chrono::Utc::now);
+            match (projected, entries.get(ix)) {
+                (Projected::User { chunks }, Some(AgentThreadEntry::UserMessage(message))) => {
+                    let seen = (*chunks).min(message.chunks.len());
+                    let (content, images) = project::user_message_parts(&message.chunks[..seen]);
+                    out.push(Message {
+                        id: format!("msg-{ix}"),
+                        role: MessageRole::User,
+                        mode: MessageMode::Text,
+                        content,
+                        thinking: String::new(),
+                        tool_calls: Vec::new(),
+                        plan: None,
+                        model: None,
+                        images,
+                        timestamp: at,
+                        timestamp_approximate: false,
+                        worked_ms: None,
+                        stop_reason: None,
+                    });
+                }
+                (
+                    Projected::Assistant { runs },
+                    Some(AgentThreadEntry::AssistantMessage(message)),
+                ) => {
+                    let spans = project::run_spans(&message.chunks);
+                    for (run_ix, run) in runs.iter().enumerate() {
+                        if run.message_id.is_none() {
+                            continue;
+                        }
+                        let Some(span) = spans.get(run_ix) else {
+                            continue;
+                        };
+                        if span.is_thought != run.is_thought {
+                            continue;
+                        }
+                        let Some(full) = project::run_span_tail(&message.chunks, span, 0) else {
+                            continue;
+                        };
+                        let text = full.get(..run.text_len).unwrap_or(&full).to_string();
+                        if text.is_empty() {
+                            continue;
+                        }
+                        out.push(project::run_message(
+                            format!("msg-{ix}-{run_ix}"),
+                            &project::Run {
+                                is_thought: run.is_thought,
+                                text,
+                            },
+                            model.map(str::to_string),
+                            at,
+                        ));
+                    }
+                }
+                (Projected::ToolCall { snapshot, .. }, Some(AgentThreadEntry::ToolCall(_))) => {
+                    out.push(project::tool_message(
+                        format!("msg-{ix}"),
+                        (**snapshot).clone(),
+                        model.map(str::to_string),
+                        at,
+                    ));
+                }
+                // Plans, compactions and elicitations are not messages (as in
+                // `snapshot_messages`); an entry the thread no longer has, or
+                // has changed kind under (a rewind still being drained), is
+                // left to the deltas that will describe it.
+                _ => {}
+            }
+            // A replayed entry's time is when Atlas replayed it; say so
+            // rather than pass it off as when it was said.
+            if thread.entry_time_approximate(ix) {
+                for message in &mut out[before..] {
+                    message.timestamp_approximate = true;
+                }
+            }
+            entry_of.resize(entry_of.len() + (out.len() - before), ix);
+        }
+        // "Worked for" / "Stopped after" must survive a reload through this
+        // path exactly as through the thread-built fallback.
+        project::stamp_turns(&mut out, &entry_of, thread.turns());
+        out
     }
 
     /// The subagent deltas for whatever the thread says now.
@@ -681,13 +1073,20 @@ impl SessionProjection {
         deltas
     }
 
-    fn wrap(&self, deltas: Vec<SessionDelta>) -> Vec<SessionDeltaEnvelope> {
+    /// Envelope a batch, numbering each delta in this session's stream.
+    /// Called under the projection lock, with the slot's emit lock held, so the
+    /// numbers are dense and leave in order.
+    fn wrap(&mut self, deltas: Vec<SessionDelta>) -> Vec<SessionDeltaEnvelope> {
         deltas
             .into_iter()
-            .map(|delta| SessionDeltaEnvelope {
-                agent_id: self.agent_id,
-                session_id: self.session_id.to_string(),
-                delta,
+            .map(|delta| {
+                self.seq += 1;
+                SessionDeltaEnvelope {
+                    agent_id: self.agent_id,
+                    session_id: self.session_id.to_string(),
+                    seq: self.seq,
+                    delta,
+                }
             })
             .collect()
     }
@@ -721,7 +1120,7 @@ impl SessionProjection {
                 // nothing to drop, which is why this can be zero.
                 let turns = self.entries[start..end]
                     .iter()
-                    .filter(|projected| matches!(projected, Projected::User))
+                    .filter(|projected| matches!(projected, Projected::User { .. }))
                     .count() as u32;
                 let removed: Vec<String> = self.entries[start..end]
                     .iter()
@@ -738,10 +1137,10 @@ impl SessionProjection {
                 // longer exists, answerable by nobody — the stranding shape of
                 // ATL-213, one layer up.
                 let mut deltas = Vec::new();
-                self.open_permissions.retain(|tool_call_id, request_id| {
+                self.open_permissions.retain(|tool_call_id, open| {
                     if removed.iter().any(|id| id == &tool_call_id.to_string()) {
                         deltas.push(SessionDelta::PermissionResolved {
-                            request_id: *request_id,
+                            request_id: open.request_id,
                         });
                         return false;
                     }
@@ -813,9 +1212,9 @@ impl SessionProjection {
                         .collect(),
                 }]
             }
-            AcpThreadEvent::ModeUpdated(mode) => vec![SessionDelta::ModeChanged {
-                mode_id: mode.to_string(),
-            }],
+            // The agent's own word: nobody through the host set it, so there
+            // is no origin to name.
+            AcpThreadEvent::ModeUpdated(mode) => self.mode_deltas(mode.to_string(), None),
             AcpThreadEvent::ConfigOptionsUpdated(options) => {
                 vec![SessionDelta::ConfigOptionsUpdated {
                     config_options: options
@@ -824,6 +1223,7 @@ impl SessionProjection {
                             serde_json::to_value(option).unwrap_or(serde_json::Value::Null)
                         })
                         .collect(),
+                    origin: None,
                 }]
             }
             AcpThreadEvent::ToolAuthorizationRequested { id, options } => {
@@ -831,7 +1231,9 @@ impl SessionProjection {
             }
             AcpThreadEvent::ToolAuthorizationReceived(tool_call_id) => {
                 let mut deltas = match self.open_permissions.remove(&tool_call_id) {
-                    Some(request_id) => vec![SessionDelta::PermissionResolved { request_id }],
+                    Some(open) => vec![SessionDelta::PermissionResolved {
+                        request_id: open.request_id,
+                    }],
                     None => Vec::new(),
                 };
                 deltas.extend(self.status_deltas());
@@ -859,13 +1261,33 @@ impl SessionProjection {
     /// Emit whatever entries the thread has that the mirror does not.
     fn sync_entries(&mut self) -> Vec<SessionDelta> {
         let mut deltas = Vec::new();
+        // A handle of its own, so the thread's guard does not borrow `self`
+        // and the user arm can take its stamp.
+        let handle = self.thread.clone();
         loop {
             let ix = self.entries.len();
-            let thread = lock_thread(&self.thread);
+            let thread = lock_thread(&handle);
             if ix >= thread.entries().len() {
                 break;
             }
-            let (projected, mut new) = self.project_new(&thread, ix);
+            let (projected, mut new) = match &thread.entries()[ix] {
+                AgentThreadEntry::UserMessage(message) => {
+                    let delta = self.pending_users.pop_front().map(|stamp| {
+                        user_message_delta(
+                            &message.chunks,
+                            stamp,
+                            thread.entry_created_at(ix).unwrap_or_else(chrono::Utc::now),
+                        )
+                    });
+                    (
+                        Projected::User {
+                            chunks: message.chunks.len(),
+                        },
+                        delta.into_iter().collect(),
+                    )
+                }
+                _ => self.project_new(&thread, ix),
+            };
             if thread.entry_time_approximate(ix) {
                 mark_time_approximate(&mut new);
             }
@@ -878,7 +1300,13 @@ impl SessionProjection {
 
     fn project_new(&self, thread: &AcpThread, ix: usize) -> (Projected, Vec<SessionDelta>) {
         match &thread.entries()[ix] {
-            AgentThreadEntry::UserMessage(_) => (Projected::User, Vec::new()),
+            // Projected by `sync_entries`, which can take the entry's stamp.
+            AgentThreadEntry::UserMessage(message) => (
+                Projected::User {
+                    chunks: message.chunks.len(),
+                },
+                Vec::new(),
+            ),
             AgentThreadEntry::AssistantMessage(message) => {
                 let mut runs = Vec::new();
                 let mut deltas = Vec::new();
@@ -967,6 +1395,24 @@ impl SessionProjection {
         };
 
         match (projected, entry) {
+            // A prompt sent while the previous one is still the last entry (the
+            // agent answered nothing in between) merges into it: the new
+            // chunks are this send's.
+            (Projected::User { chunks }, AgentThreadEntry::UserMessage(message)) => {
+                if message.chunks.len() <= *chunks {
+                    return Vec::new();
+                }
+                let from = *chunks;
+                *chunks = message.chunks.len();
+                let Some(stamp) = self.pending_users.pop_front() else {
+                    return Vec::new();
+                };
+                vec![user_message_delta(
+                    &message.chunks[from..],
+                    stamp,
+                    chrono::Utc::now(),
+                )]
+            }
             (Projected::Assistant { runs }, AgentThreadEntry::AssistantMessage(message)) => {
                 // Spans, not text: one `EntryUpdated` arrives per streamed
                 // chunk, and rebuilding the message's whole text to find out
@@ -1175,15 +1621,27 @@ impl SessionProjection {
         // wire's account true to what happened: the prompt existed, then the
         // `ToolAuthorizationReceived` that follows resolves it (#30).
         let request_id = Uuid::new_v4();
-        let delta = SessionDelta::PermissionRequest {
-            request_id,
-            tool_call: project::permission_tool_call(call),
-            options: project::permission_options(&options),
-        };
+        let tool_call = project::permission_tool_call(call);
+        let options = project::permission_options(&options);
         drop(thread);
 
-        self.open_permissions
-            .insert(tool_call_id.clone(), request_id);
+        // Kept with its payload, so a snapshot can hand the open prompt to a
+        // client that missed this delta (a reload, a remote joiner).
+        self.permissions_opened += 1;
+        self.open_permissions.insert(
+            tool_call_id.clone(),
+            OpenPermission {
+                request_id,
+                tool_call: tool_call.clone(),
+                options: options.clone(),
+                opened: self.permissions_opened,
+            },
+        );
+        let delta = SessionDelta::PermissionRequest {
+            request_id,
+            tool_call,
+            options,
+        };
         self.new_permissions.push((
             request_id,
             PermissionKey {
@@ -1442,6 +1900,34 @@ fn tool_call_meta_eq(previous: &ToolCall, current: &ToolCall) -> bool {
 /// what the rest of the app would show.
 fn load_error_reason(error: &LoadError) -> String {
     error.to_string()
+}
+
+/// A stamped prompt's user entry, as the wire announces it.
+fn user_message_delta(
+    chunks: &[acp::ContentBlock],
+    stamp: UserStamp,
+    timestamp: chrono::DateTime<chrono::Utc>,
+) -> SessionDelta {
+    let (content, images) = project::user_message_parts(chunks);
+    SessionDelta::UserMessage {
+        message: Message {
+            id: new_message_id(),
+            role: MessageRole::User,
+            mode: MessageMode::Text,
+            content,
+            thinking: String::new(),
+            tool_calls: Vec::new(),
+            plan: None,
+            model: None,
+            images,
+            timestamp,
+            timestamp_approximate: false,
+            worked_ms: None,
+            stop_reason: None,
+        },
+        origin: stamp.origin,
+        client_message_id: stamp.client_message_id,
+    }
 }
 
 fn new_message_id() -> String {

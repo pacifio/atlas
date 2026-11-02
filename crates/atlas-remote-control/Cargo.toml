@@ -1,0 +1,37 @@
+[package]
+name = "atlas-remote-control"
+version = "0.1.0"
+edition = "2021"
+description = "The desktop half of Universal RC: the room's REST doors, the host socket to the room's Durable Object, the binary stream codec and the coalesced delta egress. Tauri-free; the app supplies the session through one trait."
+
+[lib]
+name = "atlas_remote_control"
+
+[dependencies]
+# The bearer seam and the socket handshake are the artifacts crate's, reused
+# rather than restated: one `TokenSource`, one `atlas.v1, atlas.ticket.<jwt>`
+# offer, one ingest-base ladder (`ATLAS_INGEST_URL`).
+atlas-artifacts = { path = "../atlas-artifacts" }
+# The payload the stream carries, untouched (`SessionDeltaEnvelope`).
+atlas-agent-wire = { path = "../atlas-agent-wire" }
+# Secrets are scrubbed off every envelope and snapshot before they leave.
+atlas-redact = { path = "../atlas-redact" }
+tokio = { version = "1", features = ["sync", "time", "rt", "macros"] }
+# The workspace pin, for the reason `atlas-artifacts` gives.
+tokio-tungstenite = { workspace = true }
+futures-util = "0.3"
+reqwest = { version = "0.13", default-features = false, features = [
+  "json",
+  "rustls",
+] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util", "net", "io-util"] }
+chrono = "0.4"
+
+[lints]
+workspace = true

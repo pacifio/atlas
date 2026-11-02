@@ -127,6 +127,7 @@ atlas-native-agent = { path = "../crates/atlas-native-agent" }
 atlas-thread-metadata = { path = "../crates/atlas-thread-metadata" }
 atlas-bus = { path = "../crates/atlas-bus" }
 atlas-artifacts = { path = "../crates/atlas-artifacts" }
+atlas-remote-control = { path = "../crates/atlas-remote-control" }
 atlas-comms = { path = "../crates/atlas-comms" }
 # Only to name a crypto provider at startup — see `run()`. Both `ring` and
 # `aws-lc-rs` are already in the graph via the engine tree, which is

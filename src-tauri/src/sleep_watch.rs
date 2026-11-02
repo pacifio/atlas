@@ -279,6 +279,9 @@ impl SleepWatch {
             out.push(SessionDeltaEnvelope {
                 agent_id: flight.agent_id,
                 session_id: session_id.clone(),
+                // Out of band: not numbered by the projector. A remote viewer
+                // catches up on it from a snapshot rather than the stream.
+                seq: 0,
                 delta: SessionDelta::SleptMidTurn {
                     turn_seq: flight.turn_seq,
                     slept_secs: slept.duration.as_secs(),
@@ -338,6 +341,7 @@ mod tests {
         SessionDeltaEnvelope {
             agent_id: AgentId(Uuid::nil()),
             session_id: session.into(),
+            seq: 0,
             delta,
         }
     }

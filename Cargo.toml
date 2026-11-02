@@ -44,6 +44,7 @@ members = [
   "crates/atlas-process",
   "crates/atlas-profile",
   "crates/atlas-redact",
+  "crates/atlas-remote-control",
   "crates/atlas-retrieval",
   "crates/atlas-search",
   "crates/atlas-security",
@@ -833,6 +834,8 @@ opt-level = 1
 [profile.dev.package.atlas-profile]
 opt-level = 1
 [profile.dev.package.atlas-redact]
+opt-level = 1
+[profile.dev.package.atlas-remote-control]
 opt-level = 1
 [profile.dev.package.atlas-retrieval]
 opt-level = 1

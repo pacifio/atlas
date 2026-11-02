@@ -53,10 +53,12 @@ const useStopAgentsConfirmStoreBase = create<StopAgentsConfirmState>((set, get) 
 export const useStopAgentsConfirmStore = createSelectors(useStopAgentsConfirmStoreBase);
 
 /** Busy (running or permission-waiting) sessions, optionally scoped to one
- *  project path. */
+ *  project path. A held session is not one: Rust keeps it running through the
+ *  context switch (its hold outlives the tab), so it is neither asked about
+ *  nor cancelled. */
 export function busySessions(path?: string): ChatSession[] {
   return Object.values(useChatStore.getState().sessions).filter(
-    (s) => isBusyAgentStatus(s.status) && (!path || s.workingDirectory === path),
+    (s) => isBusyAgentStatus(s.status) && !s.held && (!path || s.workingDirectory === path),
   );
 }
 
