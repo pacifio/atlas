@@ -48,6 +48,7 @@ import { useThawed } from "../lib/use-thawed";
 import { useChatStore } from "../stores/chat-store";
 import { sessionCanRetry } from "../lib/retry-gate";
 import { latestResponseRowId } from "../lib/message-footer";
+import { useRcRemoteDriver } from "../stores/rc-store";
 import { pinScope } from "../stores/chat-pins-store";
 import { projectPathForTab } from "../lib/tab-project";
 import { cn } from "@/lib/utils";
@@ -372,13 +373,18 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
   // Discovered, not inferred from the agent id (ADR-0002) — the same catalog
   // flag `supportsFork` uses, computed from the live connection.
   const supportsRewind = agentCatalogEntry(agent)?.supportsRewind === true;
-  const canRetry = useChatStore((s) => sessionCanRetry(s.sessions[tabId], supportsRewind));
+  // The seat is read in its own subscription (its store, not the chat store's
+  // selector), so the chat selector stays O(1) per streaming write.
+  const remoteDriving = useRcRemoteDriver(acpSessionId) !== null;
+  const canRetry = useChatStore((s) =>
+    sessionCanRetry(s.sessions[tabId], supportsRewind, remoteDriving),
+  );
   // Whether a new message could go out now — an interrupted turn's Continue.
   // Same O(1) bargain as `canRetry`. A disconnected session counts: sending
-  // is what respawns it.
+  // is what respawns it. Someone else driving does not: only the driver sends.
   const canContinue = useChatStore((s) => {
     const session = s.sessions[tabId];
-    return !!session && !isBusyAgentStatus(session.status) && !session.stopping;
+    return !!session && !remoteDriving && !isBusyAgentStatus(session.status) && !session.stopping;
   });
   // Whether the session could be forked right now — the header's "Branch from
   // here" gate (agent advertised `fork`, session bound), plus idle: a fork

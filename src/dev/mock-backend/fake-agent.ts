@@ -11,6 +11,7 @@ import type {
   SessionMessage,
   SessionModeInfo,
   SessionSnapshot,
+  QueuedPrompt,
   ToolCall,
 } from "@/types/agents";
 import type { Subagent } from "@/types/agent";
@@ -727,6 +728,90 @@ export interface AgentResponses {
   agents_cancel: Unit;
   agents_respond_permission: Unit;
   agents_send: Unit;
+  agents_queue_add: string;
+  agents_queue_remove: boolean;
+  agents_queue_clear: Unit;
+  agents_queue_pause: Unit;
+  agents_queue_drain: number | null;
+  agents_queue_send_now: Unit;
+  agents_set_hold: Unit;
+}
+
+// ── The turn queue ────────────────────────────────────────────────────────
+//
+// Rust's turn controller owns each session's queue (`agent_host/steering.rs`)
+// and drains it when a turn ends; the window only mirrors `queue_changed`. The
+// mock keeps the same contract so `bun run dev` still shows the queued strip
+// draining.
+
+interface FakeQueue {
+  items: QueuedPrompt[];
+  paused: boolean;
+  running: boolean;
+}
+const queues = new Map<string, FakeQueue>();
+const queueOf = (sessionId: string): FakeQueue => {
+  let q = queues.get(sessionId);
+  if (!q) {
+    q = { items: [], paused: false, running: false };
+    queues.set(sessionId, q);
+  }
+  return q;
+};
+
+function announceQueue(s: FakeSession): Promise<void> {
+  return sendDelta({
+    kind: "queue_changed",
+    ...at(s),
+    queue: [...queueOf(s.key.session_id).items],
+  });
+}
+
+function drainQueue(s: FakeSession): number | null {
+  const q = queueOf(s.key.session_id);
+  if (q.running || q.paused) return null;
+  const head = q.items.shift();
+  if (!head) return null;
+  void announceQueue(s);
+  void runTurn(s, head.text);
+  return 0;
+}
+
+/** One mock turn: the prompt on the wire, then a canned echo, then the queue. */
+async function runTurn(s: FakeSession, text: string, clientMessageId?: string): Promise<void> {
+  const now = () => new Date().toISOString();
+  queueOf(s.key.session_id).running = true;
+  await sendDelta({
+    kind: "user_message",
+    ...at(s),
+    message: {
+      id: `m-${++seq}`,
+      role: "user",
+      mode: "text",
+      content: text,
+      tool_calls: [],
+      timestamp: now(),
+    },
+    origin: { kind: "local" },
+    ...(clientMessageId ? { client_message_id: clientMessageId } : {}),
+  });
+  await setStatus("running", s.key.session_id);
+  const reply: SessionMessage = {
+    id: `m-${++seq}`,
+    role: "assistant",
+    mode: "text",
+    content: `(mock) You said: ${text}`,
+    tool_calls: [],
+    timestamp: now(),
+  };
+  setTimeout(() => {
+    void playTranscript([reply], 0, s.key.session_id)
+      .then(() => finishTurn(s.key.session_id))
+      .then(() => {
+        queueOf(s.key.session_id).running = false;
+        drainQueue(s);
+      });
+  }, 400);
 }
 
 export const agentHandlers: TypedHandlers<AgentResponses> = {
@@ -759,14 +844,64 @@ export const agentHandlers: TypedHandlers<AgentResponses> = {
   agents_list_running: () => [],
   agents_replay_transcript: () => [],
   agents_drop_session: () => null,
-  agents_cancel: () => setStatus("idle"),
+  agents_cancel: ({ key }) => {
+    const s = sessions.get(key.session_id);
+    if (s) {
+      queueOf(s.key.session_id).items = [];
+      void announceQueue(s);
+    }
+    return setStatus("idle");
+  },
+  agents_queue_add: ({ key, text }) => {
+    const s = sessionOrThrow(key);
+    const id = `q-${++seq}`;
+    queueOf(s.key.session_id).items.push({ id, text: String(text), origin: { kind: "local" } });
+    void announceQueue(s);
+    return id;
+  },
+  agents_queue_remove: ({ key, itemId }) => {
+    const s = sessionOrThrow(key);
+    const q = queueOf(s.key.session_id);
+    const before = q.items.length;
+    q.items = q.items.filter((i) => i.id !== itemId);
+    void announceQueue(s);
+    return q.items.length !== before;
+  },
+  agents_queue_clear: ({ key }) => {
+    const s = sessionOrThrow(key);
+    queueOf(s.key.session_id).items = [];
+    void announceQueue(s);
+    return null;
+  },
+  agents_queue_pause: ({ key, paused }) => {
+    const s = sessionOrThrow(key);
+    queueOf(s.key.session_id).paused = !!paused;
+    if (!paused) drainQueue(s);
+    return null;
+  },
+  agents_queue_drain: ({ key }) => drainQueue(sessionOrThrow(key)),
+  agents_queue_send_now: ({ key, itemId }) => {
+    const s = sessionOrThrow(key);
+    const q = queueOf(s.key.session_id);
+    const at_ = q.items.findIndex((i) => i.id === itemId);
+    if (at_ > 0) q.items.unshift(...q.items.splice(at_, 1));
+    void announceQueue(s);
+    drainQueue(s);
+    return null;
+  },
+  // The developer hold: Rust keeps the session past its tab and says so.
+  agents_set_hold: ({ sessionId, held }) => {
+    const s = sessions.get(String(sessionId));
+    if (s) void sendDelta({ kind: "hold_changed", ...at(s), held: !!held });
+    return null;
+  },
   agents_respond_permission: ({ agentId, sessionId, requestId, decision }) => {
     void resolvePermission(agentId, sessionId, requestId, decision);
     return null;
   },
   // Echo the prompt back so the composer loop is exercisable — the prompt as
   // the agent would receive it, large pastes included.
-  agents_send: async ({ key, text: sent, pastedTexts }) => {
+  agents_send: async ({ key, text: sent, pastedTexts, clientMessageId }) => {
     const s = sessions.get(key.session_id);
     if (!s) return null;
     const text = receivedText(String(sent), (pastedTexts ?? []) as { id: string; text: string }[]);
@@ -777,19 +912,7 @@ export const agentHandlers: TypedHandlers<AgentResponses> = {
       text,
     });
     if (handled) return null;
-    const now = () => new Date().toISOString();
-    await setStatus("running");
-    const reply: SessionMessage = {
-      id: `m-${++seq}`,
-      role: "assistant",
-      mode: "text",
-      content: `(mock) You said: ${text}`,
-      tool_calls: [],
-      timestamp: now(),
-    };
-    setTimeout(() => {
-      void playTranscript([reply]).then(() => finishTurn());
-    }, 400);
+    await runTurn(s, String(text), clientMessageId ? String(clientMessageId) : undefined);
     return null;
   },
 };

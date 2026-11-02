@@ -81,6 +81,9 @@ export interface UserRow extends RowBase {
   expanded: boolean;
   /** The images sent with the prompt, shown as tiles above the bubble. */
   attachments: readonly ImageAttachment[];
+  /** The remote-control driver who sent it, when it was not this window's
+   *  composer: shown under the bubble so the thread says whose prompt it was. */
+  remoteAuthor: string | null;
   timestamp: string;
   /** `timestamp` is only when Atlas replayed the message; show no clock. */
   timestampApproximate?: true;
@@ -1268,6 +1271,7 @@ function projectSegment(
         contextBlocks: derived.contextBlocks,
         expanded: opts.expanded.has(`u:${m.id}`),
         attachments: m.attachments ?? NO_ATTACHMENTS,
+        remoteAuthor: m.origin?.kind === "remote" ? m.origin.name?.trim() || "Someone else" : null,
         timestamp: m.timestamp,
         ...(m.timestampApproximate && { timestampApproximate: true as const }),
         ...(m.trustedMentionPaths?.length && { trustedPaths: m.trustedMentionPaths }),

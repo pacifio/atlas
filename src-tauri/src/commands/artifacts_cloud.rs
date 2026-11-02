@@ -63,9 +63,10 @@ impl ArtifactsCloudState {
 /// Mints the access JWT from the account session.
 ///
 /// Resolves `AuthState` per call rather than holding it: this source is built
-/// during `setup`, where registration order is not guaranteed.
-struct AppTokenSource {
-    app: AppHandle,
+/// during `setup`, where registration order is not guaranteed. Shared with
+/// Universal RC (`commands::rc`), whose doors are on the same ingest service.
+pub(crate) struct AppTokenSource {
+    pub(crate) app: AppHandle,
 }
 
 impl atlas_artifacts::TokenSource for AppTokenSource {
@@ -598,14 +599,18 @@ static STREAM_GENERATION: std::sync::LazyLock<
 > = std::sync::LazyLock::new(Default::default);
 
 fn stream_generation_bump(key: &str) -> u64 {
-    let mut map = STREAM_GENERATION.lock().unwrap_or_else(|e| e.into_inner());
+    let mut map = STREAM_GENERATION
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let next = map.get(key).copied().unwrap_or(0) + 1;
     map.insert(key.to_string(), next);
     next
 }
 
 fn stream_is_current(key: &str, generation: u64) -> bool {
-    let map = STREAM_GENERATION.lock().unwrap_or_else(|e| e.into_inner());
+    let map = STREAM_GENERATION
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     map.get(key).copied() == Some(generation)
 }
 

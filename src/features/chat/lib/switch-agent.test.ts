@@ -29,7 +29,10 @@ const toast = vi.hoisted(() =>
 );
 vi.mock("sonner", () => ({ toast }));
 
+import { invoke } from "@tauri-apps/api/core";
 import { useChatStore } from "../stores/chat-store";
+import { useRcStore } from "../stores/rc-store";
+import type { RcRoom } from "./rc-api";
 import { useMemorySharingStore } from "@/features/memory/stores/memory-sharing-store";
 import { useSettingsStore } from "@/features/settings/stores/settings-store";
 import { DEFAULT_SETTINGS, type AppSettings } from "@/features/settings/lib/app-settings";
@@ -206,6 +209,39 @@ describe("switchAgentForTab on an idle chat", () => {
     expect(openAgentChatInNewTab).toHaveBeenCalledWith("claude-code", { model: undefined });
     expect(useChatStore.getState().sessions[TAB].agentType).toBe("codex");
     expect(handoffs).toEqual([]);
+  });
+
+  it("an in-place switch ends the old session's remote-control room, and says so", async () => {
+    converse();
+    const room: RcRoom = {
+      sessionId: "acp-1",
+      roomId: "01ROOM",
+      scope: null,
+      memberTier: "view",
+      viewerUrl: "https://app.example.invalid/rc/rooms/01ROOM",
+      state: "live",
+      ownerOnline: true,
+      viewers: 1,
+      driver: { id: "me", name: null, isOwner: true, lost: false },
+      pending: [],
+      lastError: null,
+      endReason: null,
+    };
+    useRcStore.getState().actions.upsert(room);
+    vi.mocked(invoke).mockClear();
+
+    switchAgentForTab(TAB, "claude-code");
+    await Promise.resolve();
+
+    // The room is the session's; the tab left it for a fresh one.
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith("rc_stop", { sessionId: "acp-1" });
+    // An ended room is left alone: nothing to stop twice.
+    vi.mocked(invoke).mockClear();
+    useRcStore.getState().actions.upsert({ ...room, state: "ended" });
+    useChatStore.getState().actions.setAcpBinding(TAB, "agent-1", "acp-1", "/repo");
+    switchAgentForTab(TAB, "codex");
+    expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("rc_stop", expect.anything());
+    useRcStore.setState({ bySession: {} });
   });
 
   it("resets in place by default, attaching nothing", () => {
@@ -616,10 +652,19 @@ describe("switchAgentForTab with rememberBeforeSwitch", () => {
     );
 
     expect(agent()).toBe("codex");
-    expect(sends).toEqual([
-      { tabId: TAB, text: "/remember" },
-      { tabId: TAB, text: "now add a retry" },
+    // The tab's session is bound, so the message goes back into ITS queue —
+    // Rust's, which owns it — and the hold the switch took is lifted, which
+    // is what drains it (the turn controller sends it, not the window).
+    expect(sends).toEqual([{ tabId: TAB, text: "/remember" }]);
+    const calls = vi.mocked(invoke).mock.calls;
+    expect(calls).toContainEqual([
+      "agents_queue_add",
+      expect.objectContaining({ text: "now add a retry" }),
     ]);
-    expect(useChatStore.getState().queues[TAB] ?? []).toEqual([]);
+    expect(calls).toContainEqual([
+      "agents_queue_pause",
+      expect.objectContaining({ paused: false }),
+    ]);
+    expect(useChatStore.getState().queues[TAB]).toEqual(["now add a retry"]);
   });
 });

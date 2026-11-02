@@ -1,4 +1,5 @@
-import type { SessionMessage } from "@/types/agents";
+import type { SessionMessage, SessionSnapshot } from "@/types/agents";
+import type { SnapshotLive } from "../stores/chat-store";
 
 /**
  * Map an atlas-agents `SessionMessage` (the rich Rust snapshot state returned by
@@ -46,5 +47,22 @@ export function snapshotMessageToWire(m: SessionMessage) {
       ...(tc.started_at_ms !== undefined ? { startedAt: tc.started_at_ms } : {}),
       ...(tc.ended_at_ms !== undefined ? { endedAt: tc.ended_at_ms } : {}),
     })),
+  };
+}
+
+/**
+ * What a snapshot says is live beyond its transcript, in the shape
+ * `chat-store.hydrateSessionSnapshot` takes: the open permission prompts and
+ * elicitation (so a tab reopened, or a window reloaded, mid-prompt can still
+ * answer), the turn queue Rust holds, and whether a hold keeps the session
+ * running past its tab.
+ */
+export function snapshotLive(snapshot: SessionSnapshot): SnapshotLive {
+  return {
+    agentId: snapshot.agent_id,
+    pendingPermissions: snapshot.pending_permissions,
+    pendingElicitation: snapshot.pending_elicitation,
+    queue: snapshot.queue,
+    held: snapshot.held,
   };
 }

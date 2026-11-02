@@ -126,6 +126,18 @@ describe("what a user bubble shows", () => {
     expect(row.attachments).toHaveLength(2);
   });
 
+  it("names the remote-control driver who sent a prompt, and nobody for the window's own", () => {
+    expect(bubble("own").remoteAuthor).toBeNull();
+    expect(bubble("own", { origin: { kind: "local" } }).remoteAuthor).toBeNull();
+    expect(
+      bubble("theirs", { origin: { kind: "remote", id: "u2", name: "Ada" } }).remoteAuthor,
+    ).toBe("Ada");
+    // A driver the room never named is still not this window.
+    expect(bubble("theirs", { origin: { kind: "remote", id: "u2" } }).remoteAuthor).toBe(
+      "Someone else",
+    );
+  });
+
   it("is expanded only when the reader expanded that bubble", () => {
     const messages = [user("u1", "a"), user("u2", "b")];
     const rows = userRows(rowsOf(messages, { ...OPTS, expanded: new Set(["u:u2"]) }));

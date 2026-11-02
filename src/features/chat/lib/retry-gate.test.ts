@@ -43,6 +43,13 @@ describe("whether a session can retry its last turn", () => {
     expect(sessionCanRetry(session(), false)).toBe(false);
   });
 
+  it("cannot while someone else holds the remote-control seat", () => {
+    // Retry re-sends a prompt (the driver's right, R4) and rewinds a turn that
+    // may be the driver's; neither is a master power of the owner's.
+    expect(sessionCanRetry(session(), CAN, true)).toBe(false);
+    expect(sessionCanRetry(session(), CAN, false)).toBe(true);
+  });
+
   it("cannot while a turn is in flight", () => {
     // Rewinding under a running turn would race the very turn it is replacing.
     expect(sessionCanRetry(session({ status: "running" }), CAN)).toBe(false);

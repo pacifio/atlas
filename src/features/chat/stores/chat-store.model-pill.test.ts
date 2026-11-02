@@ -16,8 +16,17 @@ vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(async () => () => {}),
   emit: vi.fn(async () => {}),
 }));
+const toastError = vi.fn();
+vi.mock("sonner", () => ({
+  toast: {
+    error: (...a: unknown[]) => toastError(...a),
+    info: vi.fn(),
+    success: vi.fn(),
+  },
+}));
 
-import type { AgentDelta } from "@/types/agents";
+import { invoke } from "@tauri-apps/api/core";
+import type { AgentDelta, Origin } from "@/types/agents";
 import { useChatStore } from "./chat-store";
 
 const TAB = "tab-1";
@@ -252,5 +261,169 @@ describe("the config-option cache the composer reads at boot (#36)", () => {
     useChatStore.getState().actions.setAcpConfigOptions(TAB, [knob], "codex-acp");
     expect(loadCachedAcpConfigOptions("claude-code")).toBeNull();
     expect(loadCachedAcpConfigOptions("codex-acp")).toBeNull();
+  });
+});
+
+// ── A model set through the host, by anyone ──────────────────────────────────
+// The host announces every `set_model` through its steering entry as
+// `model_changed` — this window's pick, or a remote driver's (Universal RC).
+// The reducer used to ignore the kind for the native agent (a guard against
+// the BYOK `provider/model` re-push loop), so a remote switch on a native
+// session ran the next turn on a model the desktop pill did not show.
+
+describe("model_changed on a native session", () => {
+  const NATIVE_TAB = "tab-native";
+  const NATIVE_SESSION = "native-session-1";
+
+  function boundNative() {
+    const { actions } = useChatStore.getState();
+    actions.createSession(NATIVE_TAB, "atlas-agent");
+    actions.setAcpBinding(NATIVE_TAB, "agent-native", NATIVE_SESSION, "/tmp");
+    actions.setAcpModels(NATIVE_TAB, "sonnet", [
+      { id: "sonnet", name: "Sonnet" },
+      { id: "opus", name: "Opus" },
+    ]);
+    return () => useChatStore.getState().sessions[NATIVE_TAB];
+  }
+
+  function modelChanged(model_id: string, origin?: Origin): AgentDelta {
+    return {
+      kind: "model_changed",
+      agent_id: "agent-native",
+      session_id: NATIVE_SESSION,
+      model_id,
+      ...(origin ? { origin } : {}),
+    } as AgentDelta;
+  }
+
+  beforeEach(() => {
+    localStorage.clear();
+    toastError.mockClear();
+    vi.mocked(invoke).mockReset();
+    vi.mocked(invoke).mockResolvedValue(undefined);
+    useChatStore.setState({ sessions: {}, activeSessionId: null });
+  });
+
+  it("follows a model a remote driver switched to, when the catalogue lists it", () => {
+    const session = boundNative();
+    expect(session().acpCurrentModel).toBe("sonnet");
+
+    useChatStore
+      .getState()
+      .actions.applyAgentDelta(modelChanged("opus", { kind: "remote", id: "user-7", name: "Ada" }));
+
+    expect(session().acpCurrentModel).toBe("opus");
+  });
+
+  /// The BYOK pills push `provider/model` with a bare id in the store; the
+  /// echo of that push is the prefixed form, which the catalogue does not
+  /// list. Taking it would re-prefix the value on every re-push.
+  it("ignores an id the catalogue does not list", () => {
+    const session = boundNative();
+
+    useChatStore.getState().actions.applyAgentDelta(modelChanged("google/sonnet"));
+
+    expect(session().acpCurrentModel).toBe("sonnet");
+  });
+
+  it("takes nothing while the catalogue is empty", () => {
+    const { actions } = useChatStore.getState();
+    actions.createSession(NATIVE_TAB, "atlas-agent");
+    actions.setAcpBinding(NATIVE_TAB, "agent-native", NATIVE_SESSION, "/tmp");
+
+    actions.applyAgentDelta(modelChanged("opus"));
+
+    expect(useChatStore.getState().sessions[NATIVE_TAB].acpCurrentModel).toBeUndefined();
+  });
+
+  it("an ACP agent's model_changed is taken as before, listed or not", () => {
+    const session = boundSession();
+
+    useChatStore.getState().actions.applyAgentDelta({
+      kind: "model_changed",
+      agent_id: "agent-1",
+      session_id: ACP_SESSION,
+      model_id: "haiku",
+    } as AgentDelta);
+
+    expect(session().acpCurrentModel).toBe("haiku");
+  });
+});
+
+// ── A refused pick rolls back and says why, like a mode's ───────────────────
+// `setAcpModel` flips the pill optimistically and pushes `agents_set_model`.
+// A refusal (the native selector's "not in the catalogue", an agent saying
+// no) used to be only `console.warn`ed, so the pill kept showing a model the
+// next turn would not run on. A remote picker is held to "revert and show the
+// message"; the desktop matches.
+
+describe("a refused model pick", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    toastError.mockClear();
+    vi.mocked(invoke).mockReset();
+    vi.mocked(invoke).mockResolvedValue(undefined);
+    useChatStore.setState({ sessions: {}, activeSessionId: null });
+  });
+
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it("reverts the pill to the previous model and toasts the agent's words", async () => {
+    const session = boundSession();
+    useChatStore.getState().actions.setAcpModels(TAB, "sonnet", [
+      { id: "sonnet", name: "Sonnet" },
+      { id: "opus", name: "Opus" },
+    ]);
+    vi.mocked(invoke).mockImplementation(async (cmd) => {
+      if (cmd === "agents_set_model") throw "model 'opus' is not in the catalogue";
+      return undefined;
+    });
+
+    useChatStore.getState().actions.setAcpModel(TAB, "opus");
+    expect(session().acpCurrentModel, "optimistic flip").toBe("opus");
+    await flush();
+
+    expect(session().acpCurrentModel).toBe("sonnet");
+    expect(toastError).toHaveBeenCalledWith("model 'opus' is not in the catalogue");
+  });
+
+  it("leaves a newer pick alone when an older one is refused late", async () => {
+    const session = boundSession();
+    useChatStore.getState().actions.setAcpModels(TAB, "sonnet", [
+      { id: "sonnet", name: "Sonnet" },
+      { id: "opus", name: "Opus" },
+      { id: "haiku", name: "Haiku" },
+    ]);
+    let reject: (reason: unknown) => void = () => {};
+    vi.mocked(invoke).mockImplementation((cmd, args) => {
+      if (cmd === "agents_set_model" && (args as { modelId: string }).modelId === "opus") {
+        return new Promise((_, r) => {
+          reject = r;
+        });
+      }
+      return Promise.resolve(undefined);
+    });
+
+    useChatStore.getState().actions.setAcpModel(TAB, "opus");
+    useChatStore.getState().actions.setAcpModel(TAB, "haiku");
+    reject("no");
+    await flush();
+
+    expect(session().acpCurrentModel).toBe("haiku");
+    expect(toastError).toHaveBeenCalledTimes(1);
+  });
+
+  it("a pick the agent accepts stays, with no toast", async () => {
+    const session = boundSession();
+    useChatStore.getState().actions.setAcpModels(TAB, "sonnet", [
+      { id: "sonnet", name: "Sonnet" },
+      { id: "opus", name: "Opus" },
+    ]);
+
+    useChatStore.getState().actions.setAcpModel(TAB, "opus");
+    await flush();
+
+    expect(session().acpCurrentModel).toBe("opus");
+    expect(toastError).not.toHaveBeenCalled();
   });
 });

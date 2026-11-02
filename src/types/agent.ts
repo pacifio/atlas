@@ -206,6 +206,10 @@ export interface ChatSession {
    *  history-loss race). Cleared by every terminal (idle/error/turn_finished/
    *  turn_failed). */
   stopping?: boolean;
+  /** A hold (Universal RC, or the developer toggle) keeps this session's
+   *  backend running past its tab: closing the tab neither asks nor cancels.
+   *  Mirrors the `hold_changed` delta / the snapshot's `held`. */
+  held?: boolean;
   /** The agent process backing this session died (agent_disconnected). The
    *  binding fields are kept for resume — the next send (or the Restart
    *  affordance) respawns the agent and load_session-resumes where the
@@ -433,6 +437,9 @@ export interface PendingSend {
   content: string;
   mentions: MentionData[];
   attachments?: ImageAttachment[];
+  /** The id of the bubble drawn when this was held — sent with the prompt so
+   *  its `user_message` delta adopts that bubble. */
+  clientMessageId?: string;
 }
 
 export interface ChatMessage {
@@ -443,6 +450,13 @@ export interface ChatMessage {
    *  never set on assistant messages, and not recovered on session replay
    *  (Rust history is text-only). Rendered as thumbnails in the bubble. */
   attachments?: import("./agents").ImageAttachment[];
+  /** User messages: the id this window minted for its optimistic row and
+   *  sent with the prompt. The prompt's `user_message` delta echoes it, which
+   *  is how the row is matched instead of drawn a second time. */
+  clientMessageId?: string;
+  /** User messages: who sent it, when it arrived over the wire rather than
+   *  from this window's composer (a remote driver, a drained queue). */
+  origin?: import("./agents").Origin;
   toolCalls: ToolCallDisplay[];
   fileChanges: FileChange[];
   plan: PlanStep[] | null;

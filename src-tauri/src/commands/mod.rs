@@ -81,6 +81,7 @@ pub mod project_sources;
 pub mod pull_request_watch;
 pub mod pull_requests;
 pub mod quit_guard;
+pub mod rc;
 pub mod recent_files;
 pub mod registry;
 pub mod restart_continuation;

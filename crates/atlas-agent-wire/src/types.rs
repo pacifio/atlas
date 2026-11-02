@@ -331,3 +331,44 @@ pub struct RateLimitWindow {
     /// Epoch seconds.
     pub resets_at: Option<i64>,
 }
+
+/// Who asked for something to happen in a session: the desktop window's own
+/// user, or a remote principal steering it (Universal RC).
+///
+/// Every steering verb on the host takes one, and the deltas that a person
+/// caused carry it, so a transcript can say who sent a prompt. `Local` is the
+/// window; a remote principal is named by the id the RC layer authenticated
+/// (`user id`, `guest:{hex}`, `link:{linkId}`) and an optional display name —
+/// a label, never an authority. Tagged by `kind`, so the wire reads
+/// `{"kind":"local"}` or `{"kind":"remote","id":"…","name":"…"}`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Origin {
+    #[default]
+    Local,
+    Remote {
+        id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+    },
+}
+
+impl Origin {
+    pub fn is_local(&self) -> bool {
+        matches!(self, Self::Local)
+    }
+}
+
+/// One prompt parked in a session's turn queue, as the wire shows it.
+///
+/// The queue belongs to the session in Rust (the turn controller); the
+/// window's queued-message strip is a mirror of it. `text` is what the user
+/// typed and what the strip shows — not necessarily the exact bytes the agent
+/// will be sent (the window may append hidden directives to those).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
+pub struct QueuedPrompt {
+    /// Stable for the item's life in the queue; what remove / send-now name.
+    pub id: String,
+    pub text: String,
+    pub origin: Origin,
+}

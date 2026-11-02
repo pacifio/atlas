@@ -695,6 +695,7 @@ dependencies = [
  "atlas-process",
  "atlas-profile",
  "atlas-redact",
+ "atlas-remote-control",
  "atlas-search",
  "atlas-security",
  "atlas-terminal",
@@ -3373,6 +3374,24 @@ version = "0.1.0"
 dependencies = [
  "regex",
  "serde_json",
+]
+
+[[package]]
+name = "atlas-remote-control"
+version = "0.1.0"
+dependencies = [
+ "atlas-agent-wire",
+ "atlas-artifacts",
+ "atlas-redact",
+ "chrono",
+ "futures-util",
+ "reqwest 0.13.5",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-tungstenite 0.28.0",
+ "tracing",
 ]
 
 [[package]]

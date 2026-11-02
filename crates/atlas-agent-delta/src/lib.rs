@@ -28,9 +28,17 @@
 //!
 //! # Conventions the consumers rely on (research §C9 touchpoint #2)
 //!
-//! - **User messages never go on the wire.** The prompt reaches capture only
-//!   through the send-path `note_prompt` hook, with the raw text before memory
-//!   prefixing. A `UserMessage` entry is mirrored and emits nothing.
+//! - **User messages go on the wire only when the host sent them.** A prompt
+//!   sent through the host's steering entry is stamped with who sent it
+//!   ([`DeltaProjector::stamp_user_message`]) and its thread entry is announced
+//!   as `user_message { origin, client_message_id }`, so a remote viewer sees
+//!   the prompt and the window can adopt its own optimistic row. Unstamped user
+//!   entries — history replayed by `session/load` — stay silent, as all of
+//!   them used to. Capture and transcripts still take the prompt from the
+//!   send-path hook, not from this delta.
+//! - **Every delta carries a per-session `seq`**, dense and in emit order, and
+//!   [`DeltaProjector::snapshot`] says which `seq` it reflects, so a late
+//!   joiner can take a snapshot and apply only the deltas above it.
 //! - **Turn start is a bare status flip.** There is no `turn_started` kind;
 //!   `status: running` is the signal, and turn identity is stamped by the host
 //!   ([`DeltaProjector::set_turn_seq`]), not carried by the thread.
@@ -40,22 +48,25 @@
 //!
 //! # What the thread cannot tell us, and the host must
 //!
-//! Four deltas have no thread event behind them, so the host announces them:
+//! Some deltas have no thread event behind them, so the host announces them:
 //! [`DeltaProjector::note_turn_failed`] (the error text lives with whoever
 //! awaited `prompt`), [`DeltaProjector::note_model_changed`],
-//! [`DeltaProjector::note_compression_saved`] and
-//! [`DeltaProjector::note_agent_disconnected`].
+//! [`DeltaProjector::note_mode_changed`] (the native agent raises no event for
+//! its own mode), [`DeltaProjector::note_compression_saved`],
+//! [`DeltaProjector::note_agent_disconnected`], and the turn controller's
+//! [`DeltaProjector::note_queue_changed`] and
+//! [`DeltaProjector::note_hold_changed`].
 
 pub mod project;
 pub mod projector;
 
 pub use projector::{
-    elicitation_wire, DeltaProjector, ElicitationKey, ElicitationWire, PermissionKey,
-    ThreadObserver,
+    elicitation_wire, DeltaProjector, ElicitationKey, ElicitationWire, PendingElicitation,
+    PendingPermission, PermissionKey, ProjectedSnapshot, ThreadObserver,
 };
 
 pub use atlas_agent_wire::{
-    AgentId, DeltaSink, Message, MessageMode, MessageRole, PlanEntry, SessionDelta,
-    SessionDeltaEnvelope, SessionStatus, Subagent, SubagentStatus, ToolCall, ToolCallStatus,
-    ToolContentBlock, Usage,
+    AgentId, DeltaSink, Message, MessageMode, MessageRole, Origin, PlanEntry, QueuedPrompt,
+    SessionDelta, SessionDeltaEnvelope, SessionStatus, Subagent, SubagentStatus, ToolCall,
+    ToolCallStatus, ToolContentBlock, Usage,
 };

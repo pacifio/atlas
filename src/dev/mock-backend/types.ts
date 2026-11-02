@@ -13,6 +13,7 @@ import type { KnowledgeResponses } from "./fixtures/knowledge";
 import type { LogResponses } from "./fixtures/log";
 import type { MemoryResponses } from "./fixtures/memory";
 import type { PullRequestsResponses } from "./fixtures/pull-requests";
+import type { RcResponses } from "./fixtures/rc";
 import type { SecurityResponses } from "./fixtures/security";
 import type { SettingsResponses } from "./fixtures/settings";
 import type { SkillsResponses } from "./fixtures/skills";
@@ -72,6 +73,7 @@ export interface MockResponses
     LogResponses,
     MemoryResponses,
     PullRequestsResponses,
+    RcResponses,
     SecurityResponses,
     SettingsResponses,
     SkillsResponses,

@@ -227,6 +227,7 @@ export function SidebarSessions() {
       (row) =>
         (row.sessionId !== "" && row.sessionId === activeSessionId) ||
         row.liveElsewhere ||
+        row.heldWorking ||
         live.has(row.sessionId),
     );
   }, [

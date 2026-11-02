@@ -535,6 +535,7 @@ function seedThreads(): ThreadRow[] {
             ]
           : [],
       forkedFromSessionId: null,
+      heldWorking: false,
     }));
 }
 
