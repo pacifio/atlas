@@ -102,9 +102,49 @@ fn index_key(eco: Ecosystem, name: &str) -> String {
     }
 }
 
+/// One ecosystem's index as it is being built: each package's advisories
+/// already serialized, as the comma-separated body of its JSON array.
+///
+/// Holding [`IndexedAdvisory`] structs instead cost about 230 MB for npm's
+/// 226k packages, nearly all of it small allocations (every id, alias and
+/// version its own string); the same data as JSON text is the ~32 MB the index
+/// takes on disk. [`write_index`] writes these bytes out as they are, so the
+/// file is the one [`AdvisoryDb::open`] has always read.
+#[derive(Debug, Default)]
+pub struct BuiltIndex {
+    packages: HashMap<Box<str>, Vec<u8>>,
+    advisories: usize,
+}
+
+impl BuiltIndex {
+    /// How many packages have at least one advisory.
+    pub fn packages(&self) -> usize {
+        self.packages.len()
+    }
+
+    /// How many (advisory, package) entries the index holds.
+    pub fn advisories(&self) -> usize {
+        self.advisories
+    }
+
+    fn push(&mut self, key: String, adv: &IndexedAdvisory) {
+        let body = match self.packages.get_mut(key.as_str()) {
+            Some(body) => {
+                body.push(b',');
+                body
+            }
+            None => self.packages.entry(key.into_boxed_str()).or_default(),
+        };
+        // A struct of strings, enums and vectors: serializing it cannot fail.
+        if serde_json::to_writer(&mut *body, adv).is_ok() {
+            self.advisories += 1;
+        }
+    }
+}
+
 /// Build an index from OSV's `all.zip` for `eco`. An entry that does not
 /// parse is skipped; only an unreadable archive is an error.
-pub fn build_index(eco: Ecosystem, zip_bytes: &[u8]) -> Result<Index, OsvError> {
+pub fn build_index(eco: Ecosystem, zip_bytes: &[u8]) -> Result<BuiltIndex, OsvError> {
     build_index_from(eco, std::io::Cursor::new(zip_bytes))
 }
 
@@ -113,9 +153,9 @@ pub fn build_index(eco: Ecosystem, zip_bytes: &[u8]) -> Result<Index, OsvError> 
 pub fn build_index_from<R: Read + std::io::Seek>(
     eco: Ecosystem,
     reader: R,
-) -> Result<Index, OsvError> {
+) -> Result<BuiltIndex, OsvError> {
     let mut archive = zip::ZipArchive::new(reader).map_err(|e| OsvError::Zip(e.to_string()))?;
-    let mut index: Index = HashMap::new();
+    let mut index = BuiltIndex::default();
     let mut buf = Vec::new();
     for i in 0..archive.len() {
         let Ok(mut file) = archive.by_index(i) else {
@@ -201,7 +241,7 @@ struct OsvSeverity {
     informational: Option<serde::de::IgnoredAny>,
 }
 
-fn add_advisory(index: &mut Index, eco: Ecosystem, doc: OsvRecord) {
+fn add_advisory(index: &mut BuiltIndex, eco: Ecosystem, doc: OsvRecord) {
     if doc.withdrawn.is_some() {
         return;
     }
@@ -243,10 +283,9 @@ fn add_advisory(index: &mut Index, eco: Ecosystem, doc: OsvRecord) {
             .map(|r| r.events.into_iter().filter_map(event).collect::<Vec<_>>())
             .filter(|events| !events.is_empty())
             .collect();
-        index
-            .entry(index_key(eco, &package.name))
-            .or_default()
-            .push(IndexedAdvisory {
+        index.push(
+            index_key(eco, &package.name),
+            &IndexedAdvisory {
                 id: doc.id.clone(),
                 // A malicious package needs no cross-references.
                 aliases: if malicious {
@@ -261,7 +300,8 @@ fn add_advisory(index: &mut Index, eco: Ecosystem, doc: OsvRecord) {
                 malicious,
                 versions: entry.versions,
                 ranges,
-            });
+            },
+        );
     }
 }
 
@@ -377,16 +417,29 @@ fn parse_severity(raw: Option<&str>) -> AdvSeverity {
     }
 }
 
-/// Write one ecosystem's index atomically: temp file, then rename.
-pub fn write_index(dir: &Path, eco: Ecosystem, index: &Index) -> Result<(), OsvError> {
+/// Write one ecosystem's index atomically: temp file, then rename. The file
+/// is a JSON object of package name → array of advisories.
+pub fn write_index(dir: &Path, eco: Ecosystem, index: &BuiltIndex) -> Result<(), OsvError> {
+    use std::io::Write;
     std::fs::create_dir_all(dir).map_err(|e| OsvError::Io(e.to_string()))?;
     let path = index_file(dir, eco);
     let tmp = path.with_extension("json.tmp");
     let file = std::fs::File::create(&tmp).map_err(|e| OsvError::Io(e.to_string()))?;
-    let mut writer = std::io::BufWriter::new(file);
-    serde_json::to_writer(&mut writer, index).map_err(|e| OsvError::Parse(e.to_string()))?;
-    std::io::Write::flush(&mut writer).map_err(|e| OsvError::Io(e.to_string()))?;
-    drop(writer);
+    let mut w = std::io::BufWriter::new(file);
+    let io = |e: std::io::Error| OsvError::Io(e.to_string());
+    w.write_all(b"{").map_err(io)?;
+    for (n, (name, body)) in index.packages.iter().enumerate() {
+        if n > 0 {
+            w.write_all(b",").map_err(io)?;
+        }
+        serde_json::to_writer(&mut w, name).map_err(|e| OsvError::Parse(e.to_string()))?;
+        w.write_all(b":[").map_err(io)?;
+        w.write_all(body).map_err(io)?;
+        w.write_all(b"]").map_err(io)?;
+    }
+    w.write_all(b"}").map_err(io)?;
+    w.flush().map_err(io)?;
+    drop(w);
     std::fs::rename(&tmp, &path).map_err(|e| OsvError::Io(e.to_string()))
 }
 
@@ -517,12 +570,16 @@ pub struct RefreshOutcome {
 /// | npm | 219.7 MB | 225,919 | 32.4 MB | 1.6 s |
 /// | PyPI | 37.6 MB | 13,583 | 18.9 MB | 0.3 s |
 ///
-/// Building all three peaks at about 340 MB resident; opening all three, at
-/// about 330 MB, nearly all of it npm. So the download streams to a
-/// temporary file beside the index and is indexed from disk, then deleted;
-/// records are parsed into typed structs that skip OSV's large text fields;
-/// and callers open only the ecosystems a scan needs
-/// ([`AdvisoryDb::open_only`]) and drop the database afterwards.
+/// Building all three peaked at about 340 MB resident while the index was
+/// held as structs; opening all three, at about 330 MB, nearly all of it npm.
+/// So the download streams to a temporary file beside the index and is
+/// indexed from disk, then deleted; records are parsed into typed structs
+/// that skip OSV's large text fields; the index is held as serialized JSON
+/// while it is built ([`BuiltIndex`]: npm's build peaked at 283 MB before
+/// that, 108 MB after, measured 2026-11-02 on Windows, of which about 50 MB
+/// is the zip's own directory of 231k entries); and callers open only the
+/// ecosystems a scan needs ([`AdvisoryDb::open_only`]) and drop the database
+/// afterwards.
 pub async fn refresh(dir: &Path, client: &reqwest::Client, max_age: Duration) -> RefreshOutcome {
     let mut outcome = RefreshOutcome::default();
     for eco in Ecosystem::ALL {

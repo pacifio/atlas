@@ -294,10 +294,10 @@ fn measure_real_indexes() {
             )
             .unwrap();
         }
-        let advisories: usize = index.values().map(Vec::len).sum();
+        let advisories = index.advisories();
         println!(
             "{:<10} zip {:>6.1} MB  packages {:>7}  entries {:>7}  index {:>6.1} MB  build {:>5.1}s",
-            eco.osv_name(), zip_len as f64 / 1e6, index.len(), advisories, size as f64 / 1e6, built.as_secs_f64()
+            eco.osv_name(), zip_len as f64 / 1e6, index.packages(), advisories, size as f64 / 1e6, built.as_secs_f64()
         );
     }
 }
