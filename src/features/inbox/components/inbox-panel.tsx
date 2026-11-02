@@ -11,7 +11,7 @@
 // Names and faces come from the Organisation's directory: the server sends a
 // member's id only (a guest's name is on the row).
 
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   AtSign,
   CheckCheck,
@@ -356,8 +356,10 @@ function actorLabel(entry: InboxEntry, directory: OrgDirectory): string {
 
 /** One entry, at the board row's size (`session-row.tsx`): a mark column,
  *  then three lines — who did what to which Session, the comment, the
- *  Project and when. */
-function InboxRow({
+ *  Project and when. Memoized: the calendar re-renders its rows on every
+ *  scroll frame, and an unchanged entry need not redraw its faces, hint and
+ *  icons each time. */
+const InboxRow = memo(function InboxRow({
   entry,
   directory,
   onOpen,
@@ -436,7 +438,7 @@ function InboxRow({
       />
     </button>
   );
-}
+});
 
 // ── States ──────────────────────────────────────────────────────────────────
 

@@ -16,7 +16,7 @@
  */
 
 import { GitBranch, MessageSquare } from "lucide-react";
-import { Fragment, type ReactNode } from "react";
+import { Fragment, memo, type ReactNode } from "react";
 import { AccountAvatar } from "@/features/auth/components/account-avatar";
 import { cn } from "@/lib/utils";
 import type { BoardSession } from "../types";
@@ -27,7 +27,10 @@ import { AgentGlyph } from "./agent-glyph";
 import { SessionStatusIcon, STATE_LABEL } from "./session-status-icon";
 import { SessionSecurityBadge } from "@/features/security/components/session-security-badge";
 
-export function SessionRow({
+/** Memoized, and handed the board's one `onOpen` rather than a closure per
+ *  row: the calendar re-renders its rows on every scroll frame, and an
+ *  unchanged row need not rebuild its lines, marks and avatar each time. */
+export const SessionRow = memo(function SessionRow({
   session: s,
   directory,
   selected,
@@ -36,7 +39,7 @@ export function SessionRow({
   session: BoardSession;
   directory: AuthorDirectory;
   selected: boolean;
-  onOpen: () => void;
+  onOpen: (session: BoardSession) => void;
 }) {
   const state = sessionState(s);
   const who = authorOf(s.authorId, directory);
@@ -49,7 +52,7 @@ export function SessionRow({
   return (
     <button
       type="button"
-      onClick={onOpen}
+      onClick={() => onOpen(s)}
       aria-pressed={selected}
       className={cn(
         // Exactly as wide as the hairlines between rows, inside them with a
@@ -125,7 +128,7 @@ export function SessionRow({
       </span>
     </button>
   );
-}
+});
 
 /** One row line: content on the left, one item pinned right. */
 function Line({ left, right }: { left: ReactNode; right?: ReactNode }) {

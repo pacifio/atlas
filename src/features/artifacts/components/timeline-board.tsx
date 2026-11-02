@@ -91,7 +91,7 @@ export function TimelineBoard({
         session={s}
         directory={directory}
         selected={boardKey(s) === openKey}
-        onOpen={() => onOpen(s)}
+        onOpen={onOpen}
       />
     ),
     [directory, openKey, onOpen],

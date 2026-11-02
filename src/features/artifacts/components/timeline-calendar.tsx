@@ -19,7 +19,16 @@
  * list that is otherwise scrolling smoothly.
  */
 
-import { useEffect, useMemo, useState, type ReactNode, type RefObject } from "react";
+import {
+  memo,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { motion } from "motion/react";
 import { cn } from "@/lib/utils";
@@ -109,8 +118,33 @@ export function TimelineCalendar<T>({
     [items],
   );
 
-  const firstKey = virtualRows[0]?.key as string | undefined;
-  const currentId = (firstKey ? dayOfItem.get(firstKey) : undefined) ?? [...days.keys()][0];
+  // Where the list starts inside the scroller (the column's top padding),
+  // and the sticky header's height. Item offsets are relative to the list,
+  // the scroll offset to the scroller. Both are measured, not taken from the
+  // classes: the spacing scale follows the density setting.
+  const list = useRef<HTMLDivElement>(null);
+  const header = useRef<HTMLElement>(null);
+  const geometry = useRef({ listTop: 0, header: 0 });
+  useLayoutEffect(() => {
+    const el = list.current;
+    const scroller = root.current;
+    if (!el || !scroller) return;
+    geometry.current = {
+      listTop:
+        el.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop,
+      header: header.current?.offsetHeight ?? 0,
+    };
+  }, [root, items]);
+
+  // The day of the item under the sticky header's bottom edge, the one being
+  // read. Not the first item the virtualizer has mounted: that one is up to
+  // `overscan` items above the viewport, so the date named a day already
+  // scrolled away and changed ~900px late. On a board day of dozens of rows
+  // that hid inside the day; the inbox's few-per-day entries showed it.
+  const line = (virtualizer.scrollOffset ?? 0) + geometry.current.header - geometry.current.listTop;
+  const reading = virtualRows.find((v) => v.end > line) ?? virtualRows[0];
+  const readingKey = reading?.key as string | undefined;
+  const currentId = (readingKey ? dayOfItem.get(readingKey) : undefined) ?? [...days.keys()][0];
   const current = currentId ? days.get(currentId) : undefined;
 
   if (items.length === 0 || !current) return null;
@@ -120,6 +154,7 @@ export function TimelineCalendar<T>({
       {/* The backing bleeds past each side, so nothing scrolling under the
           date shows at its edges. */}
       <header
+        ref={header}
         className={cn(
           HEADER,
           "sticky top-0 z-panel flex items-end border-b border-border px-2 pb-2.5",
@@ -149,7 +184,11 @@ export function TimelineCalendar<T>({
 
       {/* `isolate`: rows raise their own hover background, and this keeps
           those layers inside the list, under the sticky date. */}
-      <div className="isolate relative -mt-12" style={{ height: virtualizer.getTotalSize() }}>
+      <div
+        ref={list}
+        className="isolate relative -mt-12"
+        style={{ height: virtualizer.getTotalSize() }}
+      >
         {virtualRows.map((v) => {
           const item = items[v.index];
           if (!item) return null;
@@ -179,8 +218,10 @@ export function TimelineCalendar<T>({
 
 /** A day's own header, in the flow of the list. The first sits under the
  *  sticky header that is pulled over it; the rest carry the gap that
- *  separates them from the day above. */
-function DayHeader({ day, first }: { day: CalendarDay; first: boolean }) {
+ *  separates them from the day above. Memoized: the calendar re-renders on
+ *  every scroll frame, and a day's item is the same object until the list
+ *  itself changes. */
+const DayHeader = memo(function DayHeader({ day, first }: { day: CalendarDay; first: boolean }) {
   return (
     <div className={cn(!first && "pt-10")}>
       <h2
@@ -199,4 +240,4 @@ function DayHeader({ day, first }: { day: CalendarDay; first: boolean }) {
       </h2>
     </div>
   );
-}
+});

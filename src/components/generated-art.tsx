@@ -12,7 +12,7 @@
  * gives it a shape.
  */
 
-import { useId, useMemo } from "react";
+import { memo, useId, useMemo } from "react";
 import { ART_BOX, generatedArt } from "@/lib/generated-art";
 
 /**
@@ -22,7 +22,9 @@ import { ART_BOX, generatedArt } from "@/lib/generated-art";
 // ratchet-allow: generated art whose ink is fixed in both themes, like a photo
 const INK = "#fff";
 
-export function GeneratedArt({ seed }: { seed: string }) {
+/** Memoized: a few dozen circles per mark, and a list row holding one is
+ *  re-rendered by its virtualizer on every scroll frame. */
+export const GeneratedArt = memo(function GeneratedArt({ seed }: { seed: string }) {
   const art = useMemo(() => generatedArt(seed), [seed]);
   // Gradient ids are document-global; two marks for one seed on one page must
   // not share — and fight over — a definition.
@@ -72,4 +74,4 @@ export function GeneratedArt({ seed }: { seed: string }) {
       </g>
     </svg>
   );
-}
+});
