@@ -117,7 +117,7 @@ export function SearchField({
         onKeyDown={onKeyDown}
         placeholder={placeholder}
         spellCheck={false}
-        className="min-w-0 flex-1 bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground"
+        className="min-w-0 flex-1 bg-transparent text-xs text-foreground placeholder:text-muted-foreground"
       />
       {trailing}
     </div>
