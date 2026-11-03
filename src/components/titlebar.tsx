@@ -345,7 +345,9 @@ function TopbarTrailing() {
       {/* Outside the project guard: a fresh install has no project open, and
           sign-in, Settings and Help must be reachable from that empty
           window. */}
-      <AccountButton menuExtra={<HelpSubmenu />} />
+      <span data-tip-anchor="account" className="flex">
+        <AccountButton menuExtra={<HelpSubmenu />} />
+      </span>
       {(isWindows || isLinux) && <WindowControls />}
     </div>
   );
@@ -528,6 +530,7 @@ function ProjectLabel({
           <Popover.Trigger
             render={
               <BreadcrumbButton
+                data-tip-anchor="capture"
                 className="max-w-[240px] text-foreground"
                 title={health?.summary ?? "Session capture"}
                 aria-label={health?.summary ?? "Session capture"}

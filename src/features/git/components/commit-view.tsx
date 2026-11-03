@@ -1,3 +1,4 @@
+import { useTipOnMount } from "@/features/tips/lib/use-tip-on-mount";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -715,6 +716,7 @@ function CommitSessions({ repoPath, sha }: { repoPath: string; sha: string }) {
       cancelled = true;
     };
   }, [repoPath, sha]);
+  useTipOnMount("checkpoint", sessions.length > 0);
 
   if (sessions.length === 0) return null;
 
@@ -737,7 +739,10 @@ function CommitSessions({ repoPath, sha }: { repoPath: string; sha: string }) {
 
   return (
     <div className="mt-2 max-w-xl border-t border-border-subtle pt-2">
-      <div className="text-3xs uppercase tracking-wider text-muted-foreground">
+      <div
+        data-tip-anchor="produced-by"
+        className="text-3xs uppercase tracking-wider text-muted-foreground"
+      >
         Produced by {sessions.length} session{sessions.length === 1 ? "" : "s"}
       </div>
       {sessions.map((s) => (

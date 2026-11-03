@@ -131,6 +131,7 @@ export function TeamChatButton() {
     <DestinationButton
       icon={MessagesSquare}
       label="Team chat"
+      data-tip-anchor="team-chat"
       active={open}
       locked={unlockHint(access, "team chat")}
       dot={unread && !access.locked}
@@ -169,6 +170,7 @@ export function TimelineButton() {
     <DestinationButton
       icon={DESTINATIONS.artifacts.icon}
       label="Timeline"
+      data-tip-anchor="timeline"
       active={open}
       onClick={() => toggleDestination("artifacts")}
     />
@@ -183,6 +185,7 @@ export function AgentButton() {
     <DestinationButton
       icon={DESTINATIONS.agent.icon}
       label="Agent"
+      data-tip-anchor="ask-atlas"
       active={open}
       onClick={toggleAgentPage}
     />
@@ -196,6 +199,7 @@ export function MemoryButton(props: DockButtonProps) {
       {...props}
       icon={DESTINATIONS.memory.icon}
       label="Memory"
+      data-tip-anchor="memory"
       active={open}
       onClick={() => toggleDestination("memory")}
     />

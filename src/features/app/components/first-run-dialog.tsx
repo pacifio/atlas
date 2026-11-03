@@ -10,8 +10,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/ui/dialog";
-import { KeymapStep } from "@/features/keybindings/components/keymap-step";
+import { KeymapStep, type KeymapAnswer } from "@/features/keybindings/components/keymap-step";
 import { useKeybindingsStore } from "@/features/keybindings/stores/keybindings-store";
+import { reportFirstRunComplete } from "@/features/tips/lib/tips-api";
 
 /**
  * First run (CONTEXT.md): what Atlas is, then which editor's shortcuts to
@@ -29,9 +30,17 @@ export function FirstRunDialog() {
   const open = useKeybindingsStore.use.firstRun();
   const { completeOnboarding } = useKeybindingsStore.use.actions();
   const [step, setStep] = useState<"product" | "keymap">("product");
+  const report = (answer: KeymapAnswer) => void reportFirstRunComplete(answer).catch(() => {});
 
   return (
-    <Dialog open={open} onOpenChange={(next) => !next && void completeOnboarding(null)}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (next) return;
+        report("later");
+        void completeOnboarding(null);
+      }}
+    >
       <DialogContent showCloseButton={false} className="max-w-md">
         {step === "product" ? (
           <>
@@ -55,7 +64,7 @@ export function FirstRunDialog() {
             </DialogFooter>
           </>
         ) : (
-          <KeymapStep />
+          <KeymapStep onChosen={report} />
         )}
       </DialogContent>
     </Dialog>

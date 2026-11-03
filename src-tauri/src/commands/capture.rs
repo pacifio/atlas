@@ -3386,6 +3386,7 @@ fn process_job(job: Job, session_ids: &mut HashMap<String, String>, stores: &Sto
                         "linked commits to sessions"
                     );
                     super::security_scan::nudge(&root);
+                    super::tips::checkpoint_linked();
                 }
                 Ok(outcome) if outcome.cursor_recovered => tracing::warn!(
                     target: "atlas::capture",
@@ -3543,6 +3544,7 @@ fn process_job(job: Job, session_ids: &mut HashMap<String, String>, stores: &Sto
                 );
                 // An agent's own `git commit` lands here, not in the walk.
                 super::security_scan::nudge(&root);
+                super::tips::checkpoint_linked();
             }
             Ok(_) => {}
             Err(e) => tracing::warn!(

@@ -1,3 +1,4 @@
+import { useTipOnMount } from "@/features/tips/lib/use-tip-on-mount";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -137,6 +138,7 @@ function shellDetail(row: BoardSession): Detail {
 }
 
 export function ArtifactsPanel() {
+  useTipOnMount("timeline");
   // Every project in the active Organisation, not just the open one: the board
   // answers "what has been happening in our code", which does not stop at the
   // folder that happens to be focused.

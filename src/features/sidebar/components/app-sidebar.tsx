@@ -40,6 +40,7 @@ import {
 } from "./sidebar-destinations";
 import { SidebarProjectPicker } from "./project-picker";
 import { SidebarSessions } from "./sidebar-session-list";
+import { GetStarted } from "@/features/tips/components/get-started";
 import {
   endPeek,
   holdPeek,
@@ -76,6 +77,7 @@ export function AppSidebar({ className }: { className?: string }) {
         <Destinations />
       </div>
       <SidebarSessions />
+      <GetStarted />
       <SidebarFoot />
     </aside>
   );

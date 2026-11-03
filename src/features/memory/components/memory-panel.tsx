@@ -1,3 +1,4 @@
+import { useTipOnMount } from "@/features/tips/lib/use-tip-on-mount";
 import { useState } from "react";
 import { Share2, SlidersHorizontal } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
@@ -33,6 +34,7 @@ import { useMemoryStore } from "../stores/memory-store";
 //     different, unrelated feature and is untouched.
 
 export function MemoryPanel() {
+  useTipOnMount("memory");
   const projectPath = useAppStore.use.currentProject()?.path ?? null;
   const sub = useMemoryStore.use.subTab();
   const { setSubTab } = useMemoryStore.use.actions();

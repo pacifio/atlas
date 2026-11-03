@@ -5,11 +5,10 @@
 
 import type { KeybindingsLoadResult } from "@/features/keybindings/lib/keybindings-api";
 import { DEFAULT_KEYBINDINGS_FILE, type KeybindingsFile } from "@/features/keybindings/lib/types";
-import type { TipsState } from "@/features/tips/lib/tips-api";
+import { tipsHandlers } from "../fixtures/settings";
 import type { Scenario } from "../types";
 
 let written: KeybindingsFile | null = null;
-let tips: TipsState = { version: 1, cohort: "fresh", seen: [] };
 
 export const freshInstall: Scenario = {
   name: "fresh-install",
@@ -25,14 +24,12 @@ export const freshInstall: Scenario = {
       written = file as KeybindingsFile;
       return written;
     },
-    tips_load: (): TipsState => tips,
-    tips_mark_seen: ({ ids }): TipsState => {
-      tips = { ...tips, seen: [...new Set([...tips.seen, ...(ids as string[])])] };
-      return tips;
-    },
-    tips_reset: ({ keep }): TipsState => {
-      tips = { ...tips, cohort: "fresh", seen: tips.seen.filter((id) => keep.includes(id)) };
-      return tips;
-    },
+    ...tipsHandlers({
+      cohort: "fresh",
+      seen: [],
+      checklist: [],
+      checklistDismissed: false,
+      activeDays: [],
+    }),
   },
 };

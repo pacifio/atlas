@@ -1,3 +1,4 @@
+import { useTipOnMount } from "@/features/tips/lib/use-tip-on-mount";
 import { useEffect, useMemo } from "react";
 import { Hash, Loader2, Lock, MessageCircle, MessagesSquare, Plus, Users, X } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -32,6 +33,7 @@ import type { ChatConversation, OrgMemberProfile } from "../types";
  * conversation opened in one is the one the other shows.
  */
 export function CommsPanel({ split = false }: { split?: boolean } = {}) {
+  useTipOnMount("team-chat");
   const conversations = useCommsStore.use.conversations();
   const reads = useCommsStore.use.reads();
   const memberList = useCommsStore.use.members();

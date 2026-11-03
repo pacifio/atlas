@@ -129,7 +129,7 @@ function TipCard({ tip, step, anchor }: { tip: TipDef; step: number; anchor: HTM
       // Escape and a click outside close it too, and count as seen: a tip
       // that came back after being waved away would be nagging.
       onOpenChange={(open) => {
-        if (!open) void finish();
+        if (!open) void finish("dismissed");
       }}
     >
       <PopoverContent
@@ -155,7 +155,7 @@ function TipCard({ tip, step, anchor }: { tip: TipDef; step: number; anchor: HTM
                 Learn more
               </Button>
             )}
-            <Button size="sm" onClick={() => (last ? void finish() : nextStep())}>
+            <Button size="sm" onClick={() => (last ? void finish("done") : nextStep())}>
               {last ? "Done" : "Next"}
             </Button>
           </div>

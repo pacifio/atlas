@@ -143,8 +143,45 @@ export interface SettingsResponses {
   keybindings_open: Unit;
   menu_set_accelerators: Unit;
   tips_load: TipsState;
+  tips_shown: Unit;
   tips_mark_seen: TipsState;
   tips_reset: TipsState;
+  tips_checklist_done: TipsState;
+  tips_checklist_dismiss: TipsState;
+  first_run_complete: Unit;
+}
+
+type TipsResponses = Pick<
+  SettingsResponses,
+  | "tips_load"
+  | "tips_shown"
+  | "tips_mark_seen"
+  | "tips_reset"
+  | "tips_checklist_done"
+  | "tips_checklist_dismiss"
+  | "first_run_complete"
+>;
+
+/** `tips.json`, kept in memory until the page reloads: what Rust's
+ *  `commands/tips.rs` does, minus the telemetry. */
+export function tipsHandlers(initial: Omit<TipsState, "version">): TypedHandlers<TipsResponses> {
+  let tips: TipsState = { version: 1, ...initial };
+  const once = (list: string[], item: string) => (list.includes(item) ? list : [...list, item]);
+  return {
+    tips_load: () => tips,
+    tips_shown: () => null,
+    tips_mark_seen: ({ id }) => (tips = { ...tips, seen: once(tips.seen, id) }),
+    tips_reset: ({ keep }) =>
+      (tips = {
+        ...tips,
+        cohort: "fresh",
+        checklistDismissed: false,
+        seen: tips.seen.filter((id) => (keep as string[]).includes(id)),
+      }),
+    tips_checklist_done: ({ item }) => (tips = { ...tips, checklist: once(tips.checklist, item) }),
+    tips_checklist_dismiss: () => (tips = { ...tips, checklistDismissed: true }),
+    first_run_complete: () => null,
+  };
 }
 
 export const settingsHandlers: TypedHandlers<SettingsResponses> = {
@@ -161,11 +198,16 @@ export const settingsHandlers: TypedHandlers<SettingsResponses> = {
     (file as KeybindingsFile) ?? DEFAULT_KEYBINDINGS_FILE,
   keybindings_open: () => null,
   menu_set_accelerators: () => null,
-  // Someone who upgraded: moment tips only, so the populated scenarios stay
-  // quiet. `?scenario=fresh-install` gets every tip.
-  tips_load: (): TipsState => ({ version: 1, cohort: "upgrade", seen: [] }),
-  tips_mark_seen: ({ ids }): TipsState => ({ version: 1, cohort: "upgrade", seen: ids }),
-  tips_reset: ({ keep }): TipsState => ({ version: 1, cohort: "fresh", seen: keep }),
+  // Someone who upgraded, with projects: moment tips only and no Get
+  // started, so the populated scenarios stay quiet. `?scenario=fresh-install`
+  // gets everything.
+  ...tipsHandlers({
+    cohort: "upgrade",
+    seen: [],
+    checklist: [],
+    checklistDismissed: false,
+    activeDays: [],
+  }),
 
   models_pricing_get: (): Record<string, ModelPrice> => PRICING,
   models_pricing_refresh: () => null,

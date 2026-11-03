@@ -10,6 +10,7 @@
 //     instead of drawing it twice — Bring it back returns it;
 //   - Full screen sends it to the full page, and the same.
 
+import { useTipOnMount } from "@/features/tips/lib/use-tip-on-mount";
 import { useEffect, useRef } from "react";
 import { Maximize2, MessageSquare, Minus, PictureInPicture2, Plus, X } from "lucide-react";
 
@@ -26,6 +27,7 @@ import { askBusy, askTitle, askWaiting, useOrgAgentStore } from "../stores/org-a
 import { OrgAgentThread } from "./org-agent-thread";
 
 export function OrgAgentSidePanel() {
+  useTipOnMount("ask-atlas");
   const activeId = useOrgAgentStore.use.activeId();
   const floatingId = useOrgAgentStore.use.floatingId();
   const pageId = useOrgAgentStore.use.pageId();

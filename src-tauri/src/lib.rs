@@ -406,6 +406,7 @@ pub fn run() {
                 app.state::<commands::capture::CaptureState>()
                     .install_notifier(app.handle().clone());
                 commands::security_scan::attach(app.handle().clone());
+                commands::tips::attach(app.handle().clone());
 
                 let core = app.state::<commands::auth::AuthState>().core();
                 app.state::<commands::capture::CaptureState>()
@@ -1012,6 +1013,10 @@ pub fn run() {
             commands::tips::tips_load,
             commands::tips::tips_mark_seen,
             commands::tips::tips_reset,
+            commands::tips::tips_shown,
+            commands::tips::tips_checklist_done,
+            commands::tips::tips_checklist_dismiss,
+            commands::tips::first_run_complete,
             commands::memory_graph::memory_embed_status,
             commands::memory_graph::memory_embed_download,
             commands::memory_graph::memory_index_build,
