@@ -377,7 +377,13 @@ async fn build_project_index(
                 Duration::from_millis(150),
                 None,
                 move |result: notify_debouncer_full::DebounceEventResult| match result {
-                    Ok(mut events) => {
+                    Ok(events) => {
+                        // Reads first (`fs_events`): the ignore check below
+                        // opens `.gitignore`, which on Linux is an event here.
+                        let mut events = crate::fs_events::changes(events);
+                        if events.is_empty() {
+                            return;
+                        }
                         // Event paths as the project was opened, not as the OS
                         // resolved them.
                         if let Some(canonical) = &canonical_for_watch {
