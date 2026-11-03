@@ -20,6 +20,12 @@
 //! `libc` gates match the running platform must be present on disk and not
 //! inert. Nothing here names `@openai/codex`.
 //!
+//! The `libc` gate is only as good as the lockfile: npm writes it from
+//! 11.11.0 (arborist 9.4.0) on, and before that it is absent on every entry,
+//! which leaves the gate open and makes the wrong-libc twin of a package
+//! (`…-linux-x64-musl` beside `…-linux-x64`) look like a failed download.
+//! The managed Node (`node.rs`, `NODE_VERSION`) pins an npm past that.
+//!
 //! The hidden lockfile is written *after* every package is extracted
 //! (`reify.js`: `_reifyPackages` → `_saveIdealTree` → hidden lockfile), so its
 //! absence beside an existing `node_modules` is the signature of an install
