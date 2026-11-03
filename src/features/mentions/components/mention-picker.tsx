@@ -146,7 +146,7 @@ export const MentionPicker = forwardRef<MentionPickerHandle, MentionPickerProps>
           projectPath,
           tabId,
         }),
-      [scope, query, results, recentFiles, projectPath, tabId, attached],
+      [scope, pastSession, pastSessions, query, results, recentFiles, projectPath, tabId, attached],
     );
 
     // Compute the navigable rows (skip headers). `active` is an index into
