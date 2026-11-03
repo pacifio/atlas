@@ -3,8 +3,11 @@ import type { TipsState } from "../lib/tips-api";
 
 const api = vi.hoisted(() => ({
   loadTips: vi.fn<() => Promise<TipsState>>(),
-  markTipsSeen: vi.fn<(ids: string[]) => Promise<TipsState>>(),
+  markTipSeen: vi.fn<(id: string, outcome: string) => Promise<TipsState>>(),
   resetTips: vi.fn<(keep: string[]) => Promise<TipsState>>(),
+  reportTipShown: vi.fn(async () => {}),
+  completeChecklistItem: vi.fn<(item: string) => Promise<TipsState>>(),
+  dismissGetStarted: vi.fn<() => Promise<TipsState>>(),
 }));
 vi.mock("../lib/tips-api", () => api);
 
@@ -15,13 +18,17 @@ const state = (over: Partial<TipsState> = {}): TipsState => ({
   version: 1,
   cohort: "fresh",
   seen: [],
+  checklist: [],
+  checklistDismissed: false,
+  activeDays: [],
   ...over,
 });
 
 beforeEach(async () => {
   vi.clearAllMocks();
   api.loadTips.mockResolvedValue(state());
-  api.markTipsSeen.mockImplementation(async (ids) => state({ seen: ids }));
+  api.markTipSeen.mockImplementation(async (id) => state({ seen: [id] }));
+  api.completeChecklistItem.mockImplementation(async (item) => state({ checklist: [item] }));
   api.resetTips.mockImplementation(async (keep) => state({ seen: keep }));
   useTipsStore.setState(useTipsStore.getInitialState());
   await actions().load();
@@ -53,7 +60,7 @@ describe("tips store", () => {
     await actions().finish();
     expect(useTipsStore.getState().active).toBeNull();
     expect(useTipsStore.getState().seen).toContain("composer");
-    expect(api.markTipsSeen).toHaveBeenCalledWith(["composer"]);
+    expect(api.markTipSeen).toHaveBeenCalledWith("composer", "dismissed");
   });
 
   it("puts a tip back, unseen and without spending the gap, when its anchor goes away", () => {
@@ -65,7 +72,7 @@ describe("tips store", () => {
     expect(s.queue).toEqual(["composer"]);
     expect(s.lastShownAt).toBeNull();
     expect(s.seen).not.toContain("composer");
-    expect(api.markTipsSeen).not.toHaveBeenCalled();
+    expect(api.markTipSeen).not.toHaveBeenCalled();
   });
 
   it("keeps a tip asked for by name asked-for, not queued, when its anchor goes away", () => {
@@ -77,6 +84,35 @@ describe("tips store", () => {
     expect(s.queue).toEqual([]);
   });
 
+  it("withdraws a tip that is no longer true, unseen, wherever it waits", () => {
+    actions().request("sign-in");
+    actions().withdraw("sign-in");
+    expect(useTipsStore.getState().queue).toEqual([]);
+
+    actions().request("capture");
+    actions().start("capture", 5_000);
+    actions().withdraw("capture");
+    const s = useTipsStore.getState();
+    expect(s.active).toBeNull();
+    expect(s.lastShownAt).toBeNull();
+    expect(api.markTipSeen).not.toHaveBeenCalled();
+  });
+
+  it("skips Get started only for an upgrader who already had a project", async () => {
+    const decide = async (over: Partial<TipsState>, hasProject: boolean) => {
+      useTipsStore.setState(useTipsStore.getInitialState());
+      api.loadTips.mockResolvedValueOnce(state(over));
+      await actions().load();
+      actions().decideGetStarted(hasProject);
+      actions().decideGetStarted(!hasProject); // decided once
+      return useTipsStore.getState().getStartedSkipped;
+    };
+    expect(await decide({ cohort: "upgrade" }, true)).toBe(true);
+    expect(await decide({ cohort: "upgrade" }, false)).toBe(false);
+    expect(await decide({ cohort: "upgrade", checklist: ["add-project"] }, true)).toBe(false);
+    expect(await decide({ cohort: "fresh" }, true)).toBe(false);
+  });
+
   it("clears a tip asked for by name once it starts", () => {
     actions().showByName("composer");
     expect(useTipsStore.getState().forced).toBe("composer");
@@ -85,10 +121,26 @@ describe("tips store", () => {
   });
 
   it("replays by adopting what Rust kept", async () => {
-    actions().applyRemote(state({ cohort: "upgrade", seen: ["composer"] }));
+    actions().applyRemote(state({ cohort: "upgrade", seen: ["composer", "sign-in"] }));
+    api.resetTips.mockResolvedValueOnce(state({ seen: ["sign-in"] }));
     await actions().replayAll();
-    expect(api.resetTips).toHaveBeenCalledWith([]);
-    expect(useTipsStore.getState().seen).toEqual([]);
+    // The sign-in tip and the star prompt are asked once, ever.
+    expect(api.resetTips).toHaveBeenCalledWith(["sign-in", "star-github"]);
+    expect(useTipsStore.getState().seen).toEqual(["sign-in"]);
     expect(useTipsStore.getState().cohort).toBe("fresh");
+  });
+
+  it("records a tip finished from its own button as done", async () => {
+    actions().request("composer");
+    actions().start("composer", 1_000);
+    await actions().finish("done");
+    expect(api.markTipSeen).toHaveBeenCalledWith("composer", "done");
+  });
+
+  it("completes a Get started item once", async () => {
+    await actions().completeItem("add-project");
+    await actions().completeItem("add-project");
+    expect(api.completeChecklistItem).toHaveBeenCalledTimes(1);
+    expect(useTipsStore.getState().checklist).toEqual(["add-project"]);
   });
 });

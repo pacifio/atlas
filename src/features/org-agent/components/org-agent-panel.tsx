@@ -11,6 +11,7 @@
 // right, the thread scrolling under it into the coding chat's progressive blur
 // (`transcript.tsx`).
 
+import { useTipOnMount } from "@/features/tips/lib/use-tip-on-mount";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
@@ -61,6 +62,7 @@ const VIEWS = [
 const HISTORY_WIDTH = 244;
 
 export function OrgAgentPanel() {
+  useTipOnMount("ask-atlas");
   const asks = useOrgAgentStore.use.asks();
   const pageId = useOrgAgentStore.use.pageId();
   const pageView = useOrgAgentStore.use.pageView();

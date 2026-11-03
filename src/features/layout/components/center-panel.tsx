@@ -1127,7 +1127,15 @@ function SurfaceAdd({ groupId }: { groupId: string }) {
     <DropdownMenu open={open} onOpenChange={setOpen}>
       <HintItem label={label}>
         <DropdownMenuTrigger
-          render={<IconButton icon={Plus} label="Open a surface" size="sm" iconSize="md" />}
+          render={
+            <IconButton
+              icon={Plus}
+              label="Open a surface"
+              size="sm"
+              iconSize="md"
+              data-tip-anchor="surfaces"
+            />
+          }
         />
       </HintItem>
       {/* Opens under the `+` with their left edges in line —

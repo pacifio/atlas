@@ -1,3 +1,4 @@
+import { noteSessionSent } from "@/features/tips/lib/session-sent";
 import {
   lazy,
   Suspense,
@@ -1342,6 +1343,7 @@ export const ChatPanel = memo(function ChatPanel({ tabId }: ChatPanelProps) {
     opts?: { recorded?: boolean; clientMessageId?: string },
   ) => {
     const actualContent = content;
+    noteSessionSent(projectPathForTab(tabId));
 
     // The mount effect kicks off the bind in parallel, but on a fresh
     // project the agent spawn + first new_session roundtrip can take a

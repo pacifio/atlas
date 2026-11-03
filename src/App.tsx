@@ -14,6 +14,7 @@ import {
 } from "@/features/keybindings/stores/keybindings-store";
 import { FirstRunDialog } from "@/features/app/components/first-run-dialog";
 import { TipHost } from "@/features/tips/components/tip-host";
+import { TipTriggers } from "@/features/tips/components/tip-triggers";
 import { useNativeMenu } from "@/features/menu/lib/use-native-menu";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { OPEN_SURFACE_MENU_EVENT } from "@/features/layout/lib/surfaces";
@@ -1502,6 +1503,7 @@ export function App() {
       <UpdateAvailableModal />
       <FirstRunDialog />
       <TipHost />
+      <TipTriggers />
       <ConnectDialog />
       <LoadingOrganisationOverlay />
       <StopAgentsDialog />

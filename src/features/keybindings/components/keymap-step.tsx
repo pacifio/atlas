@@ -20,9 +20,15 @@ import { PresetIcon } from "./preset-icon";
  * afterwards — and the card says where to change it, because a choice made
  * before the user has seen the app is one they will want to revisit.
  */
-export function KeymapStep() {
+/** What the user answered: a preset, Atlas's own keys, or "later". */
+export type KeymapAnswer = PresetId | "atlas" | "later";
+
+export function KeymapStep({ onChosen }: { onChosen?: (answer: KeymapAnswer) => void }) {
   const { completeOnboarding } = useKeybindingsStore.use.actions();
-  const choose = (preset: PresetId | null) => void completeOnboarding(preset);
+  const choose = (preset: PresetId | null, answer: KeymapAnswer = preset ?? "atlas") => {
+    onChosen?.(answer);
+    void completeOnboarding(preset);
+  };
 
   return (
     <>
@@ -58,7 +64,7 @@ export function KeymapStep() {
         <span className="text-2xs text-muted-foreground">
           Change this any time in Settings → Keybindings.
         </span>
-        <Button variant="ghost" size="sm" onClick={() => choose(null)}>
+        <Button variant="ghost" size="sm" onClick={() => choose(null, "later")}>
           Decide later
         </Button>
       </DialogFooter>
