@@ -61,9 +61,25 @@ env:
   SCCACHE_GHA_RW_MODE: ${{ github.event_name == 'workflow_dispatch' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && 'READ_WRITE' || 'READ_ONLY' }}
 
 jobs:
+  # One build per architecture, each on its own runner (never emulated).
+  #
+  # Ubuntu 22.04, not `ubuntu-latest`: the runner's glibc is the oldest glibc
+  # the binary can load on, and `ubuntu-latest` moved it from 2.35 to 2.39
+  # without a commit, dropping Debian 12 and RHEL 9 the day it did. 22.04 is
+  # the oldest image that has WebKitGTK 4.1, which Tauri 2 requires, so 2.35
+  # is the floor `Verify` holds the binary to. Move it deliberately, with
+  # docs/reference/linux-support.md, when 22.04 runners are retired.
   build-linux:
-    name: Build Linux Packages
-    runs-on: ubuntu-latest
+    name: Build Linux packages (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
 
     steps:
       - name: Checkout repository
@@ -77,29 +93,7 @@ jobs:
           INPUT_VERSION: ${{ github.event.inputs.version }}
           INPUT_TAG: ${{ github.event.inputs.tag }}
         run: |
-          if [ -n "$INPUT_VERSION" ]; then
-            RAW_VER="$INPUT_VERSION"
-          elif [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
-            RAW_VER="${GITHUB_REF_NAME}"
-          else
-            RAW_VER=$(node -p 'JSON.parse(require("fs").readFileSync("package.json")).version')
-          fi
-          # Strip tag prefixes to get pure semver
-          VERSION="${RAW_VER#alpha-}"
-          VERSION="${VERSION#exp-}"
-          VERSION="${VERSION#v}"
-
-          if [ -n "$INPUT_TAG" ]; then
-            TAG="$INPUT_TAG"
-          elif [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
-            TAG="${GITHUB_REF_NAME}"
-          else
-            TAG="alpha-${VERSION}"
-          fi
-
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "Building Atlas ${VERSION} for tag ${TAG}"
+          ./scripts/linux/release-meta.sh | tee -a "$GITHUB_OUTPUT"
 
       - name: Install system build dependencies
         run: |
@@ -215,9 +209,12 @@ jobs:
           RELEASE_TAG: ${{ steps.meta.outputs.tag }}
           VERSION: ${{ steps.meta.outputs.version }}
         run: |
-          ./scripts/package-linux.sh x86_64
+          ./scripts/package-linux.sh "${{ matrix.arch }}"
 
+      # Arch Linux has no official aarch64 image; the AUR recipe the publish
+      # job writes covers both arches, and this proves it on x86-64.
       - name: Build Arch Linux package (.pkg.tar.zst) via Docker
+        if: matrix.arch == 'x86_64'
         run: |
           docker run --rm --ipc=host -v "${PWD}:/workspace" -w /workspace archlinux:latest bash -c '
             set -euo pipefail
@@ -243,9 +240,9 @@ jobs:
           # splitting out an empty debug package; drop one if it ever does, and
           # keep the plain `cp` so a missing package still fails the job.
           rm -f dist/release-linux/*-debug-*.pkg.tar.zst
-          cp dist/release-linux/*.pkg.tar.zst dist/artifacts/
-          # Copy AUR PKGBUILD for convenience
-          cp dist/release-linux/aur-tryatlas-bin/PKGBUILD dist/artifacts/PKGBUILD-tryatlas-bin
+          if [ "${{ matrix.arch }}" = x86_64 ]; then
+            cp dist/release-linux/*.pkg.tar.zst dist/artifacts/
+          fi
           # The conflict-free Debian and RPM packages from package-linux.sh.
           # Plain `cp`, so a package that was not built fails the job here
           # instead of shipping a release without it.
@@ -274,15 +271,66 @@ jobs:
       # documents each check.
       - name: Verify the release
         env:
-          GLIBC_FLOOR: '2.39'
+          GLIBC_FLOOR: '2.35'
+          EXPECT_ARCH: ${{ matrix.arch }}
           VERIFY_GUI: '1'
           VERIFY_INSTALL: '1'
           VERIFY_LINT: report
         run: |
           ./scripts/verify-linux-release.sh "${{ steps.find_bin.outputs.bin_path }}" dist/artifacts
 
-      - name: Publish GitHub Release
+      # SHA256SUMS.txt is per job and is written again over both arches by
+      # the publish job, so it is not handed on.
+      - name: Hand the packages to the publish job
         if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: |
+            dist/artifacts/*
+            !dist/artifacts/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  # One release from both architectures. It never runs cargo, which is what
+  # keeps the workflow-wide RUSTC_WRAPPER above safe.
+  publish:
+    name: Publish GitHub Release
+    needs: build-linux
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Extract release version
+        id: meta
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          ./scripts/linux/release-meta.sh | tee -a "$GITHUB_OUTPUT"
+
+      - name: Collect both architectures
+        uses: actions/download-artifact@v4
+        with:
+          pattern: linux-*
+          path: dist/artifacts
+          merge-multiple: true
+
+      - name: Write the multi-arch AUR PKGBUILD and the checksums
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          RELEASE_TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          ./scripts/linux/aur-pkgbuild.sh dist/artifacts dist/aur/PKGBUILD
+          cp dist/aur/PKGBUILD dist/artifacts/PKGBUILD-tryatlas-bin
+          cd dist/artifacts
+          find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -exec sha256sum {} + | sort -k2 > SHA256SUMS.txt
+          ls -lh
+          cat SHA256SUMS.txt
+
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.tag }}

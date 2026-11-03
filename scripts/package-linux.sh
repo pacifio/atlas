@@ -5,7 +5,8 @@
 # Generates:
 #   1. Standalone portable tarball (atlas-<version>-linux-<arch>.tar.gz)
 #      with binary, desktop integration, icons, licenses, and installer scripts.
-#   2. AUR `atlas-bin` PKGBUILD with calculated checksums.
+#   2. AUR `tryatlas-bin` PKGBUILD with calculated checksums.
+#   3. Conflict-free deb and rpm (`tryatlas`, installing `atl`).
 #
 # Usage:
 #   scripts/package-linux.sh [x86_64|aarch64]
@@ -186,60 +187,15 @@ echo "Created standalone tarball: ${TARBALL_PATH}"
 TARBALL_SHA256="$(sha256sum "${TARBALL_PATH}" | awk '{print $1}')"
 echo "Tarball SHA256: ${TARBALL_SHA256}"
 
-# 7. Generate AUR PKGBUILD
+# 7. Generate AUR PKGBUILD (this arch only; the release's publish job writes
+#    the multi-arch one that ships)
 AUR_DIR="${OUTPUT_DIR}/aur-tryatlas-bin"
-mkdir -p "${AUR_DIR}"
-REPO="${GITHUB_REPOSITORY:-pacifio/atlas}"
-
-cat <<EOF > "${AUR_DIR}/PKGBUILD"
-# Maintainer: Atlas Team <contact@tryatlas.cc>
-pkgname=tryatlas-bin
-_pkgname=atlas
-pkgver=${VERSION}
-pkgrel=1
-pkgdesc="Atlas — agent-first ideation and planning tool"
-arch=('${ARCH}')
-url="https://tryatlas.cc"
-license=('Apache-2.0')
-depends=(
-    'webkit2gtk-4.1'
-    'gtk3'
-    'libayatana-appindicator'
-    'bubblewrap'
-    'openssl'
-)
-optdepends=(
-    'xdg-terminal-exec: Open folders in default terminal'
-    'wl-clipboard: Wayland clipboard support'
-    'xclip: X11 clipboard support'
-    'xsel: Alternative X11 clipboard support'
-)
-provides=("tryatlas=\${pkgver}" "atl=\${pkgver}")
-options=('!strip' '!debug')
-source_${ARCH}=("atlas-\${pkgver}-linux-${ARCH}.tar.gz::https://github.com/${REPO}/releases/download/${RELEASE_TAG}/atlas-\${pkgver}-linux-${ARCH}.tar.gz")
-sha256sums_${ARCH}=('${TARBALL_SHA256}')
-
-package() {
-    cd "\${srcdir}/atlas-\${pkgver}"
-    install -Dm755 bin/atlas "\${pkgdir}/usr/bin/atl"
-    ln -sf atl "\${pkgdir}/usr/bin/tryatlas"
-    install -Dm644 share/applications/dev.atlas.ide.desktop "\${pkgdir}/usr/share/applications/dev.atlas.ide.desktop"
-    for size in 32 64 128 256 512; do
-        if [ -f "share/icons/hicolor/\${size}x\${size}/apps/atlas.png" ]; then
-            install -Dm644 "share/icons/hicolor/\${size}x\${size}/apps/atlas.png" \\
-                "\${pkgdir}/usr/share/icons/hicolor/\${size}x\${size}/apps/atlas.png"
-        fi
-    done
-    install -d "\${pkgdir}/usr/share/licenses/\${pkgname}"
-    install -m644 share/licenses/atlas/* "\${pkgdir}/usr/share/licenses/\${pkgname}/"
-}
-EOF
+VERSION="${VERSION}" RELEASE_TAG="${RELEASE_TAG}" \
+  "${ROOT_DIR}/scripts/linux/aur-pkgbuild.sh" "${OUTPUT_DIR}" "${AUR_DIR}/PKGBUILD"
 
 # Copy tarball to AUR dir so makepkg can build offline/locally
 cp "${TARBALL_PATH}" "${AUR_DIR}/"
 
-
-echo "Created AUR PKGBUILD: ${AUR_DIR}/PKGBUILD"
 
 # 8. Generate conflict-free Debian package (tryatlas_<version>_<arch>.deb)
 echo "Building conflict-free Debian package (tryatlas_${VERSION}_${DEB_ARCH}.deb)..."

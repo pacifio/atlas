@@ -147,7 +147,11 @@ RPM="$(one "tryatlas-*.${EXPECT_ARCH}.rpm")"
 APPIMAGE="$(one "*.AppImage")"
 ARCHPKG="$(one "tryatlas-bin-*-${EXPECT_ARCH}.pkg.tar.zst")"
 
-for pair in "tarball:$TARBALL" "deb:$DEB" "rpm:$RPM" "AppImage:$APPIMAGE" "Arch package:$ARCHPKG"; do
+# Arch Linux has no official aarch64 image, so the Arch package is built and
+# required on x86-64 only.
+EXPECTED=("tarball:$TARBALL" "deb:$DEB" "rpm:$RPM" "AppImage:$APPIMAGE")
+[ "$EXPECT_ARCH" = "x86_64" ] && EXPECTED+=("Arch package:$ARCHPKG")
+for pair in "${EXPECTED[@]}"; do
   name="${pair%%:*}"
   path="${pair#*:}"
   if [ "$path" = "AMBIGUOUS" ]; then
