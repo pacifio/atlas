@@ -40,7 +40,7 @@ const FORBIDDEN_IMPORT = [
 ];
 
 const FORBIDDEN_CALL = [
-  { re: /\buse[A-Z]\w*Store\b/, why: "reads a Zustand store hook" },
+  { re: /\buse(?!SyncExternalStore\b)[A-Z]\w*Store\b/, why: "reads a Zustand store hook" },
   { re: /\.getState\s*\(/, why: "calls .getState()" },
   { re: /\binvoke\s*(?:<[^>]*>)?\s*\(/, why: "calls invoke()" },
 ];
@@ -98,6 +98,7 @@ describe("view purity contract", () => {
       violationsIn(`// useChatStore is read by the container\nexport function V() {}`),
     ).toEqual([]);
     expect(violationsIn(`import { Button } from "@/ui/button";`)).toEqual([]);
+    expect(violationsIn(`const v = useSyncExternalStore(sub, get);`)).toEqual([]);
   });
 
   it("no file under a views/ directory reads stores or IPC", () => {
