@@ -197,7 +197,7 @@ export function MemoryPolicyView() {
       {/* One toolbar: title, count and re-scan, then the filters. It used to
           be two stacked strips, a title row and then the filters under it;
           the order is unchanged, so focus still moves re-scan → filters. */}
-      <Toolbar className="gap-3">
+      <Toolbar className="h-auto min-h-10 flex-wrap gap-x-3 gap-y-1.5 py-1.5">
         <span className="label flex items-center gap-1.5">
           Preferences
           <CountPill count={policies.length} />
