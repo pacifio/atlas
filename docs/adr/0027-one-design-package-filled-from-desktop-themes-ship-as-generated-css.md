@@ -32,8 +32,9 @@ through IPC.
 
 ## Decision
 
-**One package, `@tryatlas/design`, in the `standards` repo, renamed `pacifio/design`
-and restructured as a library.** Its history becomes the system's history. The TanStack
+**One package, `@tryatlas/design`, in `tryatlas/design`: the `standards` repo's history
+moved to the `tryatlas` org and restructured as a library.** Its history becomes the
+system's history. The TanStack
 `/mock` app and `/ds` gallery are deleted; Storybook replaces them.
 
 **Desktop is the source of truth.** The package is filled by copying from desktop:
@@ -72,7 +73,7 @@ prefix goes. A test asserts the mapping has no collisions, including with the sh
 base tokens.
 
 **Distribution.** The package is installed from a git tag
-(`github:pacifio/design#v0.x.y`) until the `@tryatlas` npm scope is set up, then from npm.
+(`github:tryatlas/design#v0.x.y`) until the `@tryatlas` npm scope is set up, then from npm.
 Desktop pins an exact version so release builds are reproducible. Web and docs may use a
 range.
 
