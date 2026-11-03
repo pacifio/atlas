@@ -306,7 +306,7 @@ describe("applyModeOnResume: issue 317, resume after a restart", () => {
 
 // The saved pick is per agent TYPE, so it holds whichever tab picked last.
 // Preferring it over a tab's own pick let one tab silently override another's
-// when an agent restart rebinds the tabs (`respawnAndRebind` in chat-panel).
+// when an agent restart rebinds the tabs (`respawnAndRebind` in agent-rebind).
 describe("applyModeOnResume: two tabs on the same agent", () => {
   const CODEX_MODES: SessionModeInfo[] = [
     { id: "read-only", name: "Read Only" },

@@ -1,6 +1,6 @@
 // Re-applying the user's approval mode when a session is RESUMED.
 //
-// `session/new` already does this (see the bind effect in `chat-panel.tsx`):
+// `session/new` already does this (see the bind effect in `use-agent-bind.ts`):
 // it reads the explicit pick the store was seeded with, validates it against
 // what the agent advertises, and pushes it to the agent before the first turn
 // can run. Resume did not, and the gap produced two separate faults:

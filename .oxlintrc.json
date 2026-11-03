@@ -157,7 +157,7 @@
         "src/features/menu/components/menu-bar.tsx",
         "src/features/spaces/components/space-chrome.tsx",
         "src/features/comms/components/call-menu.tsx",
-        "src/features/capture/components/capture-popover.tsx"
+        "src/features/capture/components/views/connect-picker-view.tsx"
       ],
       "rules": {
         "shadcn/no-restyle": "off"

@@ -148,7 +148,7 @@ function aggregateTurnFiles(tools: Record<string, TurnFile>): TurnFile[] {
  * and the ⇧⇥ shortcut both mutate `claudePermissionMode` in the store, but
  * that's only the UI label — without this IPC the agent keeps running in
  * whatever mode it was started in, so "Bypass Permissions" still prompted.
- * No-op until the session is bound (the create-time setMode in chat-panel
+ * No-op until the session is bound (the create-time setMode in use-agent-bind
  * covers the not-yet-bound case).
  */
 function pushPermissionModeToAgent(

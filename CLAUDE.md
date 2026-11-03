@@ -193,7 +193,8 @@ Each of these is a multi-file edit where missing one compiles fine.
   `EXTRA_INPUTS` in `scripts/ci-affected.mjs` (`ci-affected.test.ts` checks).
 - **A tab/panel type** — first decide its placement (session, surface or destination;
   the test is in ADR-0024) and add it to `TAB_PLACEMENT`. Then `TAB_TYPES` in `src/lib/constants.ts`, plus the lazy import
-  and the render branch in `src/features/layout/components/center-panel.tsx`, and
+  and the render branch in `src/features/layout/components/tab-panels.tsx` (the tab registry;
+  `center-panel.tsx` only lays out the columns), and
   (if ⌘T should offer it) an entry in `SURFACES` in `src/features/layout/lib/surfaces.ts`. If it stays mounted across tab
   switches it also joins `PERSISTENT_TYPES`, guarded by
   `persistent-tab-render-contract.test.ts`.

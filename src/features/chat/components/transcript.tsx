@@ -18,22 +18,17 @@
 // scroll loop free of forced layout.
 //
 // The window grows UPWARD (chat is read newest-first), which the timeline never
-// has to handle — see the re-anchoring in `useLayoutEffect` below.
+// has to handle — see the re-anchoring in `use-transcript-window.ts`.
 //
 // Because rows are real DOM, nothing here predicts heights. The whole
 // predicted-height apparatus the virtualized version needed — a height
 // function, canvas text measurement, a dev drift assertion — is gone.
+//
+// This file is the CONTAINER: it reads the stores, projects the rows and owns
+// the window (`use-transcript-window.ts`) and the jumps
+// (`use-transcript-jumps.ts`). What it renders is props-only, under `./views/`.
 
-import {
-  forwardRef,
-  useCallback,
-  useEffect,
-  useImperativeHandle,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { forwardRef, useCallback, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { isBusyAgentStatus, type ChatMessage } from "@/types/agent";
 import {
   agentMeta,
@@ -42,8 +37,6 @@ import {
 } from "@/features/agents/lib/agent-meta";
 import { useIsTabVisible } from "@/features/layout/lib/use-tab-visible";
 import { projectRows, RowKind, type Projection, type Row } from "../lib/turn-rows";
-import { revealStep } from "../lib/jump-reveal";
-import { useTranscriptScroll } from "../lib/use-transcript-scroll";
 import { useThawed } from "../lib/use-thawed";
 import { useChatStore } from "../stores/chat-store";
 import { sessionCanRetry } from "../lib/retry-gate";
@@ -51,93 +44,10 @@ import { latestResponseRowId } from "../lib/message-footer";
 import { useRcRemoteDriver } from "../stores/rc-store";
 import { pinScope } from "../stores/chat-pins-store";
 import { projectPathForTab } from "../lib/tab-project";
-import { cn } from "@/lib/utils";
-import { CONTENT_COLUMN } from "../lib/row-metrics";
-import { isScrollHot } from "@/lib/scroll-hot";
-import { GradualBlur } from "@/components/gradual-blur";
-import { LoadingState, WAITING_LABEL } from "./loading-state";
-import { ResponseSelectionActions } from "./response-selection-actions";
-import {
-  UserRowView,
-  ProseRowView,
-  ThinkingRowView,
-  MarkerRowView,
-  MarkerGroupRowView,
-  SubagentRowView,
-  WorkHeaderRowView,
-  SeparatorRowView,
-  TurnFooterRowView,
-} from "./transcript-rows";
-import { InterruptionRowView } from "./interruption-row";
-import { InjectedRowView } from "./injected-row";
-import { TurnRail } from "./turn-rail";
-import {
-  deriveTurnRailItems,
-  stableTurnRailItems,
-  turnRailPreviewSource,
-  type TurnRailItem,
-} from "../lib/turn-rail";
-
-/**
- * How many rows are added each time the window grows.
- *
- * Sized in ROWS, not turns: a collapsed tool sequence counts as one row, and an
- * opened one counts as one row carrying its calls (26px each, laid out in the
- * thread rather than in a nested scroller). Forty rows stay ahead of the reader
- * without mounting the full history at once.
- * Bursting 80 at once was visibly worse even after the blank was fixed.
- */
-const WINDOW_CHUNK = 40;
-
-/** The window starts larger than it grows: the first paint must overfill the
- *  viewport or the reader lands on a short document and can't scroll. */
-const WINDOW_INITIAL = 80;
-
-/** Rows added per idle slice while filling the window in the background.
- *  Larger than the scroll-triggered chunk — idle time is the cheap time. */
-const IDLE_CHUNK = 120;
-
-/** Above this many rows the window is filled on demand rather than eagerly.
- *  Mounting tens of thousands of rows to avoid a rare prepend is a bad trade;
- *  below it, a whole thread is comparable to what the Session timeline already
- *  renders happily. */
-const MAX_IDLE_FILL = 4000;
-
-/** Writing this to `scrollTop` clamps to the real maximum without ever reading
- *  `scrollHeight` — reading it forces a synchronous layout, and the live-edge
- *  follow runs on every streaming frame, which made that read the one forced
- *  reflow in an otherwise read-free scroll path. */
-const SCROLL_BOTTOM = 1 << 30;
-
-/** How far the header's blur band ramps BELOW the bar. Content must clear this
- *  too, or the first message renders permanently blurred. */
-const TOP_BLUR_RAMP = 34;
-
-/** Without a header over it (the session's own view: its controls are in the
- *  title bar), only a short soft edge where rows scroll out under the bar. */
-const TOP_EDGE_RAMP = 16;
-
-/** Gap left above an anchored row, so it doesn't sit flush against the top. */
-const ANCHOR_GAP = 24;
-/** The ring a comment jump leaves on the row it landed on, and for how long.
- *  Same treatment as the Timeline's `landed` row. */
-// `ring-inset`: a ring is a box-shadow, drawn OUTSIDE the box by default. The
-// content column fills the transcript's width once the pane is narrower than
-// the reading measure (the overview rail open does it), and an outer ring then
-// sat past the scroller's edges — clipped on both sides, top and bottom only.
-const LANDED_CLASSES = ["ring-1", "ring-inset", "ring-[var(--atlas-border-strong)]", "rounded-lg"];
-const LANDED_MS = 2_000;
-
-/** Breathing room between the last row and the composer. Applied as content
- *  padding rather than a spacer element so it scrolls with the thread and the
- *  bottom fade still has live content to dissolve into. */
-const BOTTOM_GAP = 28;
-
-/** How long the sticky anchor keeps correcting after a load. Long enough for a
- *  screenful of markdown to finish parsing, short enough that it can never be
- *  mistaken for the transcript refusing to scroll. Any input releases it
- *  immediately regardless. */
-const STICKY_SETTLE_MS = 4000;
+import { useTranscriptWindow } from "../hooks/use-transcript-window";
+import { useTranscriptJumps } from "../hooks/use-transcript-jumps";
+import { RowView } from "./views/transcript-row-view";
+import { TranscriptView } from "./views/transcript-view";
 
 /** Shared with the composer — see `switchableAgentOf`. */
 const switchable = switchableAgentOf;
@@ -181,118 +91,6 @@ interface TranscriptProps {
   /** Rendered under the last row while no turn is running (the "Memory
    *  updated" card). */
   footer?: React.ReactNode;
-}
-
-/** Per (tab, session) scroll position, so switching away and back returns the
- *  reader where they were. Stores the window start too — a scrollTop means
- *  nothing without the window it was measured in. */
-interface Saved {
-  startIndex: number;
-  scrollTop: number;
-  atEnd: boolean;
-}
-const savedScroll = new Map<string, Saved>();
-/** Bound the cache: entries for closed tabs / dead sessions have no eviction
- *  hook here, so cap it FIFO — re-inserting on unmount refreshes recency
- *  (Map iteration order), keeping live tabs safe from eviction. */
-const SAVED_SCROLL_CAP = 100;
-function saveScroll(cacheKey: string, saved: Saved): void {
-  savedScroll.delete(cacheKey);
-  savedScroll.set(cacheKey, saved);
-  if (savedScroll.size > SAVED_SCROLL_CAP) {
-    const oldest = savedScroll.keys().next().value;
-    if (oldest !== undefined) savedScroll.delete(oldest);
-  }
-}
-
-/**
- * Shown while a turn is live but has produced nothing to render yet: the ACP
- * round-trip, the model's first tokens, the beat before the first tool call.
- * Without it the transcript sits completely unchanged after send, which reads
- * as the message having been dropped.
- *
- * A pixel-grid wavefront, a shimmering label and an elapsed timer rather than a
- * spinner — see `loading-state.tsx` and the shimmer's note in `globals.css`.
- * The timer matters here specifically: this is the one moment in a turn with no
- * other evidence that anything is happening, and "42.4s" answers the question
- * the reader is actually asking. It occupies a fixed-height row so its arrival
- * and departure don't jolt the thread it sits under.
- */
-function WorkingIndicator({
-  label = WAITING_LABEL,
-  onStallRestart,
-  onStallSwitch,
-  onStallCopyDiagnostics,
-}: {
-  label?: string;
-  onStallRestart?: () => void;
-  onStallSwitch?: () => void;
-  onStallCopyDiagnostics?: () => void;
-}) {
-  const stall =
-    onStallRestart || onStallSwitch ? (
-      <StallNotice
-        onRestart={onStallRestart}
-        onSwitch={onStallSwitch}
-        onCopyDiagnostics={onStallCopyDiagnostics}
-      />
-    ) : undefined;
-  return (
-    <div className={cn(CONTENT_COLUMN, "pt-2 pb-3")}>
-      <LoadingState label={label} stalledContent={stall} />
-    </div>
-  );
-}
-
-/**
- * The persistent way out of a start that has stalled. Replaces a one-shot
- * toast that said the same thing and then vanished, leaving the user with a
- * "Starting Codex" that never changed. A first run legitimately takes minutes
- * (Node download + `npm install`), so the copy says so; the two actions are
- * the only ones that actually help — killing the wedged connect, or leaving
- * the agent behind.
- */
-function StallNotice({
-  onRestart,
-  onSwitch,
-  onCopyDiagnostics,
-}: {
-  onRestart?: () => void;
-  onSwitch?: () => void;
-  onCopyDiagnostics?: () => void;
-}) {
-  return (
-    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 pl-[17px] text-xs leading-[16px] text-[var(--muted-foreground)]">
-      <span className="select-text">Still starting… this can take a few minutes on first run.</span>
-      {onRestart && (
-        <button
-          type="button"
-          onClick={onRestart}
-          className="cursor-pointer font-medium text-[var(--secondary-foreground)] underline-offset-2 hover:text-[var(--foreground)] hover:underline"
-        >
-          Restart agent
-        </button>
-      )}
-      {onSwitch && (
-        <button
-          type="button"
-          onClick={onSwitch}
-          className="cursor-pointer font-medium text-[var(--secondary-foreground)] underline-offset-2 hover:text-[var(--foreground)] hover:underline"
-        >
-          Switch agent
-        </button>
-      )}
-      {onCopyDiagnostics && (
-        <button
-          type="button"
-          onClick={onCopyDiagnostics}
-          className="cursor-pointer font-medium text-[var(--secondary-foreground)] underline-offset-2 hover:text-[var(--foreground)] hover:underline"
-        >
-          Copy diagnostics
-        </button>
-      )}
-    </div>
-  );
 }
 
 export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function Transcript(
@@ -467,30 +265,27 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
   const lastTurn = projection.turns[projection.turns.length - 1];
   const working = isStreaming && (!lastTurn || lastTurn.role !== "assistant");
 
-  // ── The window ───────────────────────────────────────────────────────
-  // Anchored by START INDEX, not by a count back from the end. A count would
-  // slide the window forward as the agent streams, dropping rows off the top
-  // and shifting the content under a reader who is scrolled up in history.
-  const [startIndex, setStartIndex] = useState(() => Math.max(0, rows.length - WINDOW_INITIAL));
+  const {
+    setStartIndex,
+    safeStart,
+    visible,
+    more,
+    onScroll,
+    pendingAnchorRef,
+    pendingHighlightRef,
+    lastSeenLen,
+    setNewCount,
+  } = useTranscriptWindow({
+    scrollRef,
+    contentRef,
+    rows,
+    live,
+    cacheKey,
+    topInset,
+    working,
+    onShowJumpChange,
+  });
 
-  // A projection that SHRINKS — "New chat" resetting the session in place, a
-  // project switch dropping history — leaves `startIndex`
-  // pointing into a thread that no longer exists. Every other writer only ever
-  // moves the start DOWN (growth, jump-to-message) or sets it to this floor, so
-  // a start above the floor is unreachable except by a shrink: that is the
-  // signal, and it is exact.
-  //
-  // Snapping back to a full window is the whole fix. Clamping to `rows.length
-  // - 1` (what this did before) turned the empty slice into a transcript
-  // showing exactly ONE row — nothing above it, nothing below the fold, so the
-  // jump-to-bottom pill stayed hidden too. That reads as "the thread stopped
-  // updating mid-turn", and it clears the moment anything remounts the
-  // component (switching project and back), which is what made it look like a
-  // stuck agent rather than a windowing bug.
-  const windowFloor = Math.max(0, rows.length - WINDOW_INITIAL);
-  const stale = startIndex > windowFloor;
-  const safeStart = stale ? windowFloor : startIndex;
-  const visible = useMemo(() => rows.slice(safeStart), [rows, safeStart]);
   // Retry belongs to the thread's LAST user message, which is a fact about the
   // session's history — not about which row happens to be last in the DOM (an
   // assistant turn projects to several rows, and the window may be truncated
@@ -503,527 +298,26 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
   }, [rows]);
   // Branch belongs to the latest settled response, for the same reason.
   const latestResponseId = useMemo(() => latestResponseRowId(rows), [rows]);
-  const canGrow = safeStart > 0;
 
-  // Fold the correction back into state. Rendering from `safeStart` alone
-  // would leave `startIndex` stale, and the idle fill keys off `startIndex` —
-  // it would spend its slices walking a value that no longer refers to
-  // anything, never reaching 0, so the window would stop filling.
-  useEffect(() => {
-    if (stale) setStartIndex(safeStart);
-  }, [stale, safeStart]);
-
-  const onGrow = useCallback(() => {
-    growPendingRef.current = true;
-    setStartIndex((i) => Math.max(0, i - WINDOW_CHUNK));
-  }, []);
-
-  // ── Sticky anchor: hold the reader's place while content settles ─────
-  //
-  // Loading a session mounts a screen of messages whose markdown is still
-  // being parsed. Each one swaps from its raw-text placeholder to formatted
-  // HTML at a slightly different height, and every swap above the viewport
-  // pushes everything below it — the thread visibly creeps while it settles.
-  // Priority parsing decides WHICH message formats first; this decides that it
-  // does not move the reader when it does.
-  //
-  // The anchor is a ROW, not a scroll offset: offsets are exactly what the
-  // reflow invalidates. Re-holding `offsetTop` (measured from the positioned
-  // ancestor, so independent of scroll) puts the row back where it was.
-  const stickyRef = useRef<{ rowId: string; offset: number } | null>(null);
-  const stickyUntil = useRef(0);
-  /** True between asking to grow and the re-anchor landing. */
-  const growPendingRef = useRef(false);
-
-  const onContentResize = useCallback(() => {
-    const sticky = stickyRef.current;
-    const el = scrollRef.current;
-    if (!sticky || !el) return;
-    // A prepend is in flight — its own re-anchor is authoritative and runs in
-    // a layout effect; two corrections in one frame fight each other.
-    if (growPendingRef.current) return;
-    if (performance.now() > stickyUntil.current) {
-      stickyRef.current = null;
-      return;
-    }
-    const node = el.querySelector<HTMLElement>(`[data-row-id="${CSS.escape(sticky.rowId)}"]`);
-    if (!node) return;
-    const target = Math.max(0, node.offsetTop - sticky.offset);
-    if (Math.abs(el.scrollTop - target) > 1) el.scrollTop = target;
-  }, []);
-
-  /**
-   * Row the reader is looking at when a grow starts, plus how far below the
-   * viewport top it sat. Restoring against THIS rather than a distance from
-   * the bottom is what stops the thread creeping upward while newly-prepended
-   * markdown resolves — see the note in `use-transcript-scroll.ts`.
-   */
-  const growAnchorRow = useRef<{ rowId: string; offset: number } | null>(null);
-
-  const captureGrowAnchor = useCallback(() => {
-    const el = scrollRef.current;
-    const content = contentRef.current;
-    if (!el || !content) return;
-    const top = el.scrollTop;
-    // Binary search the content's direct children for the first row whose top
-    // is at or below the viewport top — the row the reader's eye is anchored
-    // on. Children are in document order so `offsetTop` is monotonic. This
-    // runs on every idle-fill step; the old querySelectorAll walk visited
-    // every row above the viewport per step, which compounds to O(rows²/chunk)
-    // while filling a long thread.
-    const kids = content.children;
-    let lo = 0;
-    let hi = kids.length - 1;
-    let found: HTMLElement | null = null;
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1;
-      const node = kids[mid];
-      if (!(node instanceof HTMLElement)) break;
-      if (node.offsetTop - top >= 0) {
-        found = node;
-        hi = mid - 1;
-      } else {
-        // Row straddling the top edge — the fallback if nothing sits below.
-        if (!found) found = node;
-        lo = mid + 1;
-      }
-    }
-    growAnchorRow.current =
-      found && found.dataset.rowId !== undefined
-        ? { rowId: found.dataset.rowId, offset: found.offsetTop - top }
-        : null;
-  }, []);
-
-  const { more, onScroll, invalidate, atEndRef, growPending } = useTranscriptScroll({
-    scrollRef,
-    contentRef,
-    canGrow,
-    onGrow,
-    onBeforeGrow: captureGrowAnchor,
-    onContentResize,
-    visible: live,
-  });
-
-  // ── Fill the window during IDLE, not during scroll ───────────────────
-  //
-  // This is the difference between this list and the Session timeline, and it
-  // is why the timeline never flickers. The timeline only ever APPENDS, below
-  // the fold, where nothing the reader is looking at moves. A chat window
-  // grows at the top, so every growth PREPENDS — the document gets taller
-  // above the viewport and the scroll position has to be rebuilt to
-  // compensate. Doing that on the frame the reader is mid-flick is what
-  // produced the blanks: for one frame the rows exist but the scroll position
-  // still refers to the old geometry.
-  //
-  // So don't grow on scroll if we can avoid it. Expand the window in the gaps
-  // between frames instead, until the whole thread is mounted; by the time the
-  // reader scrolls up, the rows are already there and no prepend happens at
-  // all. `requestIdleCallback` yields to scrolling by construction, so this
-  // cannot compete with the gesture. The scroll-triggered growth stays as a
-  // fallback for a reader who outruns it.
-  useEffect(() => {
-    if (startIndex === 0) return;
-    // Very long threads keep the on-demand path: mounting tens of thousands of
-    // rows to save a rare prepend is a bad trade.
-    if (rows.length > MAX_IDLE_FILL) return;
-    // Hidden tab: don't fill. A chat stays mounted behind whichever tab is
-    // showing (kept laid out, see the chat wrapper in `center-panel.tsx`), so
-    // every chunk mounted here would cost DOM and layout in a panel nobody can
-    // see — and a never-visited tab that stays at its initial window is what
-    // keeps that wrapper cheap. The effect re-runs when the tab shows, so the
-    // fill resumes in idle slices and never lands on the switch frame.
-    if (!live) return;
-
-    const w = window as Window & {
-      requestIdleCallback?: (cb: () => void, o?: { timeout?: number }) => number;
-      cancelIdleCallback?: (h: number) => void;
-    };
-    let idle: number | null = null;
-    let timer: number | null = null;
-
-    const step = () => {
-      idle = null;
-      timer = null;
-      // Mid-gesture: back off. The rIC `timeout: 400` below silently broke
-      // this effect's founding promise ("requestIdleCallback yields to
-      // scrolling by construction") — it FORCES the step to run during a
-      // long fling, and mounting IDLE_CHUNK rows stalls the main thread
-      // 100-300ms while WKWebView's compositor keeps scrolling on its own
-      // thread into unpainted territory. That is the black-viewport blanking,
-      // no streaming required. Resume a beat after the gesture goes quiet.
-      if (isScrollHot()) {
-        timer = window.setTimeout(step, 180);
-        return;
-      }
-      // A scroll-triggered grow is already in flight — let it land first, or
-      // the two overwrite each other's anchor.
-      if (growPending.current) return;
-      growPending.current = true;
-      captureGrowAnchor();
-      growPendingRef.current = true;
-      setStartIndex((i) => Math.max(0, i - IDLE_CHUNK));
-    };
-
-    if (typeof w.requestIdleCallback === "function") {
-      idle = w.requestIdleCallback(step, { timeout: 400 });
-    } else {
-      timer = window.setTimeout(step, 100);
-    }
-    return () => {
-      if (idle !== null && typeof w.cancelIdleCallback === "function") {
-        w.cancelIdleCallback(idle);
-      }
-      if (timer !== null) window.clearTimeout(timer);
-    };
-    // Re-runs on each `startIndex` change, which is what drives the loop
-    // forward one chunk per idle slice until the window covers everything.
-  }, [startIndex, rows.length, growPending, captureGrowAnchor, live]);
-  // Re-anchor after growing upward: put the recorded row back under the same
-  // pixel. Layout effect, so the correction lands in the same frame and is
-  // never seen.
-  useLayoutEffect(() => {
-    const el = scrollRef.current;
-    const anchor = growAnchorRow.current;
-    if (!el || !anchor) return;
-    const node = el.querySelector<HTMLElement>(`[data-row-id="${CSS.escape(anchor.rowId)}"]`);
-    if (node) el.scrollTop = Math.max(0, node.offsetTop - anchor.offset);
-    growAnchorRow.current = null;
-    growPending.current = false;
-    growPendingRef.current = false;
-    invalidate();
-  }, [startIndex, growPending, invalidate]);
-
-  // ── Session switch: reset the window, land on the last user turn ─────
-  /** A row id to bring to the top of the viewport once it has rendered. */
-  const pendingAnchorRef = useRef<string | null>(null);
-  const settledFor = useRef<string | null>(null);
-  useLayoutEffect(() => {
-    // Frozen rows belong to the PREVIOUS session here. A hidden tab can change
-    // `cacheKey` under us (a rebind mints a new acpSessionId, "New chat"
-    // resets in place), and settling against the stale row set would both
-    // anchor to a row that is about to disappear and mark this session as
-    // already settled — so the real content would land unanchored. Wait for
-    // the catch-up; `live` is in the deps, so this runs the moment it does.
-    if (!live) return;
-    if (settledFor.current === cacheKey) return;
-    if (rows.length === 0) return;
-    settledFor.current = cacheKey;
-
-    const saved = savedScroll.get(cacheKey);
-    if (saved && !saved.atEnd) {
-      setStartIndex(saved.startIndex);
-      requestAnimationFrame(() => {
-        const el = scrollRef.current;
-        if (el) el.scrollTop = saved.scrollTop;
-      });
-      return;
-    }
-
-    // Reopening lands on the LAST USER TURN, not the absolute bottom: the
-    // reader needs to see what they asked with the answer starting below it.
-    // Widen the window if that turn falls outside it.
-    let lastUser = -1;
-    for (let i = rows.length - 1; i >= 0; i--) {
-      if (rows[i].kind === RowKind.User || rows[i].kind === RowKind.Injected) {
-        lastUser = i;
-        break;
-      }
-    }
-    const start = Math.max(0, Math.min(lastUser, rows.length - WINDOW_INITIAL));
-    setStartIndex(start);
-    pendingAnchorRef.current = lastUser >= 0 ? rows[lastUser].id : null;
-  }, [cacheKey, rows, live]);
-
-  // A jump from the comments panel names the row to light up once the turn is
-  // on screen — the row itself when it is in the DOM (a response, a prompt),
-  // else the "Worked" header hiding it. Applied imperatively: the ring is a
-  // two-second decoration, not row state, and routing it through the memoized
-  // row list would re-render every mounted row for it.
-  const pendingHighlightRef = useRef<string[] | null>(null);
-  const landedRef = useRef<{ node: HTMLElement; timer: ReturnType<typeof setTimeout> } | null>(
-    null,
-  );
-  const markLanded = useCallback((row: HTMLElement) => {
-    // The ring goes on the row's content column, not the full-width wrapper
-    // — the same footprint the Timeline's landed entry has.
-    const node = (row.firstElementChild as HTMLElement | null) ?? row;
-    const prev = landedRef.current;
-    if (prev) {
-      clearTimeout(prev.timer);
-      prev.node.classList.remove(...LANDED_CLASSES);
-    }
-    node.classList.add(...LANDED_CLASSES);
-    landedRef.current = {
-      node,
-      timer: setTimeout(() => {
-        node.classList.remove(...LANDED_CLASSES);
-        landedRef.current = null;
-      }, LANDED_MS),
-    };
-  }, []);
-  useEffect(() => () => void (landedRef.current && clearTimeout(landedRef.current.timer)), []);
-
-  useLayoutEffect(() => {
-    const id = pendingAnchorRef.current;
-    if (!id) return;
-    const el = scrollRef.current;
-    const node = el?.querySelector<HTMLElement>(`[data-row-id="${CSS.escape(id)}"]`);
-    if (!el || !node) return;
-    pendingAnchorRef.current = null;
-    let landed: HTMLElement | null = null;
-    const wanted = pendingHighlightRef.current;
-    if (wanted) {
-      pendingHighlightRef.current = null;
-      for (const rowId of wanted) {
-        landed = el.querySelector<HTMLElement>(`[data-row-id="${CSS.escape(rowId)}"]`);
-        if (landed) break;
-      }
-    }
-    const anchor = landed ?? node;
-    // Clear the floating header and its blur band, not just the scroller's
-    // edge: a gap of `ANCHOR_GAP` alone parked the landed row under the bar,
-    // blurred. With a header the gap is the content's own top padding, so a
-    // jump to the first row lands exactly where it rests.
-    const gap = topInset ? topInset + TOP_BLUR_RAMP + 12 : ANCHOR_GAP;
-    // `offsetTop` is measured from the positioned ancestor, so it is
-    // independent of the current scroll position.
-    el.scrollTop = Math.max(0, anchor.offsetTop - gap);
-    // Hold this row in place while the screenful of markdown around it
-    // finishes parsing. Without this the reader watches the thread creep as
-    // each block swaps from placeholder to formatted.
-    stickyRef.current = { rowId: anchor.dataset.rowId ?? id, offset: gap };
-    stickyUntil.current = performance.now() + STICKY_SETTLE_MS;
-    invalidate();
-    if (landed) markLanded(landed);
-  });
-
-  // Any deliberate input means the reader has taken over — stop correcting
-  // their position. Same release rule the scroll contract uses everywhere.
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const release = () => {
-      stickyRef.current = null;
-    };
-    el.addEventListener("wheel", release, { passive: true });
-    el.addEventListener("touchstart", release, { passive: true });
-    el.addEventListener("keydown", release);
-    el.addEventListener("mousedown", release);
-    return () => {
-      el.removeEventListener("wheel", release);
-      el.removeEventListener("touchstart", release);
-      el.removeEventListener("keydown", release);
-      el.removeEventListener("mousedown", release);
-    };
-  }, []);
-
-  // ── Follow the live edge ─────────────────────────────────────────────
-  // One effect. `atEndRef` is maintained by the scroll loop, so this reads no
-  // layout to decide, and appends land inside the window by construction
-  // (the window is anchored at its start, so it always extends to the end).
-  const [newCount, setNewCount] = useState(0);
-  const lastSeenLen = useRef(rows.length);
-  const tail = rows[rows.length - 1];
-  const tailLen =
-    tail && (tail.kind === RowKind.Prose || tail.kind === RowKind.Thinking) ? tail.text.length : 0;
-
-  // Layout effect, not effect: running after paint let each append paint one
-  // frame at the old position before the correction landed — a per-frame
-  // micro-jitter at the live edge. In the same frame, the correction is
-  // invisible.
-  useLayoutEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    if (atEndRef.current) {
-      el.scrollTop = SCROLL_BOTTOM;
-      lastSeenLen.current = rows.length;
-      setNewCount((c) => (c === 0 ? c : 0));
-    } else {
-      setNewCount(Math.max(0, rows.length - lastSeenLen.current));
-    }
-    // `working` is in the deps because the indicator mounting and unmounting
-    // changes the document height without changing the row count — a reader
-    // sitting at the live edge would otherwise drift off it.
-  }, [rows.length, tailLen, working, atEndRef]);
-
-  // Clear the unseen count once the reader catches up.
-  useEffect(() => {
-    if (!more) {
-      lastSeenLen.current = rows.length;
-      setNewCount((c) => (c === 0 ? c : 0));
-    }
-  }, [more, rows.length]);
-
-  useEffect(() => {
-    onShowJumpChange?.(more, more ? newCount : 0);
-  }, [more, newCount, onShowJumpChange]);
-
-  useEffect(() => () => onShowJumpChange?.(false), [onShowJumpChange]);
-
-  // Persist position on unmount so reopening returns the reader. A tab switch
-  // no longer unmounts (the panel stays mounted and laid out behind the active
-  // tab, keeping `scrollTop` in the DOM); this covers closing the tab or the
-  // project and coming back.
-  useEffect(() => {
-    return () => {
-      const el = scrollRef.current;
-      if (!el) return;
-      saveScroll(cacheKey, {
-        startIndex,
-        scrollTop: el.scrollTop,
-        atEnd: atEndRef.current,
-      });
-    };
-  }, [cacheKey, startIndex, atEndRef]);
-
-  // ── Imperative handle + external jumps ───────────────────────────────
-  const rowsRef = useRef(rows);
-  rowsRef.current = rows;
-
-  const scrollToBottom = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    el.scrollTop = SCROLL_BOTTOM;
-    lastSeenLen.current = rowsRef.current.length;
-    setNewCount(0);
-  }, []);
-
-  // A jump has two ways of arriving before it can be honoured, and both used
-  // to be silently dropped:
-  //
-  //  * The target row is ALREADY in the window. `setStartIndex` with an
-  //    unchanged value schedules no render, so the anchor layout effect never
-  //    ran and nothing moved. `jumpTick` exists purely to force that render.
-  //  * The caller dispatched in the same tick as a change to the message
-  //    list, so the projection
-  //    we hold is the OLD one and the index is not in it yet. The index is
-  //    parked in `pendingJumpRef` and retried when the projection changes.
-  const pendingJumpRef = useRef<number | null>(null);
-  const [, setJumpTick] = useState(0);
-  const projectionRef = useRef(projection);
-  projectionRef.current = projection;
-
-  const tryJump = useCallback(() => {
-    const messageIndex = pendingJumpRef.current;
-    if (messageIndex === null) return;
-    const proj = projectionRef.current;
-    const turn = proj.turns.find((t) => t.messageIndex === messageIndex);
-    const rowId = turn ? proj.rows[turn.rowStart]?.id : undefined;
-    if (!rowId) return;
-    const target = rowsRef.current.findIndex((r) => r.id === rowId);
-    if (target < 0) return;
-    pendingJumpRef.current = null;
-    // Widen the window first if the target is above it, then anchor once the
-    // row exists. Same settle-over-renders shape the timeline uses for
-    // jump-to-Checkpoint.
-    setStartIndex((i) => (target < i ? Math.max(0, target - 10) : i));
-    pendingAnchorRef.current = rowId;
-    setJumpTick((n) => n + 1);
-  }, []);
-
-  const scrollToMessage = useCallback(
-    (messageIndex: number) => {
-      pendingJumpRef.current = messageIndex;
-      tryJump();
-    },
-    [tryJump],
-  );
-
-  useEffect(() => {
-    if (pendingJumpRef.current !== null) tryJump();
-  }, [projection, tryJump]);
-
-  // A jump to a row the projection has folded away (a call inside a collapsed
-  // run, anything in a settled turn's "Worked" section) opens those folds
-  // first, one per projection, and only then scrolls. Landing on the fold's
-  // header instead left a comment's thread unopenable: the row's comment
-  // button is not mounted while its fold is shut.
-  const pendingRevealRef = useRef<{
-    index: number;
-    target: string;
-    workFoldId: string | undefined;
-    highlight: string[];
-    steps: number;
-  } | null>(null);
-  const continueReveal = useCallback(() => {
-    const pending = pendingRevealRef.current;
-    if (!pending) return;
-    const step = revealStep(projectionRef.current.rows, pending.target, pending.workFoldId);
-    // Two folds at most (the turn, then the run inside it); the bound only
-    // guards against a projection that never shows the row.
-    if (step.kind === "open" && pending.steps < 3) {
-      pending.steps += 1;
-      setExpandedTurns((prev) => new Set(prev).add(step.foldId));
-      return; // re-projects; the effect below calls back in
-    }
-    pendingRevealRef.current = null;
-    pendingHighlightRef.current = step.kind === "shown" ? [step.rowId] : pending.highlight;
-    scrollToMessage(pending.index);
-  }, [scrollToMessage]);
-  useEffect(() => {
-    if (pendingRevealRef.current) continueReveal();
-  }, [projection, continueReveal]);
-
-  // A jump that never resolved must not fire into the next session's thread.
-  useEffect(() => {
-    pendingJumpRef.current = null;
-    pendingRevealRef.current = null;
-  }, [cacheKey]);
-
-  // ── Turn rail ────────────────────────────────────────────────────────
-  // One tick per user turn. Held stable across streaming frames (see
-  // `stableTurnRailItems`), so the memo'd rail re-renders only when a prompt
-  // is sent or history loads. The preview reads the latest rows on demand,
-  // which keeps the reply's text out of the rail's props entirely.
-  const turnRailItemsRef = useRef<readonly TurnRailItem[] | null>(null);
-  const turnRailItems = useMemo(() => {
-    const next = stableTurnRailItems(turnRailItemsRef.current, deriveTurnRailItems(projection));
-    turnRailItemsRef.current = next;
-    return next;
-  }, [projection]);
-  const getTurnRailPreview = useCallback(
-    (item: TurnRailItem) => turnRailPreviewSource(rowsRef.current, item.id),
-    [],
-  );
-  const selectTurnRailItem = useCallback(
-    (item: TurnRailItem) => scrollToMessage(item.messageIndex),
-    [scrollToMessage],
-  );
+  const { scrollToBottom, scrollToMessage, turnRailItems, getTurnRailPreview, selectTurnRailItem } =
+    useTranscriptJumps({
+      tabId,
+      cacheKey,
+      projection,
+      rows,
+      scrollRef,
+      setStartIndex,
+      setExpandedTurns,
+      pendingAnchorRef,
+      pendingHighlightRef,
+      lastSeenLen,
+      setNewCount,
+    });
 
   useImperativeHandle(ref, () => ({ scrollToBottom, scrollToMessage }), [
     scrollToBottom,
     scrollToMessage,
   ]);
-
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const detail = (
-        e as CustomEvent<{ index: number; tabId?: string; highlightRowIds?: string[] }>
-      ).detail;
-      // A jump addressed to another chat is not ours (an unaddressed one, from
-      // an older sender, still is).
-      if (detail?.tabId && detail.tabId !== tabId) return;
-      if (typeof detail?.index !== "number") return;
-      const ids = detail.highlightRowIds;
-      if (ids?.length) {
-        // The first id is the row itself; a `wk:` one names its turn's fold.
-        pendingRevealRef.current = {
-          index: detail.index,
-          target: ids[0],
-          workFoldId: ids.find((id) => id.startsWith("wk:")),
-          highlight: ids,
-          steps: 0,
-        };
-        continueReveal();
-        return;
-      }
-      pendingRevealRef.current = null;
-      pendingHighlightRef.current = null;
-      scrollToMessage(detail.index);
-    };
-    window.addEventListener("atlas:chat-jump", handler);
-    return () => window.removeEventListener("atlas:chat-jump", handler);
-  }, [scrollToMessage, continueReveal, tabId]);
 
   // ── The rows, as one memoized element ────────────────────────────────
   //
@@ -1093,199 +387,28 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(function
   );
 
   return (
-    <div className="relative min-h-0 flex-1">
-      <div
-        ref={scrollRef}
-        onScroll={onScroll}
-        className="h-full overflow-y-auto hide-scrollbar [overflow-anchor:none]"
-      >
-        {/* Pad past the ENTIRE blur band, not just the bar. Padding by the
-              header height alone left the first message sitting inside the
-              band's ramp, permanently half-blurred. */}
-        <div
-          ref={contentRef}
-          style={{
-            paddingTop: topInset ? topInset + TOP_BLUR_RAMP + 12 : TOP_EDGE_RAMP + 4,
-            paddingBottom: BOTTOM_GAP,
-          }}
-        >
-          {rows.length === 0 && !isStreaming && (
-            <div className="flex h-full items-center justify-center text-xs text-[var(--muted-foreground)]">
-              No messages yet.
-            </div>
-          )}
-          {rowViews}
-          {!turnInProgress && footer}
-          {working && (
-            <WorkingIndicator
-              key={workingEpoch}
-              label={workingLabel}
-              onStallRestart={workingLabel ? onStallRestart : undefined}
-              onStallSwitch={workingLabel ? onStallSwitch : undefined}
-              onStallCopyDiagnostics={workingLabel ? onStallCopyDiagnostics : undefined}
-            />
-          )}
-        </div>
-      </div>
-
-      <ResponseSelectionActions viewportRef={scrollRef} tabId={tabId} enabled={live} />
-
-      {/* Hangs left into the gutter outside this box; takes no space. */}
-      <TurnRail
-        items={turnRailItems}
-        scrollRef={scrollRef}
-        contentRef={contentRef}
-        topInset={topInset}
-        windowStart={safeStart}
-        getPreview={getTurnRailPreview}
-        onSelect={selectTurnRailItem}
-      />
-
-      {/* Progressive blur behind the floating header. It starts at y=0 and
-            runs past the bar, so text scrolling underneath is blurred rather
-            than clipped by an opaque strip — which is only possible because the
-            header does not occupy a row of its own. Sized to the header inset
-            plus a short ramp below it. */}
-      <GradualBlur
-        position="top"
-        height={`${topInset ? topInset + TOP_BLUR_RAMP : TOP_EDGE_RAMP}px`}
-        strength={2.1}
-        layers={5}
-        // Mostly-opaque behind the bar itself, ramping to clear below it.
-        // Without a tint the header read as a transparent pane over live text;
-        // `color-mix` keeps it theme-correct rather than hardcoding black.
-        tint="color-mix(in srgb, var(--background) 90%, transparent)"
-        className="z-panel"
-      />
-
-      {/* Bottom stays a plain colour fade. The blur was tried here and the
-            edge above the composer reads better as a clean dissolve — and it
-            avoids a second stack of live backdrop filters over the scroller. */}
-      <div
-        aria-hidden
-        className={cn(
-          // `-bottom-[2px]` + 2px extra height: the fade OVERSHOOTS the
-          // container edge. At fractional UI scales the fade's bottom and the
-          // scroller's bottom can round to different device pixels, and during
-          // scroll repaints a 1-2px hairline of text flashed through the seam
-          // above the composer. The overshoot is solid bg-surface over the
-          // inter-panel gap — invisible, and it absorbs the rounding both ways.
-          "pointer-events-none absolute -bottom-[2px] left-0 right-0 z-panel h-[44px] transition-opacity duration-200",
-          more ? "opacity-100" : "opacity-0",
-        )}
-        style={{
-          // The last ~quarter is FULLY solid: a plain two-stop gradient only
-          // reaches 100% opacity at the very last pixel, and the ~97%-opaque
-          // band just above the composer let white text ghost through the
-          // seam (subtle but visible on AMOLED black).
-          background:
-            "linear-gradient(to bottom, transparent, var(--background) 72%, var(--background))",
-        }}
-      />
-    </div>
+    <TranscriptView
+      scrollRef={scrollRef}
+      contentRef={contentRef}
+      onScroll={onScroll}
+      tabId={tabId}
+      live={live}
+      topInset={topInset}
+      empty={rows.length === 0 && !isStreaming}
+      rowViews={rowViews}
+      turnInProgress={turnInProgress}
+      footer={footer}
+      working={working}
+      workingEpoch={workingEpoch}
+      workingLabel={workingLabel}
+      onStallRestart={onStallRestart}
+      onStallSwitch={onStallSwitch}
+      onStallCopyDiagnostics={onStallCopyDiagnostics}
+      more={more}
+      turnRailItems={turnRailItems}
+      windowStart={safeStart}
+      getTurnRailPreview={getTurnRailPreview}
+      onSelectTurnRailItem={selectTurnRailItem}
+    />
   );
 });
-
-/** Row dispatch. Kept out of the list body so the map stays flat. */
-function RowView({
-  row,
-  justSentMessageId,
-  tabId,
-  agentLabel,
-  priority,
-  onToggleExpand,
-  onExpandTurn,
-  canRetryRowId,
-  canBranchRowId,
-  canContinue,
-  pinScopeKey,
-  fileRoot,
-}: {
-  row: Row;
-  justSentMessageId?: string;
-  tabId: string;
-  agentLabel: string;
-  priority: number;
-  onToggleExpand: (id: string) => void;
-  onExpandTurn: (turnId: string) => void;
-  /** Id of the one row allowed to show a retry button, or `undefined` when no
-   *  retry is possible. An id compare here keeps `UserRowView`'s prop a plain
-   *  boolean. */
-  canRetryRowId?: string;
-  /** Id of the one prose row allowed to show "Branch from here" — the latest
-   *  settled response — or `undefined` when the session cannot fork now. */
-  canBranchRowId?: string;
-  /** Whether a message could be sent now (an interrupted turn's Continue). */
-  canContinue: boolean;
-  /** Pin scope for this thread — resolved once here rather than per row, so a
-   *  row never reads the chat store. */
-  pinScopeKey: string;
-  /** The session's project root, for file chips. Resolved once, like
-   *  `pinScopeKey`. */
-  fileRoot?: string;
-}) {
-  switch (row.kind) {
-    case RowKind.User:
-      return (
-        <UserRowView
-          row={row}
-          priority={priority}
-          // Row ids are prefixed (`u:<messageId>`); the store records the raw
-          // message id. The unprefixed compare never matched — the entrance
-          // animation was silently dead until this fix.
-          justSent={row.id === `u:${justSentMessageId}`}
-          tabId={tabId}
-          canRetry={row.id === canRetryRowId}
-          pinScopeKey={pinScopeKey}
-          fileRoot={fileRoot}
-          onToggleExpand={onToggleExpand}
-        />
-      );
-    case RowKind.Prose:
-      return (
-        <ProseRowView
-          row={row}
-          tabId={tabId}
-          agentLabel={agentLabel}
-          priority={priority}
-          pinScopeKey={pinScopeKey}
-          canBranch={row.id === canBranchRowId}
-          fileRoot={fileRoot}
-        />
-      );
-    case RowKind.Thinking:
-      return <ThinkingRowView row={row} tabId={tabId} onToggleExpand={onToggleExpand} />;
-    case RowKind.Marker:
-      return <MarkerRowView row={row} tabId={tabId} />;
-    case RowKind.MarkerGroup:
-      return <MarkerGroupRowView row={row} tabId={tabId} onExpandTurn={onExpandTurn} />;
-    case RowKind.Subagent:
-      return <SubagentRowView row={row} tabId={tabId} />;
-    case RowKind.Separator:
-      return <SeparatorRowView row={row} />;
-    case RowKind.WorkHeader:
-      return <WorkHeaderRowView row={row} onToggle={onExpandTurn} />;
-    case RowKind.TurnFooter:
-      return (
-        <TurnFooterRowView
-          row={row}
-          tabId={tabId}
-          pinScopeKey={pinScopeKey}
-          canBranch={row.responseRowId !== undefined && row.responseRowId === canBranchRowId}
-        />
-      );
-    case RowKind.Injected:
-      return <InjectedRowView row={row} />;
-    case RowKind.Interruption:
-      return (
-        <InterruptionRowView
-          row={row}
-          tabId={tabId}
-          canRetry={canRetryRowId !== undefined}
-          canContinue={canContinue}
-        />
-      );
-    default:
-      return null;
-  }
-}
