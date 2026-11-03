@@ -1,33 +1,43 @@
 // The Organisation agent, full page — the `agent` destination: the history
 // on the left, one conversation given the room on the right. Reached from the
 // sidebar's Agent row, or from a conversation's Full screen in the side panel;
-// the bar's "Back to the side panel" returns the conversation home
+// the header's "Back to the side panel" returns the conversation home
 // (`org-agent-side-panel.tsx`), which in the meantime says it is up here.
 //
-// The history is kept plain: the Organisation (its logo and name) over it
-// with New and Collapse, then Pinned and Recents — titles only, pin and delete
-// on hover. The conversation's header floats over it, title on the left and
-// Share and New on the right, the thread scrolling under it into the coding
-// chat's progressive blur (`transcript.tsx`).
+// The history is kept plain: an Agent | Loops switch over it with New and
+// Collapse, then Pinned and Recents — two lines of title over a status row,
+// which gives way to pin and delete on hover. The conversation's header floats
+// over it, title on the left and Copy link and Back to the side panel on the
+// right, the thread scrolling under it into the coding chat's progressive blur
+// (`transcript.tsx`).
 
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { Minimize2, PanelLeft, Pin, PinOff, Plus, Repeat, Share, Trash2 } from "lucide-react";
+import {
+  CheckCheck,
+  MessageCircleQuestion,
+  Minimize2,
+  PanelLeft,
+  Pin,
+  PinOff,
+  Plus,
+  Share,
+  Trash2,
+} from "lucide-react";
 
 import { GradualBlur } from "@/components/gradual-blur";
-import { OrgAvatar } from "@/features/organisations/components/org-switcher";
-import { useOrgStore } from "@/features/organisations/stores/org-store";
 import { GlassIconButton } from "@/features/sidebar/components/glass-icon-button";
 import { CollapsibleSectionHeader } from "@/features/sidebar/components/sidebar-section-header";
+import { WorkingRing } from "@/features/sidebar/components/session-row-parts";
 import { copyText } from "@/lib/clipboard";
 import { SPRING_RAIL } from "@/lib/motion";
 import { formatDateTime } from "@/lib/format-time";
 import { timeAgo } from "@/lib/time-ago";
 
-import { DestinationActions } from "@/features/layout/components/destination-actions";
 import { revealAgentPanel } from "@/features/layout/lib/org-agent";
 import { cn } from "@/lib/utils";
+import { Segmented } from "@/ui/segmented";
 
 import type { AskSummary } from "../lib/org-agent-types";
 import {
@@ -41,8 +51,14 @@ import {
 import { OrgAgentLoops } from "./org-agent-loops";
 import { OrgAgentThread } from "./org-agent-thread";
 
-/** The history rail: 90% of the app sidebar's 244px (`app-layout.tsx`). */
-const HISTORY_WIDTH = Math.round(244 * 0.9);
+/** The page's views, switched from the history's header. */
+const VIEWS = [
+  { value: "chat", label: "Agent" },
+  { value: "loops", label: "Loops" },
+] as const;
+
+/** The history rail: the app sidebar's own 244px (`app-layout.tsx`). */
+const HISTORY_WIDTH = 244;
 
 export function OrgAgentPanel() {
   const asks = useOrgAgentStore.use.asks();
@@ -57,7 +73,6 @@ export function OrgAgentPanel() {
     useOrgAgentStore.use.actions();
   const [collapsed, setCollapsed] = useState(false);
   const reduceMotion = useReducedMotion();
-  const org = useOrgStore((s) => s.organisations.find((o) => o.id === s.activeOrganisationId));
   const selected = pageId;
   const selectedTitle = useOrgAgentStore((s) => (pageId ? askTitle(s, pageId) : ""));
   const loops = pageView === "loops";
@@ -83,21 +98,8 @@ export function OrgAgentPanel() {
     // it, so the two read as a rail and the thing it holds.
     // The top rule matches the divider below it: the rail divider's colour.
     <div className="flex h-full min-h-0 border-t border-[var(--atlas-rail-divider)] bg-sidebar">
-      {selected && !loops && (
-        <DestinationActions>
-          <GlassIconButton
-            icon={Minimize2}
-            label="Back to the side panel"
-            onClick={() => {
-              restoreToPanel(selected);
-              revealAgentPanel();
-            }}
-          />
-        </DestinationActions>
-      )}
-
-      {/* The history: 90% of the app sidebar's width (`app-layout.tsx`'s
-          244px), a step narrower so it reads as the second rail. Collapsing animates
+      {/* The history: the app sidebar's width (`app-layout.tsx`'s 244px), so
+          the two rails line up. Collapsing animates
           its width on the rail spring; the contents keep their own width
           inside the clipping box, so the titles never re-wrap mid-motion. */}
       <motion.aside
@@ -109,11 +111,16 @@ export function OrgAgentPanel() {
         className="shrink-0 overflow-hidden"
       >
         <div className="flex h-full flex-col" style={{ width: HISTORY_WIDTH }}>
-          <div className="flex h-12 shrink-0 items-center gap-2 pr-3 pl-4">
-            {org && <OrgAvatar org={org} size={20} />}
-            <span className="min-w-0 flex-1 truncate text-md font-medium tracking-tight text-foreground">
-              {org?.name ?? "Atlas"}
-            </span>
+          <div className="flex h-12 shrink-0 items-center gap-2 pr-3 pl-3">
+            {/* The page's two views, as the Inbox switches its filters. */}
+            <Segmented
+              value={loops ? "loops" : "chat"}
+              onValueChange={setPageView}
+              options={VIEWS}
+              size="sm"
+              aria-label="Show"
+            />
+            <span className="flex-1" />
             <GlassIconButton icon={Plus} label="New chat" onClick={() => newChat({ on: "page" })} />
             <GlassIconButton
               icon={PanelLeft}
@@ -122,20 +129,6 @@ export function OrgAgentPanel() {
             />
           </div>
           <div className="hide-scrollbar flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-2 pt-2 pb-4">
-            <button
-              type="button"
-              onClick={() => setPageView(loops ? "chat" : "loops")}
-              aria-current={loops ? "page" : undefined}
-              className={cn(
-                "flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors duration-fast",
-                loops
-                  ? "bg-element-active text-foreground"
-                  : "text-secondary-foreground hover:bg-element-hover",
-              )}
-            >
-              <Repeat size={13} className="shrink-0 text-muted-foreground" />
-              Loops
-            </button>
             {pinnedList.length > 0 && (
               <Section label="Pinned">
                 {pinnedList.map((c) => (
@@ -232,7 +225,16 @@ export function OrgAgentPanel() {
               }}
             />
           )}
-          <GlassIconButton icon={Plus} label="New chat" onClick={() => newChat({ on: "page" })} />
+          {!loops && selected && (
+            <GlassIconButton
+              icon={Minimize2}
+              label="Back to the side panel"
+              onClick={() => {
+                restoreToPanel(selected);
+                revealAgentPanel();
+              }}
+            />
+          )}
         </header>
         <GradualBlur
           position="top"
@@ -290,51 +292,67 @@ function Row({ conversation: c, pinned }: { conversation: AskSummary; pinned: bo
         onClick={() => openOnPage(c.id)}
         aria-current={active ? "page" : undefined}
         className={cn(
-          // Title (up to three lines) over when it was last active; the pin
-          // and delete buttons sit over the top-right corner, so the text
-          // leaves room for them.
-          "flex w-full cursor-pointer items-start gap-2 rounded-lg px-2.5 py-2 pr-14 text-left transition-colors duration-fast",
+          // Title (two lines at most) over a status row: when it was last
+          // active on the left, where it stands on the right.
+          "flex w-full cursor-pointer flex-col gap-1 rounded-lg px-2.5 py-2 text-left transition-colors duration-fast",
           active ? "bg-element-active" : "hover:bg-element-hover",
         )}
       >
-        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <span
-            className={cn(
-              "line-clamp-3 text-sm leading-snug break-words",
-              active ? "text-foreground" : "text-secondary-foreground",
-            )}
-          >
-            {title}
+        <span
+          className={cn(
+            "line-clamp-2 text-sm leading-snug break-words",
+            active ? "text-foreground" : "text-secondary-foreground",
+          )}
+        >
+          {title}
+        </span>
+        <span className="flex h-5 w-full items-center gap-2 text-xs text-muted-foreground">
+          <span className="min-w-0 truncate" title={formatDateTime(c.updated_at)}>
+            {timeAgo(new Date(c.updated_at).toISOString(), { suffix: true })}
           </span>
-          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            {waiting ? (
-              <span
-                aria-label="Waiting for you"
-                className="size-1.5 shrink-0 rounded-full bg-warning"
-              />
-            ) : busy ? (
-              <span
-                aria-hidden
-                className="size-1.5 shrink-0 animate-pulse rounded-full bg-foreground"
-              />
-            ) : unread ? (
-              <span aria-label="Unread" className="size-1.5 shrink-0 rounded-full bg-primary" />
-            ) : null}
-            <span title={formatDateTime(c.updated_at)}>
-              {waiting
-                ? "Waiting for you"
-                : busy
-                  ? "Working…"
-                  : timeAgo(new Date(c.updated_at).toISOString(), { suffix: true })}
+          {/* The status, as the sessions sidebar's rows show theirs
+              (`session-row.tsx`): it gives way to the row's actions on
+              hover. */}
+          {!temp && (
+            <span
+              className={cn(
+                "ml-auto flex shrink-0 items-center gap-1 font-medium transition-opacity",
+                "group-hover/item:opacity-0",
+                confirming && "opacity-0",
+              )}
+            >
+              {waiting ? (
+                <span className="inline-flex items-center gap-1 text-warning">
+                  <MessageCircleQuestion aria-hidden className="size-3.5 shrink-0" />
+                  <span role="status">Needs input</span>
+                </span>
+              ) : busy ? (
+                <span className="inline-flex items-center gap-1 text-info">
+                  <WorkingRing />
+                  <span role="status">Working</span>
+                </span>
+              ) : (
+                <>
+                  {unread && (
+                    <span
+                      aria-label="Unread"
+                      className="size-1.5 shrink-0 rounded-full bg-primary"
+                    />
+                  )}
+                  <CheckCheck aria-label="Done" className="size-3.5 shrink-0 text-success" />
+                </>
+              )}
             </span>
-          </span>
+          )}
         </span>
       </button>
       {!temp && (
         <span
           className={cn(
-            "absolute top-1.5 right-1.5 flex items-center transition-opacity group-hover/item:opacity-100 focus-within:opacity-100",
-            confirming ? "opacity-100" : "opacity-0",
+            // Over the status, bottom right, in its place.
+            "absolute right-1.5 bottom-1.5 flex items-center transition-opacity",
+            "pointer-events-none opacity-0 group-hover/item:pointer-events-auto group-hover/item:opacity-100 has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:opacity-100",
+            confirming && "pointer-events-auto opacity-100",
           )}
         >
           {confirming ? (

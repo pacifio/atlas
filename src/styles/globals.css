@@ -526,12 +526,13 @@
   border-radius: 23px;
 }
 
-/* A `glass-rim` that is a control: the fill lifts a step on hover and while
-   its menu is open. The rim's gradient paints over `background-color`, so the
+/* A `glass-rim` that is a control: the fill lifts a step on hover, while
+   its menu is open, and while it is a toggle that is on. The rim's gradient paints over `background-color`, so the
    usual `hover:bg-*` cannot reach the fill; this moves the fill itself. */
 @utility glass-rim-control {
   &:hover:not(:disabled),
-  &[data-popup-open] {
+  &[data-popup-open],
+  &[aria-pressed="true"] {
     --glass-fill: color-mix(in srgb, var(--foreground) 7%, var(--background));
   }
 }
