@@ -20,6 +20,7 @@ on:
       - 'src-tauri/resources/dev.atlas.ide.desktop'
       - 'src-tauri/src/main.rs'
       - 'crates/atlas-native-agent/Cargo.toml'
+      - 'crates/atlas-agent-store/Cargo.toml'
       - 'crates/atlas-native-agent/src/helper.rs'
       - 'crates/atlas-native-agent/src/linux_sandbox*.rs'
       - 'vendor/atlas-engine/linux-sandbox/**'
@@ -110,7 +111,10 @@ jobs:
             bubblewrap \
             rpm \
             squashfs-tools \
-            xvfb
+            xvfb \
+            meson \
+            ninja-build \
+            libcap-dev
 
       # Bun, Node and Rust at the versions mise.toml and rust-toolchain.toml
       # pin: a release is built with exactly what CI tested.
@@ -179,6 +183,13 @@ jobs:
           sudo swapon /swapfile_extra
           free -h
 
+      # The bubblewrap the AppImage carries, for machines without the distro
+      # package (the deb, rpm and Arch package depend on it instead). Built
+      # from a pinned, checksummed upstream release; the script says why.
+      - name: Build the bundled bubblewrap
+        run: |
+          ./scripts/linux/build-bwrap.sh src-tauri/binaries "${{ matrix.arch }}-unknown-linux-gnu"
+
       # Tauri builds the binary and the AppImage only. The deb and rpm are
       # package-linux.sh's, below: they install as `atl`/`tryatlas` rather
       # than claiming `/usr/bin/atlas`, which belongs to the Atlas CLI.
@@ -187,7 +198,7 @@ jobs:
           POSTHOG_KEY: ${{ secrets.POSTHOG_KEY }}
           POSTHOG_HOST: ${{ secrets.POSTHOG_HOST }}
         run: |
-          bun run build:app:linux -- --bundles appimage
+          bun run build:app:linux -- --bundles appimage --config src-tauri/binaries/tauri.bwrap.conf.json
 
       - name: Find and verify built binary
         id: find_bin
@@ -218,13 +229,18 @@ jobs:
         run: |
           docker run --rm --ipc=host -v "${PWD}:/workspace" -w /workspace archlinux:latest bash -c '
             set -euo pipefail
-            pacman-key --init && pacman-key --populate archlinux || true
-            pacman -Sy --noconfirm archlinux-keyring || true
-            pacman -Syu --noconfirm base-devel pacman-contrib zstd
+            # No `|| true`: a keyring that cannot be trusted must stop the
+            # build, not produce a package from unverified dependencies.
+            pacman-key --init
+            pacman-key --populate archlinux
+            pacman -Sy --noconfirm archlinux-keyring
+            pacman -Syu --noconfirm base-devel pacman-contrib zstd namcap
             useradd -m builder
             chown -R builder:builder /workspace/dist/release-linux
             su builder -c "cd /workspace/dist/release-linux/aur-tryatlas-bin && makepkg -f --nodeps"
             cp /workspace/dist/release-linux/aur-tryatlas-bin/*.pkg.tar.zst /workspace/dist/release-linux/
+            # Arch's own linter, report only (see VERIFY_LINT in Verify).
+            namcap /workspace/dist/release-linux/aur-tryatlas-bin/PKGBUILD /workspace/dist/release-linux/*.pkg.tar.zst || true
             chmod -R a+rw /workspace/dist/release-linux
           '
 
@@ -275,6 +291,7 @@ jobs:
           EXPECT_ARCH: ${{ matrix.arch }}
           VERIFY_GUI: '1'
           VERIFY_INSTALL: '1'
+          EXPECT_BUNDLED_BWRAP: '1'
           VERIFY_LINT: report
         run: |
           ./scripts/verify-linux-release.sh "${{ steps.find_bin.outputs.bin_path }}" dist/artifacts

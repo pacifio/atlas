@@ -19,6 +19,9 @@
 #                      stay up (needs xvfb-run)
 #   VERIFY_INSTALL=1   also install the deb and rpm into clean distro
 #                      containers and run them there (needs docker)
+#   EXPECT_BUNDLED_BWRAP=1
+#                      require the AppImage to carry bubblewrap and its license
+#                      (scripts/linux/build-bwrap.sh)
 #   VERIFY_LINT=report|fail
 #                      run lintian / rpmlint / namcap when present; `report`
 #                      prints findings, `fail` fails on errors (default report)
@@ -127,6 +130,17 @@ else
   else
     fail "needs glibc $needed, within the $GLIBC_FLOOR floor" \
       "a distro older than glibc $needed cannot load this binary; build on an older base"
+  fi
+
+  # Sonames that one distro family spells differently from another. A binary
+  # linking the Debian spelling cannot start on Fedora or openSUSE, however
+  # its package declares its dependencies.
+  nonportable="$(objdump -p "$BIN" | awk '/NEEDED/ {print $2}' | grep -E '^libbz2\.so\.1\.0$' || true)"
+  if [ -z "$nonportable" ]; then
+    pass "links no library whose soname differs across distro families"
+  else
+    fail "links no library whose soname differs across distro families" \
+      "$nonportable (Debian's name; Fedora's is libbz2.so.1): link it statically"
   fi
 
   if err="$(probe "$BIN")"; then
@@ -242,6 +256,23 @@ if [ -n "$APPIMAGE" ]; then
     pass "AppImage starts and reaches main"
   else
     fail "AppImage starts and reaches main" "$err"
+  fi
+fi
+
+if [ "${EXPECT_BUNDLED_BWRAP:-0}" = "1" ] && [ -n "$APPIMAGE" ]; then
+  mkdir -p "$WORK/appimage"
+  (cd "$WORK/appimage" && "$APPIMAGE" --appimage-extract >/dev/null 2>&1)
+  root="$WORK/appimage/squashfs-root"
+  bad=""
+  [ -x "$root/usr/bin/bwrap" ] || bad+="no executable usr/bin/bwrap"$'\n'
+  find "$root" -name 'bubblewrap-LICENSE.txt' | grep -q . || bad+="no bubblewrap-LICENSE.txt (LGPL requires it)"$'\n'
+  if [ -z "$bad" ] && ! out="$("$root/usr/bin/bwrap" --version 2>&1)"; then
+    bad+="bundled bwrap does not run: $out"$'\n'
+  fi
+  if [ -z "$bad" ]; then
+    pass "AppImage carries a working bubblewrap and its license"
+  else
+    fail "AppImage carries a working bubblewrap and its license" "$bad"
   fi
 fi
 

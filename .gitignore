@@ -103,3 +103,6 @@ ds-bundle/
 
 # Python bytecode from the one-off scripts.
 __pycache__/
+
+# Built by scripts/linux/build-bwrap.sh for the AppImage; never committed.
+src-tauri/binaries/

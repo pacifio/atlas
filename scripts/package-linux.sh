@@ -76,6 +76,26 @@ if [ -z "$ATLAS_BIN" ] || [ ! -f "$ATLAS_BIN" ]; then
   fi
 fi
 
+# The runtime dependencies of every package format, from one list.
+# shellcheck source=scripts/linux/runtime-deps.sh
+. "${ROOT_DIR}/scripts/linux/runtime-deps.sh"
+join_by() {
+  local sep="$1"
+  shift
+  local out="$1"
+  shift
+  for item in "$@"; do out+="${sep}${item}"; done
+  printf '%s' "$out"
+}
+
+# The newest glibc symbol version the binary needs: its real libc floor,
+# which the deb states as `libc6 (>= …)` rather than leaving it implicit.
+GLIBC_NEEDED="$(objdump -T "$ATLAS_BIN" | grep -o 'GLIBC_[0-9][0-9.]*' | sed 's/GLIBC_//' | sort -V | tail -n 1)"
+if [ -z "$GLIBC_NEEDED" ]; then
+  echo "Error: could not read the binary's glibc requirement (objdump -T)" >&2
+  exit 1
+fi
+
 OUTPUT_DIR="${ROOT_DIR}/dist/release-linux"
 rm -rf "${OUTPUT_DIR}"
 mkdir -p "${OUTPUT_DIR}"
@@ -143,6 +163,11 @@ if command -v gtk-update-icon-cache >/dev/null 2>&1; then
   gtk-update-icon-cache -q -t "${PREFIX}/share/icons/hicolor" 2>/dev/null || true
 fi
 echo "Atlas installed successfully to ${PREFIX}! (run 'atl' or 'tryatlas')"
+# The deb, rpm and Arch package pull bubblewrap in; a tarball cannot.
+if ! command -v bwrap >/dev/null 2>&1; then
+  echo "Note: bubblewrap (bwrap) is not installed. Atlas's agent needs it to run"
+  echo "commands. Install your distribution's 'bubblewrap' package."
+fi
 EOF
 chmod 755 "${STAGE_DIR}/install.sh"
 
@@ -206,6 +231,7 @@ mkdir -p "${DEB_STAGING}/usr/bin"
 mkdir -p "${DEB_STAGING}/usr/share/applications"
 mkdir -p "${DEB_STAGING}/usr/share/icons"
 mkdir -p "${DEB_STAGING}/usr/share/licenses/tryatlas"
+mkdir -p "${DEB_STAGING}/usr/share/doc/tryatlas"
 
 # Payload installs /usr/bin/atl and symlinks /usr/bin/tryatlas (does NOT claim /usr/bin/atlas in package index)
 cp "${STAGE_DIR}/bin/atlas" "${DEB_STAGING}/usr/bin/atl"
@@ -217,6 +243,28 @@ cp -r "${STAGE_DIR}/share/applications/"* "${DEB_STAGING}/usr/share/applications
 cp -r "${STAGE_DIR}/share/icons/"* "${DEB_STAGING}/usr/share/icons/"
 cp -r "${STAGE_DIR}/share/licenses/atlas/"* "${DEB_STAGING}/usr/share/licenses/tryatlas/"
 
+# Debian policy's two files every binary package carries: the copyright
+# statement (machine-readable format) and a compressed changelog.
+cat <<EOF > "${DEB_STAGING}/usr/share/doc/tryatlas/copyright"
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: Atlas
+Upstream-Contact: Atlas Team <contact@tryatlas.cc>
+Source: https://github.com/pacifio/atlas
+
+Files: *
+Copyright: Atlas contributors
+License: Apache-2.0
+ On Debian systems the full text of the Apache License 2.0 is in
+ /usr/share/common-licenses/Apache-2.0. The licenses of bundled third-party
+ code are in /usr/share/licenses/tryatlas.
+EOF
+printf 'tryatlas (%s) unstable; urgency=medium\n\n  * Atlas %s. Release notes: https://github.com/pacifio/atlas/releases/tag/%s\n\n -- Atlas Team <contact@tryatlas.cc>  %s\n' \
+  "${VERSION}" "${VERSION}" "${RELEASE_TAG}" "$(date -R -u -d "@${SOURCE_DATE_EPOCH:-$(date +%s)}")" \
+  | gzip -9n > "${DEB_STAGING}/usr/share/doc/tryatlas/changelog.Debian.gz"
+chmod 644 "${DEB_STAGING}/usr/share/doc/tryatlas/"*
+INSTALLED_SIZE="$(du -sk --apparent-size "${DEB_STAGING}/usr" | cut -f1)"
+DEB_DEPENDS_LINE="$(join_by ", " "libc6 (>= ${GLIBC_NEEDED})" "${DEB_DEPENDS[@]}")"
+
 cat <<EOF > "${DEB_STAGING}/DEBIAN/control"
 Package: tryatlas
 Version: ${VERSION}
@@ -224,7 +272,8 @@ Section: devel
 Priority: optional
 Architecture: ${DEB_ARCH}
 Maintainer: Atlas Team <contact@tryatlas.cc>
-Depends: libwebkit2gtk-4.1-0, libgtk-3-0, libayatana-appindicator3-1, bubblewrap, libglib2.0-0
+Installed-Size: ${INSTALLED_SIZE}
+Depends: ${DEB_DEPENDS_LINE}
 Suggests: wl-clipboard, xclip, xsel
 Provides: tryatlas (= ${VERSION}), atl (= ${VERSION})
 Description: Atlas — agent-first ideation and planning tool
@@ -267,7 +316,8 @@ chmod 755 "${DEB_STAGING}/DEBIAN/postrm"
 
 DEB_FILE="${OUTPUT_DIR}/tryatlas_${VERSION}_${DEB_ARCH}.deb"
 if command -v dpkg-deb >/dev/null 2>&1; then
-  dpkg-deb --build "${DEB_STAGING}" "${DEB_FILE}"
+  # root:root ownership regardless of who builds, as lintian requires.
+  dpkg-deb --root-owner-group --build "${DEB_STAGING}" "${DEB_FILE}"
 else
   echo "2.0" > "${DEB_STAGING}/debian-binary"
   tar -czf "${DEB_STAGING}/control.tar.gz" -C "${DEB_STAGING}/DEBIAN" .
@@ -297,8 +347,14 @@ License:        Apache-2.0
 URL:            https://tryatlas.cc
 Provides:       tryatlas = %{version}-%{release}
 Provides:       atl = %{version}-%{release}
-AutoReqProv:    no
-Requires:       webkit2gtk4.1, gtk3, libayatana-appindicator-gtk3, bubblewrap, glib2
+# The shared-library requirements are read from the ELF by rpm itself, so
+# they cannot drift from what the binary links. Provides stay off: the
+# package provides commands, not the sonames inside it. bubblewrap is
+# exec'd rather than linked, so it is named explicitly with the rest of
+# runtime-deps.sh.
+AutoReq:        yes
+AutoProv:       no
+Requires:       $(join_by ", " "${RPM_REQUIRES[@]}")
 Suggests:       wl-clipboard, xclip, xsel
 
 %description
