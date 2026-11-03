@@ -1,8 +1,7 @@
 import { useContext, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { Loader2 } from "lucide-react";
 
-import type { ArtifactPayload } from "../types";
+import { cloudPayload, localPayload } from "../lib/payload-api";
 import { RemoteSourceContext } from "../lib/session-detail-context";
 import type { PayloadPart } from "../lib/session-timeline";
 
@@ -42,13 +41,8 @@ export function ShowFull({
     setError(null);
     try {
       const payload = blobRef
-        ? await invoke<ArtifactPayload>("artifacts_payload", { projectPath, blobRef })
-        : await invoke<ArtifactPayload>("artifacts_cloud_payload", {
-            projectId: remote?.projectId,
-            sessionId: remote?.sessionId,
-            rowId,
-            part,
-          });
+        ? await localPayload(projectPath, blobRef)
+        : await cloudPayload(remote?.projectId, remote?.sessionId, rowId, part);
       if (payload.text !== null) onLoaded(payload.text);
       else setError("The full payload is binary and cannot be shown.");
     } catch {
