@@ -44,11 +44,18 @@ export function StashesView() {
               key={s.index}
               className="group flex flex-col gap-0.5 py-2 pr-1.5 pl-3 border-b border-border-subtle transition-colors duration-fast hover:bg-element-hover"
             >
-              <span className="text-xs font-medium text-secondary-foreground group-hover:text-foreground truncate">
+              {/* Both lines truncate; the title carries the full text. */}
+              <span
+                title={s.message}
+                className="text-xs font-medium text-secondary-foreground group-hover:text-foreground truncate"
+              >
                 {s.message}
               </span>
               <div className="flex items-center gap-0.5">
-                <span className="font-mono text-2xs text-muted-foreground flex-1 truncate">
+                <span
+                  title={s.branch ? `stash@{${s.index}} · ${s.branch}` : `stash@{${s.index}}`}
+                  className="font-mono text-2xs text-muted-foreground flex-1 truncate"
+                >
                   stash@{`{${s.index}}`} {s.branch && `· ${s.branch}`}
                 </span>
                 <Button
