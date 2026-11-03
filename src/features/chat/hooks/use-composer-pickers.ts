@@ -5,7 +5,7 @@ import { useCallback, type Dispatch, type RefObject, type SetStateAction } from 
 import type { MentionPickerHandle } from "@/features/mentions/components/mention-picker";
 import type { ChatInputHandle, MentionTrigger, SlashTrigger } from "../components/chat-input";
 import type { SlashCommandPickerHandle, SlashCommand } from "../components/slash-command-picker";
-import { commandRequiresArgs } from "../components/slash-command-picker";
+import { commandRequiresArgs } from "../lib/agent-slash-commands";
 import { promptSignIn } from "../lib/agent-signin";
 import { forkSessionToNewTab } from "../lib/fork-session";
 import type { MentionData } from "../lib/mentions";
