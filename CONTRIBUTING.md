@@ -170,6 +170,12 @@ PR straight into `main` only when the change has no version-branch dependency an
 
 Releases are tagged `alpha-X.Y.Z`, with occasional `exp-X.Y.Z-X.Y.Z` snapshots.
 
+### Releasing for Linux
+
+Pushing an `alpha-*` tag runs `.github/workflows/release-linux.yml`: it builds x86-64 and aarch64 on Ubuntu 22.04 (the glibc floor), packages a tarball, AppImage, deb, rpm and, on x86-64, an Arch package, then **verifies** them with `scripts/verify-linux-release.sh` (the binary loads within the floor, every package installs on clean Debian, Ubuntu, Fedora and Arch containers and starts, the GUI comes up under Xvfb) before one publish job attests, signs and releases both architectures. A pull request that touches a release input runs the same build and verification without publishing, so a red Linux release is seen before the tag.
+
+After publishing, set `uri_linux_x86_64` and `uri_linux_aarch64` in PostHog remote config to the release page; that is what tells Linux installs a new version exists. Then run the by-hand matrix in `docs/qa/linux-smoke-matrix.md`. Supported distros, what each package needs and how signing works are in `docs/reference/linux-support.md`.
+
 ### Versioning
 
 The version is written in three places: `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json`. The scripts change all three together, and refresh `Cargo.lock`'s entry for the app so CI's `--locked` builds still run. Everything else reads it from one of those: Rust through `CARGO_PKG_VERSION`, the About screen through `getVersion()`, the DMG scripts from `tauri.conf.json`.

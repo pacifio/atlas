@@ -66,7 +66,8 @@ jobs:
   #
   # Ubuntu 22.04, not `ubuntu-latest`: the runner's glibc is the oldest glibc
   # the binary can load on, and `ubuntu-latest` moved it from 2.35 to 2.39
-  # without a commit, dropping Debian 12 and RHEL 9 the day it did. 22.04 is
+  # without a commit, dropping Debian 12 and Ubuntu 22.04 the day it did. RHEL 9
+  # (glibc 2.34) is below even this floor; RHEL 10 is the first. 22.04 is
   # the oldest image that has WebKitGTK 4.1, which Tauri 2 requires, so 2.35
   # is the floor `Verify` holds the binary to. Move it deliberately, with
   # docs/reference/linux-support.md, when 22.04 runners are retired.

@@ -7,6 +7,79 @@ built, checked, signed and announced.
   (`scripts/package-linux.sh`, `scripts/verify-linux-release.sh`, `scripts/linux/`).
 - **Why it is shaped this way:** [`docs/research/linux-release-plan.md`](../research/linux-release-plan.md).
 
+## Supported systems
+
+Atlas runs where two things hold: glibc 2.35 or newer, and WebKitGTK 4.1. The release is
+built on Ubuntu 22.04 so the binary needs nothing newer, and `Verify` fails a build whose
+binary does.
+
+| family                                   | supported from | package                            |
+| ---------------------------------------- | -------------- | ---------------------------------- |
+| Ubuntu                                   | 22.04          | deb                                |
+| Debian                                   | 12             | deb                                |
+| Fedora                                   | 36             | rpm                                |
+| RHEL, Rocky, Alma                        | 10             | rpm                                |
+| Arch, Manjaro, EndeavourOS               | rolling        | Arch package or AUR `tryatlas-bin` |
+| anything else meeting the two conditions |                | AppImage or tarball                |
+
+Both x86-64 and aarch64 are built. Ubuntu 20.04, Debian 11 and RHEL 8 are not supported:
+their WebKitGTK predates 4.1. RHEL 9 is not supported either: its glibc is 2.34. Moving the floor means changing the runner in
+`release-linux.yml` and the `GLIBC_FLOOR` its `Verify` step checks, together with this
+table.
+
+## Packages
+
+Every package installs the binary as `atl`, with a `tryatlas` link. `atlas` is left to
+the Atlas CLI.
+
+| artifact                                                     | installs                                          | runtime dependencies                                                    |
+| ------------------------------------------------------------ | ------------------------------------------------- | ----------------------------------------------------------------------- |
+| `tryatlas_<ver>_<arch>.deb`                                  | system-wide, by `apt install ./…`                 | declared, from `scripts/linux/runtime-deps.sh`                          |
+| `tryatlas-<ver>-1.<arch>.rpm`                                | system-wide, by `dnf install ./…`                 | declared, plus every linked library read from the binary                |
+| `tryatlas-bin-<ver>-1-x86_64.pkg.tar.zst` and the AUR recipe | system-wide, by pacman                            | declared, from the same list                                            |
+| `tryatlas_<ver>_<arch>.AppImage`                             | nowhere; runs in place                            | must already be present, except bubblewrap, which it carries            |
+| `atlas-<ver>-linux-<arch>.tar.gz`                            | `install.sh`: `~/.local`, or `/usr/local` as root | must already be present; the installer warns when bubblewrap is missing |
+
+`scripts/linux/runtime-deps.sh` is the one list of runtime dependencies, one row per
+capability in each family's names; `tests/linux-packaging.test.ts` keeps every package
+builder reading it.
+
+## The agent's sandbox: bubblewrap
+
+The native agent runs every command it executes inside the engine's Linux sandbox:
+seccomp in-process, and bubblewrap (`bwrap`) for the filesystem and network. Without a
+working bubblewrap, those commands fail. The packages depend on it; the AppImage carries
+a copy (`scripts/linux/build-bwrap.sh`), used only when the system has none.
+
+At engine start Atlas checks that bubblewrap can create the namespaces the sandbox needs,
+and logs a warning that says why when it cannot. The two usual causes:
+
+- **bubblewrap is not installed.** Install the distro's `bubblewrap` package.
+- **Unprivileged user namespaces are restricted.** Ubuntu 24.04 and later set
+  `kernel.apparmor_restrict_unprivileged_userns=1` and allow namespaces only to programs
+  with an AppArmor profile. The distro's `/usr/bin/bwrap` has one, so the deb and a
+  system-installed bubblewrap work; the AppImage's bundled copy does not, which is why
+  the system one is preferred. On distros that disable user namespaces outright
+  (`kernel.unprivileged_userns_clone=0`, or `user.max_user_namespaces=0`), the sandbox
+  cannot run at all.
+
+Known issue: on at least one Ubuntu 26.04 machine, stopping a turn does not stop a
+sandboxed command that is already running. See finding L1 in
+[`docs/qa/linux-smoke-matrix.md`](../qa/linux-smoke-matrix.md).
+
+## Updates
+
+Linux never downloads or installs an update. When a newer version is published, Atlas
+shows a notice with a link to the release page, and "Skip this version" silences it
+(`src-tauri/src/commands/updater_linux.rs`). The notice needs two PostHog remote-config
+keys, `uri_linux_x86_64` and `uri_linux_aarch64`, set to the release page; until a key
+is set, that architecture is told nothing. The link is accepted only on the project's
+own GitHub releases or `tryatlas.cc`.
+
+How the update is then installed depends on the package: the deb, rpm and Arch package
+by downloading the new one (or `yay -S tryatlas-bin` for the AUR), the AppImage and
+tarball by replacing the file.
+
 ## Signing
 
 Every release carries two kinds of integrity evidence.

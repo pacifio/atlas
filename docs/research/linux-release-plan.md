@@ -1,6 +1,7 @@
 # Plan: a production-grade Linux release, without touching macOS
 
-Status: **plan only, nothing implemented.** Researched 2026-11-03 against `9c175188` on
+Status: **phases 0–7 implemented on `maklu/linux-release`** (2026-11-03); see
+"Outcome" at the end for what differs from the plan and what is still open. Researched 2026-11-03 against `9c175188` on
 `0.4.1`. The sources read were `.github/workflows/release-linux.yml`,
 `.github/workflows/ci.yml`, `scripts/package-linux.sh`, `src-tauri/tauri.linux.conf.json`,
 `src-tauri/src/main.rs`, `crates/atlas-native-agent/src/helper.rs`,
@@ -170,8 +171,9 @@ macOS smoke in "The one rule" is mandatory on this PR.
   `scripts/ci-linux/Dockerfile` (already pinned to Rust/Bun/Node from the toolchain
   files) with a `release` stage, and have `release-linux.yml` build in it. The base
   image is the glibc floor. Decision needed: `ubuntu:22.04` (glibc 2.35, has
-  `libwebkit2gtk-4.1-dev`, covers Debian 12, Ubuntu 22.04+, Fedora 36+, RHEL 9) versus
-  staying on 24.04 (glibc 2.39, drops Debian 12 and RHEL 9). **Recommendation: 22.04.**
+  `libwebkit2gtk-4.1-dev`, covers Debian 12, Ubuntu 22.04+, Fedora 36+, RHEL 10) versus
+  staying on 24.04 (glibc 2.39, drops Debian 12 and Ubuntu 22.04). _Corrected: this
+  first said 22.04 covers RHEL 9; RHEL 9's glibc is 2.34, below either floor._ **Recommendation: 22.04.**
   Verification: Phase 0's `ldd` check asserts the floor.
 - **Add aarch64.** Matrix the release job over `ubuntu-24.04` and `ubuntu-24.04-arm`,
   pass the arch to `package-linux.sh` (already supported), and name artifacts by arch
@@ -303,3 +305,53 @@ results pasted in, so the reviewer sees the evidence rather than the claim.
 5. Whether Flatpak is wanted. It is not in this plan; it would be a Phase 8 with its own
    sandbox interaction (Flatpak's own sandbox versus the engine's bubblewrap), and needs
    research before committing.
+
+## Outcome
+
+One commit per phase on `maklu/linux-release`, off `0.4.1`:
+
+| phase                                | commit                            |
+| ------------------------------------ | --------------------------------- |
+| 0 verify, dry run                    | `0b642713`                        |
+| 1 sandbox helper                     | `f7e42f3f`                        |
+| 2 glibc floor, aarch64               | `68e45a26`                        |
+| 3 packages, bubblewrap, static bzip2 | `1ba14964`                        |
+| 4 provenance, signing                | `98dc793b`                        |
+| 5 Linux update notice                | `f0ef0880`                        |
+| 6 QA matrix                          | `315cc02b`                        |
+| 7 docs                               | the commit that adds this section |
+
+Where the work differs from the plan, and why:
+
+- **Phase 0's dry run lives in `release-linux.yml`, not `ci.yml`.** `bun run ci:local`
+  replays every `ci.yml` job, so a release build there would run on every local check.
+  The pull-request trigger is limited to release inputs.
+- **Phase 2 uses `ubuntu-22.04` runners, not a container.** Same glibc floor, and
+  sccache and rust-cache keep working, which they would not inside `docker run`.
+- **Phase 3 found a bug the plan did not:** the binary linked `libbz2.so.1.0`, Debian's
+  soname, so it could not start on Fedora or openSUSE. bzip2 is now compiled in on Linux.
+- **Phase 3 leaves lintian and rpmlint report-only.** Neither could be run on the
+  development machine (no root), so their remaining findings are unknown until the first
+  CI run. Turn `VERIFY_LINT` to `fail` once that run's report is clean.
+- **Phase 3 does not pin the Arch image by digest.** `pacman -Syu` upgrades it to
+  current on every run anyway; the keyring is now trusted strictly instead.
+- **Phase 4 creates no key.** Provenance ships now; GPG signing turns on when the
+  maintainers add the two secrets (`docs/reference/linux-support.md`).
+- **Phase 5 needed a frontend change** after all: nothing listened for
+  `atlas:update-available`, which the plan assumed something did. The listener is
+  registered on Linux only.
+
+Still open:
+
+- **Finding L1** (`docs/qa/linux-smoke-matrix.md`): on the development machine,
+  cancelling a sandboxed command does not stop it, with or without this branch.
+  Probably Ubuntu's AppArmor exec transition clearing bubblewrap's parent-death signal;
+  the fix changes the engine's sandbox hardening and needs a decision.
+- **Nothing here has run in CI yet.** The release workflow, the dry run, `Verify`'s
+  container installs and Xvfb launch, the aarch64 AppImage and the bubblewrap build all
+  run for the first time on the pull request.
+- **The QA matrix has one partial cell.** The rest needs people at real desktops.
+- **macOS was not built from this branch.** The development machine is Linux. Every
+  change that reaches macOS's compile is a cfg attribute or a doc comment, which the
+  `app` job on `macos-latest` checks; the manual macOS smoke in "The one rule" is still
+  owed before merge.
