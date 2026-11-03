@@ -17,6 +17,7 @@ import {
   MetaChip,
   StatusChip,
 } from "./shared-memory-primitives";
+import { DETAIL_TEXT, DETAIL_WELL, ROW_DETAIL, TABLE_ROW, rowButton } from "./memory-chrome";
 
 /* ── Column tracks (sticky header + rows line up; min-width → horizontal scroll) ── */
 const EVENT_COL = {
@@ -81,25 +82,12 @@ function EventRow({
   onToggle: () => void;
 }) {
   return (
-    <div className="border-b border-[var(--atlas-border-subtle)]">
-      <button
-        onClick={onToggle}
-        className={cn(
-          "w-full flex items-center h-[40px] px-3 text-left transition-colors cursor-pointer",
-          expanded ? "bg-[var(--card)]/50" : "hover:bg-[var(--atlas-element-hover)]",
-        )}
-      >
-        <span
-          className={cn(
-            EVENT_COL.seq,
-            "font-mono text-2xs tabular-nums text-[var(--atlas-text-disabled)]",
-          )}
-        >
+    <div className={TABLE_ROW}>
+      <button onClick={onToggle} className={rowButton(expanded)}>
+        <span className={cn(EVENT_COL.seq, "font-mono text-2xs tabular-nums text-disabled")}>
           {e.seq}
         </span>
-        <span className={cn(EVENT_COL.time, "text-2xs text-[var(--muted-foreground)]")}>
-          {eventTime(e.ts)}
-        </span>
+        <span className={cn(EVENT_COL.time, "caption tabular-nums")}>{eventTime(e.ts)}</span>
         <span className={EVENT_COL.agent}>
           <AgentTag agent={e.agent} />
         </span>
@@ -107,15 +95,12 @@ function EventRow({
           <KindChip kind={e.kind} />
         </span>
         <span className={cn(EVENT_COL.detail, "min-w-0 pr-3")}>
-          <span className="block truncate text-sm text-[var(--secondary-foreground)]">
-            {eventDetail(e) || <span className="text-[var(--atlas-text-disabled)]">—</span>}
+          <span className="block truncate text-sm text-foreground">
+            {eventDetail(e) || <span className="text-disabled">—</span>}
           </span>
         </span>
         <span
-          className={cn(
-            EVENT_COL.chevron,
-            "flex items-center justify-end text-[var(--muted-foreground)]",
-          )}
+          className={cn(EVENT_COL.chevron, "flex items-center justify-end text-muted-foreground")}
         >
           {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
         </span>
@@ -128,7 +113,7 @@ function EventRow({
 function EventDetail({ event: e }: { event: MemoryEvent }) {
   const detail = eventDetail(e);
   return (
-    <div className="bg-[var(--card)]/40 border-t border-[var(--atlas-border-subtle)] px-4 py-3 space-y-3">
+    <div className={ROW_DETAIL}>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
         <MetaChip label="Seq" value={`#${e.seq}`} mono />
         <MetaChip label="Kind" value={e.kind.replace(/_/g, " ")} />
@@ -138,10 +123,8 @@ function EventDetail({ event: e }: { event: MemoryEvent }) {
         {e.sessionId && <MetaChip label="Session" value={e.sessionId.slice(0, 8)} mono />}
       </div>
       {detail && (
-        <div className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2">
-          <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-[1.55] text-[var(--secondary-foreground)]">
-            {detail}
-          </pre>
+        <div className={DETAIL_WELL}>
+          <pre className={DETAIL_TEXT}>{detail}</pre>
         </div>
       )}
     </div>
@@ -193,25 +176,12 @@ function PlanRow({
   const status = str(e.payload?.status) || "active";
   const firstLine = text.split("\n").find((l) => l.trim()) ?? "";
   return (
-    <div className="border-b border-[var(--atlas-border-subtle)]">
-      <button
-        onClick={onToggle}
-        className={cn(
-          "w-full flex items-center h-[40px] px-3 text-left transition-colors cursor-pointer",
-          expanded ? "bg-[var(--card)]/50" : "hover:bg-[var(--atlas-element-hover)]",
-        )}
-      >
-        <span
-          className={cn(
-            PLAN_COL.seq,
-            "font-mono text-2xs tabular-nums text-[var(--atlas-text-disabled)]",
-          )}
-        >
+    <div className={TABLE_ROW}>
+      <button onClick={onToggle} className={rowButton(expanded)}>
+        <span className={cn(PLAN_COL.seq, "font-mono text-2xs tabular-nums text-disabled")}>
           {e.seq}
         </span>
-        <span className={cn(PLAN_COL.time, "text-2xs text-[var(--muted-foreground)]")}>
-          {eventTime(e.ts)}
-        </span>
+        <span className={cn(PLAN_COL.time, "caption tabular-nums")}>{eventTime(e.ts)}</span>
         <span className={PLAN_COL.agent}>
           <AgentTag agent={e.agent} />
         </span>
@@ -219,31 +189,26 @@ function PlanRow({
           <StatusChip status={status} />
         </span>
         <span className={cn(PLAN_COL.plan, "min-w-0 pr-3")}>
-          <span className="block truncate text-sm text-[var(--secondary-foreground)]">
-            {firstLine || <span className="text-[var(--atlas-text-disabled)]">—</span>}
+          <span className="block truncate text-sm text-foreground">
+            {firstLine || <span className="text-disabled">—</span>}
           </span>
         </span>
         <span
-          className={cn(
-            PLAN_COL.chevron,
-            "flex items-center justify-end text-[var(--muted-foreground)]",
-          )}
+          className={cn(PLAN_COL.chevron, "flex items-center justify-end text-muted-foreground")}
         >
           {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
         </span>
       </button>
       {expanded && (
-        <div className="bg-[var(--card)]/40 border-t border-[var(--atlas-border-subtle)] px-4 py-3 space-y-3">
+        <div className={ROW_DETAIL}>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
             <MetaChip label="Seq" value={`#${e.seq}`} mono />
             <MetaChip label="Status" value={status} />
             <MetaChip label="Agent" value={agentMetaForSource(e.agent).label} />
             <MetaChip label="When" value={fmtDateTime(e.ts)} />
           </div>
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2">
-            <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-[1.55] text-[var(--secondary-foreground)]">
-              {text || "—"}
-            </pre>
+          <div className={DETAIL_WELL}>
+            <pre className={DETAIL_TEXT}>{text || "—"}</pre>
           </div>
         </div>
       )}

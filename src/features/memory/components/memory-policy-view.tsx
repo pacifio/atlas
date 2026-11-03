@@ -13,6 +13,10 @@ import {
 import { cn } from "@/lib/utils";
 import { Hint } from "@/ui/tooltip";
 import { HintGroup, HintItem } from "@/ui/hint-group";
+import { Badge } from "@/ui/badge";
+import { Button } from "@/ui/button";
+import { IconButton, iconButtonVariants } from "@/ui/icon-button";
+import { Input } from "@/ui/input";
 import { useAppStore } from "@/features/app/stores/app-store";
 import { sendToAgentChat } from "@/features/chat/lib/send-to-agent";
 import { ClaudeIcon, CodexIcon } from "@/components/agent-icons";
@@ -24,6 +28,16 @@ import {
   type DownloadProgress,
 } from "../lib/memory-graph-api";
 import { useMemoryStore } from "../stores/memory-store";
+import {
+  CountPill,
+  Notice,
+  ProgressBar,
+  TABLE_HEAD,
+  TABLE_ROW,
+  Toolbar,
+  Track,
+  TrackSegment,
+} from "./views/memory-chrome";
 
 // Column tracks shared by header + rows (mirrors the BYOK / Codex tables).
 const COL = {
@@ -115,44 +129,31 @@ export function MemoryPolicyView() {
 
   const onSaved = updatePolicyValue;
 
-  if (!projectPath) return <Centered>Open a project first.</Centered>;
+  if (!projectPath) return <Notice>Open a project first.</Notice>;
 
   if (phase === "idle" || phase === "checking" || phase === "loading") {
     return (
-      <Centered>
-        <div className="text-center space-y-2">
-          <Loader2 size={18} className="animate-spin text-[var(--muted-foreground)] mx-auto" />
-          <p className="text-xs text-[var(--muted-foreground)]">
-            {phase === "loading" ? "Distilling preferences…" : "Checking…"}
-          </p>
-        </div>
-      </Centered>
+      <Notice icon={<Loader2 size={18} className="animate-spin" />}>
+        {phase === "loading" ? "Distilling preferences…" : "Checking…"}
+      </Notice>
     );
   }
 
   if (phase === "not-downloaded") {
     return (
-      <Centered>
-        <div className="text-center max-w-[360px] px-6 space-y-3">
-          <div className="w-12 h-12 mx-auto rounded-xl bg-[var(--card)] border border-[var(--border)] flex items-center justify-center">
-            <Sparkles size={22} className="text-[var(--secondary-foreground)]" />
-          </div>
-          <p className="text-base font-medium text-[var(--foreground)]">
-            Enable preference learning
-          </p>
-          <p className="text-xs leading-relaxed text-[var(--muted-foreground)]">
-            Download the on-device embedding model to distill your saved preferences into an
-            editable policy table — no LLM, purely semantic.
-          </p>
-          <button
-            onClick={() => void download()}
-            className="inline-flex items-center gap-1.5 h-8 px-3.5 rounded-md bg-[var(--primary)] text-[var(--background)] text-xs font-medium hover:opacity-90 transition-opacity cursor-pointer"
-          >
+      <Notice
+        icon={<Sparkles size={20} />}
+        title="Enable preference learning"
+        action={
+          <Button size="lg" onClick={() => void download()}>
             <Download size={13} />
             Download model
-          </button>
-        </div>
-      </Centered>
+          </Button>
+        }
+      >
+        Download the on-device embedding model to distill your saved preferences into an editable
+        policy table — no LLM, purely semantic.
+      </Notice>
     );
   }
 
@@ -165,77 +166,53 @@ export function MemoryPolicyView() {
         )
       : 0;
     return (
-      <Centered>
-        <div className="text-center max-w-[360px] px-6 w-full space-y-2">
-          <Loader2 size={20} className="animate-spin text-[var(--secondary-foreground)] mx-auto" />
-          <p className="text-sm text-[var(--foreground)]">Downloading model…</p>
-          <div className="h-1.5 rounded-full bg-[var(--card)] overflow-hidden">
-            <div
-              className="h-full bg-[var(--primary)] transition-[width] duration-200"
-              style={{ width: `${pct}%` }}
-            />
-          </div>
-          <p className="text-2xs text-[var(--muted-foreground)] font-mono">{pct}%</p>
+      <Notice icon={<Loader2 size={18} className="animate-spin" />} title="Downloading model…">
+        <div className="flex w-[320px] max-w-full flex-col gap-2 pt-1">
+          <ProgressBar pct={pct} />
+          <p className="font-mono text-2xs tabular-nums">{pct}%</p>
         </div>
-      </Centered>
+      </Notice>
     );
   }
 
   if (phase === "error") {
     return (
-      <Centered>
-        <div className="text-center max-w-[340px] px-6 space-y-3">
-          <AlertTriangle
-            size={20}
-            className="text-[var(--atlas-status-error-foreground)] mx-auto"
-          />
-          <p className="text-sm text-[var(--secondary-foreground)]">Couldn't load policies</p>
-          {error && (
-            <p className="text-2xs text-[var(--muted-foreground)] font-mono break-words">{error}</p>
-          )}
-          <button
-            onClick={() => void init(projectPath)}
-            className="inline-flex items-center gap-1.5 h-7 px-3 rounded-md border border-[var(--border)] text-xs text-[var(--secondary-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] transition-colors cursor-pointer"
-          >
+      <Notice
+        icon={<AlertTriangle size={18} className="text-error" />}
+        title="Couldn't load policies"
+        action={
+          <Button variant="outline" onClick={() => void init(projectPath)}>
             <RotateCw size={12} /> Retry
-          </button>
-        </div>
-      </Centered>
+          </Button>
+        }
+      >
+        {error && <p className="font-mono text-2xs break-words">{error}</p>}
+      </Notice>
     );
   }
 
   // phase === "ready"
   return (
-    <div className="h-full flex flex-col bg-[var(--background)]">
-      <div className="flex items-center gap-2 px-3 h-[32px] shrink-0 border-b border-[var(--border)]">
-        <span className="text-xs font-medium text-[var(--secondary-foreground)]">
+    <div className="flex h-full flex-col bg-background">
+      {/* One toolbar: title, count and re-scan, then the filters. It used to
+          be two stacked strips, a title row and then the filters under it;
+          the order is unchanged, so focus still moves re-scan → filters. */}
+      <Toolbar className="gap-3">
+        <span className="label flex items-center gap-1.5">
           Preferences
-          <span className="ml-1.5 text-3xs text-[var(--muted-foreground)] tabular-nums">
-            {policies.length}
-          </span>
+          <CountPill count={policies.length} />
         </span>
-        <div className="flex-1" />
         <Hint label="Re-scan preferences">
-          <button
+          <IconButton
+            icon={RotateCw}
+            label="Re-scan preferences"
+            size="sm"
+            className="-ml-2"
             onClick={() => void loadPolicies(projectPath, true)}
-            className="flex items-center justify-center w-6 h-6 rounded text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--atlas-element-hover)] transition-colors cursor-pointer"
-          >
-            <RotateCw size={12} />
-          </button>
+          />
         </Hint>
-      </div>
-
-      {policies.length === 0 ? (
-        <Centered>
-          <p className="text-sm text-[var(--muted-foreground)] max-w-[300px] text-center px-4">
-            No preferences detected yet. As Claude Code & Codex record how you like to work, they'll
-            surface here.
-          </p>
-        </Centered>
-      ) : (
-        <>
-          {/* Filter bar */}
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-1.5 shrink-0 border-b border-[var(--atlas-border-subtle)]">
+        {policies.length > 0 && (
+          <>
             <FilterGroup
               value={originF}
               onChange={setOriginF}
@@ -269,17 +246,30 @@ export function MemoryPolicyView() {
                 ] as const
               }
             />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Filter…"
-              className="ml-auto h-[22px] w-[130px] rounded-md border border-[var(--border)] bg-[var(--card)] px-2 text-xs text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)] focus:border-[var(--atlas-border-strong)]"
-            />
-          </div>
+          </>
+        )}
+        <div className="flex-1" />
+        {policies.length > 0 && (
+          <Input
+            size="sm"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Filter…"
+            className="w-[160px]"
+          />
+        )}
+      </Toolbar>
 
-          <div className="flex-1 min-h-0 overflow-auto hide-scrollbar">
+      {policies.length === 0 ? (
+        <Notice>
+          No preferences detected yet. As Claude Code & Codex record how you like to work, they'll
+          surface here.
+        </Notice>
+      ) : (
+        <>
+          <div className="hide-scrollbar min-h-0 flex-1 overflow-auto">
             <div style={{ minWidth: TABLE_MIN_W }}>
-              <div className="sticky top-0 z-10 flex items-center h-[28px] border-b border-[var(--border)] bg-[var(--background)] px-3 text-2xs uppercase tracking-wider text-[var(--muted-foreground)]">
+              <div className={TABLE_HEAD}>
                 <span className={COL.policy}>Policy</span>
                 <span className={COL.value}>Value</span>
                 <span className={COL.source}>Source</span>
@@ -287,7 +277,7 @@ export function MemoryPolicyView() {
                 <span className={COL.actions} />
               </div>
               {visible.length === 0 ? (
-                <div className="px-3 py-6 text-center text-xs text-[var(--muted-foreground)]">
+                <div className="px-3 py-8 text-center text-xs text-muted-foreground">
                   No policies match these filters.
                 </div>
               ) : (
@@ -312,22 +302,13 @@ function FilterGroup<T extends string>({
   options: readonly (readonly [T, string])[];
 }) {
   return (
-    <div className="flex items-center gap-0.5 rounded-md border border-[var(--border)] bg-[var(--card)] p-0.5">
+    <Track>
       {options.map(([v, label]) => (
-        <button
-          key={v}
-          onClick={() => onChange(v)}
-          className={cn(
-            "h-[18px] rounded px-1.5 text-2xs transition-colors cursor-pointer",
-            value === v
-              ? "bg-[var(--atlas-element-selected)] text-[var(--foreground)]"
-              : "text-[var(--muted-foreground)] hover:text-[var(--secondary-foreground)]",
-          )}
-        >
+        <TrackSegment key={v} active={value === v} onClick={() => onChange(v)}>
           {label}
-        </button>
+        </TrackSegment>
       ))}
-    </div>
+    </Track>
   );
 }
 
@@ -361,27 +342,28 @@ function PolicyRow({
   };
 
   return (
-    <div className="flex items-center min-h-[42px] px-3 border-b border-[var(--atlas-border-subtle)] hover:bg-[var(--atlas-element-hover)]/40 transition-colors">
-      <div className={cn(COL.policy, "pr-3 min-w-0")}>
-        <div className="flex items-center gap-1.5 min-w-0">
-          <span
-            className={cn(
-              "shrink-0 rounded px-1 py-px text-3xs font-semibold uppercase tracking-wide border",
-              policy.category === "strong"
-                ? "border-[var(--atlas-status-error-foreground)]/40 bg-[var(--atlas-status-error-foreground)]/10 text-[var(--atlas-status-error-foreground)]"
-                : "border-[var(--border)] bg-[var(--card)] text-[var(--muted-foreground)]",
-            )}
+    <div
+      className={cn(
+        TABLE_ROW,
+        "flex min-h-[44px] items-center px-3 transition-colors duration-fast hover:bg-element-hover",
+      )}
+    >
+      <div className={cn(COL.policy, "min-w-0 pr-3")}>
+        <div className="flex min-w-0 items-center gap-1.5">
+          <Badge
+            size="sm"
+            variant={policy.category === "strong" ? "destructive" : "outline"}
             title={
               policy.category === "strong"
                 ? "Strong rule — must follow"
                 : "Soft preference — guidance"
             }
           >
-            {policy.category}
-          </span>
-          <span className="text-sm text-[var(--foreground)] truncate">{policy.key}</span>
+            <span className="font-semibold uppercase tracking-wide">{policy.category}</span>
+          </Badge>
+          <span className="truncate text-sm font-medium text-foreground">{policy.key}</span>
         </div>
-        <div className="text-2xs text-[var(--muted-foreground)] truncate mt-0.5">{policy.hint}</div>
+        <div className="caption mt-0.5 truncate">{policy.hint}</div>
       </div>
 
       <div className={cn(COL.value, "pr-3")}>
@@ -394,28 +376,27 @@ function PolicyRow({
           }}
           spellCheck={false}
           className={cn(
-            "w-full bg-transparent outline-none text-sm text-[var(--secondary-foreground)] rounded px-1.5 py-1 border transition-colors",
+            "h-control-md w-full rounded border bg-transparent px-2 text-sm outline-none",
+            "transition-colors duration-fast ease-out-strong",
             dirty
-              ? "border-[var(--atlas-border-strong)] bg-[var(--card)] text-[var(--foreground)]"
-              : "border-transparent hover:border-[var(--border)]",
+              ? "border-border-strong bg-panel-input text-foreground"
+              : "border-transparent text-secondary-foreground hover:border-border focus:border-border-strong",
           )}
         />
       </div>
 
-      <div className={cn(COL.source, "flex items-center gap-1.5 min-w-0")}>
+      <div className={cn(COL.source, "flex min-w-0 items-center gap-1.5")}>
         {policy.source === "codex" ? (
           <CodexIcon className="size-3 shrink-0 opacity-70" />
         ) : (
           <ClaudeIcon className="size-3 shrink-0 opacity-70" />
         )}
-        <span className="text-2xs text-[var(--muted-foreground)] truncate" title={policy.file_path}>
+        <span className="caption truncate font-mono" title={policy.file_path}>
           {basename(policy.file_path)}
         </span>
       </div>
 
-      <div
-        className={cn(COL.score, "text-right tabular-nums text-2xs text-[var(--muted-foreground)]")}
-      >
+      <div className={cn(COL.score, "caption text-right tabular-nums")}>
         {Math.round(policy.score * 100)}%
       </div>
 
@@ -425,18 +406,16 @@ function PolicyRow({
             <>
               <HintItem label="Save (Enter)">
                 <button
+                  type="button"
                   onClick={() => void save()}
                   disabled={saving}
-                  className="flex items-center justify-center w-5 h-5 rounded text-success hover:text-[var(--foreground)] hover:bg-[var(--atlas-element-hover)] disabled:opacity-50"
+                  className={ROW_ACTION}
                 >
-                  {saving ? <Loader2 size={12} className="animate-spin" /> : <Check size={13} />}
+                  {saving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
                 </button>
               </HintItem>
               <HintItem label="Revert (Esc)">
-                <button
-                  onClick={() => setDraft(policy.value)}
-                  className="flex items-center justify-center w-5 h-5 rounded text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--atlas-element-hover)]"
-                >
+                <button type="button" onClick={() => setDraft(policy.value)} className={ROW_ACTION}>
                   <X size={12} />
                 </button>
               </HintItem>
@@ -444,10 +423,11 @@ function PolicyRow({
           ) : (
             <HintItem label="Send to a session">
               <button
+                type="button"
                 onClick={() => sendToAgentChat(`Preference — ${policy.key}: ${policy.value}`)}
-                className="flex items-center justify-center w-5 h-5 rounded text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--atlas-element-hover)] transition-colors"
+                className={ROW_ACTION}
               >
-                <MessageSquarePlus size={13} />
+                <MessageSquarePlus size={12} />
               </button>
             </HintItem>
           )}
@@ -462,10 +442,6 @@ function basename(p: string): string {
   return parts[parts.length - 1] || p;
 }
 
-function Centered({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="h-full flex items-center justify-center text-[var(--muted-foreground)] text-sm">
-      {children}
-    </div>
-  );
-}
+/** A row's glyph action: `IconButton`'s ghost square on a plain button, so the
+ *  save glyph can swap to its spinner in place. */
+const ROW_ACTION = iconButtonVariants({ size: "xs" });

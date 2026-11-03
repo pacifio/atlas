@@ -1,15 +1,14 @@
 import { useTipOnMount } from "@/features/tips/lib/use-tip-on-mount";
 import { useState } from "react";
-import { Share2, SlidersHorizontal } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
-import { cn } from "@/lib/utils";
 import { FileTreeConfirmDelete } from "@/features/explorer/components/file-tree-confirm-delete";
 import { chainBroken, healthLine, useMemoryHealth } from "../lib/use-memory-health";
 import { MemoryGraphView } from "./memory-graph-view";
 import { MemoryPolicyView } from "./memory-policy-view";
 import { MemorySharingControls } from "./memory-sharing-controls";
 import { SharedMemoryView } from "./shared-memory-view";
+import { Notice, Toolbar, Track, TrackSegment } from "./views/memory-chrome";
 import { useAppStore } from "@/features/app/stores/app-store";
 import { useMemoryStore } from "../stores/memory-store";
 
@@ -40,37 +39,30 @@ export function MemoryPanel() {
   const { setSubTab } = useMemoryStore.use.actions();
 
   return (
-    <div className="h-full flex flex-col bg-[var(--background)]">
-      {/* Header: nav (left) · sharing controls (right) */}
-      <div className="flex items-center h-[32px] shrink-0 border-b border-[var(--border)] px-2">
-        <PillGroup>
-          <PillSeg
-            active={sub === "graph"}
-            onClick={() => setSubTab("graph")}
-            icon={<Share2 size={12} />}
-            label="Graph"
-          />
-          <PillSeg
-            active={sub === "policy"}
-            onClick={() => setSubTab("policy")}
-            icon={<SlidersHorizontal size={12} />}
-            label="Policy"
-          />
-          <PillSeg
-            active={sub === "shared"}
-            onClick={() => setSubTab("shared")}
-            icon={<Share2 size={12} />}
-            label="Shared"
-          />
-        </PillGroup>
+    <div className="flex h-full flex-col bg-background">
+      {/* Header: nav (left) · sharing controls (right). No glyphs on the nav:
+          three distinct nouns need no icons to tell them apart (the Usage
+          tables' tabs make the same call), and two of them shared one. */}
+      <Toolbar className="px-2">
+        <Track>
+          <TrackSegment active={sub === "graph"} onClick={() => setSubTab("graph")}>
+            Graph
+          </TrackSegment>
+          <TrackSegment active={sub === "policy"} onClick={() => setSubTab("policy")}>
+            Policy
+          </TrackSegment>
+          <TrackSegment active={sub === "shared"} onClick={() => setSubTab("shared")}>
+            Shared
+          </TrackSegment>
+        </Track>
 
-        <div className="ml-auto flex items-center gap-1">
+        <div className="ml-auto flex items-center gap-2">
           <MemoryHealthLine projectPath={projectPath} />
           <MemorySharingControls projectPath={projectPath} />
         </div>
-      </div>
+      </Toolbar>
 
-      <div className="flex-1 min-h-0">
+      <div className="min-h-0 flex-1">
         {sub === "graph" ? (
           <MemoryGraphView />
         ) : sub === "policy" ? (
@@ -78,55 +70,11 @@ export function MemoryPanel() {
         ) : projectPath ? (
           <SharedMemoryView projectPath={projectPath} />
         ) : (
-          <Centered>
-            <p className="text-sm text-[var(--muted-foreground)]">
-              Open a project to view shared memory.
-            </p>
-          </Centered>
+          <Notice>Open a project to view shared memory.</Notice>
         )}
       </div>
     </div>
   );
-}
-
-/** Rounded container that groups the segmented nav pills. */
-function PillGroup({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="inline-flex items-center gap-0.5 rounded-full border border-[var(--border)] bg-[var(--card,var(--card))] p-0.5">
-      {children}
-    </div>
-  );
-}
-
-function PillSeg({
-  active,
-  onClick,
-  icon,
-  label,
-}: {
-  active: boolean;
-  onClick: () => void;
-  icon: React.ReactNode;
-  label: string;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "flex items-center gap-1.5 h-control-xs px-2.5 rounded-full text-xs font-medium outline-none transition-colors cursor-pointer",
-        active
-          ? "bg-[var(--atlas-element-selected)] text-[var(--foreground)]"
-          : "text-[var(--muted-foreground)] hover:text-[var(--secondary-foreground)] hover:bg-[var(--atlas-element-hover)]",
-      )}
-    >
-      {icon}
-      {label}
-    </button>
-  );
-}
-
-function Centered({ children }: { children: React.ReactNode }) {
-  return <div className="h-full flex items-center justify-center">{children}</div>;
 }
 
 /** What the memory reconciler's last pass found, in one muted line; when the
@@ -146,14 +94,14 @@ function MemoryHealthLine({ projectPath }: { projectPath: string | null }) {
     }
   };
   return (
-    <span className="flex items-center gap-1.5 text-2xs text-[var(--muted-foreground)]">
+    <span className="caption flex items-center gap-1.5">
       {line}
       {chainBroken(status) && (
         <>
           <button
             type="button"
             onClick={() => setConfirm(true)}
-            className="underline underline-offset-2 hover:text-[var(--foreground)]"
+            className="cursor-pointer underline underline-offset-2 transition-colors duration-fast hover:text-foreground"
           >
             I made this edit
           </button>
