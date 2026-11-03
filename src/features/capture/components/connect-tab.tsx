@@ -44,8 +44,6 @@ export function ConnectTab({
   const [orgId, setOrgId] = useState<string>(cloudOrgs[0]?.remoteId ?? "");
   const [options, setOptions] = useState<ConnectOptions | null | undefined>(undefined);
   const [selected, setSelected] = useState<string | null>(null);
-  /** The server's reason for binding nothing, if it declined. */
-  const [refused, setRefused] = useState<string | null>(null);
   /** Why the listing failed, as Rust reported it — a 403 and a dead network
    *  need different fixes, and one sentence for both sent people checking
    *  Wi-Fi for a permission problem. */
@@ -61,7 +59,6 @@ export function ConnectTab({
     const mine = ++seq.current;
     setOptions(undefined);
     setSelected(null);
-    setRefused(null);
     setListError(null);
     captureConnectOptions(projectPath, orgId)
       .then((result) => {
@@ -89,7 +86,6 @@ export function ConnectTab({
       project={project}
       selected={selected}
       excludeId={excludeId}
-      refused={refused}
       busy={busy}
       primaryLabel={onContinue ? "Continue" : "Connect"}
       onSelect={setSelected}
@@ -100,7 +96,6 @@ export function ConnectTab({
           onContinue({ orgId, slug: project.slug, workspaceId: project.id });
           return;
         }
-        setRefused(null);
         void run(async () => {
           // Connect needs a binding row to attach the Cloud identity to.
           await captureEnableLocal(projectPath);
@@ -110,8 +105,10 @@ export function ConnectTab({
             slug: project.slug,
             workspaceId: project.id,
           });
-          if (result.matched) return;
-          setRefused(connectRefusal(result.candidates));
+          // Enable just created the binding, so the popover is about to swap
+          // this tab for the bound view; a refusal held here would unmount
+          // unseen. Thrown so the popover's error strip carries it instead.
+          if (!result.matched) throw new Error(connectRefusal(result.candidates));
         });
       }}
     />

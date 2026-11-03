@@ -14,6 +14,7 @@ import { createPortal } from "react-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { commandRequiresArgs } from "../lib/agent-slash-commands";
 
 // ── Public API ──────────────────────────────────────────────────────────────
 
@@ -46,13 +47,6 @@ export interface SlashCommand {
   signature: string;
   description: string;
   handler: SlashCommandHandler;
-}
-
-/** True if the signature contains `<…>` (required args). The picker uses
- *  this to decide whether to auto-send the command or just insert it into
- *  the composer and let the user type arguments before pressing Enter. */
-export function commandRequiresArgs(cmd: SlashCommand): boolean {
-  return /<[^>]+>/.test(cmd.signature);
 }
 
 /** The agent's own word for what this command takes (P3.1).

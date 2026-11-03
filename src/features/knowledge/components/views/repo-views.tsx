@@ -78,7 +78,7 @@ export function RepoEmpty({ path, onOpen }: { path: string; onOpen: () => void }
             "text-2xs text-secondary-foreground hover:bg-element-hover cursor-pointer",
           )}
         >
-          <ExternalLink size={10} /> Open in new window
+          <ExternalLink size={10} /> Open as project
         </button>
         <button
           onClick={() => navigator.clipboard.writeText(path)}
