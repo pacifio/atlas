@@ -108,6 +108,10 @@ pub struct Room {
     pub title: Option<String>,
     pub owner_user_id: String,
     pub member_tier: Tier,
+    /// Whether the owner takes requests for the seat: the object's, so
+    /// `None` in a list and from a room server that predates it.
+    #[serde(default)]
+    pub accept_requests: Option<bool>,
     pub capabilities: Vec<Capability>,
     pub status: RoomStatus,
     pub driver_epoch: Option<u64>,
