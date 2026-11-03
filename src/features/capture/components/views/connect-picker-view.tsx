@@ -22,7 +22,7 @@ export function ConnectLockedView({ reason }: { reason: string }) {
   );
 }
 
-/** The Organisation's Projects as a dropdown, plus the refusal and the actions. */
+/** The Organisation's Projects as a dropdown, plus the actions. */
 export function ConnectPickerView({
   options,
   listError,
@@ -30,7 +30,6 @@ export function ConnectPickerView({
   project,
   selected,
   excludeId,
-  refused,
   busy,
   primaryLabel,
   onSelect,
@@ -46,7 +45,6 @@ export function ConnectPickerView({
   project: RemoteWorkspace | undefined;
   selected: string | null;
   excludeId: string | null;
-  refused: string | null;
   busy: boolean;
   primaryLabel: string;
   onSelect: (id: string) => void;
@@ -127,15 +125,6 @@ export function ConnectPickerView({
             </DropdownMenuContent>
           </DropdownMenu>
         </>
-      )}
-
-      {/* The server declined to bind. Not an error — several Projects share
-       *  this repository's root commit, or none does — so the pick is handed
-       *  back rather than reported as a failure. */}
-      {refused && (
-        <p className="rounded-lg bg-[var(--atlas-status-warning-background)] px-2.5 py-1.5 text-xs text-[var(--atlas-status-warning-foreground)]">
-          {refused}
-        </p>
       )}
 
       <div className="flex justify-end gap-2 pt-1">
