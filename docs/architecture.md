@@ -88,7 +88,7 @@ Other stores: `project/stores/project-store.ts` (current project, recents), `git
 - **Up to 3 columns** (`groupOrder`, capped at 3). Each tab carries a `groupId` naming its column.
 - A maintained `activeTabId` mirrors the focused column's active tab, so most readers don't need to know splits exist.
 
-`src/lib/constants.ts` holds `TAB_TYPES` (the tab-type registry); `src/features/layout/components/tab-panels.tsx` holds the lazy-import map and render switch keyed off it (`center-panel.tsx` lays out the split columns that host them). New panel type = lazy import and render branch in `tab-panels.tsx` + entry in `TAB_TYPES` + entry in `NEW_TAB_OPTIONS` if it should reach the `+` menu.
+`src/lib/constants.ts` holds `TAB_TYPES` (the tab-type registry); `src/features/layout/components/tab-panels.tsx` holds the lazy-import map and render switch keyed off it (`center-panel.tsx` lays out the split columns that host them). New panel type = placement in `TAB_PLACEMENT` (ADR-0024) + entry in `TAB_TYPES` + lazy import and render branch in `tab-panels.tsx` + entry in `SURFACES` (`src/features/layout/lib/surfaces.ts`) if ⌘T should offer it + entry in `PERSISTENT_TYPES_LIST` if it stays mounted across tab switches.
 
 **Persistent module types — editor, terminal, browser, knowledge-graph, pdf — stay mounted across tab switches** via `display: contents` / `display: none` instead of unmounting. Remounting would rebuild the file view and drop its unsaved edits, kill the PTY's rendered scrollback, or tear down the native embedded webview.
 
