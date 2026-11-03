@@ -1,4 +1,4 @@
-// The sidebar's sessions: the header (search, new session), then one
+// The sidebar's sessions: the header (search, project filter), then one
 // scroller holding the pinned block, the active list,
 // the Snoozed shelf and the Settled shelf.
 //
@@ -39,10 +39,8 @@ import { Plus, Search, X } from "lucide-react";
 import { toast } from "sonner";
 import { useChatStore } from "@/features/chat/stores/chat-store";
 import { cn } from "@/lib/utils";
-import { openNewAgentChat } from "@/features/chat/lib/open-agent-session";
 import { registerSettleAndAdvance } from "@/features/chat/lib/settle-and-advance";
 import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
-import { useAppStore } from "@/features/app/stores/app-store";
 import { ImportThreadsModal } from "@/features/chat/components/import-threads-modal";
 import { pickAndAddProject } from "@/features/projects/lib/pick-project";
 import { noteSessionListScroll } from "../lib/session-list-scroll";
@@ -133,9 +131,7 @@ export function SidebarSessions() {
   const { pinned, active, snoozed, settled } = partition;
   const live = useLiveSessions();
   const activeSessionId = useActiveSessionId();
-  const hasProject = useAppStore((s) => !!s.currentProject);
   const settleShortcut = useActionShortcut("chat.settleSession")?.label ?? null;
-  const newSessionShortcut = useActionShortcut("tabs.newChat")?.label ?? null;
   const renamingThreadId = useSidebarStore.use.renamingThreadId();
   const search = useSidebarStore.use.search();
   const snoozedExpanded = useSidebarStore.use.snoozedExpanded();
@@ -548,9 +544,6 @@ export function SidebarSessions() {
           sidebarActions.setSearch("");
           setActiveResultIndex(0);
         }}
-        onNewSession={() => openNewAgentChat()}
-        newSessionDisabled={!hasProject}
-        newSessionShortcut={newSessionShortcut}
       />
       <SessionRowMenu
         scopedToProject={scopeProjectId !== null}

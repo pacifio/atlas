@@ -14,6 +14,7 @@ import { Kbd } from "@/ui/kbd";
 import { IconButton } from "@/ui/icon-button";
 import { PaneHeader } from "@/components/titlebar";
 import { BreadcrumbSeparator } from "@/components/breadcrumb-button";
+import { SessionSwitcher } from "@/features/sidebar/components/session-switcher";
 import { columnChrome } from "../lib/shell-edges";
 import { PaneTopInsetContext } from "../lib/pane-top-inset";
 import { OPEN_SURFACE_MENU_EVENT, SURFACES, openSurface, surfaceForKey } from "../lib/surfaces";
@@ -580,12 +581,14 @@ function namedInWindowBar(tab: Tab): boolean {
 /** The main pane's title, the breadcrumb's last segment. A chat names its
  *  session (the chat store is keyed by tab id) rather than the tab's generic
  *  "Agents". It is the one place the session's name shows: the session view
- *  itself does not repeat it. */
+ *  itself does not repeat it. On a session it is also the switch between the
+ *  project's sessions, and where a new one starts (`session-switcher.tsx`). */
 function MainTitle({ tab }: { tab: Tab }) {
   const sessionTitle = useChatStore((s) => {
     const session = tab.type === "chat" ? s.sessions[tab.id] : undefined;
     return session ? sessionDisplayTitle(session.title, session.firstUserContent) : null;
   });
+  if (tab.type === "chat") return <SessionSwitcher title={sessionTitle ?? tab.title} />;
   return (
     <span className="min-w-0 truncate px-1 text-sm text-foreground">
       {sessionTitle ?? tab.title}

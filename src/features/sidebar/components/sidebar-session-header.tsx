@@ -1,13 +1,15 @@
-// The list's header: search across every session, and new session. Which
-// projects the list shows is the project picker above it (`project-picker.tsx`).
+// The list's header: search across every session, and the filter for which
+// projects the list shows (`session-scope-filter.tsx`). A new session starts
+// from the session's own crumb in the title bar (`session-switcher.tsx`), or
+// its shortcut.
 //
 // The search is a combobox over the list below it: typing swaps the sections
 // for results, the arrow keys move a highlight through them (the field keeps
 // focus), Enter opens the highlighted one and Escape clears.
 
 import type { KeyboardEvent, RefObject } from "react";
-import { Plus, Search, X } from "lucide-react";
-import { GlassIconButton } from "./glass-icon-button";
+import { Search, X } from "lucide-react";
+import { SessionScopeFilter } from "./session-scope-filter";
 import { Icon } from "@/ui/icon";
 
 export const SEARCH_RESULTS_ID = "sidebar-session-search-results";
@@ -22,9 +24,6 @@ export interface SidebarSessionHeaderProps {
   searchResultCount: number;
   activeSearchResultIndex: number;
   onClearSearch: () => void;
-  onNewSession: () => void;
-  newSessionDisabled: boolean;
-  newSessionShortcut: string | null;
 }
 
 export function SidebarSessionHeader(props: SidebarSessionHeaderProps) {
@@ -81,13 +80,7 @@ export function SidebarSessionHeader(props: SidebarSessionHeaderProps) {
         ) : null}
       </label>
       <div className="flex shrink-0 items-center">
-        <GlassIconButton
-          icon={Plus}
-          label="New session"
-          shortcut={props.newSessionShortcut ?? undefined}
-          disabled={props.newSessionDisabled}
-          onClick={props.onNewSession}
-        />
+        <SessionScopeFilter />
       </div>
     </div>
   );
