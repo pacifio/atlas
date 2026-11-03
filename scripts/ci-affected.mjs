@@ -144,6 +144,7 @@ export const NON_RUST = [
   ".design-sync/",
   ".github/ISSUE_TEMPLATE/",
   ".github/pr-assets/",
+  ".github/assets/",
   ".github/PULL_REQUEST_TEMPLATE.md",
   ".github/SECURITY.md",
   ".github/CODE_OF_CONDUCT.md",

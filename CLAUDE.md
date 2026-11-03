@@ -23,6 +23,7 @@ drift out of date without anything noticing.
 | theme keys, theme import, icon themes, config, keybindings      | `docs/reference/`                                                                                                |
 | the browser mock backend                                        | `src/dev/mock-backend/README.md`                                                                                 |
 | what a contract suite guards, and why nothing else can          | that suite's docblock in `tests/`                                                                                |
+| what the web app, the org agent (Atlas), ROI or RC do; their wire contracts | `../server/docs/api/` (pull first)                                                                      |
 | what CI actually runs                                           | `.github/workflows/ci.yml` (commented throughout); for a given diff, `node scripts/ci-affected.mjs --base <rev>` |
 
 **Count things, don't quote counts.** Commands, crates, tab types and test suites all
