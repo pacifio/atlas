@@ -15,12 +15,19 @@ import type { CommentActions } from "../components/comment-thread";
 import type { Comment } from "./comments-api";
 
 /**
- * The pure comment helpers the reader's rows need, re-exported so a view does
- * not import the IPC module (`comments-api`) for two counting functions and a
- * type. The two functions are pure; the module they live in also holds the
- * invoke wrappers, which is the only reason for the indirection.
+ * The pure comment helpers the reader's rows and the comment thread's views
+ * need, re-exported so a view does not import the IPC module (`comments-api`)
+ * for two counting functions, a limit and two types. They are pure; the module
+ * they live in also holds the invoke wrappers, which is the only reason for the
+ * indirection.
  */
-export { anchorKindFor, visibleCount, type Comment } from "./comments-api";
+export {
+  anchorKindFor,
+  COMMENT_BODY_MAX,
+  visibleCount,
+  type AnchorKind,
+  type Comment,
+} from "./comments-api";
 
 /**
  * Everything the comment surfaces need, or `null` on a Session that is not
