@@ -100,6 +100,7 @@ import {
   useAddProjectFlow,
 } from "../lib/palette-add-project";
 import { usePaletteThemeItems } from "../lib/palette-theme-items";
+import { paletteTipItems } from "../lib/palette-tip-items";
 import { useOrgAgentStore } from "@/features/org-agent/stores/org-agent-store";
 import { revealAgentPanel, toggleAgentPanel } from "@/features/layout/lib/org-agent";
 import {
@@ -222,6 +223,7 @@ function OpenCommandPalette(props: {
   const sessions = usePaletteSessions();
   const activeSessionId = useActiveSessionId();
   const { changeThemeItem, changeAppearanceItem, themeEditorItem } = usePaletteThemeItems();
+  const tipItems = paletteTipItems();
   const { preferred: editor } = usePreferredEditor();
   const activeFile = useLayoutStore((s) => {
     const id = s.activeByGroup[s.focusedGroupId];
@@ -360,6 +362,8 @@ function OpenCommandPalette(props: {
     changeThemeItem,
     changeAppearanceItem,
     themeEditorItem,
+    tipItems.showTipItem,
+    tipItems.replayTipsItem,
   );
   if (projectPath) {
     actionItems.push(

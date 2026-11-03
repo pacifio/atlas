@@ -22,6 +22,11 @@ export interface AppSettings {
   /** Show dotfiles and dot-directories in the explorer file tree. */
   showHiddenFiles: boolean;
   /**
+   * Show a short tip the first time you meet a feature. Which tips you have already seen is
+   * kept in tips.json beside this file; Replay all tips in Settings clears it.
+   */
+  showTips: boolean;
+  /**
    * The external editor that "Open in <editor>" uses for a file or the project: an id such as
    * "vscode", "cursor", "zed", "windsurf", "sublime", "xcode" or a JetBrains IDE ("idea",
    * "webstorm", "pycharm"…), or "system" for the app your system opens the file with. Empty
@@ -433,6 +438,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoAddAtlasGitignore: true,
   enableAtlasLogs: true,
   showHiddenFiles: true,
+  showTips: true,
   preferredEditor: "",
   uiScale: 1,
   shareTelemetry: true,
@@ -633,6 +639,15 @@ export const SETTINGS_REGISTRY: readonly SettingMeta[] = [
     section: "Files",
     title: "Show hidden files",
     summary: "Show dotfiles and dot-directories in the explorer file tree.",
+  },
+  {
+    key: "showTips",
+    type: "boolean",
+    status: "live",
+    page: "general",
+    section: "Tips",
+    title: "Show tips",
+    summary: "Show a short tip the first time you meet a feature.",
   },
   {
     key: "preferredEditor",

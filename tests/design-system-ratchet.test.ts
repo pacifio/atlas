@@ -180,10 +180,6 @@ const EXEMPT_FILES: Record<string, string> = {
     "Not a colour: it BUILDS `rgb(r,g,b)` strings out of the numeric " +
     "parameters of an ANSI escape sequence. The rule matches the format, not a " +
     "choice anyone made.",
-  "src/features/telemetry/error-boundary.tsx":
-    "Shape 2, of a kind: the last-resort screen after React has unmounted the " +
-    "app. It is styled entirely inline, on purpose, so that it renders when " +
-    "whatever broke was the thing that paints everything else.",
   "src/dev/mock-backend/badge.ts":
     "Shape 2, of a kind: the unmocked-command counter, injected into the DOM " +
     "by the dev mock backend. It has to stay legible over whatever theme is " +

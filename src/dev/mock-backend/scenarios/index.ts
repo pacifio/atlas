@@ -40,9 +40,9 @@ import { collab } from "./collab";
 import { designSystem } from "./design-system";
 import { diffComments, diffLarge } from "./diff-large";
 import { filesLarge } from "./files-large";
+import { freshInstall } from "./fresh-install";
 import { gitConflict } from "./git-conflict";
 import { inboxLong } from "./inbox-long";
-import { keymapFirstRun } from "./keymap-first-run";
 import { knowledge } from "./knowledge";
 import { memorySetup } from "./memory-setup";
 import { northwind } from "./northwind";
@@ -118,7 +118,7 @@ const all: Scenario[] = [
   timelineEmpty,
   timelineLong,
   inboxLong,
-  keymapFirstRun,
+  freshInstall,
   designSystem,
 ];
 

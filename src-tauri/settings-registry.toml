@@ -158,6 +158,18 @@ doc = "Show dotfiles and dot-directories in the explorer file tree."
 validation = "—"
 
 [[setting]]
+key = "showTips"
+type = "boolean"
+default = true
+status = "live"
+page = "general"
+section = "Tips"
+title = "Show tips"
+summary = "Show a short tip the first time you meet a feature."
+doc = "Show a short tip the first time you meet a feature. Which tips you have already seen is kept in tips.json beside this file; Replay all tips in Settings clears it."
+validation = "—"
+
+[[setting]]
 key = "preferredEditor"
 type = "string"
 default = ""

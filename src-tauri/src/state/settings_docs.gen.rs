@@ -18,6 +18,10 @@ const SETTINGS_DOCS: &[(&str, &str)] = &[
         "# Show dotfiles and dot-directories in the explorer file tree. (default: true)",
     ),
     (
+        "showTips",
+        "# Show a short tip the first time you meet a feature. Which tips you have\n# already seen is kept in tips.json beside this file; Replay all tips in\n# Settings clears it. (default: true)",
+    ),
+    (
         "preferredEditor",
         "# The external editor that \"Open in <editor>\" uses for a file or the project:\n# an id such as \"vscode\", \"cursor\", \"zed\", \"windsurf\", \"sublime\", \"xcode\" or a\n# JetBrains IDE (\"idea\", \"webstorm\", \"pycharm\"…), or \"system\" for the app your\n# system opens the file with. Empty uses the first editor Atlas finds\n# installed. An id that isn't installed falls back to that same choice. Files\n# outside the project open in the system's app unless this names an editor.\n# (default: \"\")",
     ),

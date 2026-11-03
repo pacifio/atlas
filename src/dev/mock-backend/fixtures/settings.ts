@@ -13,6 +13,7 @@ import type { EnvEntry, EnvKeyMeta, ProfileInfo } from "@/features/settings/lib/
 import type { ModelPrice } from "@/features/settings/stores/model-pricing-store";
 import type { KeybindingsLoadResult } from "@/features/keybindings/lib/keybindings-api";
 import { DEFAULT_KEYBINDINGS_FILE, type KeybindingsFile } from "@/features/keybindings/lib/types";
+import type { TipsState } from "@/features/tips/lib/tips-api";
 import type { TypedHandlers, Unit, Unread } from "../types";
 
 const price = (input: number, output: number, cacheRead = 0, cacheWrite = 0): ModelPrice => ({
@@ -141,13 +142,16 @@ export interface SettingsResponses {
   keybindings_save: KeybindingsFile;
   keybindings_open: Unit;
   menu_set_accelerators: Unit;
+  tips_load: TipsState;
+  tips_mark_seen: TipsState;
+  tips_reset: TipsState;
 }
 
 export const settingsHandlers: TypedHandlers<SettingsResponses> = {
   keybindings_load: (): KeybindingsLoadResult => ({
     file: DEFAULT_KEYBINDINGS_FILE,
     path: "~/.config/atlas/keybindings.json",
-    // A returning user; `?scenario=keymap-first-run` shows the first launch.
+    // A returning user; `?scenario=fresh-install` shows the first launch.
     exists: true,
     warnings: [],
   }),
@@ -157,6 +161,11 @@ export const settingsHandlers: TypedHandlers<SettingsResponses> = {
     (file as KeybindingsFile) ?? DEFAULT_KEYBINDINGS_FILE,
   keybindings_open: () => null,
   menu_set_accelerators: () => null,
+  // Someone who upgraded: moment tips only, so the populated scenarios stay
+  // quiet. `?scenario=fresh-install` gets every tip.
+  tips_load: (): TipsState => ({ version: 1, cohort: "upgrade", seen: [] }),
+  tips_mark_seen: ({ ids }): TipsState => ({ version: 1, cohort: "upgrade", seen: ids }),
+  tips_reset: ({ keep }): TipsState => ({ version: 1, cohort: "fresh", seen: keep }),
 
   models_pricing_get: (): Record<string, ModelPrice> => PRICING,
   models_pricing_refresh: () => null,

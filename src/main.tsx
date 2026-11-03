@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { App } from "./App";
+import { CrashPreviewTrigger } from "./features/telemetry/crash-screen";
 import { TelemetryErrorBoundary } from "./features/telemetry/error-boundary";
 import { installGlobalErrorHandlers } from "./features/telemetry/error-handlers";
 import { initTelemetry } from "./features/telemetry/posthog-client";
@@ -27,6 +28,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <TelemetryErrorBoundary>
       <QueryClientProvider client={queryClient}>
+        <CrashPreviewTrigger />
         <App />
       </QueryClientProvider>
     </TelemetryErrorBoundary>
