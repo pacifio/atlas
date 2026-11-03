@@ -745,7 +745,7 @@ function TerminalHandoffDockBody({
       </button>
 
       {/* Pill button, matching the transcript's "N new messages" jump control
-          (`chat-panel.tsx`) — same radius and weight, sized to this row. */}
+          (`jump-to-bottom-pill.tsx`) — same radius and weight, sized to this row. */}
       <button
         onClick={onDone}
         className="flex h-6.5 shrink-0 items-center rounded-full border border-border bg-element-selected px-3 text-xs font-medium leading-none text-foreground transition-colors hover:bg-[var(--atlas-element-emphasis)]"

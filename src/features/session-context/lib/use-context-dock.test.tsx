@@ -3,7 +3,7 @@
 // The docked Details card's room: reserved from the panel's width alone, so
 // the transcript row, the column centred in it and the composer stack are laid
 // out the same whether or not the card shows. This mounts the real hook the
-// way `chat-panel.tsx` wires it.
+// way `chat-panel.tsx` and its `chat-panel-layout.tsx` view wire it.
 
 import { useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -20,7 +20,7 @@ import { useContextDock } from "./use-context-dock";
 
 let panelWidth = 1000;
 
-/** `chat-panel.tsx`'s wiring: the row's padding and the composer's margin,
+/** `chat-panel-layout.tsx`'s wiring: the row's padding and the composer's margin,
  *  both from one `useContextDock`. */
 function Panel({ enabled = true }: { enabled?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
