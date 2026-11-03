@@ -338,6 +338,12 @@ pub struct AppSettings {
     /// flipping a flag first.
     #[serde(default = "default_true")]
     pub enable_atlas_logs: bool,
+    /// How many days of Atlas's own daily log files to keep. The file sink
+    /// is installed before the rest of this config is read, so
+    /// `logging::init` reads just this key and a change applies at the
+    /// next launch, which also deletes the files past the new count.
+    #[serde(default = "default_log_retention_days")]
+    pub log_retention_days: u32,
     /// Show dotfiles / dot-directories (e.g. `.git`, `.atlas`, `.env`) in
     /// the explorer file tree. Default ON so nothing is silently hidden;
     /// users who want a cleaner tree can turn it off.
@@ -702,6 +708,14 @@ pub fn default_auto_settle_after_days() -> u32 {
     DEFAULT_AUTO_SETTLE_AFTER_DAYS
 }
 
+pub const DEFAULT_LOG_RETENTION_DAYS: u32 = 7;
+pub const MIN_LOG_RETENTION_DAYS: u32 = 1;
+pub const MAX_LOG_RETENTION_DAYS: u32 = 90;
+
+pub fn default_log_retention_days() -> u32 {
+    DEFAULT_LOG_RETENTION_DAYS
+}
+
 pub fn default_terminal_notify_min_duration_ms() -> u32 {
     10_000
 }
@@ -711,6 +725,7 @@ impl Default for AppSettings {
         Self {
             auto_add_atlas_gitignore: true,
             enable_atlas_logs: true,
+            log_retention_days: default_log_retention_days(),
             show_hidden_files: true,
             preferred_editor: String::new(),
             ui_scale: default_ui_scale(),
@@ -855,6 +870,15 @@ pub fn validate(settings: &AppSettings) -> Result<(), ValidationIssue> {
             message: format!(
                 "must be a finite number between {MIN_UI_SCALE} and {MAX_UI_SCALE}, got {}",
                 settings.ui_scale
+            ),
+        });
+    }
+    if !(MIN_LOG_RETENTION_DAYS..=MAX_LOG_RETENTION_DAYS).contains(&settings.log_retention_days) {
+        return Err(ValidationIssue {
+            key: "logRetentionDays",
+            message: format!(
+                "must be between {MIN_LOG_RETENTION_DAYS} and {MAX_LOG_RETENTION_DAYS}, got {}",
+                settings.log_retention_days
             ),
         });
     }
@@ -1230,6 +1254,7 @@ where
 pub struct SettingsPatch {
     pub auto_add_atlas_gitignore: Option<bool>,
     pub enable_atlas_logs: Option<bool>,
+    pub log_retention_days: Option<u32>,
     pub show_hidden_files: Option<bool>,
     pub preferred_editor: Option<String>,
     pub ui_scale: Option<f32>,
@@ -1317,6 +1342,9 @@ impl SettingsPatch {
         }
         if let Some(v) = self.enable_atlas_logs {
             settings.enable_atlas_logs = v;
+        }
+        if let Some(v) = self.log_retention_days {
+            settings.log_retention_days = v;
         }
         if let Some(v) = self.show_hidden_files {
             settings.show_hidden_files = v;
@@ -1622,6 +1650,9 @@ impl SettingsPatch {
         }
         if let Some(v) = self.terminal_notify_min_duration_ms {
             table["terminalNotifyMinDurationMs"] = toml_edit::value(i64::from(v));
+        }
+        if let Some(v) = self.log_retention_days {
+            table["logRetentionDays"] = toml_edit::value(i64::from(v));
         }
 
         if let Some(v) = self.ui_scale {
@@ -2735,6 +2766,7 @@ someFutureKey = \"left alone\"
         let patch = SettingsPatch {
             auto_add_atlas_gitignore: Some(!defaults.auto_add_atlas_gitignore),
             enable_atlas_logs: Some(!defaults.enable_atlas_logs),
+            log_retention_days: Some(defaults.log_retention_days + 1),
             show_hidden_files: Some(!defaults.show_hidden_files),
             preferred_editor: Some("zed".to_string()),
             ui_scale: Some(1.5),

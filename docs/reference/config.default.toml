@@ -24,6 +24,11 @@ autoAddAtlasGitignore = true
 # opens) into the Logs panel. (default: true)
 enableAtlasLogs = true
 
+# How many days of Atlas's own log files to keep. A new file starts each day,
+# and files past this count are deleted. Must be between 1 and 90. (default:
+# 7)
+logRetentionDays = 7
+
 # Show dotfiles and dot-directories in the explorer file tree. (default: true)
 showHiddenFiles = true
 

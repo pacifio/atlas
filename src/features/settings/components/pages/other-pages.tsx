@@ -16,7 +16,7 @@ import {
   SettingsRow,
   SettingsSection,
 } from "../layout/settings-layout";
-import { SettingSwitch } from "../layout/setting-controls";
+import { SettingStepper, SettingSwitch } from "../layout/setting-controls";
 
 import { ConfigFileSection } from "./config-file";
 
@@ -94,6 +94,10 @@ export function PrivacyPage() {
             setting="enableAtlasLogs"
             description="Atlas's own events (sign-in, agents starting and finishing, files and pages opened) in the Logs panel under the atlas source, so you can share a timeline when something goes wrong."
             control={<SettingSwitch setting="enableAtlasLogs" />}
+          />
+          <SettingsRow
+            setting="logRetentionDays"
+            control={<SettingStepper setting="logRetentionDays" unit="d" />}
           />
         </SettingsGroup>
       </SettingsSection>

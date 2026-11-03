@@ -27,8 +27,12 @@ use tracing_subscriber::layer::SubscriberExt as _;
 use tracing_subscriber::util::SubscriberInitExt as _;
 use tracing_subscriber::EnvFilter;
 
+use crate::state::atlas_config::{
+    config_root, CONFIG_FILE_NAME, DEFAULT_LOG_RETENTION_DAYS, MAX_LOG_RETENTION_DAYS,
+    MIN_LOG_RETENTION_DAYS,
+};
+
 const LOG_FILE_PREFIX: &str = "atlas";
-const MAX_LOG_FILES: usize = 7;
 
 static LOG_DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
 
@@ -49,6 +53,30 @@ fn default_log_dir() -> Option<PathBuf> {
     } else {
         dirs::data_local_dir().map(|dir| dir.join(bundle_id).join("logs"))
     }
+}
+
+/// How many daily log files to keep: `logRetentionDays` from `config.toml`.
+///
+/// The file sink is installed before the config is loaded (so the loading
+/// itself is logged), which is why this reads the one key straight from the
+/// file. A missing file, unparsable TOML, or a value outside the setting's
+/// bounds keeps the default, as the config loader would reject it too. The
+/// appender prunes when it is built, so lowering the value removes the older
+/// files at the next launch.
+fn log_retention_days() -> usize {
+    let text = config_root()
+        .map(|root| root.join(CONFIG_FILE_NAME))
+        .and_then(|path| std::fs::read_to_string(path).ok());
+    retention_days_in(text.as_deref()) as usize
+}
+
+fn retention_days_in(config: Option<&str>) -> u32 {
+    config
+        .and_then(|text| text.parse::<toml::Table>().ok())
+        .and_then(|doc| doc.get("settings")?.get("logRetentionDays")?.as_integer())
+        .and_then(|days| u32::try_from(days).ok())
+        .filter(|days| (MIN_LOG_RETENTION_DAYS..=MAX_LOG_RETENTION_DAYS).contains(days))
+        .unwrap_or(DEFAULT_LOG_RETENTION_DAYS)
 }
 
 pub fn init() {
@@ -76,7 +104,7 @@ pub fn init() {
             .rotation(tracing_appender::rolling::Rotation::DAILY)
             .filename_prefix(LOG_FILE_PREFIX)
             .filename_suffix("log")
-            .max_log_files(MAX_LOG_FILES)
+            .max_log_files(log_retention_days())
             .build(&dir)
             .ok()?;
         let _ = LOG_DIR.set(Some(dir));
@@ -103,5 +131,39 @@ pub fn init() {
 
     if let Some(dir) = log_dir() {
         tracing::info!(dir = %dir.display(), version = env!("CARGO_PKG_VERSION"), "log file sink installed");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn with_settings(line: &str) -> String {
+        format!("[settings]\n{line}\n")
+    }
+
+    #[test]
+    fn retention_reads_the_setting_and_falls_back_to_the_default() {
+        let days = |toml: &str| retention_days_in(Some(toml));
+        for kept in [1, 30, 90] {
+            assert_eq!(
+                days(&with_settings(&format!("logRetentionDays = {kept}"))),
+                kept
+            );
+        }
+
+        // Anything the config loader would reject keeps the default.
+        for rejected in [
+            with_settings("logRetentionDays = 0"),
+            with_settings("logRetentionDays = 91"),
+            with_settings("logRetentionDays = -3"),
+            with_settings("logRetentionDays = \"30\""),
+            with_settings("showHiddenFiles = false"),
+            "logRetentionDays = 30\n".to_string(),
+            "not toml [".to_string(),
+        ] {
+            assert_eq!(days(&rejected), DEFAULT_LOG_RETENTION_DAYS, "{rejected:?}");
+        }
+        assert_eq!(retention_days_in(None), DEFAULT_LOG_RETENTION_DAYS);
     }
 }
