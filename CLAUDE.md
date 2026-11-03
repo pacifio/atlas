@@ -257,6 +257,11 @@ that helper: `run_engine_helper_if_asked` dispatches the arg0 alias that
 sandboxed command is refused before it runs, with the turn ending normally. `bun run
 ci:local atlas-native-agent` runs that job in a container; CI's Linux jobs are the
 authority, and `release-linux.yml`'s `Verify` is the authority on the shipped packages.
+Two more cost nothing on a Mac and most of a core on Linux: inotify reports _reads_ as
+events, so every watcher drops `EventKind::Access` first (`src-tauri/src/fs_events.rs`,
+`watcher-access-filter.test.ts`); and WebKitGTK presents a frame per animation tick, so
+infinite animations are stepped under `html.platform-linux`
+(`linux-animation-steps.test.ts`). `docs/reference/linux-support.md` has the numbers.
 
 **CI runs on aarch64 only.** The Linux jobs use `ubuntu-24.04-arm` and the app job uses
 Apple Silicon `macos-latest`. That matches the team's machines, so a red job reproduces

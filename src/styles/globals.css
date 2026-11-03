@@ -3201,3 +3201,48 @@ html:root[data-diff-palette="blue-orange"] {
 .atlas-live-thought[data-clipped] {
   mask-image: linear-gradient(to bottom, transparent, black 20px);
 }
+
+/* ── Linux: long-running animations at a stepped frame rate ───────────────
+   WebKitGTK presents a full-window frame for every tick of an accelerated
+   animation, and the UI process pays for each one on the main thread: the
+   sidebar's 14 px working ring, turning once every 3 s while a terminal
+   session is live, measured 40% of a core on an otherwise idle project.
+   macOS composites the same ring for nothing, which is why it never showed.
+
+   `steps()` makes the compositor produce only N frames per cycle instead of
+   one per vsync; each rule below lands near 12 fps for its duration. The
+   easing becomes linear steps on this platform, a trade taken on purpose.
+   Scoped to the class `markPlatform()` sets, so every other platform keeps
+   its motion. `tests/linux-animation-steps.test.ts` requires a rule
+   here for every infinite animation in this file. */
+html.platform-linux .animate-spin {
+  /* 1 s spinners; the working ring sets 36 for its 3 s turn. */
+  animation-timing-function: steps(var(--atlas-linux-spin-steps, 12));
+}
+html.platform-linux .animate-pulse {
+  animation-timing-function: steps(24);
+}
+html.platform-linux .atlas-live-pulse {
+  animation-timing-function: steps(24);
+}
+html.platform-linux .atlas-ants {
+  animation-timing-function: steps(8);
+}
+html.platform-linux .atlas-timeline-beam {
+  animation-timing-function: steps(40);
+}
+html.platform-linux .atlas-radar-sweep {
+  animation-timing-function: steps(190);
+}
+html.platform-linux .atlas-loader {
+  animation-timing-function: steps(12);
+}
+html.platform-linux .atlas-marker-running {
+  animation-timing-function: steps(17);
+}
+html.platform-linux .atlas-pixel-cell {
+  animation-timing-function: steps(10);
+}
+html.platform-linux .atlas-arc-spin {
+  animation-timing-function: steps(13);
+}

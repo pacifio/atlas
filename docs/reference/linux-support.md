@@ -67,6 +67,34 @@ Known issue: on at least one Ubuntu 26.04 machine, stopping a turn does not stop
 sandboxed command that is already running. See finding L1 in
 [`docs/qa/linux-smoke-matrix.md`](../qa/linux-smoke-matrix.md).
 
+## CPU at idle
+
+Two things cost nothing on macOS and most of a core on Linux. Both are fixed
+in code and each has a suite that fails if the fix is undone.
+
+- **A read is an event.** notify's inotify backend subscribes to `IN_OPEN`, so
+  on Linux every read of a watched file or directory arrives as an
+  `EventKind::Access`. A watcher whose callback reads something to interpret an
+  event (`.gitignore`, `.git/index`, `config.toml`) woke itself and every other
+  watcher on the tree: an idle project measured ~1,300 events/s and 75% of a
+  core. Every watcher in `src-tauri` now drops `Access` first
+  (`src-tauri/src/fs_events.rs`; `tests/watcher-access-filter.test.ts`).
+- **A frame per animation tick.** WebKitGTK presents a full-window frame for
+  every tick of an accelerated animation, and the UI process pays for each on
+  its main thread: the sidebar's 14 px working ring, turning while a terminal
+  session is live, measured 29% of a core. Under `html.platform-linux` every
+  infinite animation runs with `steps()` timing near 12 fps (the block at the
+  end of `src/styles/globals.css`; `tests/linux-animation-steps.test.ts`): the
+  ring now costs 9%.
+
+What remains: while a session of the open project is live in another process
+(Claude Code in a terminal, typically), Atlas sits at ~9% on the UI process and
+~9% on the web process, and at ~1% each once that session goes quiet. That
+residue is not rendering (it survives reduced motion and a frozen screen) and
+is not the file watchers; it has not been traced further. Measure with the
+project open and a terminal session writing, and compare against the same
+window 90 s after the terminal's last write.
+
 ## Updates
 
 Linux never downloads or installs an update. When a newer version is published, Atlas
