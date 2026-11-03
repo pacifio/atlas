@@ -31,13 +31,20 @@ use std::path::Path;
 
 use serde::Deserialize;
 
-/// The npm name for the platform a lockfile entry's `os`/`cpu` gates are
-/// compared against — `process.platform` / `process.arch` as Node reports
-/// them, e.g. `("darwin", "arm64")` or `("win32", "x64")`.
+/// The npm name for the platform a lockfile entry's `os`/`cpu`/`libc` gates
+/// are compared against — `process.platform` / `process.arch` as Node reports
+/// them, e.g. `("darwin", "arm64")` or `("win32", "x64")`, and on Linux the
+/// libc family npm detects (`"glibc"` or `"musl"`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NpmPlatform {
     pub os: &'static str,
     pub cpu: &'static str,
+    /// `None` leaves a `libc` gate open. npm evaluates the gate only on
+    /// Linux, and there it must be known: a package that ships both a glibc
+    /// and a musl variant (`@anthropic-ai/claude-agent-sdk-linux-x64` and
+    /// `…-linux-x64-musl`) gets exactly one installed, and treating the gate
+    /// as open would demand the other one too.
+    pub libc: Option<&'static str>,
 }
 
 /// What the hidden lockfile says about `node_modules`.
@@ -171,7 +178,7 @@ fn entry_applies(key: &str, entry: &LockEntry, platform: NpmPlatform) -> bool {
         && !entry.in_bundle
         && gate_allows(entry.os.as_ref(), Some(platform.os))
         && gate_allows(entry.cpu.as_ref(), Some(platform.cpu))
-        && gate_allows(entry.libc.as_ref(), None)
+        && gate_allows(entry.libc.as_ref(), platform.libc)
 }
 
 async fn read_hidden_lockfile(install_dir: &Path) -> Result<Option<HiddenLockfile>, String> {
@@ -247,7 +254,27 @@ mod tests {
     const DARWIN_ARM64: NpmPlatform = NpmPlatform {
         os: "darwin",
         cpu: "arm64",
+        libc: None,
     };
+
+    const LINUX_X64_GLIBC: NpmPlatform = NpmPlatform {
+        os: "linux",
+        cpu: "x64",
+        libc: Some("glibc"),
+    };
+
+    /// The shape of `@anthropic-ai/claude-agent-sdk`: one package per
+    /// os/cpu, and on Linux a glibc and a musl variant of each.
+    const CLAUDE_SDK_LIKE: &str = r#"{
+      "lockfileVersion": 3,
+      "packages": {
+        "": { "name": "root" },
+        "node_modules/@anthropic-ai/claude-agent-sdk": { "version": "0.2.0" },
+        "node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64": { "optional": true, "ideallyInert": true, "os": ["darwin"], "cpu": ["arm64"] },
+        "node_modules/@anthropic-ai/claude-agent-sdk-linux-x64": { "optional": true, "os": ["linux"], "cpu": ["x64"], "libc": ["glibc"] },
+        "node_modules/@anthropic-ai/claude-agent-sdk-linux-x64-musl": { "optional": true, "ideallyInert": true, "os": ["linux"], "cpu": ["x64"], "libc": ["musl"] }
+      }
+    }"#;
 
     fn tree(lockfile: Option<&str>, packages: &[&str]) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
@@ -336,6 +363,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn on_glibc_the_musl_variant_is_not_required() {
+        let dir = tree(
+            Some(CLAUDE_SDK_LIKE),
+            &["node_modules/@anthropic-ai/claude-agent-sdk-linux-x64"],
+        );
+        assert_eq!(
+            install_state(dir.path(), LINUX_X64_GLIBC).await,
+            InstallState::Complete
+        );
+    }
+
+    #[tokio::test]
+    async fn on_glibc_the_glibc_variant_is_still_required() {
+        let dir = tree(Some(CLAUDE_SDK_LIKE), &[]);
+        assert_eq!(
+            install_state(dir.path(), LINUX_X64_GLIBC).await,
+            InstallState::MissingOptional(vec![
+                "node_modules/@anthropic-ai/claude-agent-sdk-linux-x64".into()
+            ])
+        );
+    }
+
+    #[tokio::test]
     async fn node_modules_without_a_hidden_lockfile_is_incomplete() {
         let dir = tree(None, &["node_modules/@scope/agent"]);
         assert_eq!(
@@ -403,5 +453,7 @@ mod tests {
         assert!(gate_allows(Some(&many(&[])), Some("darwin")));
         // A libc gate we cannot evaluate never blocks.
         assert!(gate_allows(Some(&many(&["musl"])), None));
+        assert!(!gate_allows(Some(&many(&["musl"])), Some("glibc")));
+        assert!(gate_allows(Some(&many(&["glibc"])), Some("glibc")));
     }
 }

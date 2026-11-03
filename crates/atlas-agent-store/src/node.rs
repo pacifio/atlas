@@ -502,13 +502,17 @@ fn node_platform() -> Result<(&'static str, &'static str)> {
     Ok((os, arch))
 }
 
-/// The platform npm gates `os`/`cpu` on — `process.platform`/`process.arch` of
-/// the managed Node, which is the Atlas build's own arch (an x64 build under
-/// Rosetta gets an x64 Node and resolves x64 packages, consistently).
+/// The platform npm gates `os`/`cpu`/`libc` on — `process.platform`/
+/// `process.arch` of the managed Node, which is the Atlas build's own arch (an
+/// x64 build under Rosetta gets an x64 Node and resolves x64 packages,
+/// consistently). On Linux the libc is always glibc: the managed Node is
+/// nodejs.org's Linux build, which is glibc-only, and npm reads the family
+/// from that Node's own runtime report.
 pub fn npm_platform() -> Option<crate::npm_tree::NpmPlatform> {
     let (os, cpu) = node_platform().ok()?;
     let os = if os == "win" { "win32" } else { os };
-    Some(crate::npm_tree::NpmPlatform { os, cpu })
+    let libc = (os == "linux").then_some("glibc");
+    Some(crate::npm_tree::NpmPlatform { os, cpu, libc })
 }
 
 /// The inherited environment keys npm must not see.
