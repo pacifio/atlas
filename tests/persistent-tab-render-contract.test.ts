@@ -4,7 +4,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
- * Guards `CenterPanel`'s persistent-tab render path.
+ * Guards `CenterPanel`'s persistent-tab render path (the registry lives in
+ * `tab-panels.tsx`).
  *
  * HISTORY. `TabContentContainer` used to mount persistent tab types through an
  * if/else-if chain keyed on `tab.type` that ended in an unconditional
@@ -33,22 +34,22 @@ import { fileURLToPath } from "node:url";
  *
  * We parse source text rather than rendering the component, matching
  * `ipc-contract.test.ts` / `state-payload-contract.test.ts`: it is cheap,
- * needs no DOM/store mocking, and importing `center-panel.tsx` would pull in
+ * needs no DOM/store mocking, and importing `tab-panels.tsx` would pull in
  * the whole lazy-loaded panel tree and every store it touches.
  */
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const CENTER_PANEL_PATH = path.join(
+const TAB_PANELS_PATH = path.join(
   REPO_ROOT,
   "src",
   "features",
   "layout",
   "components",
-  "center-panel.tsx",
+  "tab-panels.tsx",
 );
 
 function readSource(): string {
-  return readFileSync(CENTER_PANEL_PATH, "utf-8");
+  return readFileSync(TAB_PANELS_PATH, "utf-8");
 }
 
 /** Pulls the quoted string literals out of one `as const` tuple declaration. */
@@ -56,7 +57,7 @@ function parseTypeList(source: string, name: string): string[] {
   const match = source.match(new RegExp(`const ${name} = \\[([\\s\\S]*?)\\] as const`));
   if (!match) {
     throw new Error(
-      `Could not find \`${name}\` in center-panel.tsx — the parser needs updating to match a reshaped declaration.`,
+      `Could not find \`${name}\` in tab-panels.tsx — the parser needs updating to match a reshaped declaration.`,
     );
   }
   return [...match[1].matchAll(/"([a-z-]+)"/g)].map((m) => m[1]);
@@ -67,10 +68,14 @@ function parsePersistentPanelCases(source: string): string[] {
   const start = source.indexOf("function PersistentPanel(");
   if (start === -1) {
     throw new Error(
-      "Could not locate `PersistentPanel` in center-panel.tsx — the parser needs updating to match a reshaped render.",
+      "Could not locate `PersistentPanel` in tab-panels.tsx — the parser needs updating to match a reshaped render.",
     );
   }
-  const end = source.indexOf("\nfunction ", start + 1);
+  // The next top-level function, exported or not, ends the block — or the
+  // scan runs on into `TabContent` and counts its cases too.
+  const next = /\n(?:export )?function /g;
+  next.lastIndex = start + 1;
+  const end = next.exec(source)?.index ?? -1;
   const block = source.slice(start, end === -1 ? undefined : end);
   return [...block.matchAll(/case "([a-z-]+)":/g)].map((m) => m[1]);
 }
