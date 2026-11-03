@@ -1,11 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { RailGlyph } from "@/ui/animated-icon";
 import { useScopedHotkeys } from "@/features/keybindings/lib/use-scoped-hotkeys";
-import { invoke } from "@tauri-apps/api/core";
-import { toast } from "sonner";
-import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
-import { HintGroup, HintItem } from "@/ui/hint-group";
 import { useKnowledgeStore } from "../stores/knowledge-store";
 import { useKnowledgeMetaStore, usePageMeta } from "../stores/knowledge-meta-store";
 import {
@@ -36,10 +30,14 @@ import { EditorTopbar } from "./editor-topbar";
 import { EditorFooter } from "./editor-footer";
 import { KnowledgeInspector } from "./knowledge-inspector";
 import { PageProperties } from "./page-properties";
-import { IconPicker } from "./icon-picker";
-import { CoverPicker, gradientCss } from "./cover-picker";
-import { coverCacheKey, getCachedCoverUrl, putCachedCoverUrl } from "../lib/cover-url-cache";
-import { Copy, ExternalLink, GitBranch, PanelRight } from "lucide-react";
+import { PageHeaderWithIcon } from "./page-header-with-icon";
+import { RepoEmpty, RepoTopbar } from "./views/repo-views";
+import { BacklinksFooter } from "./views/backlinks-footer";
+import { listClonedRepos, readRepoReadme, saveKnowledgeNote } from "../lib/knowledge-api";
+import type { KnowledgeClonedRepo } from "../lib/knowledge-api";
+import { useKnowledgeResize } from "../lib/use-knowledge-resize";
+import { useKnowledgeImports } from "../lib/use-knowledge-imports";
+import { useEditorCounts } from "../lib/use-editor-counts";
 
 const RECENTS_MAX = 5;
 
@@ -68,9 +66,7 @@ export function KnowledgePanel({ tabId }: { tabId?: string }) {
   const [finderOpen, setFinderOpen] = useState(false);
   const [activeRepoName, setActiveRepoName] = useState<string | null>(null);
   const [repoReadme, setRepoReadme] = useState<string | null>(null);
-  const [clonedRepos, setClonedRepos] = useState<
-    Array<{ name: string; display_name: string; path: string; has_readme: boolean }>
-  >([]);
+  const [clonedRepos, setClonedRepos] = useState<KnowledgeClonedRepo[]>([]);
   // KB panel layout is hoisted into layout-store so tab switches don't
   // reset sidebar/inspector visibility or column widths — same model the
   // global left/right panels use. All KB tabs share one layout (matches
@@ -86,40 +82,15 @@ export function KnowledgePanel({ tabId }: { tabId?: string }) {
     setKnowledgeInspectorWidth,
   } = useLayoutStore.use.actions();
 
-  // Drag-resize helpers. Each handle is a 4px-wide invisible strip on
-  // the panel border; mousedown captures pointer + listens for global
-  // mousemove until release. `from` is the side being resized.
-  const startResize = useCallback(
-    (e: React.MouseEvent, from: "sidebar" | "inspector") => {
-      e.preventDefault();
-      const startX = e.clientX;
-      const startW = from === "sidebar" ? sidebarWidth : inspectorWidth;
-      const onMove = (ev: MouseEvent) => {
-        const dx = ev.clientX - startX;
-        if (from === "sidebar") {
-          setKnowledgeSidebarWidth(startW + dx);
-        } else {
-          // Inspector grows when dragged LEFT, so flip the delta.
-          setKnowledgeInspectorWidth(startW - dx);
-        }
-      };
-      const onUp = () => {
-        document.body.style.cursor = "";
-        document.body.style.userSelect = "";
-        window.removeEventListener("mousemove", onMove);
-        window.removeEventListener("mouseup", onUp);
-      };
-      document.body.style.cursor = "col-resize";
-      document.body.style.userSelect = "none";
-      window.addEventListener("mousemove", onMove);
-      window.addEventListener("mouseup", onUp);
-    },
-    [sidebarWidth, inspectorWidth, setKnowledgeSidebarWidth, setKnowledgeInspectorWidth],
+  // Drag-resize helpers (see `useKnowledgeResize`).
+  const startResize = useKnowledgeResize(
+    sidebarWidth,
+    inspectorWidth,
+    setKnowledgeSidebarWidth,
+    setKnowledgeInspectorWidth,
   );
   const [recentIds, setRecentIds] = useState<string[]>([]);
   const [editorInstance, setEditorInstance] = useState<Editor | null>(null);
-  const [wordCount, setWordCount] = useState(0);
-  const [charCount, setCharCount] = useState(0);
   const [newFolderName, setNewFolderName] = useState("");
   const [showFolderInput, setShowFolderInput] = useState(false);
 
@@ -155,10 +126,7 @@ export function KnowledgePanel({ tabId }: { tabId?: string }) {
       loadEntries(currentProject.path);
       void bindMeta(currentProject.path);
       void bindLinks(currentProject.path);
-      invoke<Array<{ name: string; display_name: string; path: string; has_readme: boolean }>>(
-        "list_cloned_repos",
-        { projectPath: currentProject.path },
-      )
+      listClonedRepos(currentProject.path)
         .then(setClonedRepos)
         .catch(() => {});
     } else {
@@ -289,54 +257,11 @@ export function KnowledgePanel({ tabId }: { tabId?: string }) {
     void openFile(filePath);
   }, []);
 
-  // Import external .md files (Obsidian-style). .md → KB notes; any non-.md
-  // files picked directly open in the file view instead.
-  const handleImportFiles = useCallback(async () => {
-    if (!currentProject) return;
-    const { open } = await import("@tauri-apps/plugin-dialog");
-    const sel = await open({ multiple: true });
-    const paths = Array.isArray(sel) ? sel : sel ? [sel] : [];
-    if (!paths.length) return;
-    const md = paths.filter((p) => /\.(md|markdown)$/i.test(p));
-    const other = paths.filter((p) => !/\.(md|markdown)$/i.test(p));
-    if (md.length) {
-      try {
-        const res = await invoke<{ notes_imported: number; files_copied: number }>(
-          "import_into_knowledge",
-          { projectPath: currentProject.path, sources: md },
-        );
-        await loadEntries(currentProject.path);
-        toast.success(`Imported ${res.notes_imported} note${res.notes_imported === 1 ? "" : "s"}`);
-      } catch (e) {
-        toast.error(`Import failed: ${e instanceof Error ? e.message : String(e)}`);
-      }
-    }
-    other.forEach(openInFileView);
-  }, [currentProject, loadEntries, openInFileView]);
-
-  // Import a whole folder (e.g. an Obsidian vault): .md become notes, other
-  // files (images, code, attachments) are copied in so the vault stays intact.
-  const handleImportFolder = useCallback(async () => {
-    if (!currentProject) return;
-    const { open } = await import("@tauri-apps/plugin-dialog");
-    const dir = await open({ directory: true });
-    if (!dir || Array.isArray(dir)) return;
-    try {
-      const res = await invoke<{ notes_imported: number; files_copied: number }>(
-        "import_into_knowledge",
-        { projectPath: currentProject.path, sources: [dir] },
-      );
-      await loadEntries(currentProject.path);
-      toast.success(
-        `Imported ${res.notes_imported} note${res.notes_imported === 1 ? "" : "s"}` +
-          (res.files_copied
-            ? ` + ${res.files_copied} file${res.files_copied === 1 ? "" : "s"}`
-            : ""),
-      );
-    } catch (e) {
-      toast.error(`Import failed: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  }, [currentProject, loadEntries]);
+  const { handleImportFiles, handleImportFolder } = useKnowledgeImports(
+    currentProject,
+    loadEntries,
+    openInFileView,
+  );
 
   const handleSelectEntry = useCallback(
     async (id: string) => {
@@ -380,10 +305,7 @@ export function KnowledgePanel({ tabId }: { tabId?: string }) {
       setActiveRepoName(name);
       selectEntry("");
       try {
-        const readme = await invoke<string>("read_repo_readme", {
-          projectPath: currentProject.path,
-          repoName: name,
-        });
+        const readme = await readRepoReadme(currentProject.path, name);
         setRepoReadme(readme);
       } catch {
         setRepoReadme(null);
@@ -396,11 +318,7 @@ export function KnowledgePanel({ tabId }: { tabId?: string }) {
     if (!newFolderName.trim() || !currentProject) return;
     const name = newFolderName.trim();
     await createDir(currentProject.path, name);
-    await invoke("save_knowledge_note", {
-      projectPath: currentProject.path,
-      id: `${name}/note-${Date.now()}`,
-      content: `# ${name}\n\n`,
-    });
+    await saveKnowledgeNote(currentProject.path, `${name}/note-${Date.now()}`, `# ${name}\n\n`);
     await loadEntries(currentProject.path);
     setNewFolderName("");
     setShowFolderInput(false);
@@ -425,31 +343,8 @@ export function KnowledgePanel({ tabId }: { tabId?: string }) {
     return parts[parts.length - 1] ?? activeEntry.id;
   }, [activeEntry, activeMeta.title]);
 
-  // Word/char counts come straight from the live editor JSON so they
-  // stay in sync with every keystroke without round-tripping markdown.
-  useEffect(() => {
-    if (!editorInstance) {
-      setWordCount(0);
-      setCharCount(0);
-      return;
-    }
-    const update = () => {
-      const text = editorInstance.state.doc.textBetween(
-        0,
-        editorInstance.state.doc.content.size,
-        " ",
-        " ",
-      );
-      const trimmed = text.trim();
-      setWordCount(trimmed ? trimmed.split(/\s+/).length : 0);
-      setCharCount(text.length);
-    };
-    update();
-    editorInstance.on("update", update);
-    return () => {
-      editorInstance.off("update", update);
-    };
-  }, [editorInstance]);
+  // Word/char counts from the live editor (see `useEditorCounts`).
+  const { wordCount, charCount } = useEditorCounts(editorInstance);
 
   const pageStats = useMemo<Array<[string, string | number]>>(() => {
     return [
@@ -573,7 +468,18 @@ export function KnowledgePanel({ tabId }: { tabId?: string }) {
                 </div>
               </div>
             ) : (
-              <RepoEmpty path={clonedRepos.find((r) => r.name === activeRepoName)?.path ?? ""} />
+              <RepoEmpty
+                path={clonedRepos.find((r) => r.name === activeRepoName)?.path ?? ""}
+                onOpen={() => {
+                  // Open this repo as a project in the current window (Atlas is
+                  // single-window now — was: spawn a new native window).
+                  void useProjectStore
+                    .getState()
+                    .actions.addProject(
+                      clonedRepos.find((r) => r.name === activeRepoName)?.path ?? "",
+                    );
+                }}
+              />
             )}
           </>
         ) : activeEntry ? (
@@ -629,84 +535,10 @@ export function KnowledgePanel({ tabId }: { tabId?: string }) {
                   }}
                 />
                 {backlinksFooter.length > 0 && (
-                  <div
-                    style={{
-                      marginTop: 32,
-                      padding: "14px 16px",
-                      background: "var(--card)",
-                      border: "1px solid var(--atlas-border-subtle)",
-                      borderRadius: 10,
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        marginBottom: 10,
-                      }}
-                    >
-                      <span className="eyebrow" style={{ flex: 1 }}>
-                        Mentioned in · {backlinksFooter.length}{" "}
-                        {backlinksFooter.length === 1 ? "place" : "places"}
-                      </span>
-                    </div>
-                    <div
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "1fr 1fr",
-                        gap: 8,
-                      }}
-                    >
-                      {backlinksFooter.slice(0, 4).map((b, idx) => (
-                        <button
-                          key={`${b.fromEntryId}-${idx}`}
-                          type="button"
-                          onClick={() => void handleSelectEntry(b.fromEntryId)}
-                          style={{
-                            padding: "8px 10px",
-                            borderRadius: 7,
-                            background: "var(--background)",
-                            border: "1px solid var(--atlas-border-subtle)",
-                            textAlign: "left",
-                            cursor: "pointer",
-                          }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.background = "var(--atlas-element-hover)";
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.background = "var(--background)";
-                          }}
-                        >
-                          <div
-                            className="text-sm"
-                            style={{
-                              color: "var(--foreground)",
-                              fontWeight: 500,
-                              marginBottom: 4,
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              whiteSpace: "nowrap",
-                            }}
-                          >
-                            {b.fromTitle}
-                          </div>
-                          <div
-                            className="text-sm"
-                            style={{
-                              color: "var(--muted-foreground)",
-                              lineHeight: 1.5,
-                              display: "-webkit-box",
-                              WebkitLineClamp: 2,
-                              WebkitBoxOrient: "vertical" as const,
-                              overflow: "hidden",
-                            }}
-                          >
-                            {b.snippet}
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
+                  <BacklinksFooter
+                    backlinks={backlinksFooter}
+                    onSelectEntry={(id) => void handleSelectEntry(id)}
+                  />
                 )}
               </div>
             </div>
@@ -747,321 +579,6 @@ export function KnowledgePanel({ tabId }: { tabId?: string }) {
           />
         </>
       )}
-    </div>
-  );
-}
-
-/* ── Sub-components kept local since they're presentational glue ─── */
-
-function PageHeaderWithIcon({
-  entryId,
-  projectPath,
-  title,
-}: {
-  entryId: string;
-  projectPath: string;
-  /** Resolved display title (meta.title ?? filename fallback). The
-   *  input below is treated as a controlled-with-debounce field; the
-   *  parent rebuilds this prop when meta changes. */
-  title: string;
-}) {
-  const meta = usePageMeta(entryId);
-  const { patch } = useKnowledgeMetaStore.use.actions();
-  const icon = meta.icon || "📄";
-  const cover = meta.cover ?? null;
-  const [iconAnchor, setIconAnchor] = useState<DOMRect | null>(null);
-  const [coverAnchor, setCoverAnchor] = useState<DOMRect | null>(null);
-
-  // Local draft so typing into the title input doesn't fire a Rust
-  // patch on every keystroke. We commit on blur + Enter.
-  const [titleDraft, setTitleDraft] = useState(title);
-  useEffect(() => {
-    setTitleDraft(title);
-  }, [title, entryId]);
-
-  const commitTitle = () => {
-    const next = titleDraft.trim();
-    if (!entryId) return;
-    if (!next) {
-      // Empty draft → clear the override so the filename fallback wins
-      // again.
-      if (meta.title !== null && meta.title !== undefined) {
-        void patch(entryId, { title: null });
-      }
-      return;
-    }
-    if (next !== (meta.title ?? "")) {
-      void patch(entryId, { title: next });
-    }
-  };
-
-  const isGradientCover = cover?.startsWith("gradient:");
-  const gradient = isGradientCover ? gradientCss(cover!) : null;
-
-  // Covers are stored under the hidden `.atlas/` directory, which Tauri's
-  // asset protocol refuses to serve (the webview 403s the asset:// request).
-  // Fetch the image as a base64 `data:` URL instead — it embeds the bytes
-  // directly, so the cover renders identically in dev and bundled builds
-  // without depending on the asset protocol or its scope globs.
-  //
-  // Cached per cover ref (see cover-url-cache) so page switches between
-  // covered pages don't re-read + re-encode + re-ship the image over IPC —
-  // that was a visible loading flash plus a main-thread parse hitch per
-  // navigation. Upload evicts (the ref is entry-id-stable, not per-upload).
-  const cacheKey = cover ? coverCacheKey(projectPath, cover) : null;
-  const [coverUrl, setCoverUrl] = useState<string | null>(() =>
-    cacheKey ? getCachedCoverUrl(cacheKey) : null,
-  );
-  useEffect(() => {
-    if (!cover || !cacheKey || isGradientCover) {
-      setCoverUrl(null);
-      return;
-    }
-    const cached = getCachedCoverUrl(cacheKey);
-    if (cached) {
-      setCoverUrl(cached);
-      return;
-    }
-    let alive = true;
-    void invoke<string>("knowledge_cover_data_url", { projectPath, cover })
-      .then((url) => {
-        putCachedCoverUrl(cacheKey, url);
-        if (alive) setCoverUrl(url);
-      })
-      .catch(() => {
-        if (alive) setCoverUrl(null);
-      });
-    return () => {
-      alive = false;
-    };
-  }, [cover, cacheKey, isGradientCover, projectPath]);
-
-  return (
-    <div style={{ marginBottom: 14 }}>
-      {/* Cover strip — 180px, hidden when not set. Add-cover button
-          appears just above the title when none exists. */}
-      {cover ? (
-        <div
-          // Key on the resolved cover ref so React fully remounts the
-          // element when it flips between gradient ↔ image ↔ absent —
-          // belt-and-braces against any background-image cache holding
-          // a stale URL after a cover swap or remove.
-          key={cover}
-          style={{
-            height: 180,
-            borderRadius: 10,
-            border: "1px solid var(--atlas-border-subtle)",
-            margin: "0 0 14px",
-            background:
-              gradient ??
-              (coverUrl ? `center / cover no-repeat url("${coverUrl}")` : "var(--card)"),
-            position: "relative",
-            cursor: "pointer",
-          }}
-          onClick={(e) => setCoverAnchor(e.currentTarget.getBoundingClientRect())}
-          title="Click to change cover"
-        />
-      ) : null}
-
-      <div
-        className="text-sm"
-        style={{
-          display: "flex",
-          gap: 12,
-          color: "var(--muted-foreground)",
-          opacity: 0.85,
-          marginBottom: 4,
-        }}
-      >
-        {!cover && (
-          <button
-            type="button"
-            onClick={(e) => setCoverAnchor(e.currentTarget.getBoundingClientRect())}
-            className="text-sm"
-            style={{
-              background: "transparent",
-              border: 0,
-              padding: 0,
-              color: "var(--muted-foreground)",
-              cursor: "pointer",
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 5,
-            }}
-          >
-            Add cover
-          </button>
-        )}
-      </div>
-
-      <div className="flex items-start" style={{ gap: 14, marginTop: 10 }}>
-        <Hint label="Change icon">
-          <button
-            onClick={(e) => setIconAnchor(e.currentTarget.getBoundingClientRect())}
-            className="text-2xl"
-            style={{
-              width: 44,
-              height: 44,
-              borderRadius: 9,
-              background: "var(--card)",
-              border: "1px solid var(--atlas-border-subtle)",
-              lineHeight: 1,
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              flex: "none",
-              cursor: "pointer",
-            }}
-          >
-            {icon}
-          </button>
-        </Hint>
-        <div className="flex-1 min-w-0">
-          <input
-            value={titleDraft}
-            placeholder="Untitled"
-            onChange={(e) => setTitleDraft(e.target.value)}
-            onBlur={commitTitle}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                commitTitle();
-                (e.currentTarget as HTMLInputElement).blur();
-              } else if (e.key === "Escape") {
-                setTitleDraft(title);
-                (e.currentTarget as HTMLInputElement).blur();
-              }
-            }}
-            className="text-2xl"
-            style={{
-              display: "block",
-              width: "100%",
-              lineHeight: 1.15,
-              margin: "2px 0 0",
-              letterSpacing: "-0.03em",
-              color: "var(--foreground)",
-              fontWeight: 600,
-              fontFamily: "var(--font-sans)",
-              background: "transparent",
-              border: 0,
-              padding: 0,
-              outline: "none",
-            }}
-          />
-        </div>
-      </div>
-
-      {iconAnchor && (
-        <IconPicker
-          value={meta.icon ?? null}
-          anchorRect={iconAnchor}
-          onPick={(v) => entryId && void patch(entryId, { icon: v })}
-          onClose={() => setIconAnchor(null)}
-        />
-      )}
-      {coverAnchor && entryId && (
-        <CoverPicker
-          value={cover}
-          projectPath={projectPath}
-          entryId={entryId}
-          anchorRect={coverAnchor}
-          onPick={(v) => void patch(entryId, { cover: v })}
-          onClose={() => setCoverAnchor(null)}
-        />
-      )}
-    </div>
-  );
-}
-
-function RepoTopbar({
-  name,
-  path,
-  onToggleSidebar,
-  sidebarHidden,
-  onToggleInspector,
-}: {
-  name: string;
-  path: string;
-  onToggleSidebar?: () => void;
-  sidebarHidden?: boolean;
-  onToggleInspector: () => void;
-}) {
-  return (
-    <div
-      className="flex items-center shrink-0 border-b border-border-subtle"
-      style={{ height: 36, gap: 8, padding: "0 14px", background: "var(--atlas-panel-background)" }}
-    >
-      {onToggleSidebar && (
-        <Hint label={sidebarHidden ? "Show sidebar" : "Hide sidebar"}>
-          <button
-            onClick={onToggleSidebar}
-            className="p-1 rounded text-muted-foreground hover:bg-element-hover hover:text-secondary-foreground transition-colors"
-            style={{ width: 22, height: 22, marginLeft: -6 }}
-          >
-            <RailGlyph open={!sidebarHidden} size="sm" />
-          </button>
-        </Hint>
-      )}
-      <GitBranch size={12} className="text-muted-foreground shrink-0" />
-      <span className="font-mono text-secondary-foreground truncate flex-1 min-w-0 text-sm">
-        {name}
-      </span>
-      <span className="pill pill-bare text-2xs" style={{ height: 18, padding: "0 6px" }}>
-        REPO
-      </span>
-      <HintGroup>
-        <HintItem label="Copy path">
-          <button
-            onClick={() => navigator.clipboard.writeText(path)}
-            className="p-1 rounded text-muted-foreground hover:bg-element-hover hover:text-secondary-foreground transition-colors cursor-pointer"
-            style={{ width: 22, height: 22 }}
-          >
-            <Copy size={11} />
-          </button>
-        </HintItem>
-        <HintItem label="Toggle inspector">
-          <button
-            onClick={onToggleInspector}
-            className="p-1 rounded text-muted-foreground hover:bg-element-hover hover:text-secondary-foreground transition-colors"
-            style={{ width: 22, height: 22 }}
-          >
-            <PanelRight size={12} />
-          </button>
-        </HintItem>
-      </HintGroup>
-    </div>
-  );
-}
-
-function RepoEmpty({ path }: { path: string }) {
-  // Open this repo as a project in the current window (Atlas is
-  // single-window now — was: spawn a new native window).
-  const open = () => {
-    void useProjectStore.getState().actions.addProject(path);
-  };
-  return (
-    <div className="h-full flex flex-col items-center justify-center gap-3 text-muted-foreground">
-      <p className="text-sm">No README.md found</p>
-      <div className="flex items-center gap-2">
-        <button
-          onClick={open}
-          className={cn(
-            "flex items-center gap-1 px-2 py-1 rounded border border-border",
-            "text-2xs text-secondary-foreground hover:bg-element-hover cursor-pointer",
-          )}
-        >
-          <ExternalLink size={10} /> Open in new window
-        </button>
-        <button
-          onClick={() => navigator.clipboard.writeText(path)}
-          className={cn(
-            "flex items-center gap-1 px-2 py-1 rounded border border-border",
-            "text-2xs text-secondary-foreground hover:bg-element-hover cursor-pointer",
-          )}
-        >
-          <Copy size={10} /> Copy path
-        </button>
-      </div>
     </div>
   );
 }
