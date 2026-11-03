@@ -56,14 +56,20 @@ function childEnv() {
   return env;
 }
 
-/** Every file under `dir`, as paths relative to it (POSIX-ish, sorted). */
+/** Every file under `dir`, as paths relative to it (POSIX-ish, sorted).
+ *
+ *  Symlinks count as files, so the sync below deletes them like any other
+ *  stray. Skipping them left a link whose target it had just deleted, and
+ *  `tauri::generate_context!` walks all of `dist/` and fails the build on a
+ *  dangling link: `scripts/package-linux.sh` stages `bin/atl -> atlas` under
+ *  `dist/release-linux/`, so a build after a local packaging run broke. */
 function listFiles(dir) {
   const out = [];
   const walk = (abs) => {
     for (const entry of readdirSync(abs, { withFileTypes: true })) {
       const child = join(abs, entry.name);
       if (entry.isDirectory()) walk(child);
-      else if (entry.isFile()) out.push(relative(dir, child));
+      else if (entry.isFile() || entry.isSymbolicLink()) out.push(relative(dir, child));
     }
   };
   if (existsSync(dir)) walk(dir);
