@@ -1,3 +1,4 @@
+import { useTipsStore } from "@/features/tips/stores/tips-store";
 import {
   memo,
   useState,
@@ -2016,6 +2017,7 @@ export function MessageInput({
         <div
           ref={composerRef}
           data-chat-composer
+          data-tip-anchor="composer"
           data-collapsed={collapsed || undefined}
           className={cn(
             // Positioned + z-indexed so the composer paints over — and visually
@@ -2050,6 +2052,7 @@ export function MessageInput({
           onFocusCapture={() => {
             setComposerFocused(true);
             handleFocusCapture();
+            useTipsStore.getState().actions.request("composer");
           }}
           onBlurCapture={onComposerBlur}
           // A press anywhere in it is being in it, focus or not (see above).

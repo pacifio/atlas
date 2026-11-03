@@ -343,6 +343,10 @@ pub struct AppSettings {
     /// users who want a cleaner tree can turn it off.
     #[serde(default = "default_true")]
     pub show_hidden_files: bool,
+    /// Show a Tip the first time the user meets a feature. Off silences
+    /// every tip; which ones were already seen lives in `tips.json`.
+    #[serde(default = "default_true")]
+    pub show_tips: bool,
     /// The external editor "Open in <editor>" uses: an editor id from
     /// `commands::external_editor`, `"system"` for the OS's own app, or empty
     /// for the first editor detected. Files outside the project go to the
@@ -712,6 +716,7 @@ impl Default for AppSettings {
             auto_add_atlas_gitignore: true,
             enable_atlas_logs: true,
             show_hidden_files: true,
+            show_tips: true,
             preferred_editor: String::new(),
             ui_scale: default_ui_scale(),
             share_telemetry: true,
@@ -1231,6 +1236,7 @@ pub struct SettingsPatch {
     pub auto_add_atlas_gitignore: Option<bool>,
     pub enable_atlas_logs: Option<bool>,
     pub show_hidden_files: Option<bool>,
+    pub show_tips: Option<bool>,
     pub preferred_editor: Option<String>,
     pub ui_scale: Option<f32>,
     pub share_telemetry: Option<bool>,
@@ -1320,6 +1326,9 @@ impl SettingsPatch {
         }
         if let Some(v) = self.show_hidden_files {
             settings.show_hidden_files = v;
+        }
+        if let Some(v) = self.show_tips {
+            settings.show_tips = v;
         }
         if let Some(v) = &self.preferred_editor {
             settings.preferred_editor = v.clone();
@@ -1513,6 +1522,7 @@ impl SettingsPatch {
         set_bool!(auto_add_atlas_gitignore, "autoAddAtlasGitignore");
         set_bool!(enable_atlas_logs, "enableAtlasLogs");
         set_bool!(show_hidden_files, "showHiddenFiles");
+        set_bool!(show_tips, "showTips");
         set_bool!(share_telemetry, "shareTelemetry");
         set_bool!(link_telemetry_to_account, "linkTelemetryToAccount");
         set_bool!(git_blame_inline, "gitBlameInline");
@@ -2736,6 +2746,7 @@ someFutureKey = \"left alone\"
             auto_add_atlas_gitignore: Some(!defaults.auto_add_atlas_gitignore),
             enable_atlas_logs: Some(!defaults.enable_atlas_logs),
             show_hidden_files: Some(!defaults.show_hidden_files),
+            show_tips: Some(!defaults.show_tips),
             preferred_editor: Some("zed".to_string()),
             ui_scale: Some(1.5),
             share_telemetry: Some(!defaults.share_telemetry),

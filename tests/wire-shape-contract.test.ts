@@ -70,6 +70,9 @@ import { fileURLToPath } from "node:url";
  *    on, and `artifacts_cloud_session_stream`'s argument names. A renamed tag
  *    would drop every page on the floor, and the reader would sit on an empty
  *    timeline with nothing in the console.
+ * #17 pins the Tips record (`tips.rs` ↔ `tips-api.ts`): the state's fields,
+ *    the cohort's spellings and the commands' argument names. A renamed
+ *    `seen` would arrive as `undefined` and every tip would show again.
  *
  * Unlike `tests/state-payload-contract.test.ts` (which is specifically the
  * `save_app_state` / `bootstrap_app_state` payload and generalises over many
@@ -1056,5 +1059,34 @@ describe("streamed remote Session read: SessionStreamChunk (#16)", () => {
     expect([...tsInvokeArgKeys(ts, "artifacts_cloud_session_stream")].sort()).toEqual(
       [...rustCommandArgKeys(rust, "artifacts_cloud_session_stream")].sort(),
     );
+  });
+});
+
+describe("tips: TipsState ↔ tips-api.ts, and the tips_* commands (#17)", () => {
+  const rust = read("src-tauri", "src", "commands", "tips.rs");
+  const api = read("src", "features", "tips", "lib", "tips-api.ts");
+
+  it("carries the same fields", () => {
+    const { attrs, body } = rustItem(rust, "struct", "TipsState");
+    expect(attrs).toMatch(/rename_all\s*=\s*"camelCase"/);
+    const rustFields = rustStructFields(body).map(snakeToCamel).sort();
+    expect(tsInterfaceProps(api, "TipsState").sort()).toEqual(rustFields);
+  });
+
+  it("spells the cohort the same way", () => {
+    const { attrs, body } = rustItem(rust, "enum", "TipCohort");
+    expect(attrs).toMatch(/rename_all\s*=\s*"lowercase"/);
+    const rustVariants = rustEnumVariants(body)
+      .map((v) => v.toLowerCase())
+      .sort();
+    expect(tsUnionLiterals(api, "TipCohort").sort()).toEqual(rustVariants);
+  });
+
+  it("passes the argument names each command reads", () => {
+    for (const name of ["tips_mark_seen", "tips_reset"]) {
+      expect([...tsInvokeArgKeys(api, name)].sort()).toEqual(
+        [...rustCommandArgKeys(rust, name)].sort(),
+      );
+    }
   });
 });

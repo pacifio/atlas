@@ -18,6 +18,11 @@ import { cn } from "@/lib/utils";
  * Scales: `rounded-lg` (the popover step), `shadow-md` (`--elevation-menu`),
  * and the `z-popover` layer on the Positioner — the Popup is static inside it,
  * so a z-index on the Popup would do nothing at all.
+ *
+ * `anchor` places the popup against any element, with no Trigger at all —
+ * how a Tip points at the feature it explains. `arrow` draws the pointer
+ * toward that anchor; it sits outside the popup's box, so an arrowed popup
+ * does not clip its overflow (scroll inside the content instead).
  */
 
 function Popover(props: PopoverPrimitive.Root.Props) {
@@ -43,9 +48,17 @@ function PopoverContent({
   side = "bottom",
   sideOffset = 4,
   surface = "default",
+  anchor,
+  arrow = false,
+  children,
   ...props
 }: PopoverPrimitive.Popup.Props &
-  Pick<PopoverPrimitive.Positioner.Props, "align" | "alignOffset" | "side" | "sideOffset"> & {
+  Pick<
+    PopoverPrimitive.Positioner.Props,
+    "align" | "alignOffset" | "side" | "sideOffset" | "anchor"
+  > & {
+    /** Draw an arrow pointing at the anchor. */
+    arrow?: boolean;
     /**
      * `tinted` is the two-surface recipe the agent/model picker and org
      * switcher use: the popup is the foreground at 4% over the background (the
@@ -63,11 +76,13 @@ function PopoverContent({
         alignOffset={alignOffset}
         side={side}
         sideOffset={sideOffset}
+        anchor={anchor}
       >
         <PopoverPrimitive.Popup
           data-slot="popover-content"
           className={cn(
-            "max-h-(--available-height) w-72 overflow-hidden rounded-lg",
+            "max-h-(--available-height) w-72 rounded-lg",
+            !arrow && "overflow-hidden",
             surface === "tinted"
               ? "bg-[color-mix(in_srgb,var(--foreground)_4%,var(--background))] p-1.5 shadow-sm"
               : "bg-popover p-2.5 shadow-md",
@@ -77,7 +92,22 @@ function PopoverContent({
             className,
           )}
           {...props}
-        />
+        >
+          {children}
+          {arrow && (
+            <PopoverPrimitive.Arrow
+              data-slot="popover-arrow"
+              className={cn(
+                // Matches the default surface; `tinted` has no arrowed use.
+                "size-2.5 rotate-45 border-border bg-popover",
+                "data-[side=bottom]:-top-1.25 data-[side=bottom]:border-t data-[side=bottom]:border-l",
+                "data-[side=top]:-bottom-1.25 data-[side=top]:border-b data-[side=top]:border-r",
+                "data-[side=left]:-right-1.25 data-[side=left]:border-t data-[side=left]:border-r",
+                "data-[side=right]:-left-1.25 data-[side=right]:border-b data-[side=right]:border-l",
+              )}
+            />
+          )}
+        </PopoverPrimitive.Popup>
       </PopoverPrimitive.Positioner>
     </PopoverPrimitive.Portal>
   );

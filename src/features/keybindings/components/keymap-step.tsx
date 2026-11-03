@@ -3,14 +3,7 @@ import { AtlasIcon } from "@/components/atlas-icon";
 import { KbdKeys } from "@/ui/kbd";
 import { Button } from "@/ui/button";
 import { cn } from "@/lib/utils";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/ui/dialog";
+import { DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/ui/dialog";
 import { ACTION_BY_ID } from "../lib/actions";
 import { displayKeys, parseCombo } from "../lib/combo";
 import { PRESETS, type Preset, type PresetId } from "../lib/presets";
@@ -19,60 +12,57 @@ import { useKeybindingsStore } from "../stores/keybindings-store";
 import { PresetIcon } from "./preset-icon";
 
 /**
- * First launch: "which editor are you coming from?"
+ * First run's last step: "which editor are you coming from?" (the dialog
+ * itself is `FirstRunDialog`).
  *
- * Shown while there is no keybindings.json (see `firstRun` in the store).
- * Every answer writes the file, "Decide later" and Escape included, so it is
+ * Every answer writes keybindings.json, "Decide later" included, so it is
  * asked exactly once. Nothing here is permanent — a preset is just a profile
  * afterwards — and the card says where to change it, because a choice made
  * before the user has seen the app is one they will want to revisit.
  */
-export function KeymapOnboarding() {
-  const open = useKeybindingsStore.use.firstRun();
+export function KeymapStep() {
   const { completeOnboarding } = useKeybindingsStore.use.actions();
   const choose = (preset: PresetId | null) => void completeOnboarding(preset);
 
   return (
-    <Dialog open={open} onOpenChange={(next) => !next && choose(null)}>
-      <DialogContent showCloseButton={false} className="max-w-md">
-        <DialogHeader>
-          <DialogTitle>Which shortcuts should Atlas use?</DialogTitle>
-          <DialogDescription>
-            Pick the editor you're coming from and Atlas will match its keys where it has the same
-            command.
-          </DialogDescription>
-        </DialogHeader>
+    <>
+      <DialogHeader>
+        <DialogTitle>Which shortcuts should Atlas use?</DialogTitle>
+        <DialogDescription>
+          Pick the editor you're coming from and Atlas will match its keys where it has the same
+          command.
+        </DialogDescription>
+      </DialogHeader>
 
-        <div className="flex flex-col gap-1.5">
+      <div className="flex flex-col gap-1.5">
+        <Choice
+          icon={<AtlasIcon size={16} />}
+          label="Atlas"
+          description="Atlas's own shortcuts."
+          keys={paletteKeys(null)}
+          onClick={() => choose(null)}
+        />
+        {PRESETS.map((preset) => (
           <Choice
-            icon={<AtlasIcon size={16} />}
-            label="Atlas"
-            description="Atlas's own shortcuts."
-            keys={paletteKeys(null)}
-            onClick={() => choose(null)}
+            key={preset.id}
+            icon={<PresetIcon id={preset.id} className="size-4 text-foreground" />}
+            label={preset.label}
+            description={preset.description}
+            keys={paletteKeys(preset)}
+            onClick={() => choose(preset.id)}
           />
-          {PRESETS.map((preset) => (
-            <Choice
-              key={preset.id}
-              icon={<PresetIcon id={preset.id} className="size-4 text-foreground" />}
-              label={preset.label}
-              description={preset.description}
-              keys={paletteKeys(preset)}
-              onClick={() => choose(preset.id)}
-            />
-          ))}
-        </div>
+        ))}
+      </div>
 
-        <DialogFooter className="items-center sm:justify-between">
-          <span className="text-2xs text-muted-foreground">
-            Change this any time in Settings → Keybindings.
-          </span>
-          <Button variant="ghost" size="sm" onClick={() => choose(null)}>
-            Decide later
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      <DialogFooter className="items-center sm:justify-between">
+        <span className="text-2xs text-muted-foreground">
+          Change this any time in Settings → Keybindings.
+        </span>
+        <Button variant="ghost" size="sm" onClick={() => choose(null)}>
+          Decide later
+        </Button>
+      </DialogFooter>
+    </>
   );
 }
 
