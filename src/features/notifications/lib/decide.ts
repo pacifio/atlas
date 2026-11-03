@@ -120,6 +120,7 @@ const TARGET_LABEL: Record<NotificationTarget["type"], string> = {
   "git-panel": "Git",
   "config-file": "Atlas",
   "pull-request": "Pull request",
+  "timeline-session": "Timeline",
 };
 
 /** Agent, app and Chat copy is already banner-shaped (title, subtitle, body); the OS shows

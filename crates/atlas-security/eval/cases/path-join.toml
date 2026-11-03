@@ -1,0 +1,16 @@
+id = "path-join"
+kind = "synthetic"
+vulnerable = true
+class = "path_traversal"
+severity = 3
+title = "Serve workspace attachments"
+diff = '''
+--- a/src-tauri/src/commands/files.rs
++++ b/src-tauri/src/commands/files.rs
+@@ -1,0 +1,5 @@
++#[tauri::command]
++pub fn read_attachment(state: State<AppState>, name: String) -> Result<Vec<u8>, String> {
++    let path = state.attachments_dir.join(&name);
++    std::fs::read(path).map_err(|e| e.to_string())
++}
+'''

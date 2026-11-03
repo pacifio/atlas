@@ -242,6 +242,7 @@ impl AgentHost {
 
 #[cfg(test)]
 mod tests {
+    use super::super::{Origin, Prompt, SubmitPolicy};
     use super::*;
 
     fn wake(text: &str) -> PendingWake {
@@ -465,7 +466,8 @@ mod tests {
         async fn a_wake_during_a_turn_waits_for_it_to_end_then_goes() {
             let (host, gate, delivered, dir) = gated_host("s-busy");
             let key = open_session(&host, &dir).await;
-            host.send(&key, Vec::new()).expect("send");
+            host.submit(&key, Prompt::default(), Origin::Local, SubmitPolicy::Now)
+                .expect("send");
             assert!(
                 until(
                     || gate.prompts.load(Ordering::SeqCst) == 1,
@@ -528,7 +530,8 @@ mod tests {
         async fn stop_drops_a_wake_held_for_the_turn_it_cancels() {
             let (host, gate, delivered, dir) = gated_host("s-stop");
             let key = open_session(&host, &dir).await;
-            host.send(&key, Vec::new()).expect("send");
+            host.submit(&key, Prompt::default(), Origin::Local, SubmitPolicy::Now)
+                .expect("send");
             assert!(
                 until(
                     || gate.prompts.load(Ordering::SeqCst) == 1,
@@ -541,7 +544,7 @@ mod tests {
                 WakeOutcome::Held
             );
 
-            host.stop(&key).expect("stop");
+            host.stop(&key, Origin::Local).expect("stop");
             assert!(
                 until(
                     || !host.session_is_busy("s-stop", &host.atlas_activity()),

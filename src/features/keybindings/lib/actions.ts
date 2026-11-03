@@ -208,6 +208,14 @@ export const ACTIONS = [
     defaults: ["cmd+shift+c"],
   },
   {
+    // The Organisation agent in the side panel, its home.
+    id: "panels.agent",
+    title: "Toggle Ask Atlas",
+    category: "Panels",
+    when: "global",
+    defaults: ["cmd+alt+a"],
+  },
+  {
     id: "panels.terminal",
     title: "Toggle terminal",
     category: "Panels",

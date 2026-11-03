@@ -54,6 +54,8 @@ import { openNewAgentChat } from "@/features/chat/lib/open-agent-session";
 import { settleAndAdvance } from "@/features/chat/lib/settle-and-advance";
 import { requestCloseTab } from "@/features/chat/lib/close-tab";
 import { pruneContextUsageCache } from "@/features/chat/lib/context-usage-cache";
+import { installDevSessionHold } from "@/features/chat/lib/dev-session-hold";
+import { isDev } from "@/lib/env";
 import { isScrollHot } from "@/lib/scroll-hot";
 import { useAppProfile } from "@/lib/app-profile";
 import { useNativeContextMenu } from "@/lib/native-context-menu";
@@ -91,6 +93,7 @@ import {
   notifyUpdateReady,
 } from "@/features/notifications/lib/outcome-notifier";
 import { logEvent } from "@/features/log/lib/log";
+import { startSecurityNotifier } from "@/features/security/lib/security-notifier";
 import { warmMarkdownWorker, primeMarkdownRenderer } from "@/lib/markdown-cache";
 import { primeMarkdown } from "@/lib/markdown";
 import { NotificationPanel } from "@/features/notifications/components/notification-panel";
@@ -156,6 +159,11 @@ import { toggleFiles } from "@/features/layout/lib/files-surface";
 import { refreshProjectTree } from "@/features/explorer/lib/project-tree-model";
 import { toggleTeamChat } from "@/features/layout/lib/team-chat";
 import { toggleDestination } from "@/features/layout/lib/destinations";
+import { toggleAgentPanel } from "@/features/layout/lib/org-agent";
+import { startOrgAgentBridge } from "@/features/org-agent/lib/org-agent-bridge";
+
+// Developer console toggle for session holds (Universal RC groundwork).
+if (isDev) installDevSessionHold();
 
 /** Minimum gap between two wake-triggered account re-pulls. Long enough that a
  *  burst of focus edges (Space switches) costs one pull; short enough that a
@@ -185,6 +193,9 @@ export function App() {
 
   // App warnings (auto-fetch failing, behind remote, config.toml errors).
   useEffect(() => startAppWarnings(), []);
+
+  // Blocking Security Agent findings (ATL-985); the rest stays on the Timeline.
+  useEffect(() => startSecurityNotifier(), []);
 
   // The first idle sweep that settles a pile of sessions at once says so,
   // once ever (Rust keeps the flag): otherwise a long list just vanishes.
@@ -395,6 +406,9 @@ export function App() {
   // the roster is only re-sent when somebody comes or goes: a listener that
   // mounted with the panel would miss the one sent when the sockets opened.
   useEffect(() => startTeamPresenceListener(), []);
+  // The organisation agent's socket, into its store, before any of its
+  // views mount: an answer landing with the panel closed is still kept.
+  useEffect(() => startOrgAgentBridge(), []);
   /** The Organisation the presence rosters were heard under. */
   const presenceOrgRef = useRef<string | null>(null);
   useEffect(() => {
@@ -1340,6 +1354,8 @@ export function App() {
     "panels.teamChat": toggleTeamChat,
     "panels.sessionDetails": toggleSessionDetails,
     "panels.terminal": toggleTerminal,
+    // ⌘⌥A — the Organisation agent, in the side panel.
+    "panels.agent": toggleAgentPanel,
     // ⌥J — Knowledge, a destination: opens it, or goes back to the session
     // when it is the one on screen.
     "panels.knowledge": () => toggleDestination("knowledge"),

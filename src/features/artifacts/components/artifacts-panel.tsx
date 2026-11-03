@@ -810,6 +810,7 @@ export function ArtifactsPanel() {
                             }
                             remoteProjectId={open.remoteProjectId ?? null}
                             focusCommitSha={open.commitSha}
+                            focusAnchor={open.anchor}
                             // Grounded chat about this Session. Its button is
                             // in the reader's footer with the other actions on
                             // the record; the panel it opens is this pane's.

@@ -130,6 +130,8 @@ const REVIEWED_AGENT_COMMANDS = [
   "panels.teamChat",
   "panels.terminal",
   "panels.knowledge",
+  // Shows or hides the Organisation agent's side panel; layout only.
+  "panels.agent",
   "panels.zen",
   "tabs.openSurface",
   "tabs.newChat",

@@ -23,6 +23,7 @@ import {
   MessageSquare,
   Download,
   GitCommitHorizontal,
+  GitPullRequest,
   Loader2,
   Search,
   SlidersHorizontal,
@@ -86,6 +87,12 @@ import { filterKeyForKind } from "../lib/comment-threads";
 import { JUMP_EVENT, type JumpDetail } from "./session-chat-message";
 import { AgentGlyph } from "./agent-glyph";
 import { formatTime } from "@/lib/format-time";
+import { CheckpointFindings } from "@/features/security/components/checkpoint-findings";
+import { SecuritySummary } from "@/features/security/components/security-summary";
+import {
+  ShipOverviewCard,
+  useBranchPullRequest,
+} from "@/features/security/components/ship-overview-card";
 
 /**
  * One Session, as the ordered record of what happened.
@@ -210,6 +217,8 @@ interface Props {
   remoteProjectId?: string | null;
   /** Opened from a commit: land on that Checkpoint rather than at the top. */
   focusCommitSha?: string;
+  /** Opened from the inbox: land on this comment's thread and open it. */
+  focusAnchor?: { kind: string; id: string };
   /** Whether the grounded chat is open beside the record. The panel is the
    *  pane's; the button that opens it is in this footer. */
   chatOpen?: boolean;
@@ -298,6 +307,7 @@ export function SessionDetail({
   remote = null,
   remoteProjectId = null,
   focusCommitSha,
+  focusAnchor,
   chatOpen = false,
   onToggleChat,
 }: Props) {
@@ -692,6 +702,25 @@ export function SessionDetail({
     [sessionId, setFocusThread],
   );
 
+  // Arrived from the inbox. Honoured once per arrival, and only once the
+  // anchored row is here — a Session read from the server streams in, and a
+  // jump to a row still on its way would find nothing.
+  const honouredAnchor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!focusAnchor) return;
+    const arrival = `${detail.summary.id}:${focusAnchor.kind}:${focusAnchor.id}`;
+    if (honouredAnchor.current === arrival) return;
+    if (focusAnchor.kind === "session") {
+      honouredAnchor.current = arrival;
+      jumpToThread(sessionId);
+      return;
+    }
+    if (detail.entries.some((entry) => entry.id === focusAnchor.id)) {
+      honouredAnchor.current = arrival;
+      jumpToThread(focusAnchor.id);
+    }
+  }, [focusAnchor, detail.summary.id, detail.entries, jumpToThread, sessionId]);
+
   const activeFilters =
     (filters.prompts ? 0 : 1) +
     (filters.responses ? 0 : 1) +
@@ -741,7 +770,7 @@ export function SessionDetail({
             className="hide-scrollbar min-h-0 flex-1 overflow-y-auto"
           >
             <div ref={contentRef} className={cn(MEASURE, "pb-28 pt-14")}>
-              <Masthead detail={detail} comments={comments} />
+              <Masthead detail={detail} comments={comments} projectPath={projectPath} />
 
               {groups.length === 0 ? (
                 <Empty
@@ -755,6 +784,7 @@ export function SessionDetail({
                   <Timeline
                     groups={rendered}
                     projectPath={projectPath}
+                    sessionId={s.id}
                     agent={s.agent}
                     expandTools={expandTools}
                     landed={landed}
@@ -872,10 +902,19 @@ export function SessionDetail({
  * around it rather than three rows that happen to be stacked. Export is not
  * here; it lives in the header dock with the tab's other actions.
  */
-function Masthead({ detail, comments }: { detail: Detail; comments: RowComments | null }) {
+function Masthead({
+  detail,
+  comments,
+  projectPath,
+}: {
+  detail: Detail;
+  comments: RowComments | null;
+  projectPath: string;
+}) {
   const openSignal = useOpenSignal(detail.summary.id);
   const s = detail.summary;
   const branch = s.branches[0];
+  const pr = useBranchPullRequest(projectPath, branch ?? "");
   const tokens = tokenLabel(s);
 
   // Pricing is cached by Rust and refreshed in the background; a consumer has
@@ -947,6 +986,12 @@ function Masthead({ detail, comments }: { detail: Detail; comments: RowComments 
             {branch}
           </Chip>
         )}
+        {pr !== null && (
+          <Chip>
+            <GitPullRequest size={11} />
+            PR #{pr.number} open
+          </Chip>
+        )}
         <span className="font-mono text-xs text-[var(--muted-foreground)]">
           {timeAgo(s.lastActivityAt, { suffix: true })} · {formatDuration(s.activeSeconds)}
         </span>
@@ -960,6 +1005,8 @@ function Masthead({ detail, comments }: { detail: Detail; comments: RowComments 
           </span>
         )}
       </div>
+
+      {branch && <ShipOverviewCard projectPath={projectPath} branch={branch} pr={pr} />}
 
       <div
         className={cn(
@@ -1008,6 +1055,7 @@ function Masthead({ detail, comments }: { detail: Detail; comments: RowComments 
           />
         )}
       </div>
+      <SecuritySummary projectPath={projectPath} sessionId={s.id} />
     </>
   );
 }
@@ -1176,6 +1224,7 @@ function groupEntries(entries: TimelineEntry[]): Group[] {
 const Timeline = memo(function Timeline({
   groups,
   projectPath,
+  sessionId,
   agent,
   expandTools,
   landed,
@@ -1184,6 +1233,7 @@ const Timeline = memo(function Timeline({
 }: {
   groups: Group[];
   projectPath: string;
+  sessionId: string;
   agent: string | null;
   expandTools: boolean;
   landed: string | null;
@@ -1199,6 +1249,7 @@ const Timeline = memo(function Timeline({
           first={i === 0}
           last={i === groups.length - 1}
           projectPath={projectPath}
+          sessionId={sessionId}
           agent={agent}
           expandTools={expandTools}
           isLanded={group.entries.some((e) => e.id === landed)}
@@ -1232,6 +1283,7 @@ const Row = memo(function Row({
   first,
   last,
   projectPath,
+  sessionId,
   agent,
   expandTools,
   isLanded,
@@ -1243,6 +1295,7 @@ const Row = memo(function Row({
   first: boolean;
   last: boolean;
   projectPath: string;
+  sessionId: string;
   agent: string | null;
   /** The global "always expand" switch from the filter drawer. */
   expandTools: boolean;
@@ -1365,7 +1418,7 @@ const Row = memo(function Row({
             revealId={landedCallId}
           />
         ) : group.kind === "checkpoint" ? (
-          <Checkpoint entry={head} />
+          <Checkpoint entry={head} projectPath={projectPath} sessionId={sessionId} />
         ) : group.kind === "prompt" ? (
           <Prompt entry={head} projectPath={projectPath} />
         ) : (
@@ -1982,7 +2035,15 @@ const CallRow = memo(function CallRow({
  * paths and a diffstat, never the patch. A diff viewer here would need the
  * commit re-read from git, which is a different feature.
  */
-function Checkpoint({ entry }: { entry: TimelineEntry }) {
+function Checkpoint({
+  entry,
+  projectPath,
+  sessionId,
+}: {
+  entry: TimelineEntry;
+  projectPath: string;
+  sessionId: string;
+}) {
   const orphaned = entry.linkState === "orphaned";
   return (
     <div
@@ -2053,6 +2114,14 @@ function Checkpoint({ entry }: { entry: TimelineEntry }) {
             </li>
           )}
         </ul>
+      )}
+
+      {entry.commitSha && !orphaned && (
+        <CheckpointFindings
+          projectPath={projectPath}
+          sessionId={sessionId}
+          commitSha={entry.commitSha}
+        />
       )}
 
       {/* Suppressed when orphaned: the branch no longer contains this commit,

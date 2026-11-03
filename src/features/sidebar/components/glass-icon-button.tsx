@@ -12,6 +12,7 @@ export function GlassIconButton({
   label,
   shortcut,
   disabled,
+  pressed,
   onClick,
   className,
 }: {
@@ -19,6 +20,8 @@ export function GlassIconButton({
   label: string;
   shortcut?: string;
   disabled?: boolean;
+  /** A toggle's on state: the lifted fill (`glass-rim-control`). */
+  pressed?: boolean;
   onClick: () => void;
   className?: string;
 }) {
@@ -28,10 +31,12 @@ export function GlassIconButton({
         type="button"
         aria-label={label}
         disabled={disabled}
+        aria-pressed={pressed}
         onClick={onClick}
         className={cn(
           "glass-rim glass-rim-control flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full text-muted-foreground outline-none transition-colors duration-fast",
           "hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-40",
+          pressed && "text-foreground",
           className,
         )}
       >

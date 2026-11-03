@@ -111,6 +111,7 @@ function generate(): ThreadRow[] {
       projectName: project.name,
       folderPaths: [project.path],
       liveElsewhere: false,
+      heldWorking: false,
       attachedProjects: [],
       pullRequests: [],
       forkedFromSessionId: null,

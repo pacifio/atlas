@@ -501,6 +501,17 @@ export const TEAM_CHAT_TAB: Tab = {
   data: {},
 };
 
+/** The Organisation agent's side-panel tab — one per window, like team chat;
+ *  `org-agent.ts` opens it. Its conversations are its own tabs inside it. */
+export const AGENT_PANEL_TAB: Tab = {
+  id: "agent-panel",
+  type: "agent-panel",
+  title: "Ask Atlas",
+  closable: true,
+  dirty: false,
+  data: {},
+};
+
 /**
  * `applyView`, except that the window's own tabs (team chat) come along
  * instead of being swapped out with the outgoing project. The incoming view's
@@ -1182,6 +1193,7 @@ export const useLayoutStore = createSelectors(
         partialize: (s) => ({
           // Derived, not a field: the tab is the truth while the app runs.
           teamChat: { open: s.tabs.some((t) => t.type === "team-chat") },
+          agent: { open: s.tabs.some((t) => t.type === "agent-panel") },
           sourceControl: s.sourceControl,
           knowledgePanel: s.knowledgePanel,
           bashPanel: s.bashPanel,
@@ -1199,6 +1211,7 @@ export const useLayoutStore = createSelectors(
           // control shared before that, with `mode`).
           const persisted_ = (persisted ?? {}) as {
             teamChat?: { open?: boolean };
+            agent?: { open?: boolean };
             rightPanel?: { visible?: boolean; mode?: string };
           };
           const legacyRight = persisted_.rightPanel;
@@ -1235,6 +1248,9 @@ export const useLayoutStore = createSelectors(
           // projectless shell) carries it like any open team chat.
           if (teamChatOpen && !tabs.some((t) => t.type === "team-chat")) {
             tabs.push({ ...TEAM_CHAT_TAB });
+          }
+          if (persisted_.agent?.open && !tabs.some((t) => t.type === "agent-panel")) {
+            tabs.push({ ...AGENT_PANEL_TAB });
           }
           let activeTabId = p.activeTabId ?? current.activeTabId;
           if (activeTabId !== null && !tabs.some((t) => t.id === activeTabId)) {

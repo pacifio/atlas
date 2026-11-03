@@ -76,6 +76,7 @@ function thread(sessionId: string, title: string, hours: number, parent: string 
     projectName: MOCK_PROJECT.name,
     folderPaths: [MOCK_PROJECT.path],
     liveElsewhere: false,
+    heldWorking: false,
     pullRequests: [],
     forkedFromSessionId: parent,
     attachedProjects: [],

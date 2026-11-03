@@ -12,6 +12,7 @@ import {
   isNotificationKind,
   isNotificationSettingsSection,
   isPullRequestTarget,
+  isTimelineSessionTarget,
   OPEN_ACTION_ID,
   type NotificationAction,
   type NotificationKind,
@@ -185,7 +186,8 @@ function isAppTarget(t: unknown): t is NonNullable<AppNotification["target"]> {
     (r.type === "settings" && isNotificationSettingsSection(r.section)) ||
     r.type === "config-file" ||
     (r.type === "git-panel" && typeof r.projectId === "string" && !!r.projectId) ||
-    isPullRequestTarget(r)
+    isPullRequestTarget(r) ||
+    isTimelineSessionTarget(r)
   );
 }
 

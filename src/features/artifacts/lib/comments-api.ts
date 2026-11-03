@@ -17,7 +17,9 @@ import { invoke } from "@tauri-apps/api/core";
 import type { EntryKind } from "../types";
 
 /** Where a comment is attached. Mirrors the server's `anchorKind` exactly. */
-export type AnchorKind = "session" | "message" | "tool_call" | "checkpoint";
+/** `thread_range` is a span of a shared Thread's transcript: never minted
+ *  here, only read (an inbox entry on a Thread comment carries it). */
+export type AnchorKind = "session" | "message" | "tool_call" | "checkpoint" | "thread_range";
 
 /** The server's cap, enforced here so the composer can say so before sending. */
 export const COMMENT_BODY_MAX = 4000;

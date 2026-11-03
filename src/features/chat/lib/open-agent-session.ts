@@ -13,6 +13,7 @@ import {
   type SwitchableAgent,
 } from "@/types/agent";
 import { invalidateLoad } from "./load-tokens";
+import { snapshotLive } from "./snapshot-message";
 import { ResumeError, resumeSessionFast } from "./resume-session";
 import { applyModeOnResume, holdUnrestoredMode } from "./resume-mode";
 
@@ -161,7 +162,13 @@ export async function openAgentSession({
     });
     setAcpBinding(targetTabId, agent.agent_id, acpSessionId, cwd);
     // Restore live status + docked plan AFTER the bind (which clears the plan).
-    hydrateSessionSnapshot(targetTabId, snapshot.status, snapshot.plan, snapshot.subagents);
+    hydrateSessionSnapshot(
+      targetTabId,
+      snapshot.status,
+      snapshot.plan,
+      snapshot.subagents,
+      snapshotLive(snapshot),
+    );
     // This path seeded the mode pill from the stored preference but never told
     // the agent, so the pill could read Bypass while the engine enforced Ask.
     // Applied before `setResumePending(false)`, which is what releases a queued

@@ -1,5 +1,5 @@
 // The sidebar's destinations, one component each, so each subscribes to its
-// own slice of the layout store. Team chat and Timeline are labelled rows;
+// own slice of the layout store. Inbox, Team chat, Timeline and Agent are labelled rows;
 // Usage sits icon-only beside search, and Memory, Knowledge, Source control
 // and the bell are the footer's icon dock (`app-sidebar.tsx`). Each toggles what it opens (back to the
 // session when it is already on screen) and lights while its view is the one
@@ -22,6 +22,7 @@ import {
   toggleDestination,
 } from "@/features/layout/lib/destinations";
 import { sourceControlShown, toggleSourceControl } from "@/features/layout/lib/source-control";
+import { agentPageShown, toggleAgentPage } from "@/features/layout/lib/org-agent";
 import {
   teamChatDestinationShown,
   toggleTeamChatDestination,
@@ -34,6 +35,7 @@ import {
   useNotificationsStore,
 } from "@/features/notifications/stores/notifications-store";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
+import { useInboxStore, useInboxUnreadPoll } from "@/features/inbox/stores/inbox-store";
 
 /** One destination: an icon and its label, lit while its view is on screen.
  *  `iconOnly` drops the label to the tooltip, for the sidebar's top row and
@@ -138,6 +140,29 @@ export function TeamChatButton() {
   );
 }
 
+/** The Organisation's inbox, when the active Organisation is synced: a dot
+ *  while something is unread (polled — nothing pushes the inbox). A
+ *  local-only Organisation has no inbox and no row. */
+export function InboxButton() {
+  const open = useLayoutStore((s) => destinationShown(s, "inbox"));
+  const remoteOrgId = useOrgStore(
+    (s) => s.organisations.find((o) => o.id === s.activeOrganisationId)?.remoteId ?? null,
+  );
+  useInboxUnreadPoll(remoteOrgId);
+  const unread = useInboxStore((s) => (s.unread ?? 0) > 0);
+  if (!remoteOrgId) return null;
+  return (
+    <DestinationButton
+      icon={DESTINATIONS.inbox.icon}
+      label="Inbox"
+      active={open}
+      dot={unread}
+      data-testid={unread ? "inbox-unread" : undefined}
+      onClick={() => toggleDestination("inbox")}
+    />
+  );
+}
+
 export function TimelineButton() {
   const open = useLayoutStore((s) => destinationShown(s, "artifacts"));
   return (
@@ -146,6 +171,20 @@ export function TimelineButton() {
       label="Timeline"
       active={open}
       onClick={() => toggleDestination("artifacts")}
+    />
+  );
+}
+
+/** The Organisation agent, full page: every conversation, and the open one
+ *  given the room. Its home is the side panel (⌘⌥A, `org-agent.ts`). */
+export function AgentButton() {
+  const open = useLayoutStore(agentPageShown);
+  return (
+    <DestinationButton
+      icon={DESTINATIONS.agent.icon}
+      label="Agent"
+      active={open}
+      onClick={toggleAgentPage}
     />
   );
 }

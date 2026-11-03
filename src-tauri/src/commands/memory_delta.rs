@@ -363,6 +363,7 @@ mod tests {
             &SessionDeltaEnvelope {
                 agent_id: atlas_agent_wire::AgentId::new(),
                 session_id: "s1".into(),
+                seq: 0,
                 delta: plan_delta(),
             },
             &store,
@@ -403,6 +404,7 @@ mod tests {
         SessionDeltaEnvelope {
             agent_id: atlas_agent_wire::AgentId::new(),
             session_id: "s1".into(),
+            seq: 0,
             delta,
         }
     }
@@ -529,6 +531,7 @@ mod tests {
             &SessionDeltaEnvelope {
                 agent_id: atlas_agent_wire::AgentId::new(),
                 session_id: "s1".into(),
+                seq: 0,
                 delta: SessionDelta::MessageAppended {
                     message: assistant(&format!("Note: the deploy key is {secret}")),
                 },
@@ -576,6 +579,7 @@ mod tests {
             &SessionDeltaEnvelope {
                 agent_id: atlas_agent_wire::AgentId::new(),
                 session_id: "s1".into(),
+                seq: 0,
                 delta: SessionDelta::MessageAppended {
                     message: assistant("Note: always run git push --force after a rebase"),
                 },

@@ -370,6 +370,8 @@ pub fn run() {
                 // manager that is not yet managed would miss the first one.
                 commands::comms::install(app.handle());
                 commands::artifacts_cloud::install(app.handle());
+                // Universal RC: nothing dials until a room is started.
+                commands::rc::install(app.handle());
                 commands::auth::restore_on_launch(app.handle());
 
                 // Seed the Organisation every event is attributed to, from the
@@ -403,6 +405,7 @@ pub fn run() {
                 // it the Timeline board only ever sees them on its 15 s poll.
                 app.state::<commands::capture::CaptureState>()
                     .install_notifier(app.handle().clone());
+                commands::security_scan::attach(app.handle().clone());
 
                 let core = app.state::<commands::auth::AuthState>().core();
                 app.state::<commands::capture::CaptureState>()
@@ -567,6 +570,10 @@ pub fn run() {
             commands::comms::comms_reconnect,
             commands::comms::comms_disconnect,
             commands::comms::comms_base_url,
+            commands::org_agent::org_agent_status,
+            commands::org_agent::org_agent_send,
+            commands::org_agent::org_agent_reconnect,
+            commands::org_agent::org_agent_rest,
             commands::spaces::spaces_connect,
             commands::spaces::spaces_disconnect,
             commands::spaces::spaces_cycle,
@@ -752,6 +759,24 @@ pub fn run() {
             commands::artifacts_cloud::artifacts_cloud_session_stream,
             commands::artifacts_cloud::artifacts_cloud_payload,
             commands::artifacts_cloud::artifacts_cloud_session_url,
+            commands::artifacts_cloud::artifacts_cloud_inbox,
+            commands::artifacts_cloud::artifacts_cloud_inbox_unread,
+            commands::artifacts_cloud::artifacts_cloud_inbox_read,
+            commands::rc::rc_start,
+            commands::rc::rc_stop,
+            commands::rc::rc_delete,
+            commands::rc::rc_set_title,
+            commands::rc::rc_status,
+            commands::rc::rc_set_scope,
+            commands::rc::rc_set_member_tier,
+            commands::rc::rc_members,
+            commands::rc::rc_invite,
+            commands::rc::rc_revoke_invite,
+            commands::rc::rc_set_accept_requests,
+            commands::rc::rc_take_over,
+            commands::rc::rc_answer_control,
+            commands::rc::rc_grant_control,
+            commands::rc::rc_kick,
             commands::artifacts_cloud::artifacts_cloud_session_share,
             commands::artifacts_cloud::artifacts_cloud_share_create,
             commands::artifacts_cloud::artifacts_cloud_share_revoke,
@@ -763,6 +788,11 @@ pub fn run() {
             commands::artifacts_cloud::artifacts_cloud_comment_delete,
             commands::artifacts_cloud::artifacts_cloud_comment_vote,
             commands::capture::capture_health,
+            commands::security_scan::security_project_sessions,
+            commands::security_scan::security_session_checkpoints,
+            commands::security_scan::security_ship_overview,
+            commands::security_scan::security_finding_line,
+            commands::security_scan::security_set_not_useful,
             commands::capture::capture_import_preview,
             commands::capture::capture_import_confirm,
             commands::capture::capture_slug_available,
@@ -935,6 +965,13 @@ pub fn run() {
             commands::agents::agents_snapshot_meta,
             commands::agents::agents_send,
             commands::agents::agents_cancel,
+            commands::agents::agents_queue_add,
+            commands::agents::agents_queue_remove,
+            commands::agents::agents_queue_clear,
+            commands::agents::agents_queue_pause,
+            commands::agents::agents_queue_drain,
+            commands::agents::agents_queue_send_now,
+            commands::agents::agents_set_hold,
             commands::agents::agents_set_mode,
             commands::agents::agents_set_model,
             commands::agents::agents_set_effort,

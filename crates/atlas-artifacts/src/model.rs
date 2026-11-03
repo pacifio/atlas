@@ -255,6 +255,9 @@ pub enum AnchorKind {
     Message,
     ToolCall,
     Checkpoint,
+    /// A span of a shared Thread's transcript. Never minted here; read so an
+    /// inbox page holding a comment on a Thread still decodes.
+    ThreadRange,
 }
 
 impl AnchorKind {
@@ -264,6 +267,7 @@ impl AnchorKind {
             Self::Message => "message",
             Self::ToolCall => "tool_call",
             Self::Checkpoint => "checkpoint",
+            Self::ThreadRange => "thread_range",
         }
     }
 

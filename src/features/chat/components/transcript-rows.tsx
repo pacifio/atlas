@@ -48,6 +48,7 @@ import { userRowMessageId } from "../lib/turn-rows";
 import { CONTENT_COLUMN, M } from "../lib/row-metrics";
 import { formatTime } from "@/lib/format-time";
 import { useVisibleAnimation } from "@/lib/visible-animation";
+import { RemoteAuthor } from "./remote-author";
 
 /** Shared by every row: the centred content column. */
 function Column({ children, className }: { children: React.ReactNode; className?: string }) {
@@ -171,6 +172,13 @@ export const UserRowView = memo(function UserRowView({
             <Paperclip size={10} />
             {row.contextBlocks} attached
           </button>
+        )}
+        {/* A prompt sent by whoever held the remote-control seat, not this
+            window: the thread names them, the same caption row as the
+            attached-context chip. Only the live row knows — a snapshot
+            carries no origin, so after a reload the caption is gone. */}
+        {row.remoteAuthor && (
+          <RemoteAuthor tabId={tabId} id={row.remoteAuthorId} fallback={row.remoteAuthor} />
         )}
         {overflows && <ExpandToggle row={row} onToggleExpand={onToggleExpand} />}
         <UserRowActions

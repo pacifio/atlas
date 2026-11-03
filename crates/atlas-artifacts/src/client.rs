@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use crate::error::{Error, Result};
 use crate::model::{
-    ArtifactShare, Comment, EntryPayload, InboxPage, SessionBoardPage, SessionDetailPage,
+    ArtifactShare, Comment, EntryPayload, InboxKind, InboxPage, SessionBoardPage, SessionDetailPage,
 };
 use crate::{ingest_base, AnchorKind, TokenSource};
 
@@ -36,6 +36,14 @@ const ENTRY_PAGE: u32 = 500;
 /// and far past what a person reads. The ceiling exists so a pathological
 /// Session cannot turn one click into an unbounded crawl.
 const MAX_ENTRY_PAGES: usize = 40;
+
+/// What [`ArtifactsClient::mark_inbox_read`] marks: some entries (1–100 ids,
+/// the server's bound), or every entry in one Organisation.
+#[derive(Debug, Clone, Copy)]
+pub enum InboxRead<'a> {
+    Ids(&'a [String]),
+    All { org_id: &'a str },
+}
 
 /// The most an inbox page may hold. The server clamps at 100 and silently
 /// falls back to its default of 50 past it, so a larger ask is clamped here
@@ -552,11 +560,11 @@ impl ArtifactsClient {
     /// One page of the signed-in person's inbox in `org_id`, newest first:
     /// mentions, replies and comments on their Sessions.
     ///
-    /// **Read-only, and the only inbox call here.** The server's mark-read
-    /// route (`POST /inbox/read`) has no caller in this crate on purpose: the
-    /// unread state is the person's, and the agent tools this backs must never
-    /// be able to clear it. There is no `user` parameter either — the server
-    /// scopes both routes to the token's subject.
+    /// **Read-only.** The agent tools this backs must never be able to clear
+    /// the person's unread state, so they read through here and nothing else;
+    /// marking read is [`Self::mark_inbox_read`], which only the window's own
+    /// command calls. There is no `user` parameter either — the server scopes
+    /// both routes to the token's subject.
     ///
     /// One page rather than a walk: `cursor` continues where `next_cursor`
     /// left off, and `limit` is clamped to [`INBOX_PAGE_MAX`].
@@ -564,6 +572,19 @@ impl ArtifactsClient {
         &self,
         org_id: &str,
         unread_only: bool,
+        cursor: Option<&str>,
+        limit: Option<u32>,
+    ) -> Result<InboxPage> {
+        self.inbox_page(org_id, unread_only, None, cursor, limit)
+            .await
+    }
+
+    /// [`Self::inbox`], narrowed to one kind — the window's "Mentions" filter.
+    pub async fn inbox_page(
+        &self,
+        org_id: &str,
+        unread_only: bool,
+        kind: Option<InboxKind>,
         cursor: Option<&str>,
         limit: Option<u32>,
     ) -> Result<InboxPage> {
@@ -575,6 +596,9 @@ impl ArtifactsClient {
         if unread_only {
             req = req.query(&[("unread", "true")]);
         }
+        if let Some(kind) = kind {
+            req = req.query(&[("kind", kind.as_str())]);
+        }
         if let Some(cursor) = cursor {
             req = req.query(&[("cursor", cursor)]);
         }
@@ -582,6 +606,23 @@ impl ArtifactsClient {
             req = req.query(&[("limit", limit.clamp(1, INBOX_PAGE_MAX).to_string())]);
         }
         self.send(req, "inbox").await
+    }
+
+    /// Mark inbox entries read: these ids, or everything in `org_id`.
+    ///
+    /// The person's own act, from the window — never an agent tool's (see
+    /// [`Self::inbox`]). `POST /inbox/read` answers `204`.
+    pub async fn mark_inbox_read(&self, target: InboxRead<'_>) -> Result<()> {
+        let body = match target {
+            InboxRead::Ids(ids) => serde_json::json!({ "ids": ids }),
+            InboxRead::All { org_id } => serde_json::json!({ "all": true, "org": org_id }),
+        };
+        let req = self
+            .http
+            .post(format!("{}/inbox/read", self.base))
+            .bearer_auth(self.token().await?)
+            .json(&body);
+        self.send_discarding_body(req, "mark inbox read").await
     }
 
     async fn token(&self) -> Result<String> {
@@ -804,6 +845,42 @@ mod tests {
             seen[0].lines().next().unwrap(),
             "GET /inbox?org=org_1 HTTP/1.1"
         );
+    }
+
+    #[tokio::test]
+    async fn the_mentions_filter_is_the_kind_query() {
+        let (base, seen) = loopback(ONE_UNREAD).await;
+        let client = ArtifactsClient::at(&base, Arc::new(Tok));
+
+        client
+            .inbox_page("org_1", false, Some(crate::InboxKind::Mention), None, None)
+            .await
+            .unwrap();
+
+        let seen = seen.lock().unwrap().clone();
+        assert_eq!(
+            seen[0].lines().next().unwrap(),
+            "GET /inbox?org=org_1&kind=artifact_mention HTTP/1.1"
+        );
+    }
+
+    #[tokio::test]
+    async fn marking_read_is_one_post_on_the_read_route() {
+        let (base, seen) = loopback("").await;
+        let client = ArtifactsClient::at(&base, Arc::new(Tok));
+
+        let ids = vec!["n1".to_string()];
+        client.mark_inbox_read(InboxRead::Ids(&ids)).await.unwrap();
+        client
+            .mark_inbox_read(InboxRead::All { org_id: "org_1" })
+            .await
+            .unwrap();
+
+        let seen = seen.lock().unwrap().clone();
+        assert_eq!(seen.len(), 2);
+        for request in &seen {
+            assert_eq!(request.lines().next().unwrap(), "POST /inbox/read HTTP/1.1");
+        }
     }
 
     // ── One board page and one timeline page, as the organisation tools read them ──

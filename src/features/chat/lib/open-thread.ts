@@ -28,6 +28,7 @@ import { getAgentSync } from "./agents-api";
 import { bumpLoadToken, isLoadStale } from "./load-tokens";
 import { ResumeError, resumeThreadFast } from "./resume-session";
 import { applyModeOnResume, holdUnrestoredMode } from "./resume-mode";
+import { snapshotLive } from "./snapshot-message";
 import { AGENT_TYPE_BY_SIDEBAR, type SidebarAgent } from "./sidebar-agents";
 
 export interface OpenableThread {
@@ -200,7 +201,13 @@ export async function openThread(
   }
   // With its subagents: the bind cleared them, and a finished child is never
   // re-announced by a live delta.
-  hydrateSessionSnapshot(targetTabId, snapshot.status, snapshot.plan, snapshot.subagents);
+  hydrateSessionSnapshot(
+    targetTabId,
+    snapshot.status,
+    snapshot.plan,
+    snapshot.subagents,
+    snapshotLive(snapshot),
+  );
   if (snapshot.available_models.length > 0) {
     setAcpModels(targetTabId, snapshot.current_model, snapshot.available_models);
   }

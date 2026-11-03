@@ -71,10 +71,21 @@ function ToastIcon({ glyph }: { glyph: ReactNode }) {
   );
 }
 
+/** Each type's glyph alone. A call site passes one as its `icon` to keep the
+ *  look but drop the copy button — a toast whose own action already copies
+ *  something ("Copy link") would otherwise offer two copy buttons that copy
+ *  different things. */
+export const TOAST_GLYPHS = {
+  success: <Icon icon={CircleCheck} size="lg" className="text-success" />,
+  info: <Icon icon={Info} size="lg" className="text-info" />,
+  warning: <Icon icon={TriangleAlert} size="lg" className="text-warning" />,
+  error: <Icon icon={CircleAlert} size="lg" className="text-error" />,
+};
+
 export const TOAST_ICONS: ToasterProps["icons"] = {
-  success: <ToastIcon glyph={<Icon icon={CircleCheck} size="lg" className="text-success" />} />,
-  info: <ToastIcon glyph={<Icon icon={Info} size="lg" className="text-info" />} />,
-  warning: <ToastIcon glyph={<Icon icon={TriangleAlert} size="lg" className="text-warning" />} />,
-  error: <ToastIcon glyph={<Icon icon={CircleAlert} size="lg" className="text-error" />} />,
+  success: <ToastIcon glyph={TOAST_GLYPHS.success} />,
+  info: <ToastIcon glyph={TOAST_GLYPHS.info} />,
+  warning: <ToastIcon glyph={TOAST_GLYPHS.warning} />,
+  error: <ToastIcon glyph={TOAST_GLYPHS.error} />,
   close: <Icon icon={X} size="xs" />,
 };

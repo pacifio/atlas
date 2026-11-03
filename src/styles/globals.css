@@ -88,6 +88,18 @@
   --color-warning-muted: var(--atlas-status-warning-background);
   --color-error-muted: var(--atlas-status-error-background);
   --color-info-muted: var(--atlas-status-info-background);
+  /* Between error and warning, for a severity scale that needs a step above
+     warning (the Security Agent's High). Derived, so every theme has it. */
+  --color-severe: color-mix(
+    in oklab,
+    var(--atlas-status-error-foreground) 50%,
+    var(--atlas-status-warning-foreground)
+  );
+  --color-severe-muted: color-mix(
+    in oklab,
+    var(--atlas-status-error-background) 50%,
+    var(--atlas-status-warning-background)
+  );
 
   --font-sans: var(--font-sans);
   --font-serif: var(--font-serif);
@@ -514,12 +526,13 @@
   border-radius: 23px;
 }
 
-/* A `glass-rim` that is a control: the fill lifts a step on hover and while
-   its menu is open. The rim's gradient paints over `background-color`, so the
+/* A `glass-rim` that is a control: the fill lifts a step on hover, while
+   its menu is open, and while it is a toggle that is on. The rim's gradient paints over `background-color`, so the
    usual `hover:bg-*` cannot reach the fill; this moves the fill itself. */
 @utility glass-rim-control {
   &:hover:not(:disabled),
-  &[data-popup-open] {
+  &[data-popup-open],
+  &[aria-pressed="true"] {
     --glass-fill: color-mix(in srgb, var(--foreground) 7%, var(--background));
   }
 }

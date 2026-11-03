@@ -37,7 +37,8 @@ tracing = "0.1"
 
 [dev-dependencies]
 tempfile = "3"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
+# `net`: the org agent's socket tests dial a local server.
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util", "net"] }
 
 [lints]
 workspace = true

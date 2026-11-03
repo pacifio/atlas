@@ -201,6 +201,17 @@ export const CommsConversation = memo(function CommsConversation({
     [conv.id, atEndRef],
   );
 
+  // A jump asked for from outside (the organisation agent opening a message
+  // it cited): only the conversation it names takes it.
+  useEffect(() => {
+    const onJump = (e: Event) => {
+      const detail = (e as CustomEvent<{ convId?: string; messageId?: string }>).detail;
+      if (detail?.convId === conv.id && detail.messageId) void jumpToMessage(detail.messageId);
+    };
+    window.addEventListener("atlas:comms-jump-to-message", onJump);
+    return () => window.removeEventListener("atlas:comms-jump-to-message", onJump);
+  }, [conv.id, jumpToMessage]);
+
   // Unseen-message count for the pill label. Counted only while away from the
   // live edge; cleared the moment the reader returns.
   const [newCount, setNewCount] = useState(0);

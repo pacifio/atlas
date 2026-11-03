@@ -26,6 +26,7 @@ vi.mock("./workspace-section", () => ({ WorkspaceSection: stub("workspace") }));
 vi.mock("./version-control-section", () => ({ VersionControlSection: stub("version-control") }));
 vi.mock("./projects-section", () => ({ ProjectsSection: stub("projects") }));
 vi.mock("./lineage-section", () => ({ LineageSection: stub("lineage") }));
+vi.mock("./remote-control-section", () => ({ RemoteControlSection: () => null }));
 vi.mock("../lib/details-project-path", () => ({ useDetailsProjectPath: () => "/work/acme" }));
 vi.mock("../lib/session-work-path", () => ({ useSessionWorkPath: () => null }));
 

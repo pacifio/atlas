@@ -41,6 +41,7 @@ import { designSystem } from "./design-system";
 import { diffComments, diffLarge } from "./diff-large";
 import { filesLarge } from "./files-large";
 import { gitConflict } from "./git-conflict";
+import { inboxLong } from "./inbox-long";
 import { keymapFirstRun } from "./keymap-first-run";
 import { knowledge } from "./knowledge";
 import { memorySetup } from "./memory-setup";
@@ -116,6 +117,7 @@ const all: Scenario[] = [
   sidebar,
   timelineEmpty,
   timelineLong,
+  inboxLong,
   keymapFirstRun,
   designSystem,
 ];

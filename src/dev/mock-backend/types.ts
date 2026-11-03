@@ -8,11 +8,15 @@ import type { ExternalEditorResponses } from "./fixtures/external-editor";
 import type { FsResponses } from "./fixtures/files";
 import type { GitResponses } from "./fixtures/git";
 import type { IconThemeResponses } from "./fixtures/icon-themes";
+import type { InboxResponses } from "./fixtures/inbox";
+import type { OrgAgentResponses } from "./fixtures/org-agent";
 import type { IntegrationsResponses } from "./fixtures/integrations";
 import type { KnowledgeResponses } from "./fixtures/knowledge";
 import type { LogResponses } from "./fixtures/log";
 import type { MemoryResponses } from "./fixtures/memory";
 import type { PullRequestsResponses } from "./fixtures/pull-requests";
+import type { RcResponses } from "./fixtures/rc";
+import type { SecurityResponses } from "./fixtures/security";
 import type { SettingsResponses } from "./fixtures/settings";
 import type { SkillsResponses } from "./fixtures/skills";
 import type { SpacesResponses } from "./fixtures/spaces";
@@ -66,11 +70,15 @@ export interface MockResponses
     FsResponses,
     GitResponses,
     IconThemeResponses,
+    InboxResponses,
+    OrgAgentResponses,
     IntegrationsResponses,
     KnowledgeResponses,
     LogResponses,
     MemoryResponses,
     PullRequestsResponses,
+    RcResponses,
+    SecurityResponses,
     SettingsResponses,
     SkillsResponses,
     SpacesResponses,

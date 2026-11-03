@@ -25,7 +25,7 @@ use std::sync::Arc;
 
 use atlas_artifacts::{
     AnchorKind, ArtifactShare, ArtifactsClient, ArtifactsEvent, ArtifactsManager, CloudBoard,
-    Comment,
+    Comment, InboxKind, InboxPage, InboxRead,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
@@ -63,9 +63,10 @@ impl ArtifactsCloudState {
 /// Mints the access JWT from the account session.
 ///
 /// Resolves `AuthState` per call rather than holding it: this source is built
-/// during `setup`, where registration order is not guaranteed.
-struct AppTokenSource {
-    app: AppHandle,
+/// during `setup`, where registration order is not guaranteed. Shared with
+/// Universal RC (`commands::rc`), whose doors are on the same ingest service.
+pub(crate) struct AppTokenSource {
+    pub(crate) app: AppHandle,
 }
 
 impl atlas_artifacts::TokenSource for AppTokenSource {
@@ -598,14 +599,18 @@ static STREAM_GENERATION: std::sync::LazyLock<
 > = std::sync::LazyLock::new(Default::default);
 
 fn stream_generation_bump(key: &str) -> u64 {
-    let mut map = STREAM_GENERATION.lock().unwrap_or_else(|e| e.into_inner());
+    let mut map = STREAM_GENERATION
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let next = map.get(key).copied().unwrap_or(0) + 1;
     map.insert(key.to_string(), next);
     next
 }
 
 fn stream_is_current(key: &str, generation: u64) -> bool {
-    let map = STREAM_GENERATION.lock().unwrap_or_else(|e| e.into_inner());
+    let map = STREAM_GENERATION
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     map.get(key).copied() == Some(generation)
 }
 
@@ -1127,6 +1132,68 @@ pub async fn artifacts_cloud_comment_vote(
     let (client, org_id) = reader(&app)?;
     client
         .vote_comment(&org_id, &project_id, &session_id, &comment_id, value)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+// ── The inbox ───────────────────────────────────────────────────────────────
+//
+// The signed-in person's mentions, replies and comments on their Sessions in
+// the active synced Organisation — the web's /inbox, on the same ingest doors.
+// Nothing pushes it; the window polls the unread count and reads pages on
+// demand.
+
+/// One page of the inbox. `filter` is the window's segmented control:
+/// `all`, `unread` or `mentions`. `cursor` continues a previous page.
+#[tauri::command]
+pub async fn artifacts_cloud_inbox(
+    filter: String,
+    cursor: Option<String>,
+    app: AppHandle,
+) -> Result<InboxPage, String> {
+    let (client, org_id) = reader(&app)?;
+    let (unread, kind) = match filter.as_str() {
+        "unread" => (true, None),
+        "mentions" => (false, Some(InboxKind::Mention)),
+        _ => (false, None),
+    };
+    client
+        .inbox_page(&org_id, unread, kind, cursor.as_deref(), Some(50))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// How many entries are unread — the sidebar's dot. One entry's page: the
+/// count is the Organisation's total whatever the page holds.
+#[tauri::command]
+pub async fn artifacts_cloud_inbox_unread(app: AppHandle) -> Result<u64, String> {
+    let (client, org_id) = reader(&app)?;
+    client
+        .inbox_page(&org_id, true, None, None, Some(1))
+        .await
+        .map(|page| page.unread)
+        .map_err(|e| e.to_string())
+}
+
+/// Mark entries read: these `ids`, or with `all` every entry in the active
+/// Organisation. The person's own act — the agent's org tools read the inbox
+/// and can never call this.
+#[tauri::command]
+pub async fn artifacts_cloud_inbox_read(
+    ids: Vec<String>,
+    all: bool,
+    app: AppHandle,
+) -> Result<(), String> {
+    let (client, org_id) = reader(&app)?;
+    let target = if all {
+        InboxRead::All { org_id: &org_id }
+    } else if ids.is_empty() {
+        return Ok(());
+    } else {
+        InboxRead::Ids(&ids)
+    };
+    client
+        .mark_inbox_read(target)
         .await
         .map_err(|e| e.to_string())
 }

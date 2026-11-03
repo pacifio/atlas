@@ -3,12 +3,14 @@ import {
   BrainCircuit,
   Frame,
   Gauge,
+  Inbox,
   Layers,
   Map,
   MessagesSquare,
   Network,
   type LucideIcon,
 } from "lucide-react";
+import { AgentIcon } from "@/features/org-agent/lib/agent-icon";
 import type { DestinationType } from "@/lib/constants";
 import { useLayoutStore } from "../stores/layout-store";
 
@@ -28,6 +30,8 @@ export interface DestinationMeta {
  *  does not compile. */
 export const DESTINATIONS: Record<DestinationType, DestinationMeta> = {
   artifacts: { title: "Timeline", icon: Layers },
+  inbox: { title: "Inbox", icon: Inbox },
+  agent: { title: "Agent", icon: AgentIcon },
   usage: { title: "Usage", icon: Gauge },
   knowledge: { title: "Knowledge", icon: Brain },
   "knowledge-graph": { title: "Knowledge graph", icon: Network },
