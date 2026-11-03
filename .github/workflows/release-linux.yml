@@ -316,6 +316,11 @@ jobs:
     needs: build-linux
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      # For the build-provenance attestation below.
+      id-token: write
+      attestations: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -335,6 +340,18 @@ jobs:
           path: dist/artifacts
           merge-multiple: true
 
+      # Signs the rpms in place, so it runs before the checksums are taken.
+      # Skipped, with a warning on the run, until the release key exists:
+      # see "Signing" in docs/reference/linux-support.md for the two secrets.
+      - name: Sign the rpm packages
+        env:
+          GPG_KEY: ${{ secrets.LINUX_RELEASE_GPG_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.LINUX_RELEASE_GPG_PASSPHRASE }}
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends rpm
+          ./scripts/linux/sign-release.sh rpm dist/artifacts
+
       - name: Write the multi-arch AUR PKGBUILD and the checksums
         env:
           VERSION: ${{ steps.meta.outputs.version }}
@@ -346,6 +363,21 @@ jobs:
           find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -exec sha256sum {} + | sort -k2 > SHA256SUMS.txt
           ls -lh
           cat SHA256SUMS.txt
+
+      # A detached signature over the checksums signs every file they list.
+      - name: Sign the checksums
+        env:
+          GPG_KEY: ${{ secrets.LINUX_RELEASE_GPG_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.LINUX_RELEASE_GPG_PASSPHRASE }}
+        run: ./scripts/linux/sign-release.sh sums dist/artifacts
+
+      # SLSA build provenance for every artifact, tied to this workflow run:
+      # `gh attestation verify <file> --repo pacifio/atlas` checks it. Needs no
+      # key, so it ships whether or not the GPG key exists.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/artifacts/*
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
