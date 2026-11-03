@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { PanelSkeleton } from "@/components/panel-skeleton";
 import { GithubIcon } from "@/components/github-icon";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
+import { Button } from "@/ui/button";
 
 // All three sections are lazy so none of them runs its first invokes or vendor
 // parses before the tab is opened. `GitManagerPanel` in particular pulls in
@@ -37,29 +38,24 @@ export function SourceControlPanel() {
   const { setSourceControlSection } = useLayoutStore.use.actions();
 
   return (
-    <div className="flex h-full flex-col bg-[var(--card)]">
+    <div className="flex h-full flex-col bg-card">
       {/* A size container: the inactive sections drop to icons when the
           column is too narrow for every label. */}
-      <div className="@container flex h-9 shrink-0 items-center gap-0.5 overflow-x-auto border-b border-border px-1.5 hide-scrollbar">
+      <div className="@container flex h-control-lg shrink-0 items-center gap-0.5 overflow-x-auto border-b border-border-subtle px-1.5 hide-scrollbar">
         {SECTIONS.map((s) => {
           const active = section === s.id;
           return (
-            <button
+            <Button
               key={s.id}
-              type="button"
+              variant="ghost"
+              size="sm"
               onClick={() => setSourceControlSection(s.id)}
               title={s.label}
               aria-pressed={active}
-              className={cn(
-                "flex h-6 shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-1.5 text-xs whitespace-nowrap transition-colors",
-                active
-                  ? "bg-element-selected text-foreground"
-                  : "text-muted-foreground hover:bg-element-hover hover:text-foreground",
-              )}
             >
               <s.icon size={14} />
               <span className={cn(!active && "hidden @[18rem]:inline")}>{s.label}</span>
-            </button>
+            </Button>
           );
         })}
       </div>

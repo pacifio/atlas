@@ -359,6 +359,10 @@ side by side.
 | `DropdownMenu`     | a list of commands anchored to a trigger. Base UI has no "DropdownMenu": a trigger-anchored menu _is_ `Menu`, and the wrapper renames it back.                                                                                                                     |
 | `ContextMenu`      | the same list, opened by right-click at the pointer.                                                                                                                                                                                                               |
 
+`Button` and `IconButton` also carry `ghost-destructive`: a quiet action that
+throws work away (discard, drop, delete), ghost at rest and the error tone only
+under the pointer.
+
 Those five overlay primitives arrived with the Base UI migration (decision 16).
 Three rules they all share, because Base UI's anatomy differs from Radix's:
 

@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { FileCode2, Check } from "lucide-react";
+import { Button } from "@/ui/button";
+import { IconButton } from "@/ui/icon-button";
 import { HintGroup, HintItem } from "@/ui/hint-group";
+import { SectionHeader } from "./section-header";
 import { useGitStore } from "../../stores/git-store";
 import { handleGitError } from "../../lib/git-errors";
 
@@ -56,73 +59,70 @@ export function ConflictsView({ onOpenFile }: { onOpenFile: (path: string) => vo
   if (!state || state.files.length === 0) return null;
 
   return (
-    <div className="shrink-0 border-b border-border">
-      <div className="flex items-center justify-between px-2 h-control-sm bg-[var(--sidebar)] border-b border-border-subtle">
-        <span className="text-2xs font-semibold text-muted-foreground uppercase tracking-wider">
-          Conflicts ({state.files.length})
-        </span>
-        <span className="text-3xs text-muted-foreground">resolve each file, then Continue</span>
-      </div>
-      {state.files.map((f) => (
-        <div
-          key={f.path}
-          className="group flex items-center gap-1.5 h-control-md px-2 text-xs hover:bg-element-hover"
-        >
-          <span className="shrink-0 w-3 text-center font-mono text-2xs font-semibold text-error">
-            !
-          </span>
-          <span className="truncate flex-1 min-w-0 font-mono text-secondary-foreground">
-            {f.path}
-          </span>
-          {f.markerCount > 0 ? (
-            <span className="shrink-0 text-3xs font-mono text-[var(--atlas-status-warning-foreground)]">
-              {f.markerCount} marker{f.markerCount === 1 ? "" : "s"}
+    <div className="shrink-0 border-b border-border-subtle">
+      <SectionHeader title={`Conflicts (${state.files.length})`}>
+        <span className="caption pr-1">resolve each file, then Continue</span>
+      </SectionHeader>
+      {state.files.map((f) => {
+        const resolvedLabel =
+          f.markerCount > 0 ? "Mark resolved (conflict markers still present!)" : "Mark resolved";
+        return (
+          <div
+            key={f.path}
+            className="group flex items-center gap-1.5 h-control-md pl-2 pr-1 text-xs transition-colors duration-fast hover:bg-element-hover"
+          >
+            <span className="shrink-0 w-3 text-center font-mono text-2xs font-semibold text-error">
+              !
             </span>
-          ) : (
-            <span className="shrink-0 text-3xs font-mono text-muted-foreground">no markers</span>
-          )}
-          <HintGroup>
-            <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 shrink-0">
-              <button
-                onClick={() => void resolve(f.path, "ours")}
-                className="px-1.5 h-[16px] rounded border border-border text-3xs text-secondary-foreground hover:text-foreground hover:bg-element-hover"
-                title="Keep your version"
-              >
-                Ours
-              </button>
-              <button
-                onClick={() => void resolve(f.path, "theirs")}
-                className="px-1.5 h-[16px] rounded border border-border text-3xs text-secondary-foreground hover:text-foreground hover:bg-element-hover"
-                title="Take their version"
-              >
-                Theirs
-              </button>
-              <HintItem label="Open in editor">
-                <button
-                  onClick={() => onOpenFile(f.path)}
-                  className="p-0.5 rounded text-muted-foreground hover:text-foreground"
+            <span className="truncate flex-1 min-w-0 font-mono text-secondary-foreground group-hover:text-foreground">
+              {f.path}
+            </span>
+            {f.markerCount > 0 ? (
+              <span className="shrink-0 font-mono text-2xs tabular-nums text-warning">
+                {f.markerCount} marker{f.markerCount === 1 ? "" : "s"}
+              </span>
+            ) : (
+              <span className="shrink-0 font-mono text-2xs text-muted-foreground">no markers</span>
+            )}
+            <HintGroup>
+              <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 shrink-0">
+                <Button
+                  variant="outline"
+                  size="xs"
+                  onClick={() => void resolve(f.path, "ours")}
+                  title="Keep your version"
                 >
-                  <FileCode2 size={11} />
-                </button>
-              </HintItem>
-              <HintItem
-                label={
-                  f.markerCount > 0
-                    ? "Mark resolved (conflict markers still present!)"
-                    : "Mark resolved"
-                }
-              >
-                <button
-                  onClick={() => void resolve(f.path, "manual")}
-                  className="p-0.5 rounded text-muted-foreground hover:text-success"
+                  Ours
+                </Button>
+                <Button
+                  variant="outline"
+                  size="xs"
+                  onClick={() => void resolve(f.path, "theirs")}
+                  title="Take their version"
                 >
-                  <Check size={11} />
-                </button>
-              </HintItem>
-            </div>
-          </HintGroup>
-        </div>
-      ))}
+                  Theirs
+                </Button>
+                <HintItem label="Open in editor">
+                  <IconButton
+                    size="xs"
+                    icon={FileCode2}
+                    label="Open in editor"
+                    onClick={() => onOpenFile(f.path)}
+                  />
+                </HintItem>
+                <HintItem label={resolvedLabel}>
+                  <IconButton
+                    size="xs"
+                    icon={Check}
+                    label={resolvedLabel}
+                    onClick={() => void resolve(f.path, "manual")}
+                  />
+                </HintItem>
+              </div>
+            </HintGroup>
+          </div>
+        );
+      })}
     </div>
   );
 }

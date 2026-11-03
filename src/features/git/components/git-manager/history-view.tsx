@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { Button } from "@/ui/button";
 import { HintGroup, HintItem } from "@/ui/hint-group";
 import { useGitStore } from "../../stores/git-store";
 import { handleGitError } from "../../lib/git-errors";
@@ -39,12 +40,12 @@ export function HistoryView() {
                   // ("View commit diff · sha") becomes its accessible name.
                   aria-label={`${c.message} — ${c.author}, ${c.date}`}
                   onClick={() => repoPath && openCommit(repoPath, c.hash, c.message)}
-                  className="w-full text-left flex flex-col gap-1 px-3 py-1.5 hover:bg-element-hover"
+                  className="w-full text-left flex flex-col gap-1 px-3 py-2 border-b border-border-subtle transition-colors duration-fast hover:bg-element-hover"
                 >
-                  <span className="text-xs text-secondary-foreground group-hover:text-foreground truncate pr-12">
+                  <span className="text-xs font-medium text-secondary-foreground group-hover:text-foreground truncate pr-12">
                     {c.message}
                   </span>
-                  <span className="flex min-w-0 items-center gap-1.5 text-2xs text-muted-foreground">
+                  <span className="flex min-w-0 items-center gap-1.5 caption">
                     <CommitAvatar email={c.email} size={14} />
                     <span className="truncate">{c.author}</span>
                     <span className="shrink-0">·</span>
@@ -55,16 +56,19 @@ export function HistoryView() {
                 </button>
               </HintItem>
               {i === 0 && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void run(() => actions.undoCommit());
-                  }}
-                  className="absolute right-2 top-1.5 opacity-0 group-hover:opacity-100 px-1.5 h-[16px] rounded border border-border text-3xs text-secondary-foreground hover:text-foreground hover:bg-element-hover"
-                  title="Undo this commit — changes return to the staged area (blocked once pushed)"
-                >
-                  Undo
-                </button>
+                <span className="absolute right-2 top-1.5 opacity-0 group-hover:opacity-100">
+                  <Button
+                    variant="outline"
+                    size="xs"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void run(() => actions.undoCommit());
+                    }}
+                    title="Undo this commit — changes return to the staged area (blocked once pushed)"
+                  >
+                    Undo
+                  </Button>
+                </span>
               )}
             </div>
           ))}

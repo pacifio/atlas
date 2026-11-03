@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { Archive } from "lucide-react";
+import { Button } from "@/ui/button";
 import { useGitStore } from "../../stores/git-store";
 import { handleGitError } from "../../lib/git-errors";
 
@@ -23,15 +24,16 @@ export function StashesView() {
 
   return (
     <div className="h-full flex flex-col">
-      <div className="shrink-0 border-b border-border p-2">
-        <button
+      <div className="shrink-0 border-b border-border-subtle p-2">
+        <Button
+          variant="outline"
           onClick={() => run(() => actions.stashPush())}
           disabled={files.length === 0}
-          className="w-full flex items-center justify-center gap-1.5 h-7 rounded-md text-xs font-medium bg-card text-secondary-foreground hover:text-foreground hover:bg-element-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          className="w-full"
         >
           <Archive size={12} />
           Stash all changes
-        </button>
+        </Button>
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto hide-scrollbar">
         {stashes.length === 0 ? (
@@ -40,31 +42,36 @@ export function StashesView() {
           stashes.map((s) => (
             <div
               key={s.index}
-              className="group flex flex-col gap-1 px-3 py-2 border-b border-border-subtle"
+              className="group flex flex-col gap-0.5 py-2 pr-1.5 pl-3 border-b border-border-subtle transition-colors duration-fast hover:bg-element-hover"
             >
-              <span className="text-xs text-secondary-foreground truncate">{s.message}</span>
-              <div className="flex items-center gap-2">
-                <span className="text-3xs font-mono text-muted-foreground flex-1">
+              <span className="text-xs font-medium text-secondary-foreground group-hover:text-foreground truncate">
+                {s.message}
+              </span>
+              <div className="flex items-center gap-0.5">
+                <span className="font-mono text-2xs text-muted-foreground flex-1 truncate">
                   stash@{`{${s.index}}`} {s.branch && `· ${s.branch}`}
                 </span>
-                <button
+                <Button
+                  variant="ghost"
+                  size="xs"
                   onClick={() => run(() => actions.stashApply(s.index))}
-                  className="text-2xs text-muted-foreground hover:text-foreground"
                 >
                   Apply
-                </button>
-                <button
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="xs"
                   onClick={() => run(() => actions.stashPop(s.index))}
-                  className="text-2xs text-muted-foreground hover:text-foreground"
                 >
                   Pop
-                </button>
-                <button
+                </Button>
+                <Button
+                  variant="ghost-destructive"
+                  size="xs"
                   onClick={() => run(() => actions.stashDrop(s.index))}
-                  className="text-2xs text-muted-foreground hover:text-[var(--atlas-status-error-foreground)]"
                 >
                   Drop
-                </button>
+                </Button>
               </div>
             </div>
           ))

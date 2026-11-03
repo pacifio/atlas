@@ -40,10 +40,10 @@ export function GitOpOutput() {
   const failed = !activeOp.running && activeOp.error !== null;
 
   return (
-    <div className="shrink-0 border-t border-border">
+    <div className="shrink-0 border-t border-border-subtle">
       <button
         onClick={() => setCollapsed((c) => !c)}
-        className="flex w-full items-center gap-1.5 px-2 h-[22px] text-2xs text-muted-foreground hover:text-secondary-foreground"
+        className="flex w-full items-center gap-1.5 px-2 h-control-sm text-2xs font-medium text-muted-foreground transition-colors duration-fast hover:bg-element-hover hover:text-secondary-foreground"
       >
         {collapsed ? <ChevronRight size={10} /> : <ChevronDown size={10} />}
         {activeOp.running ? (
@@ -56,20 +56,18 @@ export function GitOpOutput() {
           </>
         ) : failed ? (
           <>
-            <XCircle size={10} className="text-[var(--atlas-status-error-foreground)]" />
-            <span className="text-[var(--atlas-status-error-foreground)]">
-              {activeOp.kind} failed — output below
-            </span>
+            <XCircle size={10} className="text-error" />
+            <span className="text-error">{activeOp.kind} failed — output below</span>
           </>
         ) : (
           <span>{activeOp.kind} output</span>
         )}
-        <span className="ml-auto font-mono">{activeOp.lines.length} lines</span>
+        <span className="ml-auto font-mono tabular-nums">{activeOp.lines.length} lines</span>
       </button>
       {!collapsed && (
         <div
           ref={scrollRef}
-          className="max-h-[120px] overflow-y-auto hide-scrollbar bg-[var(--background)] px-2 py-1 select-text cursor-text"
+          className="max-h-[120px] overflow-y-auto hide-scrollbar bg-background px-2 py-1.5 select-text cursor-text"
         >
           {/* Keyed by `seq`: when the cap trims the front, existing rows
               keep their keys and only the new ones mount. */}
@@ -87,8 +85,8 @@ const OpLineRow = memo(function OpLineRow({ text, error }: { text: string; error
   return (
     <div
       className={cn(
-        "font-mono text-2xs leading-[15px] whitespace-pre-wrap break-all",
-        error ? "text-[var(--atlas-status-error-foreground)]" : "text-secondary-foreground",
+        "font-mono text-2xs whitespace-pre-wrap break-all",
+        error ? "text-error" : "text-secondary-foreground",
       )}
     >
       {text}
