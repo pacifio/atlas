@@ -56,7 +56,7 @@ export function HistoryView() {
                 </button>
               </HintItem>
               {i === 0 && (
-                <span className="absolute right-2 top-1.5 opacity-0 group-hover:opacity-100">
+                <span className="absolute right-2 top-1.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">
                   <Button
                     variant="outline"
                     size="xs"
