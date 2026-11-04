@@ -355,7 +355,7 @@ export function SidebarSessions() {
                       isHighlighted={index === activeResultIndex}
                       isActive={session.sessionId !== "" && session.sessionId === activeSessionId}
                       onHighlight={search.highlight}
-                      onSelect={(row) => openSession(row)}
+                      onSelect={openSession}
                       onMenuTarget={handlers.menuTarget}
                     />
                   )}

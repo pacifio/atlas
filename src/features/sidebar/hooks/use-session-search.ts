@@ -2,6 +2,7 @@
 // highlight, and Enter to open. The query itself lives in the sidebar store.
 
 import {
+  useCallback,
   useDeferredValue,
   useEffect,
   useLayoutEffect,
@@ -78,10 +79,10 @@ export function useSessionSearch(lists: {
   }, [activeResultIndex, isSearching]);
 
   /** The pointer moved over a result: it becomes the highlighted one. */
-  const highlight = (threadId: string) => {
+  const highlight = useCallback((threadId: string) => {
     const i = resultsRef.current.findIndex((row) => row.threadId === threadId);
     if (i !== -1) setActiveResultIndex(i);
-  };
+  }, []);
 
   const setQuery = (value: string) => {
     sidebarActions.setSearch(value);
