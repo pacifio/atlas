@@ -206,15 +206,14 @@ export function stripAgentMarkup(title: string): string {
  *  `useAgentMetaResolver()` (or `agentMeta` outside React); there is no
  *  default, so a caller that forgets it is a type error, not a store read. */
 export function agentLabel(agent: string, resolveAgent: AgentMetaResolver): string {
-  if (agent.includes("claude")) return "Claude Code";
-  if (agent.includes("codex")) return "Codex";
-  if (agent.includes("opencode")) return "OpenCode";
-  if (agent.includes("cursor")) return "Cursor";
-  if (agent.includes("kilo")) return "Kilo";
-  if (agent.includes("atlas-agent")) return "Atlas";
-  // Registry-installed external agent: resolve its marketplace name (falls
-  // back to a prettified id for purged metadata).
-  return resolveAgent(agent).label;
+  const meta = resolveAgent(agent);
+  // The board names the native agent "Atlas", shorter than its catalog name.
+  if (meta.firstPartyIcon === "atlas-agent") return "Atlas";
+  // Everything else is its identity's label: a first-party agent's static
+  // name, an external agent's registry name, or a prettified id for purged
+  // metadata. Never a substring match on the id (ADR-0002): a third-party
+  // `claude-foo` is not Claude Code.
+  return meta.label;
 }
 
 /** Local midnight, the key every day bucket is grouped on. */

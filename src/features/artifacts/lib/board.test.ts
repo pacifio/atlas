@@ -275,12 +275,27 @@ describe("shortSessionId", () => {
 const resolve: AgentMetaResolver = (id) => resolveAgentMeta(id, EMPTY_AGENT_REGISTRY);
 
 describe("agentLabel", () => {
-  it("keeps the first-party ladder", () => {
+  it("names first-party agents, and the native agent Atlas", () => {
     expect(agentLabel("claude-code", resolve)).toBe("Claude Code");
     expect(agentLabel("claude-acp", resolve)).toBe("Claude Code");
-    expect(agentLabel("codex-acp", resolve)).toBe("Codex");
     expect(agentLabel("opencode", resolve)).toBe("OpenCode");
     expect(agentLabel("atlas-agent", resolve)).toBe("Atlas");
+  });
+
+  it("does not name an id after a first-party agent it merely contains", () => {
+    // ADR-0002: identity, not a substring of the id.
+    const registry: AgentMetaResolver = (id) =>
+      resolveAgentMeta(id, {
+        catalogById: {},
+        registryEntries: [
+          { id: "claude-foo", name: "Foo for Claude", iconDataUrl: null },
+          { id: "codex-acp", name: "Codex", iconDataUrl: null },
+        ],
+      });
+    expect(agentLabel("claude-foo", registry)).toBe("Foo for Claude");
+    expect(agentLabel("claude-bar", resolve)).toBe("Claude Bar");
+    expect(agentLabel("codex-acp", registry)).toBe("Codex");
+    expect(agentLabel("my-kilo-fork", resolve)).toBe("My Kilo Fork");
   });
 
   it("names any other agent through the resolver it is handed", () => {

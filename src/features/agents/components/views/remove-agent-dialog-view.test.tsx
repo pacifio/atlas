@@ -1,8 +1,7 @@
 // @vitest-environment happy-dom
 //
-// The remove-agent confirm: Keep holds focus when it opens, and every way out
-// that is not the Remove button — Keep, Esc, a click on the backdrop — means
-// Keep. The ask/settle promise itself is `remove-agent-confirm.test.ts`.
+// The remove-agent confirm: Keep holds focus when it opens, Keep and Esc mean
+// Keep, and a click on the backdrop does nothing (it must be answered). The ask/settle promise itself is `remove-agent-confirm.test.ts`.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -48,12 +47,14 @@ describe("RemoveAgentDialogView", () => {
     expect(onRemove).not.toHaveBeenCalled();
   });
 
-  it("a click on the backdrop keeps", () => {
+  it("a click on the backdrop does nothing", () => {
     const { onKeep, onRemove } = renderDialog();
-    const backdrop = document.querySelector('[data-slot="alert-dialog-backdrop-close"]');
-    expect(backdrop).toBeTruthy();
+    expect(document.querySelector('[data-slot="alert-dialog-backdrop-close"]')).toBeNull();
+    const backdrop = document.querySelector('[data-slot="alert-dialog-overlay"]');
+    expect(backdrop).not.toBeNull();
     fireEvent.click(backdrop!);
-    expect(onKeep).toHaveBeenCalled();
+    expect(onKeep).not.toHaveBeenCalled();
     expect(onRemove).not.toHaveBeenCalled();
+    expect(screen.getByTestId("remove-agent-dialog")).toBeTruthy();
   });
 });

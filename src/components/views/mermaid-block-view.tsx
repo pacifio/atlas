@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type Ref, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronRight, Copy, Download, Maximize2, Minus, Plus, X } from "lucide-react";
 import {
@@ -308,6 +308,7 @@ function DiagramViewer({
   const [copied, setCopied] = useState(false);
   const [saving, setSaving] = useState(false);
   const [full, setFull] = useState(false);
+  const openFullRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!copied) return;
@@ -367,14 +368,24 @@ function DiagramViewer({
         <div className="absolute right-1.5 top-1.5 flex items-center gap-0.5 rounded-full border border-border bg-card/80 p-0.5 opacity-0 backdrop-blur-xl transition-opacity focus-within:opacity-100 group-hover/diagram:opacity-100">
           <ZoomControls zoom={zoom} onZoom={setZoom} size="xs" />
           <Divider />
-          <ToolButton label="Open full screen" icon={Maximize2} onClick={() => setFull(true)} />
+          <ToolButton
+            label="Open full screen"
+            icon={Maximize2}
+            buttonRef={openFullRef}
+            onClick={() => setFull(true)}
+          />
           <CopyExport {...actions} size="xs" />
         </div>
       </HintGroup>
 
       {full &&
         createPortal(
-          <Fullscreen svg={svg} {...actions} onClose={() => setFull(false)} />,
+          <Fullscreen
+            svg={svg}
+            {...actions}
+            returnFocusRef={openFullRef}
+            onClose={() => setFull(false)}
+          />,
           document.body,
         )}
     </div>
@@ -392,8 +403,27 @@ function DiagramViewer({
  * Its zoom is deliberately independent of the inline one — you open this to look
  * closer, and inheriting a 40% inline zoom would defeat the point.
  */
-function Fullscreen({ svg, onClose, ...actions }: Actions & { svg: string; onClose: () => void }) {
+function Fullscreen({
+  svg,
+  onClose,
+  returnFocusRef,
+  ...actions
+}: Actions & {
+  svg: string;
+  onClose: () => void;
+  /** Where focus lands on close: the button that opened it. A click does not
+   *  focus a button in WebKit, so `document.activeElement` cannot say. */
+  returnFocusRef: RefObject<HTMLButtonElement | null>;
+}) {
   const [zoom, setZoom] = useState(1);
+  // Focus moves into the overlay, onto Close, and goes back to the button that
+  // opened it when it closes; left alone it stayed behind the overlay.
+  const closeRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const opener = returnFocusRef.current;
+    closeRef.current?.focus();
+    return () => opener?.focus();
+  }, [returnFocusRef]);
 
   return (
     <div
@@ -409,7 +439,7 @@ function Fullscreen({ svg, onClose, ...actions }: Actions & { svg: string; onClo
           {(actions.onCopy || actions.onExport) && <Divider />}
           <CopyExport {...actions} size="sm" />
           <Divider />
-          <ToolButton label="Close" icon={X} onClick={onClose} size="sm" />
+          <ToolButton label="Close" icon={X} onClick={onClose} size="sm" buttonRef={closeRef} />
         </HintGroup>
       </header>
 
@@ -496,16 +526,19 @@ function ToolButton({
   onClick,
   disabled,
   size = "xs",
+  buttonRef,
 }: {
   label: string;
   icon: typeof Plus;
   onClick: () => void;
   disabled?: boolean;
   size?: "xs" | "sm";
+  buttonRef?: Ref<HTMLButtonElement>;
 }) {
   return (
     <HintItem label={label}>
       <IconButton
+        ref={buttonRef}
         variant="ghost"
         shape="round"
         size={size}

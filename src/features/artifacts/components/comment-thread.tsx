@@ -26,7 +26,7 @@
  * the views under `views/`.
  */
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef } from "react";
 import { Popover } from "@base-ui/react/popover";
 import { MessageSquare } from "lucide-react";
 
@@ -35,6 +35,7 @@ import type { OrgDirectory } from "@/features/organisations/lib/use-org-director
 import { cn } from "@/lib/utils";
 
 import { visibleCount, type AnchorKind, type Comment } from "../lib/comments-api";
+import { commentAnchorKey, useCommentAnchorState } from "../lib/comment-anchor-context";
 import { Thread } from "./views/comment-thread-view";
 
 export { avatarUser } from "../lib/avatar-user";
@@ -160,8 +161,13 @@ export const CommentButton = memo(function CommentButton({
 
   // Controlled, so `openSignal` can open it. The popover still owns every
   // other way it opens and closes — the trigger, Escape, a click outside —
-  // through `onOpenChange`.
-  const [open, setOpen] = useState(false);
+  // through `onOpenChange`. Remembered above the row (`CommentAnchorProvider`),
+  // so a row that unmounts and comes back reopens its thread. A passage
+  // comment is transient and is not remembered.
+  const [open, setOpen] = useCommentAnchorState(
+    selectedText === undefined ? commentAnchorKey.open(`${anchorKind}:${anchorId}`) : null,
+    false,
+  );
   useEffect(() => {
     if (openSignal) setOpen(true);
   }, [openSignal]);

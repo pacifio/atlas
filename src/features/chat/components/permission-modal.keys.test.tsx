@@ -9,7 +9,7 @@ vi.mock("../lib/agents-api", async (importOriginal) => {
   return { agents: { ...real.agents, respondPermission } };
 });
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useChatStore } from "../stores/chat-store";
 import { PermissionModal } from "./permission-modal";
 
@@ -117,30 +117,44 @@ describe("keys on the permission card", () => {
   /// Esc on the plan review reached both the window handler and the dialog's
   /// own dismiss, so the agent was sent two cancels for one request.
   it("Esc on the plan review cancels once", () => {
-    useChatStore.setState({
-      sessions: {
-        "chat-1": { acpSessionId: "sess-1", agentType: "atlas-agent", messages: [] },
-      } as never,
-      pendingPermissions: {
-        "sess-1": [
-          {
-            agentId: "atlas-agent",
-            acpSessionId: "sess-1",
-            requestId: "req-plan",
-            toolCall: {
-              toolCallId: "call-plan",
-              title: "Ready to code?",
-              kind: "other",
-              toolName: "ExitPlanMode",
-              rawInput: { plan: "1. Do the thing" },
-            },
-            options: OPTIONS,
-          },
-        ],
-      } as never,
-    });
-    render(<PermissionModal tabId="chat-1" />);
+    pendingPlan();
     fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
     expect(picked()).toEqual(["cancelled"]);
   });
+
+  /// The plan review opens with Cancel focused. Enter there belongs to the
+  /// button; the window handler must not turn it into an approve.
+  it("Enter on the plan review's focused Cancel never approves", async () => {
+    pendingPlan();
+    const cancel = screen.getByText("Cancel").closest("button");
+    await waitFor(() => expect(document.activeElement).toBe(cancel));
+    fireEvent.keyDown(cancel!, { key: "Enter" });
+    expect(picked()).not.toContain("allow-once");
+  });
 });
+
+function pendingPlan() {
+  useChatStore.setState({
+    sessions: {
+      "chat-1": { acpSessionId: "sess-1", agentType: "atlas-agent", messages: [] },
+    } as never,
+    pendingPermissions: {
+      "sess-1": [
+        {
+          agentId: "atlas-agent",
+          acpSessionId: "sess-1",
+          requestId: "req-plan",
+          toolCall: {
+            toolCallId: "call-plan",
+            title: "Ready to code?",
+            kind: "other",
+            toolName: "ExitPlanMode",
+            rawInput: { plan: "1. Do the thing" },
+          },
+          options: OPTIONS,
+        },
+      ],
+    } as never,
+  });
+  render(<PermissionModal tabId="chat-1" />);
+}

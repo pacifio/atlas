@@ -1,17 +1,27 @@
-import type { ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
+import { useAgentRegistryStore } from "../stores/agent-registry-store";
 import { agentMeta } from "../lib/agent-meta";
+import type { AgentMetaResolver } from "../lib/agent-identity";
 import { AgentMetaContext } from "../lib/agent-meta-context";
 
 /**
  * Binds `useAgentMeta` / `useAgentMetaResolver` to the live agent registry.
  *
- * The value is `agentMeta` itself: a stable, non-reactive resolver that reads
- * the registry when it is called. A mark therefore re-resolves when its parent
- * re-renders, exactly as it did when it called `agentMeta` directly. Re-rendering
- * every mark when an agent is installed or removed (a subscription to the
- * registry's `signature`) is a proposed behaviour change awaiting review
- * (ATL-718), not part of this provider.
+ * Subscribes to the registry's `signature` only (never the arrays: a selector
+ * returning a fresh array is the useShallow infinite-loop trap). A new
+ * signature mints a new resolver, so every mark, label and derivation that
+ * reads the context re-resolves when an agent is installed, removed or
+ * discovered, instead of waiting for its parent to re-render.
  */
 export function AgentMetaProvider({ children }: { children: ReactNode }) {
-  return <AgentMetaContext.Provider value={agentMeta}>{children}</AgentMetaContext.Provider>;
+  const signature = useAgentRegistryStore((s) => s.signature);
+  const resolve = useMemo(() => resolverFor(signature), [signature]);
+  return <AgentMetaContext.Provider value={resolve}>{children}</AgentMetaContext.Provider>;
+}
+
+/** A fresh resolver per registry `signature`. `agentMeta` reads the registry
+ *  through getState(), so the signature is only what makes the identity new:
+ *  a context consumer re-renders exactly when the registry changed. */
+function resolverFor(_signature: string): AgentMetaResolver {
+  return (id) => agentMeta(id);
 }

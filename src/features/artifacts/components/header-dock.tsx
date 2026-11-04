@@ -88,6 +88,7 @@ export function DockButton({
     <HintItem label={label}>
       <button
         type="button"
+        aria-label={label}
         aria-pressed={active}
         onClick={onClick}
         className={cn(DOCK_TRIGGER, active && DOCK_ACTIVE)}

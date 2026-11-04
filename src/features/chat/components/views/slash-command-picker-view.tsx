@@ -82,7 +82,12 @@ export function SlashCommandPickerView({
             {loading ? "Loading commands…" : `No commands match "/${query}".`}
           </div>
         ) : (
-          <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
+          <div
+            role="listbox"
+            aria-label={footerLabel}
+            className="relative w-full"
+            style={{ height: virtualizer.getTotalSize() }}
+          >
             {virtualizer.getVirtualItems().map((item) => {
               const i = item.index;
               const cmd = rows[i];
@@ -92,6 +97,8 @@ export function SlashCommandPickerView({
                 <button
                   key={item.key}
                   type="button"
+                  role="option"
+                  aria-selected={isActive}
                   style={{ transform: `translateY(${item.start}px)` }}
                   onMouseEnter={() => onHover(i)}
                   onMouseDown={(e) => {
@@ -139,7 +146,7 @@ export function SlashCommandPickerView({
       </div>
       <div className="flex h-[24px] shrink-0 items-center justify-between border-t border-border px-3 text-3xs uppercase tracking-wider text-muted-foreground">
         <span>{footerLabel}</span>
-        <span>↑↓ · ↵ run · ⎋ close</span>
+        <span>↑↓ · ↵ run · ⇥ complete · ⎋ close</span>
       </div>
     </div>
   );

@@ -8,15 +8,15 @@
 //
 // Every control is a separate tab stop, as before: the enum chips are single
 // package `Toggle`s rather than a `ToggleGroup`, whose roving focus would turn
-// them into one stop walked by arrow keys. No `initialFocus`: Base UI focuses
-// the first tabbable control, as it always has (moving it is a proposed
-// behaviour change, not yet approved).
+// them into one stop walked by arrow keys. The dialog opens on the first text
+// or number input, else on Decline — never on Send / I'm done, so an Enter on
+// open cannot send an answer the user never gave.
 //
 // Composed from the package's dialog parts, not `DialogContent`, to keep the
 // frosted scrim (`DialogOverlay blur`) the package reserves for blocking
 // prompts; `DialogContent`'s built-in overlay cannot carry it.
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { ExternalLink, HelpCircle } from "lucide-react";
 import {
@@ -80,6 +80,9 @@ export function ElicitationDialogView({
   const complete = elicitationComplete(fields, values);
   const set = (name: string, v: unknown) => setValues((prev) => ({ ...prev, [name]: v }));
   const locked = remoteDriver !== null;
+  const firstInput = fields.find((f) => f.kind === "string" || f.kind === "number")?.name ?? null;
+  const inputRef = useRef<HTMLInputElement>(null);
+  const declineRef = useRef<HTMLButtonElement>(null);
 
   return (
     <Dialog open onOpenChange={(o) => !o && onCancel()}>
@@ -87,6 +90,7 @@ export function ElicitationDialogView({
         <DialogOverlay blur />
         <DialogPrimitive.Popup
           data-testid="elicitation-dialog"
+          initialFocus={firstInput !== null ? inputRef : declineRef}
           // The package dialog's surface, anchored a quarter down the window
           // like every blocking prompt rather than centred.
           className="fixed top-[24%] left-1/2 z-modal w-[480px] max-w-[92vw] -translate-x-1/2 rounded-xl border border-border bg-card text-foreground shadow-lg outline-none data-open:animate-scale-in data-closed:animate-scale-out"
@@ -173,6 +177,7 @@ export function ElicitationDialogView({
                   </div>
                 ) : (
                   <Input
+                    ref={f.name === firstInput ? inputRef : undefined}
                     type={f.kind === "number" ? "number" : "text"}
                     value={String(values[f.name] ?? "")}
                     onChange={(e) =>
@@ -204,7 +209,13 @@ export function ElicitationDialogView({
               >
                 {mode === "url" ? "I'm done" : "Send"}
               </Button>
-              <Button variant="outline" size="md" disabled={busy || locked} onClick={onDecline}>
+              <Button
+                ref={declineRef}
+                variant="outline"
+                size="md"
+                disabled={busy || locked}
+                onClick={onDecline}
+              >
                 Decline
               </Button>
             </div>

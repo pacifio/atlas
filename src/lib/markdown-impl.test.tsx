@@ -4,9 +4,13 @@
 // `StreamingMarkdown`: the `.prose-session` root, the chat engine's
 // highlighting, and links that can never navigate the webview.
 
-import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, render } from "@testing-library/react";
-import MarkdownImpl from "./markdown-impl";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+
+const openUrl = vi.fn(() => Promise.resolve());
+vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl }));
+
+const { default: MarkdownImpl } = await import("./markdown-impl");
 
 afterEach(cleanup);
 
@@ -36,5 +40,13 @@ describe("MarkdownImpl", () => {
     expect(bad.getAttribute("href") ?? "").toBe("");
     expect(good.getAttribute("href")).toBe("https://example.com");
     expect(good.getAttribute("target")).toBe("_blank");
+  });
+
+  it("opens an http(s) link in the system browser, not the webview", async () => {
+    const { container } = render(<MarkdownImpl>{"[good](https://example.com)"}</MarkdownImpl>);
+    const link = container.querySelector("a")!;
+    const allowed = fireEvent.click(link);
+    expect(allowed).toBe(false);
+    await waitFor(() => expect(openUrl).toHaveBeenCalledWith("https://example.com"));
   });
 });

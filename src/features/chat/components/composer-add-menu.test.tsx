@@ -50,6 +50,14 @@ describe("ComposerAddMenu", () => {
     expect(screen.getByText("Attach media")).toBeTruthy();
   });
 
+  it("offers Add more agents as a menu item the arrow keys reach", async () => {
+    renderMenu();
+    await act(async () => {
+      fireEvent.click(trigger());
+    });
+    expect(screen.getByRole("menuitem", { name: /Add more agents/ })).toBeTruthy();
+  });
+
   it("closes when another composer menu opens", async () => {
     renderMenu();
     await act(async () => {

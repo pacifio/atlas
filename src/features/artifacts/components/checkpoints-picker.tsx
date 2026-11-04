@@ -101,7 +101,7 @@ export function CheckpointsPicker({
       <HintItem label="Recent checkpoints">
         <Popover.Trigger
           render={
-            <button type="button" className={DOCK_TRIGGER}>
+            <button type="button" aria-label="Recent checkpoints" className={DOCK_TRIGGER}>
               <GitCommitHorizontal size={13} />
             </button>
           }

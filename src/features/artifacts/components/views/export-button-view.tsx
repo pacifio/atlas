@@ -9,18 +9,18 @@
  * `IconButton`: it sits beside share and filter in that pill, and all three
  * have to be the same 28px round target.
  *
- * The rows are package ghost buttons that close the popover, reached with Tab — a menu
- * (arrow keys, typeahead, menuitem roles) would be a behaviour change.
+ * The formats are a package `DropdownMenu`: menuitem roles, arrow keys and
+ * typeahead, and the menu closes before the export runs.
  */
 
 import { Download, LoaderCircle } from "lucide-react";
 import {
-  Button,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuShortcut,
+  DropdownMenuTrigger,
   HintItem,
-  Popover,
-  PopoverClose,
-  PopoverContent,
-  PopoverTrigger,
 } from "@tryatlas/design";
 
 import { PILL_BUTTON, PILL_ICON } from "../footer-pill";
@@ -44,11 +44,16 @@ export function ExportButtonView({
   onPick: (format: ExportFormat) => void;
 }) {
   return (
-    <Popover>
+    <DropdownMenu>
       <HintItem label="Export session">
-        <PopoverTrigger
+        <DropdownMenuTrigger
           render={
-            <button type="button" disabled={busy !== null} className={PILL_BUTTON}>
+            <button
+              type="button"
+              aria-label="Export session"
+              disabled={busy !== null}
+              className={PILL_BUTTON}
+            >
               {busy ? (
                 <LoaderCircle size={PILL_ICON} className="animate-spin" />
               ) : (
@@ -59,24 +64,14 @@ export function ExportButtonView({
         />
       </HintItem>
       {/* The pill sits on the reader's bottom-left: the menu opens up from it. */}
-      <PopoverContent side="top" align="start" sideOffset={8} className="w-[184px] p-1">
+      <DropdownMenuContent side="top" align="start" sideOffset={8} className="w-[184px]">
         {FORMATS.map((f) => (
-          <PopoverClose
-            key={f.format}
-            render={
-              <Button
-                variant="ghost"
-                size="md"
-                className="w-full justify-start"
-                onClick={() => onPick(f.format)}
-              >
-                {f.label}
-                <span className="ml-auto font-mono text-2xs text-disabled">{f.hint}</span>
-              </Button>
-            }
-          />
+          <DropdownMenuItem key={f.format} onClick={() => onPick(f.format)}>
+            {f.label}
+            <DropdownMenuShortcut>{f.hint}</DropdownMenuShortcut>
+          </DropdownMenuItem>
         ))}
-      </PopoverContent>
-    </Popover>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

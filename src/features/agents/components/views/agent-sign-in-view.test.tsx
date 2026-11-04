@@ -121,4 +121,20 @@ describe("AgentSignInView", () => {
     renderView({ kind: "loading" });
     expect(screen.getByTestId("sign-in-dock").textContent).toContain("Starting Demo…");
   });
+
+  it.each<SignInPhase>([
+    { kind: "choose", methods: [BROWSER, CLI] },
+    { kind: "running", label: "Signing in to Demo…", docked: false },
+    { kind: "error", message: "nope" },
+  ])("gives the $kind step a close button", async (phase) => {
+    const { onDismiss } = renderView(phase);
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(onDismiss).toHaveBeenCalledTimes(1));
+  });
+
+  it("offers Cancel while the sign-in runs", () => {
+    const { onDismiss } = renderView({ kind: "running", label: "Signing in…", docked: false });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
 });

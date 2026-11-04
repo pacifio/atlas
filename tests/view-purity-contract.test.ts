@@ -235,8 +235,12 @@ describe("view purity contract", () => {
     const meta = path.join(SRC, "features/agents/lib/agent-meta.ts");
     expect(transitiveViolations(meta).join("\n")).toContain("stores/agent-registry-store");
     const provider = path.join(SRC, "features/agents/components/agent-meta-provider.tsx");
+    // The provider is the one container that binds identity to the live
+    // registry: it subscribes to the registry's signature and reads agentMeta.
     expect(transitiveViolations(provider)).toEqual([
+      "imports a store module: ../stores/agent-registry-store via src/features/agents/components/agent-meta-provider.tsx",
       "imports agent-meta (reads the registry store; use useAgentMeta): ../lib/agent-meta via src/features/agents/components/agent-meta-provider.tsx",
+      "reads a Zustand store hook via src/features/agents/components/agent-meta-provider.tsx",
     ]);
   });
 

@@ -482,10 +482,10 @@ export interface CachedMarkdownProps {
   source: string;
   className?: string;
   /**
-   * What sits in each code fence's top-right corner, revealed on hover:
-   * `renderCodeActions` (the language and Copy) unless given. `null` puts
-   * nothing there: the transcript's rows, which today show no fence bar
-   * (showing one there is a D24 change awaiting ATL-718).
+   * What sits in each code fence's top-right corner, revealed on hover and
+   * while its button has keyboard focus: `renderCodeActions` (the language and
+   * Copy) unless given. `null` puts nothing there (a tool result in the
+   * detail panel).
    */
   codeActions?: ((ctx: CodeActionsContext) => ReactNode) | null;
   /**
@@ -686,7 +686,7 @@ const NO_FENCES: readonly Fence[] = [];
 /** The actions' corner: hidden until the pointer is over the fence. Today's
  *  reveal; showing it on keyboard focus too is a D24 change awaiting ATL-718. */
 const CODE_ACTIONS_HOST =
-  "absolute top-1.5 right-1.5 flex items-center gap-1.5 opacity-0 transition-opacity group-hover/pre:opacity-100";
+  "absolute top-1.5 right-1.5 flex items-center gap-1.5 opacity-0 transition-opacity group-hover/pre:opacity-100 focus-within:opacity-100";
 
 /** The fence's language from its `language-*` class; none for plain text. */
 function fenceLang(pre: HTMLElement): string | null {

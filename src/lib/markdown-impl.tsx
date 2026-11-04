@@ -5,7 +5,7 @@
 // its graph put the whole pipeline in the entry chunk, parsed before first
 // paint. Import THIS module directly only from code that is already lazy.
 
-import { useMemo, type ComponentProps } from "react";
+import { useMemo, type ComponentProps, type MouseEvent } from "react";
 import type { Components, Options } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import { StreamingMarkdown } from "@tryatlas/design/session";
@@ -23,9 +23,19 @@ const HIGHLIGHT: NonNullable<Options["rehypePlugins"]>[number] = [
 const PLAIN_REHYPE_PLUGINS: NonNullable<Options["rehypePlugins"]> = [HIGHLIGHT];
 
 /** Every link opens outside the webview, never in it: a non-http link must not
- *  navigate Atlas away. */
+ *  navigate Atlas away. An http(s) link opens in the system browser through
+ *  the opener plugin, loaded on the first click (as `markdown-links.ts` does
+ *  for the chat renderer). */
 function ExternalLink({ node: _node, ...props }: ComponentProps<"a"> & { node?: unknown }) {
-  return <a {...props} target="_blank" rel="noreferrer" />;
+  const href = props.href;
+  const onClick =
+    href && /^https?:/i.test(href)
+      ? (e: MouseEvent<HTMLAnchorElement>) => {
+          e.preventDefault();
+          void import("@tauri-apps/plugin-opener").then((m) => m.openUrl(href)).catch(() => {});
+        }
+      : undefined;
+  return <a {...props} target="_blank" rel="noreferrer" onClick={onClick} />;
 }
 const COMPONENTS: Components = { a: ExternalLink };
 

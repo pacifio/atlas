@@ -163,11 +163,15 @@ export function RunningStep({
   tail,
   authUrl,
   onOpenUrl,
+  onCancel,
 }: {
   label: string;
   tail: string[];
   authUrl: string | null;
   onOpenUrl: (url: string) => void;
+  /** Abandon the sign-in: the login has no timeout, so a browser that never
+   *  returns would otherwise leave no visible way out. */
+  onCancel: () => void;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -197,6 +201,11 @@ export function RunningStep({
           <div ref={endRef} />
         </div>
       )}
+      <div className="flex justify-end">
+        <Button variant="ghost" size="sm" onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
     </div>
   );
 }

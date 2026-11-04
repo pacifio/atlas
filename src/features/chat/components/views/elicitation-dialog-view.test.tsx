@@ -2,7 +2,7 @@
 //
 // The elicitation dialog's answer paths: Send waits for the required fields,
 // Decline declines, Esc cancels (never declines), a single choice stays picked
-// when pressed again, and focus lands where Base UI has always put it.
+// when pressed again, and focus opens on the first text input, else Decline.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -148,10 +148,23 @@ describe("ElicitationDialogView", () => {
     expect(screen.getByText("I'm done")).toBeTruthy();
   });
 
-  // Today's focus, kept: Base UI's first tabbable control. Moving it to the
-  // first text input / Decline is a proposed change (D24), not approved.
-  it("opens with focus on the first control", async () => {
-    renderDialog();
+  it("opens with focus on the first text input", async () => {
+    // The text field is listed after a boolean here: focus skips the switch.
+    renderDialog({ fields: [FIELDS[1], FIELDS[0], FIELDS[2]] });
     await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText("Branch name")));
+  });
+
+  it("opens on Decline when there is nothing to type, never on Send", async () => {
+    renderDialog({ fields: [] });
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByText("Decline").closest("button")),
+    );
+  });
+
+  it("opens on Decline in url mode, not on Open page", async () => {
+    renderDialog({ mode: "url", url: "https://example.invalid/consent", fields: [] });
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByText("Decline").closest("button")),
+    );
   });
 });
