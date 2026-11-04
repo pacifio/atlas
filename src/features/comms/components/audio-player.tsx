@@ -1,8 +1,8 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { Download, Pause, Play, Volume2, VolumeX } from "lucide-react";
+import { HintGroup, HintItem, Icon, IconButton } from "@tryatlas/design";
 import { cn } from "@/lib/utils";
 import { ArcProgress } from "./arc-progress";
-import { HintGroup, HintItem } from "@tryatlas/design";
 
 /**
  * A compact audio block: play/pause, a seekable waveform, mute, download.
@@ -141,7 +141,10 @@ export const AudioPlayer = memo(function AudioPlayer({
 
   return (
     <HintGroup>
-      <div className="flex w-full max-w-[420px] items-center gap-2 rounded-lg border border-border bg-card px-2.5 py-2">
+      <div
+        data-audio-player=""
+        className="flex w-full max-w-[420px] items-center gap-2 rounded-lg border border-border bg-card px-2.5 py-2"
+      >
         {src && (
           <audio
             ref={audioRef}
@@ -160,22 +163,27 @@ export const AudioPlayer = memo(function AudioPlayer({
         )}
 
         <HintItem label={playing ? "Pause" : "Play"}>
-          <button
-            type="button"
-            onClick={toggle}
+          <IconButton
+            icon={
+              buffering ? (
+                // While the caller buffers, the control holds its download
+                // arc and stays disabled: there is nothing to play yet.
+                <span className="flex text-success">
+                  <ArcProgress got={bufferProgress?.got ?? 0} total={bufferProgress?.total ?? 0} />
+                </span>
+              ) : playing ? (
+                Pause
+              ) : (
+                <Icon icon={Play} size="sm" className="ml-px" />
+              )
+            }
+            label={playing ? "Pause" : "Play"}
+            size="sm"
+            variant="secondary"
+            shape="round"
             disabled={buffering}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-element-active text-foreground transition-colors hover:bg-element-hover cursor-pointer"
-          >
-            {buffering ? (
-              <span className="text-success">
-                <ArcProgress got={bufferProgress?.got ?? 0} total={bufferProgress?.total ?? 0} />
-              </span>
-            ) : playing ? (
-              <Pause size={12} />
-            ) : (
-              <Play size={12} className="ml-px" />
-            )}
-          </button>
+            onClick={toggle}
+          />
         </HintItem>
 
         <div className="min-w-0 flex-1">
@@ -215,23 +223,16 @@ export const AudioPlayer = memo(function AudioPlayer({
 
         <div className="flex shrink-0 items-center gap-0.5">
           <HintItem label={muted ? "Unmute" : "Mute"}>
-            <button
-              type="button"
+            <IconButton
+              icon={muted ? VolumeX : Volume2}
+              label={muted ? "Unmute" : "Mute"}
+              size="xs"
               onClick={() => setMuted((v) => !v)}
-              className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-element-hover hover:text-foreground cursor-pointer"
-            >
-              {muted ? <VolumeX size={12} /> : <Volume2 size={12} />}
-            </button>
+            />
           </HintItem>
           {onDownload && (
             <HintItem label="Download">
-              <button
-                type="button"
-                onClick={onDownload}
-                className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-element-hover hover:text-foreground cursor-pointer"
-              >
-                <Download size={12} />
-              </button>
+              <IconButton icon={Download} label="Download" size="xs" onClick={onDownload} />
             </HintItem>
           )}
         </div>
