@@ -12,7 +12,7 @@
 // keeps the frosted scrim (`DialogOverlay blur`) the package reserves for
 // blocking prompts, which `DialogContent`'s built-in overlay cannot carry.
 
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { AlertTriangle, ClipboardList } from "lucide-react";
 import {
@@ -46,12 +46,16 @@ export function PlanReviewView({
   onSelect: (optionId: string, override?: "bypassPermissions") => void;
   onCancel: () => void;
 }) {
+  // An allow never holds default focus (ADR-0014): the dialog opens on Cancel.
+  // Enter still approves through the container's window handler.
+  const cancelRef = useRef<HTMLButtonElement>(null);
   return (
     <Dialog open onOpenChange={(open) => !open && onCancel()}>
       <DialogPortal>
         <DialogOverlay blur />
         <DialogPrimitive.Popup
           data-testid="plan-review"
+          initialFocus={cancelRef}
           // Anchored near the top (not vertically centred) with a viewport
           // cap, so a long plan never pushes the dialog — and its Cancel
           // footer — below the window. The plan panel scrolls internally.
@@ -100,7 +104,7 @@ export function PlanReviewView({
               </div>
               <div className="border-t border-border px-4 py-2.5">
                 <DialogFooter>
-                  <Button variant="ghost" size="sm" onClick={onCancel}>
+                  <Button ref={cancelRef} variant="ghost" size="sm" onClick={onCancel}>
                     Cancel <Kbd>esc</Kbd>
                   </Button>
                 </DialogFooter>

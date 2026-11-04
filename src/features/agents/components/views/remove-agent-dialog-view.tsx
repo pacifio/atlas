@@ -1,9 +1,8 @@
 // "Remove this agent?" — the confirm Settings → Agents asks before removing
 // one. Props only; `remove-agent-dialog.tsx` reads the ask/settle store.
 //
-// Keep holds focus when it opens, Esc is Keep, and so is a click on the
-// backdrop (`dismissOnBackdrop`, reported as a close like Cancel), as it
-// always has been.
+// Keep holds focus when it opens and Esc is Keep. A click on the backdrop does
+// nothing: an alert dialog must be answered.
 
 import { useRef, useState } from "react";
 import { Trash2 } from "lucide-react";
@@ -71,7 +70,6 @@ export function RemoveAgentDialogView({
         data-testid="remove-agent-dialog"
         initialFocus={keepRef}
         blur
-        dismissOnBackdrop
       >
         <AlertDialogHeader>
           <AlertDialogTitle>

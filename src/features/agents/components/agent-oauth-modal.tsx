@@ -26,12 +26,13 @@
 //                contract), and Atlas holds no agent tokens.
 
 import { resolveAgentSignIn } from "@/features/notifications/lib/agent-notifier";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   agents,
   ensureAgent,
+  listenAuthEnvUpdated,
   listenAuthRunProgress,
   type AuthEnvStatus,
   type AuthMethodWire,
@@ -97,6 +98,21 @@ function AgentOAuthModal({
   const [authUrl, setAuthUrl] = useState<string | null>(null);
   /** A2: only agents that advertised `auth.logout` get a sign-out action. */
   const supportsLogout = catalogEntry(request.agentType)?.supportsLogout ?? false;
+  /** False once the dialog is dismissed or unmounted: a sign-in still running
+   *  then must not touch this dialog (or close a newer one). */
+  const aliveRef = useRef(true);
+  /** Bumped by every run, "Try again" and dismissal; a run whose attempt is no
+   *  longer current is stale and only logs. */
+  const attemptRef = useRef(0);
+  /** The success frame's close timer, cleared on dismissal and unmount. */
+  const closeTimerRef = useRef<number | null>(null);
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+      if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current);
+    };
+  }, []);
 
   const refreshEnv = useCallback(async (id: string) => {
     try {
@@ -181,13 +197,25 @@ function AgentOAuthModal({
   }, [request.agentType, request.requestId, request.reason, nonce, refreshEnv, handOffToTerminal]);
 
   // The user exports a var in their shell and comes back — re-check without
-  // making them reopen the modal.
+  // making them reopen the modal. Rust announces it as a Tauri event.
   useEffect(() => {
     if (!agentId) return;
-    const handler = () => void refreshEnv(agentId);
-    window.addEventListener("atlas:byok-env-updated", handler);
-    return () => window.removeEventListener("atlas:byok-env-updated", handler);
+    let unlisten: (() => void) | undefined;
+    let gone = false;
+    void listenAuthEnvUpdated(() => void refreshEnv(agentId))
+      .then((u) => {
+        if (gone) u();
+        else unlisten = u;
+      })
+      .catch(() => {});
+    return () => {
+      gone = true;
+      unlisten?.();
+    };
   }, [agentId, refreshEnv]);
+
+  /** True while `attempt` is the dialog's current one and it is still open. */
+  const current = (attempt: number) => aliveRef.current && attempt === attemptRef.current;
 
   const finish = (docked: boolean) => {
     setPhase({ kind: "done", docked });
@@ -195,7 +223,12 @@ function AgentOAuthModal({
     // Closes the agent's sign-in notification episode (toast, center item).
     resolveAgentSignIn(request.agentType);
     // Brief success frame before closing, matching the dialogs this replaces.
-    window.setTimeout(onClose, 700);
+    // Stored so a dismissal clears it: left running, it closed a NEWER sign-in.
+    if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = window.setTimeout(() => {
+      closeTimerRef.current = null;
+      if (aliveRef.current) onClose();
+    }, 700);
   };
 
   const run = async (method: AuthMethodWire) => {
@@ -214,6 +247,7 @@ function AgentOAuthModal({
     }
     setTail([]);
     setAuthUrl(null);
+    const attempt = ++attemptRef.current;
     // Atlas drives this one and tails it, so it needs the dialog's room.
     setPhase({ kind: "running", label: `Signing in to ${label}…`, docked: false });
 
@@ -222,7 +256,7 @@ function AgentOAuthModal({
     let unlisten: (() => void) | undefined;
     try {
       unlisten = await listenAuthRunProgress((p) => {
-        if (p.agentId !== agentId) return;
+        if (p.agentId !== agentId || !current(attempt)) return;
         setTail((prev) => [...prev, p.line].slice(-8));
         if (p.url) setAuthUrl((u) => u ?? p.url);
       });
@@ -234,13 +268,18 @@ function AgentOAuthModal({
         status: "success",
         payload: { agent: request.agentType, method: method.id },
       });
-      finish(false);
+      // Dismissed (or retried) meanwhile: the sign-in still landed, so close
+      // its notification, but leave the dialog and its callbacks alone.
+      if (!current(attempt)) resolveAgentSignIn(request.agentType);
+      else finish(false);
     } catch (err) {
-      setPhase({
-        kind: "error",
-        message: errInfo(err).message,
-        manualCommand: manualCommandFor(method) ?? undefined,
-      });
+      if (current(attempt)) {
+        setPhase({
+          kind: "error",
+          message: errInfo(err).message,
+          manualCommand: manualCommandFor(method) ?? undefined,
+        });
+      }
       logEvent({
         source: "atlas",
         kind: "agent-auth",
@@ -269,8 +308,9 @@ function AgentOAuthModal({
     // Stays in the dock: the terminal behind it is still what the user is
     // looking at, and this is one call with nothing to show.
     setPhase({ kind: "running", label: `Checking ${label}…`, docked: true });
+    const attempt = ++attemptRef.current;
     await authenticateAfterCliLogin(agentId, method.id, label);
-    finish(true);
+    if (current(attempt)) finish(true);
   };
 
   /** ACP `logout` (A2) — the agent drops its own credentials; Atlas holds none
@@ -302,6 +342,13 @@ function AgentOAuthModal({
   };
 
   const dismiss = () => {
+    // A dismissal cancels the flow: whatever is still running finds its
+    // attempt stale, and the success frame's close timer cannot fire.
+    attemptRef.current += 1;
+    if (closeTimerRef.current !== null) {
+      window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
     // Dismissing during the hand-off is a CANCELLATION, and the login CLI is
     // still alive in there, mid-prompt, with the only thing that could confirm
     // it about to disappear. Take its terminal with it. (Not done on success:
@@ -362,7 +409,13 @@ function AgentOAuthModal({
       onContinueEnv={() => {
         if (phase.kind === "env") void run(phase.method);
       }}
-      onRetry={() => setNonce((n) => n + 1)}
+      onRetry={() => {
+        // A clean start: the old run is stale, and its tail and URL go too.
+        attemptRef.current += 1;
+        setTail([]);
+        setAuthUrl(null);
+        setNonce((n) => n + 1);
+      }}
       onSignOut={() => void signOut()}
       onOpenUrl={(url) => void openUrl(url)}
       onCopyCommand={copyCommand}

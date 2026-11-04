@@ -10,15 +10,17 @@
 // Base UI popup.
 
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
-import { Info } from "lucide-react";
+import { Info, X } from "lucide-react";
 import {
   Dialog,
+  DialogClose,
   DialogDescription,
   DialogHeader,
   DialogOverlay,
   DialogPortal,
   DialogTitle,
   Icon,
+  IconButton,
 } from "@tryatlas/design";
 import { cn } from "@/lib/utils";
 import {
@@ -171,12 +173,14 @@ export function AgentSignInView({
           >
             <div className="flex items-start gap-2.5 border-b border-border px-4 py-3">
               <Icon icon={Info} size="lg" className="mt-0.5 shrink-0 text-muted-foreground" />
-              <DialogHeader>
+              <DialogHeader className="min-w-0 flex-1">
                 <DialogTitle>Sign in to {label}</DialogTitle>
                 <DialogDescription>
                   {label} needs credentials before it can start a session.
                 </DialogDescription>
               </DialogHeader>
+              {/* A way out on every step, besides Esc and the backdrop. */}
+              <DialogClose render={<IconButton icon={X} label="Close" size="sm" />} />
             </div>
 
             <div className="p-3">
@@ -188,6 +192,7 @@ export function AgentSignInView({
                   tail={tail}
                   authUrl={authUrl}
                   onOpenUrl={onOpenUrl}
+                  onCancel={onDismiss}
                 />
               )}
               {phase.kind === "done" && <DoneStep label={label} />}

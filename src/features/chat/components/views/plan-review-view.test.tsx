@@ -45,13 +45,12 @@ function renderReview(bypassOptionId: string | null = null) {
 afterEach(cleanup);
 
 describe("PlanReviewView", () => {
-  // Today's focus: Base UI's default, the first tabbable control — the first
-  // option. Moving it to Cancel is a proposed behaviour change (D24) that has
-  // not been approved.
-  it("opens with focus on the first option", async () => {
+  // An allow never holds default focus (ADR-0014): the review opens on
+  // Cancel, not on the first option.
+  it("opens with focus on Cancel", async () => {
     renderReview();
-    const first = screen.getByText("Yes, and auto-accept edits").closest("button");
-    await waitFor(() => expect(document.activeElement).toBe(first));
+    const cancel = screen.getByText("Cancel").closest("button");
+    await waitFor(() => expect(document.activeElement).toBe(cancel));
   });
 
   it("lists every option in order, with its digit", () => {
