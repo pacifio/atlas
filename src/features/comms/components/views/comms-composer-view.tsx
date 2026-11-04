@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { ALargeSmall, AtSign, CornerUpRight, Pencil, Plus, X } from "lucide-react";
-import { Hint, HintGroup, HintItem } from "@tryatlas/design";
+import { Hint, HintGroup, HintItem, IconButton, Pill } from "@tryatlas/design";
 import { cn } from "@/lib/utils";
 import { EmojiPicker } from "../emoji-picker";
 import {
@@ -159,14 +159,7 @@ export function CommsComposerView({
               {intent.preview}
             </span>
             <Hint label="Cancel" side="top">
-              <button
-                type="button"
-                aria-label="Cancel"
-                onClick={onCancelIntent}
-                className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-element-active hover:text-foreground cursor-pointer"
-              >
-                <X size={11} />
-              </button>
+              <IconButton size="2xs" icon={X} label="Cancel" onClick={onCancelIntent} />
             </Hint>
           </div>
         )}
@@ -192,9 +185,9 @@ export function CommsComposerView({
           >
             {dropActive && (
               <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-composer bg-primary/8 backdrop-blur-[1px]">
-                <span className="rounded-full bg-card px-3 py-1 text-xs font-medium text-secondary-foreground shadow">
+                <Pill size="sm" surface="raised">
                   Drop files to attach
-                </span>
+                </Pill>
               </div>
             )}
 
