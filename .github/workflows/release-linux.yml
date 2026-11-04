@@ -261,7 +261,7 @@ jobs:
             chown -R builder:builder /workspace/target/release-linux
             su builder -c "cd /workspace/target/release-linux/aur-tryatlas-bin && makepkg -f --nodeps"
             cp /workspace/target/release-linux/aur-tryatlas-bin/*.pkg.tar.zst /workspace/target/release-linux/
-            # Arch's own linter, report only (see VERIFY_LINT in Verify).
+            # The Arch linter, report only (see VERIFY_LINT in Verify).
             namcap /workspace/target/release-linux/aur-tryatlas-bin/PKGBUILD /workspace/target/release-linux/*.pkg.tar.zst || true
             chmod -R a+rw /workspace/target/release-linux
           '
