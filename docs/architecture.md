@@ -69,7 +69,8 @@ themes and the ratchet's rules. Change it there and bump the pin. A theme
 reaches the screen like this:
 
 1. Rust (`crates/atlas-theme`) loads the built-in themes and the user's
-   `~/.config/atlas/themes/*.toml`, against the key list and rule tables
+   `~/.config/atlas/themes/*.toml` (`atlas-dev` under `bun run dev:app`; an
+   absolute `XDG_CONFIG_HOME` replaces `~/.config`), against the key list and rule tables
    `bun run theme:keys` copied from the package. A file that is not
    `schema = 1` is skipped with a warning and the default `atlas` theme still
    loads; there is no legacy format.
