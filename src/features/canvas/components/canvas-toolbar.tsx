@@ -64,7 +64,7 @@ export function CanvasToolbar({
     <div
       className={cn(
         "absolute left-3 top-1/2 -translate-y-1/2 z-panel flex flex-col items-center gap-1 p-1",
-        "rounded-xl border border-border-subtle bg-[var(--card)]/70 backdrop-blur-2xl shadow-md",
+        "rounded-xl border border-border-subtle bg-card/70 backdrop-blur-2xl shadow-md",
       )}
     >
       {TOOLS.map((t) => (
@@ -140,7 +140,7 @@ function ToolButton({
         className={cn(
           "flex h-8 w-8 items-center justify-center rounded-lg transition-colors cursor-pointer",
           active
-            ? "bg-[var(--primary)]/20 text-[var(--foreground)]"
+            ? "bg-primary/20 text-foreground"
             : "text-secondary-foreground hover:bg-element-hover hover:text-foreground",
         )}
       >

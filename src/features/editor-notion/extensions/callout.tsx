@@ -5,7 +5,8 @@ import {
   ReactNodeViewRenderer,
   type NodeViewProps,
 } from "@tiptap/react";
-import { Hint } from "@tryatlas/design";
+import { Hint, calloutVariants } from "@tryatlas/design";
+import { cn } from "@/lib/utils";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -99,12 +100,18 @@ export const Callout = Node.create({
 function CalloutView({ node, updateAttributes }: NodeViewProps) {
   const emoji = (node.attrs.emoji as string) || "💡";
   return (
-    <NodeViewWrapper className="atlas-callout">
+    // The package callout's neutral surface, laid out as emoji | body.
+    <NodeViewWrapper
+      className={cn(
+        calloutVariants({ tone: "neutral" }),
+        "mt-2 mb-3 grid grid-cols-[auto_1fr] gap-3 text-base/relaxed",
+      )}
+    >
       <Hint label="Change emoji">
         <button
           type="button"
           contentEditable={false}
-          className="atlas-callout-emoji"
+          className="cursor-pointer select-none text-lg leading-snug"
           onClick={() => {
             const next = window.prompt("Emoji", emoji);
             if (next && next.trim()) updateAttributes({ emoji: next.trim() });
@@ -113,7 +120,7 @@ function CalloutView({ node, updateAttributes }: NodeViewProps) {
           {emoji}
         </button>
       </Hint>
-      <NodeViewContent className="atlas-callout-body" />
+      <NodeViewContent className="atlas-callout-body text-secondary-foreground" />
     </NodeViewWrapper>
   );
 }

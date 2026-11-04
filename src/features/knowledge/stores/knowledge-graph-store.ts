@@ -2,23 +2,9 @@ import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { createSelectors } from "@/lib/create-selectors";
+import type { ProjectGraph } from "../lib/knowledge-graph-model";
 
-export interface GraphNode {
-  id: string;
-  title: string;
-  inDegree: number;
-  outDegree: number;
-}
-
-export interface GraphEdge {
-  from: string;
-  to: string;
-}
-
-export interface ProjectGraph {
-  nodes: GraphNode[];
-  edges: GraphEdge[];
-}
+export type { GraphEdge, GraphNode, ProjectGraph } from "../lib/knowledge-graph-model";
 
 interface KnowledgeGraphState {
   projectPath: string | null;

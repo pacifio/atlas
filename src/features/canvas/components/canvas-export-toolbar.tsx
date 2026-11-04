@@ -62,7 +62,7 @@ export function CanvasExportToolbar({
         disabled={!!busy}
         title="Export canvas"
         className={cn(
-          "flex items-center gap-1.5 rounded-xl border border-border-subtle bg-[var(--card)]/70 backdrop-blur-2xl px-2.5 h-8 shadow-md",
+          "flex items-center gap-1.5 rounded-xl border border-border-subtle bg-card/70 backdrop-blur-2xl px-2.5 h-8 shadow-md",
           "text-xs font-medium text-secondary-foreground hover:text-foreground transition-colors cursor-pointer disabled:opacity-60",
         )}
       >
@@ -73,7 +73,7 @@ export function CanvasExportToolbar({
       {open && !busy && (
         <>
           <div className="fixed inset-0 z-panel" onClick={() => setOpen(false)} aria-hidden />
-          <div className="absolute right-0 top-full z-popover mt-1 w-[140px] overflow-hidden rounded-lg border border-border bg-[var(--card)] py-1 shadow-md">
+          <div className="absolute right-0 top-full z-popover mt-1 w-[140px] overflow-hidden rounded-lg border border-border bg-card py-1 shadow-md">
             {FORMATS.map((f) => (
               <button
                 key={f.format}

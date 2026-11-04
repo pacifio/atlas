@@ -6,7 +6,7 @@ import { useSpacesStore } from "../stores/spaces-store";
 import { readDock, writeDock, type SpaceDock } from "../lib/dock";
 import { SpaceCanvas } from "./space-canvas";
 import { SpacePages } from "./space-pages";
-import { Hint } from "@tryatlas/design";
+import { EmptyState, Hint, IconButton } from "@tryatlas/design";
 
 /**
  * The center-tab host for one conversation's realtime Space — the
@@ -18,11 +18,12 @@ export function SpacesTab({ convId }: { convId: string }) {
   const conv = useCommsStore((s) => s.conversations.find((c) => c.id === convId));
   if (!conv) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-sm text-muted-foreground">
-        <Frame size={18} className="opacity-60" />
-        <div>This Space is no longer available.</div>
-        <div className="text-2xs">The conversation was removed, or you left it.</div>
-      </div>
+      <EmptyState
+        className="h-full"
+        icon={Frame}
+        title="This Space is no longer available."
+        description="The conversation was removed, or you left it."
+      />
     );
   }
   return <SpaceHost convId={convId} />;
@@ -39,12 +40,7 @@ function SpaceHost({ convId }: { convId: string }) {
   };
 
   if (meta?.error) {
-    return (
-      <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-sm text-muted-foreground">
-        <AlertTriangle size={18} className="opacity-60" />
-        <div>{meta.error}</div>
-      </div>
-    );
+    return <EmptyState className="h-full" icon={AlertTriangle} title={meta.error} />;
   }
 
   const connection = meta?.connection ?? "disconnected";
@@ -80,13 +76,13 @@ function SpaceHost({ convId }: { convId: string }) {
           <AlertTriangle size={11} className="shrink-0" />
           <span className="min-w-0 flex-1 truncate">{session.banner}</span>
           <Hint label="Dismiss">
-            <button
-              type="button"
+            <IconButton
+              icon={X}
+              label="Dismiss"
+              size="xs"
+              variant="ghost"
               onClick={session.dismissBanner}
-              className="flex h-4 w-4 cursor-pointer items-center justify-center rounded text-muted-foreground hover:text-foreground"
-            >
-              <X size={10} />
-            </button>
+            />
           </Hint>
         </div>
       )}

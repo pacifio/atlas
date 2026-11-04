@@ -65,9 +65,9 @@ export const SpaceNoteNode = memo(function SpaceNoteNode({ id, data, selected }:
     <div
       className={cn(
         "group relative flex h-full w-full flex-col overflow-visible rounded-2xl",
-        "bg-[var(--card)]/70 backdrop-blur-3xl backdrop-saturate-150",
+        "bg-card/70 backdrop-blur-3xl backdrop-saturate-150",
         "border shadow-lg transition-colors",
-        selected ? "border-[var(--primary)]/60" : "border-border-subtle hover:border-border",
+        selected ? "border-primary/60" : "border-border-subtle hover:border-border",
       )}
     >
       <div className="pointer-events-none absolute inset-0 rounded-2xl bg-gradient-to-b from-[var(--element-highlight)] to-transparent opacity-60" />
@@ -82,7 +82,7 @@ export const SpaceNoteNode = memo(function SpaceNoteNode({ id, data, selected }:
           onChange={title.onChange}
           readOnly={title.readOnly}
           placeholder="Untitled"
-          className="nodrag min-w-0 flex-1 bg-transparent text-base font-semibold text-[var(--foreground)] outline-none placeholder:text-muted-foreground"
+          className="nodrag min-w-0 flex-1 bg-transparent text-base font-semibold text-foreground outline-none placeholder:text-muted-foreground"
         />
       </div>
       <textarea
@@ -91,7 +91,7 @@ export const SpaceNoteNode = memo(function SpaceNoteNode({ id, data, selected }:
         onChange={body.onChange}
         readOnly={body.readOnly}
         placeholder="Write something…"
-        className="nodrag relative min-h-0 flex-1 resize-none rounded-b-2xl bg-transparent px-3 py-2.5 text-sm leading-relaxed text-[var(--secondary-foreground)] outline-none placeholder:italic placeholder:text-muted-foreground"
+        className="nodrag relative min-h-0 flex-1 resize-none rounded-b-2xl bg-transparent px-3 py-2.5 text-sm leading-relaxed text-secondary-foreground outline-none placeholder:italic placeholder:text-muted-foreground"
       />
       <SpaceResizer id={id} selected={selected} minWidth={160} minHeight={100} />
     </div>
@@ -108,7 +108,7 @@ export const SpaceTextNode = memo(function SpaceTextNode({ id, data, selected }:
     <div
       className={cn(
         "group relative h-full w-full rounded",
-        selected && "outline outline-1 outline-[var(--primary)]/50",
+        selected && "outline outline-1 outline-primary/50",
       )}
     >
       <NodeHandles selected={selected} />
@@ -118,7 +118,7 @@ export const SpaceTextNode = memo(function SpaceTextNode({ id, data, selected }:
         onChange={text.onChange}
         readOnly={text.readOnly}
         placeholder="Text"
-        className="nodrag h-full w-full resize-none whitespace-pre-wrap break-words bg-transparent px-1 py-0.5 text-lg leading-snug text-[var(--foreground)] caret-[var(--primary)] outline-none placeholder:text-muted-foreground"
+        className="nodrag h-full w-full resize-none whitespace-pre-wrap break-words bg-transparent px-1 py-0.5 text-lg leading-snug text-foreground caret-primary outline-none placeholder:text-muted-foreground"
       />
       <SpaceResizer id={id} selected={selected} minWidth={80} minHeight={40} />
     </div>
@@ -175,7 +175,7 @@ export const SpaceShapeNode = memo(function SpaceShapeNode({ id, data, selected 
           onChange={title.onChange}
           readOnly={title.readOnly}
           rows={1}
-          className="nodrag max-h-full w-full resize-none whitespace-pre-wrap break-words bg-transparent text-center text-sm leading-snug text-[var(--foreground)] caret-[var(--primary)] outline-none"
+          className="nodrag max-h-full w-full resize-none whitespace-pre-wrap break-words bg-transparent text-center text-sm leading-snug text-foreground caret-primary outline-none"
         />
       </div>
     </div>
@@ -194,7 +194,7 @@ export const SpaceGroupNode = memo(function SpaceGroupNode({ id, data, selected 
     <div
       className={cn(
         "group relative h-full w-full rounded-xl border-2 border-dashed",
-        selected ? "border-[var(--primary)]/50" : "border-border-subtle",
+        selected ? "border-primary/50" : "border-border-subtle",
         "bg-element-hover",
       )}
     >
@@ -252,8 +252,8 @@ export const SpaceMediaNode = memo(function SpaceMediaNode({ id, data, selected 
       <div
         className={cn(
           "h-full w-full overflow-hidden rounded-xl border transition-colors",
-          selected ? "border-[var(--primary)]/60" : "border-border-subtle",
-          "bg-[var(--card)]",
+          selected ? "border-primary/60" : "border-border-subtle",
+          "bg-card",
         )}
       >
         {failed ? (
@@ -299,8 +299,8 @@ function SpaceResizer({
       isVisible={!!selected}
       minWidth={minWidth}
       minHeight={minHeight}
-      lineClassName="!border-[var(--primary)]/70"
-      handleClassName="!bg-[var(--primary)] !border-border-strong !w-2 !h-2 !rounded-sm"
+      lineClassName="!border-primary/70"
+      handleClassName="!bg-primary !border-border-strong !w-2 !h-2 !rounded-sm"
       onResize={(_, p) => {
         const d = doc();
         if (!d || !id) return;
