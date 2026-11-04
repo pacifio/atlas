@@ -10,6 +10,7 @@ import {
   isNewDay,
   memberName,
   peerTone,
+  typingLabel,
   utf8Bytes,
 } from "./derive";
 import { HUES } from "@tryatlas/design";
@@ -335,5 +336,13 @@ describe("peerTone", () => {
       expect(HUES).toContain(tone);
       expect(tone).not.toBe("grey");
     }
+  });
+});
+
+describe("typingLabel", () => {
+  it("names one or two typers and counts three or more", () => {
+    expect(typingLabel(["Ada"])).toBe("Ada is typing");
+    expect(typingLabel(["Ada", "Bob"])).toBe("Ada and Bob are typing");
+    expect(typingLabel(["Ada", "Bob", "Cy"])).toBe("3 people are typing");
   });
 });

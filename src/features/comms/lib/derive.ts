@@ -245,6 +245,14 @@ export function formatDuration(from: number, to: number): string {
   return rem === 0 ? `${h} hr` : `${h} hr ${rem} min`;
 }
 
+/** The typing hint's sentence. There is no "stopped typing" frame — the store
+ *  ages entries out on a timer. */
+export function typingLabel(names: string[]): string {
+  if (names.length === 1) return `${names[0]} is typing`;
+  if (names.length === 2) return `${names[0]} and ${names[1]} are typing`;
+  return `${names.length} people are typing`;
+}
+
 export function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
