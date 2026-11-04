@@ -75,9 +75,7 @@ export function GithubPanelView({
   return (
     <div data-view="github-panel" className="flex h-full flex-col">
       {/* A bare search strip on the panel's own surface, like the source
-          control filter rows: the package `InputGroupInput` keeps the global
-          focus ring inside its group's focus border, and may not be
-          restyled here. */}
+          control filter rows: no field border, so not an `InputGroup`. */}
       <div className="flex h-control-lg shrink-0 items-center gap-1.5 border-b border-border-subtle px-3">
         <Icon icon={Search} size="sm" className="text-muted-foreground" />
         <input

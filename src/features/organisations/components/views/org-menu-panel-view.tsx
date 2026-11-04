@@ -106,12 +106,9 @@ export function OrgMenuPanelView({
 }) {
   return (
     <>
-      {/* A filter field with the refresh beside it. The group draws its own
-          focus (the border lifts), so the inner field's ring — a second,
-          clipped indicator — is dropped; the package's `InputGroupInput` keeps
-          it and takes no class that would remove it. */}
+      {/* A filter field with the refresh beside it. */}
       <div
-        className="flex shrink-0 items-center gap-1 p-1 [&_input]:focus-visible:outline-none"
+        className="flex shrink-0 items-center gap-1 p-1"
         onKeyDown={(e) => {
           // Keep keys from the popup's typeahead and arrow nav, but let Escape
           // bubble to the dismiss handler so it still closes the popup.
