@@ -1120,3 +1120,56 @@ export const commsNotConnected: Scenario = {
   setup: openTeamChat,
   actions: { openTeamChat },
 };
+
+/** Team chat for a synced organisation whose socket has delivered nothing yet,
+ *  held at one connection state: the panel's loading body (the skeleton) or its
+ *  terminal one ("Chat is unavailable"). No conversations, so the panel never
+ *  leaves that state; "Try again" is answered and changes nothing. */
+function commsHeld(
+  name: string,
+  description: string,
+  state: ConnectionInfo["state"],
+  reason: ConnectionInfo["reason"],
+): Scenario {
+  const held: ConnectionInfo = { state, reason, epoch: 1, orgId: MOCK_ORG_ID };
+  return {
+    name,
+    description,
+    commands: {
+      comms_status: () => held,
+      comms_snapshot: () => ({
+        connection: held,
+        me: "usr_dev",
+        conversations: [],
+        discoverable: [],
+        reads: [],
+        online: [],
+        calls: [],
+      }),
+      // Rust's boot announcement, at the held state rather than the
+      // default world's `open`.
+      comms_ready: () => {
+        const ev: CommsEvent = { kind: "connection", state, reason, retry_at_ms: null };
+        void emit("atlas:comms", { org: MOCK_ORG_ID, epoch: held.epoch, ev });
+        return null;
+      },
+      comms_reconnect: () => null,
+    },
+    setup: openTeamChat,
+    actions: { openTeamChat },
+  };
+}
+
+export const commsConnecting = commsHeld(
+  "comms-connecting",
+  "Team chat while the socket is still connecting, before any data: the skeleton.",
+  "connecting",
+  null,
+);
+
+export const commsUnavailable = commsHeld(
+  "comms-unavailable",
+  "Team chat after the server refused the account (not a member): the terminal state.",
+  "unavailable",
+  "not_a_member",
+);

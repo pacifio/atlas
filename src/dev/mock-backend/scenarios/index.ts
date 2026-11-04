@@ -56,7 +56,12 @@ import { inboxLong } from "./inbox-long";
 import { knowledge } from "./knowledge";
 import { memoryHistoryEdited, memorySetup } from "./memory-setup";
 import { northwind } from "./northwind";
-import { commsNotConnected, openTeamChat } from "./northwind-comms";
+import {
+  commsConnecting,
+  commsNotConnected,
+  commsUnavailable,
+  openTeamChat,
+} from "./northwind-comms";
 import { paletteActions } from "./palette-actions";
 import { pullRequestScenarios } from "./pull-request";
 import { sessionContext } from "./session-context";
@@ -144,6 +149,8 @@ const all: Scenario[] = [
   inboxLong,
   freshInstall,
   commsNotConnected,
+  commsConnecting,
+  commsUnavailable,
   designSystem,
 ];
 
