@@ -346,7 +346,7 @@ impl MemoryRegistry {
             if let Ok(event) = res {
                 // The indexer reads the corpus it watches; on Linux a read is
                 // an event (`fs_events`).
-                if crate::fs_events::is_change(&event.kind)
+                if crate::fs_events::is_change(event.kind)
                     && event.paths.iter().any(|p| is_corpus_path(p))
                 {
                     // Non-blocking; a dropped signal just means the debounce already

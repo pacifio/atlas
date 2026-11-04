@@ -18,19 +18,19 @@ use notify::EventKind;
 use notify_debouncer_full::DebouncedEvent;
 
 /// Whether `kind` can mean something on disk changed.
-pub fn is_change(kind: &EventKind) -> bool {
+pub fn is_change(kind: EventKind) -> bool {
     !matches!(kind, EventKind::Access(_))
 }
 
 /// `events` without the reads.
 pub fn changes(mut events: Vec<DebouncedEvent>) -> Vec<DebouncedEvent> {
-    events.retain(|e| is_change(&e.event.kind));
+    events.retain(|e| is_change(e.event.kind));
     events
 }
 
 /// Whether anything in `events` is more than a read.
 pub fn any_change(events: &[DebouncedEvent]) -> bool {
-    events.iter().any(|e| is_change(&e.event.kind))
+    events.iter().any(|e| is_change(e.event.kind))
 }
 
 #[cfg(test)]
@@ -48,24 +48,22 @@ mod tests {
 
     #[test]
     fn reads_are_not_changes() {
-        assert!(!is_change(&EventKind::Access(AccessKind::Open(
+        assert!(!is_change(EventKind::Access(AccessKind::Open(
             AccessMode::Read
         ))));
-        assert!(!is_change(&EventKind::Access(AccessKind::Close(
+        assert!(!is_change(EventKind::Access(AccessKind::Close(
             AccessMode::Read
         ))));
-        assert!(!is_change(&EventKind::Access(AccessKind::Any)));
+        assert!(!is_change(EventKind::Access(AccessKind::Any)));
     }
 
     #[test]
     fn writes_moves_and_the_unknown_are_changes() {
-        assert!(is_change(&EventKind::Modify(ModifyKind::Any)));
-        assert!(is_change(&EventKind::Create(CreateKind::File)));
-        assert!(is_change(&EventKind::Remove(
-            notify::event::RemoveKind::Any
-        )));
-        assert!(is_change(&EventKind::Any));
-        assert!(is_change(&EventKind::Other));
+        assert!(is_change(EventKind::Modify(ModifyKind::Any)));
+        assert!(is_change(EventKind::Create(CreateKind::File)));
+        assert!(is_change(EventKind::Remove(notify::event::RemoveKind::Any)));
+        assert!(is_change(EventKind::Any));
+        assert!(is_change(EventKind::Other));
     }
 
     #[test]
