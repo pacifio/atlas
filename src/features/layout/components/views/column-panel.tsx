@@ -1,5 +1,6 @@
 import { useEffect } from "react";
-import { Panel, usePanelRef } from "react-resizable-panels";
+import { usePanelRef } from "react-resizable-panels";
+import { ResizablePane } from "@tryatlas/design";
 
 /**
  * One split column's panel, collapsed to zero width instead of unmounted when
@@ -41,16 +42,15 @@ export function ColumnPanel({
     return () => cancelAnimationFrame(raf);
   }, [shown, panelRef]);
   return (
-    <Panel
+    <ResizablePane
       id={id}
       panelRef={panelRef}
       collapsible
       collapsedSize="0"
       minSize={minSize}
       defaultSize={defaultSize}
-      className="min-w-0"
     >
       {children}
-    </Panel>
+    </ResizablePane>
   );
 }
