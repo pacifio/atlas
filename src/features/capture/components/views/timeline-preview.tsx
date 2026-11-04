@@ -25,10 +25,8 @@ export function TimelinePreview() {
   return (
     <div className={cn(GROUP, "overflow-hidden")}>
       <div className="flex items-center gap-1.5">
-        <Layers size={10} className="text-[var(--muted-foreground)]" />
-        <span className="text-3xs font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">
-          Timeline
-        </span>
+        <Layers size={10} className="text-muted-foreground" />
+        <span className="eyebrow">Timeline</span>
         <span className="ml-auto text-3xs text-disabled">preview</span>
       </div>
 
@@ -56,15 +54,15 @@ export function TimelinePreview() {
                   "relative size-[7px] shrink-0 rounded-full border",
                   row.dot === "commit"
                     ? "border-success bg-success"
-                    : "border-border-strong bg-[var(--card)]",
+                    : "border-border-strong bg-card",
                 )}
               />
               <span
                 className={cn(
                   "min-w-0 flex-1 truncate text-2xs",
                   row.dot === "commit"
-                    ? "font-mono text-[var(--secondary-foreground)]"
-                    : "text-[var(--secondary-foreground)]",
+                    ? "font-mono text-secondary-foreground"
+                    : "text-secondary-foreground",
                 )}
               >
                 {row.text}
@@ -75,7 +73,7 @@ export function TimelinePreview() {
         </div>
       </div>
 
-      <p className="mt-2 text-2xs text-[var(--muted-foreground)]">
+      <p className="mt-2 text-2xs text-muted-foreground">
         Every prompt, tool call and commit, kept on one thread you can reopen months later.
       </p>
     </div>

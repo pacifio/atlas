@@ -10,11 +10,15 @@ import type { Binding, CaptureHealth } from "../types";
 import { cn } from "@/lib/utils";
 
 /**
- * The recording dot: green while capture is live.
+ * The recording dot: the success tone while capture is live.
  *
  * A steady dot, not a pulsing one: capture is often on for hours, and a
  * blinking light in the bar for all of that time pulls the eye every time it
- * moves. Green means capturing; it is there to be checked, not to call out.
+ * moves. It is there to be checked, not to call out.
+ *
+ * The shape carries the state as well as the tone, so it reads without
+ * colour: a solid dot is a recorder that is on (capturing, or faulted in the
+ * warning or error tone), a hollow ring is one that is not (neutral).
  *
  * The wrapper is a fixed-size grid cell, which is what keeps it on the text
  * baseline's centre line.
@@ -22,28 +26,30 @@ import { cn } from "@/lib/utils";
 export function CaptureDot({
   tone = "success",
 }: {
-  tone?: "success" | "warning" | "error" | "idle";
+  tone?: "success" | "warning" | "error" | "neutral";
 }) {
-  const color =
-    tone === "error"
-      ? "var(--status-error-foreground)"
-      : tone === "warning"
-        ? "var(--status-warning-foreground)"
-        : tone === "idle"
-          ? "var(--text-disabled)"
-          : "var(--status-success-foreground)";
-
   return (
-    <span className="relative grid size-[10px] shrink-0 place-items-center" aria-hidden>
-      <span className="relative size-[5px] rounded-full" style={{ backgroundColor: color }} />
+    <span className="relative grid size-2.5 shrink-0 place-items-center" aria-hidden>
+      <span
+        className={cn(
+          "relative size-1.5 rounded-full",
+          tone === "error"
+            ? "bg-error"
+            : tone === "warning"
+              ? "bg-warning"
+              : tone === "neutral"
+                ? "border border-current bg-transparent text-disabled"
+                : "bg-success",
+        )}
+      />
     </span>
   );
 }
 
 /**
- * The titlebar dot. Green while capturing; a fault keeps its own colour, since
- * painting a stopped recorder green would be the one lie this indicator cannot
- * afford.
+ * The titlebar dot. The success tone while capturing; a fault keeps its own
+ * tone, since painting a stopped recorder green would be the one lie this
+ * indicator cannot afford.
  */
 export function StatusDot({
   binding,
@@ -59,10 +65,10 @@ export function StatusDot({
         ? "warning"
         : binding?.enabled
           ? "success"
-          : "idle";
+          : "neutral";
 
   return (
-    <span className={cn("flex items-center", tone === "idle" && "opacity-70")}>
+    <span className={cn("flex items-center", tone === "neutral" && "opacity-70")}>
       <CaptureDot tone={tone} />
     </span>
   );

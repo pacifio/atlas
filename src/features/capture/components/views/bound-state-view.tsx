@@ -8,6 +8,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 
+import { Badge, Button, Callout } from "@tryatlas/design";
 import { cn } from "@/lib/utils";
 
 import type { CloudOrg } from "../../lib/capture-flow";
@@ -100,45 +101,45 @@ export function BoundStateView({
       {/* A Cloud Project whose bulk import was never approved imports
        *  nothing, forever, on purpose. Say so where it can be resolved. */}
       {binding.mode === "cloud" && !binding.importApproved && (
-        <div className="flex items-center justify-between gap-2 rounded-lg border border-dashed border-element-active px-2.5 py-1.5">
-          <span className="text-xs text-[var(--secondary-foreground)]">
+        <div className="flex items-center justify-between gap-2 rounded-md border border-dashed border-element-active px-2.5 py-1.5">
+          <span className="text-xs text-secondary-foreground">
             History import is waiting for your review.
           </span>
-          <button
-            type="button"
+          <Button
+            variant="link"
+            size="xs"
             disabled={busy || !importPreview}
             onClick={onReviewImport}
-            className="shrink-0 cursor-pointer rounded-full px-1.5 py-0.5 text-xs text-[var(--foreground)] underline underline-offset-2 transition-colors duration-150 hover:no-underline disabled:cursor-not-allowed disabled:opacity-40"
           >
             Review
-          </button>
+          </Button>
         </div>
       )}
 
       {/* Failed rows: the retry is a deliberate human action, never automatic. */}
       {failed > 0 && (
-        <div className="flex items-center justify-between gap-2 rounded-lg bg-warning-muted px-2.5 py-1.5">
-          <span className="text-xs text-warning">
-            {failed} record{failed === 1 ? "" : "s"} could not be sent.
-          </span>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={onRetryFailed}
-            className="flex shrink-0 cursor-pointer items-center gap-1 rounded-full px-1.5 py-0.5 text-xs text-[var(--foreground)] underline underline-offset-2 transition-colors duration-150 hover:no-underline disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            <RefreshCw size={10} />
-            Retry
-          </button>
-        </div>
+        <Callout
+          tone="warning"
+          icon={false}
+          action={
+            <Button variant="link" size="xs" disabled={busy} onClick={onRetryFailed}>
+              <RefreshCw size={10} />
+              Retry
+            </Button>
+          }
+        >
+          {failed} record{failed === 1 ? "" : "s"} could not be sent.
+        </Callout>
       )}
 
       <div className="flex items-center gap-2 pt-1">
         {/* Where this Project's Sessions live. A label, not a control — the
          *  way to change it is the Sync button beside it. */}
-        <span className="mr-auto flex items-center gap-1.5 text-xs text-[var(--muted-foreground)]">
-          {binding.mode === "cloud" ? <Cloud size={11} /> : <Laptop size={11} />}
-          {binding.mode === "cloud" ? "Cloud" : "Local"}
+        <span className="mr-auto">
+          <Badge variant="outline" size="md">
+            {binding.mode === "cloud" ? <Cloud size={10} /> : <Laptop size={10} />}
+            {binding.mode === "cloud" ? "Cloud" : "Local"}
+          </Badge>
         </span>
 
         {/* Promotion pushes to the same ingest service Create-Cloud and Connect
@@ -147,25 +148,15 @@ export function BoundStateView({
          *  A control that disappears reads as a feature that does not exist. */}
         {binding.mode === "local" &&
           (cloudReason ? (
-            <button
-              type="button"
-              disabled
-              title={cloudReason}
-              className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-full border border-element-selected bg-element-hover px-2.5 py-1 text-xs text-[var(--muted-foreground)] opacity-40"
-            >
+            <Button variant="secondary" size="sm" disabled title={cloudReason}>
               <Cloud size={11} />
               Sync
-            </button>
+            </Button>
           ) : (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={onPromote}
-              className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-element-selected bg-element-hover px-2.5 py-1 text-xs text-[var(--secondary-foreground)] transition-colors hover:bg-element-selected hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-40"
-            >
+            <Button variant="secondary" size="sm" disabled={busy} onClick={onPromote}>
               <ArrowUpRight size={11} />
               Sync
-            </button>
+            </Button>
           ))}
 
         {/* The Cloud counterpart of Sync: the destination is a choice, not a
@@ -173,26 +164,21 @@ export function BoundStateView({
          *  it. Same availability rule as Sync — it needs the server. */}
         {binding.mode === "cloud" &&
           (cloudReason ? (
-            <button
-              type="button"
-              disabled
-              title={cloudReason}
-              className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-full border border-element-selected bg-element-hover px-2.5 py-1 text-xs text-[var(--muted-foreground)] opacity-40"
-            >
+            <Button variant="secondary" size="sm" disabled title={cloudReason}>
               <ArrowLeftRight size={11} />
               Change
-            </button>
+            </Button>
           ) : (
-            <button
-              type="button"
+            <Button
+              variant="secondary"
+              size="sm"
               disabled={busy}
               onClick={onSwitch}
               title="Sync to a different Project"
-              className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-element-selected bg-element-hover px-2.5 py-1 text-xs text-[var(--secondary-foreground)] transition-colors hover:bg-element-selected hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-40"
             >
               <ArrowLeftRight size={11} />
               Change
-            </button>
+            </Button>
           ))}
 
         {binding.enabled ? (
@@ -203,7 +189,7 @@ export function BoundStateView({
       </div>
 
       {!binding.enabled && (
-        <p className="text-xs text-[var(--muted-foreground)]">
+        <p className="text-xs text-muted-foreground">
           Paused. Nothing already recorded has been deleted.
         </p>
       )}

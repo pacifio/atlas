@@ -1,15 +1,15 @@
-import { Check, Loader2, Lock } from "lucide-react";
+import { Check, Lock } from "lucide-react";
 
-import { cn } from "@/lib/utils";
+import { Button, Spinner } from "@tryatlas/design";
 
 import type { PromoteTab } from "../../lib/capture-flow";
-import { pillClass } from "./styles";
 
 /**
  * The one affirmative action per view.
  *
- * Atlas has no accent *background* token — `--primary` is white, meant
- * for text and rules — so the primary action inverts, matching the app.
+ * The package's `default` button is the inverted primary — `--primary` is the
+ * foreground ink, so the fill is light on a dark theme and dark on a light
+ * one — which is what marks it as the one action that moves the flow on.
  */
 export function PrimaryButton({
   busy,
@@ -23,15 +23,10 @@ export function PrimaryButton({
   label: string;
 }) {
   return (
-    <button
-      type="button"
-      disabled={busy || disabled}
-      onClick={onClick}
-      className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--card)] px-3 py-1.5 text-xs font-medium leading-none text-[var(--foreground)] transition-colors hover:bg-element-hover disabled:cursor-not-allowed disabled:opacity-40"
-    >
-      {busy && <Loader2 size={11} className="animate-spin" />}
+    <Button variant="default" size="sm" disabled={busy || disabled} onClick={onClick}>
+      {busy && <Spinner size="xs" label="" />}
       {label}
-    </button>
+    </Button>
   );
 }
 
@@ -45,24 +40,23 @@ export function GhostButton({
   disabled?: boolean;
 }) {
   return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={onClick}
-      className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--card)] px-3 py-1.5 text-xs font-medium leading-none text-[var(--secondary-foreground)] transition-colors hover:bg-element-hover hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-40"
-    >
+    <Button variant="outline" size="sm" disabled={disabled} onClick={onClick}>
       {label}
-    </button>
+    </Button>
   );
 }
 
 /**
- * One storage choice, as a pill.
+ * One storage choice.
  *
  * The explanation lives in a single hint line under the group rather than on
  * each option: two stacked cards each carrying their own sentence made the
  * first thing in the popover the tallest, and the choice is genuinely one line
  * of consequence, not two paragraphs.
+ *
+ * Each option is its own Tab stop, activated with Enter or Space. Arrow keys
+ * between the two (a roving radio group) are a proposed behaviour change
+ * awaiting review (ATL-718), so this stays a pair of `role="radio"` buttons.
  */
 export function ModeOption({
   selected,
@@ -79,23 +73,19 @@ export function ModeOption({
   onSelect: () => void;
 }) {
   return (
-    <button
-      type="button"
+    <Button
+      variant={selected ? "outline" : "ghost"}
+      size="sm"
       role="radio"
       aria-checked={selected}
       aria-disabled={disabled}
       disabled={disabled}
       title={disabled ? (reason ?? undefined) : undefined}
       onClick={onSelect}
-      className={pillClass(disabled ? "disabled" : selected ? "on" : "off")}
     >
-      {disabled ? (
-        <Lock size={10} />
-      ) : (
-        selected && <Check size={10} className="text-[var(--foreground)]" />
-      )}
+      {disabled ? <Lock size={10} /> : selected && <Check size={10} />}
       {label}
-    </button>
+    </Button>
   );
 }
 
@@ -113,9 +103,10 @@ export function Tabs({
   connectReason: string | null;
   label?: string;
 }) {
-  // Pills rather than a segmented control: these are two *ways in*, not two
-  // views of one thing, and the pill row is the same shape the feedback panel
-  // uses for its categories.
+  // Two *ways in*, not two views of one thing, so the selected one is drawn
+  // the way a chosen option is (an outlined button) rather than as a page
+  // tab. Each is its own Tab stop: arrow keys between them are a proposed
+  // behaviour change awaiting review (ATL-718).
   return (
     <div role="tablist" aria-label={label} className="flex gap-1">
       {(
@@ -127,25 +118,18 @@ export function Tabs({
         const disabled = id === "connect" && connectDisabled;
         const on = tab === id;
         return (
-          <button
+          <Button
             key={id}
-            type="button"
+            variant={on ? "outline" : "ghost"}
+            size="sm"
             role="tab"
             aria-selected={on}
             disabled={disabled}
             title={disabled ? (connectReason ?? undefined) : undefined}
-            className={cn(
-              "h-6 rounded-full border px-2.5 text-xs transition-colors",
-              disabled
-                ? "cursor-not-allowed border-element-hover bg-element-hover text-[var(--muted-foreground)] opacity-40"
-                : on
-                  ? "cursor-pointer border-element-active bg-element-active text-[var(--foreground)]"
-                  : "cursor-pointer border-element-selected bg-element-hover text-[var(--muted-foreground)] hover:bg-element-selected hover:text-[var(--secondary-foreground)]",
-            )}
             onClick={() => onTabChange(id)}
           >
             {label}
-          </button>
+          </Button>
         );
       })}
     </div>

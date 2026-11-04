@@ -36,6 +36,7 @@ import { chatLongSession } from "./chat-long-session";
 import { chatMarkdown } from "./chat-markdown";
 import { chatTools } from "./chat-tools";
 import { chatTurnChanges, chatTurnChangesLong, chatTurnChangesNative } from "./chat-turn-changes";
+import { captureHealthy } from "./capture-healthy";
 import { collab } from "./collab";
 import { designSystem } from "./design-system";
 import { diffComments, diffLarge } from "./diff-large";
@@ -109,6 +110,7 @@ const all: Scenario[] = [
   filesLarge,
   knowledge,
   collab,
+  captureHealthy,
   northwind,
   memorySetup,
   memoryHistoryEdited,
