@@ -30,6 +30,20 @@ import { composePrompt, type MentionData } from "./mentions";
 import { trustedMentionPaths } from "./picked-mentions";
 import { withCitesInline } from "./cited-text";
 import { withReviewCommentsInline } from "./review-comments";
+import { withContextsInline } from "@/features/ask-agent/lib/agent-context";
+
+/** A new session's title, from its first message: the words, without the
+ *  `@ctx:` tokens of an ask (else the first context's label). */
+function firstTitle(content: string, mentions: readonly MentionData[]): string {
+  const words = content.includes("@ctx:")
+    ? content
+        .replace(/@ctx:\S+/g, "")
+        .replace(/\s+/g, " ")
+        .trim()
+    : content;
+  const text = words || mentions.find((m) => m.kind === "agent_context")?.displayName || content;
+  return text.slice(0, 40) + (text.length > 40 ? "..." : "");
+}
 
 type ChatActions = ReturnType<typeof useChatStore.getState>["actions"];
 
@@ -270,10 +284,7 @@ export function createChatPanelHandlers({
           payload: { tabId, mentionCount: mentions.length, heldForBind: true },
         });
         if (session.messages.length === 0) {
-          setSessionTitle(
-            tabId,
-            actualContent.slice(0, 40) + (actualContent.length > 40 ? "..." : ""),
-          );
+          setSessionTitle(tabId, firstTitle(actualContent, mentions));
         }
         updateSessionStatus(tabId, "running");
         cs.actions.setPendingSend(tabId, {
@@ -324,10 +335,7 @@ export function createChatPanelHandlers({
       });
 
       if (session.messages.length === 0) {
-        setSessionTitle(
-          tabId,
-          actualContent.slice(0, 40) + (actualContent.length > 40 ? "..." : ""),
-        );
+        setSessionTitle(tabId, firstTitle(actualContent, mentions));
       }
     }
     // Idempotent for a held send (already running while it started), and it
@@ -367,7 +375,10 @@ export function createChatPanelHandlers({
       console.warn("composePrompt failed, sending raw text:", err);
       // A cite's passage is only in the context block `compose_prompt`
       // writes, so without one it is written out after the prose.
-      wirePrompt = withReviewCommentsInline(withCitesInline(actualContent, mentions), mentions);
+      wirePrompt = withContextsInline(
+        withReviewCommentsInline(withCitesInline(actualContent, mentions), mentions),
+        mentions,
+      );
       // A paste is never only in the prose (just its `@paste:` token), so it
       // must survive a failed compose too.
       pastedTexts = mentions.flatMap((m) =>

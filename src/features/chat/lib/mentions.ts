@@ -32,6 +32,7 @@ import {
   type OrgMentionKind,
 } from "./org-mentions";
 import type { ProjectAccess } from "./history-api";
+import { withContextsInline, type AgentContext } from "@/features/ask-agent/lib/agent-context";
 
 export type {
   MentionComment,
@@ -95,7 +96,12 @@ export type MentionKind =
   | "cited_text"
   // A comment on lines of a diff or a file, written in the gutter beside a
   // session (`review-comments.ts`). Never in the picker.
-  | "review_comment";
+  | "review_comment"
+  // A piece of work a surface handed the agent: a file range, a diff hunk, a
+  // memory, a commit, an error, a quote (`ask-agent/lib/agent-context.ts`).
+  // Never in the picker, and never reaches `compose_prompt`: `composePrompt`
+  // writes it after the prose itself.
+  | "agent_context";
 
 export interface MentionFile {
   kind: "file";
@@ -279,6 +285,17 @@ export interface MentionReviewComment {
   endSide: "additions" | "deletions";
 }
 
+/** A piece of work a surface handed the agent (`askAgent`). */
+export interface MentionAgentContext {
+  kind: "agent_context";
+  /** Short and unique — the `@ctx:<id>` token. */
+  id: string;
+  /** The chip's label (`contextLabel`). */
+  displayName: string;
+  /** What it is and where it came from, capped (`capContext`). */
+  context: AgentContext;
+}
+
 export type MentionData =
   | MentionFile
   | MentionFolder
@@ -296,7 +313,8 @@ export type MentionData =
   | MentionComment
   | MentionPastedText
   | MentionCitedText
-  | MentionReviewComment;
+  | MentionReviewComment
+  | MentionAgentContext;
 
 // ── Catalog ──────────────────────────────────────────────────────────────────
 
@@ -526,6 +544,8 @@ export function toShortForm(m: MentionData): string {
       return `@cite:${m.id}`;
     case "review_comment":
       return `@review:${m.id}`;
+    case "agent_context":
+      return `@ctx:${m.id}`;
   }
 }
 
@@ -851,11 +871,18 @@ export async function composePrompt(
 ): Promise<ComposedPrompt> {
   const pastedTexts: PastedTextSpec[] = [];
   const mentions: MentionData[] = [];
+  const contexts: MentionAgentContext[] = [];
   for (const m of allMentions) {
     if (m.kind === "pasted_text") pastedTexts.push({ id: m.id, text: m.text });
+    else if (m.kind === "agent_context") contexts.push(m);
     else mentions.push(m);
   }
-  if (mentions.length === 0) return { prose: prosePlainText, resourceLinks: [], pastedTexts };
+  // A surface's context is written here, after whatever `compose_prompt`
+  // appends: Rust has no such kind, and needs none.
+  const withContexts = (prose: string) => withContextsInline(prose, contexts);
+  if (mentions.length === 0) {
+    return { prose: withContexts(prosePlainText), resourceLinks: [], pastedTexts };
+  }
   const wireMentions = await Promise.all(
     mentions.map(async (m) => {
       if (m.kind === "knowledge") {
@@ -889,10 +916,10 @@ export async function composePrompt(
       prose: prosePlainText,
       mentions: wireMentions,
     });
-    return { ...composed, pastedTexts };
+    return { ...composed, prose: withContexts(composed.prose), pastedTexts };
   } catch (e) {
     console.warn("compose_prompt invoke failed, sending raw prose:", e);
-    return { prose: prosePlainText, resourceLinks: [], pastedTexts };
+    return { prose: withContexts(prosePlainText), resourceLinks: [], pastedTexts };
   }
 }
 

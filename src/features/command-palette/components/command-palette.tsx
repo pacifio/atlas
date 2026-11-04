@@ -34,6 +34,7 @@ import {
   Map as MapIcon,
   Maximize2,
   MessageSquare,
+  MessageSquarePlus,
   Network,
   PanelRight,
   ScrollText,
@@ -60,6 +61,8 @@ import { useActiveOrgProjects } from "@/features/projects/lib/org-scope";
 import { pickAndAddProject } from "@/features/projects/lib/pick-project";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
 import { openNewAgentChat } from "@/features/chat/lib/open-agent-session";
+import { openAskAgent } from "@/features/ask-agent/lib/ask-agent";
+import { focusedAskContext } from "@/features/ask-agent/lib/focused-context";
 import { activateProject, openProjectSettings } from "@/features/sidebar/lib/sidebar-actions";
 import { useActiveSessionId } from "@/features/sidebar/hooks/use-sidebar-sessions";
 import { findSession } from "@/features/sidebar/lib/find-session";
@@ -316,6 +319,15 @@ function OpenCommandPalette(props: {
     });
   }
   actionItems.push(
+    // Whatever was focused before the palette opened (a registered row, or
+    // selected text as a quote), else an empty box.
+    action(
+      "action:ask-agent",
+      "Ask agent about…",
+      MessageSquarePlus,
+      () => openAskAgent(focusedAskContext()),
+      { searchTerms: ["ask agent", "agent", "send to agent", "fix", "explain", "selection"] },
+    ),
     action(
       "action:go-to-file",
       "Go to file",

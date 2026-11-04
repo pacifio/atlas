@@ -263,27 +263,40 @@ export function openNewAgentChat(agent?: SwitchableAgent): string {
  * the conversation stays on screen beside the new agent instead of being
  * cleared out of its tab (a session is paired to one agent for its lifetime,
  * so the new agent needs a session of its own either way).
+ *
+ * `background` opens it without showing it: the user stays where they are
+ * (`askAgent` sending from a surface), and the active session stays active.
  */
 export function openAgentChatInNewTab(
   agent?: SwitchableAgent,
-  opts: { model?: string } = {},
+  opts: { model?: string; background?: boolean } = {},
 ): string {
   if (typeof agent !== "string") agent = undefined;
-  const { addTab, setActiveTab } = useLayoutStore.getState().actions;
-  const { createSession, switchChatAgent, setAcpModel } = useChatStore.getState().actions;
+  const { addTab, addBackgroundTab, setActiveTab } = useLayoutStore.getState().actions;
+  const { createSession, switchChatAgent, setAcpModel, setActiveSession } =
+    useChatStore.getState().actions;
   const id = freshTabId();
-  addTab({
+  const tab = {
     id,
-    type: "chat",
+    type: "chat" as const,
     title: "Agents",
     closable: true,
     dirty: false,
     data: {},
-  });
+  };
+  const activeSession = useChatStore.getState().activeSessionId;
+  if (opts.background) addBackgroundTab(tab);
+  else addTab(tab);
   createSession(id);
   if (agent) switchChatAgent(id, agent);
   // Unbound, so this only records the pick; the bind applies it.
   if (agent && opts.model) setAcpModel(id, opts.model);
+  if (opts.background) {
+    // `createSession` makes the new session the active one. Hand it back,
+    // unless the new tab is the one in view (its column had no other).
+    if (useLayoutStore.getState().activeTabId !== id) setActiveSession(activeSession);
+    return id;
+  }
   setActiveTab(id);
   window.dispatchEvent(new CustomEvent("atlas:chat-focus", { detail: { tabId: id } }));
   return id;

@@ -111,7 +111,12 @@ export function useComposerEvents({
         return;
       const cur = inputRef.current?.getValue() ?? valueRef.current;
       writeComposer(insertedDraft(cur, detail));
-      requestAnimationFrame(() => inputRef.current?.focus());
+      // Heard: a cancelable sender (`askAgent`) writes the stored draft
+      // itself when no composer took it.
+      e.preventDefault();
+      // An append lands beside work the user stayed on: the composer does
+      // not take the focus from it.
+      if (!detail.append) requestAnimationFrame(() => inputRef.current?.focus());
     };
     window.addEventListener("atlas:chat-insert", handler);
     return () => window.removeEventListener("atlas:chat-insert", handler);
