@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
  * generate — a typo like `rounded-huge`, or a plugin utility the repo does not
  * ship (`animate-in` was one: a dialog's fade-in that never ran). It knows
  * Tailwind and `@utility`, but not the plain CSS classes in Atlas's own
- * stylesheets (`.atlas-tab`, `.atlas-prose-wrap`, …), so those are allowlisted.
+ * stylesheets (`.atlas-pill-in`, `.atlas-prose-wrap`, …), so those are allowlisted.
  *
  * WHY each name is listed exactly rather than as `atlas-*`: a wildcard is the
  * one shape that hides the bug the rule exists for. `atlas-promt` matches
