@@ -51,8 +51,6 @@ const JS_HOOKS = ["atlas-cmd-suggest", "atlas-mention-picker", "atlas-slash-pick
 const LIBRARY_CLASSES: Record<string, string> = {
   nodrag: "@xyflow/react: an element inside a node that must not start a drag",
   hljs: "highlight.js: the root its themes are scoped under",
-  lucide: "lucide: the class every lucide-react icon carries, mirrored by a hand-drawn one",
-  "lucide-github": "lucide: the per-icon class lucide-react adds, mirrored likewise",
 };
 
 function walk(dir: string, exts: string[]): string[] {

@@ -57,8 +57,9 @@ export function KeymapStep({ onChosen }: { onChosen?: (answer: KeymapAnswer) => 
           <Choice
             key={preset.id}
             icon={
-              // The ink sits on a wrapper: the package mark takes `currentColor`
-              // and does not accept a colour class of its own.
+              // The ink sits on a wrapper the mark inherits through `currentColor`:
+              // the design-system lint (`shadcn/no-restyle`) rejects a colour
+              // class on a package mark.
               <span className="flex text-foreground">
                 <PresetIcon id={preset.id} className="size-4" />
               </span>

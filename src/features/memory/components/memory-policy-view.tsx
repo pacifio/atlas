@@ -391,7 +391,8 @@ function PolicyRow({
       </div>
 
       <div className={cn(COL.source, "flex min-w-0 items-center gap-1.5")}>
-        {/* The dimming sits on a wrapper: the package marks own their effects. */}
+        {/* The dimming sits on a wrapper: the design-system lint
+            (`shadcn/no-restyle`) rejects an opacity class on a package mark. */}
         <span className="inline-flex shrink-0 opacity-70">
           {policy.source === "codex" ? (
             <CodexMark className="size-3 shrink-0" />

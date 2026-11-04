@@ -47,8 +47,15 @@ export const FIRST_PARTY_MARKS: Record<FirstPartyAgent, (p: MarkProps) => ReactN
   kilo: ({ size, color, className }) => (
     <KiloMark className={className} style={{ width: size, height: size, color }} />
   ),
+  // Named like the other agent marks (the package draws `AtlasMark` decorative).
   "atlas-agent": ({ size, className }) => (
-    <AtlasMark className={className} style={{ width: size, height: size }} />
+    <AtlasMark
+      role="img"
+      aria-hidden={false}
+      aria-label="Atlas"
+      className={className}
+      style={{ width: size, height: size }}
+    />
   ),
 };
 
