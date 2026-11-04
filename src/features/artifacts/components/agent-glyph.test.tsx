@@ -73,6 +73,6 @@ describe("AgentGlyph", () => {
   it("falls back to a monogram for an external agent with no icon", () => {
     const { container } = render(<AgentGlyph agent="gemini-cli" />);
     expect(container.querySelector("svg")).toBeNull();
-    expect(container.textContent).toMatch(/^[A-Z?]$/);
+    expect(container.textContent).toBe("G");
   });
 });

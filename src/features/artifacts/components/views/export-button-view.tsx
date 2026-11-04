@@ -9,7 +9,7 @@
  * `IconButton`: it sits beside share and filter in that pill, and all three
  * have to be the same 28px round target.
  *
- * The rows are plain buttons that close the popover, reached with Tab — a menu
+ * The rows are package ghost buttons that close the popover, reached with Tab — a menu
  * (arrow keys, typeahead, menuitem roles) would be a behaviour change.
  */
 
