@@ -12,6 +12,8 @@ vi.mock("../lib/mentions", () => ({
 }));
 vi.mock("@/features/settings/lib/open-settings", () => ({ openSettingsSection: vi.fn() }));
 
+import { searchGithub } from "@/features/github/lib/github-api";
+import type { GithubRepo } from "@/features/github/types";
 import { ComposerAddMenu } from "./composer-add-menu";
 
 afterEach(cleanup);
@@ -58,5 +60,45 @@ describe("ComposerAddMenu", () => {
       window.dispatchEvent(new CustomEvent("atlas:composer-menu-open", { detail: "options" }));
     });
     await vi.waitFor(() => expect(screen.queryByText("Attach media")).toBeNull());
+  });
+
+  it("drops a GitHub search that lands after the menu was closed and reopened", async () => {
+    let resolve!: (rows: GithubRepo[]) => void;
+    vi.mocked(searchGithub).mockImplementationOnce(
+      () => new Promise<GithubRepo[]>((r) => (resolve = r)),
+    );
+    renderMenu();
+    const openGithub = async () => {
+      await act(async () => {
+        fireEvent.click(screen.getByText("Add from GitHub").closest("[role='menuitem']")!);
+      });
+      return (await screen.findByPlaceholderText(/Search GitHub repos/)) as HTMLInputElement;
+    };
+
+    await act(async () => {
+      fireEvent.click(trigger());
+    });
+    const input = await openGithub();
+    fireEvent.change(input, { target: { value: "swr" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(searchGithub).toHaveBeenCalledWith("swr");
+
+    // Another composer menu takes over; then the + menu opens again.
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent("atlas:composer-menu-open", { detail: "options" }));
+    });
+    await vi.waitFor(() => expect(screen.queryByText("Attach media")).toBeNull());
+    await act(async () => {
+      fireEvent.click(trigger());
+    });
+    await openGithub();
+
+    await act(async () => {
+      resolve([
+        { full_name: "vercel/swr", description: "", stars: 1, clone_url: "" } as GithubRepo,
+      ]);
+    });
+    expect(screen.getByText("Type a repo name and press Enter.")).toBeTruthy();
+    expect(screen.queryByText("vercel/swr")).toBeNull();
   });
 });
