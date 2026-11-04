@@ -1,7 +1,15 @@
-import type { ReactNode } from "react";
-import { Hash, Lock, MessageCircle, MessagesSquare, Plus, Users, X } from "lucide-react";
-import { Button, EmptyState, Hint, IconButton, Spinner } from "@tryatlas/design";
-import { cn } from "@/lib/utils";
+import { useMemo, type ReactNode } from "react";
+import { Hash, Lock, MessageCircle, MessagesSquare, Plus, Users } from "lucide-react";
+import {
+  Button,
+  EmptyState,
+  Hint,
+  Icon,
+  IconButton,
+  Spinner,
+  TabStrip,
+  type TabStripItem,
+} from "@tryatlas/design";
 import type { LucideIcon } from "lucide-react";
 
 /**
@@ -76,10 +84,10 @@ const TAB_ICON: Record<CommsTabKind, LucideIcon> = {
 /**
  * The open conversations, as tabs, under the column's own tab strip.
  *
- * Hand-built rather than the package's `TabStrip`: here every tab is its own
- * Tab stop with a Tab-reachable close button, and `TabStrip`'s roving focus
- * and middle-click close are behaviour changes still awaiting review
- * (ATL-718), so adopting it waits on that sign-off.
+ * The package's `TabStrip`, with its defaults: one Tab stop (the active tab),
+ * ←/→ wrap, Home/End jump, Enter or Space opens, Delete and middle-click close,
+ * and the × named "Close {title}". The `+` sits outside the strip so it stays
+ * at the right edge however few tabs there are.
  */
 export function CommsTabsView({
   tabs,
@@ -94,29 +102,26 @@ export function CommsTabsView({
   onClose: (id: string) => void;
   onNew: () => void;
 }) {
+  const items = useMemo<TabStripItem[]>(
+    () =>
+      tabs.map((tab) => ({
+        id: tab.id,
+        title: tab.title,
+        closable: true,
+        icon: <TabGlyph tab={tab} />,
+      })),
+    [tabs],
+  );
   return (
     <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border pl-1.5">
-      <div
-        className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto hide-scrollbar"
-        // A gradient overlay in the backdrop colour never quite matched it —
-        // the vibrant grain composites on top of the token, so the patch
-        // read as its own rectangle. A mask fades the CONTENT instead, and
-        // whatever is behind it shows through exactly.
-        style={{
-          maskImage: "linear-gradient(to right, black, black calc(100% - 28px), transparent)",
-          WebkitMaskImage: "linear-gradient(to right, black, black calc(100% - 28px), transparent)",
-        }}
-      >
-        {tabs.map((tab) => (
-          <CommsTab
-            key={tab.id}
-            tab={tab}
-            active={tab.id === activeId}
-            onSelect={() => onSelect(tab.id)}
-            onClose={() => onClose(tab.id)}
-          />
-        ))}
-      </div>
+      <TabStrip
+        aria-label="Chats"
+        items={items}
+        activeId={activeId}
+        onSelect={onSelect}
+        onClose={onClose}
+        className="flex-1"
+      />
 
       <div className="flex shrink-0 items-center pr-1.5">
         <Hint label="New tab">
@@ -134,65 +139,20 @@ export function CommsTabsView({
   );
 }
 
-function CommsTab({
-  tab,
-  active,
-  onSelect,
-  onClose,
-}: {
-  tab: CommsTabItem;
-  active: boolean;
-  onSelect: () => void;
-  onClose: () => void;
-}) {
-  const Glyph = TAB_ICON[tab.kind];
+/** A tab's kind glyph, with the unread dot on its corner: a mention lights it
+ *  in the foreground, plain unread in the success tone. */
+function TabGlyph({ tab }: { tab: CommsTabItem }) {
   return (
-    <div
-      role="tab"
-      aria-selected={active}
-      tabIndex={0}
-      onClick={onSelect}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onSelect();
-        }
-      }}
-      className={cn(
-        "group/tab relative flex h-[26px] shrink-0 cursor-pointer items-center gap-1.5 rounded-lg pl-2.5 pr-6 text-sm font-medium select-none",
-        "transition-[background-color,color] duration-fast ease-out-strong",
-        active
-          ? "bg-element-selected text-foreground"
-          : "text-muted-foreground hover:bg-element-hover hover:text-secondary-foreground",
-      )}
-    >
-      <Glyph size={tab.kind === "private" ? 10 : 11} className="shrink-0 opacity-70" />
-      <span className="max-w-[110px] truncate">{tab.title}</span>
-
+    <span className="relative flex">
+      <span className="flex opacity-70">
+        <Icon icon={TAB_ICON[tab.kind]} size="sm" />
+      </span>
       {tab.mentions > 0 ? (
-        <span className="size-1.5 shrink-0 rounded-full bg-foreground" />
+        <span className="absolute -top-0.5 -right-0.5 size-1.5 rounded-full bg-foreground" />
       ) : tab.unread > 0 ? (
-        <span className="size-1.5 shrink-0 rounded-full bg-success" />
+        <span className="absolute -top-0.5 -right-0.5 size-1.5 rounded-full bg-success" />
       ) : null}
-
-      <Hint label="Close tab">
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onClose();
-          }}
-          className={cn(
-            "absolute right-1 top-1/2 -translate-y-1/2",
-            "inline-flex size-4 items-center justify-center rounded-full",
-            "text-muted-foreground opacity-0 scale-90 group-hover/tab:opacity-100 group-hover/tab:scale-100 focus-visible:opacity-100 focus-visible:scale-100",
-            "transition-[opacity,scale,background-color,color] duration-fast ease-out-strong hover:bg-[var(--element-emphasis)] hover:text-foreground cursor-pointer",
-          )}
-        >
-          <X size={10} strokeWidth={2.2} />
-        </button>
-      </Hint>
-    </div>
+    </span>
   );
 }
 

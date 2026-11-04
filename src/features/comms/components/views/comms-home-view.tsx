@@ -228,7 +228,7 @@ export function CommsHomeView({
                     <button
                       type="button"
                       onClick={() => onJoin(c.id)}
-                      className="shrink-0 cursor-pointer rounded px-1.5 py-px text-xs font-medium text-secondary-foreground opacity-0 transition-opacity duration-fast hover:bg-element-hover hover:text-foreground group-hover/disc:opacity-100"
+                      className="shrink-0 cursor-pointer rounded px-1.5 py-px text-xs font-medium text-secondary-foreground opacity-0 transition-opacity duration-fast hover:bg-element-hover hover:text-foreground group-hover/disc:opacity-100 focus-visible:opacity-100"
                     >
                       Join
                     </button>
@@ -331,8 +331,8 @@ function rowView(
  * it is the one thing about a group row that a name does not already tell you.
  *
  * A 1:1's face is `CommsAvatar` in the row's icon slot, not the row's own
- * `PersonAvatar`: that one swaps a broken photo for initials, a behaviour
- * change still awaiting review (ATL-718).
+ * `PersonAvatar`, so it carries the presence dot and matches every other face
+ * team chat draws.
  */
 function DirectRow({
   conv,

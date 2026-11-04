@@ -11,7 +11,7 @@ import {
   TooltipTrigger,
 } from "@tryatlas/design";
 import { cn } from "@/lib/utils";
-import { INK } from "../../lib/derive";
+import { INK, presenceLabel } from "../../lib/derive";
 
 export interface DraftPeerView {
   id: string;
@@ -85,34 +85,41 @@ export function DraftEditorView({
             is in this doc", which is never true while you are. Peers stack in
             front of your avatar as they arrive, each ringed in the hue their
             caret is drawn in. */}
-        <div className="flex shrink-0 items-center pl-1">
-          <AvatarStack>
-            {peers.slice(0, PEERS_SHOWN).map((p) => (
-              <Tooltip key={p.id}>
-                <TooltipTrigger
-                  render={
-                    <span className="inline-flex">
-                      <span className={cn("inline-flex rounded-full ring-2", INK[p.tone].ring)}>
-                        {p.avatar}
+        <div className="flex shrink-0 items-center gap-1.5 pl-1">
+          <span role="group" aria-label="In this draft" className="flex items-center">
+            <AvatarStack>
+              {peers.slice(0, PEERS_SHOWN).map((p) => (
+                <Tooltip key={p.id}>
+                  <TooltipTrigger
+                    render={
+                      <span className="inline-flex">
+                        <span className={cn("inline-flex rounded-full ring-2", INK[p.tone].ring)}>
+                          {p.avatar}
+                        </span>
                       </span>
-                    </span>
-                  }
-                />
+                    }
+                  />
+                  <TooltipContent side="bottom" sideOffset={4}>
+                    {p.name ?? "Unknown"} · editing
+                  </TooltipContent>
+                </Tooltip>
+              ))}
+              <Tooltip>
+                <TooltipTrigger render={<span className="inline-flex">{self}</span>} />
                 <TooltipContent side="bottom" sideOffset={4}>
-                  {p.name ?? "Unknown"} · editing
+                  You
                 </TooltipContent>
               </Tooltip>
-            ))}
-            <Tooltip>
-              <TooltipTrigger render={<span className="inline-flex">{self}</span>} />
-              <TooltipContent side="bottom" sideOffset={4}>
-                You
-              </TooltipContent>
-            </Tooltip>
-          </AvatarStack>
-          {peers.length > PEERS_SHOWN && (
-            <span className="pl-1 text-2xs text-muted-foreground">
-              +{peers.length - PEERS_SHOWN}
+            </AvatarStack>
+            {peers.length > PEERS_SHOWN && (
+              <span className="pl-1 text-2xs text-muted-foreground">
+                +{peers.length - PEERS_SHOWN}
+              </span>
+            )}
+          </span>
+          {peers.length > 0 && (
+            <span className="max-w-40 truncate text-2xs text-muted-foreground">
+              {presenceLabel(peers.map((p) => p.name ?? "Unknown"))}
             </span>
           )}
         </div>

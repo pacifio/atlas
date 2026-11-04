@@ -1,6 +1,6 @@
 import { memo } from "react";
 import { Webhook } from "lucide-react";
-import { Avatar, AvatarFallback } from "@tryatlas/design";
+import { Avatar, AvatarFallback, AvatarImage } from "@tryatlas/design";
 import { cn } from "@/lib/utils";
 import { initials } from "../lib/derive";
 import type { OrgMemberProfile } from "../types";
@@ -20,6 +20,9 @@ const SIZE: Record<CommsAvatarSize, string> = {
   24: "size-[24px]",
   30: "size-[30px]",
 };
+
+/** How long a face with a picture waits before showing initials instead. */
+const IMAGE_GRACE_MS = 150;
 
 /** The presence dot: 30% of the face, never under 6px. */
 const DOT: Record<CommsAvatarSize, string> = {
@@ -74,18 +77,14 @@ export const CommsAvatar = memo(function CommsAvatar({
       {/* `data-size` replaces the package's own (`md`), so its control-ladder
           size rule does not beat the pixel size. */}
       <Avatar data-size="comms" className={SIZE[size]}>
-        {member?.image ? (
-          // A plain <img>, not `AvatarImage`: that one swaps a broken image for
-          // the initials, a behaviour change still awaiting review (ATL-718).
-          <img
-            src={member.image}
-            alt=""
-            draggable={false}
-            className="aspect-square size-full object-cover"
-          />
-        ) : (
-          <AvatarFallback aria-hidden>{initials(label)}</AvatarFallback>
-        )}
+        {member?.image && <AvatarImage src={member.image} alt="" draggable={false} />}
+        {/* Initials stand in until the picture loads and for good when it
+            fails, so a broken URL still shows who it is. With a picture the
+            initials wait a beat first: a cached image loads within a frame or
+            two, and drawing initials for that long reads as a flicker. */}
+        <AvatarFallback aria-hidden delay={member?.image ? IMAGE_GRACE_MS : undefined}>
+          {initials(label)}
+        </AvatarFallback>
       </Avatar>
       {online !== undefined && (
         <span

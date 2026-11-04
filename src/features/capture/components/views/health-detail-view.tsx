@@ -1,12 +1,12 @@
 import { RefreshCw } from "lucide-react";
 
-import { calloutVariants, Spinner } from "@tryatlas/design";
+import { Button, Callout, Icon, Spinner } from "@tryatlas/design";
 import { cn } from "@/lib/utils";
 
 import type { CaptureHealth } from "../../types";
 
 /**
- * Why capture is degraded or stopped, and one click to try to fix it.
+ * Why capture is degraded or stopped, and a Retry to try to fix it.
  *
  * Nothing renders while healthy or switched off — a permanent banner trains
  * people to stop reading the thing they are supposed to notice.
@@ -16,10 +16,11 @@ import type { CaptureHealth } from "../../types";
  * nobody finished reading. The reason is the line; the `nextStep` moves to the
  * title, so it is still reachable and no longer competing.
  *
- * **The banner is the retry.** See `HealthDetail` for what the click runs. It
- * wears the package `Callout` look (`calloutVariants`) but stays one button:
- * a separate Retry control is a proposed behaviour change awaiting review
- * (ATL-718), so the click target and its label are today's.
+ * **Retry is its own button.** The whole banner used to be the button: it had
+ * no visible affordance (nothing said it could be clicked), and a screen reader
+ * read its long label on every visit instead of the issues. The issues are
+ * now plain text and Retry sits at the callout's end; see `HealthDetail` for
+ * what it runs.
  */
 export function HealthDetailView({
   health,
@@ -32,49 +33,53 @@ export function HealthDetailView({
   onRetry: () => void;
 }) {
   const stopped = health.state === "stopped";
-  const tone = stopped ? "error" : "warning";
   const ink = stopped ? "var(--status-error-foreground)" : "var(--status-warning-foreground)";
 
   return (
-    <button
-      type="button"
-      onClick={onRetry}
-      disabled={retrying}
-      aria-label="Retry — restart capture for this project"
-      className={cn(
-        calloutVariants({ tone }),
-        // The ants are drawn as background gradients, so the fill has to be a
-        // background-COLOR (the callout's `bg-*-muted` is) or it would paint
-        // over them.
-        "atlas-ants mb-2.5 w-full cursor-pointer text-left transition-opacity",
-        "hover:opacity-90 disabled:cursor-wait",
-      )}
+    // The marching ants ride an overlay over the callout rather than the
+    // callout itself: they are background gradients, and the callout's own
+    // tinted fill is a background too.
+    <div
+      className="relative mb-2.5"
       style={{
         // A call-site tint of the banner's own tone, for the ants.
         ["--atlas-ants-color" as string]: `color-mix(in oklab, ${ink} 55%, transparent)`,
       }}
     >
-      <span className="flex min-w-0 flex-1 flex-col gap-1">
-        {health.issues.map((issue, index) => (
-          // Index in the key: two issues can share their reason text.
-          <span
-            key={`${index}-${issue.reason}`}
-            title={issue.nextStep || undefined}
-            className={cn(
-              "flex items-center gap-1.5",
-              issue.state === "stopped" ? "text-error" : "text-warning",
-            )}
+      <Callout
+        tone={stopped ? "error" : "warning"}
+        icon={false}
+        className="*:min-w-0"
+        action={
+          <Button
+            variant="ghost"
+            size="xs"
+            onClick={onRetry}
+            disabled={retrying}
+            aria-label="Retry — restart capture for this project"
           >
-            {index === 0 &&
-              (retrying ? (
-                <Spinner size="xs" label="" />
-              ) : (
-                <RefreshCw size={10} className="shrink-0 opacity-70" />
-              ))}
-            <span className="min-w-0 flex-1 truncate">{issue.reason}</span>
-          </span>
-        ))}
-      </span>
-    </button>
+            {retrying ? <Spinner size="xs" label="" /> : <Icon icon={RefreshCw} size="xs" />}
+            Retry
+          </Button>
+        }
+      >
+        <span className="flex min-w-0 flex-1 flex-col gap-1">
+          {health.issues.map((issue, index) => (
+            // Index in the key: two issues can share their reason text.
+            <span
+              key={`${index}-${issue.reason}`}
+              title={issue.nextStep || undefined}
+              className={cn(
+                "min-w-0 truncate",
+                issue.state === "stopped" ? "text-error" : "text-warning",
+              )}
+            >
+              {issue.reason}
+            </span>
+          ))}
+        </span>
+      </Callout>
+      <span aria-hidden className="atlas-ants pointer-events-none absolute inset-0 rounded-md" />
+    </div>
   );
 }

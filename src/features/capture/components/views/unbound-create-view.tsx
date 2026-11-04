@@ -5,7 +5,7 @@ import { Button, Callout } from "@tryatlas/design";
 import type { CloudOrg, SlugState } from "../../lib/capture-flow";
 import type { Detection, ImportPreview, ProjectMode } from "../../types";
 import { CloudFields } from "./cloud-fields";
-import { GhostButton, ModeOption, PrimaryButton } from "./controls";
+import { GhostButton, ModeOption, PrimaryButton, rovingKeys } from "./controls";
 import { Detected, GitInitOffer, GitMissingBanner } from "./detected";
 import { TimelinePreview } from "./timeline-preview";
 
@@ -64,7 +64,12 @@ export function UnboundCreateView({
         <span className="text-xs font-medium text-secondary-foreground">
           Where sessions are stored
         </span>
-        <div role="radiogroup" aria-label="Where sessions are stored" className="mt-1 flex gap-1">
+        <div
+          role="radiogroup"
+          aria-label="Where sessions are stored"
+          className="mt-1 flex gap-1"
+          onKeyDown={(e) => rovingKeys(e, "radio", true)}
+        >
           <ModeOption
             selected={mode === "local"}
             disabled={false}

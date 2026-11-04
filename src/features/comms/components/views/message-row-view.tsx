@@ -84,7 +84,13 @@ const GUTTER = "w-9";
  * **The hover toolbar mounts on first hover, not eagerly.** Three popup roots
  * per row across a whole transcript was ~12 idle fibers per message; CSS
  * already hides the toolbar until hover, so mounting it at that moment is
- * invisible — and drops the idle cost to zero.
+ * invisible — and drops the idle cost to zero. Keyboard focus entering the row
+ * (a reply line, a reaction chip, a link in the body) mounts it too, so the
+ * next Tab reaches React, Reply and More.
+ *
+ * **A deleted message is only its tombstone**: no reply line, no reactions,
+ * and a toolbar that offers nothing but a disabled Copy — there is no text left
+ * to copy, nothing to react or reply to, and pinning a tombstone pins nothing.
  */
 export function MessageRowView({
   message: m,
@@ -113,6 +119,7 @@ export function MessageRowView({
   references,
 }: MessageRowViewProps) {
   const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
   // Opening a menu moves the pointer and focus into a PORTAL, outside this
   // row — so `onMouseLeave` fires, and if mounting depended on hover alone the
   // toolbar (and the menu inside it) would unmount the instant it opened. The
@@ -127,6 +134,12 @@ export function MessageRowView({
       className="group/msg relative flex gap-2 rounded px-1 py-px hover:bg-element-hover [contain:layout_style]"
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
+      onFocus={() => setFocused(true)}
+      onBlur={(e) => {
+        // Focus moving between the row's own controls (chip -> toolbar) keeps
+        // the toolbar; only focus leaving the row drops it.
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocused(false);
+      }}
     >
       <div className={cn("shrink-0 pt-[3px]", GUTTER)}>
         {first && webhook ? (
@@ -143,7 +156,7 @@ export function MessageRowView({
       </div>
 
       <div className="min-w-0 flex-1 pb-1">
-        {m.reply_to_id && (
+        {m.reply_to_id && !m.deleted && (
           <ReplyLine
             deleted={replyParent?.deleted === true}
             loaded={replyParent !== undefined}
@@ -191,7 +204,7 @@ export function MessageRowView({
           references={references}
         />
 
-        {reactions.length > 0 && (
+        {reactions.length > 0 && !m.deleted && (
           // In normal flow beneath the message: absolutely positioned chips
           // sat on top of the message's own edge.
           <div className="mt-1 flex flex-wrap items-center gap-1">
@@ -199,6 +212,7 @@ export function MessageRowView({
               <button
                 key={c.emoji}
                 type="button"
+                aria-pressed={c.mine}
                 title={c.userIds.map(memberName).join(", ")}
                 onClick={() => onReact(c.emoji, !c.mine)}
                 className={cn(
@@ -216,9 +230,10 @@ export function MessageRowView({
         )}
       </div>
 
-      {(hovered || menuOpen) && (
+      {(hovered || focused || menuOpen) && (
         <HoverActions
           onOpenChange={setMenuOpen}
+          deleted={m.deleted === true}
           pinned={pinned}
           canEdit={canEdit}
           canDelete={canDelete}
@@ -346,6 +361,7 @@ function ReplyLine({
 }
 
 function HoverActions({
+  deleted,
   pinned,
   canEdit,
   canDelete,
@@ -358,6 +374,8 @@ function HoverActions({
   onPin,
   onCopy,
 }: {
+  /** A tombstone: only a disabled Copy is offered. */
+  deleted: boolean;
   pinned: boolean;
   canEdit: boolean;
   canDelete: boolean;
@@ -383,42 +401,46 @@ function HoverActions({
       <div
         className={cn(
           "absolute -top-2.5 right-2 z-10 flex items-center gap-px rounded-md border border-border bg-popover p-0.5 shadow-md",
-          "opacity-0 transition-opacity duration-fast group-hover/msg:opacity-100 focus-within:opacity-100",
+          "opacity-0 transition-opacity duration-fast group-hover/msg:opacity-100 group-focus-within/msg:opacity-100",
           forceShow && "opacity-100",
         )}
       >
-        <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
-          <HintItem label="React">
-            <PopoverTrigger render={<IconButton icon={SmilePlus} label="React" size="xs" />} />
-          </HintItem>
-          <PopoverContent side="top" align="end" sideOffset={6} className="w-[212px] gap-0 p-1.5">
-            <div className="grid grid-cols-7 gap-0.5">
-              {/* Built FROM the allowlist, so no button here can be refused. */}
-              {reactionEmoji.map((e) => (
-                <button
-                  key={e}
-                  type="button"
-                  onClick={() => {
-                    onReact(e);
-                    setPickerOpen(false);
-                  }}
-                  className="flex size-7 cursor-pointer items-center justify-center rounded text-md transition-colors duration-fast hover:bg-element-hover"
-                >
-                  {e}
-                </button>
-              ))}
-            </div>
-          </PopoverContent>
-        </Popover>
+        {!deleted && (
+          <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
+            <HintItem label="React">
+              <PopoverTrigger render={<IconButton icon={SmilePlus} label="React" size="xs" />} />
+            </HintItem>
+            <PopoverContent side="top" align="end" sideOffset={6} className="w-[212px] gap-0 p-1.5">
+              <div className="grid grid-cols-7 gap-0.5">
+                {/* Built FROM the allowlist, so no button here can be refused. */}
+                {reactionEmoji.map((e) => (
+                  <button
+                    key={e}
+                    type="button"
+                    onClick={() => {
+                      onReact(e);
+                      setPickerOpen(false);
+                    }}
+                    className="flex size-7 cursor-pointer items-center justify-center rounded text-md transition-colors duration-fast hover:bg-element-hover"
+                  >
+                    {e}
+                  </button>
+                ))}
+              </div>
+            </PopoverContent>
+          </Popover>
+        )}
 
-        <HintItem label="Reply">
-          <IconButton
-            icon={<Icon icon={CornerUpRight} size="xs" className="-scale-y-100" />}
-            label="Reply"
-            size="xs"
-            onClick={onReply}
-          />
-        </HintItem>
+        {!deleted && (
+          <HintItem label="Reply">
+            <IconButton
+              icon={<Icon icon={CornerUpRight} size="xs" className="-scale-y-100" />}
+              label="Reply"
+              size="xs"
+              onClick={onReply}
+            />
+          </HintItem>
+        )}
 
         <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
           <HintItem label="More">
@@ -427,14 +449,16 @@ function HoverActions({
             />
           </HintItem>
           <DropdownMenuContent side="top" align="end" sideOffset={6} className="min-w-[168px]">
-            <DropdownMenuItem onClick={onCopy}>
+            <DropdownMenuItem onClick={onCopy} disabled={deleted}>
               <Icon icon={Copy} size="sm" /> Copy text
             </DropdownMenuItem>
             {/* Pins are SHARED, not personal — anyone's pin is everyone's. */}
-            <DropdownMenuItem onClick={onPin}>
-              <Icon icon={pinned ? PinOff : Pin} size="sm" />
-              {pinned ? "Unpin for everyone" : "Pin for everyone"}
-            </DropdownMenuItem>
+            {!deleted && (
+              <DropdownMenuItem onClick={onPin}>
+                <Icon icon={pinned ? PinOff : Pin} size="sm" />
+                {pinned ? "Unpin for everyone" : "Pin for everyone"}
+              </DropdownMenuItem>
+            )}
             {(canEdit || canDelete) && <DropdownMenuSeparator />}
             {/* Author only — an admin can delete but never rewrite. */}
             {canEdit && (

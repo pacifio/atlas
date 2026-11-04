@@ -106,14 +106,10 @@ function DraftRow({
   // column, then the created date — so the eye scans a straight edge down the
   // list instead of a ragged one.
   return (
-    <div
-      role="button"
-      tabIndex={0}
+    <button
+      type="button"
       onClick={() => onOpen(d)}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") onOpen(d);
-      }}
-      className="flex cursor-pointer items-center gap-2 border-b border-border-subtle px-3 py-2 transition-colors last:border-b-0 hover:bg-element-hover"
+      className="flex w-full cursor-pointer items-center gap-2 border-b border-border-subtle px-3 py-2 text-left transition-colors last:border-b-0 hover:bg-element-hover"
     >
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-1.5">
@@ -152,7 +148,7 @@ function DraftRow({
       <span className="w-[62px] shrink-0 text-right text-2xs tabular-nums text-muted-foreground">
         {formatCreated(d.created_at)}
       </span>
-    </div>
+    </button>
   );
 }
 
