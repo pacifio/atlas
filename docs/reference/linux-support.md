@@ -5,6 +5,9 @@ built, checked, signed and announced.
 
 - **Source of truth:** `.github/workflows/release-linux.yml` and the scripts it calls
   (`scripts/package-linux.sh`, `scripts/verify-linux-release.sh`, `scripts/linux/`).
+- **Where packages land:** `target/release-linux/`, next to the binary, never under
+  `dist/` (the frontend bundle, which the next build syncs and watches).
+  `cargo clean` removes them with the rest of the build output.
 - **Why it is shaped this way:** [`docs/research/linux-release-plan.md`](../research/linux-release-plan.md).
 
 ## Supported systems

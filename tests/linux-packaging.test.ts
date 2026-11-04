@@ -23,7 +23,13 @@ import { fileURLToPath } from "node:url";
  *  - no dead deb/rpm config in tauri.linux.conf.json (Tauri builds neither,
  *    and the copy there drifted unnoticed while package-linux.sh shipped);
  *  - bzip2 compiled in on Linux, for the soname reason in its manifest;
- *  - the bundled bubblewrap pinned to one version and one checksum.
+ *  - the bundled bubblewrap pinned to one version and one checksum;
+ *  - the packages staged under target/, where the packager and the release
+ *    workflow name the same directory. Staging under dist/ shipped once: the
+ *    frontend sync (scripts/build-frontend.mjs) deletes everything in dist/
+ *    that Vite did not emit, and tauri-build watches all of dist/, so the
+ *    next build wiped the packages and relinked the app. Nothing errors
+ *    either way; the symptom is a missing deb or a slow rebuild.
  */
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -102,5 +108,24 @@ describe("the Linux binary's portability", () => {
     expect(version).toBeDefined();
     expect(sha).toMatch(/^[0-9a-f]{64}$/);
     expect(src).toMatch(/sha256sum -c/);
+  });
+});
+
+describe("where the Linux packages are staged", () => {
+  const packager = read("scripts/package-linux.sh");
+  const workflow = read(".github/workflows/release-linux.yml");
+  const outputDir = packager.match(/^OUTPUT_DIR="\$\{ROOT_DIR\}\/(.+)"$/m)?.[1];
+
+  it("is under target/, with the binary, and never under dist/", () => {
+    expect(outputDir).toBeDefined();
+    expect(outputDir!.startsWith("target/")).toBe(true);
+    expect(outputDir!.startsWith("dist/")).toBe(false);
+  });
+
+  it("is the directory release-linux.yml collects from", () => {
+    // The workflow copies out of it by path; a rename on one side only makes
+    // Collect fail with `cp: cannot stat` after a full build.
+    expect(workflow).toContain(`${outputDir}/`);
+    expect(workflow).not.toContain("dist/release-linux");
   });
 });

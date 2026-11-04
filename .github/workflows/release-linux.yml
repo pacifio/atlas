@@ -237,12 +237,12 @@ jobs:
             pacman -Sy --noconfirm archlinux-keyring
             pacman -Syu --noconfirm base-devel pacman-contrib zstd namcap
             useradd -m builder
-            chown -R builder:builder /workspace/dist/release-linux
-            su builder -c "cd /workspace/dist/release-linux/aur-tryatlas-bin && makepkg -f --nodeps"
-            cp /workspace/dist/release-linux/aur-tryatlas-bin/*.pkg.tar.zst /workspace/dist/release-linux/
+            chown -R builder:builder /workspace/target/release-linux
+            su builder -c "cd /workspace/target/release-linux/aur-tryatlas-bin && makepkg -f --nodeps"
+            cp /workspace/target/release-linux/aur-tryatlas-bin/*.pkg.tar.zst /workspace/target/release-linux/
             # Arch's own linter, report only (see VERIFY_LINT in Verify).
-            namcap /workspace/dist/release-linux/aur-tryatlas-bin/PKGBUILD /workspace/dist/release-linux/*.pkg.tar.zst || true
-            chmod -R a+rw /workspace/dist/release-linux
+            namcap /workspace/target/release-linux/aur-tryatlas-bin/PKGBUILD /workspace/target/release-linux/*.pkg.tar.zst || true
+            chmod -R a+rw /workspace/target/release-linux
           '
 
       - name: Collect release artifacts
@@ -252,19 +252,19 @@ jobs:
           [ -d "target" ] && SEARCH_DIRS+=("target")
           [ -d "src-tauri/target" ] && SEARCH_DIRS+=("src-tauri/target")
           # Copy standalone tarball
-          cp dist/release-linux/*.tar.gz dist/artifacts/
+          cp target/release-linux/*.tar.gz dist/artifacts/
           # Copy Arch Linux package. `!debug` in the PKGBUILD stops makepkg
           # splitting out an empty debug package; drop one if it ever does, and
           # keep the plain `cp` so a missing package still fails the job.
-          rm -f dist/release-linux/*-debug-*.pkg.tar.zst
+          rm -f target/release-linux/*-debug-*.pkg.tar.zst
           if [ "${{ matrix.arch }}" = x86_64 ]; then
-            cp dist/release-linux/*.pkg.tar.zst dist/artifacts/
+            cp target/release-linux/*.pkg.tar.zst dist/artifacts/
           fi
           # The conflict-free Debian and RPM packages from package-linux.sh.
           # Plain `cp`, so a package that was not built fails the job here
           # instead of shipping a release without it.
-          cp dist/release-linux/*.deb dist/artifacts/
-          cp dist/release-linux/*.rpm dist/artifacts/
+          cp target/release-linux/*.deb dist/artifacts/
+          cp target/release-linux/*.rpm dist/artifacts/
           # Copy AppImage from Tauri bundles and normalize name to tryatlas package convention
           find "${SEARCH_DIRS[@]}" -type f -name "*.AppImage" -exec cp -t dist/artifacts/ {} +
           for appimage in dist/artifacts/*Atlas*.AppImage; do

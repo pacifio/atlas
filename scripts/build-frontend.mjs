@@ -61,8 +61,10 @@ function childEnv() {
  *  Symlinks count as files, so the sync below deletes them like any other
  *  stray. Skipping them left a link whose target it had just deleted, and
  *  `tauri::generate_context!` walks all of `dist/` and fails the build on a
- *  dangling link: `scripts/package-linux.sh` stages `bin/atl -> atlas` under
- *  `dist/release-linux/`, so a build after a local packaging run broke. */
+ *  dangling link. `scripts/package-linux.sh` once staged `bin/atl -> atlas`
+ *  under `dist/release-linux/` and broke every build after a packaging run;
+ *  it stages under `target/` now, and this keeps any other stray link from
+ *  doing the same. */
 function listFiles(dir) {
   const out = [];
   const walk = (abs) => {

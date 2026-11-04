@@ -96,7 +96,12 @@ if [ -z "$GLIBC_NEEDED" ]; then
   exit 1
 fi
 
-OUTPUT_DIR="${ROOT_DIR}/dist/release-linux"
+# Under target/, with the binary, not under dist/. `dist/` is the frontend
+# bundle: `scripts/build-frontend.mjs` syncs it to Vite's output before every
+# build, deleting whatever else is there, and `tauri-build` watches all of it,
+# so packages staged there were wiped and relinked the app on the next build.
+# `cargo clean` removes this with the rest of the build output.
+OUTPUT_DIR="${ROOT_DIR}/target/release-linux"
 rm -rf "${OUTPUT_DIR}"
 mkdir -p "${OUTPUT_DIR}"
 
