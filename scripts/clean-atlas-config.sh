@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Wipe all local Atlas app data for a true first-run (macOS).
 # Removes ~/.config/atlas (config.toml), app support, caches, WebKit state,
-# and preferences for both the current bundle id (dev.atlas.ide) and the
-# legacy `atlas` name. Does NOT
-# touch the repo, build artifacts, or any agent CLI credentials (~/.claude etc).
+# and preferences for the bundle id (dev.atlas.ide). Does NOT touch the repo,
+# build artifacts, or any agent CLI credentials (~/.claude etc).
 #
 # `--dev` (`bun run clean:app:dev`) wipes Atlas Dev's instead — the profile
 # `bun run dev:app` runs under (dev.atlas.ide.dev, ~/.config/atlas-dev) — and
@@ -12,9 +11,11 @@
 #
 # Settings › Privacy › Local data ("Reset Atlas", "Clear cache") does the same
 # from inside the app: `targets` in src-tauri/src/commands/app_data_reset.rs
-# names these directories too. Change the two lists together. (One known
-# difference: the app treats ~/Library/{Caches,WebKit}/atlas as an unbundled
-# build's, i.e. Atlas Dev's, where this script removes them as the default's.)
+# names these directories too. Change the two lists together.
+#
+# `bun run dev:app` runs unbundled, so WebKit names its Caches, WebKit and
+# Preferences entries after the binary, `atlas`, not after a bundle id. Those
+# are Atlas Dev's: `--dev` removes them and the default leaves them alone.
 set -euo pipefail
 
 dev=0
@@ -32,12 +33,14 @@ if [ "$dev" -eq 1 ]; then
     echo "error: Atlas Dev is running — quit it first" >&2
     exit 1
   fi
-  ids=(dev.atlas.ide.dev)
+  ids=(dev.atlas.ide.dev atlas)
   dirs=(
     "$config_home/atlas-dev"
     "$HOME/Library/Application Support/dev.atlas.ide.dev"
     "$HOME/Library/Caches/dev.atlas.ide.dev"
+    "$HOME/Library/Caches/atlas"
     "$HOME/Library/WebKit/dev.atlas.ide.dev"
+    "$HOME/Library/WebKit/atlas"
   )
   leftover_pattern="*dev.atlas.ide.dev*"
   label="Atlas Dev"
@@ -46,13 +49,11 @@ else
     echo "error: atlas is running — quit it first" >&2
     exit 1
   fi
-  ids=(atlas dev.atlas.ide)
+  ids=(dev.atlas.ide)
   dirs=(
     "$config_home/atlas"
     "$HOME/Library/Application Support/dev.atlas.ide"
-    "$HOME/Library/Caches/atlas"
     "$HOME/Library/Caches/dev.atlas.ide"
-    "$HOME/Library/WebKit/atlas"
     "$HOME/Library/WebKit/dev.atlas.ide"
   )
   leftover_pattern="*atlas*"
@@ -76,7 +77,13 @@ done
 
 # The other profile's data is not a leftover.
 leftover=$(find "$HOME/Library" -maxdepth 2 -iname "$leftover_pattern" 2>/dev/null |
-  grep -iv claude | { if [ "$dev" -eq 1 ]; then cat; else grep -v 'dev\.atlas\.ide\.dev'; fi; } || true)
+  grep -iv claude | {
+  if [ "$dev" -eq 1 ]; then
+    cat
+  else
+    grep -Ev 'dev\.atlas\.ide\.dev|/(Caches|WebKit)/atlas$|/Preferences/atlas\.plist$'
+  fi
+} || true)
 if [ -n "$leftover" ]; then
   echo "warning: leftovers found:" >&2
   echo "$leftover" >&2
