@@ -35,9 +35,7 @@ export function Detected({
 
   return (
     <div className={cn(GROUP, "space-y-1.5")}>
-      <p className="text-3xs font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">
-        This project
-      </p>
+      <p className="eyebrow">This project</p>
 
       <StatusRow icon={FolderGit2} ok value={folder} caption="folder" mono={false} />
 
@@ -97,9 +95,9 @@ export function Detected({
  */
 export function GitMissingBanner() {
   return (
-    <div className="flex items-start gap-2 rounded-lg border border-dashed border-warning/40 px-2.5 py-2">
+    <div className="flex items-start gap-2 rounded-md border border-dashed border-warning/40 px-2.5 py-2">
       <GitBranch size={12} className="mt-0.5 shrink-0 text-warning" />
-      <p className="min-w-0 text-xs text-[var(--secondary-foreground)]">
+      <p className="min-w-0 text-xs text-secondary-foreground">
         Git is not installed on this machine. Sessions are still recorded, but they cannot be linked
         to commits and cannot be shared with an Organization.
       </p>
@@ -116,10 +114,10 @@ export function GitMissingBanner() {
  */
 export function GitInitOffer({ busy, onGitInit }: { busy: boolean; onGitInit: () => void }) {
   return (
-    <div className="flex items-start gap-2 rounded-lg border border-dashed border-element-active px-2.5 py-2">
-      <GitBranch size={12} className="mt-0.5 shrink-0 text-[var(--muted-foreground)]" />
+    <div className="flex items-start gap-2 rounded-md border border-dashed border-element-active px-2.5 py-2">
+      <GitBranch size={12} className="mt-0.5 shrink-0 text-muted-foreground" />
       <div className="min-w-0">
-        <p className="text-xs text-[var(--secondary-foreground)]">
+        <p className="text-xs text-secondary-foreground">
           Sessions are recorded here already. Initialize git to also link them to the commits they
           produce.
         </p>
@@ -127,7 +125,7 @@ export function GitInitOffer({ busy, onGitInit }: { busy: boolean; onGitInit: ()
           type="button"
           disabled={busy}
           onClick={onGitInit}
-          className="mt-1 cursor-pointer text-xs text-[var(--foreground)] underline underline-offset-2 transition-colors duration-150 hover:no-underline disabled:cursor-not-allowed disabled:opacity-40"
+          className="mt-1 cursor-pointer text-xs text-foreground underline underline-offset-2 transition-colors duration-150 hover:no-underline disabled:cursor-not-allowed disabled:opacity-40"
         >
           Initialize git
         </button>

@@ -58,8 +58,8 @@ export function PromoteForm({
 
   return (
     <div className="space-y-2">
-      <p className="text-sm font-medium text-[var(--foreground)]">Promote to Cloud</p>
-      <p className="text-xs text-[var(--muted-foreground)]">
+      <p className="text-sm font-medium text-foreground">Promote to Cloud</p>
+      <p className="text-xs text-muted-foreground">
         {activeTab === "create"
           ? "Everything captured here joins your Organization's timeline. You'll see exactly what before anything is sent."
           : "Attach this Project's history to a Project your Organization already has. You'll see exactly what before anything is sent."}

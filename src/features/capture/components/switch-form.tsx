@@ -29,10 +29,10 @@ export function SwitchForm({
 }) {
   return (
     <div className="space-y-2">
-      <p className="text-sm font-medium text-[var(--foreground)]">Change Project</p>
-      <p className="text-xs text-[var(--muted-foreground)]">
+      <p className="text-sm font-medium text-foreground">Change Project</p>
+      <p className="text-xs text-muted-foreground">
         Currently syncing to{" "}
-        <span className="font-mono text-[var(--secondary-foreground)]">{binding.slug ?? "—"}</span>.
+        <span className="font-mono text-secondary-foreground">{binding.slug ?? "—"}</span>.
         Everything captured here will be re-sent to the Project you pick.
       </p>
       <ConnectTab

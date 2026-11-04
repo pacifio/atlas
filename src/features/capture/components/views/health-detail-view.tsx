@@ -1,5 +1,6 @@
-import { Loader2, RefreshCw } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 
+import { calloutVariants, Spinner } from "@tryatlas/design";
 import { cn } from "@/lib/utils";
 
 import type { CaptureHealth } from "../../types";
@@ -15,7 +16,10 @@ import type { CaptureHealth } from "../../types";
  * nobody finished reading. The reason is the line; the `nextStep` moves to the
  * title, so it is still reachable and no longer competing.
  *
- * **The banner is the retry.** See `HealthDetail` for what the click runs.
+ * **The banner is the retry.** See `HealthDetail` for what the click runs. It
+ * wears the package `Callout` look (`calloutVariants`) but stays one button:
+ * a separate Retry control is a proposed behaviour change awaiting review
+ * (ATL-718), so the click target and its label are today's.
  */
 export function HealthDetailView({
   health,
@@ -28,7 +32,8 @@ export function HealthDetailView({
   onRetry: () => void;
 }) {
   const stopped = health.state === "stopped";
-  const tone = stopped ? "var(--status-error-foreground)" : "var(--status-warning-foreground)";
+  const tone = stopped ? "error" : "warning";
+  const ink = stopped ? "var(--status-error-foreground)" : "var(--status-warning-foreground)";
 
   return (
     <button
@@ -37,32 +42,32 @@ export function HealthDetailView({
       disabled={retrying}
       aria-label="Retry — restart capture for this project"
       className={cn(
+        calloutVariants({ tone }),
         // The ants are drawn as background gradients, so the fill has to be a
-        // background-COLOR or it would paint over them.
-        "atlas-ants mb-2.5 block w-full cursor-pointer rounded-lg px-2.5 py-2 text-left transition-opacity",
+        // background-COLOR (the callout's `bg-*-muted` is) or it would paint
+        // over them.
+        "atlas-ants mb-2.5 w-full cursor-pointer text-left transition-opacity",
         "hover:opacity-90 disabled:cursor-wait",
       )}
       style={{
-        backgroundColor: stopped
-          ? "var(--status-error-background)"
-          : "var(--status-warning-background)",
-        ["--atlas-ants-color" as string]: `color-mix(in oklab, ${tone} 55%, transparent)`,
+        // A call-site tint of the banner's own tone, for the ants.
+        ["--atlas-ants-color" as string]: `color-mix(in oklab, ${ink} 55%, transparent)`,
       }}
     >
-      <span className="flex flex-col gap-1">
+      <span className="flex min-w-0 flex-1 flex-col gap-1">
         {health.issues.map((issue, index) => (
           // Index in the key: two issues can share their reason text.
           <span
             key={`${index}-${issue.reason}`}
             title={issue.nextStep || undefined}
             className={cn(
-              "flex items-center gap-1.5 text-xs",
+              "flex items-center gap-1.5",
               issue.state === "stopped" ? "text-error" : "text-warning",
             )}
           >
             {index === 0 &&
               (retrying ? (
-                <Loader2 size={10} className="shrink-0 animate-spin" />
+                <Spinner size="xs" label="" />
               ) : (
                 <RefreshCw size={10} className="shrink-0 opacity-70" />
               ))}

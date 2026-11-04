@@ -144,15 +144,13 @@ export function CaptureRadar({ live, health }: { live: boolean; health: CaptureH
           so the origin of every ring is visibly a thing rather than a corner. */}
       <span
         aria-hidden
-        className="absolute size-[92px] rounded-full border border-element-selected bg-[var(--card)]"
+        className="absolute size-[92px] rounded-full border border-element-selected bg-card"
         style={{ left: RADAR_ORIGIN_X - 46, top: RADAR_HEIGHT - 46 }}
       />
 
       <span className="absolute bottom-3 left-3.5 flex items-center gap-1.5">
-        <CaptureDot tone={live ? "success" : "idle"} />
-        <span className="text-3xs font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
-          {live ? "Capturing" : "Paused"}
-        </span>
+        <CaptureDot tone={live ? "success" : "neutral"} />
+        <span className="eyebrow">{live ? "Capturing" : "Paused"}</span>
       </span>
     </div>
   );

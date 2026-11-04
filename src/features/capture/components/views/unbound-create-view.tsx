@@ -1,11 +1,12 @@
 import { RefreshCw } from "lucide-react";
 
+import { Button, Callout } from "@tryatlas/design";
+
 import type { CloudOrg, SlugState } from "../../lib/capture-flow";
 import type { Detection, ImportPreview, ProjectMode } from "../../types";
 import { CloudFields } from "./cloud-fields";
 import { GhostButton, ModeOption, PrimaryButton } from "./controls";
 import { Detected, GitInitOffer, GitMissingBanner } from "./detected";
-import { HINT, SECTION_LABEL } from "./styles";
 import { TimelinePreview } from "./timeline-preview";
 
 /** The unbound Create tab: Local in one click, or the Cloud form. */
@@ -60,8 +61,10 @@ export function UnboundCreateView({
   return (
     <div className="atlas-fade-in space-y-2.5">
       <div>
-        <span className={SECTION_LABEL}>Where sessions are stored</span>
-        <div role="radiogroup" aria-label="Where sessions are stored" className="mt-1 flex gap-1.5">
+        <span className="text-xs font-medium text-secondary-foreground">
+          Where sessions are stored
+        </span>
+        <div role="radiogroup" aria-label="Where sessions are stored" className="mt-1 flex gap-1">
           <ModeOption
             selected={mode === "local"}
             disabled={false}
@@ -80,7 +83,7 @@ export function UnboundCreateView({
          *  unavailable rides on the disabled pill itself (lock glyph +
          *  title) rather than as a line of prose under a selected Local,
          *  where it read as Local being the thing that was broken. */}
-        <p className={HINT}>
+        <p className="caption mt-1">
           {mode === "cloud"
             ? "Shared with your Organization."
             : "This machine only — no account needed."}
@@ -112,17 +115,18 @@ export function UnboundCreateView({
       {/* The preview read failed: Continue has nothing to disclose, so say
        *  so where it blocks, with the retry right there. */}
       {mode === "cloud" && importPreview === null && (
-        <div className="flex items-center justify-between gap-2 rounded-lg bg-warning-muted px-2.5 py-1.5">
-          <span className="text-xs text-warning">Couldn't read this Project's history.</span>
-          <button
-            type="button"
-            onClick={onRetryPreview}
-            className="flex shrink-0 cursor-pointer items-center gap-1 rounded-full px-1.5 py-0.5 text-xs text-[var(--foreground)] underline underline-offset-2 transition-colors duration-150 hover:no-underline"
-          >
-            <RefreshCw size={10} />
-            Retry
-          </button>
-        </div>
+        <Callout
+          tone="warning"
+          icon={false}
+          action={
+            <Button variant="link" size="xs" onClick={onRetryPreview}>
+              <RefreshCw size={10} />
+              Retry
+            </Button>
+          }
+        >
+          Couldn't read this Project's history.
+        </Callout>
       )}
 
       {/* Create only. The Connect tab is a list of existing Projects —

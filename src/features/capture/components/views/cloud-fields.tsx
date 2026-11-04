@@ -1,9 +1,11 @@
-import { Check, Loader2, X } from "lucide-react";
+import { useId } from "react";
+import { Check, X } from "lucide-react";
 
+import { Button, Checkbox, FieldLabel, Input, Spinner } from "@tryatlas/design";
 import { cn } from "@/lib/utils";
 
 import type { CloudOrg, SlugState } from "../../lib/capture-flow";
-import { FIELD, GROUP } from "./styles";
+import { GROUP } from "./styles";
 
 /** Org label + Slug, Repository URL and visibility, shared by Create-Cloud and Promote. */
 export function CloudFields({
@@ -28,6 +30,9 @@ export function CloudFields({
   onRestrictedChange: (restricted: boolean) => void;
   onConnectInstead?: () => void;
 }) {
+  const slugId = useId();
+  const gitUrlId = useId();
+
   return (
     <div className={cn(GROUP, "space-y-2")}>
       {/* A label, not a picker: the destination is the Organisation you have
@@ -35,55 +40,56 @@ export function CloudFields({
        *  tenant you are not looking at, and the mistake only shows up later in
        *  someone else's timeline. */}
       <div className="flex items-center gap-2">
-        <span className="w-[70px] shrink-0 text-xs text-[var(--muted-foreground)]">
-          Organization
-        </span>
-        <span className="truncate text-xs text-[var(--secondary-foreground)]">
+        <span className="label w-[70px] shrink-0">Organization</span>
+        <span className="truncate text-xs text-secondary-foreground">
           {cloudOrgs[0]?.name ?? "—"}
         </span>
       </div>
 
-      <label className="flex items-center gap-2">
-        <span className="w-[70px] shrink-0 text-xs text-[var(--muted-foreground)]">Slug</span>
-        <input
+      <div className="flex items-center gap-2">
+        <FieldLabel htmlFor={slugId} className="w-[70px] shrink-0">
+          Slug
+        </FieldLabel>
+        <Input
+          id={slugId}
+          size="sm"
           value={slug}
           onChange={(e) => onSlugChange(e.target.value)}
           spellCheck={false}
           autoCapitalize="off"
           placeholder="my-project"
-          className={cn(FIELD, "h-7 flex-1 font-mono text-xs")}
+          className="flex-1 font-mono"
         />
-      </label>
+      </div>
 
       <SlugStatus state={slugState} onConnectInstead={onConnectInstead} />
 
       {/* A URL and nothing more — it is what lets a teammate's desktop find
        *  this Project from their own checkout's origin. Prefilled from the
        *  detected remote, and cleared on purpose is a real answer. */}
-      <label className="flex items-center gap-2">
-        <span className="w-[70px] shrink-0 text-xs text-[var(--muted-foreground)]">Repository</span>
-        <input
+      <div className="flex items-center gap-2">
+        <FieldLabel htmlFor={gitUrlId} className="w-[70px] shrink-0">
+          Repository
+        </FieldLabel>
+        <Input
+          id={gitUrlId}
+          size="sm"
           value={gitUrl}
           onChange={(e) => onGitUrlChange(e.target.value)}
           spellCheck={false}
           autoCapitalize="off"
           placeholder="github.com/acme/my-project"
-          className={cn(FIELD, "h-7 flex-1 font-mono text-xs")}
+          className="flex-1 font-mono"
         />
-      </label>
+      </div>
 
       <label className="flex cursor-pointer items-start gap-2">
-        <input
-          type="checkbox"
-          checked={restricted}
-          onChange={(e) => onRestrictedChange(e.target.checked)}
-          className="mt-0.5 size-3 shrink-0 cursor-pointer accent-[var(--primary)]"
-        />
+        <span className="pt-px">
+          <Checkbox checked={restricted} onCheckedChange={(next) => onRestrictedChange(next)} />
+        </span>
         <span className="min-w-0">
-          <span className="text-xs text-[var(--secondary-foreground)]">
-            Restrict to named members
-          </span>
-          <span className="block text-2xs text-[var(--muted-foreground)]">
+          <span className="text-xs text-secondary-foreground">Restrict to named members</span>
+          <span className="caption block">
             Otherwise every member of the Organization can read it and push to it. You can change
             this later.
           </span>
@@ -102,18 +108,21 @@ function SlugStatus({
   onConnectInstead?: () => void;
 }) {
   if (state.kind === "idle") return null;
+  // Indented past the 70px label column and its gap, so the verdict sits under
+  // the value it is about. Px like the column, not spacing steps: the rem
+  // shrinks with the UI-scale setting and the label text does not.
   return (
     <p className="flex items-center gap-1 pl-[78px] text-2xs">
       {state.kind === "checking" && (
         <>
-          <Loader2 size={10} className="animate-spin text-[var(--muted-foreground)]" />
-          <span className="text-[var(--muted-foreground)]">checking…</span>
+          <Spinner size="xs" label="" />
+          <span className="text-muted-foreground">checking…</span>
         </>
       )}
       {state.kind === "available" && (
         <>
-          <Check size={10} className="text-[var(--secondary-foreground)]" />
-          <span className="text-[var(--secondary-foreground)]">available</span>
+          <Check size={10} className="text-success" />
+          <span className="text-success">available</span>
         </>
       )}
       {state.kind === "taken" && (
@@ -121,26 +130,18 @@ function SlugStatus({
           <X size={10} className="text-error" />
           <span className="text-error">taken in this Organization</span>
           {onConnectInstead && (
-            <button
-              type="button"
-              onClick={onConnectInstead}
-              className="cursor-pointer text-[var(--secondary-foreground)] underline underline-offset-2 transition-colors duration-150 hover:text-[var(--foreground)]"
-            >
+            <Button variant="link" size="xs" onClick={onConnectInstead}>
               connect to it instead
-            </button>
+            </Button>
           )}
         </>
       )}
       {state.kind === "unknown" && (
         <>
           <span className="text-warning">couldn't check</span>
-          <button
-            type="button"
-            onClick={state.retry}
-            className="cursor-pointer text-[var(--secondary-foreground)] underline underline-offset-2 transition-colors duration-150 hover:text-[var(--foreground)]"
-          >
+          <Button variant="link" size="xs" onClick={state.retry}>
             retry
-          </button>
+          </Button>
         </>
       )}
     </p>

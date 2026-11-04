@@ -25,15 +25,15 @@ export function DisclosureStep({
 }) {
   return (
     <div className="atlas-fade-in space-y-2.5">
-      <p className="text-sm font-medium text-[var(--foreground)]">{title}</p>
+      <p className="text-sm font-medium text-foreground">{title}</p>
       <ul className={cn(GROUP, "space-y-1")}>
         {lines.map((line) => (
-          <li key={line} className="text-xs text-[var(--secondary-foreground)]">
+          <li key={line} className="text-xs text-secondary-foreground">
             {line}
           </li>
         ))}
       </ul>
-      <p className="text-2xs text-[var(--muted-foreground)]">
+      <p className="text-2xs text-muted-foreground">
         This makes the above visible to your Organization. Nothing is sent until you confirm.
       </p>
       <div className="flex justify-end gap-2 pt-0.5">

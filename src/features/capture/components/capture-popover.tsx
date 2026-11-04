@@ -1,6 +1,7 @@
 import { useAuthStore } from "@/features/auth/stores/auth-store";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
 import type { Organisation } from "@/features/organisations/types";
+import { Callout } from "@tryatlas/design";
 import { cn } from "@/lib/utils";
 
 import { useCapturePopover } from "../hooks/use-capture-popover";
@@ -141,14 +142,16 @@ export function CapturePopover({
 
   return (
     <div
+      data-view="capture-popover"
       className={cn(
         "w-[352px] select-none overflow-hidden text-sm",
-        // Border, translucent fill and blur all on THIS element — the same one
-        // the enter animation transforms. Splitting them across a wrapper would
-        // isolate the compositing layer and flatten the blur to flat
-        // transparency (see the note beside the keyframes in globals.css).
+        // The package popover surface. Edge, translucent fill and blur all on
+        // THIS element — the same one the enter animation transforms.
+        // Splitting them across a wrapper would isolate the compositing layer
+        // and flatten the blur to flat transparency (see the note beside the
+        // keyframes in globals.css).
         !embedded &&
-          "rounded-xl border border-element-active bg-[var(--card)]/95 shadow-md backdrop-blur-2xl atlas-panel-in-tl",
+          "rounded-lg bg-popover/95 shadow-md ring-1 ring-foreground/10 backdrop-blur-2xl atlas-panel-in-tl",
       )}
     >
       {/* A bound project opens onto the radar rather than a title bar: the panel
@@ -363,7 +366,11 @@ export function CapturePopover({
         )}
 
         {error && (
-          <p className="mt-2 rounded-lg bg-error-muted px-2.5 py-1.5 text-xs text-error">{error}</p>
+          <div className="mt-2">
+            <Callout tone="error" icon={false}>
+              {error}
+            </Callout>
+          </div>
         )}
       </div>
     </div>
