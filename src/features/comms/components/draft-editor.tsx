@@ -1,35 +1,27 @@
 import { useEffect, useMemo, useRef } from "react";
-import { Copy, Hash, Link2, Play } from "lucide-react";
-import {
-  EditorView,
-  keymap,
-  lineNumbers,
-  placeholder as cmPlaceholder,
-  Decoration,
-  WidgetType,
-} from "@codemirror/view";
-import type { DecorationSet } from "@codemirror/view";
-import { Compartment, EditorState, StateEffect, StateField } from "@codemirror/state";
+import { EditorView, keymap, lineNumbers, placeholder as cmPlaceholder } from "@codemirror/view";
+import { Compartment, EditorState } from "@codemirror/state";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { toast } from "sonner";
-import { cn } from "@/lib/utils";
 import { copyText } from "@/lib/clipboard";
 import { editorThemeExtensions } from "@/features/editor/themes/build-cm-theme";
 import { sendToAgentChat } from "@/features/chat/lib/send-to-agent";
 import { yCollab } from "y-codemirror.next";
 import { CommsAvatar } from "./comms-avatar";
 import { useDraftSession } from "../lib/use-draft-session";
-import { avatarHue } from "../lib/derive";
+import { peerTone } from "../lib/derive";
+import { remoteCaretField, setRemoteCarets } from "../lib/cm-remote-carets";
 import { useCommsStore } from "../stores/comms-store";
 import type { ChatConversation, PromptDraft } from "../types";
-import { HintGroup, HintItem, Tooltip, TooltipContent, TooltipTrigger } from "@tryatlas/design";
+import { DraftEditorView } from "./views/draft-editor-view";
 
 /**
  * The realtime Prompt Draft editor: one shared Y.Doc, everyone types at
  * once, remote carets drawn in place with the owner's name — the document
- * plumbing lives in `use-draft-session` and this file is the chrome plus a
- * CodeMirror wired with `yCollab` for sync and a custom caret layer for the
+ * plumbing lives in `use-draft-session`, the chrome in
+ * `views/draft-editor-view.tsx`, and this file wires CodeMirror with `yCollab`
+ * for sync and a custom caret layer (`lib/cm-remote-carets.ts`) for the
  * bespoke awareness protocol (position-only; y-protocols would be invisible
  * to the web client).
  */
@@ -98,6 +90,7 @@ export function DraftEditor({ conv, draft }: { conv: ChatConversation; draft: Pr
     const list = Object.values(peers).map((p) => ({
       ...p,
       name: firstName(members.get(p.userId)?.name),
+      tone: peerTone(p.userId),
     }));
     view.dispatch({ effects: setRemoteCarets.of(list) });
   }, [peers, members]);
@@ -116,134 +109,27 @@ export function DraftEditor({ conv, draft }: { conv: ChatConversation; draft: Pr
     sendToAgentChat(text);
   };
 
-  const peerList = Object.values(peers);
+  const peerList = Object.values(peers).map((p) => {
+    const member = members.get(p.userId) ?? null;
+    return {
+      id: p.userId,
+      name: member?.name ?? null,
+      tone: peerTone(p.userId),
+      avatar: <CommsAvatar member={member} size={16} />,
+    };
+  });
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex h-[32px] shrink-0 items-center gap-1.5 border-b border-border px-1.5">
-        <span className="flex min-w-0 items-center gap-1 pl-1 text-xs font-medium text-secondary-foreground">
-          <Hash size={11} className="shrink-0 text-muted-foreground" />
-          <span className="truncate">{conv.name ?? "conversation"}</span>
-        </span>
-
-        {/* Centre: the grouped action pill. */}
-        <div className="flex min-w-0 flex-1 justify-center">
-          <HintGroup>
-            <div className="flex items-center overflow-hidden rounded-full border border-border bg-element-selected">
-              <PillButton label="Copy draft" onClick={() => void copyAll()}>
-                <Copy size={11} />
-              </PillButton>
-              <span className="h-4 w-px bg-border" />
-              <PillButton label="Send to agent" onClick={toAgent}>
-                <Play size={11} />
-              </PillButton>
-              <span className="h-4 w-px bg-border" />
-              {/* No API mints a public draft link (the meetings door is the one
-                unauthenticated surface) — a mock, like the Spaces pill. */}
-              <PillButton label="Public link — coming soon" disabled>
-                <Link2 size={11} />
-              </PillButton>
-            </div>
-          </HintGroup>
-        </div>
-
-        {/* Who's here — always at least you: an empty corner read as "nobody
-            is in this doc", which is never true while you are. Peers stack in
-            front of your avatar as they arrive. */}
-        <div className="flex shrink-0 items-center pl-1">
-          <div className="flex items-center -space-x-1.5">
-            {peerList.slice(0, 3).map((p) => (
-              <Tooltip key={p.userId}>
-                <TooltipTrigger
-                  render={
-                    <span className="inline-flex">
-                      <CommsAvatar
-                        member={members.get(p.userId) ?? null}
-                        size={16}
-                        className="ring-2 ring-[var(--background)] rounded-full"
-                      />
-                    </span>
-                  }
-                />
-                <TooltipContent side="bottom" sideOffset={4}>
-                  {members.get(p.userId)?.name ?? "Unknown"} · editing
-                </TooltipContent>
-              </Tooltip>
-            ))}
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span className="inline-flex">
-                    <CommsAvatar
-                      member={members.get(me) ?? null}
-                      size={16}
-                      className="ring-2 ring-[var(--background)] rounded-full"
-                    />
-                  </span>
-                }
-              />
-              <TooltipContent side="bottom" sideOffset={4}>
-                You
-              </TooltipContent>
-            </Tooltip>
-          </div>
-          {peerList.length > 3 && (
-            <span className="pl-1 text-2xs text-muted-foreground">+{peerList.length - 3}</span>
-          )}
-        </div>
-      </div>
-
-      {sent && (
-        <div className="shrink-0 border-b border-border-subtle bg-element-hover px-3 py-1 text-2xs text-muted-foreground">
-          Sent to an agent — this draft is read-only now.
-        </div>
-      )}
-
-      <div className="relative min-h-0 flex-1 overflow-y-auto hide-scrollbar">
-        {!ready && (
-          <div className="flex flex-col gap-2 px-4 py-4">
-            {[0, 1, 2].map((i) => (
-              <div
-                key={i}
-                className="h-[10px] rounded bg-[var(--card)] opacity-50 atlas-marker-running"
-                style={{ width: `${60 - i * 12}%` }}
-              />
-            ))}
-          </div>
-        )}
-        <div ref={host} className={cn("h-full [&_.cm-editor]:h-full", !ready && "hidden")} />
-      </div>
-    </div>
-  );
-}
-
-function PillButton({
-  label,
-  onClick,
-  disabled,
-  children,
-}: {
-  label: string;
-  onClick?: () => void;
-  disabled?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <HintItem label={label}>
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={onClick}
-        className={cn(
-          "flex h-[22px] w-8 items-center justify-center text-secondary-foreground transition-colors",
-          disabled
-            ? "cursor-not-allowed text-disabled"
-            : "hover:bg-element-active hover:text-foreground cursor-pointer",
-        )}
-      >
-        {children}
-      </button>
-    </HintItem>
+    <DraftEditorView
+      convName={conv.name}
+      sent={sent}
+      ready={ready}
+      editorHost={host}
+      onCopy={() => void copyAll()}
+      onSendToAgent={toAgent}
+      peers={peerList}
+      self={<CommsAvatar member={members.get(me) ?? null} size={16} />}
+    />
   );
 }
 
@@ -251,77 +137,3 @@ function firstName(name: string | undefined): string {
   const first = (name ?? "").trim().split(/\s+/)[0];
   return first || "Someone";
 }
-
-// ---------------------------------------------------------------------------
-// Remote carets — the Google-docs treatment, from position-only awareness.
-// ---------------------------------------------------------------------------
-
-interface CaretInfo {
-  userId: string;
-  cursor: number;
-  name: string;
-}
-
-const setRemoteCarets = StateEffect.define<CaretInfo[]>();
-
-class CaretWidget extends WidgetType {
-  constructor(
-    private readonly name: string,
-    private readonly hue: number,
-  ) {
-    super();
-  }
-  override eq(other: CaretWidget): boolean {
-    return other.name === this.name && other.hue === this.hue;
-  }
-  toDOM(): HTMLElement {
-    // ratchet-allow: a collaborator's own caret hue, assigned per session.
-    const color = `hsl(${this.hue} 55% 55%)`;
-    const wrap = document.createElement("span");
-    wrap.className = "atlas-remote-caret";
-    wrap.style.cssText =
-      "position:relative;display:inline-block;width:0;height:1em;vertical-align:text-bottom;";
-    const bar = document.createElement("span");
-    bar.style.cssText = `position:absolute;left:-1px;top:0;bottom:-2px;width:2px;border-radius:1px;background:${color};`;
-    const flag = document.createElement("span");
-    flag.textContent = this.name;
-    flag.style.cssText =
-      `position:absolute;left:-1px;top:-14px;padding:0 4px;border-radius:3px 3px 3px 0;` +
-      // ratchet-allow: white on that saturated caret hue, which is not a theme surface.
-      `background:${color};color:#fff;font-size:9px;line-height:13px;white-space:nowrap;` +
-      `pointer-events:none;user-select:none;`;
-    wrap.append(bar, flag);
-    return wrap;
-  }
-  override ignoreEvent(): boolean {
-    return true;
-  }
-}
-
-/** Carets as a StateField so positions MAP through document changes between
- *  awareness frames — a peer's caret keeps riding its text while you type
- *  above it, instead of drifting until their next 500ms publish. */
-const remoteCaretField = StateField.define<DecorationSet>({
-  create: () => Decoration.none,
-  update(carets, tr) {
-    let next = carets.map(tr.changes);
-    for (const effect of tr.effects) {
-      if (effect.is(setRemoteCarets)) {
-        const len = tr.newDoc.length;
-        next = Decoration.set(
-          effect.value
-            .map((c) => {
-              const at = Math.min(Math.max(0, c.cursor), len);
-              return Decoration.widget({
-                widget: new CaretWidget(c.name, avatarHue(c.userId)),
-                side: -1,
-              }).range(at);
-            })
-            .sort((a, b) => a.from - b.from),
-        );
-      }
-    }
-    return next;
-  },
-  provide: (field) => EditorView.decorations.from(field),
-});

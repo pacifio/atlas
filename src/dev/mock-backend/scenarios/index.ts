@@ -11,7 +11,7 @@ import {
   updateError,
   updateReady,
 } from "../fixtures/app-chrome";
-import { commsIncomingMessage } from "../fixtures/comms";
+import { commsDraftPeers, commsIncomingMessage } from "../fixtures/comms";
 import {
   gitPullAsks,
   gitPullPrefersMerge,
@@ -94,6 +94,7 @@ const all: Scenario[] = [
     // terminal or git config could produce.
     actions: {
       commsIncomingMessage,
+      commsDraftPeers,
       openTeamChat,
       ...permissionActions,
       // The computer sleeping under a running turn (`sleep_watch.rs`).

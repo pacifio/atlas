@@ -10,6 +10,7 @@ import type {
   OrgMemberProfile,
 } from "../types";
 import { formatTime, timeFormat } from "@/lib/format-time";
+import { hueFor, type LabelTone } from "@tryatlas/design";
 
 /** The server sends reaction ROWS and no aggregate; this is where counts come
  *  from. Ordered by first appearance so the chips don't reshuffle on a change. */
@@ -185,13 +186,26 @@ export function initials(name: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
-/** Stable per-user hue so an avatar keeps its colour across sessions. Kept in
- *  the muted band so a wall of avatars never out-shouts the text. */
-export function avatarHue(id: string): number {
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-  return h % 360;
+/** A collaborator's identity hue in a shared draft — their caret, its flag
+ *  and the ring on their avatar. The package's `hueFor`, so web and desktop
+ *  give each person the same tone. */
+export function peerTone(userId: string): LabelTone {
+  return hueFor(userId);
 }
+
+/** Full class strings per tone, so Tailwind sees every one of them: `bg` for
+ *  the caret and its flag, `ring` for the same person's avatar. */
+export const INK: Record<LabelTone, { bg: string; ring: string }> = {
+  grey: { bg: "bg-hue-grey", ring: "ring-hue-grey" },
+  red: { bg: "bg-hue-red", ring: "ring-hue-red" },
+  orange: { bg: "bg-hue-orange", ring: "ring-hue-orange" },
+  yellow: { bg: "bg-hue-yellow", ring: "ring-hue-yellow" },
+  green: { bg: "bg-hue-green", ring: "ring-hue-green" },
+  cyan: { bg: "bg-hue-cyan", ring: "ring-hue-cyan" },
+  blue: { bg: "bg-hue-blue", ring: "ring-hue-blue" },
+  purple: { bg: "bg-hue-purple", ring: "ring-hue-purple" },
+  pink: { bg: "bg-hue-pink", ring: "ring-hue-pink" },
+};
 
 /** Body limits are in UTF-8 BYTES, not characters — emoji and CJK count 3–4×. */
 export function utf8Bytes(s: string): number {
