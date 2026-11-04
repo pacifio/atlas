@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   aggregateReactions,
   conversationTitle,
+  formatBytes,
+  formatDuration,
   groupMessages,
   hasUnreadConversation,
   initials,
@@ -294,5 +296,28 @@ describe("hasUnreadConversation", () => {
     expect(hasUnreadConversation([read("a", 0)], [conv("a")])).toBe(false);
     expect(hasUnreadConversation([read("gone", 5)], [conv("a")])).toBe(false);
     expect(hasUnreadConversation([], [])).toBe(false);
+  });
+});
+
+describe("formatDuration", () => {
+  const at = (seconds: number) => formatDuration(0, seconds * 1000);
+  it("counts seconds below a minute and whole minutes, then hours, above", () => {
+    expect(at(0)).toBe("0 sec");
+    expect(at(59)).toBe("59 sec");
+    expect(at(60)).toBe("1 min");
+    expect(at(59 * 60)).toBe("59 min");
+    expect(at(60 * 60)).toBe("1 hr");
+    expect(at(61 * 60)).toBe("1 hr 1 min");
+    expect(at(125 * 60)).toBe("2 hr 5 min");
+  });
+});
+
+describe("formatBytes", () => {
+  it("steps from bytes to whole kilobytes to one-decimal megabytes", () => {
+    expect(formatBytes(0)).toBe("0 B");
+    expect(formatBytes(1023)).toBe("1023 B");
+    expect(formatBytes(1024)).toBe("1 KB");
+    expect(formatBytes(1024 * 1024)).toBe("1.0 MB");
+    expect(formatBytes(1.5 * 1024 * 1024)).toBe("1.5 MB");
   });
 });

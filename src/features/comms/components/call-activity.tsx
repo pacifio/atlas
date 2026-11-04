@@ -9,7 +9,7 @@ import { copyShareLink, memberCallUrl } from "../lib/call-links";
 import { useCommsStore } from "../stores/comms-store";
 import { AudioPlayer } from "./audio-player";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { formatClock } from "../lib/derive";
+import { formatBytes, formatClock, formatDuration } from "../lib/derive";
 import type { ChatCall, OrgMemberProfile, RecordingTrack } from "../types";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@tryatlas/design";
 
@@ -279,21 +279,4 @@ async function saveTrack(track: RecordingTrack): Promise<void> {
     console.warn("comms: save recording failed:", track.id, e);
     toast.error("Could not save that recording.");
   }
-}
-
-/** Whole minutes above a minute, seconds below — the web log's phrasing. */
-function formatDuration(from: number, to: number): string {
-  const s = Math.max(0, Math.round((to - from) / 1000));
-  if (s < 60) return `${s} sec`;
-  const m = Math.round(s / 60);
-  if (m < 60) return `${m} min`;
-  const h = Math.floor(m / 60);
-  const rem = m % 60;
-  return rem === 0 ? `${h} hr` : `${h} hr ${rem} min`;
-}
-
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }

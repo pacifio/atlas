@@ -219,3 +219,20 @@ export function hasUnreadConversation(
   }
   return false;
 }
+
+/** Whole minutes above a minute, seconds below — the web log's phrasing. */
+export function formatDuration(from: number, to: number): string {
+  const s = Math.max(0, Math.round((to - from) / 1000));
+  if (s < 60) return `${s} sec`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60);
+  const rem = m % 60;
+  return rem === 0 ? `${h} hr` : `${h} hr ${rem} min`;
+}
+
+export function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}

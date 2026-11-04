@@ -1,10 +1,9 @@
-import { useEffect, useState, type ReactElement } from "react";
-import { Popover } from "@base-ui/react/popover";
-import { Hash, Loader2 } from "lucide-react";
+import { useState, type ReactElement } from "react";
 import { toast } from "sonner";
 import { comms } from "../lib/comms-api";
-import { CHANNEL_NAME_MAX, type ChatConversation } from "../types";
+import type { ChatConversation } from "../types";
 import { useCommsStore } from "../stores/comms-store";
+import { RenameChannelMenuView } from "./views/rename-channel-menu-view";
 
 /**
  * Rename a channel — `PATCH /conversations/{id} { name }`, open to any member
@@ -24,25 +23,12 @@ export function RenameChannelMenu({
 }) {
   const actions = useCommsStore.use.actions();
   const [open, setOpen] = useState(false);
-  const [name, setName] = useState(conv.name ?? "");
   const [pending, setPending] = useState(false);
 
-  useEffect(() => {
-    if (open) {
-      setName(conv.name ?? "");
-      setPending(false);
-    }
-  }, [open, conv.name]);
-
-  const save = async () => {
-    const trimmed = name.trim();
-    if (!trimmed || pending || trimmed === conv.name) {
-      if (trimmed === conv.name) setOpen(false);
-      return;
-    }
+  const save = async (name: string) => {
     setPending(true);
     try {
-      const updated = await comms.patchConversation(conv.id, { name: trimmed });
+      const updated = await comms.patchConversation(conv.id, { name });
       setOpen(false);
       actions.adoptConversation(updated);
     } catch (e) {
@@ -53,45 +39,16 @@ export function RenameChannelMenu({
   };
 
   return (
-    <Popover.Root open={open} onOpenChange={setOpen}>
-      <Popover.Trigger render={children} />
-      <Popover.Portal>
-        <Popover.Positioner className="z-popover" align="start" sideOffset={6}>
-          <Popover.Popup className="overflow-hidden rounded-xl select-none border border-border bg-[var(--card)]/95 backdrop-blur-2xl atlas-panel-in-tl shadow-lg inset-highlight">
-            <div className="flex w-[240px] flex-col">
-              <div className="flex h-[32px] items-center gap-1.5 border-b border-border-subtle px-3">
-                <Hash size={11} className="shrink-0 text-muted-foreground" />
-                <input
-                  autoFocus
-                  value={name}
-                  maxLength={CHANNEL_NAME_MAX}
-                  onChange={(e) => setName(e.target.value)}
-                  onFocus={(e) => e.currentTarget.select()}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      void save();
-                    }
-                  }}
-                  aria-label="Channel name"
-                  className="min-w-0 flex-1 bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground"
-                />
-              </div>
-              <div className="p-2">
-                <button
-                  type="button"
-                  disabled={!name.trim() || pending}
-                  onClick={() => void save()}
-                  className="flex h-[26px] w-full items-center justify-center gap-1.5 rounded-md bg-element-active text-xs font-medium text-foreground transition-colors hover:bg-[var(--element-emphasis)] disabled:cursor-not-allowed disabled:opacity-45 cursor-pointer"
-                >
-                  {pending && <Loader2 size={11} className="animate-spin" />}
-                  Rename
-                </button>
-              </div>
-            </div>
-          </Popover.Popup>
-        </Popover.Positioner>
-      </Popover.Portal>
-    </Popover.Root>
+    <RenameChannelMenuView
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (next) setPending(false);
+      }}
+      initialName={conv.name ?? ""}
+      pending={pending}
+      onSave={(name) => void save(name)}
+      trigger={children}
+    />
   );
 }
