@@ -88,8 +88,8 @@ export function NoteEditorPanel({ noteId, projectPath, onClose }: NoteEditorPane
       <aside
         className={cn(
           "fixed right-0 top-0 bottom-0 z-modal w-[400px] flex flex-col",
-          "border-l border-[var(--border)]",
-          "bg-[var(--card)]/60 backdrop-blur-2xl backdrop-saturate-150",
+          "border-l border-border",
+          "bg-card/60 backdrop-blur-2xl backdrop-saturate-150",
           "shadow-md animate-slide-in-right",
         )}
       >
@@ -113,7 +113,7 @@ export function NoteEditorPanel({ noteId, projectPath, onClose }: NoteEditorPane
               value={note.title}
               onChange={(e) => updateNote(noteId, { title: e.target.value })}
               placeholder="Untitled"
-              className="flex-1 min-w-0 bg-transparent outline-none text-sm font-semibold text-[var(--foreground)] placeholder:text-[var(--muted-foreground)]"
+              className="flex-1 min-w-0 bg-transparent outline-none text-sm font-semibold text-foreground placeholder:text-muted-foreground"
             />
             <HintItem label="Delete note">
               <button
@@ -122,7 +122,7 @@ export function NoteEditorPanel({ noteId, projectPath, onClose }: NoteEditorPane
                   deleteNote(noteId);
                   onClose();
                 }}
-                className="p-1 rounded hover:bg-element-hover text-[var(--muted-foreground)] hover:text-error cursor-pointer transition-colors"
+                className="p-1 rounded hover:bg-element-hover text-muted-foreground hover:text-error cursor-pointer transition-colors"
               >
                 <Trash2 size={12} />
               </button>
@@ -131,7 +131,7 @@ export function NoteEditorPanel({ noteId, projectPath, onClose }: NoteEditorPane
               <button
                 type="button"
                 onClick={close}
-                className="p-1 rounded hover:bg-element-hover text-[var(--muted-foreground)] hover:text-[var(--foreground)] cursor-pointer transition-colors"
+                className="p-1 rounded hover:bg-element-hover text-muted-foreground hover:text-foreground cursor-pointer transition-colors"
               >
                 <X size={12} />
               </button>

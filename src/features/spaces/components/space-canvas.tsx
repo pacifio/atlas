@@ -36,7 +36,7 @@ import type { SpaceSession } from "../lib/use-space-session";
 import { useSpacesStore } from "../stores/spaces-store";
 import { SpaceCanvasContext, type SpaceCanvasCtx } from "./space-canvas-ctx";
 import { SPACE_NODE_TYPES } from "./space-nodes";
-import { SpaceActionPill, SpaceHeaderPill, type SyncState } from "./space-chrome";
+import { linkStatus, SpaceActionPill, SpaceHeaderPill } from "./space-chrome";
 import { SpaceCursors } from "./space-cursors";
 import { SpaceToolbar, type SpaceTool } from "./space-toolbar";
 
@@ -555,12 +555,7 @@ function SpaceSurface({
   // One glyph for the socket: live, catching up, or refused. `unavailable`
   // is the only state retrying cannot fix.
   const connection = session.meta?.connection ?? "disconnected";
-  const syncState: SyncState =
-    connection === "open" && ready
-      ? "synced"
-      : connection === "unavailable"
-        ? "offline"
-        : "syncing";
+  const status = linkStatus(connection, ready);
 
   const clearSelection = useCallback(() => {
     setSelectedIds([]);
@@ -660,7 +655,7 @@ function SpaceSurface({
         </div>
 
         <SpaceHeaderPill
-          sync={syncState}
+          status={status}
           pages={session.meta?.pages ?? []}
           activePageId={session.pageId}
           onOpenPage={session.openPage}
