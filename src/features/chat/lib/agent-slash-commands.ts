@@ -1,15 +1,11 @@
 import { agentMeta, catalogEntry as agentCatalogEntry } from "@/features/agents/lib/agent-meta";
 import { canSignIn } from "./agent-signin";
-import type { SlashCommand } from "../components/slash-command-picker";
+import type { SlashCommand } from "./slash-command-model";
 
-/** True if the signature contains `<…>` (required args). The picker uses
- *  this to decide whether to auto-send the command or just insert it into
- *  the composer and let the user type arguments before pressing Enter.
- *  Lives here, not in the picker, so the eager composer can call it without
- *  pulling the lazy picker chunk into the initial graph. */
-export function commandRequiresArgs(cmd: SlashCommand): boolean {
-  return /<[^>]+>/.test(cmd.signature);
-}
+// `commandRequiresArgs` lives in the pure model, not the picker, so the eager
+// composer can call it without pulling the lazy picker chunk into the initial
+// graph; it is re-exported here for the callers that import it from this file.
+export { commandRequiresArgs } from "./slash-command-model";
 
 /** The slash picker's catalogue for an agent: what it advertised over ACP
  *  (`availableCommands`), plus the few commands Atlas itself handles. */

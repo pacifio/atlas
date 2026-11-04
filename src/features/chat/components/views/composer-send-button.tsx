@@ -2,7 +2,7 @@
 
 import { ArrowUp, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Hint } from "@tryatlas/design";
+import { Hint, Icon } from "@tryatlas/design";
 
 export function ComposerSendButton({
   mode,
@@ -35,6 +35,7 @@ export function ComposerSendButton({
         shortcut={mode === "send" ? (enterToSend ? "↵" : "⌘↵") : undefined}
       >
         <button
+          type="button"
           onClick={onSubmit}
           disabled={!enabled}
           aria-label={
@@ -57,22 +58,23 @@ export function ComposerSendButton({
             // button at 8px top centers at 22px at EVERY UI scale.
             "absolute top-[8px] right-[8px] flex items-center justify-center w-[28px] h-[28px] rounded-lg border transition-colors",
             enabled
-              ? "border-transparent text-[var(--foreground)] hover:bg-element-hover hover:border-[var(--border)] cursor-pointer"
-              : "border-transparent text-[var(--muted-foreground)] cursor-not-allowed",
+              ? "border-transparent text-foreground hover:bg-element-hover hover:border-border cursor-pointer"
+              : "border-transparent text-muted-foreground cursor-not-allowed",
           )}
         >
           {/* Updates in place: Enter sends, so the arrow↔stop swap is
                 keyboard-driven and has no animation. */}
           <span className="flex items-center justify-center">
             {mode === "stop" ? (
-              <Square
-                size={11}
+              <Icon
+                icon={Square}
+                size="xs"
                 strokeWidth={3}
                 fill="currentColor"
                 className={stopping ? "animate-pulse" : undefined}
               />
             ) : (
-              <ArrowUp size={15} strokeWidth={2.5} />
+              <Icon icon={ArrowUp} size="md" strokeWidth={2.5} />
             )}
           </span>
         </button>

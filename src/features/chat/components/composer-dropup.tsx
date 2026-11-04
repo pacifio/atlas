@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
-import { cn } from "@/lib/utils";
 
 /**
  * The composer footer's dropup grammar, in one place.
@@ -22,36 +21,9 @@ import { cn } from "@/lib/utils";
  *   menu speak the same event.
  */
 
-/** The pill trigger's class string, so every footer pill reads as one set. */
-export function composerPillClass(open: boolean, opts: { disabled?: boolean } = {}): string {
-  return cn(
-    "flex h-6.5 items-center rounded-full border px-1.5 text-2xs font-medium leading-none transition-colors",
-    open
-      ? "border-border-strong bg-element-selected text-[var(--foreground)]"
-      : "border-[var(--border)] bg-[var(--card)] text-[var(--secondary-foreground)]",
-    opts.disabled
-      ? "cursor-default"
-      : "cursor-pointer hover:bg-element-hover hover:text-[var(--foreground)]",
-  );
-}
-
-/**
- * A footer pill's text label. As the composer narrows, labels give way to
- * their icons instead of wrapping onto a second line or pushing the right-hand
- * pills out past the edge. The composer shell is the `@container`; each pill's
- * `title` still names it when only the icon shows.
- *  - `"early"`: the icon carries the meaning on its own (usage ring, options
- *    sliders, memory index), so these go first.
- *  - `"late"`: agent and mode, which only an icon cannot fully identify.
- *  - omitted: always shown (the model, which truncates instead).
- */
-export function composerPillLabelClass(collapse?: "early" | "late"): string {
-  return cn(
-    "ml-1.5 whitespace-nowrap",
-    collapse === "early" && "hidden @[640px]:inline",
-    collapse === "late" && "hidden @[460px]:inline",
-  );
-}
+// The pill class strings live in a pure module so views can use them; they are
+// re-exported here for the containers that already import them from this file.
+export { composerPillClass, composerPillLabelClass } from "../lib/composer-pill-class";
 
 export interface ComposerDropupState {
   open: boolean;
@@ -144,7 +116,7 @@ export function ComposerDropup({
   return (
     <div
       aria-hidden={!open}
-      className="absolute bottom-full right-0 z-popover mb-1.5 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] shadow-md"
+      className="absolute bottom-full right-0 z-popover mb-1.5 overflow-hidden rounded-xl border border-border bg-card shadow-md"
       style={{
         width,
         height: open ? panelHeight : 0,

@@ -20,7 +20,7 @@ import {
 } from "../../lib/composer-modes";
 import { ModelPicker, type PickerAgent } from "../model-picker";
 import { FeaturedAgentOffers } from "../featured-agent-offers";
-import { composerPillLabelClass } from "../composer-dropup";
+import { composerPillClass, composerPillLabelClass } from "../../lib/composer-pill-class";
 import { Hint } from "@tryatlas/design";
 
 type AcpMode = { id: string; name: string; description?: string | null };
@@ -86,14 +86,6 @@ export function ComposerGroupsPanel({
   // Labels stay visible on every pill — the reference folds unselected tabs
   // to icon-only, but on a toolbar whose pills are real controls that reads
   // worse than it looks (deliberately skipped).
-  const pillCls = (active: boolean) =>
-    cn(
-      "flex items-center px-1.5 h-6.5 rounded-full border text-2xs leading-none font-medium transition-colors cursor-pointer",
-      active
-        ? "border-border-strong bg-element-selected text-[var(--foreground)]"
-        : "border-[var(--border)] bg-[var(--card)] text-[var(--secondary-foreground)] hover:bg-element-hover hover:text-[var(--foreground)]",
-    );
-
   return (
     <div ref={rootRef} className="relative flex items-center gap-1">
       {/* Shared morphing panel — ONE container whose height tweens to the
@@ -147,7 +139,7 @@ export function ComposerGroupsPanel({
                         className={cn("h-1.5 w-1.5 shrink-0 rounded-full", claudeModeDotClass(m))}
                       />
                       <span className="flex-1 label">{CLAUDE_PERMISSION_MODE_LABEL[m]}</span>
-                      {active && <Check size={11} className="text-[var(--primary)]" />}
+                      {active && <Check size={11} className="text-primary" />}
                     </button>
                   );
                 })}
@@ -157,7 +149,7 @@ export function ComposerGroupsPanel({
             {openGroup === "mode" && !isClaude && (
               <div className="p-1">
                 {!hasAcpModes ? (
-                  <div className="flex items-center gap-1.5 px-2 py-2 text-xs text-[var(--muted-foreground)]">
+                  <div className="flex items-center gap-1.5 px-2 py-2 text-xs text-muted-foreground">
                     <Loader2 size={11} className="animate-spin" /> Loading modes…
                   </div>
                 ) : (
@@ -179,10 +171,10 @@ export function ComposerGroupsPanel({
                         <span className="min-w-0 flex-1">
                           <span className="flex items-center gap-1.5 label">
                             {displayModeName(m.name)}
-                            {active && <Check size={11} className="text-[var(--primary)]" />}
+                            {active && <Check size={11} className="text-primary" />}
                           </span>
                           {m.description && (
-                            <span className="mt-0.5 block text-3xs leading-snug text-[var(--muted-foreground)]">
+                            <span className="mt-0.5 block text-3xs leading-snug text-muted-foreground">
                               {m.description}
                             </span>
                           )}
@@ -262,7 +254,7 @@ export function ComposerGroupsPanel({
             list to pick from. */}
       <button
         onClick={() => onToggle("model")}
-        className={pillCls(openGroup === "model")}
+        className={composerPillClass(openGroup === "model")}
         title={
           cycleAgentHint
             ? `${currentAgentLabel} — pick an agent and model here, ${cycleAgentHint} cycles agents`
@@ -284,13 +276,13 @@ export function ComposerGroupsPanel({
               ? capitalizeModelName(currentModel)
               : currentAgentLabel}
         </span>
-        <ChevronDown size={10} className="ml-0.5 shrink-0 text-[var(--muted-foreground)]" />
+        <ChevronDown size={10} className="ml-0.5 shrink-0 text-muted-foreground" />
       </button>
 
       {showMode && (
         <button
           onClick={() => onToggle("mode")}
-          className={pillCls(openGroup === "mode")}
+          className={composerPillClass(openGroup === "mode")}
           title="Permission mode — pick here, ⇧⇥ cycles"
         >
           {isClaude ? (
