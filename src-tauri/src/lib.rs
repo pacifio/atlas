@@ -652,7 +652,6 @@ pub fn run() {
             commands::fs::fs_add_to_gitignore,
             commands::git::git_status_fresh,
             commands::git::git_log,
-            commands::git::git_diff_all,
             commands::git::git_workspace_summary,
             commands::git::git_branch_compare,
             commands::usage_dashboard::usage_dashboard,

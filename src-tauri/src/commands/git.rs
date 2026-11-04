@@ -600,20 +600,6 @@ pub async fn git_branch_compare(path: String) -> Result<GitBranchCompare, String
 }
 
 #[tauri::command]
-pub async fn git_diff_all(path: String) -> Result<String, String> {
-    tokio::task::spawn_blocking(move || {
-        let output = git_read()
-            .args(["diff", "HEAD"])
-            .current_dir(&path)
-            .output()
-            .map_err(|e| e.to_string())?;
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
-#[tauri::command]
 pub async fn git_diff_file(path: String, file: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
         let output = git_read()

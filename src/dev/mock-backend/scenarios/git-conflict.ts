@@ -114,7 +114,6 @@ export const gitConflict: Scenario = {
       return null;
     },
     git_diff_file: () => API_DIFF,
-    git_diff_all: () => API_DIFF,
     git_log: () => [
       {
         hash: "a1b2c3d4e5f6",

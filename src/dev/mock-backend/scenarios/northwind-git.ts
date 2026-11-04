@@ -918,12 +918,6 @@ export const northwindGitCommands: Partial<TypedHandlers<MockResponses>> = {
     const change = changeFor(String(args.file));
     return change ? unifiedDiff(change.before ?? "", change.after, change.path) : "";
   },
-  git_diff_all: (args) =>
-    ours(args.path)
-      ? changes()
-          .map((change) => unifiedDiff(change.before ?? "", change.after, change.path))
-          .join("")
-      : gitHandlers.git_diff_all(args),
   // The review diff: the take's uncommitted work, and the same change set
   // against `origin/main` (the branch's commits are already pushed).
   git_diff_preview: (args): DiffPreview | Promise<DiffPreview> =>
