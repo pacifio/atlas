@@ -299,8 +299,6 @@ function SpaceResizer({
       isVisible={!!selected}
       minWidth={minWidth}
       minHeight={minHeight}
-      lineClassName="!border-primary/70"
-      handleClassName="!bg-primary !border-border-strong !w-2 !h-2 !rounded-sm"
       onResize={(_, p) => {
         const d = doc();
         if (!d || !id) return;

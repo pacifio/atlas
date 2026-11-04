@@ -5,7 +5,8 @@
    `@source`: its boot skeleton uses only its own inline `atlas-boot-*` rules. */
 @import "tailwindcss" source("../");
 /* The design system (`@tryatlas/design`, ADR-0027): Geist and Geist Mono, the
-   non-colour scales, the Tailwind bridge and the named utilities. The `-core`
+   non-colour scales, the Tailwind bridge, the named utilities and xyflow's
+   chrome (`canvas.css`: edges, handles, resize controls). The `-core`
    sheet leaves out the package's built-in themes as resolved CSS blocks,
    which desktop never selects: it applies themes through its own engine. In
    their place it carries the Atlas theme alone at `:root` (dark unless the OS
@@ -14,7 +15,6 @@
    replays the last one from localStorage). Everything below is desktop's own. */
 @import "@tryatlas/design/styles-core.css";
 @import "./diff-syntax.css";
-@import "./xyflow.css";
 
 :root {
   /* The one bar: every column's header (file tree, each split column, the

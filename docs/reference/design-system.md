@@ -24,8 +24,8 @@ the active theme over it at `html:root`:
 
 `globals.css` keeps only what is desktop's: the 13px root, the titlebar height,
 `font-terminal`, `rounded-composer` and the feature CSS. The other files in
-`src/styles/` are desktop's too: `diff-syntax.css` and `xyflow.css`, which
-`globals.css` imports, and `hljs.css`, which the markdown and code renderers
+`src/styles/` are desktop's too: `diff-syntax.css`, which `globals.css`
+imports, and `hljs.css`, which the markdown and code renderers
 import themselves. Primitives are imported
 from the package root (`import { Button } from "@tryatlas/design"`); there is no
 `src/ui/` any more.

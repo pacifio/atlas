@@ -76,8 +76,6 @@ export const ShapeNode = memo(function ShapeNode({ id, data, selected }: NodePro
         isVisible={selected}
         minWidth={40}
         minHeight={40}
-        lineClassName="!border-primary/70"
-        handleClassName="!bg-primary !border-border-strong !w-2 !h-2 !rounded-sm"
         onResizeStart={() => beginInteraction()}
         onResize={(_, p) => {
           moveNote(id, p.x, p.y);
