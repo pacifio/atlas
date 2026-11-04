@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { DERIVED_VAR_REGISTRY, THEME_KEY_REGISTRY } from "@/features/theme/theme-key-registry";
+import { DERIVED_VAR_REGISTRY, THEME_KEY_REGISTRY } from "@tryatlas/design/theme";
 
 /**
  * The design-system ratchet (decision 33) — closed at zero.
@@ -143,9 +143,6 @@ const RULES: Rule[] = [
  * scanned.
  */
 const EXEMPT_FILES: Record<string, string> = {
-  "src/features/theme/theme-key-registry.ts":
-    "Shape 1. The one table of Atlas's per-appearance default for every theme " +
-    "key, so every entry is a colour literal by construction.",
   "src/features/agents/lib/agent-brand.ts":
     "Shape 2. The first-party agents' OWN brand colours — the one kind of " +
     "colour a theme key must not be able to restate (ADR-0002, and the " +
@@ -172,11 +169,6 @@ const EXEMPT_FILES: Record<string, string> = {
   "src/features/pdf/components/pdf-toolbar.tsx":
     "Shape 2. Renders the swatches for the ink colours above; the swatch has " +
     "to be the colour it applies.",
-  "src/features/theme/color.ts":
-    "Shape 1. The colour parser/mixer the resolver is built on. Its literals " +
-    "are the identity values of the operations themselves.",
-  "src/features/theme/resolve-theme.test.ts":
-    "Shape 1. Fixture themes. A test for the resolver has to hand it colours.",
   "src/features/terminal/lib/line-emulator.ts":
     "Not a colour: it BUILDS `rgb(r,g,b)` strings out of the numeric " +
     "parameters of an ANSI escape sequence. The rule matches the format, not a " +

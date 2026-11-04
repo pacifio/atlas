@@ -1,6 +1,6 @@
 // Generated from src-tauri/settings-registry.toml — do not edit. Run `bun run settings:gen` after editing that file.
 
-import type { ThemeOverride } from "@/features/theme/resolve-theme";
+import type { ThemeOverride } from "@tryatlas/design/theme";
 
 /**
  * Every key under `[settings]` in `config.toml`, typed. The Rust side is

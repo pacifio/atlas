@@ -24,12 +24,7 @@ import { Segmented } from "@/ui/segmented";
 import { Switch } from "@/ui/switch";
 import { useSettingsStore } from "@/features/settings/stores/settings-store";
 import { applyTheme } from "../../apply-theme";
-import {
-  saveTheme,
-  type Theme,
-  type ThemeAppearance,
-  type ThemeVariant,
-} from "../../lib/theme-api";
+import { saveTheme } from "../../lib/theme-api";
 import { themeIdSlug } from "../../lib/theme-import-api";
 import {
   ROLE_GROUPS,
@@ -38,11 +33,16 @@ import {
   type EditorRole,
   type EditorTable,
 } from "../../lib/theme-editor-roles";
-import { resolveTheme } from "../../resolve-theme";
 import type { ThemeEditorSession } from "../../stores/theme-editor-store";
 import { repaintTheme, useThemeStore } from "../../stores/theme-store";
-import type { ThemeKey } from "../../theme-key-registry";
 import { ColorField } from "./color-field";
+import {
+  type Theme,
+  type ThemeAppearance,
+  type ThemeVariant,
+  resolveTheme,
+  type ThemeKey,
+} from "@tryatlas/design/theme";
 
 /** The values an author set in one variant — nothing derived is in here. */
 type Slots = Record<EditorTable, Record<string, string>>;

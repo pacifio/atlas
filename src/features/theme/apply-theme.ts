@@ -1,5 +1,10 @@
-import type { Theme, ThemeMode } from "./lib/theme-api";
-import { resolveTheme, type ResolvedTheme, type ThemeOverride } from "./resolve-theme";
+import {
+  type Theme,
+  type ThemeMode,
+  resolveTheme,
+  type ResolvedTheme,
+  type ThemeOverride,
+} from "@tryatlas/design/theme";
 
 const STYLE_ID = "atlas-resolved-theme";
 /**

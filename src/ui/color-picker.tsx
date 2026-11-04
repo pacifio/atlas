@@ -7,8 +7,8 @@ import {
   type RefObject,
 } from "react";
 
-import type { HsvColor } from "@/features/theme/color";
 import { cn } from "@/lib/utils";
+import type { HsvColor } from "@tryatlas/design/theme";
 
 /**
  * The two controls a colour picker is made of: a saturation/brightness plane

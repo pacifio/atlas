@@ -1,12 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Check, ChevronRight, Copy, Plus, Search, Settings, Trash2, X } from "lucide-react";
-import {
-  describeDerivation,
-  DERIVED_VAR_REGISTRY,
-  THEME_KEY_REGISTRY,
-} from "@/features/theme/theme-key-registry";
 import { useThemeStore } from "@/features/theme/stores/theme-store";
-import type { ThemeMode } from "@/features/theme/lib/theme-api";
 import { Badge } from "@/ui/badge";
 import { Button } from "@/ui/button";
 import { IconButton } from "@/ui/icon-button";
@@ -85,6 +79,12 @@ import {
   TYPE_SCALE,
   Z_LAYERS,
 } from "./tokens";
+import {
+  describeDerivation,
+  DERIVED_VAR_REGISTRY,
+  THEME_KEY_REGISTRY,
+  type ThemeMode,
+} from "@tryatlas/design/theme";
 
 /**
  * The design-system gallery (decision 21).

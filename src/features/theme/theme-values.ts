@@ -24,13 +24,13 @@
  */
 import { useSyncExternalStore } from "react";
 import { getActiveTheme } from "./apply-theme";
-import { parseColor } from "./color";
 import {
+  hexOf,
   DERIVED_VAR_REGISTRY,
   THEME_KEY_REGISTRY,
   type DerivedVar,
   type ThemeKey,
-} from "./theme-key-registry";
+} from "@tryatlas/design/theme";
 
 export const THEME_APPLIED_EVENT = "atlas:theme-applied";
 
@@ -82,22 +82,6 @@ export function themeBase(token: string): string {
 /** A theme key as pixi's 24-bit colour integer. Alpha is dropped; see `alphaOf`. */
 export function themeHex(key: ThemeKey): number {
   return hexOf(themeColor(key));
-}
-
-/** Any CSS colour as pixi's 24-bit colour integer. */
-export function hexOf(value: string): number {
-  const color = parseColor(value);
-  if (!color) return 0;
-  return (
-    ((Math.round(color.r) & 0xff) << 16) |
-    ((Math.round(color.g) & 0xff) << 8) |
-    (Math.round(color.b) & 0xff)
-  );
-}
-
-/** The alpha channel of a theme key, for the pixi calls that take it apart. */
-export function alphaOf(value: string): number {
-  return parseColor(value)?.a ?? 1;
 }
 
 // ── Change notification ────────────────────────────────────────────────────

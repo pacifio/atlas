@@ -4,9 +4,8 @@ import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 import type { EditorThemeColors } from "./types";
 import { getActiveTheme } from "@/features/theme/apply-theme";
-import type { ResolvedTheme } from "@/features/theme/resolve-theme";
-import { THEME_KEY_REGISTRY, type ThemeKey } from "@/features/theme/theme-key-registry";
 import { themeBase } from "@/features/theme/theme-values";
+import { type ResolvedTheme, THEME_KEY_REGISTRY, type ThemeKey } from "@tryatlas/design/theme";
 
 /**
  * Atlas's per-appearance default for every theme key, read from the registry

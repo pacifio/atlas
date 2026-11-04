@@ -1,7 +1,10 @@
 import type { CSSProperties } from "react";
-import type { Theme, ThemeAppearance } from "./lib/theme-api";
-import { resolveTheme } from "./resolve-theme";
-import type { Appearance } from "./theme-key-registry";
+import {
+  type Theme,
+  type ThemeAppearance,
+  resolveTheme,
+  type Appearance,
+} from "@tryatlas/design/theme";
 
 /**
  * A theme resolved for a PREVIEW rather than for the app.

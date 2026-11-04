@@ -3,8 +3,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { BUILTIN_THEMES } from "@/dev/mock-backend/fixtures/builtin-themes";
-import { resolveTheme } from "./resolve-theme";
-import { DERIVED_VAR_REGISTRY, THEME_KEY_REGISTRY } from "./theme-key-registry";
+import { resolveTheme, DERIVED_VAR_REGISTRY, THEME_KEY_REGISTRY } from "@tryatlas/design/theme";
 
 /**
  * `tokens.css` carries every theme-key variable at its Atlas-dark value, as

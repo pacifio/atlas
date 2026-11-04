@@ -12,7 +12,7 @@ import { Icon } from "@/ui/icon";
 import { Input } from "@/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/ui/popover";
 import { Hint } from "@/ui/tooltip";
-import { colorToCss, hsvToHex, parseColor, toHsv, type HsvColor } from "../../color";
+import { colorToCss, hsvToHex, parseColor, toHsv, type HsvColor } from "@tryatlas/design/theme";
 
 /** `#rrggbb` for anything `parseColor` reads, alpha dropped: what the picker
  *  edits. A colour with alpha keeps it (`alphaOf`) and gets it back on save. */

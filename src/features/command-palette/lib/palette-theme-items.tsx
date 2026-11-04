@@ -8,12 +8,12 @@ import { Monitor, Moon, Palette, Sun } from "lucide-react";
 import { toast } from "sonner";
 import { Icon } from "@/ui/icon";
 import { appearanceForMode } from "@/features/theme/apply-theme";
-import type { ThemeMode } from "@/features/theme/lib/theme-api";
 import { themeIdFor, useThemeStore } from "@/features/theme/stores/theme-store";
 import { useThemeEditorStore } from "@/features/theme/stores/theme-editor-store";
 import { useSettingsStore } from "@/features/settings/stores/settings-store";
 import type { AppSettings } from "@/features/settings/lib/app-settings";
 import type { CommandPaletteActionItem, CommandPaletteSubmenuItem } from "./command-palette-logic";
+import type { ThemeMode } from "@tryatlas/design/theme";
 
 export const APPEARANCE_OPTIONS = [
   { mode: "system", label: "System", icon: Monitor },

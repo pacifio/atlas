@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { BUILTIN_THEMES } from "@/dev/mock-backend/fixtures/builtin-themes";
 import { previewTheme } from "./preview-theme";
-import { resolveTheme } from "./resolve-theme";
-import type { Theme } from "./lib/theme-api";
+import { resolveTheme, type Theme } from "@tryatlas/design/theme";
 
 const themes = BUILTIN_THEMES;
 const withBoth = themes.find((theme) => theme.dark && theme.light)!;

@@ -25,11 +25,12 @@ import { appearanceForMode } from "@/features/theme/apply-theme";
 import { useThemeEditorStore } from "@/features/theme/stores/theme-editor-store";
 import { themeIdFor, useThemeStore } from "@/features/theme/stores/theme-store";
 import { previewTheme, type ThemePreview } from "@/features/theme/preview-theme";
-import type { Theme, ThemeAppearance, ThemeSummary } from "@/features/theme/lib/theme-api";
+import type { ThemeSummary } from "@/features/theme/lib/theme-api";
 import type { AppSettings } from "../../lib/app-settings";
 import { useSettingsStore } from "../../stores/settings-store";
 import { SettingsSection } from "../layout/settings-layout";
 import { ThemeImportPanel } from "../theme-import-panel";
+import type { Theme, ThemeAppearance } from "@tryatlas/design/theme";
 
 export function ThemesSection() {
   const themeLight = useSettingsStore((s) => s.settings.themeLight);

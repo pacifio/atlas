@@ -6,8 +6,9 @@
 
 import { lazy, Suspense, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { getTheme, type Theme } from "../../lib/theme-api";
+import { getTheme } from "../../lib/theme-api";
 import { useThemeEditorStore } from "../../stores/theme-editor-store";
+import type { Theme } from "@tryatlas/design/theme";
 
 const ThemeEditorPanel = lazy(() =>
   import("./theme-editor-panel").then((m) => ({ default: m.ThemeEditorPanel })),

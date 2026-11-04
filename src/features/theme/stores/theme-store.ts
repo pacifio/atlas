@@ -1,16 +1,8 @@
 import { create } from "zustand";
 import { createSelectors } from "@/lib/create-selectors";
 import { appearanceForMode, applyTheme } from "../apply-theme";
-import {
-  getTheme,
-  listThemes,
-  onThemesChanged,
-  type Theme,
-  type ThemeMode,
-  type ThemeSummary,
-  type ThemeWarning,
-} from "../lib/theme-api";
-import type { ThemeOverride } from "../resolve-theme";
+import { getTheme, listThemes, onThemesChanged, type ThemeSummary } from "../lib/theme-api";
+import type { Theme, ThemeMode, ThemeWarning, ThemeOverride } from "@tryatlas/design/theme";
 
 /** The id every install ships with, and the last thing `apply` tries. */
 const FALLBACK_THEME = "atlas";

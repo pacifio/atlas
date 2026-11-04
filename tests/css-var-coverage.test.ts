@@ -3,7 +3,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { BUILTIN_THEMES } from "@/dev/mock-backend/fixtures/builtin-themes";
-import { resolveTheme } from "@/features/theme/resolve-theme";
+import { resolveTheme } from "@tryatlas/design/theme";
 
 /**
  * Every CSS custom property `src/` reads must be one something defines.
