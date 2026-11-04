@@ -3,7 +3,7 @@ import type { Tab } from "../stores/layout-store";
 // Chat is the default landing surface — always loaded so the first paint
 // shows the agent UI without a Suspense flash.
 import { ChatPanel } from "@/features/chat/components/chat-panel";
-import { UnsupportedView } from "@/features/unsupported/components/unsupported-view";
+import { UnsupportedFile } from "@/features/unsupported/components/unsupported-file";
 import { FileTabFrame } from "@/features/explorer/components/file-tab-frame";
 import { readPullRequestTabData } from "@/features/pull-requests/lib/open-pull-request-tab";
 import { readPullRequestListTabData } from "@/features/pull-requests/lib/open-pull-request-list-tab";
@@ -297,7 +297,7 @@ export function TabContent({ tab, projectId = null }: { tab: Tab; projectId?: st
         <CommsDraftTab convId={tab.data.convId as string} draftId={tab.data.draftId as string} />
       );
     case "unsupported":
-      return framed(<UnsupportedView filePath={tab.data.filePath as string} />);
+      return framed(<UnsupportedFile filePath={tab.data.filePath as string} />);
     default:
       return <PlaceholderContent tab={tab} />;
   }

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ZoomIn, ZoomOut, Maximize } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { HintGroup, HintItem } from "@tryatlas/design";
+import { HintGroup, HintItem, IconButton } from "@tryatlas/design";
 
 interface ImageZoomViewProps {
   src: string;
@@ -105,6 +105,7 @@ export function ImageZoomView({ src, alt, fill, checkerboard }: ImageZoomViewPro
   return (
     <div
       ref={containerRef}
+      data-view="image-zoom"
       className="relative flex h-full w-full items-center justify-center overflow-hidden"
       style={{
         cursor: scale > 1 ? (dragRef.current ? "grabbing" : "grab") : "default",
@@ -131,38 +132,21 @@ export function ImageZoomView({ src, alt, fill, checkerboard }: ImageZoomViewPro
         }}
       />
 
-      {/* Zoom controls — at the bottom of the view, so tooltips open upward. */}
+      {/* Zoom controls — at the bottom of the view, so tooltips open upward.
+          At a bound a click is a clamped no-op, so no button disables. */}
       <HintGroup side="top">
-        <div className="absolute bottom-3 right-3 flex items-center gap-0.5 rounded-md border border-[var(--border)] bg-[var(--card)] px-1 py-0.5 shadow-md">
+        <div className="absolute right-3 bottom-3 flex items-center gap-0.5 rounded-md border border-border bg-card p-0.5 shadow-md">
           <HintItem label="Zoom out">
-            <button
-              type="button"
-              onClick={zoomButton(1 / 1.3)}
-              className="flex h-6 w-6 items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-element-hover hover:text-[var(--foreground)]"
-            >
-              <ZoomOut size={13} />
-            </button>
+            <IconButton size="sm" icon={ZoomOut} label="Zoom out" onClick={zoomButton(1 / 1.3)} />
           </HintItem>
-          <span className="w-9 text-center text-2xs font-mono text-[var(--muted-foreground)]">
+          <span className="w-9 text-center font-mono text-2xs text-muted-foreground tabular-nums">
             {Math.round(scale * 100)}%
           </span>
           <HintItem label="Zoom in">
-            <button
-              type="button"
-              onClick={zoomButton(1.3)}
-              className="flex h-6 w-6 items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-element-hover hover:text-[var(--foreground)]"
-            >
-              <ZoomIn size={13} />
-            </button>
+            <IconButton size="sm" icon={ZoomIn} label="Zoom in" onClick={zoomButton(1.3)} />
           </HintItem>
           <HintItem label="Reset zoom">
-            <button
-              type="button"
-              onClick={reset}
-              className="flex h-6 w-6 items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-element-hover hover:text-[var(--foreground)]"
-            >
-              <Maximize size={12} />
-            </button>
+            <IconButton size="sm" icon={Maximize} label="Reset zoom" onClick={reset} />
           </HintItem>
         </div>
       </HintGroup>
