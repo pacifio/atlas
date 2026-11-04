@@ -31,7 +31,7 @@ import {
   RefreshCw,
   type LucideIcon,
 } from "lucide-react";
-import { GithubIcon } from "@/components/github-icon";
+import { GithubIcon } from "@/components/brand-marks";
 import { cn } from "@/lib/utils";
 import { isMac } from "@/lib/platform";
 import { useProjectStore } from "@/features/projects/stores/project-store";

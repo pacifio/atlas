@@ -1,5 +1,5 @@
 import { Cpu } from "lucide-react";
-import { AgentIcons } from "@/components/agent-icons";
+import { AgentIcons } from "@/components/brand-marks";
 import {
   modelVendorColor,
   modelVendorOf,

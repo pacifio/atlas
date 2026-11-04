@@ -13,7 +13,6 @@ import {
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/features/app/stores/app-store";
 import { sendToAgentChat } from "@/features/chat/lib/send-to-agent";
-import { ClaudeIcon, CodexIcon } from "@/components/agent-icons";
 import { memoryPolicy, type Policy } from "../lib/memory-policy-api";
 import {
   memoryGraph,
@@ -33,6 +32,8 @@ import {
   TrackSegment,
 } from "./views/memory-chrome";
 import {
+  ClaudeCodeMark,
+  CodexMark,
   Hint,
   HintGroup,
   HintItem,
@@ -390,11 +391,15 @@ function PolicyRow({
       </div>
 
       <div className={cn(COL.source, "flex min-w-0 items-center gap-1.5")}>
-        {policy.source === "codex" ? (
-          <CodexIcon className="size-3 shrink-0 opacity-70" />
-        ) : (
-          <ClaudeIcon className="size-3 shrink-0 opacity-70" />
-        )}
+        {/* The dimming sits on a wrapper: the design-system lint
+            (`shadcn/no-restyle`) rejects an opacity class on a package mark. */}
+        <span className="inline-flex shrink-0 opacity-70">
+          {policy.source === "codex" ? (
+            <CodexMark className="size-3 shrink-0" />
+          ) : (
+            <ClaudeCodeMark className="size-3 shrink-0" />
+          )}
+        </span>
         <span className="caption truncate font-mono" title={policy.file_path}>
           {basename(policy.file_path)}
         </span>

@@ -6,7 +6,6 @@ import { useEffect, useMemo, useState } from "react";
 import { Download } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AtlasLoader } from "@/components/atlas-loader";
-import { AgentMonogram, ExternalAgentIcon } from "@/components/agent-icons";
 import { TrendSparkline } from "@/components/trend-sparkline";
 import { downloadTrend, fmtDownloads } from "@/features/agents/lib/download-trends";
 import { useAgentRegistryStore } from "@/features/agents/stores/agent-registry-store";
@@ -22,7 +21,9 @@ import {
   useInstalls,
 } from "./agent-install";
 import {
+  AgentMonogram,
   Button,
+  ExternalAgentMark,
   Icon,
   Hint,
   Dialog,
@@ -191,7 +192,7 @@ function OfferRow({
           `currentColor` art, so the tile decides whether they are legible. */}
       <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md border border-border bg-background text-foreground">
         {entry.iconDataUrl ? (
-          <ExternalAgentIcon dataUrl={entry.iconDataUrl} size={16} />
+          <ExternalAgentMark dataUrl={entry.iconDataUrl} size={16} />
         ) : (
           <AgentMonogram label={entry.name} size={16} />
         )}

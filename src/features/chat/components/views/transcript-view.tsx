@@ -1,6 +1,6 @@
 import type { ReactNode, RefObject } from "react";
 import { cn } from "@/lib/utils";
-import { GradualBlur } from "@/components/gradual-blur";
+import { GradualBlur } from "@tryatlas/design";
 import type { TurnRailItem, TurnRailPreview } from "../../lib/turn-rail";
 import { BOTTOM_GAP, TOP_BLUR_RAMP, TOP_EDGE_RAMP } from "../../lib/transcript-insets";
 import { ResponseSelectionActions } from "../response-selection-actions";

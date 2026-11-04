@@ -34,7 +34,7 @@ import {
   type RefObject,
 } from "react";
 import { Check, ChevronRight, Pin, Plus, Search } from "lucide-react";
-import { ProviderLogo } from "@/components/provider-logo";
+import { ProviderLogo } from "@/components/brand-marks";
 import { AgentGlyph } from "@/features/artifacts/components/agent-glyph";
 import type { ActionId } from "@/features/keybindings/lib/actions";
 import { displayLabel } from "@/features/keybindings/lib/combo";

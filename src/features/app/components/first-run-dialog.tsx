@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { AtlasIcon } from "@/components/atlas-icon";
+import { AtlasIcon } from "@/components/brand-marks";
 import { StepDots } from "@/components/step-dots";
 import { KeymapStep, type KeymapAnswer } from "@/features/keybindings/components/keymap-step";
 import { useKeybindingsStore } from "@/features/keybindings/stores/keybindings-store";

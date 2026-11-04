@@ -15,7 +15,7 @@ import {
 import { Button, Icon } from "@tryatlas/design";
 
 import { AtlasLoader } from "@/components/atlas-loader";
-import { GithubIcon } from "@/components/github-icon";
+import { GithubIcon } from "@/components/brand-marks";
 import type { InstalledPack } from "@/features/packs/lib/types";
 import { kindCounts, type ModalSkill } from "@/features/skills/lib/skills-view-model";
 import type { ProjectionStatus, ReconciledSkill, ToolInfo } from "@/features/skills/lib/types";

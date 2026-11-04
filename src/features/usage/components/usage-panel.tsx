@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Card } from "@/components/usage-primitives";
-import { GradualBlur } from "@/components/gradual-blur";
+import { GradualBlur } from "@tryatlas/design";
 import { useProjectStore } from "@/features/projects/stores/project-store";
 import { useUsageStore } from "../stores/usage-store";
 import { useUsageView } from "../lib/use-usage-view";

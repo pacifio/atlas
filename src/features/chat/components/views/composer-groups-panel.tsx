@@ -5,7 +5,7 @@
 import type { ReactNode, Ref } from "react";
 import { Check, ChevronDown, Loader2, Plus, RotateCw } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { AgentMark } from "@/components/agent-mark";
+import { AgentMark } from "@/components/brand-marks";
 import {
   CLAUDE_PERMISSION_MODE_LABEL,
   CLAUDE_PERMISSION_MODES,

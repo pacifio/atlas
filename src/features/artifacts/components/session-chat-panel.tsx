@@ -30,7 +30,7 @@ import {
   X,
 } from "lucide-react";
 
-import { AtlasIcon } from "@/components/atlas-icon";
+import { AtlasIcon } from "@/components/brand-marks";
 
 import { ChatInput, type ChatInputHandle } from "@/features/chat/components/chat-input";
 import { ProviderModelPills } from "@/features/chat/components/provider-model-pills";

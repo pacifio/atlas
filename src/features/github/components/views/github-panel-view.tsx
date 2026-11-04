@@ -9,7 +9,7 @@ import {
   Spinner,
   useScrollEdges,
 } from "@tryatlas/design";
-import { GithubIcon } from "@/components/github-icon";
+import { GithubIcon } from "@/components/brand-marks";
 import type { ClonedRepo, GithubRepo } from "../../types";
 import { ClonedRepoRowView, type RowBusy } from "./cloned-repo-row-view";
 import { SearchResultRowView, type CloneState } from "./search-result-row-view";

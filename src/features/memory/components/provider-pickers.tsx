@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Menu as DropdownMenu } from "@base-ui/react/menu";
 import { Popover } from "@base-ui/react/popover";
 import { Loader2, ChevronDown, Search, Check } from "lucide-react";
-import { ProviderLogo } from "@/components/provider-logo";
+import { ProviderLogo } from "@/components/brand-marks";
 import { providerById } from "@/features/settings/lib/providers";
 import { modelchat } from "@/lib/byok/byok-chat";
 import { cn } from "@/lib/utils";

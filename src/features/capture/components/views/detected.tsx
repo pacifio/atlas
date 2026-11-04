@@ -1,6 +1,6 @@
 import { FolderGit2, GitBranch, GitCommitHorizontal, History } from "lucide-react";
 
-import { GithubIcon } from "@/components/github-icon";
+import { GithubIcon } from "@/components/brand-marks";
 import { cn } from "@/lib/utils";
 
 import type { Detection, ImportPreview } from "../../types";

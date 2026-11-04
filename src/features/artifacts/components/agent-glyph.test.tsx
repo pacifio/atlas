@@ -32,11 +32,11 @@ describe("AgentGlyph", () => {
     expect(titleOf(container)).toBe(title);
   });
 
-  it("draws the Atlas icon for the native agent", () => {
+  it("draws the Atlas mark for the native agent", () => {
     const { container } = render(<AgentGlyph agent="atlas-agent" />);
-    const img = container.querySelector("img");
-    expect(img?.getAttribute("alt")).toBe("Atlas");
-    expect(container.querySelector("svg")).toBeNull();
+    expect(container.querySelector('[role="img"]')?.getAttribute("aria-label")).toBe("Atlas");
+    expect(container.querySelector("svg")).not.toBeNull();
+    expect(container.querySelector("img")).toBeNull();
   });
 
   it("tints a first-party mark with its brand hue, and mono drops it", () => {
@@ -66,7 +66,8 @@ describe("AgentGlyph", () => {
       </AgentMetaContext.Provider>,
     );
     const span = container.querySelector("span[aria-hidden]") as HTMLElement | null;
-    expect(span?.style.backgroundColor.toLowerCase()).toBe("currentcolor");
+    expect(span?.classList.contains("bg-current")).toBe(true);
+    expect(span?.style.getPropertyValue("mask")).toContain(dataUrl);
     expect(container.querySelector("svg")).toBeNull();
   });
 

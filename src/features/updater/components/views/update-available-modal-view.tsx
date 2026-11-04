@@ -7,7 +7,7 @@ import {
   DialogTitle,
   Spinner,
 } from "@tryatlas/design";
-import { AtlasIcon } from "@/components/atlas-icon";
+import { AtlasIcon } from "@/components/brand-marks";
 
 export type UpdateModalState = "ready" | "applying" | "error";
 

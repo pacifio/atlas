@@ -19,7 +19,7 @@ import {
 import { toast } from "sonner";
 import { copyText } from "@/lib/clipboard";
 import { DISCORD_URL, DOCS_URL, GITHUB_URL, SITE_URL, X_URL } from "@/lib/atlas-links";
-import { GithubIcon } from "@/components/github-icon";
+import { GithubIcon } from "@/components/brand-marks";
 import { useFeedbackStore } from "@/features/feedback/stores/feedback-store";
 import { openSettingsSection } from "@/features/settings/lib/open-settings";
 import { updater } from "@/features/updater/lib/updater-api";

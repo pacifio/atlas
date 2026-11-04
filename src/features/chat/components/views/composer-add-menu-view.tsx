@@ -42,7 +42,7 @@ import {
   PlusMinusGlyph,
   Spinner,
 } from "@tryatlas/design";
-import { GithubIcon } from "@/components/github-icon";
+import { GithubIcon } from "@/components/brand-marks";
 import { cn } from "@/lib/utils";
 import type { GithubRepo, ClonedRepo } from "@/features/github/types";
 import type { MentionProject, PastSessionRef } from "../../lib/mentions";

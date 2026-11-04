@@ -109,7 +109,7 @@ const viewFiles = walk(SRC);
 const PURE_SHARED_MODULES = [
   "src/features/agents/lib/agent-identity.ts",
   "src/features/agents/lib/agent-meta-context.ts",
-  "src/components/agent-mark.tsx",
+  "src/components/brand-marks/agent-mark.tsx",
   "src/features/artifacts/components/agent-glyph.tsx",
   "src/features/artifacts/lib/board.ts",
   "src/features/usage/lib/derive.ts",

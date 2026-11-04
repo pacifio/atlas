@@ -10,7 +10,7 @@
 import { useEffect, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
-import { AtlasIcon } from "@/components/atlas-icon";
+import { AtlasIcon } from "@/components/brand-marks";
 import { GITHUB_URL } from "@/lib/atlas-links";
 import { isBrowserMock } from "@/lib/env";
 import { Button, Kbd } from "@tryatlas/design";

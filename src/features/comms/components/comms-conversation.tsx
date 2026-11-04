@@ -23,7 +23,6 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { GradualBlur } from "@/components/gradual-blur";
 import { useTranscriptScroll } from "@/features/chat/lib/use-transcript-scroll";
 import { useComposerFileDrop } from "@/features/chat/hooks/use-composer-file-drop";
 import { animatedScrollTo } from "@/features/artifacts/lib/scroll-to";
@@ -47,7 +46,7 @@ import {
   isNewDay,
 } from "../lib/derive";
 import type { ChatConversation, OrgMemberProfile } from "../types";
-import { Hint, Tooltip, TooltipContent, TooltipTrigger } from "@tryatlas/design";
+import { GradualBlur, Hint, Tooltip, TooltipContent, TooltipTrigger } from "@tryatlas/design";
 
 /**
  * Writing this to `scrollTop` and letting the browser clamp is the one way to

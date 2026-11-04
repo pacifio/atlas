@@ -5,7 +5,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { toast } from "sonner";
 import { isLinux, isWindows } from "@/lib/platform";
 import { useAppProfile } from "@/lib/app-profile";
-import { AtlasIcon } from "@/components/atlas-icon";
+import { AtlasIcon } from "@/components/brand-marks";
 import { updater } from "@/features/updater/lib/updater-api";
 import { useUpdaterStore } from "@/features/updater/stores/updater-store";
 import { useSettingsStore } from "../../stores/settings-store";
