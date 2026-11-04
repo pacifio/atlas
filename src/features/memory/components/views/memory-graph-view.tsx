@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Loader2,
   Download,
@@ -13,46 +13,69 @@ import {
   ListTree,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useAppStore } from "@/features/app/stores/app-store";
 import { agentBrandColor } from "@/features/agents/lib/agent-brand";
-import { useMemoryGraphStore } from "../stores/memory-graph-store";
-import { MemoryGraphCanvas } from "./memory-graph-canvas";
-import { MemoryTreeView } from "./memory-tree-view";
-import {
-  Notice,
-  ProgressBar,
-  SearchField,
-  Toolbar,
-  Track,
-  TrackSegment,
-} from "./views/memory-chrome";
+import type { MemoryGraphData } from "../../lib/memory-graph-types";
+import { Notice, ProgressBar, SearchField, Toolbar, Track, TrackSegment } from "./memory-chrome";
 import { Hint, Button, IconButton } from "@tryatlas/design";
 
-type ViewMode = "graph" | "tree";
-const VIEW_KEY = "atlas-memory-graph-view-mode";
+export type MemoryGraphViewMode = "graph" | "tree";
 
 const MODEL_LABEL = "all-MiniLM-L6-v2 · ~90 MB";
 
-export function MemoryGraphView() {
-  const projectPath = useAppStore.use.currentProject()?.path ?? null;
-  const phase = useMemoryGraphStore.use.phase();
-  const progress = useMemoryGraphStore.use.progress();
-  const error = useMemoryGraphStore.use.error();
-  const graph = useMemoryGraphStore.use.graph();
-  const docCount = useMemoryGraphStore.use.docCount();
-  const query = useMemoryGraphStore.use.query();
-  const querying = useMemoryGraphStore.use.querying();
-  const results = useMemoryGraphStore.use.results();
-  const matchedIds = useMemoryGraphStore.use.matchedIds();
-  const selectedId = useMemoryGraphStore.use.selectedId();
-  const { init, download, buildIndex, runQuery, setQuery, clearQuery, select } =
-    useMemoryGraphStore.use.actions();
+/** The memory graph's setup phases (mirrors `MemoryGraphPhase` in the store). */
+export type MemoryGraphViewPhase =
+  | "checking"
+  | "not-downloaded"
+  | "downloading"
+  | "download-failed"
+  | "indexing"
+  | "graph-ready"
+  | "error";
 
-  useEffect(() => {
-    if (projectPath) void init(projectPath);
-  }, [projectPath, init]);
+export interface MemoryGraphViewProps {
+  projectOpen: boolean;
+  phase: MemoryGraphViewPhase;
+  progress: {
+    file: string;
+    file_index: number;
+    file_count: number;
+    received: number;
+    total: number;
+  } | null;
+  error: string | null;
+  graph: MemoryGraphData | null;
+  docCount: number;
+  query: string;
+  querying: boolean;
+  results: { id: string; score: number }[];
+  selectedId: string | null;
+  viewMode: MemoryGraphViewMode;
+  onViewModeChange: (mode: MemoryGraphViewMode) => void;
+  onDownload: () => void;
+  /** Re-downloads after a failed download, re-inits after an error. */
+  onRetry: () => void;
+  onQueryChange: (q: string) => void;
+  onRunQuery: (q: string) => void;
+  onClearQuery: () => void;
+  onSelect: (id: string | null) => void;
+  onReindex: () => void;
+  /** The graph or tree stage for the current view mode, at the scrubber's cutoff. */
+  renderStage: (cutoffMs: number | null) => ReactNode;
+}
 
-  if (!projectPath) {
+/** The Memory tab's Graph sub-tab: setup screens, then the toolbar, stage,
+ *  timeline scrubber, legend, detail card and results rail. Props only. */
+export function MemoryGraphView({
+  projectOpen,
+  phase,
+  progress,
+  error,
+  graph,
+  onDownload,
+  onRetry,
+  ...ready
+}: MemoryGraphViewProps) {
+  if (!projectOpen) {
     return <Notice>Open a project first.</Notice>;
   }
 
@@ -66,7 +89,7 @@ export function MemoryGraphView() {
         icon={<Sparkles size={20} />}
         title="Enable semantic memory"
         action={
-          <Button size="lg" onClick={() => void download()}>
+          <Button size="lg" onClick={onDownload}>
             <Download size={13} />
             Download model
           </Button>
@@ -108,10 +131,7 @@ export function MemoryGraphView() {
         icon={<AlertTriangle size={18} className="text-error" />}
         title={phase === "download-failed" ? "Model download failed" : "Something went wrong"}
         action={
-          <Button
-            variant="outline"
-            onClick={() => (phase === "download-failed" ? void download() : void init(projectPath))}
-          >
+          <Button variant="outline" onClick={onRetry}>
             <RotateCw size={12} />
             Retry
           </Button>
@@ -131,54 +151,30 @@ export function MemoryGraphView() {
     return <Notice>No memory to graph yet.</Notice>;
   }
 
-  return (
-    <GraphReady
-      projectPath={projectPath}
-      graph={graph}
-      docCount={docCount}
-      query={query}
-      querying={querying}
-      results={results}
-      matchedIds={matchedIds}
-      selectedId={selectedId}
-      onQueryChange={setQuery}
-      onRunQuery={(q) => void runQuery(projectPath, q)}
-      onClearQuery={clearQuery}
-      onSelect={select}
-      onReindex={() => void buildIndex(projectPath)}
-    />
-  );
+  return <GraphReady graph={graph} {...ready} />;
 }
 
+type GraphReadyProps = Omit<
+  MemoryGraphViewProps,
+  "projectOpen" | "phase" | "progress" | "error" | "graph" | "onDownload" | "onRetry"
+> & { graph: MemoryGraphData };
+
 function GraphReady({
-  projectPath,
   graph,
   docCount,
   query,
   querying,
   results,
-  matchedIds,
   selectedId,
+  viewMode,
+  onViewModeChange,
   onQueryChange,
   onRunQuery,
   onClearQuery,
   onSelect,
   onReindex,
-}: {
-  projectPath: string;
-  graph: import("./memory-graph-canvas").MemoryGraphData;
-  docCount: number;
-  query: string;
-  querying: boolean;
-  results: { id: string; score: number }[];
-  matchedIds: Set<string>;
-  selectedId: string | null;
-  onQueryChange: (q: string) => void;
-  onRunQuery: (q: string) => void;
-  onClearQuery: () => void;
-  onSelect: (id: string | null) => void;
-  onReindex: () => void;
-}) {
+  renderStage,
+}: GraphReadyProps) {
   const nodeById = useMemo(() => {
     const m = new Map<string, (typeof graph.nodes)[number]>();
     for (const n of graph.nodes) m.set(n.id, n);
@@ -204,20 +200,6 @@ function GraphReady({
   const [cutoff, setCutoff] = useState<number | null>(null);
   const [playing, setPlaying] = useState(false);
   const rafRef = useRef<number | undefined>(undefined);
-
-  const [viewMode, setViewMode] = useState<ViewMode>(() => {
-    const v = typeof localStorage !== "undefined" ? localStorage.getItem(VIEW_KEY) : null;
-    // Tree is the default/initial view; only an explicit "graph" pref overrides.
-    return v === "graph" ? "graph" : "tree";
-  });
-  const setView = (m: ViewMode) => {
-    setViewMode(m);
-    try {
-      localStorage.setItem(VIEW_KEY, m);
-    } catch {
-      /* ignore */
-    }
-  };
 
   // Esc deselects the active node (unless typing in the search field).
   useEffect(() => {
@@ -254,7 +236,7 @@ function GraphReady({
   }, [playing, hasTime, minTs, maxTs]);
 
   return (
-    <div className="flex h-full flex-col bg-background">
+    <div data-view="memory-graph" className="flex h-full flex-col bg-background">
       {/* Query bar */}
       <Toolbar>
         {/* Tree / Graph toggle — top-left. Tree (the decision tree) is the
@@ -262,14 +244,14 @@ function GraphReady({
         <Track>
           <TrackSegment
             active={viewMode === "tree"}
-            onClick={() => setView("tree")}
+            onClick={() => onViewModeChange("tree")}
             title="Decision tree"
           >
             <ListTree size={11} /> Tree
           </TrackSegment>
           <TrackSegment
             active={viewMode === "graph"}
-            onClick={() => setView("graph")}
+            onClick={() => onViewModeChange("graph")}
             title="Force graph"
           >
             <Network size={11} /> Graph
@@ -313,27 +295,7 @@ function GraphReady({
       {/* Canvas + optional results rail */}
       <div className="flex-1 min-h-0 flex">
         <div className="relative flex-1 min-w-0">
-          {viewMode === "graph" ? (
-            <MemoryGraphCanvas
-              graph={graph}
-              projectPath={projectPath}
-              selectedId={selectedId}
-              matchedIds={matchedIds}
-              cutoffMs={cutoff}
-              onSelect={onSelect}
-              onActivate={onSelect}
-            />
-          ) : (
-            <MemoryTreeView
-              graph={graph}
-              projectPath={projectPath}
-              selectedId={selectedId}
-              matchedIds={matchedIds}
-              cutoffMs={cutoff}
-              onSelect={onSelect}
-              onActivate={onSelect}
-            />
-          )}
+          {renderStage(cutoff)}
 
           {/* Time scrubber — watch memory accrue; drag to a moment in time. */}
           {hasTime && (
@@ -372,11 +334,14 @@ function GraphReady({
             </div>
           )}
 
-          {/* Impact-mode legend (graph only, while a node is selected). */}
+          {/* Impact-mode legend (graph only, while a node is selected). The
+              graph's ruler draws a 20px band along the top and left edges
+              above everything else, so the graph-mode overlays sit at 26px
+              (band + 6) to clear it rather than on the spacing scale. */}
           {selected && viewMode === "graph" && (
             <div
               className={cn(
-                "caption absolute right-3 top-3 flex h-7 items-center gap-3 rounded-full px-3",
+                "caption absolute top-[26px] right-3 flex h-7 items-center gap-3 rounded-full px-3",
                 HUD,
               )}
             >
@@ -392,7 +357,11 @@ function GraphReady({
               used to open were removed with the agent dropdown. */}
           {selected && (
             <div
-              className={cn("absolute bottom-3 left-3 max-w-[340px] rounded-lg p-3 text-left", HUD)}
+              className={cn(
+                "absolute bottom-3 max-w-[340px] rounded-lg p-3 text-left",
+                viewMode === "graph" ? "left-[26px]" : "left-3",
+                HUD,
+              )}
             >
               <div className="mb-1 flex items-center gap-1.5">
                 <SourceDot source={selected.source} />
