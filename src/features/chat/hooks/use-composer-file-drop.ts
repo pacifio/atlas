@@ -1,4 +1,4 @@
-import { useEffect, useState, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { dragPositionToCss } from "@/lib/drag-position";
 
@@ -67,4 +67,42 @@ export function useComposerFileDrop(opts: {
   }, [enabled, onDropFiles, targetRef]);
 
   return { isDropTarget };
+}
+
+/** The chat composer's drop zone, wired to `useComposerFileDrop`. */
+export function useComposerDropZone({
+  composerRef,
+  disabled,
+  attachPaths,
+}: {
+  composerRef: RefObject<HTMLDivElement | null>;
+  disabled: boolean;
+  attachPaths: (paths: string[]) => Promise<void>;
+}) {
+  // Drag-and-drop from the OS. The zone is the whole conversation column
+  // (`data-chat-drop-zone` in chat-panel.tsx), not this composer: a thin
+  // target under a drag image that hangs off the cursor lit up and went dark
+  // seemingly at random. Each split pane has its own column, so a drop still
+  // lands in the pane under the cursor. Outside a chat panel, the composer.
+  //
+  // A drop is a pointing gesture — "this one, here, in the sentence I am
+  // writing" — and `attachPaths` keeps that: the chip lands at the caret, and
+  // an image's staged bytes ride along with it. The chip carries the
+  // absolute path, which rides to the agent as an ACP `ResourceLink`
+  // (`compose_prompt`) — every agent reads those.
+  const dropZoneRef = useRef<HTMLElement | null>(null);
+  const [dropZoneEl, setDropZoneEl] = useState<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    const composer = composerRef.current;
+    const zone = composer?.closest<HTMLElement>("[data-chat-drop-zone]") ?? composer ?? null;
+    dropZoneRef.current = zone;
+    setDropZoneEl(zone);
+  }, []);
+  const onDropFiles = useCallback((paths: string[]) => void attachPaths(paths), [attachPaths]);
+  const { isDropTarget } = useComposerFileDrop({
+    targetRef: dropZoneRef,
+    enabled: !disabled,
+    onDropFiles,
+  });
+  return { dropZoneEl, isDropTarget };
 }

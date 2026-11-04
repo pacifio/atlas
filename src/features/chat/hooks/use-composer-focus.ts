@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { useComposerFold } from "./use-composer-fold";
 
 /** The composer's focused / folded form: focus moving into it opens it; focus
@@ -48,4 +48,25 @@ export function useComposerFocus({
   }, [composerFocused]);
 
   return { setComposerFocused, collapsed, trayShown, onComposerBlur };
+}
+
+/** Fire `atlas:chat-input-focused` the first time this composer takes focus.
+ *  ChatPanel listens for it to lazily bind an ACP session — deferring the
+ *  agent spawn until the user actually intends to chat keeps it off the cold
+ *  boot path. Reset per tab so re-focusing a fresh tab still binds. */
+export function useChatInputFocusedSignal(tabId: string, disabled: boolean) {
+  const focusedOnceRef = useRef(false);
+  useEffect(() => {
+    focusedOnceRef.current = false;
+  }, [tabId]);
+  return useCallback(() => {
+    // The toolbar (agent / model pickers) stays interactive while the composer
+    // is disabled, so focus can now reach this handler from a control rather
+    // than the text area. Don't kick off an agent bind against a CLI that
+    // isn't ready — the user is most likely on their way to switching agents.
+    if (disabled) return;
+    if (focusedOnceRef.current) return;
+    focusedOnceRef.current = true;
+    window.dispatchEvent(new CustomEvent("atlas:chat-input-focused", { detail: { tabId } }));
+  }, [tabId, disabled]);
 }

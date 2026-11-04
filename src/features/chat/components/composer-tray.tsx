@@ -1,11 +1,12 @@
 // The toolbar tray tucked under the composer's input card: the "+" menu, the
 // grouped agent / mode / model picker, and the session's pills.
 
-import type { Ref } from "react";
+import { useCallback, type Ref } from "react";
 import type { AgentType, SwitchableAgent } from "@/types/agent";
 import type { GithubRepo } from "@/features/github/types";
 import type { MentionProject, PastSessionRef } from "../lib/mentions";
 import { useAppStore } from "@/features/app/stores/app-store";
+import { switchAgentForTab } from "../lib/switch-agent";
 import { ComposerAddMenu } from "./composer-add-menu";
 import { ComposerGroupsMenu } from "./composer-groups-menu";
 import { EffortPill } from "./effort-pill";
@@ -29,7 +30,6 @@ export function ComposerTray({
   handleCloneRepo,
   handlePickSession,
   handlePickProject,
-  handleSwitchAgent,
 }: {
   tabId: string;
   agentType: AgentType;
@@ -46,8 +46,13 @@ export function ComposerTray({
   handleCloneRepo: (repo: GithubRepo) => Promise<void>;
   handlePickSession: (session: PastSessionRef) => void;
   handlePickProject: (project: MentionProject) => void;
-  handleSwitchAgent: (next: SwitchableAgent, model?: string) => void;
 }) {
+  // "+" menu footer → agent switcher. Same helper as ⌥/ and the agent pill,
+  // but jumps straight to the picked agent instead of cycling.
+  const handleSwitchAgent = useCallback(
+    (next: SwitchableAgent, model?: string) => switchAgentForTab(tabId, next, { model }),
+    [tabId],
+  );
   // The toolbar tray, tucked under the input card. Folding, the card
   // slides down over it while it fades, so the two read as one bar
   // retracting into the input; opening runs it back. Transform and
