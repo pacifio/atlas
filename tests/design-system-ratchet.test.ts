@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { TRANSITION_ALL_RULE, formatViolations, runRatchet } from "@tryatlas/design/ratchet";
 import { DERIVED_VAR_REGISTRY, THEME_KEY_REGISTRY } from "@tryatlas/design/theme";
+import { D23_RENAMES } from "@tryatlas/design";
 
 /**
  * The design-system ratchet (decision 33) — closed at zero.
@@ -185,5 +186,101 @@ describe("retired `--atlas-` theme-key names", () => {
     );
     expect(names.length).toBeGreaterThan(0);
     expect(hits, "drop the `--atlas-` prefix: a theme key's variable is `--<key>`").toEqual([]);
+  });
+});
+
+/**
+ * The role names D23 retired (ATL-426), from the package's own `D23_RENAMES`
+ * so there is one list. A role's variable moved to its theme key's name
+ * (`--success` is `--status-success-foreground`, `--hairline` is
+ * `--border-subtle`); its utility moved only where the package stopped
+ * bridging the old one (`border-hairline` is `border-border-subtle`). Where
+ * the package still bridges it, the old utility IS the D23 name — `text-error`
+ * and `bg-success-muted` are what web, docs and the package write — so it is
+ * not matched. Like the `--atlas-` names, a retired variable resolves to
+ * nothing and paints transparent, so this is banned across all of `src/` and
+ * `index.html`, comments included, with no `ratchet-allow` exit (the fake
+ * source files in `EXEMPT_DIRS` are skipped: their text is content).
+ */
+const UTILITY_PREFIX =
+  "(?:bg|text|border(?:-[xytrblse])?|divide|ring(?:-offset)?|outline|fill|stroke|" +
+  "decoration|caret|accent|shadow|inset-ring|placeholder|from|via|to)";
+
+function retiredRoleNamePattern(): RegExp {
+  const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const longestFirst = (a: string, b: string) => b.length - a.length;
+  // The `atlas-` entries are the prefix drop, guarded by the suite above.
+  const roles = Object.entries(D23_RENAMES).filter(([old]) => !old.startsWith("atlas-"));
+  const variables = roles
+    .map(([old]) => old)
+    .sort(longestFirst)
+    .map(escape);
+  const utilities = roles
+    .filter(([old, { utility }]) => utility !== old)
+    .map(([old]) => old)
+    .sort(longestFirst)
+    .map(escape);
+  return new RegExp(
+    `(?<![\\w-])(?:--(?:${variables.join("|")})|(?:--color-|${UTILITY_PREFIX}-)(?:${utilities.join("|")}))(?![\\w-])`,
+    "g",
+  );
+}
+
+describe("retired D23 role names", () => {
+  const retired = retiredRoleNamePattern();
+
+  it("are named nowhere", () => {
+    // The fixtures are fake source files the editor renders as text (see
+    // `EXEMPT_DIRS`); an old class name in them is content, not a reference.
+    const exempt = Object.keys(EXEMPT_DIRS).map((dir) => path.join(REPO_ROOT, dir) + path.sep);
+    const files = [
+      ...walk(path.join(REPO_ROOT, "src")).filter((f) => !exempt.some((d) => f.startsWith(d))),
+      path.join(REPO_ROOT, "index.html"),
+    ];
+    const hits = files.flatMap((file) =>
+      readFileSync(file, "utf8")
+        .split("\n")
+        .flatMap((line, i) =>
+          (line.match(retired) ?? []).map(
+            (name) => `${path.relative(REPO_ROOT, file)}:${i + 1}: ${name}`,
+          ),
+        ),
+    );
+    expect(
+      hits,
+      "use the key-derived name (ATL-426 D23): --success is --status-success-foreground, " +
+        "--error-muted is --status-error-background, border-hairline is border-border-subtle",
+    ).toEqual([]);
+  });
+
+  it.each([
+    "var(--success)",
+    "var(--error-muted)",
+    "var(--selection)",
+    "--hairline: x",
+    "--color-hairline: x",
+    "border-t-hairline",
+    "hover:border-hairline",
+    "bg-diff-added",
+    "text-diff-removed-foreground",
+  ])("matches %s", (text) => {
+    expect(text.match(retired)).not.toBeNull();
+  });
+
+  it.each([
+    "text-error",
+    "hover:text-error",
+    "bg-success-muted/40",
+    "data-[variant=destructive]:text-error",
+    "--color-error: var(--status-error-foreground)",
+    "var(--status-error-foreground)",
+    "var(--selection-background)",
+    "var(--scrollbar-thumb-hover)",
+    "border-border-subtle",
+    'data-slot="field-error"',
+    'variant: "success"',
+    "text-destructive",
+  ])("does not match %s", (text) => {
+    expect(text.match(retired)).toBeNull();
   });
 });
