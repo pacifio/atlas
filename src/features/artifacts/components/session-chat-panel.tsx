@@ -459,7 +459,7 @@ function Starters({ disabled, onPick }: { disabled: boolean; onPick: (question: 
               onClick={() => onPick(text)}
               style={{ animationDelay: `${120 + i * 50}ms` }}
               className={cn(
-                "group atlas-fade-in flex flex-col gap-2 rounded-xl border border-[var(--border)] bg-[var(--card)] p-2.5 text-left transition-[translate,background-color,border-color,box-shadow] duration-150",
+                "group atlas-fade-in flex flex-col gap-2 rounded-xl border border-[var(--border)] bg-[var(--card)] p-2.5 text-left transition-[translate,background-color,border-color,box-shadow,opacity] duration-150",
                 disabled
                   ? "cursor-default opacity-50"
                   : "cursor-pointer hover:-translate-y-0.5 hover:border-border-strong hover:bg-[var(--card)] hover:shadow-md",

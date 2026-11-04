@@ -191,7 +191,7 @@ export const CommentButton = memo(function CommentButton({
       <Popover.Trigger
         aria-label={count > 0 ? `${label} (${count})` : label}
         className={cn(
-          "flex h-5 shrink-0 cursor-pointer items-center gap-1 rounded-full text-disabled transition-[color,background-color,opacity] duration-150 hover:bg-element-hover hover:text-[var(--foreground)] focus-visible:opacity-100",
+          "flex h-5 shrink-0 cursor-pointer items-center gap-1 rounded-full text-disabled transition-[color,background-color,border-color,opacity] duration-150 hover:bg-element-hover hover:text-[var(--foreground)] focus-visible:opacity-100",
           count > 0 && "text-[var(--secondary-foreground)]",
           // Inside a cluster the surround belongs to the cluster, which also
           // owns when the whole group is visible.
