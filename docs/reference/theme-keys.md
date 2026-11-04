@@ -322,65 +322,15 @@ unknown-key warning.
 
 <!-- /generated:theme-keys -->
 
-## Legacy CSS-variable map
+## Scales that are not theme keys
 
-**These names no longer exist.** They were aliases in `tokens.css` through the
-sweep, which rewrote all 2,594 `var(--alias)` call sites and deleted them — a
-name in the left column will resolve to nothing. The exceptions are
-`--border-subtle`, `--border-strong`, `--diff-added-text` and
-`--diff-removed-text`: since theme keys dropped the `--atlas-` prefix
-(ADR-0027) they are those keys' own variables again, with the meaning given
-below. The table is kept because a
-theme written against an older Atlas, a stale branch, or a snippet in an issue
-will still be full of them, and this is the translation.
-
-The table is exhaustive for the former `tokens.css` colour variables; names
-within a cell each map to the single token or key in the next cell.
-
-| Former variable(s) | Source now |
-|---|---|
-| `--bg-base`, `--bg-surface`, `--bg-primary` | base `background` |
-| `--bg-sidebar` | base `sidebar` |
-| `--bg-raised`, `--bg-secondary`, `--bg-elevated` | base `card` |
-| `--bg-overlay`, `--bg-tertiary` | base `popover` |
-| `--bg-input`, `--bg-canvas`, `--bg-rail`, `--panel-rail-bg`, `--panel-bg` | `panel.input.background`, `panel.background` |
-| `--bg-elevated-2`, `--panel-bg-2` | base `card` |
-| `--bg-tab-active`, `--bg-tab-inactive` | base `accent`, base `sidebar` |
-| `--bg-hover`, `--bg-selected`, `--bg-active`, `--selection-bg` | `element.hover`, `element.selected`, `element.active`, `selection.background` |
-| `--text-primary`, `--text-secondary`, `--text-tertiary`, `--text-inverse` | base `foreground`, `secondary-foreground`, `muted-foreground`, `primary-foreground` |
-| `--text-ghost`, `--text-muted` | `text.disabled`, base `muted-foreground` |
-| `--border-default`, `--border-focus`, `--border-variant` | **gone** — use `var(--border)`, `border.strong`, `border.subtle` |
-| `--border-subtle`, `--border-strong` | corresponding `border.*` key |
-| `--accent-primary`, `--accent-primary-hover`, `--accent-primary-muted`, `--accent-secondary` | base `primary`, `primary.hover`, `primary.muted`, base `muted-foreground` |
-| `--status-success`, `--status-warning`, `--status-error`, `--status-info` | corresponding `status.*.foreground` key |
-| `--status-*-muted`, `--status-success-bg` | corresponding `status.*.background` **derived variable** |
-| `--status-purple`, `--status-orange`, `--text-accent`, `--atlas-ants-color` | **gone** — no consumer; the marching-ants colour is set per call site |
-| `--danger`, `--warning` | base `destructive`, `status.warning.foreground` |
-| `--stat-added`, `--stat-removed`, `--capture-live` | `diff.added.text`, `diff.removed.text`, `status.success.foreground` |
-| `--diff-add-line-bg`, `--diff-add-side-bg` | `diff.added.background` (one fill for both renderers) |
-| `--diff-remove-line-bg`, `--diff-remove-side-bg` | `diff.removed.background` |
-| `--diff-emph-add-bg`, `--diff-emph-remove-bg` | `diff.added.emphasis`, `diff.removed.emphasis` |
-| `--diff-added-text`, `--diff-removed-text`, `--diff-context-bg` | corresponding `diff.*` key |
-| `--diff-added-bg`, `--diff-removed-bg`, `--diff-modified-bg` | **gone** — no consumer |
-| `--cm-bg`, `--cm-fg`, `--cm-caret`, `--cm-gutter-*`, `--cm-active-*`, `--cm-selection-*`, `--cm-bracket-*` | corresponding `editor.*` key |
-| `--cm-fold-bg`, `--cm-fold-border`, `--cm-fold-fg` | base `secondary`, `border`, `secondary-foreground` |
-| `--cm-comment`, `--cm-keyword`, `--cm-string`, `--cm-number`, `--cm-type`, `--cm-func`, `--cm-variable`, `--cm-tag`, `--cm-attr`, `--cm-constant`, `--cm-regexp`, `--cm-property` | corresponding `syntax.*` key |
-| `--cm-meta` | `syntax.attribute` — CodeMirror already coloured `tags.meta` with it |
-| `--comms-outer`, `--comms-surface` | base `sidebar`, base `background` |
-| `--comms-unread`, `--comms-unread-deep` | `status.success.foreground` |
-| `--comms-mention-text`, `--comms-mention-bg` | base `foreground`, the `element.emphasis` derived variable |
-| `--comms-mention-other-bg`, `--comms-mention-other-text` | **gone** — no consumer |
-| `--agent-*-chip`, `--agent-*-chip-bg` | **gone** — the chip is `agent.chip.foreground` / `agent.chip.background`, and the vendors' brand hues are constants in `features/agents/lib/agent-brand.ts` |
-
-`--font-size-*` and `--space-*` are gone too, and radius, shadow, z-index and
-motion are not theme keys: those scales live in the Tailwind namespaces, and
-[`design-system.md`](./design-system.md) is their reference. A theme does set
-`radius`, the three fonts, `tracking-normal` and the seven `shadow-*` ramps —
-they are base tokens, listed with the rest of the shadcn set above.
-
-Two more former aliases that were not colours: `--shadow-overlay` is
-`shadow-md`, and `--z-max` is whichever named layer the site belongs to
-(`z-popover` for a menu, `z-drag` for the hint overlay).
+The radius, elevation, z-index and motion scales are not theme keys. Radius
+and elevation use Tailwind's namespaces; z-index and the durations are
+Atlas's own custom scales. [`design-system.md`](./design-system.md) is the
+reference for all four. A theme does set `radius`, `tracking-normal` and the
+seven `shadow-*` ramps, which are base tokens listed with the rest of the shadcn
+set above. It can also set the three fonts (`font-sans`, `font-serif`,
+`font-mono`): these are optional base tokens with no row in that table.
 
 ## Regenerating checked assets
 

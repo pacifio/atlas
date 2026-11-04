@@ -556,13 +556,19 @@ pub fn load_user_themes_from(dir: &Path) -> Result<(Vec<Theme>, Vec<ThemeWarning
 }
 
 pub fn all_themes() -> Result<ThemeCatalog, ThemeError> {
+    all_themes_from(user_theme_dir().as_deref())
+}
+
+/// [`all_themes`] over a given user-theme directory, so a test can assemble
+/// the real catalog without touching `~/.config`.
+fn all_themes_from(user_dir: Option<&Path>) -> Result<ThemeCatalog, ThemeError> {
     let mut by_id = built_in_themes()?
         .into_iter()
         .map(|theme| (theme.id.clone(), (theme, true)))
         .collect::<BTreeMap<_, _>>();
     let mut warnings = Vec::new();
-    if let Some(dir) = user_theme_dir() {
-        let (themes, failures) = load_user_themes_from(&dir)?;
+    if let Some(dir) = user_dir {
+        let (themes, failures) = load_user_themes_from(dir)?;
         for theme in themes {
             by_id.insert(theme.id.clone(), (theme, false));
         }
@@ -1287,6 +1293,47 @@ mod tests {
         assert_eq!(warnings[0].key, "0-broken.toml");
         assert_eq!(warnings[1].key, "1-not-toml.toml");
         assert!(warnings.iter().all(|warning| !warning.message.is_empty()));
+    }
+
+    /// Atlas reads one theme schema and translates nothing older. A theme in
+    /// an old shape, or one naming another schema, fails to load like any other
+    /// bad file: it is reported by name and never enters the assembled
+    /// catalog, which still holds the default. An id that does not resolve
+    /// falls back to that default: `fallback_unknown_theme` in
+    /// `atlas_config.rs` (tested by
+    /// `unknown_config_theme_falls_back_in_memory_and_is_never_rewritten`)
+    /// and `apply` in the theme store.
+    #[test]
+    fn an_old_or_other_schema_user_theme_is_skipped_and_the_default_still_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("old.toml"),
+            "id = \"old\"\nname = \"Old\"\n[colors]\n\"--atlas-element-hover\" = \"#123456\"\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("next.toml"),
+            minimal_theme("").replace("schema = 1", "schema = 2"),
+        )
+        .unwrap();
+
+        let catalog = all_themes_from(Some(dir.path())).unwrap();
+        let ids = catalog
+            .themes
+            .iter()
+            .map(|(theme, _)| theme.id.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(!ids.contains(&"old") && !ids.contains(&"next"), "{ids:?}");
+        assert!(ids.contains(&DEFAULT_THEME_ID), "{ids:?}");
+        let warnings = catalog.warnings;
+        let keys = warnings.iter().map(|w| w.key.as_str()).collect::<Vec<_>>();
+        assert_eq!(keys, ["next.toml", "old.toml"]);
+        assert!(
+            warnings[0].message.contains("unsupported schema 2"),
+            "{warnings:?}"
+        );
+        assert!(warnings[1].message.contains("old.toml"), "{warnings:?}");
     }
 
     // ── config_root (must track `config_root` in `atlas_config.rs`; #64 follow-up) ──

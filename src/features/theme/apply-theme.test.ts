@@ -201,22 +201,6 @@ describe("the launch replay in index.html", () => {
     );
   });
 
-  it("replays a cache written before the prefix was dropped under the new names", () => {
-    // Built from parts: the ratchet bans the retired name written out anywhere in src/.
-    const retired = ["--atlas", "element-hover"].join("-");
-    localStorage.setItem(
-      "atlas:launch-theme",
-      JSON.stringify({
-        appearance: "dark",
-        vars: { "--background": "navy", [retired]: "teal" },
-      }),
-    );
-    coldStart();
-    expect(document.getElementById("atlas-resolved-theme")?.textContent).toBe(
-      "html:root{--background:navy;--element-hover:teal}",
-    );
-  });
-
   it("does nothing on a first run", () => {
     localStorage.removeItem("atlas:launch-theme");
     coldStart();

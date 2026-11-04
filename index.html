@@ -81,10 +81,7 @@
             // hand-edited entry must not be able to close the block.
             if (!/^--[A-Za-z0-9-]+$/.test(name) || typeof value !== "string") continue;
             if (/[;{}<\\]/.test(value)) continue;
-            // A cache written before theme keys dropped their `--atlas-` prefix
-            // (ADR-0027). `vars` only ever holds theme-key variables, never the
-            // app's own `--atlas-*` ones, and the first applyTheme rewrites it.
-            declarations.push(name.replace(/^--atlas-/, "--") + ":" + value);
+            declarations.push(name + ":" + value);
           }
           if (!declarations.length) return;
           var style = document.createElement("style");
