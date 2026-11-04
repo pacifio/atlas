@@ -123,6 +123,9 @@ function PermissionModalImpl({ tabId, onSendMessage }: PermissionModalProps) {
       const inText = document.activeElement === textRef.current;
       if (e.key === "Escape") {
         e.preventDefault();
+        // The plan review is a dialog whose own Esc dismiss also cancels:
+        // stop the key here, or one Esc sends two cancels.
+        if (extractPlanMarkdown(current.toolCall)) e.stopPropagation();
         send({ kind: "cancelled" });
         return;
       }

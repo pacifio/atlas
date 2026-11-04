@@ -113,4 +113,34 @@ describe("keys on the permission card", () => {
     fireEvent.keyDown(window, { key: "Enter" });
     expect(picked()).toEqual(["allow-once"]);
   });
+
+  /// Esc on the plan review reached both the window handler and the dialog's
+  /// own dismiss, so the agent was sent two cancels for one request.
+  it("Esc on the plan review cancels once", () => {
+    useChatStore.setState({
+      sessions: {
+        "chat-1": { acpSessionId: "sess-1", agentType: "atlas-agent", messages: [] },
+      } as never,
+      pendingPermissions: {
+        "sess-1": [
+          {
+            agentId: "atlas-agent",
+            acpSessionId: "sess-1",
+            requestId: "req-plan",
+            toolCall: {
+              toolCallId: "call-plan",
+              title: "Ready to code?",
+              kind: "other",
+              toolName: "ExitPlanMode",
+              rawInput: { plan: "1. Do the thing" },
+            },
+            options: OPTIONS,
+          },
+        ],
+      } as never,
+    });
+    render(<PermissionModal tabId="chat-1" />);
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+    expect(picked()).toEqual(["cancelled"]);
+  });
 });
