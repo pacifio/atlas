@@ -89,8 +89,6 @@ function firstPartyOf(id: string): FirstPartyAgent | null {
   // The real Claude ids only — the registry's `claude-acp` is Claude Code and
   // keeps its mark, but a third-party `claude-*` agent must not borrow it.
   if (CLAUDE_CODE_IDS.has(id)) return "claude-code";
-  // The registry's Codex adapter keeps the Codex mark it has always drawn.
-  if (id === "codex-acp") return "codex";
   return null;
 }
 

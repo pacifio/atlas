@@ -56,12 +56,17 @@ describe("resolveAgentMeta", () => {
     expect(m.label).toBe("Claude Code");
   });
 
-  it("treats the registry's codex-acp as Codex, as claude-acp is Claude Code", () => {
-    const m = resolveAgentMeta("codex-acp", EMPTY_AGENT_REGISTRY);
-    expect(m.agentType).toBe("codex");
-    expect(m.firstPartyIcon).toBe("codex");
+  it("treats the registry's codex-acp as an external agent with its registry name", () => {
+    // ADR-0002: only the retired Claude spec ids and claude-acp alias to a
+    // first-party mark; codex-acp draws its registry icon or a monogram.
+    const m = resolveAgentMeta("codex-acp", {
+      catalogById: {},
+      registryEntries: [{ id: "codex-acp", name: "Codex", iconDataUrl: null }],
+    });
+    expect(m.agentType).toBe("codex-acp");
+    expect(m.firstPartyIcon).toBeNull();
     expect(m.label).toBe("Codex");
-    expect(m.external).toBe(false);
+    expect(m.external).toBe(true);
   });
 
   it("does not lend the Claude mark to a third-party claude-* agent", () => {

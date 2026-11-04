@@ -54,9 +54,9 @@ describe("AgentMark", () => {
     expect(container.querySelector("title")).toBeNull();
   });
 
-  it("draws the Codex mark for the registry's Codex adapter", () => {
+  it("draws the registry's Codex adapter from its registry identity, not the Codex mark", () => {
     const { container } = render(<AgentGlyph agentType="codex-acp" />);
-    expect(container.querySelector("title")?.textContent).toBe("Codex");
+    expect(container.querySelector("title")).toBeNull();
   });
 
   it("draws the Atlas mark as an svg, not the app-icon image", () => {

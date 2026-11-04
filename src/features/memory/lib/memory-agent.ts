@@ -6,7 +6,8 @@
 //     "codex-acp", "amp-acp". `agentMeta` treats these as opaque, a deliberate
 //     invariant of the ACP registry port locked by `agent-meta.test.ts`
 //     ("treats an agent id as opaque"), except for the first-party aliases in
-//     `agent-identity.ts` (`claude-acp`, `codex-acp`), which keep their marks.
+//     `agent-identity.ts` (`claude-acp` keeps the Claude Code mark; `codex-acp`
+//     is opaque and draws its registry icon).
 //   * The **memory corpus** tags every doc, session and shared-memory event
 //     with a bare source — "claude", "codex", "atlas-agent" — written by
 //     `agent_memory.rs` long before the registry existed, and still written

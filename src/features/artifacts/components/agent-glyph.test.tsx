@@ -1,9 +1,8 @@
 // @vitest-environment happy-dom
 //
-// Which mark an agent id draws. The substring ladder (`claude`, `codex`,
-// `opencode`, `cursor`, `kilo`, `atlas-agent`) still runs first, so an id that
-// merely contains a first-party name gets that mark; resolving only through
-// `agentMeta().firstPartyIcon` is a proposed behaviour change awaiting review.
+// Which mark an agent id draws. Only `agentMeta().firstPartyIcon` picks a
+// first-party mark, so an id that merely contains a first-party name gets its
+// registry icon or a monogram (ADR-0002).
 
 import { beforeEach, describe, expect, it } from "vitest";
 import { cleanup, render } from "@testing-library/react";
@@ -70,6 +69,15 @@ describe("AgentGlyph", () => {
     expect(span?.style.getPropertyValue("mask")).toContain(dataUrl);
     expect(container.querySelector("svg")).toBeNull();
   });
+
+  it.each(["claude-foo", "codex-acp", "my-kilo-fork"])(
+    "%s does not borrow a first-party mark",
+    (id) => {
+      const { container } = render(<AgentGlyph agent={id} />);
+      expect(container.querySelector("svg")).toBeNull();
+      expect(container.querySelector('[role="img"]')).toBeNull();
+    },
+  );
 
   it("falls back to a monogram for an external agent with no icon", () => {
     const { container } = render(<AgentGlyph agent="gemini-cli" />);
