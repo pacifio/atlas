@@ -115,7 +115,8 @@ jobs:
             xvfb \
             meson \
             ninja-build \
-            libcap-dev
+            libcap-dev \
+            clang-15
 
       # Bun, Node and Rust at the versions mise.toml and rust-toolchain.toml
       # pin: a release is built with exactly what CI tested.
@@ -194,6 +195,26 @@ jobs:
       # Tauri builds the binary and the AppImage only. The deb and rpm are
       # package-linux.sh's, below: they install as `atl`/`tryatlas` rather
       # than claiming `/usr/bin/atlas`, which belongs to the Atlas CLI.
+      # Clang for the C and C++ dependencies cc-rs compiles on aarch64. The
+      # runner's GCC 11 cannot build numkong (usearch's SIMD backend) there:
+      # its arm_neon.h wraps the dot-product intrinsics in
+      # `#pragma GCC target ("arch=armv8.2-a+dotprod")`, and a caller under
+      # numkong's `#pragma GCC target("+dotprod")` does not satisfy that arch,
+      # so the build dies with "inlining failed in call to 'always_inline'
+      # 'vdotq_s32': target specific option mismatch". GCC 12 wraps them the
+      # same way; GCC 13 (CI's ubuntu-24.04-arm, which builds it) changed the
+      # region to `+nothing+dotprod`. Jammy has no GCC 13, and a PPA's g++-13
+      # would raise the libstdc++ floor above the 12.x that Ubuntu 22.04 and
+      # Debian 12 ship, which Verify would refuse. Clang 15 is in jammy for
+      # arm64, takes numkong's `#pragma clang attribute` path (the one the
+      # macOS build already proves), and links the system libstdc++ 12, so
+      # the floor stands. x86-64 stays on the runner's GCC, which builds it.
+      - name: Use Clang for native dependencies on aarch64
+        if: matrix.arch == 'aarch64'
+        run: |
+          echo "CC=clang-15" >> "$GITHUB_ENV"
+          echo "CXX=clang++-15" >> "$GITHUB_ENV"
+
       - name: Build frontend, binary and AppImage
         env:
           POSTHOG_KEY: ${{ secrets.POSTHOG_KEY }}
