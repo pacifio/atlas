@@ -115,17 +115,28 @@ function ImportView({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<ThemeImportPreview | null>(null);
+  // Each conversion is numbered and only the latest may land: a slow answer
+  // to an earlier input must not replace the one after it. The number also
+  // keys the candidate cards, so a new preview starts them fresh (name, id,
+  // "Saved") instead of keeping what was typed into the last one.
+  const latest = useRef(0);
+  const [previewKey, setPreviewKey] = useState(0);
 
   const run = useCallback(async (input: ThemeImportInput) => {
+    const request = ++latest.current;
     setBusy(true);
     setError(null);
     try {
-      setPreview(await previewThemeImport(input));
+      const next = await previewThemeImport(input);
+      if (request !== latest.current) return;
+      setPreview(next);
+      setPreviewKey(request);
     } catch (cause) {
+      if (request !== latest.current) return;
       setPreview(null);
       setError(String(cause));
     } finally {
-      setBusy(false);
+      if (request === latest.current) setBusy(false);
     }
   }, []);
 
@@ -176,6 +187,8 @@ function ImportView({
           <OpenVsxSearch
             busy={busy}
             onSearch={() => {
+              latest.current++;
+              setBusy(false);
               setPreview(null);
               setError(null);
             }}
@@ -261,7 +274,7 @@ function ImportView({
 
         {preview?.themes.map((candidate) => (
           <CandidateCard
-            key={candidate.id}
+            key={`${previewKey}:${candidate.id}`}
             candidate={candidate}
             themes={themes}
             onImported={onImported}
@@ -633,13 +646,20 @@ function ExportView({ themes }: { themes: ThemeSummary[] }) {
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
+  // Only the latest pick may land: a slow export of an earlier theme must not
+  // replace the one picked after it.
+  const latest = useRef(0);
   const load = async (id: string) => {
+    const request = ++latest.current;
     setSelected(id);
     setError(null);
     try {
-      setResult(await exportThemeShadcn(id));
+      const next = await exportThemeShadcn(id);
+      if (request !== latest.current) return;
+      setResult(next);
       setCopied(false);
     } catch (cause) {
+      if (request !== latest.current) return;
       setResult(null);
       setError(String(cause));
     }

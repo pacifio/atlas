@@ -16,7 +16,11 @@ interface PanelSkeletonProps {
  */
 export function PanelSkeleton({ rows = 6, label, className }: PanelSkeletonProps) {
   return (
-    <div className={cn("h-full flex flex-col gap-2 p-3", className)}>
+    <div
+      role="status"
+      aria-label={label ?? "Loading"}
+      className={cn("h-full flex flex-col gap-2 p-3", className)}
+    >
       {label && (
         <div className="text-2xs uppercase tracking-wider text-muted-foreground px-0.5">
           {label}

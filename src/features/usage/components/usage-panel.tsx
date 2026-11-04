@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Card } from "@/components/usage-primitives";
-import { GradualBlur } from "@tryatlas/design";
+import { Button, Callout, GradualBlur } from "@tryatlas/design";
 import { useProjectStore } from "@/features/projects/stores/project-store";
 import { useUsageStore } from "../stores/usage-store";
 import { useUsageView } from "../lib/use-usage-view";
@@ -95,7 +95,26 @@ export function UsagePanel() {
           {!data && loading && (
             <div className="p-6 text-sm text-muted-foreground">Reading usage…</div>
           )}
-          {error && <div className="p-6 text-sm text-error">Failed to load: {error}</div>}
+          {error && (
+            <div className="p-4">
+              <Callout
+                tone="error"
+                role="alert"
+                action={
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={loading}
+                    onClick={() => void refresh({ force: true })}
+                  >
+                    Try again
+                  </Button>
+                }
+              >
+                Failed to load: {error}
+              </Callout>
+            </div>
+          )}
           {data && view.all.length === 0 && !loading && (
             <div className="p-4">
               <Card index={0} section="empty">

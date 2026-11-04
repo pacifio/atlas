@@ -133,7 +133,7 @@ export function ThemesSection() {
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-3 @2xl:grid-cols-3">
+      <div role="list" className="grid grid-cols-2 gap-3 @2xl:grid-cols-3">
         {themes.map((theme) => (
           <ThemeCard
             key={theme.id}
@@ -210,70 +210,81 @@ const ThemeCard = memo(function ThemeCard({
   const dark = full && summary.hasDark ? previewTheme(full, "dark") : null;
 
   return (
-    <button
-      type="button"
-      onClick={() => onPick(summary.id, summary.name, "both")}
-      className={cn(
-        "group flex min-w-0 cursor-pointer flex-col gap-3 rounded-lg border bg-card px-3 pt-4 pb-2.5 text-left outline-none",
-        "transition-colors duration-fast ease-out-strong focus-visible:ring-1 focus-visible:ring-ring",
-        showing ? "border-primary" : "border-border hover:border-border-strong",
-      )}
-    >
-      <div className="flex h-11 items-center justify-center gap-4">
-        {full ? (
-          <>
-            <Orb half="light" theme={summary} preview={light} chosen={isLight} onPick={onPick} />
-            <Orb half="dark" theme={summary} preview={dark} chosen={isDark} onPick={onPick} />
-          </>
-        ) : (
-          // The document is one `get_theme` away; hold the orbs' place.
-          <>
-            <span className="size-11 rounded-full bg-element-selected" />
-            <span className="size-11 rounded-full bg-element-selected" />
-          </>
+    <div role="listitem" className="flex min-w-0">
+      <button
+        type="button"
+        aria-pressed={showing}
+        aria-label={`Apply ${summary.name} theme`}
+        onClick={() => onPick(summary.id, summary.name, "both")}
+        className={cn(
+          "group flex min-w-0 flex-1 cursor-pointer flex-col gap-3 rounded-lg border bg-card px-3 pt-4 pb-2.5 text-left outline-none",
+          "transition-colors duration-fast ease-out-strong focus-visible:ring-1 focus-visible:ring-ring",
+          showing ? "border-primary" : "border-border hover:border-border-strong",
         )}
-      </div>
+      >
+        <div className="flex h-11 items-center justify-center gap-4">
+          {full ? (
+            <>
+              <Orb half="light" theme={summary} preview={light} chosen={isLight} onPick={onPick} />
+              <Orb half="dark" theme={summary} preview={dark} chosen={isDark} onPick={onPick} />
+            </>
+          ) : (
+            // The document is one `get_theme` away; hold the orbs' place.
+            <>
+              <span className="size-11 rounded-full bg-element-selected" />
+              <span className="size-11 rounded-full bg-element-selected" />
+            </>
+          )}
+        </div>
 
-      <div className="flex min-w-0 items-center gap-1.5">
-        <span className="truncate text-xs font-medium text-foreground">{summary.name}</span>
-        {/* A theme that loaded but carries keys Atlas does not know. Those
+        <div className="flex min-w-0 items-center gap-1.5">
+          <span className="truncate text-xs font-medium text-foreground">{summary.name}</span>
+          {/* A theme that loaded but carries keys Atlas does not know. Those
             keys are preserved, not applied, so the author sees the name
             they typed do nothing until they are told. */}
-        {summary.warnings.length > 0 && (
-          <Hint
-            label={
-              <span className="block max-w-64 whitespace-pre-line text-left">
-                {summary.warnings.map((warning) => `${warning.key}: ${warning.message}`).join("\n")}
-              </span>
-            }
-          >
-            <span
-              aria-label={`${summary.warnings.length} unknown theme key(s)`}
-              className="flex shrink-0 items-center gap-0.5 text-2xs text-warning"
+          {summary.warnings.length > 0 && (
+            <Hint
+              label={
+                <span className="block max-w-64 whitespace-pre-line text-left">
+                  {summary.warnings
+                    .map((warning) => `${warning.key}: ${warning.message}`)
+                    .join("\n")}
+                </span>
+              }
             >
-              <Icon icon={AlertTriangle} size="xs" />
-              {summary.warnings.length}
-            </span>
-          </Hint>
-        )}
-        <span className="ml-auto flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity duration-fast group-focus-within:opacity-100 group-hover:opacity-100">
-          {/* A built-in is rebuilt with every release, so it is duplicated
-              rather than edited: the copy is the user's and stays put. */}
-          {!summary.builtIn && (
-            <CardAction
-              icon={Pencil}
-              label={`Edit ${summary.name}`}
-              onAct={() => onEdit(summary.id, "edit")}
-            />
+              {/* Its own Tab stop, so the keys it lists reach the keyboard too;
+                a click reads them rather than applying the theme. */}
+              <span
+                role="img"
+                tabIndex={0}
+                aria-label={`${summary.warnings.length} unknown theme key(s)`}
+                onClick={(event) => event.stopPropagation()}
+                className="flex shrink-0 items-center gap-0.5 rounded-sm text-2xs text-warning outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              >
+                <Icon icon={AlertTriangle} size="xs" />
+                {summary.warnings.length}
+              </span>
+            </Hint>
           )}
-          <CardAction
-            icon={Copy}
-            label={`Duplicate ${summary.name}`}
-            onAct={() => onEdit(summary.id, "duplicate")}
-          />
-        </span>
-      </div>
-    </button>
+          <span className="ml-auto flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity duration-fast group-focus-within:opacity-100 group-hover:opacity-100">
+            {/* A built-in is rebuilt with every release, so it is duplicated
+              rather than edited: the copy is the user's and stays put. */}
+            {!summary.builtIn && (
+              <CardAction
+                icon={Pencil}
+                label={`Edit ${summary.name}`}
+                onAct={() => onEdit(summary.id, "edit")}
+              />
+            )}
+            <CardAction
+              icon={Copy}
+              label={`Duplicate ${summary.name}`}
+              onAct={() => onEdit(summary.id, "duplicate")}
+            />
+          </span>
+        </div>
+      </button>
+    </div>
   );
 });
 

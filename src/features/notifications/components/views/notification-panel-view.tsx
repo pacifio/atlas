@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { Bell, X } from "lucide-react";
 import {
   Button,
@@ -41,9 +42,10 @@ export interface NotificationPanelViewProps {
  * The notification drawer: the titlebar bell's day-grouped list, over the
  * right of the window.
  *
- * Non-modal on purpose, as it was before it was a Sheet: opening it does not
- * move focus in or trap it, and Esc does nothing; a click on the scrim (or an
- * item) closes it. It stays a `role="dialog"`, which is what the browser
+ * A modal Sheet: opening it moves focus in and traps it; Esc, the scrim or
+ * an item closes it. Dismissed (Esc or the scrim), focus goes back to the
+ * bell (`[data-notifications-bell]`); closed by opening an item, it stays
+ * where that item took it. It is a `role="dialog"`, which is what the browser
  * overlay watcher looks for to hide the native webview underneath.
  */
 export function NotificationPanelView({
@@ -57,19 +59,26 @@ export function NotificationPanelView({
   onRunAction,
   onClearAll,
 }: NotificationPanelViewProps) {
+  // Why the drawer last closed itself; null when the store closed it.
+  const dismissedBy = useRef<string | null>(null);
   return (
     <Sheet
       open={open}
-      modal={false}
       onOpenChange={(next, details) => {
-        if (!next && details.reason !== "escape-key") onClose();
+        if (next) return;
+        dismissedBy.current = details.reason;
+        onClose();
       }}
     >
       <SheetContent
         side="right"
         showCloseButton={false}
-        initialFocus={false}
-        finalFocus={false}
+        finalFocus={() => {
+          const dismissed = dismissedBy.current !== null;
+          dismissedBy.current = null;
+          if (!dismissed) return false;
+          return document.querySelector<HTMLElement>("[data-notifications-bell]") ?? true;
+        }}
         aria-label="Notifications"
         data-view="notification-panel"
         style={{ width, maxWidth: "none" }}

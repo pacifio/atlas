@@ -148,11 +148,28 @@ function ModelRow({
   if (progress) {
     control = <ProgressBar progress={progress} />;
   } else if (!m.downloaded) {
+    // A disabled button takes no pointer events, so the reason sits on a
+    // wrapper where its `title` can still show, and is read out with the
+    // button through `aria-describedby`.
+    const reason = m.compatible ? undefined : INCOMPATIBLE_REASON;
     control = (
-      <Button variant="outline" size="sm" onClick={onDownload}>
-        <Icon icon={Download} size="xs" />
-        Download
-      </Button>
+      <span title={reason}>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={!m.compatible}
+          aria-describedby={reason ? `model-${m.id}-reason` : undefined}
+          onClick={onDownload}
+        >
+          <Icon icon={Download} size="xs" />
+          Download
+        </Button>
+        {reason && (
+          <span id={`model-${m.id}-reason`} className="sr-only">
+            {reason}
+          </span>
+        )}
+      </span>
     );
   } else if (!m.selected) {
     control = (
@@ -189,6 +206,8 @@ function ModelRow({
     />
   );
 }
+
+const INCOMPATIBLE_REASON = "Atlas's on-device embedding loader can't load this model";
 
 function ProgressBar({ progress: p }: { progress: DownloadProgress }) {
   const pct = Math.min(

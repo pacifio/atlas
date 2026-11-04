@@ -333,7 +333,16 @@ export function MembersModalView({
               ))}
             </div>
           ) : body === "error" ? (
-            <Callout tone="error">{error}</Callout>
+            <Callout
+              tone="error"
+              action={
+                <Button size="sm" variant="secondary" disabled={!canRefresh} onClick={onRefresh}>
+                  Retry
+                </Button>
+              }
+            >
+              {error}
+            </Callout>
           ) : tab === "members" ? (
             <DataTable
               className="h-full"
@@ -424,7 +433,13 @@ function MemberMenu({
             <DropdownMenuGroup>
               <DropdownMenuLabel>Role</DropdownMenuLabel>
               {ROLES.map((r) => (
-                <DropdownMenuItem key={r} onClick={() => onRoleChange(r)}>
+                <DropdownMenuItem
+                  key={r}
+                  // Picking the role a member already has changes nothing.
+                  onClick={() => {
+                    if (r !== member.role) onRoleChange(r);
+                  }}
+                >
                   {ROLE_LABELS[r]}
                   {member.role === r && <Icon icon={Check} size="sm" className="ml-auto" />}
                 </DropdownMenuItem>

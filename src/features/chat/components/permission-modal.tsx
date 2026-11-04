@@ -24,6 +24,7 @@ import { PlanReviewView } from "./views/plan-review-view";
 import { ComposerDrawer } from "./composer-drawer";
 import type { PendingPermission } from "@/types/acp";
 import { agentMeta } from "@/features/agents/lib/agent-meta";
+import { isRecordingShortcut } from "@/features/keybindings/lib/recording";
 import {
   isOutwardCall,
   keyMayPick,
@@ -120,6 +121,8 @@ function PermissionModalImpl({ tabId, onSendMessage }: PermissionModalProps) {
       });
     };
     const onKey = (e: KeyboardEvent) => {
+      // A chord being recorded in Settings → Keybindings is not an answer.
+      if (isRecordingShortcut()) return;
       const inText = document.activeElement === textRef.current;
       if (e.key === "Escape") {
         e.preventDefault();
