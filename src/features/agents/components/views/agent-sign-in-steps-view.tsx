@@ -8,6 +8,8 @@ import { useEffect, useMemo, useRef } from "react";
 import { Check, ChevronRight, Copy, ExternalLink, LogOut, Terminal, X } from "lucide-react";
 import { Badge, Button, Callout, Code, Hint, Icon, IconButton, Spinner } from "@tryatlas/design";
 import { cn } from "@/lib/utils";
+import { FixWithAgentButton } from "@/features/ask-agent/components/ask-agent-button";
+import type { ErrorContext } from "@/features/ask-agent/lib/agent-context";
 import {
   envStatusLabel,
   methodBlockedReason,
@@ -199,17 +201,24 @@ export function RunningStep({
   );
 }
 
-/** A failure, and the two ways forward: run the command by hand, or retry. */
+/** A failure, and the ways forward: run the command by hand, retry, or hand
+ *  the failure to an agent (which closes the dialog: the ask box cannot sit
+ *  over its scrim). */
 export function ErrorStep({
   message,
   manualCommand,
+  fixError,
   onCopyCommand,
   onRetry,
+  onDismiss,
 }: {
   message: string;
   manualCommand?: string;
+  /** The failure as "Fix with agent" hands it over. */
+  fixError: ErrorContext;
   onCopyCommand: (command: string) => void;
   onRetry: () => void;
+  onDismiss: () => void;
 }) {
   return (
     <div className="space-y-3 px-2">
@@ -231,9 +240,12 @@ export function ErrorStep({
           </button>
         </div>
       )}
-      <Button variant="outline" size="sm" onClick={onRetry}>
-        Try again
-      </Button>
+      <div className="flex items-center gap-2">
+        <Button variant="outline" size="sm" onClick={onRetry}>
+          Try again
+        </Button>
+        <FixWithAgentButton error={fixError} dismiss={onDismiss} />
+      </div>
     </div>
   );
 }

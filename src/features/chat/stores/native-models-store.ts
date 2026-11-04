@@ -56,7 +56,12 @@ export const useNativeModelsStore = createSelectors(
             }
             return true;
           } catch (err) {
-            if (!opts?.silent) toast.error(errInfo(err).message);
+            // Titled, with the cause under it, so "Fix with agent" offers.
+            if (!opts?.silent) {
+              toast.error("Couldn't refresh the model list", {
+                description: errInfo(err).message,
+              });
+            }
             return false;
           } finally {
             set({ refreshing: false });

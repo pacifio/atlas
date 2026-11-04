@@ -34,15 +34,22 @@ export interface FileContext {
   path: string;
 }
 
-/** One hunk of a diff, `@@` header included. */
+/** One hunk of a diff, `@@` header included. `staged` says which side of
+ *  the index it is on; leave it out for a diff that is neither (a branch's
+ *  changes against its base, a turn's edits). */
 export interface DiffHunkContext {
   kind: "diff_hunk";
   path: string;
   hunk: string;
-  staged: boolean;
+  staged?: boolean;
   /** The hunk is from the working tree against HEAD, staged and unstaged
    *  changes together (a partly staged file); `staged` then says nothing. */
   againstHead?: boolean;
+}
+
+/** "staged ", "unstaged " or nothing, for a hunk's labels. */
+function stageWord(staged: boolean | undefined): string {
+  return staged === undefined ? "" : staged ? "staged " : "unstaged ";
 }
 
 /** A memory entry. `memoryKind` is the memory's own kind ("decision",
@@ -154,7 +161,7 @@ export function contextLabel(ctx: AgentContext): string {
       return shortLabel(`${ctx.path}:${rangeOf(ctx.startLine, ctx.endLine)}`);
     case "diff_hunk":
       return shortLabel(
-        `${ctx.path} · ${ctx.againstHead ? "hunk vs HEAD" : `${ctx.staged ? "staged" : "unstaged"} hunk`}`,
+        `${ctx.path} · ${ctx.againstHead ? "hunk vs HEAD" : `${stageWord(ctx.staged)}hunk`}`,
       );
     case "memory_entry":
       return shortLabel(`Memory · ${ctx.text}`);
@@ -176,6 +183,7 @@ export function contextTitle(ctx: AgentContext): string {
     case "file_range":
       return `${ctx.path}, lines ${rangeOf(ctx.startLine, ctx.endLine)}\n${head(ctx.excerpt)}`;
     case "diff_hunk":
+      if (!ctx.againstHead && ctx.staged === undefined) return `${ctx.path}\n${head(ctx.hunk)}`;
       return `${ctx.path} (${ctx.againstHead ? "staged and unstaged, vs HEAD" : ctx.staged ? "staged" : "unstaged"})\n${head(ctx.hunk)}`;
     case "memory_entry":
       return `${ctx.memoryKind} memory${ctx.project ? ` · ${ctx.project}` : ""}\n${head(ctx.text)}`;
@@ -230,7 +238,7 @@ function sourceLine(ctx: AgentContext): string {
     case "diff_hunk":
       return ctx.againstHead
         ? `a diff hunk against HEAD (staged and unstaged changes) in \`${ctx.path}\``
-        : `a ${ctx.staged ? "staged" : "unstaged"} diff hunk in \`${ctx.path}\``;
+        : `a ${stageWord(ctx.staged)}diff hunk in \`${ctx.path}\``;
     case "memory_entry":
       return `${ctx.memoryKind} memory \`${ctx.id}\`${ctx.project ? ` in project ${ctx.project}` : " (global)"}`;
     case "commit":

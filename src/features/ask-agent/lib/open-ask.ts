@@ -5,6 +5,7 @@
 
 import { useAskAgentStore, type AskAnchor } from "../stores/ask-agent-store";
 import { capContext, type AgentContext, type ErrorContext } from "./agent-context";
+import type { AskResult } from "./ask-agent";
 
 /** Where the ask goes: the session in view, a new one, or an open session's
  *  tab id. */
@@ -19,6 +20,9 @@ export function openAskAgent(request: {
   suggestions?: readonly string[];
   anchor?: AskAnchor;
   target?: AskTarget;
+  /** Once it is sent or drafted, not on cancel; `kept` is which of
+   *  `context` (by index) went with it. */
+  onAsked?: (result: AskResult, kept: readonly number[]) => void;
 }): void {
   useAskAgentStore.getState().actions.open({
     context: (request.context ?? []).map(capContext),
@@ -26,6 +30,7 @@ export function openAskAgent(request: {
     suggestions: request.suggestions,
     anchor: request.anchor ?? null,
     target: request.target,
+    onAsked: request.onAsked,
   });
 }
 

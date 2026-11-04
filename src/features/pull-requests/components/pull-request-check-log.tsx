@@ -9,7 +9,10 @@ import { Copy, ExternalLink, ScrollText } from "lucide-react";
 
 import { openPullRequest } from "@/features/git/lib/git-pr-api";
 
+import { FixWithAgentButton } from "@/features/ask-agent/components/ask-agent-button";
+
 import { prErrorMessage } from "../lib/pr-errors";
+import { checkErrorContext, isFailingCheck } from "../lib/pull-request-ask";
 import { hasCheckLog, useCheckLog } from "../lib/pull-request-check-log";
 import type { PrCheck } from "../lib/pull-requests-types";
 import { usePullRequestScope } from "./pull-request-context";
@@ -23,7 +26,7 @@ import {
 } from "@tryatlas/design";
 
 export function CheckLogButton({ check }: { check: PrCheck }) {
-  const { repoPath, number } = usePullRequestScope();
+  const { repoPath, number, headBranch } = usePullRequestScope();
   const [open, setOpen] = useState(false);
   const url = check.url ?? "";
   const log = useCheckLog(repoPath, number, url, open && hasCheckLog(check));
@@ -72,6 +75,19 @@ export function CheckLogButton({ check }: { check: PrCheck }) {
             )}
           </div>
           <div className="flex justify-end gap-2">
+            {isFailingCheck(check) && log.data ? (
+              <span className="mr-auto">
+                <FixWithAgentButton
+                  size="xs"
+                  error={checkErrorContext(
+                    { number, headBranch: headBranch ?? null },
+                    check,
+                    log.data,
+                  )}
+                  dismiss={() => setOpen(false)}
+                />
+              </span>
+            ) : null}
             <Button size="xs" variant="ghost" disabled={!log.data} onClick={copy}>
               <Copy aria-hidden className="size-3" />
               Copy

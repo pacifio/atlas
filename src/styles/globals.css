@@ -2345,9 +2345,21 @@ html[data-word-wrap="off"] .prose-chat pre {
   [data-toast-copy] {
   opacity: 1;
 }
+/* "Fix with agent" on an error toast (toast-icons.tsx), beside the copy
+   button and before any action. `hidden` until it has read the toast's text,
+   and for good when that text gives an agent nothing to fix (toast-fix.ts). */
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-toast-fix] {
+  display: flex;
+  order: 2;
+  flex-shrink: 0;
+  align-self: flex-end;
+}
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-toast-fix][hidden] {
+  display: none;
+}
 [data-sonner-toaster]
   [data-sonner-toast][data-styled="true"][data-expanded="false"][data-front="false"]
-  :is([data-toast-glyph], [data-toast-copy]) {
+  :is([data-toast-glyph], [data-toast-copy], [data-toast-fix]) {
   opacity: 0;
 }
 
