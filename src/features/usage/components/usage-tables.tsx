@@ -11,6 +11,7 @@ import {
 } from "@tryatlas/design";
 import { Bar, EstTag, useMounted } from "@/components/usage-primitives";
 import { AgentGlyph } from "@/components/agent-mark";
+import { useAgentMetaResolver } from "@/features/agents/lib/agent-meta-context";
 import { fmtCost, fmtNum, fmtPct, fmtTokens } from "@/features/monitor/lib/usage-format";
 import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/time-ago";
@@ -423,14 +424,17 @@ function RollupTable({
  */
 export function AgentChip({ agent }: { agent: string }) {
   const { agentTint } = useIdentityTints();
+  const resolveAgent = useAgentMetaResolver();
   if (agent === BYOK_AGENT || agent === UNKNOWN)
-    return <span className="truncate text-muted-foreground">{agentDisplay(agent)}</span>;
+    return (
+      <span className="truncate text-muted-foreground">{agentDisplay(agent, resolveAgent)}</span>
+    );
   return (
     <span className="inline-flex max-w-full items-center gap-1.5 text-foreground">
       <span className="flex shrink-0 items-center" style={{ color: agentTint(agent).fg }}>
         <AgentGlyph agentType={agent} />
       </span>
-      <span className="truncate">{agentDisplay(agent)}</span>
+      <span className="truncate">{agentDisplay(agent, resolveAgent)}</span>
     </span>
   );
 }

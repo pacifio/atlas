@@ -2,7 +2,7 @@ import { cn } from "@/lib/utils";
 import type { AgentType } from "@/types/agent";
 import { AgentIcons, AgentMonogram, ExternalAgentIcon } from "@/components/agent-icons";
 import { AtlasIcon } from "@/components/atlas-icon";
-import { agentMeta } from "@/features/agents/lib/agent-meta";
+import { useAgentMeta } from "@/features/agents/lib/agent-meta-context";
 
 /**
  * The brand icon alone, with no badge around it. Exported for the places that
@@ -23,6 +23,8 @@ export function AgentGlyph({
   agentType: AgentType;
   size?: "sm" | "lg";
 }) {
+  // First, so the hook order never depends on which branch returns.
+  const meta = useAgentMeta(agentType);
   const cls = size === "lg" ? "size-[18px]" : "size-3.5";
   if (agentType === "claude-acp" || agentType === "claude-code")
     return <AgentIcons.Claude className={cls} />;
@@ -33,10 +35,9 @@ export function AgentGlyph({
   if (agentType === "kilo") return <AgentIcons.Kilo className={cls} />;
   // Atlas's native agent — its own brand mark.
   if (agentType === "atlas-agent") return <AtlasIcon size={size === "lg" ? 18 : 14} />;
-  const meta = agentMeta(agentType);
   const px = size === "lg" ? 18 : 14;
-  // Only recurse when the lookup resolved to a DIFFERENT id: `agentMeta("claude-code")`
-  // answers `firstPartyIcon: "claude-code"`, and recursing on the same id was unbounded.
+  // Only recurse when the lookup resolved to a DIFFERENT id: `"claude-code"`
+  // resolves to `firstPartyIcon: "claude-code"`, and recursing on the same id was unbounded.
   if (meta.firstPartyIcon && meta.firstPartyIcon !== agentType)
     return <AgentGlyph agentType={meta.firstPartyIcon} size={size} />;
   if (meta.iconDataUrl) return <ExternalAgentIcon dataUrl={meta.iconDataUrl} size={px} />;

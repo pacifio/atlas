@@ -22,6 +22,7 @@ import {
   type BoardSession,
   type ProjectFilter,
 } from "../types";
+import { useAgentMetaResolver } from "@/features/agents/lib/agent-meta-context";
 import { agentLabel } from "../lib/board";
 import { authorOf, type AuthorDirectory } from "../lib/author-directory";
 import {
@@ -124,6 +125,7 @@ export function BoardFilters({
   peopleFilter: (string | null)[];
   onPeopleFilter: (people: (string | null)[]) => void;
 }) {
+  const resolveAgent = useAgentMetaResolver();
   // Keyed on the folder when there is one and the server id when there is
   // not, so a teammate's Project with no checkout here is choosable too.
   const filterOf = new Map<string, ProjectFilter>();
@@ -205,7 +207,7 @@ export function BoardFilters({
           render={
             <CompoundFilter label="Agent" aria-label="Filter by agent">
               <span className="max-w-32 truncate">
-                {agentFilter === null ? "Any" : agentLabel(agentFilter)}
+                {agentFilter === null ? "Any" : agentLabel(agentFilter, resolveAgent)}
               </span>
               <ChevronDown size={12} className="shrink-0 text-muted-foreground" />
             </CompoundFilter>
@@ -222,7 +224,7 @@ export function BoardFilters({
               count={a.count}
               onSelect={() => onAgentFilter(agentFilter === a.value ? null : a.value)}
             >
-              {agentLabel(a.value)}
+              {agentLabel(a.value, resolveAgent)}
             </Option>
           ))}
         </DropdownMenuContent>

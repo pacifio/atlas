@@ -9,6 +9,8 @@ import {
   type BranchPullRequest,
 } from "@/features/security/components/ship-overview-card";
 
+import { useAgentMetaResolver } from "@/features/agents/lib/agent-meta-context";
+
 import type { SessionDetail as Detail } from "../../types";
 import {
   agentLabel,
@@ -260,12 +262,13 @@ function LiveChip() {
  * important — the agent is *identity*, not *status*, and the mark alone says it.
  */
 function AgentChip({ agent }: { agent: string }) {
+  const resolveAgent = useAgentMetaResolver();
   return (
     <Chip>
       <span className="text-[var(--secondary-foreground)]">
         <AgentGlyph agent={agent} mono />
       </span>
-      {agentLabel(agent).toLowerCase()}
+      {agentLabel(agent, resolveAgent).toLowerCase()}
     </Chip>
   );
 }

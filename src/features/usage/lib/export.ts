@@ -126,13 +126,16 @@ function facetLine(view: UsageView): string | null {
   const parts: string[] = [];
   if (facets.projects.length)
     parts.push(`projects: ${facets.projects.map((p) => projectLabel(p, data)).join(", ")}`);
-  if (facets.agents.length) parts.push(`agents: ${facets.agents.map(agentDisplay).join(", ")}`);
+  if (facets.agents.length)
+    parts.push(
+      `agents: ${facets.agents.map((a) => agentDisplay(a, view.resolveAgent)).join(", ")}`,
+    );
   if (facets.models.length) parts.push(`models: ${facets.models.map(modelDisplay).join(", ")}`);
   return parts.length ? parts.join(" · ") : null;
 }
 
 function rankedTable(view: UsageView, g: GroupBy, heading: string): string[] {
-  const ranked = rankBy(view.rows, g, view.metric, view.data).slice(0, TOP_N);
+  const ranked = rankBy(view.rows, g, view.metric, view.data, view.resolveAgent).slice(0, TOP_N);
   const col = g === "project" ? "Project" : g === "agent" ? "Agent" : "Model";
   const lines = [`## ${heading}`, ""];
   if (!ranked.length) {

@@ -1,4 +1,5 @@
 import { CAPTION, Card, EstTag, VALUE } from "@/components/usage-primitives";
+import { useAgentMetaResolver } from "@/features/agents/lib/agent-meta-context";
 import { TickMeter } from "@/features/chat/components/usage-meter";
 import { fmtCost, fmtPct, fmtTokens } from "@/features/monitor/lib/usage-format";
 import type { DailyBucket, GroupBy, SessionRow, UsageDashboard } from "../types";
@@ -29,6 +30,7 @@ export function EfficiencyCard({
   groupBy: GroupBy;
   data: UsageDashboard | null;
 }) {
+  const resolveAgent = useAgentMetaResolver();
   const tiles: Array<{
     key: keyof Efficiency;
     label: React.ReactNode;
@@ -44,7 +46,7 @@ export function EfficiencyCard({
   ];
 
   // Per-key efficiency: sessions grouped by the same axis give the distinct-session count.
-  const ranked = rankBy(rows, groupBy, "tokens", data).slice(0, 8);
+  const ranked = rankBy(rows, groupBy, "tokens", data, resolveAgent).slice(0, 8);
   const sessionsByKey = new Map<string, number>();
   for (const s of sessions) {
     const k = keyOf(s, groupBy);

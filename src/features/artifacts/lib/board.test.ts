@@ -10,7 +10,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  EMPTY_AGENT_REGISTRY,
+  resolveAgentMeta,
+  type AgentMetaResolver,
+} from "@/features/agents/lib/agent-identity";
+import {
+  agentLabel,
   bucketByDay,
+  facets,
   formatDuration,
   groupSessions,
   prettyModel,
@@ -261,5 +268,43 @@ describe("shortSessionId", () => {
     // A server Session is `ses-983`; shortening that would be vandalism.
     expect(shortSessionId("ses-983")).toBe("ses-983");
     expect(shortSessionId("abc")).toBe("abc");
+  });
+});
+
+/** Agent identity over an empty registry: first-party names, prettified ids. */
+const resolve: AgentMetaResolver = (id) => resolveAgentMeta(id, EMPTY_AGENT_REGISTRY);
+
+describe("agentLabel", () => {
+  it("keeps the first-party ladder", () => {
+    expect(agentLabel("claude-code", resolve)).toBe("Claude Code");
+    expect(agentLabel("claude-acp", resolve)).toBe("Claude Code");
+    expect(agentLabel("codex-acp", resolve)).toBe("Codex");
+    expect(agentLabel("opencode", resolve)).toBe("OpenCode");
+    expect(agentLabel("atlas-agent", resolve)).toBe("Atlas");
+  });
+
+  it("names any other agent through the resolver it is handed", () => {
+    const registry: AgentMetaResolver = (id) =>
+      resolveAgentMeta(id, {
+        catalogById: {},
+        registryEntries: [{ id: "gemini", name: "Gemini CLI", iconDataUrl: null }],
+      });
+    expect(agentLabel("gemini", registry)).toBe("Gemini CLI");
+    expect(agentLabel("some-agent", resolve)).toBe("Some Agent");
+  });
+});
+
+describe("facets", () => {
+  it("labels the agent options with the resolver", () => {
+    const registry: AgentMetaResolver = (id) =>
+      resolveAgentMeta(id, {
+        catalogById: {},
+        registryEntries: [{ id: "gemini", name: "Gemini CLI", iconDataUrl: null }],
+      });
+    const agent = facets(
+      [session({ agent: "gemini" }), session({ id: "as-2", agent: "codex" })],
+      registry,
+    ).find((f) => f.key === "agent");
+    expect(agent?.options.map((o) => o.label)).toEqual(["All agents", "Codex", "Gemini CLI"]);
   });
 });

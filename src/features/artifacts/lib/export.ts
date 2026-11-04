@@ -15,6 +15,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 
+import { agentMeta } from "@/features/agents/lib/agent-meta";
 import { agentLabel, formatDuration, prettyModel, tokenLabel } from "./board";
 import type { SessionDetail, TimelineEntry } from "../types";
 import { formatDateTime, formatTime } from "@/lib/format-time";
@@ -70,7 +71,7 @@ function toMarkdown(detail: SessionDetail): string {
   const lines: string[] = [];
 
   lines.push(`# ${s.title ?? "Untitled session"}`, "");
-  lines.push(`- **Agent** — ${s.agent ? agentLabel(s.agent) : "unknown"}`);
+  lines.push(`- **Agent** — ${s.agent ? agentLabel(s.agent, agentMeta) : "unknown"}`);
   if (s.model) lines.push(`- **Model** — ${prettyModel(s.model)}`);
   if (s.branches[0]) lines.push(`- **Branch** — \`${s.branches[0]}\``);
   lines.push(`- **Started** — ${formatDateTime(s.startedAt)}`);
