@@ -45,7 +45,7 @@ export function BranchSwitcher() {
         render={
           <Button variant="ghost" size="sm" className="min-w-0 shrink" title="Switch branch">
             <GitBranch size={12} />
-            <span className="truncate max-w-[120px]">{branch || "—"}</span>
+            <span className="truncate">{branch || "—"}</span>
           </Button>
         }
       />

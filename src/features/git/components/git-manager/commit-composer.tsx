@@ -1,0 +1,389 @@
+import { useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { ChevronDown, ChevronUp } from "lucide-react";
+import { Button, Checkbox, Input, Textarea } from "@tryatlas/design";
+
+import { gitBranchCompare } from "@/features/session-context/lib/session-git-api";
+import { featureBranchName } from "@/features/session-context/lib/git-quick-action";
+import { openPullRequestTab } from "@/features/pull-requests/lib/open-pull-request-tab";
+
+import { useGitStore } from "../../stores/git-store";
+import { useShipStore } from "../../stores/ship-store";
+import { handleGitError } from "../../lib/git-errors";
+import { openPullRequest } from "../../lib/git-pr-api";
+import {
+  RETRY_LABEL,
+  STEP_LABEL,
+  needsNewBranch,
+  resumeStep,
+  shipBlockedReason,
+  type ShipContext,
+  type ShipState,
+  type ShipStep,
+} from "../../lib/ship-flow";
+import { dismissShip, retryShip, startShip } from "../../lib/ship-run";
+import { ShipButtonView, type ShipChoice, type ShipChoiceItem } from "../views/ship-button-view";
+import { ShipProgressView, type ShipStepRow } from "../views/ship-progress-view";
+
+/** Expand/collapse toggle for an optional commit-form field. A collapsed field
+ *  that still holds text shows a dot, so its content can't be committed
+ *  invisibly by surprise. */
+function FieldToggle({
+  open,
+  hasContent,
+  label,
+  onToggle,
+}: {
+  open: boolean;
+  hasContent: boolean;
+  label: string;
+  onToggle: () => void;
+}) {
+  return (
+    <Button
+      variant="ghost"
+      size="xs"
+      onClick={onToggle}
+      aria-expanded={open}
+      title={open ? `Hide ${label.toLowerCase()}` : `Show ${label.toLowerCase()}`}
+    >
+      {open ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
+      {label}
+      {!open && hasContent && <span className="inline-block size-1 rounded-full bg-primary" />}
+    </Button>
+  );
+}
+
+function splitAuthors(raw: string): string[] {
+  return raw
+    .split(",")
+    .map((a) => a.trim())
+    .filter(Boolean);
+}
+
+/**
+ * The commit box: the message, its optional body and co-authors, amend, the
+ * last commit with Undo, and the action — Commit, Commit & push, or
+ * "Commit, push & PR" (`ship-flow.ts`), whose steps show in place above the
+ * box while they run, and stay there on a failure with a retry from the step
+ * that failed.
+ */
+export function CommitComposer({ stagedCount }: { stagedCount: number }) {
+  const client = useQueryClient();
+  const repoPath = useGitStore.use.repoPath();
+  const branch = useGitStore.use.branch();
+  const branchesFull = useGitStore.use.branchesFull();
+  const ahead = useGitStore.use.ahead();
+  const log = useGitStore.use.log();
+  const actions = useGitStore.use.actions();
+  const run = useShipStore((s) => (repoPath ? (s.runs[repoPath] ?? null) : null));
+
+  const [summary, setSummary] = useState("");
+  const [description, setDescription] = useState("");
+  const [amend, setAmend] = useState(false);
+  const [showDesc, setShowDesc] = useState(false);
+  const [showCoAuthors, setShowCoAuthors] = useState(false);
+  const [coAuthors, setCoAuthors] = useState("");
+  const [draftOpen, setDraftOpen] = useState(false);
+  const [prTitle, setPrTitle] = useState("");
+  const [prBase, setPrBase] = useState<string | null>(null);
+  const [newBranch, setNewBranch] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (repoPath) void actions.loadLog(repoPath).catch(() => {});
+  }, [repoPath, actions]);
+
+  // Where the branch stands: the default branch, whether there is a remote.
+  // Keyed on what moves it, so a checkout or a push reads it again.
+  const current = branchesFull.find((b) => b.isCurrent);
+  const compare = useQuery({
+    queryKey: ["git-branch-compare", repoPath, branch, current?.upstream ?? null, ahead],
+    queryFn: () => gitBranchCompare(repoPath!),
+    enabled: !!repoPath,
+    staleTime: 30_000,
+  });
+  const detached = useGitStore.use.detached();
+
+  // Busy while OUR streaming commit runs — a slow pre-commit hook used to
+  // look like a hung app. A boolean, not the op: the op changes on every
+  // output batch the hook prints.
+  const committing = useGitStore((s) => s.activeOp?.kind === "commit" && s.activeOp.running);
+  const shipping = run?.phase === "running";
+  const busy = committing || shipping;
+
+  // Amending never requires a new summary (empty = keep the original
+  // message, like `git commit --amend --no-edit`).
+  const canCommit = (stagedCount > 0 || amend) && (summary.trim().length > 0 || amend);
+
+  const ctx: ShipContext = {
+    canCommit,
+    amend,
+    branch: detached ? null : branch || null,
+    hasRemote: compare.data?.hasRemote ?? !!current?.upstream,
+    isDefault: compare.data?.isDefault ?? false,
+    busy,
+  };
+  const commitBlocked = busy
+    ? "A git action is in progress."
+    : canCommit
+      ? null
+      : stagedCount === 0 && !amend
+        ? "Stage changes to commit."
+        : "Write a summary to commit.";
+  const blocked = commitBlocked ?? shipBlockedReason(ctx);
+
+  const branchNeeded = needsNewBranch(ctx, "commit_push_pr");
+  const suggestedBranch = useMemo(
+    () =>
+      featureBranchName(
+        summary,
+        branchesFull.map((b) => b.name),
+      ),
+    [summary, branchesFull],
+  );
+
+  const resetForm = () => {
+    setSummary("");
+    setDescription("");
+    setAmend(false);
+    setShowDesc(false);
+    setCoAuthors("");
+    setShowCoAuthors(false);
+    setPrTitle("");
+    setNewBranch(null);
+  };
+
+  const commit = async () => {
+    if (commitBlocked) return;
+    try {
+      const authors = splitAuthors(coAuthors);
+      await actions.commit(
+        summary.trim(),
+        description.trim() || undefined,
+        amend,
+        authors.length > 0 ? authors : undefined,
+      );
+      resetForm();
+    } catch (e) {
+      handleGitError(e);
+    }
+  };
+
+  const ship = (variant: "commit_push" | "commit_push_pr") => {
+    if (!repoPath || blocked) return;
+    const branchName =
+      variant === "commit_push_pr" && branchNeeded ? (newBranch ?? suggestedBranch).trim() : null;
+    startShip(client, repoPath, {
+      variant,
+      summary: summary.trim(),
+      description: description.trim() || null,
+      coAuthors: splitAuthors(coAuthors),
+      newBranch: branchName || null,
+      pr: { title: prTitle, base: prBase ?? compare.data?.defaultBranch ?? null },
+    });
+  };
+
+  // The box empties once the run has committed, not when it starts: a run
+  // stopped before its commit (no `gh`, a branch name taken) keeps the
+  // message for the next try. Once per run.
+  const committedRun = run && run.status.commit === "done" ? run.request : null;
+  const [clearedFor, setClearedFor] = useState<object | null>(null);
+  if (committedRun && committedRun !== clearedFor) {
+    setClearedFor(committedRun);
+    resetForm();
+  }
+
+  const onRun = (choice: ShipChoice) => {
+    if (choice === "commit") void commit();
+    // A pull request from the default branch has to name its new branch.
+    else if (choice === "commit_push_pr" && branchNeeded && !draftOpen && newBranch === null) {
+      setDraftOpen(true);
+    } else ship(choice);
+  };
+
+  const items: ShipChoiceItem[] = [
+    {
+      choice: "commit",
+      label: amend ? "Amend" : "Commit",
+      disabledReason: commitBlocked,
+      shortcut: "⌘↵",
+    },
+    { choice: "commit_push", label: "Commit & push", disabledReason: blocked },
+    { choice: "commit_push_pr", label: "Commit, push & PR", disabledReason: blocked },
+  ];
+  // The pull request is the primary action wherever it can run; where it
+  // can't (no remote, detached, an amend), plain Commit is.
+  const primary = blocked === null || !canCommit || busy ? items[2] : items[0];
+
+  const last = log[0];
+
+  return (
+    <>
+      {run && repoPath && (
+        <ShipProgress
+          run={run}
+          onRetry={() => retryShip(client, repoPath)}
+          onDismiss={() => dismissShip(repoPath)}
+          repoPath={repoPath}
+        />
+      )}
+      <div className="shrink-0 space-y-1.5 border-t border-border-subtle p-2">
+        <Input
+          value={summary}
+          onChange={(e) => setSummary(e.target.value)}
+          aria-label="Commit summary"
+          placeholder={amend ? "Amend message (empty = keep original)" : "Summary"}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void commit();
+          }}
+        />
+        {showDesc && (
+          <Textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            aria-label="Commit description"
+            placeholder="Description — also the pull request's body"
+            rows={3}
+            className="resize-none"
+          />
+        )}
+        {showCoAuthors && (
+          <Input
+            value={coAuthors}
+            onChange={(e) => setCoAuthors(e.target.value)}
+            aria-label="Co-authors"
+            placeholder="Co-authors: Name <email>, Name <email>"
+            className="font-mono"
+            title="Added as Co-authored-by trailers"
+          />
+        )}
+        <div className="flex flex-wrap items-center gap-1">
+          <FieldToggle
+            open={showDesc}
+            hasContent={description.trim().length > 0}
+            label="Description"
+            onToggle={() => setShowDesc((v) => !v)}
+          />
+          <FieldToggle
+            open={showCoAuthors}
+            hasContent={coAuthors.trim().length > 0}
+            label="Co-authors"
+            onToggle={() => setShowCoAuthors((v) => !v)}
+          />
+          <label className="ml-1 flex cursor-pointer items-center gap-1.5 caption select-none">
+            <Checkbox checked={amend} onCheckedChange={setAmend} />
+            Amend
+          </label>
+        </div>
+        <div className="flex items-center gap-2">
+          {last ? (
+            <span className="flex min-w-0 flex-1 items-center gap-1 caption">
+              <span className="shrink-0">Last:</span>
+              <span className="truncate" title={last.message}>
+                {last.message}
+              </span>
+              <Button
+                variant="ghost"
+                size="xs"
+                disabled={busy}
+                title="Undo this commit — its changes return to Staged (blocked once pushed)"
+                onClick={() => void actions.undoCommit().catch(handleGitError)}
+              >
+                Undo
+              </Button>
+            </span>
+          ) : (
+            <span className="flex-1" />
+          )}
+          <ShipButtonView
+            primary={primary}
+            items={items}
+            busy={busy}
+            busyLabel={committing ? "Committing…" : "Shipping…"}
+            onRun={onRun}
+            draftOpen={draftOpen}
+            onDraftOpenChange={(open) => {
+              setDraftOpen(open);
+              if (open && branchNeeded && newBranch === null) setNewBranch(suggestedBranch);
+            }}
+            draft={{
+              title: prTitle,
+              titlePlaceholder: summary.trim(),
+              base: prBase ?? compare.data?.defaultBranch ?? "",
+              newBranch: branchNeeded ? (newBranch ?? suggestedBranch) : null,
+              currentBranch: branch || null,
+            }}
+            onDraftChange={(patch) => {
+              if (patch.title !== undefined) setPrTitle(patch.title);
+              if (patch.base !== undefined) setPrBase(patch.base);
+              if (patch.newBranch !== undefined) setNewBranch(patch.newBranch);
+            }}
+            prDisabledReason={
+              blocked ??
+              (branchNeeded && !(newBranch ?? suggestedBranch).trim()
+                ? "Name the new branch."
+                : null)
+            }
+          />
+        </div>
+      </div>
+    </>
+  );
+}
+
+/** The run's state, as the progress view's rows. */
+function ShipProgress({
+  run,
+  repoPath,
+  onRetry,
+  onDismiss,
+}: {
+  run: ShipState;
+  repoPath: string;
+  onRetry: () => void;
+  onDismiss: () => void;
+}) {
+  const { request } = run;
+  const detail: Record<ShipStep, string | null> = {
+    check: null,
+    branch: request.newBranch,
+    commit: request.summary,
+    push: run.branch,
+    pr: run.pr ? `#${run.pr.number}` : request.pr.base ? `into ${request.pr.base}` : null,
+  };
+  const rows: ShipStepRow[] = run.steps.map((step) => ({
+    id: step,
+    label: STEP_LABEL[step],
+    detail: detail[step],
+    status: run.status[step],
+  }));
+  const resume = run.phase === "failed" ? resumeStep(run) : null;
+  const title =
+    run.phase === "done"
+      ? request.variant === "commit_push_pr"
+        ? "Shipped"
+        : "Committed and pushed"
+      : run.phase === "failed"
+        ? "Stopped"
+        : request.variant === "commit_push_pr"
+          ? "Commit, push & PR"
+          : "Commit & push";
+  return (
+    <ShipProgressView
+      title={title}
+      steps={rows}
+      phase={run.phase}
+      error={run.error?.message ?? null}
+      retryLabel={resume ? RETRY_LABEL[resume] : null}
+      pr={run.pr}
+      onRetry={onRetry}
+      onDismiss={onDismiss}
+      onOpenPr={() => {
+        if (run.pr) openPullRequestTab({ repoPath, number: run.pr.number });
+      }}
+      onOpenPrOnHost={() => {
+        if (run.pr) openPullRequest(run.pr.url);
+      }}
+    />
+  );
+}
