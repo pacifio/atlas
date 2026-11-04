@@ -1299,9 +1299,10 @@ mod tests {
     /// an old shape, or one naming another schema, fails to load like any other
     /// bad file: it is reported by name and never enters the assembled
     /// catalog, which still holds the default. An id that does not resolve
-    /// falls back to that default in
-    /// `unknown_config_theme_falls_back_in_memory_and_is_never_rewritten` in
-    /// `atlas_config.rs`, and `apply` in the theme store.
+    /// falls back to that default: `fallback_unknown_theme` in
+    /// `atlas_config.rs` (tested by
+    /// `unknown_config_theme_falls_back_in_memory_and_is_never_rewritten`)
+    /// and `apply` in the theme store.
     #[test]
     fn an_old_or_other_schema_user_theme_is_skipped_and_the_default_still_loads() {
         let dir = tempfile::tempdir().unwrap();
