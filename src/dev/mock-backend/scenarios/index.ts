@@ -57,6 +57,7 @@ import { knowledge } from "./knowledge";
 import { memoryHistoryEdited, memorySetup } from "./memory-setup";
 import { northwind } from "./northwind";
 import { commsNotConnected, openTeamChat } from "./northwind-comms";
+import { paletteActions } from "./palette-actions";
 import { pullRequestScenarios } from "./pull-request";
 import { sessionContext } from "./session-context";
 import { sessionProjects } from "./session-projects";
@@ -95,6 +96,7 @@ const all: Scenario[] = [
       gitPullPrefersMerge,
       gitPullAsks,
       gitRewritePushedCommits,
+      ...paletteActions,
       // The app chrome that only shows when something happens (ATL-935).
       seedNotifications,
       openNotifications,
