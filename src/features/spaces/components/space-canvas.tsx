@@ -14,7 +14,6 @@ import {
   type NodeChange,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { useComposerFileDrop } from "@/features/chat/hooks/use-composer-file-drop";
 import { filesFromClipboard, hasFiles, scratchPathForFile } from "@/lib/scratch-file";
@@ -515,7 +514,8 @@ function SpaceSurface({
       }
       if (hasFiles(dt)) {
         e.preventDefault();
-        void invoke<string[]>("clipboard_file_paths")
+        void spacesApi
+          .clipboardFilePaths()
           .then((paths) => {
             if (paths.length > 0) return uploadAndPlace(paths, viewportCentre());
           })
@@ -628,7 +628,7 @@ function SpaceSurface({
           >
             {preview && (
               <div
-                className="pointer-events-none absolute rounded border border-[var(--primary)] bg-[var(--primary)]/10"
+                className="pointer-events-none absolute rounded border border-primary bg-primary/10"
                 style={{
                   left: preview.left,
                   top: preview.top,
@@ -641,7 +641,7 @@ function SpaceSurface({
         )}
 
         {uploading && (
-          <div className="absolute bottom-3 left-1/2 z-40 -translate-x-1/2 rounded-full border border-border-subtle bg-[var(--card)]/80 px-3 py-1 text-xs text-secondary-foreground backdrop-blur-xl">
+          <div className="absolute bottom-3 left-1/2 z-40 -translate-x-1/2 rounded-full border border-border-subtle bg-card/80 px-3 py-1 text-xs text-secondary-foreground backdrop-blur-xl">
             Uploading media…
           </div>
         )}
@@ -650,11 +650,11 @@ function SpaceSurface({
             the drop against the wrapper; opacity only. */}
         <div
           aria-hidden
-          className={`pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-[var(--primary)]/8 transition-opacity duration-150 ${
+          className={`pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-primary/8 transition-opacity duration-150 ${
             isDropTarget ? "opacity-100" : "opacity-0"
           }`}
         >
-          <span className="rounded-full border border-[var(--primary)]/40 bg-card px-3 py-1 text-xs font-medium text-secondary-foreground shadow">
+          <span className="rounded-full border border-primary/40 bg-card px-3 py-1 text-xs font-medium text-secondary-foreground shadow">
             Drop images or video to add them
           </span>
         </div>
