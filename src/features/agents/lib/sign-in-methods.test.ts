@@ -1,22 +1,14 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { AuthEnvStatus, AuthMethodWire } from "@/features/chat/lib/agents-api";
 
-// The component pulls Tauri IPC, Radix and zustand in at import time; the pure
-// decision functions under test need none of it.
-vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: () => Promise.resolve() }));
-vi.mock("sonner", () => ({ toast: { success: () => {}, error: () => {} } }));
-vi.mock("@/features/chat/lib/agents-api", () => ({ agents: {}, ensureAgent: () => {} }));
-vi.mock("@/features/chat/lib/agent-signin", () => ({
-  AGENT_SIGNIN_EVENT: "atlas:agent-signin",
-  errInfo: (e: unknown) => ({ message: String(e), kind: null }),
-  runSignInMethod: () => Promise.resolve(),
-  takeSignInCallback: () => undefined,
-}));
-vi.mock("@/features/agents/lib/agent-meta", () => ({ agentMeta: (id: string) => ({ label: id }) }));
-vi.mock("@/features/log/lib/log", () => ({ logEvent: () => {} }));
-
-const { manualCommandFor, methodBlockedReason, methodForReason } =
-  await import("./agent-oauth-modal");
+import {
+  envStatusLabel,
+  isDocked,
+  manualCommandFor,
+  methodBlockedReason,
+  methodForReason,
+  type SignInPhase,
+} from "./sign-in-methods";
 
 /** A method with only the fields a given assertion depends on. */
 function method(over: Partial<AuthMethodWire>): AuthMethodWire {
@@ -155,5 +147,41 @@ describe("methodForReason", () => {
   it("returns null when no method matches the named provider", () => {
     const methods = [method({ id: "chat-gpt", kind: "agent" })];
     expect(methodForReason(methods, "Gemini API key is missing")).toBeNull();
+  });
+});
+
+describe("isDocked", () => {
+  const m = method({});
+  const cases: [SignInPhase, boolean][] = [
+    [{ kind: "loading" }, true],
+    [{ kind: "choose", methods: [] }, false],
+    [{ kind: "env", method: m, methods: [m] }, false],
+    [{ kind: "running", label: "Signing in…", docked: false }, false],
+    [{ kind: "running", label: "Checking…", docked: true }, true],
+    [{ kind: "error", message: "no" }, false],
+    [{ kind: "terminal", method: m, command: "x login", terminal: null }, true],
+    [{ kind: "done", docked: false }, false],
+    [{ kind: "done", docked: true }, true],
+  ];
+  for (const [phase, docked] of cases) {
+    it(`${phase.kind}${"docked" in phase ? ` (docked: ${phase.docked})` : ""} → ${docked ? "dock" : "dialog"}`, () => {
+      expect(isDocked(phase)).toBe(docked);
+    });
+  }
+});
+
+describe("envStatusLabel", () => {
+  it("names where a satisfied variable came from", () => {
+    expect(envStatusLabel(envStatus({ satisfied: true, source: "shell-env" }))).toBe(
+      "from shell profile",
+    );
+    expect(envStatusLabel(envStatus({ satisfied: true, source: "process-env" }))).toBe(
+      "from environment",
+    );
+  });
+
+  it("tells an optional variable from a missing one", () => {
+    expect(envStatusLabel(envStatus({ satisfied: false, optional: true }))).toBe("optional");
+    expect(envStatusLabel(envStatus({ satisfied: false, optional: false }))).toBe("not set");
   });
 });
