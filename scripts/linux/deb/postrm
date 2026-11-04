@@ -1,0 +1,14 @@
+#!/bin/sh
+# The tryatlas deb's postrm. One copy, read by both deb builders:
+# scripts/package-linux.sh (the release) and scripts/linux/cargo-deb.sh.
+set -e
+if [ -L /usr/bin/atlas ] && [ "$(readlink /usr/bin/atlas)" = "atl" ]; then
+  rm -f /usr/bin/atlas
+fi
+rm -f /usr/share/applications/atlas.desktop /usr/share/applications/atl.desktop /usr/share/applications/tryatlas.desktop
+if command -v update-desktop-database >/dev/null 2>&1; then
+  update-desktop-database -q /usr/share/applications || true
+fi
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+  gtk-update-icon-cache -q -t /usr/share/icons/hicolor || true
+fi

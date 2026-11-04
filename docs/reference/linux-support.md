@@ -8,6 +8,14 @@ built, checked, signed and announced.
 - **Where packages land:** `target/release-linux/`, next to the binary, never under
   `dist/` (the frontend bundle, which the next build syncs and watches).
   `cargo clean` removes them with the rest of the build output.
+- **A local deb with cargo-deb:** `bun run package:linux:deb` (`scripts/linux/cargo-deb.sh`,
+  `--build` to build first, `--install` to apt-install the result) writes
+  `target/debian/tryatlas_<version>_<arch>.deb` from `[package.metadata.deb]` in
+  `src-tauri/Cargo.toml`. It installs what the release deb installs, with the shared
+  libraries and glibc floor read from the binary by `dpkg-shlibdeps`, so its `Depends`
+  names the building machine's packages. The release deb stays the one
+  `package-linux.sh` builds and `Verify` checks; `linux-packaging.test.ts` keeps the two
+  in step.
 - **Why it is shaped this way:** [`docs/research/linux-release-plan.md`](../research/linux-release-plan.md).
 
 ## Supported systems
