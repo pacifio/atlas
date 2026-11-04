@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Hint } from "@/ui/tooltip";
+import { Hint } from "@tryatlas/design";
 
 /** A note's cover strip, icon button and title input. Every value and
  *  handler comes from `PageHeaderWithIcon`; `pickers` is its icon/cover

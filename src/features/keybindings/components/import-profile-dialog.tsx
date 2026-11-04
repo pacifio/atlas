@@ -1,16 +1,16 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { Button } from "@/ui/button";
+import { useKeybindingsStore } from "../stores/keybindings-store";
 import {
+  Button,
   Dialog,
   DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/ui/dialog";
-import { useKeybindingsStore } from "../stores/keybindings-store";
+} from "@tryatlas/design";
 
 /**
  * Paste a profile someone copied with "Copy as JSON". A textarea rather than

@@ -29,8 +29,6 @@ import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { GitMerge, GitPullRequestArrow, GitPullRequestClosed, LoaderCircle } from "lucide-react";
 import { toast } from "sonner";
 
-import { Button } from "@/ui/button";
-
 import { classifyPrError } from "../lib/pr-errors";
 import { lastMergeMethod, removeAgentCreditsOnMerge } from "../lib/pull-request-prefs";
 import {
@@ -48,6 +46,7 @@ import { pullRequestKeys } from "../lib/pull-requests-queries";
 import type { PrAction, PrListEntry } from "../lib/pull-requests-types";
 import { readableFailure } from "../lib/use-pull-request-actions";
 import { useInlineConfirm } from "../lib/use-inline-confirm";
+import { Button } from "@tryatlas/design";
 
 export type QuickActionEntry = Pick<PrListEntry, "number" | "title" | "state" | "isDraft">;
 

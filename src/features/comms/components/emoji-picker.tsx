@@ -1,8 +1,8 @@
 import { useMemo, useRef, useState } from "react";
 import { Popover } from "@base-ui/react/popover";
 import { Search, Smile } from "lucide-react";
-import { HintItem } from "@/ui/hint-group";
 import { EMOJI_CATEGORIES, searchEmoji } from "../lib/emoji-data";
+import { HintItem } from "@tryatlas/design";
 
 /**
  * The composer's emoji button.

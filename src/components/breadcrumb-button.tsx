@@ -1,7 +1,7 @@
 import type { ComponentProps, ReactNode } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Icon } from "@/ui/icon";
+import { Icon } from "@tryatlas/design";
 
 /**
  * One segment of the top bar's `org / project` breadcrumb.

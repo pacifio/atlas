@@ -7,7 +7,6 @@
  * what reads them (the watch, the link handler) acts across projects.
  */
 
-import { Select } from "@/ui/select";
 import { NATIVE_AGENT_ID } from "@/types/agent";
 import { useAgentRegistryStore } from "@/features/agents/stores/agent-registry-store";
 import { useSettingsStore } from "../../stores/settings-store";
@@ -19,6 +18,7 @@ import {
   SettingsSection,
 } from "../layout/settings-layout";
 import { SettingSelect, SettingSwitch, SettingTextarea } from "../layout/setting-controls";
+import { Select } from "@tryatlas/design";
 
 const MERGE_METHODS = [
   {

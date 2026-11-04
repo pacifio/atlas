@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Kbd } from "@/ui/kbd";
 import { useHintStore } from "../stores/hint-store";
 import { scanTargets, HINT_OVERLAY_ATTR, type HintTarget } from "../lib/scan-targets";
 import { generateLabels } from "../lib/generate-labels";
 import { activate } from "../lib/activate-target";
 
-import { HUD } from "@/ui/hud";
 import { matchesAction } from "@/features/keybindings/lib/use-scoped-hotkeys";
+import { Kbd, HUD } from "@tryatlas/design";
 
 /**
  * The trigger (⌘⌥Space by default) — rebindable via Settings → Keybindings.

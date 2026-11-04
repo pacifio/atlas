@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { AlertTriangle, Frame, X } from "lucide-react";
-import { Hint } from "@/ui/tooltip";
 import { useCommsStore } from "@/features/comms/stores/comms-store";
 import { useSpaceSession } from "../lib/use-space-session";
 import { useSpacesStore } from "../stores/spaces-store";
 import { readDock, writeDock, type SpaceDock } from "../lib/dock";
 import { SpaceCanvas } from "./space-canvas";
 import { SpacePages } from "./space-pages";
+import { Hint } from "@tryatlas/design";
 
 /**
  * The center-tab host for one conversation's realtime Space — the

@@ -2,13 +2,13 @@ import { useEffect, useRef } from "react";
 import { Camera, Check, EyeOff, MessageCircleQuestion, MessagesSquare, X } from "lucide-react";
 import { GithubIcon } from "@/components/github-icon";
 import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
 import { useAuthStore } from "@/features/auth/stores/auth-store";
 import { AccountAvatar } from "@/features/auth/components/account-avatar";
 import { useFeedbackStore } from "../stores/feedback-store";
 import { CATEGORIES } from "../lib/feedback-api";
 import { DISCORD_URL, issueUrl, openExternal } from "../lib/feedback-links";
 import { useSettingsStore } from "@/features/settings/stores/settings-store";
+import { Hint } from "@tryatlas/design";
 
 /** Inset from the window's bottom-right corner. The status bar the panel
  *  used to sit above is gone (2026-09-16); the feedback entry is now the

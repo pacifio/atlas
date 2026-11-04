@@ -28,7 +28,7 @@ import { getLanguage } from "@/features/git/lib/diff";
 import { highlightDiffLine } from "@/features/git/lib/diff-highlight";
 import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
+import { Hint } from "@tryatlas/design";
 
 /**
  * Lines past which the block renders plain.

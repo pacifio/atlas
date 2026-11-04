@@ -12,7 +12,6 @@
  * item says which, so "Default" never hides where a font came from.
  */
 
-import { Select } from "@/ui/select";
 import { appearanceForMode } from "@/features/theme/apply-theme";
 import { themeIdFor, useThemeStore } from "@/features/theme/stores/theme-store";
 import { useSettingsStore } from "../../stores/settings-store";
@@ -22,6 +21,7 @@ import { settingMeta } from "../../lib/settings-sections";
 import { useScopedSetting } from "../../lib/use-scoped-setting";
 import { SettingsGroup, SettingsRow, SettingsSection } from "../layout/settings-layout";
 import { FontPicker } from "./font-picker";
+import { Select } from "@tryatlas/design";
 
 /** Atlas's own defaults, for when neither the setting nor the theme names a
  *  font: Geist and Geist Mono, which `@tryatlas/design` bundles (its

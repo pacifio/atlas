@@ -25,7 +25,6 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
-import { HintGroup, HintItem } from "@/ui/hint-group";
 import { openFileOrReveal } from "@/lib/open-file";
 import { markScrollHot } from "@/lib/scroll-hot";
 import { useAppStore } from "@/features/app/stores/app-store";
@@ -38,6 +37,7 @@ import { terminalSessions } from "../lib/terminal-session";
 import { CommandInput, type CommandInputHandle } from "./command-input";
 import { TerminalStopControl } from "./terminal-stop-control";
 import { useTerminalStore } from "../stores/terminal-store";
+import { HintGroup, HintItem } from "@tryatlas/design";
 
 export type { RawGitStatus } from "../lib/term-git";
 

@@ -1,7 +1,7 @@
 import { createContext, memo, use, type ReactNode } from "react";
 import { Checkbox } from "@base-ui/react/checkbox";
 import { Check } from "lucide-react";
-import { Hint } from "@/ui/tooltip";
+import { Hint } from "@tryatlas/design";
 
 /** What a file header's "Viewed" box reads and writes. */
 export interface FileViewedState {

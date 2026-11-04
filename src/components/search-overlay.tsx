@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef } from "react";
 import { Dialog } from "@base-ui/react/dialog";
 import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
 import { openFile } from "@/lib/open-file";
 import { useSessionStore } from "@/features/app/stores/session-store";
 import { useAppStore } from "@/features/app/stores/app-store";
 import { Search, FileCode, Clock, X } from "lucide-react";
 import { codeGrep, type CodeGrepMatch, type CodeSearchOptions } from "@/components/code-search-api";
+import { Hint } from "@tryatlas/design";
 
 /** The switches beside the query, in VS Code's order and with its glyphs. */
 const TOGGLES: { key: keyof CodeSearchOptions; glyph: string; label: string }[] = [

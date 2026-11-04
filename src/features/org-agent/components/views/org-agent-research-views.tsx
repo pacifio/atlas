@@ -15,8 +15,6 @@ import {
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { Badge } from "@/ui/badge";
-import { Button } from "@/ui/button";
 
 import type { OrgAgentTarget } from "../../lib/org-agent-links";
 import { etaWords, researchFinished, secondsLeft, tookWords } from "../../lib/org-agent-log";
@@ -24,6 +22,7 @@ import type { Payload, ResearchStatus, ResearchStep } from "../../lib/org-agent-
 import { CardList } from "../org-agent-cards";
 import { OrgAgentMarkdown } from "../org-agent-markdown";
 import { Uncited, useNow } from "./org-agent-turn-parts";
+import { Badge, Button } from "@tryatlas/design";
 
 const PHASE_WORDS: Record<ResearchStatus, string> = {
   queued: "Starting",

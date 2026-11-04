@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { RailGlyph } from "@/ui/animated-icon";
 import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
 import { Popover } from "@base-ui/react/popover";
 import { useAppStore } from "@/features/app/stores/app-store";
@@ -7,7 +6,6 @@ import { useProjectStore } from "@/features/projects/stores/project-store";
 import { ArrowDownToLine, Hammer, Loader2, Minus, Search, Square, Copy, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppProfile } from "@/lib/app-profile";
-import { HintGroup, HintItem } from "@/ui/hint-group";
 import { TitlebarDock, type DockItem } from "./titlebar-dock";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -31,6 +29,7 @@ import { RightPanelToggle } from "@/features/layout/components/right-panel-toggl
 import { AccountButton } from "@/features/auth/components/account-button";
 import { HelpSubmenu } from "./help-submenu";
 import { endPeek, releasePeek, requestPeek } from "@/features/sidebar/lib/sidebar-peek";
+import { RailGlyph, HintGroup, HintItem } from "@tryatlas/design";
 
 /**
  * The native window, for dragging and zooming. Resolved once per module and

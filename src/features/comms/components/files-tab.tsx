@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { FileText, Image as ImageIcon, Music, RefreshCw } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { timeAgo } from "@/lib/time-ago";
-import { Hint } from "@/ui/tooltip";
 import { AudioPlayer } from "./audio-player";
 import { CommsAvatar } from "./comms-avatar";
 import { formatBytes, saveAttachment } from "./message-group";
@@ -11,6 +10,7 @@ import { useCommsStore } from "../stores/comms-store";
 import { openMediaList, toLightboxItem, type LightboxItem } from "../stores/lightbox-store";
 import type { LucideIcon } from "lucide-react";
 import type { ChatAttachment, CommsMessage, OrgMemberProfile } from "../types";
+import { Hint } from "@tryatlas/design";
 
 /**
  * Every file in the conversation, as far as loaded history reaches.

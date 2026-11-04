@@ -1,7 +1,5 @@
 import { ChevronRight, Folder, PanelRight } from "lucide-react";
-import { RailGlyph } from "@/ui/animated-icon";
-
-import { Hint } from "@/ui/tooltip";
+import { RailGlyph, Hint } from "@tryatlas/design";
 
 interface EditorTopbarProps {
   /** Folder/segment trail (empty for root-level pages). */

@@ -15,10 +15,6 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
 
 import { copyText } from "@/lib/clipboard";
-import { Badge } from "@/ui/badge";
-import { Button } from "@/ui/button";
-import { Icon } from "@/ui/icon";
-import { Hint } from "@/ui/tooltip";
 import { AtlasLoader } from "@/components/atlas-loader";
 import { packs as packsApi } from "@/features/packs/lib/packs-api";
 import { skills as skillsApi } from "@/features/skills/lib/skills-api";
@@ -34,6 +30,7 @@ import { SettingsSearch } from "../layout/settings-search";
 import { TrendSparkline } from "@/components/trend-sparkline";
 import { installTrend } from "@/features/packs/lib/install-trends";
 import type { ComponentKind, Pack, PackSearchHit, Scope } from "@/features/packs/lib/types";
+import { Badge, Button, Icon, Hint } from "@tryatlas/design";
 
 const POPULAR_SEEDS = ["agent", "react", "design", "review", "database", "python"];
 const POPULAR_LS_KEY = "atlas:skills:popular:v1";

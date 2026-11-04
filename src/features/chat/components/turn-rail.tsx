@@ -29,8 +29,6 @@ import {
 } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { IconButton } from "@/ui/icon-button";
-import { Hint } from "@/ui/tooltip";
 import { useSettingsStore } from "@/features/settings/stores/settings-store";
 import {
   resolveTurnRailCurrentIndex,
@@ -48,6 +46,7 @@ import {
   type TurnRailPreview,
 } from "../lib/turn-rail";
 import { forwardWheelToScroller } from "../lib/turn-rail-wheel";
+import { IconButton, Hint } from "@tryatlas/design";
 
 export interface TurnRailProps {
   items: readonly TurnRailItem[];

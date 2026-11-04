@@ -4,7 +4,6 @@ import { save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/ui/tooltip";
 import { comms, parseRefusal } from "../lib/comms-api";
 import { copyShareLink, memberCallUrl } from "../lib/call-links";
 import { useCommsStore } from "../stores/comms-store";
@@ -12,6 +11,7 @@ import { AudioPlayer } from "./audio-player";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { formatClock } from "../lib/derive";
 import type { ChatCall, OrgMemberProfile, RecordingTrack } from "../types";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@tryatlas/design";
 
 /**
  * A call, rendered as a Linear-style activity row rather than a message bubble.

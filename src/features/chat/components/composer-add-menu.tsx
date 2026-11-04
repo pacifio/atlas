@@ -8,7 +8,6 @@
 // eat the keystrokes — the same pattern the project "+" AddProjectMenu uses.
 
 import { useEffect, useMemo, useState } from "react";
-import { PlusMinusGlyph } from "@/ui/animated-icon";
 import { Menu as DropdownMenu } from "@base-ui/react/menu";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -30,7 +29,6 @@ import {
 } from "lucide-react";
 import { GithubIcon } from "@/components/github-icon";
 import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
 import { openSettingsSection } from "@/features/settings/lib/open-settings";
 import type { GithubRepo, ClonedRepo } from "@/features/github/types";
 import {
@@ -39,6 +37,7 @@ import {
   type MentionProject,
   type PastSessionRef,
 } from "../lib/mentions";
+import { PlusMinusGlyph, Hint } from "@tryatlas/design";
 
 interface ComposerAddMenuProps {
   disabled?: boolean;

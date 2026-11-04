@@ -2,13 +2,9 @@ import { useMemo, useState } from "react";
 import { Popover } from "@base-ui/react/popover";
 import { GitBranch, Check, Plus, Search, Trash2, GitMerge } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Badge } from "@/ui/badge";
-import { Button } from "@/ui/button";
-import { IconButton } from "@/ui/icon-button";
-import { Input } from "@/ui/input";
-import { HintGroup, HintItem } from "@/ui/hint-group";
 import { useGitStore } from "../../stores/git-store";
 import { handleGitError } from "../../lib/git-errors";
+import { Badge, Button, IconButton, Input, HintGroup, HintItem } from "@tryatlas/design";
 
 /** Branch switcher popover: filter, checkout, create, delete, merge-into-current. */
 export function BranchSwitcher() {

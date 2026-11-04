@@ -28,7 +28,7 @@ import {
 } from "@/features/settings/lib/model-catalog";
 import { loadNativeModelPref } from "../lib/native-model-pref";
 import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
+import { Hint } from "@tryatlas/design";
 
 // Curated model-list cache — `modelchat.models(provider)` hits the provider API,
 // so cache the curated list per provider for the app session and dedupe

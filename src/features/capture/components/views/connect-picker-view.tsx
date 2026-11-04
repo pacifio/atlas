@@ -1,16 +1,16 @@
 import { Check, ChevronDown, Loader2, Lock } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+
+import type { ConnectOptions, RemoteWorkspace } from "../../types";
+import { GhostButton, PrimaryButton } from "./controls";
+import { FIELD, GROUP } from "./styles";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/ui/dropdown-menu";
-
-import type { ConnectOptions, RemoteWorkspace } from "../../types";
-import { GhostButton, PrimaryButton } from "./controls";
-import { FIELD, GROUP } from "./styles";
+} from "@tryatlas/design";
 
 /** Connect is unavailable: the reason, in place of the picker. */
 export function ConnectLockedView({ reason }: { reason: string }) {

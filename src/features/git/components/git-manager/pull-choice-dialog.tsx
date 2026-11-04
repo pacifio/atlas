@@ -1,7 +1,7 @@
 import { Dialog } from "@base-ui/react/dialog";
 import { GitBranch } from "lucide-react";
-import { Button } from "@/ui/button";
 import { useGitStore, type PullStrategy } from "../../stores/git-store";
+import { Button } from "@tryatlas/design";
 
 const OPTIONS: { strategy: Exclude<PullStrategy, "default">; label: string; detail: string }[] = [
   {

@@ -3,10 +3,10 @@ import { CircleUser, Loader2 } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
 import { useAuthStore } from "../stores/auth-store";
 import { AccountAvatar } from "./account-avatar";
 import { AccountMenu } from "./account-menu";
+import { Hint } from "@tryatlas/design";
 
 /**
  * The account control at the right of the title bar.

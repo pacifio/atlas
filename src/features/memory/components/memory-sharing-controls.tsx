@@ -11,11 +11,8 @@ import { useEffect, useMemo } from "react";
 import { Popover } from "@base-ui/react/popover";
 import { Share2, SlidersHorizontal, FileText, Server, Cpu, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
-import { IconButton } from "@/ui/icon-button";
 import { ProviderModelSelector } from "./provider-pickers";
 import { Track, TrackSegment } from "./views/memory-chrome";
-import { Switch } from "@/ui/switch";
 import { useByokStore } from "@/features/settings/stores/byok-store";
 import { CHAT_PROVIDERS } from "@/features/settings/lib/providers";
 import { useMemorySharingStore } from "../stores/memory-sharing-store";
@@ -28,6 +25,7 @@ import {
   HANDOFF_HINT,
   RAW_HINT,
 } from "../lib/memory-sharing-copy";
+import { Hint, IconButton, Switch } from "@tryatlas/design";
 
 export function MemorySharingControls({ projectPath }: { projectPath: string | null }) {
   const enabled = useMemorySharingStore.use.enabled();

@@ -18,13 +18,12 @@ import { copyText } from "@/lib/clipboard";
 import { editorThemeExtensions } from "@/features/editor/themes/build-cm-theme";
 import { sendToAgentChat } from "@/features/chat/lib/send-to-agent";
 import { yCollab } from "y-codemirror.next";
-import { HintGroup, HintItem } from "@/ui/hint-group";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/ui/tooltip";
 import { CommsAvatar } from "./comms-avatar";
 import { useDraftSession } from "../lib/use-draft-session";
 import { avatarHue } from "../lib/derive";
 import { useCommsStore } from "../stores/comms-store";
 import type { ChatConversation, PromptDraft } from "../types";
+import { HintGroup, HintItem, Tooltip, TooltipContent, TooltipTrigger } from "@tryatlas/design";
 
 /**
  * The realtime Prompt Draft editor: one shared Y.Doc, everyone types at

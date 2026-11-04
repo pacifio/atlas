@@ -206,7 +206,9 @@ export default defineConfig(() => ({
             // silently defeating the lazy `PdfViewer` boundary in
             // center-panel.tsx. `\0vite/preload-helper` (the `__vitePreload`
             // runtime) rides along for the same reason: it is needed eagerly,
-            // and wherever it lands the entry must import that chunk.
+            // and wherever it lands the entry must import that chunk. `cn` is
+            // the compiled clsx + tailwind-merge that `@tryatlas/design`'s
+            // primitives merge their classes with: eager, and the same risk.
             {
               name: "vendor-utils",
               priority: 100,
@@ -214,6 +216,7 @@ export default defineConfig(() => ({
                 !id.endsWith(".css") &&
                 (id.includes("/node_modules/clsx/") ||
                   id.includes("/node_modules/tailwind-merge/") ||
+                  id.includes("/node_modules/cn/") ||
                   id.includes("vite/preload-helper")),
             },
             // Exact package roots only — NOT a `/react/` substring (which

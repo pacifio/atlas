@@ -15,8 +15,6 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { HintGroup, HintItem } from "@/ui/hint-group";
-import { Hint } from "@/ui/tooltip";
 import { copyText } from "@/lib/clipboard";
 import { timeAgo } from "@/lib/time-ago";
 import { AccountAvatar } from "@/features/auth/components/account-avatar";
@@ -32,6 +30,7 @@ import { leaveOrgAndData } from "../lib/org-switch";
 import { useMembersStore } from "../stores/members-store";
 import { useOrgStore } from "../stores/org-store";
 import type { Organisation } from "../types";
+import { HintGroup, HintItem, Hint } from "@tryatlas/design";
 
 const ROLES: Role[] = ["admin", "product_owner", "developer", "member"];
 

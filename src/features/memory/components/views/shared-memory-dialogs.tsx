@@ -1,14 +1,11 @@
 // The Shared view's three dialogs, props-only. Their containers (state, IPC,
 // toasts) live in `../shared-memory-modals.tsx`. Composed from the Import
 // sessions modal's Dialog shell, on the house dialog's scales: the dialog
-// radius and elevation, a `heading` title, and `src/ui` buttons.
+// radius and elevation, a `heading` title, and `@tryatlas/design` buttons.
 
 import type { ReactNode } from "react";
 import { X, Check } from "lucide-react";
 import { Dialog } from "@base-ui/react/dialog";
-import { DialogOverlay } from "@/ui/dialog";
-import { Button } from "@/ui/button";
-import { IconButton } from "@/ui/icon-button";
 import { cn } from "@/lib/utils";
 import type {
   ClaudeImportLine,
@@ -17,6 +14,7 @@ import type {
   RepoImportLine,
 } from "../../lib/shared-memory-format";
 import { KindChip } from "./shared-memory-primitives";
+import { DialogOverlay, Button, IconButton } from "@tryatlas/design";
 
 /** The shell all three share: scrim, panel, a titled header with its close,
  *  the body, and a footer of actions. */

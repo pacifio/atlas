@@ -1,71 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Check, ChevronRight, Copy, Plus, Search, Settings, Trash2, X } from "lucide-react";
 import { useThemeStore } from "@/features/theme/stores/theme-store";
-import { Badge } from "@/ui/badge";
-import { Button } from "@/ui/button";
-import { IconButton } from "@/ui/icon-button";
-import { Icon, ICON_SIZES, type IconSize } from "@/ui/icon";
-import {
-  BellGlyph,
-  CopyGlyph,
-  MenuGlyph,
-  PlusMinusGlyph,
-  RailGlyph,
-  SendGlyph,
-  TrashGlyph,
-} from "@/ui/animated-icon";
-import { Input } from "@/ui/input";
-import { Kbd, KbdCombo } from "@/ui/kbd";
-import {
-  ContextMenu,
-  ContextMenuCheckboxItem,
-  ContextMenuContent,
-  ContextMenuGroup,
-  ContextMenuItem,
-  ContextMenuLabel,
-  ContextMenuSeparator,
-  ContextMenuShortcut,
-  ContextMenuSub,
-  ContextMenuSubContent,
-  ContextMenuSubTrigger,
-  ContextMenuTrigger,
-} from "@/ui/context-menu";
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuSeparator,
-  DropdownMenuShortcut,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
-  DropdownMenuTrigger,
-} from "@/ui/dropdown-menu";
-import {
-  Popover,
-  PopoverClose,
-  PopoverContent,
-  PopoverDescription,
-  PopoverHeader,
-  PopoverTitle,
-  PopoverTrigger,
-} from "@/ui/popover";
-import { Hint, Tooltip, TooltipContent, TooltipTrigger } from "@/ui/tooltip";
 import { cn } from "@/lib/utils";
 import {
   BASE_COLOR_TOKENS,
@@ -85,6 +20,69 @@ import {
   THEME_KEY_REGISTRY,
   type ThemeMode,
 } from "@tryatlas/design/theme";
+import {
+  Badge,
+  Button,
+  IconButton,
+  Icon,
+  ICON_SIZES,
+  type IconSize,
+  BellGlyph,
+  CopyGlyph,
+  MenuGlyph,
+  PlusMinusGlyph,
+  RailGlyph,
+  SendGlyph,
+  TrashGlyph,
+  Input,
+  Kbd,
+  KbdCombo,
+  ContextMenu,
+  ContextMenuCheckboxItem,
+  ContextMenuContent,
+  ContextMenuGroup,
+  ContextMenuItem,
+  ContextMenuLabel,
+  ContextMenuSeparator,
+  ContextMenuShortcut,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuTrigger,
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuShortcut,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+  Popover,
+  PopoverClose,
+  PopoverContent,
+  PopoverDescription,
+  PopoverHeader,
+  PopoverTitle,
+  PopoverTrigger,
+  Hint,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@tryatlas/design";
 
 /**
  * The design-system gallery (decision 21).

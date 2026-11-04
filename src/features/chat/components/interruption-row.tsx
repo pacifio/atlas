@@ -1,12 +1,12 @@
 import { memo, useState } from "react";
 import { ChevronRight, CornerDownRight, MoonStar, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Button } from "@/ui/button";
 import { CONTENT_COLUMN } from "../lib/row-metrics";
 import { CONTINUE_AFTER_SLEEP, interruptionHeadline } from "../lib/interruption-copy";
 import { retryLastTurn } from "../lib/retry-turn";
 import type { InterruptionRow } from "../lib/turn-rows";
 import { ICON_PX, ICON_STROKE } from "./tool-glyph";
+import { Button } from "@tryatlas/design";
 
 /**
  * A turn something outside the conversation cut into — today, the computer

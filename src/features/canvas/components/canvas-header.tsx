@@ -1,8 +1,7 @@
 import { Crosshair, Maximize2, Minimize2 } from "lucide-react";
-import { RailGlyph } from "@/ui/animated-icon";
 import { cn } from "@/lib/utils";
-import { HintGroup, HintItem } from "@/ui/hint-group";
 import { DEFAULT_PAGE_ICON } from "./pages-panel";
+import { RailGlyph, HintGroup, HintItem } from "@tryatlas/design";
 
 /**
  * Floating top-left board header (replaces the old fixed bar). Glassmorphic pill

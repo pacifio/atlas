@@ -1,6 +1,6 @@
 import { Dialog } from "@base-ui/react/dialog";
 import { cn } from "@/lib/utils";
-import { DialogOverlay } from "@/ui/dialog";
+import { DialogOverlay } from "@tryatlas/design";
 
 interface ConfirmDeleteProps {
   open: boolean;

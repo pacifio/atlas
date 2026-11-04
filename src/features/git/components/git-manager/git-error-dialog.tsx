@@ -1,11 +1,10 @@
 import { useRef, useState } from "react";
-import { CopyGlyph } from "@/ui/animated-icon";
 import { Dialog } from "@base-ui/react/dialog";
 import { AlertTriangle } from "lucide-react";
-import { Button } from "@/ui/button";
 import { useGitStore } from "../../stores/git-store";
 import { gitErrorTitle } from "../../lib/git-errors";
 import { copyText } from "@/lib/clipboard";
+import { CopyGlyph, Button } from "@tryatlas/design";
 
 /**
  * Friendly dialog for actionable git failures (auth, rejected pushes, hook

@@ -2,10 +2,9 @@ import { memo, useMemo, useState } from "react";
 import { Dialog } from "@base-ui/react/dialog";
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
-import { HintGroup, HintItem } from "@/ui/hint-group";
 import { ImageZoomView } from "@/features/media/components/image-zoom-view";
 import type { ImageAttachment } from "@/types/agents";
+import { Hint, HintGroup, HintItem } from "@tryatlas/design";
 
 /*
  * The one way an agent-chat image looks: a square tile, the same in the

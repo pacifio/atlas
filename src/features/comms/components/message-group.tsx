@@ -17,12 +17,10 @@ import {
 } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { cn } from "@/lib/utils";
-import { HintGroup, HintItem } from "@/ui/hint-group";
 import { copyText } from "@/lib/clipboard";
 import { save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import { comms } from "../lib/comms-api";
-import { Badge } from "@/ui/badge";
 import { authorLabel, isWebhookMessage, presentAuthor } from "../lib/message-author";
 import { CommsAvatar, IntegrationAvatar } from "./comms-avatar";
 import { MessageBody } from "./message-body";
@@ -41,6 +39,7 @@ import { AudioPlayer } from "./audio-player";
 import { SessionReferenceCard } from "./session-reference-card";
 import { CHAT_REACTION_EMOJI } from "../types";
 import type { ChatAttachment, CommsMessage, OrgMemberProfile } from "../types";
+import { HintGroup, HintItem, Badge } from "@tryatlas/design";
 
 /**
  * One author's run of messages, rendered LINEAR — the Discord/Slack shape:

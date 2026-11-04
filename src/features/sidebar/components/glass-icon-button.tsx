@@ -4,8 +4,7 @@
 
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Icon } from "@/ui/icon";
-import { Hint } from "@/ui/tooltip";
+import { Icon, Hint } from "@tryatlas/design";
 
 export function GlassIconButton({
   icon,

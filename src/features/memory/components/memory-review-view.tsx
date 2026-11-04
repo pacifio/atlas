@@ -16,8 +16,8 @@ import {
   type ReviewQueue,
 } from "../lib/shared-memory-api";
 import { MEMORY_CHANGED_EVENT } from "../stores/shared-memory-store";
-import { Button } from "@/ui/button";
 import { CountPill, Notice } from "./views/memory-chrome";
+import { Button } from "@tryatlas/design";
 
 const EMPTY: ReviewQueue = { candidates: [], merges: [], conflicts: [], dreams: [] };
 const DEBOUNCE_MS = 300;

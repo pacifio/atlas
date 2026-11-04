@@ -2,12 +2,12 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { TerminalSquare, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
 import type { ChatMessage } from "@/types/agent";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { usePaneTopInset } from "@/features/layout/lib/pane-top-inset";
 import { isBashToolCall, bashCommandOf } from "../lib/tool-calls";
 import { timeAgo } from "@/lib/time-ago";
+import { Hint } from "@tryatlas/design";
 
 interface BashEntry {
   command: string;

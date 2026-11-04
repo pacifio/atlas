@@ -22,10 +22,20 @@ import {
 } from "react";
 import { ArrowDown, ArrowUp } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Icon } from "@/ui/icon";
 import { isMac } from "@/lib/platform";
-import { Kbd, KbdGroup } from "@/ui/kbd";
+import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
+import type { ActionId } from "@/features/keybindings/lib/actions";
 import {
+  buildCommandPaletteRows,
+  stepHighlight,
+  type CommandPaletteEntry,
+  type CommandPaletteGroup,
+  type CommandPaletteRow,
+} from "../lib/command-palette-logic";
+import {
+  Icon,
+  Kbd,
+  KbdGroup,
   CommandEmpty,
   CommandFooter,
   CommandFooterHint,
@@ -36,16 +46,7 @@ import {
   CommandPanel,
   CommandShortcut,
   CommandSubmenuChevron,
-} from "@/ui/command";
-import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
-import type { ActionId } from "@/features/keybindings/lib/actions";
-import {
-  buildCommandPaletteRows,
-  stepHighlight,
-  type CommandPaletteEntry,
-  type CommandPaletteGroup,
-  type CommandPaletteRow,
-} from "../lib/command-palette-logic";
+} from "@tryatlas/design";
 
 /** The host dialog's slot for the mounted view's Escape handler: set, the
  *  dialog calls it and stays open instead of closing. */

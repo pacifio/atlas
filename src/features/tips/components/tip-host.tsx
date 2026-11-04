@@ -1,7 +1,5 @@
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { Button } from "@/ui/button";
-import { Popover, PopoverContent, PopoverDescription, PopoverTitle } from "@/ui/popover";
 import { StepDots } from "@/components/step-dots";
 import { openExternal } from "@/features/feedback/lib/feedback-links";
 import { useSettingsStore } from "@/features/settings/stores/settings-store";
@@ -11,6 +9,13 @@ import { TIPS_CHANGED_EVENT, type TipsState } from "../lib/tips-api";
 import { pickNextTip } from "../lib/tip-queue";
 import { TIP_BY_ID, type TipDef } from "../lib/tip-registry";
 import { useTipsStore } from "../stores/tips-store";
+import {
+  Button,
+  Popover,
+  PopoverContent,
+  PopoverDescription,
+  PopoverTitle,
+} from "@tryatlas/design";
 
 /**
  * Shows Tips (CONTEXT.md, "Tip"). Mounted once per window.

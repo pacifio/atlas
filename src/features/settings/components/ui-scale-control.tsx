@@ -1,8 +1,5 @@
 import { Minus, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
-import { Button } from "@/ui/button";
-import { IconButton } from "@/ui/icon-button";
 import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
 import { useSettingsStore } from "../stores/settings-store";
 import {
@@ -13,6 +10,7 @@ import {
   SCALE_PRESETS,
   SCALE_STEP,
 } from "../lib/ui-scale";
+import { Hint, Button, IconButton } from "@tryatlas/design";
 
 /** The preview glyph per preset, on the type scale rather than an inline
  *  `fontSize`, so the column shows real steps the interface moves through. */

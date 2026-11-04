@@ -26,10 +26,6 @@ import {
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { Badge } from "@/ui/badge";
-import { Button } from "@/ui/button";
-import { IconButton } from "@/ui/icon-button";
-import { Kbd } from "@/ui/kbd";
 import { StyledFileDiff } from "@/features/git/components/diff-viewer/styled-code-view";
 import { getRenderablePatch, resolveFileDiffPreviousPath } from "@/features/git/lib/diff-rendering";
 
@@ -54,6 +50,7 @@ import type {
 } from "../lib/pull-request-guide-types";
 import { PullRequestMarkdown, TEXTAREA_CLASS } from "./pull-request-markdown";
 import { PendingCommentCard } from "./pull-request-review-thread";
+import { Badge, Button, IconButton, Kbd } from "@tryatlas/design";
 
 const ATTENTION_LABELS: Record<GuideAttentionKind, string> = {
   tradeoff: "A tradeoff to weigh",

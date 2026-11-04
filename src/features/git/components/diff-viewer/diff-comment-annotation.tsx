@@ -1,10 +1,9 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { MessageSquareCode, Trash2 } from "lucide-react";
 
-import { Button } from "@/ui/button";
-import { IconButton } from "@/ui/icon-button";
 import { isMac } from "@/lib/platform";
 import { isCommentSubmitShortcut } from "../../lib/comment-submit-shortcut";
+import { Button, IconButton } from "@tryatlas/design";
 
 /**
  * A comment drawn under the lines it is on, in the diff or the file view: the

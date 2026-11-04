@@ -38,7 +38,6 @@ import { CHAT_PROVIDERS } from "@/features/settings/lib/providers";
 import { useByokStore } from "@/features/settings/stores/byok-store";
 import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/time-ago";
-import { Hint } from "@/ui/tooltip";
 
 import { useSessionChatStore, UNTITLED } from "../stores/session-chat-store";
 import type { SessionDetail as Detail, TimelineEntry } from "../types";
@@ -46,6 +45,7 @@ import { CheckpointScopePicker, defaultScope } from "./checkpoint-scope-picker";
 import { SessionChatMessage } from "./session-chat-message";
 import { AgentGlyph } from "./agent-glyph";
 import { useSettingsStore } from "@/features/settings/stores/settings-store";
+import { Hint } from "@tryatlas/design";
 
 /**
  * The questions worth putting in front of someone who has never used this.

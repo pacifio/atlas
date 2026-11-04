@@ -1,4 +1,3 @@
-import { Hint } from "@/ui/tooltip";
 import { useTipOnMount } from "@/features/tips/lib/use-tip-on-mount";
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -13,6 +12,7 @@ import { Notice, Track, TrackSegment } from "./views/memory-chrome";
 import { DestinationActions } from "@/features/layout/components/destination-actions";
 import { useAppStore } from "@/features/app/stores/app-store";
 import { useMemoryStore } from "../stores/memory-store";
+import { Hint } from "@tryatlas/design";
 
 // ── Panel shell ─────────────────────────────────────────────────────────────
 //

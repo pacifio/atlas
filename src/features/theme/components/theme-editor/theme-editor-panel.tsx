@@ -16,12 +16,6 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 import { ChevronDown, ChevronUp, Moon, Paintbrush, Sun, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { Button } from "@/ui/button";
-import { Icon } from "@/ui/icon";
-import { IconButton } from "@/ui/icon-button";
-import { Input } from "@/ui/input";
-import { Segmented } from "@/ui/segmented";
-import { Switch } from "@/ui/switch";
 import { useSettingsStore } from "@/features/settings/stores/settings-store";
 import { applyTheme } from "../../apply-theme";
 import { saveTheme } from "../../lib/theme-api";
@@ -43,6 +37,7 @@ import {
   resolveTheme,
   type ThemeKey,
 } from "@tryatlas/design/theme";
+import { Button, Icon, IconButton, Input, Segmented, Switch } from "@tryatlas/design";
 
 /** The values an author set in one variant — nothing derived is in here. */
 type Slots = Record<EditorTable, Record<string, string>>;

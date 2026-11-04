@@ -26,7 +26,7 @@ import {
   StateChip,
 } from "./shared-memory-primitives";
 import { DETAIL_TEXT, DETAIL_WELL, ROW_DETAIL, TABLE_ROW, rowButton } from "./memory-chrome";
-import { Button } from "@/ui/button";
+import { Button } from "@tryatlas/design";
 
 const ENTRY_COL = {
   time: "w-[92px] shrink-0",

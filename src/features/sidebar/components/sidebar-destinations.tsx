@@ -11,8 +11,6 @@
 
 import type { ComponentProps } from "react";
 import { Bell, BookOpen, GitBranch, MessagesSquare, type LucideIcon } from "lucide-react";
-import { Hint } from "@/ui/tooltip";
-import { Icon } from "@/ui/icon";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/features/app/stores/app-store";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
@@ -36,6 +34,7 @@ import {
 } from "@/features/notifications/stores/notifications-store";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
 import { useInboxStore, useInboxUnreadPoll } from "@/features/inbox/stores/inbox-store";
+import { Hint, Icon } from "@tryatlas/design";
 
 /** One destination: an icon and its label, lit while its view is on screen.
  *  `iconOnly` drops the label to the tooltip, for the sidebar's top row and

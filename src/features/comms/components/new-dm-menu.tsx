@@ -3,10 +3,10 @@ import { Popover } from "@base-ui/react/popover";
 import { Check, Loader2, Plus, Search } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
 import { CommsAvatar } from "./comms-avatar";
 import { comms } from "../lib/comms-api";
 import { useCommsStore } from "../stores/comms-store";
+import { Hint } from "@tryatlas/design";
 
 /** The server takes up to 9 OTHERS in a group DM (3–10 people with you). */
 const MAX_OTHERS = 9;

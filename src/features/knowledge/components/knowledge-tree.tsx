@@ -3,7 +3,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { Trash2, FileText } from "lucide-react";
 import { KnowledgeTreeRow } from "./knowledge-tree-row";
 import { ROW_HEIGHT } from "@/features/explorer/lib/tree-constants";
-import { Hint } from "@/ui/tooltip";
+import { Hint } from "@tryatlas/design";
 
 /** Imperative handle exposed to the sidebar so its header buttons can
  *  drive collapse-all / expand-all without lifting `expanded` state. */

@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 import { PanelSkeleton } from "@/components/panel-skeleton";
 import { GithubIcon } from "@/components/github-icon";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
-import { Button } from "@/ui/button";
+import { Button } from "@tryatlas/design";
 
 // All three sections are lazy so none of them runs its first invokes or vendor
 // parses before the tab is opened. `GitManagerPanel` in particular pulls in

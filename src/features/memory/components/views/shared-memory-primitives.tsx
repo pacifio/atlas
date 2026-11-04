@@ -2,18 +2,18 @@ import { ChevronDown } from "lucide-react";
 import { AgentMark } from "@/components/agent-mark";
 import { agentMetaForSource, pluginIdForSource } from "../../lib/memory-agent";
 import { cn } from "@/lib/utils";
-import { Badge } from "@/ui/badge";
+import { KIND_LABEL, sourceLabel } from "../../lib/shared-memory-format";
+import { Notice, TABLE_HEAD, TrackSegment } from "./memory-chrome";
 import {
+  Badge,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
-} from "@/ui/dropdown-menu";
-import { iconButtonVariants } from "@/ui/icon-button";
-import { HintItem } from "@/ui/hint-group";
-import { KIND_LABEL, sourceLabel } from "../../lib/shared-memory-format";
-import { Notice, TABLE_HEAD, TrackSegment } from "./memory-chrome";
+  iconButtonVariants,
+  HintItem,
+} from "@tryatlas/design";
 
 /* ── Primitives ──────────────────────────────────────────────────────────────── */
 

@@ -3,11 +3,11 @@ import { Dialog } from "@base-ui/react/dialog";
 import { Building2, Check, Loader2, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
 import { auth } from "@/features/auth/lib/auth-api";
 import { useAuthStore } from "@/features/auth/stores/auth-store";
 import { useOrgStore } from "../stores/org-store";
 import { switchOrg } from "../lib/org-switch";
+import { Hint } from "@tryatlas/design";
 
 /** The web origin an org handle lives under — shown as the static prefix. */
 const HANDLE_PREFIX = "app.tryatlas.cc/";

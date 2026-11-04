@@ -14,11 +14,10 @@ import { useState } from "react";
 import { Popover } from "@base-ui/react/popover";
 import { Download, Loader2 } from "lucide-react";
 
-import { HintItem } from "@/ui/hint-group";
-
 import type { SessionDetail as Detail } from "../types";
 import { exportSession, type ExportFormat } from "../lib/export";
 import { PILL_BUTTON, PILL_ICON } from "./footer-pill";
+import { HintItem } from "@tryatlas/design";
 
 export function ExportButton({ detail }: { detail: Detail }) {
   const [busy, setBusy] = useState<ExportFormat | null>(null);

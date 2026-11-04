@@ -46,8 +46,6 @@ import {
   TextSearch,
 } from "lucide-react";
 import { AgentIcon } from "@/features/org-agent/lib/agent-icon";
-import { Icon } from "@/ui/icon";
-import { CommandDialog, CommandDialogPopup } from "@/ui/command";
 import type { TabType } from "@/lib/constants";
 import { useAppStore } from "@/features/app/stores/app-store";
 import { recentsForOrg } from "@/features/app/lib/recent-projects";
@@ -109,6 +107,7 @@ import {
   useCommandEscape,
 } from "./command-palette-content";
 import { FileSearch as FileSearchView } from "./file-search";
+import { Icon, CommandDialog, CommandDialogPopup } from "@tryatlas/design";
 
 /** The overlay, mounted once at the app root. */
 export function CommandPalette() {

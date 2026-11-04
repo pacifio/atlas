@@ -1,9 +1,5 @@
 import { useEffect, useId, useMemo, useState, type KeyboardEvent } from "react";
 import { Check, ChevronDown, Search } from "lucide-react";
-import { Button } from "@/ui/button";
-import { Popover, PopoverContent, PopoverTrigger } from "@/ui/popover";
-import { Switch } from "@/ui/switch";
-import { Hint } from "@/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { BranchInfo } from "../../stores/git-store";
 import {
@@ -13,6 +9,7 @@ import {
   toggledRef,
   type BaseRefChoice,
 } from "../../lib/base-ref-choices";
+import { Button, Popover, PopoverContent, PopoverTrigger, Switch, Hint } from "@tryatlas/design";
 
 /**
  * "Compare against": the branch range's base. A searchable list: Automatic

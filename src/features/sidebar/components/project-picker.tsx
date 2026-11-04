@@ -27,7 +27,6 @@ import {
   Settings,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Icon } from "@/ui/icon";
 import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
 import { useCommandPaletteStore } from "@/features/command-palette/stores/command-palette-store";
 import {
@@ -42,6 +41,7 @@ import { type SidebarProject } from "../lib/sidebar-sessions";
 import { openProjectSettings } from "../lib/sidebar-actions";
 import { ProjectBadge } from "./session-row-parts";
 import { GlassIconButton } from "./glass-icon-button";
+import { Icon } from "@tryatlas/design";
 
 /** Past this many projects the menu grows a search field. */
 export const SEARCH_THRESHOLD = 6;

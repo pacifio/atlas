@@ -1,5 +1,4 @@
 import { useEffect, useState, type RefObject } from "react";
-import { RailGlyph } from "@/ui/animated-icon";
 import { useReactFlow, useViewport } from "@xyflow/react";
 import { Popover } from "@base-ui/react/popover";
 import {
@@ -18,12 +17,12 @@ import {
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { Hint, Tooltip, TooltipContent, TooltipTrigger } from "@/ui/tooltip";
 import { CommsAvatar } from "@/features/comms/components/comms-avatar";
 import { useCommsStore } from "@/features/comms/stores/comms-store";
 import { exportCanvas, type ExportFormat } from "@/features/canvas/lib/canvas-export";
 import type { SpacePage } from "../lib/spaces-api";
 import type { SpaceActor } from "../lib/space-wire";
+import { RailGlyph, Hint, Tooltip, TooltipContent, TooltipTrigger } from "@tryatlas/design";
 
 // The floating chrome over the realtime canvas — the local canvas's design:
 // top-left page pill (pages toggle · page dropdown · fit), top-right a single

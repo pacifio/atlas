@@ -4,7 +4,7 @@
   "jsPlugins": ["@shadcn/lint"],
   "settings": {
     "shadcn": {
-      "ui": ["@/ui", "@tryatlas/design"],
+      "ui": "@tryatlas/design",
       "themeImports": ["^@tryatlas/design/"]
     }
   },
@@ -145,12 +145,6 @@
       "files": ["**/*.test.ts", "**/*.test.tsx", "**/__fixtures__/**", "tests/**"],
       "rules": {
         "typescript/no-explicit-any": "off"
-      }
-    },
-    {
-      "files": ["src/ui/**"],
-      "rules": {
-        "shadcn/no-restyle": "off"
       }
     },
     {

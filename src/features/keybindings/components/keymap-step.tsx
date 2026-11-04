@@ -1,15 +1,20 @@
 import type { ReactNode } from "react";
 import { AtlasIcon } from "@/components/atlas-icon";
-import { KbdKeys } from "@/ui/kbd";
-import { Button } from "@/ui/button";
 import { cn } from "@/lib/utils";
-import { DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/ui/dialog";
 import { ACTION_BY_ID } from "../lib/actions";
 import { displayKeys, parseCombo } from "../lib/combo";
 import { PRESETS, type Preset, type PresetId } from "../lib/presets";
 import { baseChords } from "../lib/resolve";
 import { useKeybindingsStore } from "../stores/keybindings-store";
 import { PresetIcon } from "./preset-icon";
+import {
+  KbdKeys,
+  Button,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@tryatlas/design";
 
 /**
  * First run's last step: "which editor are you coming from?" (the dialog

@@ -5,14 +5,11 @@
 import { useState } from "react";
 import { Bell, Check, Eye, Loader2 } from "lucide-react";
 
-import { Badge } from "@/ui/badge";
-import { Button } from "@/ui/button";
-import { Input } from "@/ui/input";
-
 import type { OrgAgentTarget } from "../../lib/org-agent-links";
 import type { ApprovalBlock, QuestionBlock } from "../../lib/org-agent-log";
 import { CardList } from "../org-agent-cards";
 import { Notice } from "./org-agent-turn-parts";
+import { Badge, Button, Input } from "@tryatlas/design";
 
 // ── Questions ───────────────────────────────────────────────────────────────
 

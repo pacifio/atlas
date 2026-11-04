@@ -41,16 +41,6 @@ import {
 import { fnv1a32 } from "@/features/git/lib/diff-rendering";
 import type { ReviewFile } from "@/features/git/lib/use-review-files";
 import { cn } from "@/lib/utils";
-import { Button } from "@/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuTrigger,
-} from "@/ui/dropdown-menu";
-import { Hint } from "@/ui/tooltip";
 
 import { classifyPrError } from "../lib/pr-errors";
 import { fileDiffLines, orderDiffFiles } from "../lib/pull-request-file-order";
@@ -99,6 +89,16 @@ import {
   PendingCommentCard,
   ReviewThreadCard,
 } from "./pull-request-review-thread";
+import {
+  Button,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+  Hint,
+} from "@tryatlas/design";
 
 /** Commits the picker lists before "Show more". */
 const COMMIT_PAGE = 10;

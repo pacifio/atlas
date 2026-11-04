@@ -20,10 +20,8 @@ import { AlertTriangle, Check, ChevronDown, ExternalLink, PenLine, Search } from
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { Icon } from "@/ui/icon";
-import { Input } from "@/ui/input";
-import { Hint } from "@/ui/tooltip";
 import { cssFamily, listFontFamilies, parseFontValue, type FontFamily } from "../../lib/fonts-api";
+import { Icon, Input, Hint } from "@tryatlas/design";
 
 const DEFAULT_ITEM = "\u0000default";
 const GOOGLE_FONTS = "https://fonts.google.com";

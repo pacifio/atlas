@@ -18,7 +18,7 @@
  */
 
 import { cn } from "@/lib/utils";
-import { HintGroup, HintItem } from "@/ui/hint-group";
+import { HintGroup, HintItem } from "@tryatlas/design";
 
 /**
  * The pill that gathers the header's icon controls.

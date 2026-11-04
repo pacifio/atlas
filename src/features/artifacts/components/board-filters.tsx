@@ -17,12 +17,6 @@ import { AccountAvatar } from "@/features/auth/components/account-avatar";
 import { cn } from "@/lib/utils";
 import { Check } from "lucide-react";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/ui/dropdown-menu";
-import {
   projectFilterFor,
   projectFilterKey,
   type BoardSession,
@@ -30,6 +24,12 @@ import {
 } from "../types";
 import { agentLabel } from "../lib/board";
 import { authorOf, type AuthorDirectory } from "../lib/author-directory";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@tryatlas/design";
 
 /**
  * The pill: a quiet label welded to a bright value, split by a hairline.

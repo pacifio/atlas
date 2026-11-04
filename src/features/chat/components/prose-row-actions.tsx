@@ -21,7 +21,6 @@
 import { useCallback, useMemo } from "react";
 import { GitBranch } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { HintGroup } from "@/ui/hint-group";
 import { forkSessionToNewTab } from "../lib/fork-session";
 import { responseFooterActions } from "../lib/message-footer";
 import { useChatPinsStore } from "../stores/chat-pins-store";
@@ -34,6 +33,7 @@ import {
   MessageTimestamp,
   PinToggle,
 } from "./user-row-actions";
+import { HintGroup } from "@tryatlas/design";
 
 export function ProseRowActions({
   tabId,

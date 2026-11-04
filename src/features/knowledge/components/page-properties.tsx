@@ -11,8 +11,8 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
 import { usePageMeta, useKnowledgeMetaStore } from "../stores/knowledge-meta-store";
+import { Hint } from "@tryatlas/design";
 
 interface PagePropertiesProps {
   entryId: string;

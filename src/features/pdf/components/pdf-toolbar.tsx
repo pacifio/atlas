@@ -8,9 +8,9 @@ import {
   ZoomOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { HintGroup, HintItem } from "@/ui/hint-group";
 import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
 import { usePdfAnnotationStore, PDF_COLORS, type PdfTool } from "../stores/pdf-annotation-store";
+import { HintGroup, HintItem } from "@tryatlas/design";
 
 interface PdfToolbarProps {
   fileName: string;

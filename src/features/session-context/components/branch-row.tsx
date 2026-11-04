@@ -19,18 +19,20 @@ import { Copy, GitBranch, GitBranchPlus } from "lucide-react";
 import type { BranchInfo } from "@/features/git/stores/git-store";
 import { gitErrorText } from "@/features/notifications/lib/outcome-notifier";
 import { cn } from "@/lib/utils";
+
+import { gitCheckout, gitCreateBranch } from "../lib/session-git-api";
+import { refreshSessionGit, type SessionGit } from "../lib/use-session-git";
+import { DetailsSelect, RowIcon, RowLabel } from "./details-rows";
 import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuTrigger,
-} from "@/ui/context-menu";
-import { Input } from "@/ui/input";
-import { Popover, PopoverContent, PopoverTrigger } from "@/ui/popover";
-
-import { gitCheckout, gitCreateBranch } from "../lib/session-git-api";
-import { refreshSessionGit, type SessionGit } from "../lib/use-session-git";
-import { DetailsSelect, RowIcon, RowLabel } from "./details-rows";
+  Input,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@tryatlas/design";
 
 type Badge = "current" | "default" | "remote";
 

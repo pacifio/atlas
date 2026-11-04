@@ -2,12 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import { Popover } from "@base-ui/react/popover";
 import { Loader2, Pin, Search } from "lucide-react";
 import { timeAgo } from "@/lib/time-ago";
-import { Hint } from "@/ui/tooltip";
 import { CommsAvatar, IntegrationAvatar } from "./comms-avatar";
 import { comms } from "../lib/comms-api";
 import { authorLabel, isWebhookMessage, presentAuthor } from "../lib/message-author";
 import { toPlainText } from "../lib/to-plain-text";
 import type { ChatPin, OrgMemberProfile } from "../types";
+import { Hint } from "@tryatlas/design";
 
 /**
  * The pin rail as a dropdown — the agent chat's session-picker recipe: one

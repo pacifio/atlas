@@ -1,13 +1,11 @@
 import { memo, useEffect, useRef, useState } from "react";
 import { Dialog } from "@base-ui/react/dialog";
-import { DialogOverlay } from "@/ui/dialog";
 import { CheckCircle2, XCircle, AlertTriangle, ClipboardList, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useChatStore } from "../stores/chat-store";
 import { respondAndPopPermission, type PermissionAnswer } from "../lib/respond-permission";
 import { cn } from "@/lib/utils";
 import { CONTENT_COLUMN } from "../lib/row-metrics";
-import { Kbd } from "@/ui/kbd";
 import { Markdown } from "@/lib/markdown";
 import { extractPlanMarkdown } from "../lib/plans";
 import { exitPlanOffersBypass } from "../lib/exit-plan-modes";
@@ -25,6 +23,7 @@ import {
   type OutwardApproval,
   type OutwardPreparing,
 } from "@/features/org-actions/lib/outward-approval";
+import { DialogOverlay, Kbd } from "@tryatlas/design";
 
 function isAllow(kind: string) {
   return kind === "allow_once" || kind === "allow_always";

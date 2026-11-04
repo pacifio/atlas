@@ -14,8 +14,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Check, CircleHelp } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { HintGroup, HintItem } from "@/ui/hint-group";
 import type { QuestionSpec } from "../lib/questions";
+import { HintGroup, HintItem } from "@tryatlas/design";
 
 /** One question's answer, as the card reports it. */
 export interface Answer {

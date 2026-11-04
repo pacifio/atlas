@@ -19,7 +19,6 @@ import type { FileDiffMetadata } from "@pierre/diffs";
 import { Loader2, ShieldQuestion, Sparkles, TriangleAlert } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { Button } from "@/ui/button";
 import { agents } from "@/features/chat/lib/agents-api";
 import { useChatStore } from "@/features/chat/stores/chat-store";
 import { agentMeta } from "@/features/agents/lib/agent-meta";
@@ -42,6 +41,7 @@ import {
   usePullRequestReviewStore,
 } from "../stores/pull-request-review-store";
 import { GuideRail, GuideStop, type ExcerptCommenting } from "./pull-request-guide-stop";
+import { Button } from "@tryatlas/design";
 
 const NO_FILES: ReadonlyMap<string, FileDiffMetadata> = new Map();
 

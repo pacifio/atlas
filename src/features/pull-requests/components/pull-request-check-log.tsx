@@ -8,13 +8,19 @@ import { toast } from "sonner";
 import { Copy, ExternalLink, ScrollText } from "lucide-react";
 
 import { openPullRequest } from "@/features/git/lib/git-pr-api";
-import { Button } from "@/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/ui/dialog";
 
 import { prErrorMessage } from "../lib/pr-errors";
 import { hasCheckLog, useCheckLog } from "../lib/pull-request-check-log";
 import type { PrCheck } from "../lib/pull-requests-types";
 import { usePullRequestScope } from "./pull-request-context";
+import {
+  Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@tryatlas/design";
 
 export function CheckLogButton({ check }: { check: PrCheck }) {
   const { repoPath, number } = usePullRequestScope();

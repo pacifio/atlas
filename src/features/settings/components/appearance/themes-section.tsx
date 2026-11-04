@@ -17,10 +17,6 @@ import { memo, useCallback, useEffect, useState } from "react";
 import { AlertTriangle, Copy, Download, Moon, Pencil, Plus, Sun } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { Button } from "@/ui/button";
-import { Dialog, DialogContent } from "@/ui/dialog";
-import { Icon } from "@/ui/icon";
-import { Hint } from "@/ui/tooltip";
 import { appearanceForMode } from "@/features/theme/apply-theme";
 import { useThemeEditorStore } from "@/features/theme/stores/theme-editor-store";
 import { themeIdFor, useThemeStore } from "@/features/theme/stores/theme-store";
@@ -31,6 +27,7 @@ import { useSettingsStore } from "../../stores/settings-store";
 import { SettingsSection } from "../layout/settings-layout";
 import { ThemeImportPanel } from "../theme-import-panel";
 import type { Theme, ThemeAppearance } from "@tryatlas/design/theme";
+import { Button, Dialog, DialogContent, Icon, Hint } from "@tryatlas/design";
 
 export function ThemesSection() {
   const themeLight = useSettingsStore((s) => s.settings.themeLight);

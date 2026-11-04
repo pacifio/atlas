@@ -3,17 +3,17 @@
 // page: what it does, then where it goes, then the actions in the footer.
 
 import type { ReactNode } from "react";
-import { Switch } from "@/ui/switch";
+import type { ProjectionStatus, ToolInfo } from "@/features/skills/lib/types";
+import { SettingsGroup, SettingsRow, SettingsSection } from "../layout/settings-layout";
 import {
+  Switch,
   Dialog,
   DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/ui/dialog";
-import type { ProjectionStatus, ToolInfo } from "@/features/skills/lib/types";
-import { SettingsGroup, SettingsRow, SettingsSection } from "../layout/settings-layout";
+} from "@tryatlas/design";
 
 export interface ModalSkill {
   name: string;

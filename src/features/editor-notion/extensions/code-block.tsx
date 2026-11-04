@@ -1,5 +1,4 @@
 import { CodeBlockLowlight } from "@tiptap/extension-code-block-lowlight";
-import { CopyGlyph } from "@/ui/animated-icon";
 import {
   NodeViewWrapper,
   NodeViewContent,
@@ -7,7 +6,7 @@ import {
   type NodeViewProps,
 } from "@tiptap/react";
 import { useState } from "react";
-import { Hint } from "@/ui/tooltip";
+import { CopyGlyph, Hint } from "@tryatlas/design";
 
 /**
  * CodeBlockLowlight wrapped in a React NodeView that adds the header

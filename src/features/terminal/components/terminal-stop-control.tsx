@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Loader2, OctagonX, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
+import { Hint } from "@tryatlas/design";
 
 const FORCE_STOP_DELAY_MS = 1500;
 

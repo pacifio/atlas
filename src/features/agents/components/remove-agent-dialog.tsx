@@ -1,9 +1,9 @@
 import { Dialog } from "@base-ui/react/dialog";
-import { TrashGlyph } from "@/ui/animated-icon";
 import { useState } from "react";
 import { Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useRemoveAgentConfirmStore } from "../lib/remove-agent-confirm";
+import { TrashGlyph } from "@tryatlas/design";
 
 /** The app's pill-button language (matches the stop-agents dialog). */
 const pillButton =

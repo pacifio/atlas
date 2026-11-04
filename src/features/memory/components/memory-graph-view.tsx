@@ -13,9 +13,6 @@ import {
   ListTree,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
-import { Button } from "@/ui/button";
-import { IconButton } from "@/ui/icon-button";
 import { useAppStore } from "@/features/app/stores/app-store";
 import { agentBrandColor } from "@/features/agents/lib/agent-brand";
 import { useMemoryGraphStore } from "../stores/memory-graph-store";
@@ -29,6 +26,7 @@ import {
   Track,
   TrackSegment,
 } from "./views/memory-chrome";
+import { Hint, Button, IconButton } from "@tryatlas/design";
 
 type ViewMode = "graph" | "tree";
 const VIEW_KEY = "atlas-memory-graph-view-mode";

@@ -11,12 +11,6 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
-import { HintGroup, HintItem } from "@/ui/hint-group";
-import { Badge } from "@/ui/badge";
-import { Button } from "@/ui/button";
-import { IconButton, iconButtonVariants } from "@/ui/icon-button";
-import { Input } from "@/ui/input";
 import { useAppStore } from "@/features/app/stores/app-store";
 import { sendToAgentChat } from "@/features/chat/lib/send-to-agent";
 import { ClaudeIcon, CodexIcon } from "@/components/agent-icons";
@@ -38,6 +32,16 @@ import {
   Track,
   TrackSegment,
 } from "./views/memory-chrome";
+import {
+  Hint,
+  HintGroup,
+  HintItem,
+  Badge,
+  Button,
+  IconButton,
+  iconButtonVariants,
+  Input,
+} from "@tryatlas/design";
 
 // Column tracks shared by header + rows (mirrors the BYOK / Codex tables).
 const COL = {

@@ -2,8 +2,6 @@ import { useEffect, useState } from "react";
 import { BubbleMenu } from "@tiptap/react/menus";
 import type { Editor } from "@tiptap/core";
 import { cn } from "@/lib/utils";
-import { HintGroup, HintItem } from "@/ui/hint-group";
-import { Hint } from "@/ui/tooltip";
 import { sendToAgentChat } from "@/features/chat/lib/send-to-agent";
 import {
   Bold,
@@ -18,6 +16,7 @@ import {
   Quote,
   MessageSquarePlus,
 } from "lucide-react";
+import { HintGroup, HintItem, Hint } from "@tryatlas/design";
 
 interface AtlasBubbleMenuProps {
   editor: Editor | null;

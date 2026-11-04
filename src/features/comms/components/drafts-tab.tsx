@@ -2,12 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { FilePlus2, Loader2, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { timeAgo } from "@/lib/time-ago";
-import { Hint, Tooltip, TooltipContent, TooltipTrigger } from "@/ui/tooltip";
 import { CommsAvatar } from "./comms-avatar";
 import { comms } from "../lib/comms-api";
 import { useCommsStore } from "../stores/comms-store";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import type { ChatConversation, PromptDraft } from "../types";
+import { Hint, Tooltip, TooltipContent, TooltipTrigger } from "@tryatlas/design";
 
 /** Web parity: `CHAT_DRAFT_TITLE_MAX`. Refused server-side, not truncated. */
 const TITLE_MAX = 200;

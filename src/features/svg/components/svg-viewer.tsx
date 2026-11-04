@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { CopyGlyph } from "@/ui/animated-icon";
 import { invoke } from "@tauri-apps/api/core";
 import { Loader2 } from "lucide-react";
 import { ImageZoomView } from "@/features/media/components/image-zoom-view";
+import { CopyGlyph } from "@tryatlas/design";
 
 interface SvgViewerProps {
   filePath: string;

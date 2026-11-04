@@ -20,11 +20,11 @@ import { invoke } from "@tauri-apps/api/core";
 import { GitBranch, GitCommitHorizontal, Loader2, Unlink } from "lucide-react";
 
 import { timeAgo } from "@/lib/time-ago";
-import { HintItem } from "@/ui/hint-group";
 
 import { DOCK_TRIGGER } from "./header-dock";
 
 import type { BoardCheckpoint } from "../types";
+import { HintItem } from "@tryatlas/design";
 
 /**
  * The shas that more than one row carries. A commit two Sessions produced is

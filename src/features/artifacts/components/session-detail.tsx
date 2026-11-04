@@ -1,7 +1,6 @@
 import { Sparkles } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { HintItem } from "@/ui/hint-group";
 
 import type { SessionDetail as Detail } from "../types";
 import { EMPTY_DIRECTORY } from "../lib/author-directory";
@@ -19,6 +18,7 @@ import { Masthead } from "./session-masthead";
 import { ShareMorph } from "./share-morph";
 import { FilterMenu } from "./views/session-filter-menu";
 import { Empty, Timeline } from "./views/session-timeline-view";
+import { HintItem } from "@tryatlas/design";
 
 export type { RemoteSource, RowComments } from "../lib/session-detail-context";
 

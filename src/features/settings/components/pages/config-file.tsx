@@ -6,8 +6,11 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
-import { Button } from "@/ui/button";
+import { useSettingsStore } from "../../stores/settings-store";
+import { getConfigInfo, openConfigFile, type ConfigInfo } from "../../lib/atlas-config-api";
+import { SettingsGroup, SettingsRow, SettingsSection } from "../layout/settings-layout";
 import {
+  Button,
   Dialog,
   DialogClose,
   DialogContent,
@@ -15,10 +18,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/ui/dialog";
-import { useSettingsStore } from "../../stores/settings-store";
-import { getConfigInfo, openConfigFile, type ConfigInfo } from "../../lib/atlas-config-api";
-import { SettingsGroup, SettingsRow, SettingsSection } from "../layout/settings-layout";
+} from "@tryatlas/design";
 
 /** Shown at the top of General while `config.toml` failed to load. */
 export function ConfigErrorBanner() {

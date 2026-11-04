@@ -34,17 +34,17 @@ import { AgentIcon } from "@/features/org-agent/lib/agent-icon";
 import { cn } from "@/lib/utils";
 import { copyText } from "@/lib/clipboard";
 import { requestCloseTab } from "@/features/chat/lib/close-tab";
+import { AtlasIcon } from "@/components/atlas-icon";
+import { FileIcon, type FallbackIcon } from "@/features/icon-theme/components/file-icon";
+import type { TabType } from "@/lib/constants";
+import { groupOf, useLayoutStore, type Tab } from "../stores/layout-store";
 import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
   ContextMenuTrigger,
-} from "@/ui/context-menu";
-import { AtlasIcon } from "@/components/atlas-icon";
-import { FileIcon, type FallbackIcon } from "@/features/icon-theme/components/file-icon";
-import type { TabType } from "@/lib/constants";
-import { groupOf, useLayoutStore, type Tab } from "../stores/layout-store";
+} from "@tryatlas/design";
 
 // Typed as the icon-theme fallback rather than `React.ElementType`: these are
 // what a tab falls back to when the icon theme has nothing for it, and

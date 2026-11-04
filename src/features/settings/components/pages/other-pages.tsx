@@ -5,7 +5,6 @@ import { getVersion } from "@tauri-apps/api/app";
 import { toast } from "sonner";
 import { isLinux, isWindows } from "@/lib/platform";
 import { useAppProfile } from "@/lib/app-profile";
-import { Button } from "@/ui/button";
 import { AtlasIcon } from "@/components/atlas-icon";
 import { updater } from "@/features/updater/lib/updater-api";
 import { useUpdaterStore } from "@/features/updater/stores/updater-store";
@@ -19,6 +18,7 @@ import {
 import { SettingSwitch } from "../layout/setting-controls";
 
 import { ConfigFileSection } from "./config-file";
+import { Button } from "@tryatlas/design";
 
 export function SourceControlPage() {
   return (

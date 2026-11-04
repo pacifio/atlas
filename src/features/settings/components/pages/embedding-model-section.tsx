@@ -1,20 +1,6 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Download, Trash2 } from "lucide-react";
-import { Badge } from "@/ui/badge";
-import { Button } from "@/ui/button";
-import { Icon } from "@/ui/icon";
-import { IconButton } from "@/ui/icon-button";
-import { Hint } from "@/ui/tooltip";
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/ui/dialog";
 import { AtlasLoader } from "@/components/atlas-loader";
 import { useAppStore } from "@/features/app/stores/app-store";
 import { useModelsStore } from "../../stores/models-store";
@@ -25,6 +11,20 @@ import {
   SettingsRow,
   SettingsSection,
 } from "../layout/settings-layout";
+import {
+  Badge,
+  Button,
+  Icon,
+  IconButton,
+  Hint,
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@tryatlas/design";
 
 /**
  * Settings → Memory → Embedding model: the on-device models memory search can

@@ -16,8 +16,6 @@
 
 import { Pencil, Plus } from "lucide-react";
 
-import { DropdownMenuItem, DropdownMenuSeparator } from "@/ui/dropdown-menu";
-
 import {
   commandSummary,
   preferredProjectScriptId,
@@ -28,6 +26,7 @@ import {
 import { useSessionDetailsStore } from "../stores/session-details-store";
 import { DetailsRow, DetailsSplit, RowIcon, RowLabel } from "./details-rows";
 import { ProjectScriptGlyph } from "./project-script-icons";
+import { DropdownMenuItem, DropdownMenuSeparator } from "@tryatlas/design";
 
 export function ProjectScriptsRow({
   projectPath,

@@ -13,16 +13,6 @@ import { useId, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { GitBranch, TriangleAlert } from "lucide-react";
 
-import { Button } from "@/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/ui/dialog";
-
 import {
   defaultBranchCopy,
   featureBranchUnavailableReason,
@@ -31,6 +21,15 @@ import {
 import { continueGitAction, runGitAction } from "../lib/run-git-action";
 import { useSessionGit } from "../lib/use-session-git";
 import { useSessionDetailsStore, type GitActionPrompt } from "../stores/session-details-store";
+import {
+  Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@tryatlas/design";
 
 export function GitActionDialogHost() {
   const prompt = useSessionDetailsStore.use.gitPrompt();

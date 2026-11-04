@@ -13,10 +13,6 @@ import {
   Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Button } from "@/ui/button";
-import { IconButton } from "@/ui/icon-button";
-import { Input } from "@/ui/input";
-import { HintGroup, HintItem } from "@/ui/hint-group";
 import { SectionHeader } from "./section-header";
 import { useGitStore, retainGitDiff, type GitFileStatus } from "../../stores/git-store";
 import { handleGitError } from "../../lib/git-errors";
@@ -29,6 +25,7 @@ import { useAppStore } from "@/features/app/stores/app-store";
 import { DiffView } from "../diff-view";
 import { classifyFile } from "@/lib/file-types";
 import { FileTreeConfirmDelete } from "@/features/explorer/components/file-tree-confirm-delete";
+import { Button, IconButton, Input, HintGroup, HintItem } from "@tryatlas/design";
 
 /** Expand/collapse toggle for an optional commit-form field. The chevron
  *  flips with state; a collapsed field that still holds text shows a dot so

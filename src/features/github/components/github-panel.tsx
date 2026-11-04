@@ -17,8 +17,6 @@ import {
 import { GithubIcon } from "@/components/github-icon";
 import { cn } from "@/lib/utils";
 import { useAppProfile } from "@/lib/app-profile";
-import { HintGroup, HintItem } from "@/ui/hint-group";
-import { ScrollFade, useScrollEdges } from "@/ui/scroll-fade";
 import { logEvent } from "@/features/log/lib/log";
 import { toast } from "sonner";
 import { metaFromSearch, type ClonedRepo, type GithubRepo } from "@/features/github/types";
@@ -32,6 +30,7 @@ import {
   switchClonedRepoBranch,
   updateClonedRepo,
 } from "@/features/github/lib/github-api";
+import { HintGroup, HintItem, ScrollFade, useScrollEdges } from "@tryatlas/design";
 
 /**
  * The GitHub panel: search public repositories, clone them as reference

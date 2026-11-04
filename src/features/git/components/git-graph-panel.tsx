@@ -6,13 +6,12 @@ import { listen } from "@tauri-apps/api/event";
 import { Dialog } from "@base-ui/react/dialog";
 import { RefreshCw, GitBranch, Maximize2, Minimize2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { HintGroup, HintItem } from "@/ui/hint-group";
-import { IconButton, iconButtonVariants } from "@/ui/icon-button";
 import { useAppStore } from "@/features/app/stores/app-store";
 import { useGitStore } from "@/features/git/stores/git-store";
 import { CommitRowView } from "./commit-node";
 import { openCommit } from "../lib/open-commit";
 import { ROW_HEIGHT, commitCountLabel, type BuiltGraph } from "../lib/git-graph";
+import { HintGroup, HintItem, IconButton, iconButtonVariants } from "@tryatlas/design";
 
 const DEFAULT_LIMIT = 1000;
 

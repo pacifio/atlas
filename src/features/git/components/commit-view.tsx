@@ -17,8 +17,6 @@ import {
   Undo2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { CopyGlyph } from "@/ui/animated-icon";
-import { HintGroup, HintItem } from "@/ui/hint-group";
 import { useArtifactsStore } from "@/features/artifacts/stores/artifacts-store";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useGitStore, type CommitDetail } from "../stores/git-store";
@@ -35,6 +33,7 @@ import { CommitAvatar } from "./commit-avatar";
 import type { DiffJump } from "../lib/diff-jump";
 import { useSettingsStore } from "@/features/settings/stores/settings-store";
 import { useCollapsedFiles } from "../lib/use-collapsed-files";
+import { CopyGlyph, HintGroup, HintItem } from "@tryatlas/design";
 
 type ViewMode = "split" | "unified";
 

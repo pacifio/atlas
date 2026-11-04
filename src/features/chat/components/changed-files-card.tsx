@@ -23,15 +23,6 @@ import {
 import type { TurnFile } from "@/types/agent";
 import { cn } from "@/lib/utils";
 import { copyText } from "@/lib/clipboard";
-import { Button } from "@/ui/button";
-import { IconButton } from "@/ui/icon-button";
-import { Hint } from "@/ui/tooltip";
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuTrigger,
-} from "@/ui/context-menu";
 import { useAppStore } from "@/features/app/stores/app-store";
 import { FileIcon } from "@/features/icon-theme/components/file-icon";
 import { openReviewFile } from "@/features/git/lib/open-review-file";
@@ -53,6 +44,15 @@ import { needsGroupHeaders, type SessionRoot } from "../lib/session-roots";
 import { useSessionRoots } from "../hooks/use-session-roots";
 import { useChatStore } from "../stores/chat-store";
 import { useChangedFilesStore } from "../stores/changed-files-store";
+import {
+  Button,
+  IconButton,
+  Hint,
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@tryatlas/design";
 
 /** Rows drawn before "Show all": a card is a summary, not the file list. */
 export const ROW_LIMIT = 200;

@@ -1,6 +1,6 @@
 import type { Ref } from "react";
-import { Kbd } from "@/ui/kbd";
 import type { Surface } from "../../lib/surfaces";
+import { Kbd } from "@tryatlas/design";
 
 /** The empty column's "Open a surface" list; its keyboard lives in
  *  `SurfaceLauncher`. */

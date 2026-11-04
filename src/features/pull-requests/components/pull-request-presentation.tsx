@@ -21,8 +21,6 @@ import {
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { Badge } from "@/ui/badge";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/ui/tooltip";
 
 import { usePrImage } from "../lib/pr-image";
 import type { ReviewOutcome } from "../lib/pull-request-logic";
@@ -35,6 +33,7 @@ import type {
   PrState,
 } from "../lib/pull-requests-types";
 import { usePullRequestScope } from "./pull-request-context";
+import { Badge, Tooltip, TooltipContent, TooltipTrigger } from "@tryatlas/design";
 
 // ── state ───────────────────────────────────────────────────────────────
 

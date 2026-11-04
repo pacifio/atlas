@@ -57,17 +57,17 @@ import { LINK_SOURCE_LABEL } from "@/features/pull-requests/lib/session-pull-req
 import { linkSessionPullRequest } from "@/features/pull-requests/lib/session-pull-requests-api";
 import { useInlineConfirm } from "@/features/pull-requests/lib/use-inline-confirm";
 import { usePullRequestActions } from "@/features/pull-requests/lib/use-pull-request-actions";
-import { Button } from "@/ui/button";
+
+import type { SessionPullRequest, SessionPullRequests } from "../lib/session-pull-requests";
+import { DetailsRow, RowIcon, RowLabel, RowMeta } from "./details-rows";
 import {
+  Button,
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
   ContextMenuTrigger,
-} from "@/ui/context-menu";
-
-import type { SessionPullRequest, SessionPullRequests } from "../lib/session-pull-requests";
-import { DetailsRow, RowIcon, RowLabel, RowMeta } from "./details-rows";
+} from "@tryatlas/design";
 
 export type PullRequestRowAction = "resolve" | "ready" | "merge";
 

@@ -33,9 +33,6 @@ import { useAuthStore } from "@/features/auth/stores/auth-store";
 import { useComposerFold } from "@/features/chat/hooks/use-composer-fold";
 import { useSettingsStore } from "@/features/settings/stores/settings-store";
 import { cn } from "@/lib/utils";
-import { Button } from "@/ui/button";
-import { HintGroup, HintItem } from "@/ui/hint-group";
-import { Hint } from "@/ui/tooltip";
 
 import { handleIndex, type OrgAgentTarget } from "../lib/org-agent-links";
 import { durationWords, foldAsk, lastOf } from "../lib/org-agent-log";
@@ -50,6 +47,7 @@ import {
 } from "../stores/org-agent-store";
 import { OrgAgentInput, type OrgAgentInputHandle } from "./org-agent-input";
 import { Notice, PendingTurn, TurnView } from "./org-agent-turn";
+import { Button, HintGroup, HintItem, Hint } from "@tryatlas/design";
 
 /** The starters: the web's three, and the one a team lead asks first. */
 const STARTERS: { text: string; Icon: LucideIcon }[] = [

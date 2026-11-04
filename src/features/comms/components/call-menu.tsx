@@ -5,13 +5,13 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { copyText } from "@/lib/clipboard";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/ui/tooltip";
 import { comms, parseRefusal } from "../lib/comms-api";
 import { copyShareLink, memberCallUrl, shareUrl } from "../lib/call-links";
 import { callButtonPlan, NO_CALLS_REASON, NO_MEETINGS_REASON } from "../lib/call-plan";
 import { useCallFeatures } from "../lib/use-call-features";
 import { useCommsStore } from "../stores/comms-store";
 import type { CallMode, CallProvider } from "../types";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@tryatlas/design";
 
 /** One row of the start menu: what it starts, and how it reads. */
 interface StartOption {

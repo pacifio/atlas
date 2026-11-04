@@ -4,8 +4,6 @@ import { ChevronDown, ChevronUp, Search, SlidersHorizontal } from "lucide-react"
 
 import { GlassIconButton } from "@/features/sidebar/components/glass-icon-button";
 import { cn } from "@/lib/utils";
-import { HintItem } from "@/ui/hint-group";
-import { ScrollFade, useScrollEdges } from "@/ui/scroll-fade";
 
 import {
   DEFAULT_FILTERS,
@@ -14,6 +12,7 @@ import {
   type TimelineFilters,
 } from "../../types";
 import { PILL_BUTTON, PILL_BUTTON_ACTIVE, PILL_ICON } from "../footer-pill";
+import { HintItem, ScrollFade, useScrollEdges } from "@tryatlas/design";
 
 /**
  * The filter menu: what the timeline shows, and a way through its Checkpoints.

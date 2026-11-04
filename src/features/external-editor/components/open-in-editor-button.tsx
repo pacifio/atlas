@@ -2,19 +2,19 @@
 // and a ▾ listing every other installed editor.
 
 import { ChevronDown, SquareArrowOutUpRight } from "lucide-react";
-import { Button } from "@/ui/button";
-import { IconButton } from "@/ui/icon-button";
-import { Hint } from "@/ui/tooltip";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/ui/dropdown-menu";
 import type { EditorPosition } from "../lib/external-editor-api";
 import { openInEditor, openInLabel, usePreferredEditor } from "../lib/preferred-editor";
 import { EditorIcon } from "./editor-icons";
 import { editorMenuEntries } from "./open-in-editor-menu";
+import {
+  Button,
+  IconButton,
+  Hint,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@tryatlas/design";
 
 export function OpenInEditorButton({
   path,

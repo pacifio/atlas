@@ -4,17 +4,6 @@ import { listen } from "@tauri-apps/api/event";
 import type { FileDiffContentsLoader } from "@pierre/diffs";
 import { ArrowRight, ChevronDown } from "lucide-react";
 import { openReviewFile } from "../../lib/open-review-file";
-import { Button } from "@/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
-  DropdownMenuTrigger,
-} from "@/ui/dropdown-menu";
 import { formatTime } from "@/lib/format-time";
 import type { EditTurn } from "@/features/chat/lib/turn-edits";
 import { getDiffFileContents, getDiffPreview, type DiffSource } from "../../lib/git-review-api";
@@ -45,6 +34,17 @@ import {
   useDiffIgnoreWhitespace,
   type DiffViewSource,
 } from "./diff-panel-view";
+import {
+  Button,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@tryatlas/design";
 
 /**
  * The review diff: every changed file of the working tree or the branch,

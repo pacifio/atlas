@@ -1,21 +1,9 @@
 import { useEffect, useState } from "react";
 import { ChevronRight, RotateCcw, Settings } from "lucide-react";
-import { ScrollArea } from "@/ui/scroll-area";
-import { Button } from "@/ui/button";
-import { Icon } from "@/ui/icon";
 import { WindowControls, useWindowDrag } from "@/components/titlebar";
 import { isLinux, isWindows } from "@/lib/platform";
 import { cn } from "@/lib/utils";
 import { closeSettings } from "../lib/open-settings";
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/ui/dialog";
 import { LayoutsSettings } from "./layouts-settings";
 import { SkillsAndPacks } from "./skills-and-packs";
 import { AgentsPage } from "./agents/agents-page";
@@ -38,6 +26,18 @@ import {
   type SearchItem,
 } from "../lib/settings-sections";
 import { useAgentRegistryStore } from "@/features/agents/stores/agent-registry-store";
+import {
+  ScrollArea,
+  Button,
+  Icon,
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@tryatlas/design";
 
 /** Pages drawn with the settings layout, inside one scroll area. */
 const PAGES: Partial<Record<SettingsSection, () => React.ReactElement>> = {

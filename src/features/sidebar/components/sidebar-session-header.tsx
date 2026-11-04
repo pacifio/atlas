@@ -10,7 +10,7 @@
 import type { KeyboardEvent, RefObject } from "react";
 import { Search, X } from "lucide-react";
 import { SessionScopeFilter } from "./session-scope-filter";
-import { Icon } from "@/ui/icon";
+import { Icon } from "@tryatlas/design";
 
 export const SEARCH_RESULTS_ID = "sidebar-session-search-results";
 export const searchResultId = (index: number) => `sidebar-session-search-result-${index}`;

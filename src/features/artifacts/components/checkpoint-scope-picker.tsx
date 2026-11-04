@@ -21,8 +21,8 @@ import { Popover } from "@base-ui/react/popover";
 import { Check, ChevronDown, GitCommitHorizontal, Layers, Search, X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
 import type { TimelineEntry } from "../types";
+import { Hint } from "@tryatlas/design";
 
 /**
  * The tucked header itself, same construction as Memory ▸ Chat's codebase strip

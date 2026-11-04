@@ -4,19 +4,6 @@ import { ArrowUpRight, Lock, MoreHorizontal, X } from "lucide-react";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { copyText } from "@/lib/clipboard";
 import { tildePath } from "@/lib/paths";
-import { Badge } from "@/ui/badge";
-import { Button } from "@/ui/button";
-import { Icon } from "@/ui/icon";
-import { IconButton } from "@/ui/icon-button";
-import { SecretInput } from "@/ui/secret-input";
-import { Segmented } from "@/ui/segmented";
-import { Hint } from "@/ui/tooltip";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/ui/dropdown-menu";
 import { ProviderLogo } from "@/components/provider-logo";
 import {
   PROVIDERS,
@@ -33,6 +20,19 @@ import {
   SettingsSection,
 } from "../layout/settings-layout";
 import { SettingsSearch } from "../layout/settings-search";
+import {
+  Badge,
+  Button,
+  Icon,
+  IconButton,
+  SecretInput,
+  Segmented,
+  Hint,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@tryatlas/design";
 
 /**
  * Settings → Agents → Provider keys: an editor for the provider keys in the

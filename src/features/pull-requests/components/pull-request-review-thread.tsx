@@ -18,8 +18,6 @@ import {
 
 import { timeAgo } from "@/lib/time-ago";
 import { cn } from "@/lib/utils";
-import { Button } from "@/ui/button";
-import { IconButton } from "@/ui/icon-button";
 
 import { classifyPrError } from "../lib/pr-errors";
 import { findingKey } from "../lib/pull-request-logic";
@@ -33,6 +31,7 @@ import { usePullRequestScope } from "./pull-request-context";
 import { PullRequestMarkdown, TEXTAREA_CLASS } from "./pull-request-markdown";
 import { ActorLabel } from "./pull-request-presentation";
 import { ReactionBar } from "./pull-request-reactions";
+import { Button, IconButton } from "@tryatlas/design";
 
 const CARD_CLASS =
   "mx-3 my-2 rounded-lg border border-border bg-background p-3 font-sans text-sm text-foreground shadow-sm";
