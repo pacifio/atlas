@@ -16,6 +16,8 @@ import {
   type ReviewQueue,
 } from "../lib/shared-memory-api";
 import { MEMORY_CHANGED_EVENT } from "../stores/shared-memory-store";
+import { Button } from "@/ui/button";
+import { CountPill, Notice } from "./views/memory-chrome";
 
 const EMPTY: ReviewQueue = { candidates: [], merges: [], conflicts: [], dreams: [] };
 const DEBOUNCE_MS = 300;
@@ -87,18 +89,18 @@ export function MemoryReviewView({
     dreams.length === 0;
 
   return (
-    <div className={cn("flex-1 min-h-0 overflow-y-auto px-3 py-2", className)}>
+    <div className={cn("flex min-h-0 flex-1 flex-col overflow-y-auto p-4", className)}>
       {loaded && empty ? (
-        <p className="py-8 text-center text-sm text-[var(--muted-foreground)]">
+        <Notice>
           {loadError ? `Couldn't read the review queue: ${loadError}` : "Nothing to review"}
-        </p>
+        </Notice>
       ) : null}
       {dreams.length > 0 && (
         <Section title="Proposed by the nightly review" count={dreams.length}>
           {dreams.map((d) => (
             <Card key={d.id}>
-              <div className="text-xs text-[var(--foreground)]">{dreamLabel(d.op)}</div>
-              {d.why && <div className="text-2xs text-[var(--muted-foreground)]">{d.why}</div>}
+              <div className="label">{dreamLabel(d.op)}</div>
+              {d.why && <div className="caption">{d.why}</div>}
               {d.entries.map((e) => (
                 <Line key={e.id} entry={e} muted />
               ))}
@@ -227,19 +229,21 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section className="mb-3">
-      <h3 className="mb-1.5 flex items-center gap-1.5 text-3xs uppercase tracking-wider text-[var(--atlas-text-disabled)]">
+    <section className="mb-4">
+      <h3 className="eyebrow mb-2 flex items-center gap-1.5">
         {title}
-        <span className="tabular-nums">{count}</span>
+        <CountPill count={count} />
       </h3>
-      <div className="flex flex-col gap-1.5">{children}</div>
+      <div className="flex flex-col gap-2">{children}</div>
     </section>
   );
 }
 
+/** One proposal: the Usage section card — a hairline in the element ramp's
+ *  selected step over the card surface, no shadow. */
 function Card({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex flex-col gap-1 rounded-md border border-[var(--border)] bg-[var(--card)] px-2.5 py-2">
+    <div className="flex flex-col gap-1.5 rounded-lg border border-element-selected bg-card px-3 py-2.5">
       {children}
     </div>
   );
@@ -247,21 +251,21 @@ function Card({ children }: { children: React.ReactNode }) {
 
 function Line({ label, entry, muted }: { label?: string; entry: MemoryEntry; muted?: boolean }) {
   return (
-    <div className="flex items-baseline gap-2 text-xs">
+    <div className="flex items-baseline gap-2 text-sm">
       {label && (
-        <span className="w-12 shrink-0 text-3xs uppercase tracking-wide text-[var(--atlas-text-disabled)]">
+        <span className="w-12 shrink-0 text-3xs font-semibold uppercase tracking-wider text-disabled">
           {label}
         </span>
       )}
       <span
         className={cn(
           "min-w-0 flex-1 break-words",
-          muted ? "text-[var(--muted-foreground)]" : "text-[var(--foreground)]",
+          muted ? "text-muted-foreground" : "text-foreground",
         )}
       >
         {entry.content}
       </span>
-      <span className="shrink-0 text-2xs text-[var(--muted-foreground)]">
+      <span className="caption shrink-0 tabular-nums">
         {entry.kind} · {entry.agent || entry.source} · {Math.round(entry.confidence * 100)}%
       </span>
     </div>
@@ -274,12 +278,8 @@ function Actions({ children }: { children: React.ReactNode }) {
 
 function Action({ label, onClick }: { label: string; onClick: () => void }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="h-6 rounded-md border border-[var(--border)] px-2 text-xs text-[var(--secondary-foreground)] transition-colors hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]"
-    >
+    <Button variant="outline" size="sm" onClick={onClick}>
       {label}
-    </button>
+    </Button>
   );
 }

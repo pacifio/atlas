@@ -336,7 +336,9 @@ export function MemoryTreeView({
                         x={textX}
                         fontFamily="var(--font-sans)"
                         fontSize={fontSize}
-                        fontWeight={isRoot || isCat ? 600 : 400}
+                        // The type scale's two weights: 400 disappears
+                        // against the dense monochrome chrome.
+                        fontWeight={isRoot || isCat ? 600 : 500}
                         fill={textColor}
                       >
                         {lines.map((ln, i) => (

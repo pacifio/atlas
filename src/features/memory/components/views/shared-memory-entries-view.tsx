@@ -25,6 +25,8 @@ import {
   SourceChip,
   StateChip,
 } from "./shared-memory-primitives";
+import { DETAIL_TEXT, DETAIL_WELL, ROW_DETAIL, TABLE_ROW, rowButton } from "./memory-chrome";
+import { Button } from "@/ui/button";
 
 const ENTRY_COL = {
   time: "w-[92px] shrink-0",
@@ -68,15 +70,11 @@ export function MemoriesTableView({
   return (
     <div ref={scrollerRef} className="flex-1 min-h-0 overflow-auto hide-scrollbar">
       {chosenCount > 0 && (
-        <div className="flex items-center gap-2 border-b border-[var(--border)] px-3 py-1.5 text-xs text-[var(--muted-foreground)]">
-          <span>{chosenCount} selected</span>
-          <button
-            type="button"
-            onClick={onExport}
-            className="ml-auto h-6 rounded-md border border-[var(--border)] px-2 text-xs text-[var(--secondary-foreground)] transition-colors hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]"
-          >
+        <div className="flex h-10 items-center gap-2 border-b border-border bg-card px-3">
+          <span className="label tabular-nums">{chosenCount} selected</span>
+          <Button variant="outline" size="sm" className="ml-auto" onClick={onExport}>
             Export to AGENTS.md
-          </button>
+          </Button>
         </div>
       )}
       {exportModal}
@@ -128,7 +126,7 @@ function EntryRow({
   detail: ReactNode;
 }) {
   return (
-    <div data-entry-id={e.id} className="border-b border-[var(--atlas-border-subtle)]">
+    <div data-entry-id={e.id} className={TABLE_ROW}>
       <div className="flex items-center">
         <span className="flex w-6 shrink-0 items-center justify-end">
           {exportable(e) && (
@@ -137,18 +135,12 @@ function EntryRow({
               checked={selected}
               onChange={onSelect}
               aria-label={`Select ${e.content}`}
-              className="h-3 w-3 cursor-pointer accent-[var(--primary)]"
+              className="size-3 cursor-pointer accent-foreground"
             />
           )}
         </span>
-        <button
-          onClick={onToggle}
-          className={cn(
-            "flex-1 min-w-0 flex items-center h-[40px] px-3 text-left transition-colors cursor-pointer",
-            expanded ? "bg-[var(--card)]/50" : "hover:bg-[var(--atlas-element-hover)]",
-          )}
-        >
-          <span className={cn(ENTRY_COL.time, "text-2xs text-[var(--muted-foreground)]")}>
+        <button onClick={onToggle} className={rowButton(expanded, "min-w-0 flex-1")}>
+          <span className={cn(ENTRY_COL.time, "caption tabular-nums")}>
             {eventTime(e.updatedAt)}
           </span>
           <span className={ENTRY_COL.kind}>
@@ -162,29 +154,19 @@ function EntryRow({
             {entryAgent(e.agent) ? (
               <AgentTag agent={e.agent} />
             ) : (
-              <span className="font-mono text-2xs uppercase tracking-wider text-[var(--muted-foreground)]">
-                {e.agent || "—"}
-              </span>
+              <span className="text-xs text-muted-foreground">{e.agent || "—"}</span>
             )}
           </span>
-          <span
-            className={cn(
-              ENTRY_COL.confidence,
-              "tabular-nums text-2xs text-[var(--muted-foreground)]",
-            )}
-          >
+          <span className={cn(ENTRY_COL.confidence, "caption tabular-nums")}>
             {confidenceLabel(e.confidence)}
           </span>
           <span className={cn(ENTRY_COL.content, "min-w-0 pr-3")}>
-            <span className="block truncate text-sm text-[var(--secondary-foreground)]">
-              {e.content || <span className="text-[var(--atlas-text-disabled)]">—</span>}
+            <span className="block truncate text-sm text-foreground">
+              {e.content || <span className="text-disabled">—</span>}
             </span>
           </span>
           <span
-            className={cn(
-              ENTRY_COL.chevron,
-              "flex items-center justify-end text-[var(--muted-foreground)]",
-            )}
+            className={cn(ENTRY_COL.chevron, "flex items-center justify-end text-muted-foreground")}
           >
             {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
           </span>
@@ -237,7 +219,7 @@ export function EntryDetailView({
   onConfirmEraseChange: (open: boolean) => void;
 }) {
   return (
-    <div className="bg-[var(--card)]/40 border-t border-[var(--atlas-border-subtle)] px-4 py-3 space-y-3">
+    <div className={ROW_DETAIL}>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
         <MetaChip label="Kind" value={KIND_LABEL[e.kind] ?? e.kind.replace(/_/g, " ")} />
         <MetaChip label="Source" value={sourceLabel(e.source)} />
@@ -294,21 +276,20 @@ export function EntryDetailView({
           rows={Math.min(8, Math.max(2, draft.split("\n").length))}
           aria-label="Memory content"
           className={cn(
-            "block w-full resize-y rounded-lg border bg-[var(--background)] px-3 py-2 font-sans text-sm leading-[1.55] text-[var(--foreground)] outline-none transition-colors",
-            dirty ? "border-[var(--atlas-border-strong)]" : "border-[var(--border)]",
+            "block w-full resize-y rounded-md border bg-panel-input px-3 py-2 font-sans text-sm leading-relaxed text-foreground outline-none",
+            "transition-colors duration-fast ease-out-strong focus:border-border-strong",
+            dirty ? "border-border-strong" : "border-border",
           )}
         />
       ) : (
-        <div className="rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2">
-          <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-[1.55] text-[var(--secondary-foreground)]">
-            {e.content || "—"}
-          </pre>
+        <div className={DETAIL_WELL}>
+          <pre className={DETAIL_TEXT}>{e.content || "—"}</pre>
         </div>
       )}
       {provenance.length > 0 && (
         <div className="space-y-0.5">
           {provenance.map((p, i) => (
-            <p key={`${p.source}-${i}`} className="text-xs text-[var(--muted-foreground)]">
+            <p key={`${p.source}-${i}`} className="text-xs text-muted-foreground">
               {provenanceLine(p)}
             </p>
           ))}

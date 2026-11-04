@@ -1,18 +1,9 @@
-import {
-  RefreshCw,
-  Trash2,
-  Search,
-  ListChecks,
-  ScrollText,
-  Brain,
-  Download,
-  Inbox,
-  FolderInput,
-} from "lucide-react";
+import { RefreshCw, Trash2, Download, FolderInput } from "lucide-react";
 import { agentMetaForSource } from "../../lib/memory-agent";
 import { HintGroup } from "@/ui/hint-group";
 import { KIND_LABEL, entryAgent } from "../../lib/shared-memory-format";
 import { FilterMenu, IconButton, SegBtn } from "./shared-memory-primitives";
+import { SearchField, Toolbar, Track } from "./memory-chrome";
 
 export type SharedMemoryTab = "events" | "plans" | "memories" | "review";
 
@@ -55,38 +46,35 @@ export function SharedMemoryToolbar({
   onClear: () => void;
 }) {
   return (
-    <div className="flex items-center gap-2 px-3 h-[32px] shrink-0 border-b border-[var(--border)]">
-      {/* Events / Plans toggle — pill group, matches the Memory nav. */}
-      <div className="inline-flex items-center gap-0.5 rounded-full border border-[var(--border)] bg-[var(--card)] p-0.5">
+    <Toolbar>
+      {/* Events / Plans / Memories / Review — the Memory nav's track. No
+          glyphs: four distinct nouns, and the counts already set them apart. */}
+      <Track>
         <SegBtn
           active={tab === "events"}
           onClick={() => onTabChange("events")}
-          icon={<ScrollText size={11} />}
           label="Events"
           count={eventCount}
         />
         <SegBtn
           active={tab === "plans"}
           onClick={() => onTabChange("plans")}
-          icon={<ListChecks size={11} />}
           label="Plans"
           count={planCount}
         />
         <SegBtn
           active={tab === "memories"}
           onClick={() => onTabChange("memories")}
-          icon={<Brain size={11} />}
           label="Memories"
           count={entryCount}
         />
         <SegBtn
           active={tab === "review"}
           onClick={() => onTabChange("review")}
-          icon={<Inbox size={11} />}
           label="Review"
           count={0}
         />
-      </div>
+      </Track>
 
       {/* Column filters */}
       <FilterMenu
@@ -108,31 +96,29 @@ export function SharedMemoryToolbar({
 
       <div className="flex-1" />
 
-      <div className="flex items-center gap-1.5 h-6 rounded-md border border-[var(--border)] bg-[var(--card)] px-2 w-[190px] focus-within:border-[var(--atlas-border-strong)]">
-        <Search size={11} className="text-[var(--muted-foreground)] shrink-0" />
-        <input
-          value={query}
-          onChange={(e) => onQueryChange(e.target.value)}
-          placeholder={`Search ${tab}…`}
-          spellCheck={false}
-          className="flex-1 min-w-0 bg-transparent outline-none text-xs text-[var(--foreground)] placeholder:text-[var(--muted-foreground)]"
-        />
-      </div>
+      <SearchField
+        value={query}
+        onChange={onQueryChange}
+        placeholder={`Search ${tab}…`}
+        className="w-[200px]"
+      />
 
       <HintGroup>
-        <IconButton label="Refresh" onClick={onRefresh}>
-          <RefreshCw size={12} />
-        </IconButton>
-        <IconButton label="Import Claude memory" onClick={onImportClaude}>
-          <Download size={12} />
-        </IconButton>
-        <IconButton label="Import memory repo" onClick={onImportRepo}>
-          <FolderInput size={12} />
-        </IconButton>
-        <IconButton label="Clear shared memory" onClick={onClear}>
-          <Trash2 size={12} />
-        </IconButton>
+        <div className="flex items-center gap-1">
+          <IconButton label="Refresh" onClick={onRefresh}>
+            <RefreshCw size={12} />
+          </IconButton>
+          <IconButton label="Import Claude memory" onClick={onImportClaude}>
+            <Download size={12} />
+          </IconButton>
+          <IconButton label="Import memory repo" onClick={onImportRepo}>
+            <FolderInput size={12} />
+          </IconButton>
+          <IconButton label="Clear shared memory" onClick={onClear}>
+            <Trash2 size={12} />
+          </IconButton>
+        </div>
       </HintGroup>
-    </div>
+    </Toolbar>
   );
 }

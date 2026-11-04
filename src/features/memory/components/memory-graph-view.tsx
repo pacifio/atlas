@@ -3,7 +3,6 @@ import {
   Loader2,
   Download,
   Sparkles,
-  Search,
   X,
   AlertTriangle,
   RotateCw,
@@ -15,11 +14,21 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Hint } from "@/ui/tooltip";
+import { Button } from "@/ui/button";
+import { IconButton } from "@/ui/icon-button";
 import { useAppStore } from "@/features/app/stores/app-store";
 import { agentBrandColor } from "@/features/agents/lib/agent-brand";
 import { useMemoryGraphStore } from "../stores/memory-graph-store";
 import { MemoryGraphCanvas } from "./memory-graph-canvas";
 import { MemoryTreeView } from "./memory-tree-view";
+import {
+  Notice,
+  ProgressBar,
+  SearchField,
+  Toolbar,
+  Track,
+  TrackSegment,
+} from "./views/memory-chrome";
 
 type ViewMode = "graph" | "tree";
 const VIEW_KEY = "atlas-memory-graph-view-mode";
@@ -46,44 +55,30 @@ export function MemoryGraphView() {
   }, [projectPath, init]);
 
   if (!projectPath) {
-    return <Centered>Open a project first.</Centered>;
+    return <Notice>Open a project first.</Notice>;
   }
 
   if (phase === "checking") {
-    return (
-      <Centered>
-        <Loader2 size={18} className="animate-spin text-[var(--muted-foreground)]" />
-      </Centered>
-    );
+    return <Notice icon={<Loader2 size={18} className="animate-spin" />} />;
   }
 
   if (phase === "not-downloaded") {
     return (
-      <Centered>
-        <div className="text-center max-w-[360px] px-6 space-y-3">
-          <div className="w-12 h-12 mx-auto rounded-xl bg-[var(--card)] border border-[var(--border)] flex items-center justify-center">
-            <Sparkles size={22} className="text-[var(--secondary-foreground)]" />
-          </div>
-          <div className="space-y-1">
-            <h3 className="text-base font-medium text-[var(--foreground)]">
-              Enable semantic memory
-            </h3>
-            <p className="text-xs leading-relaxed text-[var(--muted-foreground)]">
-              Download a small on-device embedding model to index your Claude & Codex memory, map
-              how it relates, and query it in natural language. Runs entirely locally — nothing
-              leaves your machine.
-            </p>
-          </div>
-          <button
-            onClick={() => void download()}
-            className="inline-flex items-center gap-1.5 h-8 px-3.5 rounded-md bg-[var(--primary)] text-[var(--background)] text-xs font-medium hover:opacity-90 transition-opacity cursor-pointer"
-          >
+      <Notice
+        icon={<Sparkles size={20} />}
+        title="Enable semantic memory"
+        action={
+          <Button size="lg" onClick={() => void download()}>
             <Download size={13} />
             Download model
-          </button>
-          <p className="text-2xs text-[var(--atlas-text-disabled)] font-mono">{MODEL_LABEL}</p>
-        </div>
-      </Centered>
+          </Button>
+        }
+        footnote={<span className="font-mono">{MODEL_LABEL}</span>}
+      >
+        Download a small on-device embedding model to index your Claude & Codex memory, map how it
+        relates, and query it in natural language. Runs entirely locally — nothing leaves your
+        machine.
+      </Notice>
     );
   }
 
@@ -96,72 +91,46 @@ export function MemoryGraphView() {
         )
       : 0;
     return (
-      <Centered>
-        <div className="text-center max-w-[360px] px-6 w-full space-y-3">
-          <Loader2 size={20} className="animate-spin text-[var(--secondary-foreground)] mx-auto" />
-          <div className="space-y-1.5">
-            <p className="text-sm text-[var(--foreground)]">Downloading model…</p>
-            <div className="h-1.5 rounded-full bg-[var(--card)] overflow-hidden">
-              <div
-                className="h-full bg-[var(--primary)] transition-[width] duration-200"
-                style={{ width: `${pct}%` }}
-              />
-            </div>
-            <p className="text-2xs text-[var(--muted-foreground)] font-mono">
-              {progress
-                ? `${progress.file}  ·  ${fmtMB(progress.received)} / ${fmtMB(progress.total)}  ·  ${pct}%`
-                : "starting…"}
-            </p>
-          </div>
+      <Notice icon={<Loader2 size={18} className="animate-spin" />} title="Downloading model…">
+        <div className="flex w-[320px] max-w-full flex-col gap-2 pt-1">
+          <ProgressBar pct={pct} />
+          <p className="font-mono text-2xs tabular-nums">
+            {progress
+              ? `${progress.file}  ·  ${fmtMB(progress.received)} / ${fmtMB(progress.total)}  ·  ${pct}%`
+              : "starting…"}
+          </p>
         </div>
-      </Centered>
+      </Notice>
     );
   }
 
   if (phase === "download-failed" || phase === "error") {
     return (
-      <Centered>
-        <div className="text-center max-w-[340px] px-6 space-y-3">
-          <AlertTriangle
-            size={20}
-            className="text-[var(--atlas-status-error-foreground)] mx-auto"
-          />
-          <p className="text-sm text-[var(--secondary-foreground)]">
-            {phase === "download-failed" ? "Model download failed" : "Something went wrong"}
-          </p>
-          {error && (
-            <p className="text-2xs text-[var(--muted-foreground)] font-mono break-words">{error}</p>
-          )}
-          <button
+      <Notice
+        icon={<AlertTriangle size={18} className="text-error" />}
+        title={phase === "download-failed" ? "Model download failed" : "Something went wrong"}
+        action={
+          <Button
+            variant="outline"
             onClick={() => (phase === "download-failed" ? void download() : void init(projectPath))}
-            className="inline-flex items-center gap-1.5 h-7 px-3 rounded-md border border-[var(--border)] text-xs text-[var(--secondary-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] transition-colors cursor-pointer"
           >
             <RotateCw size={12} />
             Retry
-          </button>
-        </div>
-      </Centered>
+          </Button>
+        }
+      >
+        {error && <p className="font-mono text-2xs break-words">{error}</p>}
+      </Notice>
     );
   }
 
   if (phase === "indexing") {
-    return (
-      <Centered>
-        <div className="text-center space-y-2">
-          <Loader2 size={18} className="animate-spin text-[var(--secondary-foreground)] mx-auto" />
-          <p className="text-xs text-[var(--muted-foreground)]">Indexing memory…</p>
-        </div>
-      </Centered>
-    );
+    return <Notice icon={<Loader2 size={18} className="animate-spin" />}>Indexing memory…</Notice>;
   }
 
   // phase === "graph-ready"
   if (!graph || graph.nodes.length === 0) {
-    return (
-      <Centered>
-        <p className="text-sm text-[var(--muted-foreground)]">No memory to graph yet.</p>
-      </Centered>
-    );
+    return <Notice>No memory to graph yet.</Notice>;
   }
 
   return (
@@ -287,77 +256,61 @@ function GraphReady({
   }, [playing, hasTime, minTs, maxTs]);
 
   return (
-    <div className="h-full flex flex-col bg-[var(--background)]">
+    <div className="flex h-full flex-col bg-background">
       {/* Query bar */}
-      <div className="flex items-center gap-2 px-3 h-[32px] shrink-0 border-b border-[var(--border)]">
+      <Toolbar>
         {/* Tree / Graph toggle — top-left. Tree (the decision tree) is the
             primary view, so it sits first. */}
-        <div className="flex items-center gap-0.5 h-6 rounded-md border border-[var(--border)] bg-[var(--card)] p-0.5 shrink-0">
-          <button
+        <Track>
+          <TrackSegment
+            active={viewMode === "tree"}
             onClick={() => setView("tree")}
             title="Decision tree"
-            className={cn(
-              "flex items-center gap-1 px-1.5 h-5 rounded-sm text-2xs font-medium transition-colors cursor-pointer",
-              viewMode === "tree"
-                ? "bg-[var(--atlas-element-selected)] text-[var(--foreground)]"
-                : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]",
-            )}
           >
             <ListTree size={11} /> Tree
-          </button>
-          <button
+          </TrackSegment>
+          <TrackSegment
+            active={viewMode === "graph"}
             onClick={() => setView("graph")}
             title="Force graph"
-            className={cn(
-              "flex items-center gap-1 px-1.5 h-5 rounded-sm text-2xs font-medium transition-colors cursor-pointer",
-              viewMode === "graph"
-                ? "bg-[var(--atlas-element-selected)] text-[var(--foreground)]"
-                : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]",
-            )}
           >
             <Network size={11} /> Graph
-          </button>
-        </div>
-        <div className="flex items-center gap-1.5 h-6 flex-1 max-w-[440px] rounded-md border border-[var(--border)] bg-[var(--card)] px-2 focus-within:border-[var(--atlas-border-strong)]">
-          <Search size={12} className="text-[var(--muted-foreground)] shrink-0" />
-          <input
-            value={query}
-            onChange={(e) => onQueryChange(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") onRunQuery(query);
-              else if (e.key === "Escape") onClearQuery();
-            }}
-            placeholder="Ask your memory… (Enter to search)"
-            spellCheck={false}
-            className="flex-1 min-w-0 bg-transparent outline-none text-xs text-[var(--foreground)] placeholder:text-[var(--muted-foreground)]"
-          />
-          {querying && (
-            <Loader2 size={11} className="animate-spin text-[var(--muted-foreground)]" />
-          )}
-          {query && !querying && (
-            <Hint label="Clear search">
-              <button
-                onClick={onClearQuery}
-                className="text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-              >
-                <X size={12} />
-              </button>
-            </Hint>
-          )}
-        </div>
+          </TrackSegment>
+        </Track>
+        <SearchField
+          value={query}
+          onChange={onQueryChange}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") onRunQuery(query);
+            else if (e.key === "Escape") onClearQuery();
+          }}
+          placeholder="Ask your memory… (Enter to search)"
+          className="max-w-[440px] flex-1"
+          trailing={
+            <>
+              {querying && <Loader2 size={11} className="animate-spin text-muted-foreground" />}
+              {query && !querying && (
+                <Hint label="Clear search">
+                  <button
+                    type="button"
+                    onClick={onClearQuery}
+                    className="cursor-pointer text-muted-foreground transition-colors duration-fast hover:text-foreground"
+                  >
+                    <X size={12} />
+                  </button>
+                </Hint>
+              )}
+            </>
+          }
+        />
         <div className="flex-1" />
-        <span className="text-2xs text-[var(--muted-foreground)] tabular-nums">
+        <span className="caption tabular-nums">
           {docCount} memories · {graph.edges.length} links
         </span>
         <Hint label="Re-index memory">
-          <button
-            onClick={onReindex}
-            className="flex items-center justify-center w-6 h-6 rounded text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--atlas-element-hover)] transition-colors cursor-pointer"
-          >
-            <RotateCw size={12} />
-          </button>
+          <IconButton icon={RotateCw} label="Re-index memory" size="sm" onClick={onReindex} />
         </Hint>
-      </div>
+      </Toolbar>
 
       {/* Canvas + optional results rail */}
       <div className="flex-1 min-h-0 flex">
@@ -386,16 +339,22 @@ function GraphReady({
 
           {/* Time scrubber — watch memory accrue; drag to a moment in time. */}
           {hasTime && (
-            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--card)]/90 backdrop-blur-sm px-2.5 h-9 shadow-md">
+            <div
+              className={cn(
+                "absolute bottom-3 left-1/2 flex h-9 -translate-x-1/2 items-center gap-2 rounded-full px-2",
+                HUD,
+              )}
+            >
               <Hint label={playing ? "Pause" : "Play timeline"} side="top">
-                <button
+                <IconButton
+                  icon={playing ? Pause : Play}
+                  label={playing ? "Pause" : "Play timeline"}
+                  size="sm"
+                  shape="round"
                   onClick={() => setPlaying((p) => !p)}
-                  className="flex items-center justify-center w-6 h-6 rounded-full text-[var(--secondary-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--atlas-element-hover)] transition-colors cursor-pointer"
-                >
-                  {playing ? <Pause size={13} /> : <Play size={13} />}
-                </button>
+                />
               </Hint>
-              <Clock size={11} className="text-[var(--muted-foreground)]" />
+              <Clock size={11} className="text-muted-foreground" />
               <input
                 type="range"
                 min={minTs}
@@ -407,9 +366,9 @@ function GraphReady({
                   const v = Number(e.target.value);
                   setCutoff(v >= maxTs ? null : v);
                 }}
-                className="w-[220px] h-1 accent-[var(--primary)] cursor-pointer"
+                className="h-1 w-[220px] cursor-pointer accent-foreground"
               />
-              <span className="text-2xs tabular-nums text-[var(--muted-foreground)] w-[78px] text-right">
+              <span className="caption w-[78px] text-right tabular-nums">
                 {cutoff ? fmtDate(cutoff) : "All time"}
               </span>
             </div>
@@ -417,29 +376,34 @@ function GraphReady({
 
           {/* Impact-mode legend (graph only, while a node is selected). */}
           {selected && viewMode === "graph" && (
-            <div className="absolute right-3 top-[26px] flex items-center gap-3 rounded-md border border-[var(--border)] bg-[var(--card)]/90 backdrop-blur-sm px-2.5 h-7 text-2xs text-[var(--muted-foreground)]">
-              <span className="flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full bg-foreground" /> impacted
+            <div
+              className={cn(
+                "caption absolute right-3 top-3 flex h-7 items-center gap-3 rounded-full px-3",
+                HUD,
+              )}
+            >
+              <span className="flex items-center gap-1.5">
+                <span className="size-1.5 rounded-full bg-foreground" /> impacted
               </span>
-              <span className="flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full bg-info" /> influenced by
+              <span className="flex items-center gap-1.5">
+                <span className="size-1.5 rounded-full bg-info" /> influenced by
               </span>
             </div>
           )}
           {/* Selected node detail card. Read-only: the per-agent memory views it
               used to open were removed with the agent dropdown. */}
           {selected && (
-            <div className="absolute left-[26px] bottom-3 max-w-[340px] text-left rounded-lg border border-[var(--border)] bg-[var(--card)]/90 backdrop-blur-sm shadow-md p-3">
-              <div className="flex items-center gap-1.5 mb-1">
+            <div
+              className={cn("absolute bottom-3 left-3 max-w-[340px] rounded-lg p-3 text-left", HUD)}
+            >
+              <div className="mb-1 flex items-center gap-1.5">
                 <SourceDot source={selected.source} />
-                <span className="text-xs font-medium text-[var(--foreground)] truncate">
-                  {selected.summary || selected.title}
-                </span>
+                <span className="label truncate">{selected.summary || selected.title}</span>
               </div>
-              <p className="text-2xs text-[var(--muted-foreground)] line-clamp-4 leading-relaxed">
+              <p className="line-clamp-4 text-2xs leading-relaxed text-secondary-foreground">
                 {selected.snippet || "—"}
               </p>
-              <p className="text-3xs text-[var(--atlas-text-disabled)] mt-1.5 uppercase tracking-wide">
+              <p className="eyebrow mt-2 text-disabled">
                 {selected.source} · {selected.kind}
                 {selected.timestampMs > 0 && ` · ${fmtDate(selected.timestampMs)}`}
               </p>
@@ -448,40 +412,42 @@ function GraphReady({
         </div>
 
         {results.length > 0 && (
-          <aside className="w-[280px] shrink-0 border-l border-[var(--border)] overflow-y-auto hide-scrollbar bg-[var(--sidebar)]">
-            <div className="px-3 h-[28px] flex items-center text-3xs font-semibold uppercase tracking-wider text-[var(--muted-foreground)] border-b border-[var(--atlas-border-subtle)] sticky top-0 bg-[var(--sidebar)]">
+          <aside className="hide-scrollbar w-[280px] shrink-0 overflow-y-auto border-l border-border bg-background">
+            <div className="eyebrow sticky top-0 z-panel flex h-control-md items-center border-b border-border-subtle bg-background px-3">
               Results
             </div>
-            {results.map((hit) => {
-              const node = nodeById.get(hit.id);
-              if (!node) return null;
-              const active = selectedId === hit.id;
-              return (
-                <button
-                  key={hit.id}
-                  onClick={() => onSelect(active ? null : hit.id)}
-                  className={cn(
-                    "w-full text-left px-3 py-2 border-b border-[var(--atlas-border-subtle)] transition-colors flex flex-col gap-0.5",
-                    active
-                      ? "bg-[var(--atlas-element-selected)]"
-                      : "hover:bg-[var(--atlas-element-hover)]",
-                  )}
-                >
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <SourceDot source={node.source} />
-                    <span className="text-xs text-[var(--foreground)] truncate flex-1">
-                      {node.title}
+            <div className="flex flex-col gap-px p-1.5">
+              {results.map((hit) => {
+                const node = nodeById.get(hit.id);
+                if (!node) return null;
+                const active = selectedId === hit.id;
+                return (
+                  <button
+                    key={hit.id}
+                    type="button"
+                    onClick={() => onSelect(active ? null : hit.id)}
+                    className={cn(
+                      "flex w-full cursor-pointer flex-col gap-0.5 rounded-md px-2 py-1.5 text-left",
+                      "transition-colors duration-fast ease-out-strong",
+                      active
+                        ? "bg-element-selected hover:bg-element-selected"
+                        : "hover:bg-element-hover",
+                    )}
+                  >
+                    <div className="flex min-w-0 items-center gap-1.5">
+                      <SourceDot source={node.source} />
+                      <span className="flex-1 truncate text-sm font-medium text-foreground">
+                        {node.title}
+                      </span>
+                      <span className="caption tabular-nums">{Math.round(hit.score * 100)}%</span>
+                    </div>
+                    <span className="line-clamp-2 text-2xs leading-snug text-muted-foreground">
+                      {node.snippet}
                     </span>
-                    <span className="text-3xs text-[var(--muted-foreground)] tabular-nums">
-                      {Math.round(hit.score * 100)}%
-                    </span>
-                  </div>
-                  <span className="text-2xs text-[var(--muted-foreground)] line-clamp-2 leading-snug">
-                    {node.snippet}
-                  </span>
-                </button>
-              );
-            })}
+                  </button>
+                );
+              })}
+            </div>
           </aside>
         )}
       </div>
@@ -493,16 +459,12 @@ function SourceDot({ source }: { source: string }) {
   // The vendor marks are constants (`agent-brand.ts`); anything else is the
   // theme's own primary.
   const color = agentBrandColor(source) ?? "var(--primary)";
-  return <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: color }} />;
+  return <span className="size-1.5 shrink-0 rounded-full" style={{ background: color }} />;
 }
 
-function Centered({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="h-full flex items-center justify-center text-[var(--muted-foreground)] text-sm">
-      {children}
-    </div>
-  );
-}
+/** A surface floating over the canvas: the frosted HUD (hairline, raised top
+ *  edge, menu-rung shadow) over a translucent fill the blur shows through. */
+const HUD = "glass-hud backdrop-blur-glass bg-gradient-to-b from-popover/85 to-card/90";
 
 function fmtMB(bytes: number): string {
   if (!bytes) return "0 MB";

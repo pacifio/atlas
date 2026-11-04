@@ -140,7 +140,7 @@ export function SharedMemoryView({ projectPath, className }: Props) {
   );
 
   return (
-    <div className={cn("h-full flex flex-col bg-[var(--background)]", className)}>
+    <div className={cn("flex h-full flex-col bg-background", className)}>
       {/* Toolbar */}
       <SharedMemoryToolbar
         tab={tab}
