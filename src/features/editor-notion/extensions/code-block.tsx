@@ -7,7 +7,6 @@ import {
 } from "@tiptap/react";
 import { useState } from "react";
 import { CopyGlyph, Hint, buttonVariants } from "@tryatlas/design";
-import "@/styles/hljs.css";
 
 /**
  * CodeBlockLowlight wrapped in a React NodeView that adds the header
@@ -70,8 +69,8 @@ function CodeBlockView({ node, updateAttributes }: NodeViewProps) {
       </div>
       {/* NodeViewContent's `as` prop is narrowed to "div" in our Tiptap
           types — wrap in <pre> for the design's monospace block frame and let
-          lowlight paint `.hljs-*` token spans inside, coloured by the shared
-          `styles/hljs.css`. Never the bare `hljs` class: that stylesheet's
+          lowlight paint `.hljs-*` token spans inside, coloured by the package's
+          `syntax.css`. Never the bare `hljs` class: that stylesheet's
           `.hljs` rule paints its own background and padding. */}
       <pre>
         <NodeViewContent

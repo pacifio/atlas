@@ -25,7 +25,6 @@
 // chunk into the entry.
 
 import { lazy, memo, Suspense, useMemo } from "react";
-import "@/styles/hljs.css";
 import { cn } from "@/lib/utils";
 import { MentionContext } from "../message-body-context";
 import type { OrgMemberProfile } from "../../types";

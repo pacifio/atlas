@@ -7,8 +7,8 @@
  * * **It follows the Atlas theme.** `diff-syntax.css` keys every token off the
  *   resolved theme's `--cm-*` variables, so a payload here matches the diff
  *   view, the editor, and whatever theme is selected.
- * * **It never applies the bare `.hljs` class.** `styles/hljs.css` is loaded by
- *   the markdown pipeline and its root rule carries a background *and*
+ * * **It never applies the bare `.hljs` class.** The package's `syntax.css` is
+ *   loaded globally and its root rule carries a background *and*
  *   `padding: 1em` — which, applied per line, boxes every row and blows the
  *   line height apart.
  * * **It is already cached and bounded.** The tokenizer memoises per
