@@ -55,12 +55,24 @@ export function ShipProgressView({
   onOpenPr,
   onOpenPrOnHost,
 }: ShipProgressViewProps) {
+  // One short sentence for assistive tech, rather than the whole block
+  // re-read on every step change.
+  const current = steps.find((s) => s.status === "running" || s.status === "failed");
+  const announcement =
+    phase === "done"
+      ? pr
+        ? pr.existing
+          ? `Done. Pull request ${pr.number} was already open.`
+          : `Done. Opened pull request ${pr.number}.`
+        : "Done."
+      : phase === "failed"
+        ? `${current?.label ?? "A step"} failed. ${error ?? ""}`
+        : `${current?.label ?? "Starting"}…`;
   return (
-    <section
-      aria-label={title}
-      aria-live="polite"
-      className="shrink-0 border-t border-border-subtle px-3 py-2"
-    >
+    <section aria-label={title} className="shrink-0 border-t border-border-subtle px-3 py-2">
+      <p role="status" className="sr-only">
+        {announcement}
+      </p>
       <div className="flex h-control-sm items-center gap-2">
         <span className="eyebrow min-w-0 flex-1 truncate">{title}</span>
         {phase !== "running" && (

@@ -76,7 +76,7 @@ const FileRow = memo(function FileRow({
   return (
     <div
       onClick={() => onSelect(file.path)}
-      aria-selected={selected}
+      data-selected={selected || undefined}
       className={cn(
         "group flex h-control-sm cursor-pointer items-center gap-1.5 pr-1 pl-2.5 text-xs transition-colors duration-fast",
         selected ? "bg-element-selected" : "hover:bg-element-hover focus-within:bg-element-hover",
@@ -150,11 +150,13 @@ const FileRow = memo(function FileRow({
         </div>
       </HintGroup>
       <span
+        aria-hidden
         title={badge.word}
         className={cn("w-3 shrink-0 text-center font-mono text-2xs font-semibold", badge.cls)}
       >
         {badge.letter}
       </span>
+      <span className="sr-only">{badge.word}</span>
     </div>
   );
 });
@@ -169,9 +171,17 @@ async function run(fn: () => Promise<void>) {
 
 /** Stashes, at the end of the file list: folded until opened, and absent
  *  when there are none. Stashing itself is in the branch bar's menu. */
-function StashesGroup({ stashes }: { stashes: StashEntry[] }) {
+function StashesGroup({
+  stashes,
+  open,
+  setOpen,
+}: {
+  stashes: StashEntry[];
+  /** Held by the view, so the group stays open across clean ↔ dirty. */
+  open: boolean;
+  setOpen: (update: (open: boolean) => boolean) => void;
+}) {
   const actions = useGitStore.use.actions();
-  const [open, setOpen] = useState(false);
   if (stashes.length === 0) return null;
   return (
     <div>
@@ -247,6 +257,7 @@ export function ChangesView() {
   const currentProject = useAppStore.use.currentProject();
 
   const [selected, setSelected] = useState<string | null>(null);
+  const [stashesOpen, setStashesOpen] = useState(false);
   const [fileDiff, setFileDiff] = useState<string | null>(null);
   // Bumped after a hunk op: discarding one hunk of several leaves the file
   // list as it was, so `files` alone would not reload the diff.
@@ -431,7 +442,7 @@ export function ChangesView() {
               title="Working tree clean"
               description="Changes the agent or you make show up here."
             />
-            <StashesGroup stashes={stashes} />
+            <StashesGroup stashes={stashes} open={stashesOpen} setOpen={setStashesOpen} />
           </div>
         ) : (
           <>
@@ -496,7 +507,7 @@ export function ChangesView() {
               </div>
             )}
 
-            <StashesGroup stashes={stashes} />
+            <StashesGroup stashes={stashes} open={stashesOpen} setOpen={setStashesOpen} />
 
             {files.length > 0 && repoPath && (
               <div className="px-1.5 py-1.5">

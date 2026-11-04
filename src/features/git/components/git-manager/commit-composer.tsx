@@ -130,7 +130,19 @@ export function CommitComposer({ stagedCount }: { stagedCount: number }) {
       : stagedCount === 0 && !amend
         ? "Stage changes to commit."
         : "Write a summary to commit.";
-  const blocked = commitBlocked ?? shipBlockedReason(ctx);
+  // Why the push variants are off for a reason Commit isn't: the one to
+  // say out loud, since it is about the repository rather than the form.
+  const shipOnlyBlocked = commitBlocked ? null : shipBlockedReason(ctx);
+  const blocked = commitBlocked ?? shipOnlyBlocked;
+  // A pull request also has to know whether this is the default branch; until
+  // that answer is in, it would open one from `main` without asking.
+  const prBlocked =
+    blocked ??
+    (compare.data
+      ? null
+      : compare.isError
+        ? "Could not tell whether this is the default branch."
+        : "Reading the branch…");
 
   const branchNeeded = needsNewBranch(ctx, "commit_push_pr");
   const suggestedBranch = useMemo(
@@ -169,25 +181,33 @@ export function CommitComposer({ stagedCount }: { stagedCount: number }) {
     }
   };
 
+  const branchName = (newBranch ?? suggestedBranch).trim();
+
   const ship = (variant: "commit_push" | "commit_push_pr") => {
-    if (!repoPath || blocked) return;
-    const branchName =
-      variant === "commit_push_pr" && branchNeeded ? (newBranch ?? suggestedBranch).trim() : null;
+    if (!repoPath || (variant === "commit_push_pr" ? prBlocked : blocked)) return;
+    const pr = variant === "commit_push_pr";
+    // Never on to the default branch without its new branch named.
+    if (pr && branchNeeded && !branchName) {
+      setDraftOpen(true);
+      return;
+    }
     startShip(client, repoPath, {
       variant,
       summary: summary.trim(),
       description: description.trim() || null,
       coAuthors: splitAuthors(coAuthors),
-      newBranch: branchName || null,
+      newBranch: pr && branchNeeded ? branchName : null,
       pr: { title: prTitle, base: prBase ?? compare.data?.defaultBranch ?? null },
     });
   };
 
   // The box empties once the run has committed, not when it starts: a run
   // stopped before its commit (no `gh`, a branch name taken) keeps the
-  // message for the next try. Once per run.
+  // message for the next try. Once per run: a run that had already committed
+  // when the box mounted (back from History) counts as cleared, so what was
+  // typed since is kept.
   const committedRun = run && run.status.commit === "done" ? run.request : null;
-  const [clearedFor, setClearedFor] = useState<object | null>(null);
+  const [clearedFor, setClearedFor] = useState<object | null>(() => committedRun);
   if (committedRun && committedRun !== clearedFor) {
     setClearedFor(committedRun);
     resetForm();
@@ -195,7 +215,7 @@ export function CommitComposer({ stagedCount }: { stagedCount: number }) {
 
   const onRun = (choice: ShipChoice) => {
     if (choice === "commit") void commit();
-    // A pull request from the default branch has to name its new branch.
+    // A pull request from the default branch names its new branch first.
     else if (choice === "commit_push_pr" && branchNeeded && !draftOpen && newBranch === null) {
       setDraftOpen(true);
     } else ship(choice);
@@ -209,11 +229,14 @@ export function CommitComposer({ stagedCount }: { stagedCount: number }) {
       shortcut: "⌘↵",
     },
     { choice: "commit_push", label: "Commit & push", disabledReason: blocked },
-    { choice: "commit_push_pr", label: "Commit, push & PR", disabledReason: blocked },
+    { choice: "commit_push_pr", label: "Commit, push & PR", disabledReason: prBlocked },
   ];
-  // The pull request is the primary action wherever it can run; where it
-  // can't (no remote, detached, an amend), plain Commit is.
-  const primary = blocked === null || !canCommit || busy ? items[2] : items[0];
+  // The pull request is the primary action unless the repository rules it
+  // out (no remote, detached, an amend), where plain Commit is. An unready
+  // form (nothing staged, no summary) keeps the pull request in place,
+  // disabled, so the button doesn't change shape under the pointer as the
+  // summary is typed.
+  const primary = shipOnlyBlocked === null ? items[2] : items[0];
 
   const last = log[0];
 
@@ -319,13 +342,13 @@ export function CommitComposer({ stagedCount }: { stagedCount: number }) {
               if (patch.newBranch !== undefined) setNewBranch(patch.newBranch);
             }}
             prDisabledReason={
-              blocked ??
-              (branchNeeded && !(newBranch ?? suggestedBranch).trim()
-                ? "Name the new branch."
-                : null)
+              prBlocked ?? (branchNeeded && !branchName ? "Name the new branch." : null)
             }
           />
         </div>
+        {/* Why only Commit is offered, in words: a disabled control's
+            tooltip never reaches a keyboard. */}
+        {shipOnlyBlocked && <p className="caption">Commit only. {shipOnlyBlocked}</p>}
       </div>
     </>
   );
