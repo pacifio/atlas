@@ -67,6 +67,15 @@ export default defineConfig(() => ({
       // worker is imported separately via `?url`. Two copies would mismatch
       // the worker against the main-thread API version and fail to render.
       "pdfjs-dist",
+      // The design package and the two peers its primitives share with the
+      // app. A second `@base-ui/react` splits the floating-UI contexts (a
+      // menu inside a dialog no longer sees its parent), and a second
+      // `motion` splits `LayoutGroup`/`MotionConfig`. While the package is
+      // `bun link`ed it resolves peers from its own node_modules, which is
+      // exactly the duplicate this prevents (the package's README).
+      "@tryatlas/design",
+      "@base-ui/react",
+      "motion",
     ],
   },
   clearScreen: false,
