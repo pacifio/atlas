@@ -29,6 +29,9 @@
      set by `applyUiScale`) and stays 36pt on screen at any zoom. (It was 40;
      30 was tried and was too tight.) */
   --titlebar-height: calc(36px / var(--ui-zoom, 1));
+  /* Windows and Linux caption buttons (minimize, maximize, close): the
+     Windows 11 caption button is 46px wide. */
+  --caption-button-width: 46px;
 }
 
 @theme inline {

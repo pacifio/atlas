@@ -220,7 +220,7 @@ export function TitlebarDock({
           className={cn(
             "flex w-max",
             "bg-popover text-foreground",
-            "outline outline-1 outline-[var(--border)]",
+            "outline outline-1 outline-border",
             "shadow-md",
           )}
           style={{

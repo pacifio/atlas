@@ -1,6 +1,6 @@
-import { useMemo, memo, Fragment } from "react";
-import { cn } from "@/lib/utils";
-import { Group, Separator, useDefaultLayout } from "react-resizable-panels";
+import { useMemo, useState, memo, Fragment } from "react";
+import { useDefaultLayout } from "react-resizable-panels";
+import { ResizableHandle, ResizableSplit } from "@tryatlas/design";
 import { useLayoutStore, type ProjectView } from "../stores/layout-store";
 import { useProjectStore } from "@/features/projects/stores/project-store";
 import { useAppStore } from "@/features/app/stores/app-store";
@@ -10,6 +10,7 @@ import { surfaceMinWidth } from "@/lib/constants";
 import { ProjectlessCenter } from "./projectless-center";
 import { TabColumn } from "./tab-column";
 import { ColumnPanel } from "./views/column-panel";
+import { initialCenterLayout } from "../lib/center-layout";
 
 // The tab registry — every tab type's lazy import and render branch, and the
 // persistent-type lists — lives in `tab-panels.tsx`.
@@ -139,30 +140,33 @@ const ProjectColumns = memo(function ProjectColumns({
   // new set (fresh group id). Three columns stay even.
   const pairSizes = view.groupOrder.length === 2 ? ["65", "35"] : null;
   // Same storage id as before the v4 upgrade, so saved split widths carry over.
-  // v4 dropped `autoSaveId` in favour of this hook; the Group takes the stored
-  // layout as `defaultLayout` and writes back through `onLayoutChanged`.
+  // v4 dropped `autoSaveId` in favour of this hook; the split takes the stored
+  // layout as `defaultLayout` and writes back through `onLayoutCommit`, which
+  // fires only when a drag ends. Collapsing or expanding a column is not saved,
+  // so the saved layout can disagree with the surfaces mode; `initialCenterLayout`
+  // reconciles the two. Computed once: the split reads `defaultLayout` only on
+  // mount.
   const layoutId = `atlas-center-split-${projectId}`;
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({ id: layoutId });
+  const [initialLayout] = useState(() =>
+    initialCenterLayout(
+      defaultLayout,
+      view.groupOrder.map((id, i) => ({ id, shown: shown[i] })),
+    ),
+  );
   return (
-    <Group
+    <ResizableSplit
       id={layoutId}
       orientation="horizontal"
-      defaultLayout={defaultLayout}
-      onLayoutChanged={onLayoutChanged}
-      className="h-full bg-background"
+      defaultLayout={initialLayout}
+      onLayoutCommit={(layout) => onLayoutChanged(layout, { isUserInteraction: true })}
     >
       {view.groupOrder.map((gid, i) => (
         <Fragment key={gid}>
           {i > 0 && (
-            <Separator
-              className={cn(
-                "bg-border hover:bg-primary data-[separator=active]:bg-primary transition-colors",
-                "w-px cursor-col-resize",
-                // Kept in the tree, like the collapsed column beside it; inert
-                // while either side is collapsed.
-                !(shown[i - 1] && shown[i]) && "pointer-events-none invisible",
-              )}
-            />
+            // Kept in the tree, like the collapsed column beside it; inert
+            // while either side is collapsed.
+            <ResizableHandle hidden={!(shown[i - 1] && shown[i])} />
           )}
           <ColumnPanel
             id={gid}
@@ -184,7 +188,7 @@ const ProjectColumns = memo(function ProjectColumns({
           </ColumnPanel>
         </Fragment>
       ))}
-    </Group>
+    </ResizableSplit>
   );
 });
 
