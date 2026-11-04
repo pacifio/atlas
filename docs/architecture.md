@@ -57,7 +57,7 @@ src/features/<feature>/
 `src/features/` holds ~30 slices: app, chat, editor, terminal, browser, git, github, explorer, knowledge, canvas, layout, log, monitor, settings, memory, mission-control, model-chat, organisations, packs, projects, skills, telemetry, updater, and more.
 
 - **Cross-feature widgets** live in `src/components/`.
-- **UI primitives** live in `src/ui/`.
+- **UI primitives** come from the design package, `@tryatlas/design` (ADR-0027).
 - **Shared helpers** live in `src/lib/`. `@/` aliases `src/`.
 
 ### State management

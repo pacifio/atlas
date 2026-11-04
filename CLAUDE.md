@@ -86,9 +86,14 @@ Generated files — the TOML/SVG is the source, the committed output is derived,
 suite fails the moment they disagree. Edit the source and regenerate:
 
 ```bash
-bun run theme:keys     # crates/atlas-theme/keys.toml → TS registry, Rust, schema, docs
+bun run theme:keys     # @tryatlas/design's keys.toml, themes, Rust tables → crates/atlas-theme; schema, docs
 bun run icons:render   # macOS app icons
 ```
+
+The design system (primitives, scales, theme engine, `keys.toml`, built-in themes,
+the ratchet's rules) is `@tryatlas/design`, pinned to a git tag (ADR-0027). Change it
+there and bump the pin; `crates/atlas-theme/` holds committed copies, never edited by
+hand (`design-package-copies.test.ts`).
 
 Pre-commit (husky): lint-staged → `bun run typecheck` → `bun run test:contracts`.
 Pre-push: the full `bun run test`.
@@ -102,11 +107,11 @@ inside its directory.
 Each has a suite in `tests/`. Read that suite's docblock before changing what it guards.
 
 **The design-system ratchet is closed at zero** (`design-system-ratchet.test.ts`).
-Across `src/features`, `src/components`, `src/ui` and `src/dev` it bans: arbitrary
+Across `src/features`, `src/components` and `src/dev` it bans: arbitrary
 `text-[…]` / `z-[…]` / `shadow-[…]` / `rounded-[…]`; colour literals (`#hex`, `rgb()`,
 `hsl()`); `*-white` and `*-black` utilities; Tailwind's stock ramps (`bg-amber-500` —
 no theme can restate them); bare `z-` at 50 or above; and inline numeric `zIndex` /
-`fontSize` / `boxShadow`. Use the scale and the tokens. The only exits are
+`fontSize` / `boxShadow`; and `transition-all`. Use the scale and the tokens. The only exits are
 `EXEMPT_FILES` or an inline `ratchet-allow: <reason>` comment — on the line or anywhere
 in the comment block above it — and the reason must be a real argument of 20+
 characters, which the suite also checks. A violation type-checks, lints and renders
@@ -115,8 +120,8 @@ perfectly; this suite is the only thing in the toolchain that can see it.
 **`bun run lint` also runs `@shadcn/lint`**, whose rules are errors. `no-unknown-classes`
 catches a class Tailwind can't generate — a typo, or a plugin utility Atlas doesn't ship —
 which otherwise renders as nothing. `no-restyle` stops `className` from overriding a
-`src/ui` primitive's look: when it fires, use the variant its message names, or add one
-to the primitive; don't restyle at the call site. Plain stylesheet classes are
+`@tryatlas/design` primitive's look: when it fires, use the variant its message names, or
+add one to the primitive in the package; don't restyle at the call site. Plain stylesheet classes are
 allowlisted by exact name in `.oxlintrc.json` (`shadcn-lint-allowlist.test.ts` keeps
 that list honest — never add a wildcard).
 
@@ -205,7 +210,7 @@ Each of these is a multi-file edit where missing one compiles fine.
 
 Frontend is organised by **feature**, not file type: `src/features/<feature>/` holds
 `components/`, `stores/`, `lib/`. Cross-feature widgets in `src/components/`, primitives
-in `src/ui/`, shared helpers in `src/lib/`; `@/` aliases `src/`. **Filenames are
+from `@tryatlas/design`, shared helpers in `src/lib/`; `@/` aliases `src/`. **Filenames are
 kebab-case** (`center-panel.tsx`), the sole exception being `src/App.tsx`. Zustand +
 Immer stores wrapped in `createSelectors` so `useStore.use.x()` works; stores never call
 other stores — cross-feature coordination is `getState()` at an action boundary or a

@@ -4,16 +4,29 @@ The non-colour half of Atlas's design system: the scales, what they are called,
 which primitive to reach for, and the test that stops the app drifting back off
 them. Colour is the other half and lives in [`theme-keys.md`](./theme-keys.md).
 
-Everything here is defined in two files:
+The scales, the named utilities, the primitives and the ratchet's rules belong
+to **`@tryatlas/design`** ([ADR-0027](../adr/0027-one-design-package-filled-from-desktop-themes-ship-as-generated-css.md)),
+in the `tryatlas/design` repo, which desktop installs at a pinned tag. They were
+copied out of desktop and are changed there now. `src/styles/globals.css`
+imports the package's stylesheet first:
 
-| file                     | holds                                                                                                                                                               |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/styles/tokens.css`  | the raw custom properties on `:root` — the shadcn base tokens, control heights, layout constants, radius derivation, elevation, motion durations and z-index layers |
-| `src/styles/globals.css` | the Tailwind namespaces (`@theme`), the named utilities (`@utility`), and the global focus rule                                                                     |
+| file (in the package)    | holds                                                                                                                                         |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/styles/tokens.css`  | the non-colour custom properties — font stacks, control heights, radius derivation, elevation, motion durations and z-index layers            |
+| `src/styles/themes.css`  | generated: every built-in theme resolved, one block per theme and appearance; its `:root` is Atlas dark, the floor before `applyTheme` runs  |
+| `src/styles/utilities.css` | the Tailwind namespaces (`@theme`), the named utilities (`@utility`), and the global focus and border rules                                 |
 
-Primitives live in `src/ui/`. The gallery that renders all of it is the dev-only
-mock scenario **`localhost:1420/?scenario=design-system`** — open it before and
-after any change to this page.
+`globals.css` keeps only what is desktop's: the 13px root, the titlebar height,
+`font-terminal`, `rounded-composer` and the feature CSS. Primitives are imported
+from the package root (`import { Button } from "@tryatlas/design"`); there is no
+`src/ui/` any more.
+
+The package's **Storybook** ([design.tryatlas.cc](https://design.tryatlas.cc))
+renders every scale and primitive under every built-in theme — open it before
+and after any change to this page. The dev-only mock scenario
+**`localhost:1420/?scenario=design-system`** shows what only desktop can: the
+active theme's colour roles as desktop's applier resolved them (an imported
+theme, a theme-editor preview), and desktop's own utilities.
 
 ## Naming rules
 
@@ -23,7 +36,7 @@ after any change to this page.
    control heights and durations are custom, because Tailwind's equivalents take
    bare numbers and cannot be given names.
 2. **A scale step is named, never measured.** `text-xs`, not `text-[11px]`;
-   `z-popover`, not `z-[9999]`. The number belongs in `tokens.css` exactly once.
+   `z-popover`, not `z-[9999]`. The number belongs in the package's `tokens.css` exactly once.
 3. **A token is a role, not a value.** There are no 12-step colour ramps and no
    per-component colour tokens. A theme key exists only when a theme author
    needs that surface to differ from the base tokens.
@@ -52,6 +65,11 @@ round **up** to the next step.
 | `text-lg`   | 16  | 22          | page headings                               |
 | `text-xl`   | 20  | 26          | empty-state headlines                       |
 | `text-2xl`  | 24  | 30          | the largest thing in the app                |
+
+**Geist and Geist Mono** are the default faces. The package bundles them
+(`@fontsource-variable`), so they render offline in Tauri; the theme or the
+user's font setting can still replace either. The display steps (`lg` and up)
+carry their own negative tracking, and `heading` tightens by -0.01em.
 
 **Two weights only**: `font-medium` (500) and `font-semibold` (600). Nothing
 lighter, nothing heavier — the app is a dense monochrome UI and 400 disappears
@@ -87,8 +105,8 @@ the nearest step.
 `size-control-xs … size-control-lg` give the same value on both axes, for an
 icon-only control.
 
-Two named layout constants, which are **not** controls and are not on the scale:
-`h-titlebar` (30px) and `h-tab-strip` (36px, the centre tab strip).
+One named layout constant, which is **not** a control and is not on the scale,
+and is desktop's (`globals.css`): `h-titlebar` (36pt on screen at any zoom).
 
 ## Radius
 
@@ -112,8 +130,8 @@ Rendered today: **4 / 6 / 8 / 12**. Before Foundations it was 2 / 4 / 6 with no
 `xl`, and bare `rounded` was 4px. Two things to know:
 
 - **Bare `rounded` changed.** Tailwind's own `rounded` is a static `0.25rem`
-  that no theme value can reach, so `globals.css` redeclares it in the utilities
-  layer, after the generated rules. It therefore beats `.rounded` and still
+  that no theme value can reach, so the package's `utilities.css` restates it in
+  the utilities layer, after the generated rules. It therefore beats `.rounded` and still
   loses to `.rounded-lg` on an element carrying both.
 - **The scale reads `--radius-base`, which is now plain `var(--radius)`.** It
   briefly carried a `max(…, 8px)` floor: Atlas sets its root font-size to 13px
@@ -128,7 +146,7 @@ Rendered today: **4 / 6 / 8 / 12**. Before Foundations it was 2 / 4 / 6 with no
 
 Three levels (decision 27). The shadow **colour comes from the theme**: each
 level points at one of the theme's shadcn `--shadow-*` tokens through an
-`--elevation-*` variable in `tokens.css`. A theme's `[light.base]` and
+`--elevation-*` variable in the package's `tokens.css`. A theme's `[light.base]` and
 `[dark.base]` tables set their own `--shadow-*` ramps independently — a light
 appearance is not the dark ramp reused as-is. Pure black at the dark table's
 alphas reads as a heavy halo on a light surface, so a light ramp should tint
@@ -208,8 +226,8 @@ else's photo, and the Windows close button's system red in the titlebar.
 
 ## Z-index
 
-Nine named layers (decision 28). Nothing outside `globals.css` writes a
-z-index — not a class, not an inline style.
+Nine named layers (decision 28), defined in the package's `tokens.css`. Nothing
+else writes a z-index — not a class, not an inline style.
 
 | utility      | value | what sits there                                                               |
 | ------------ | ----- | ----------------------------------------------------------------------------- |
@@ -252,17 +270,24 @@ added without a decision.
 | `ease-in-out-strong` | two-way state changes         |
 | `ease-drawer`        | panels and drawers sliding in |
 
-`src/ui/tooltip-timing.ts` is the model for a component that needs more than a
-duration — a shared open delay, a warm-start window, reduced-motion handling.
-Copy its shape rather than scattering timers.
+The package's `tooltip-timing.ts` is the model for a component that needs more
+than a duration — a shared open delay, a warm-start window, reduced-motion
+handling. Copy its shape rather than scattering timers.
+
+**A transition names what it animates.** `transition-all` and `transition: all`
+are banned (the ratchet suite): `all` animates whatever changes next, including
+a width or a padding nobody meant to animate, and that is a layout recalculation
+every frame. Use `transition-colors` for a hover colour, `transition-opacity`,
+or `transition-[translate,opacity]` when movement goes with it — movement by
+`translate`/`transform`, which stay on the compositor.
 
 ## Icons
 
-One wrapper: `src/ui/icon.tsx` (decision 30).
+One wrapper: the package's `Icon` (decision 30).
 
 ```tsx
 import { Search } from "lucide-react";
-import { Icon } from "@/ui/icon";
+import { Icon } from "@tryatlas/design";
 
 <Icon icon={Search} size="sm" />;
 ```
@@ -285,14 +310,14 @@ is done, it is one pass with this mapping:
 
 Note that `11 → 12` moves the single most common icon size in the app, in dense
 chrome sized around it, so it wants the before/after check on
-`?scenario=design-system` that decision 23 asks for. Foundations shipped the
-wrapper and uses it in the `src/ui` primitives only.
+screens that decision 23 asks for. Foundations shipped the wrapper and uses it
+in the package's primitives only.
 
 ## States
 
 **Focus** (decision 31). There is one keyboard focus indicator: a 2px
 `var(--ring)` outline on `:focus-visible`, offset 1px, declared in `@layer base`
-in `globals.css`. `:focus` stays bare, so a mouse click never draws a ring and a
+in the package's `utilities.css`. `:focus` stays bare, so a mouse click never draws a ring and a
 `role="tab"` host never looks stuck.
 
 A control that draws its own indicator opts out with `focus-ring-none` (or
@@ -301,7 +326,7 @@ global rule has to live in `@layer base` — an unlayered rule would outrank eve
 utility regardless of specificity.
 
 `--ring` is a real accent: every built-in theme sets it to its `primary`, and the
-pre-theme fallback in `tokens.css` matches. It used to equal `--border-strong`,
+pre-theme `:root` in the package's `themes.css` matches. It used to equal `--border-strong`,
 which is why a focus ring was indistinguishable from a border.
 
 **Disabled** (decision 31). One visual treatment, everywhere: `opacity-50` plus
@@ -309,7 +334,7 @@ which is why a focus ring was indistinguishable from a border.
 `data-disabled` attribute (`data-disabled:opacity-50 data-disabled:cursor-not-allowed`)
 rather than the `:disabled` pseudo-class, since `data-disabled` is present
 whether or not the control also carries the native `disabled` attribute — see
-`focusableWhenDisabled` below. Every other `src/ui` primitive, which renders a
+`focusableWhenDisabled` below. Every other primitive, which renders a
 plain element rather than Base UI's `Button`, still carries the same pair as
 `disabled:opacity-50 disabled:cursor-not-allowed`. For an element that cannot
 take `:disabled` at all — a `div` acting as a control — use the `disabled-look`
@@ -318,8 +343,10 @@ utility. Do not invent a third opacity; the audit found five (30 / 40 / 45 /
 
 ## Primitives
 
-`src/ui/` (decision 32). Variants come from `class-variance-authority`, which is
-the only dependency Foundations added.
+`@tryatlas/design` (decision 32), imported from the package root. Variants come
+from `class-variance-authority`; the recipes (`buttonVariants`…) are also on
+`@tryatlas/design/variants`, the server-safe entry. To change a primitive,
+change the package and bump desktop's pin; desktop never wraps or forks one.
 
 Each file is shaped like shadcn's **base-style** component — same file name, same
 exported `<name>Variants`, same `variant` / `size` prop pair, same `data-slot` —
@@ -346,8 +373,8 @@ where a disabled control also carries a `Hint`/`Tooltip` explaining _why_ it
 is disabled — otherwise the tooltip can never be reached by keyboard. Most
 disabled controls in Atlas explain nothing, so the default stays `false`
 rather than flipping every disabled control into the tab order; see the
-`IconButton` gallery section (`?scenario=design-system`) for the three states
-side by side.
+`IconButton` stories in the package's Storybook for the three states side by
+side.
 
 | primitive          | reach for it when                                                                                                                                                                                                                                                  |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -440,10 +467,13 @@ i.e. 23 new chances for a stale palette. Both are worse than the risk removed.
 
 `tests/design-system-ratchet.test.ts` is one of the contract suites in `tests/`.
 Nothing else in the toolchain can see this drift — a new `text-[11.5px]`
-type-checks, lints and renders.
+type-checks, lints and renders. The rules and the runner are the package's
+(`runRatchet` from `@tryatlas/design/ratchet`), so desktop, web and docs hold one
+set; desktop passes its own roots and exemptions, and keeps two checks of its
+own: the retired `--atlas-` theme-key names, and `transition-all` (see Motion).
 
-**What it counts**, across `src/features/**`, `src/components/**`, `src/ui/**`
-and `src/dev/**`:
+**What it counts**, across `src/features/**`, `src/components/**` and
+`src/dev/**` (the primitives are held to the same rules in the package):
 
 | rule                   | pattern                                                                  |
 | ---------------------- | ------------------------------------------------------------------------ |
@@ -459,11 +489,11 @@ and `src/dev/**`:
 
 `src/styles` is the only wholesale exclusion — it _is_ the scale.
 
-`src/ui` and `src/dev` used to be excluded too, on the same "they define these
-values" argument, and it was untrue of nearly every file in them: the 2026-09-18
-review found a hardcoded white canvas ink and a literal 50%-black popover shadow
-sitting in `src/ui`, where exactly 2 of 19 files carried a violation and neither
-defined anything. `src/dev` keeps one narrow **directory** exemption, for the
+The primitives (then `src/ui`) and `src/dev` used to be excluded too, on the
+same "they define these values" argument, and it was untrue of nearly every
+file in them: the 2026-09-18 review found a hardcoded white canvas ink and a
+literal 50%-black popover shadow among the primitives, where exactly 2 of 19
+files carried a violation and neither defined anything. `src/dev` keeps one narrow **directory** exemption, for the
 mock fixtures whose colours ARE their content (theme files, and the text of fake
 source files the editor renders rather than applies).
 
@@ -481,8 +511,8 @@ violation fails outright rather than being absorbed.
 Which means the exits have to be real ones:
 
 - **`EXEMPT_FILES`** — a whole file, with the argument written next to the path.
-  Two shapes qualify: the file _defines_ the scale (`theme-key-registry.ts`,
-  `color.ts`), or the colour is _not Atlas's to choose_ — a third party's brand
+  Two shapes qualify: the file _defines_ the scale (the key registry and the
+  colour maths, both in the package now), or the colour is _not Atlas's to choose_ — a third party's brand
   mark (`agent-brand.ts`, `agent-icons.tsx`), a palette the **user** picks a
   value from (spaces sticky notes, knowledge covers, PDF ink), or something that
   has to survive being shown over content Atlas did not draw.
@@ -498,8 +528,7 @@ reason, or an exempt file with under 40, fails the suite on its own. That is the
 point — the record of _why_ is the thing being enforced, not the count.
 
 What survives today, so the shape is clear: the vendors' agent marks, the
-user-pickable palettes (spaces, knowledge covers, PDF ink), the colour resolver
-and its fixtures, the ANSI `rgb()` string builder in the terminal, the
+user-pickable palettes (spaces, knowledge covers, PDF ink), the ANSI `rgb()` string builder in the terminal, the
 post-crash error boundary, per-identity avatar hues, pixi's numeric `fontSize`,
 mermaid's own `themeVariables`, the PDF page and the lightbox matte (decision
 3), Windows' close-button red, and the dev-build badge.
