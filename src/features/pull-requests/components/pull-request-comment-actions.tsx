@@ -13,8 +13,6 @@ import { toast } from "sonner";
 import { Pencil, Trash2 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { Button } from "@/ui/button";
-import { IconButton } from "@/ui/icon-button";
 
 import { classifyPrError } from "../lib/pr-errors";
 import { usePrDeleteCommentMutation, usePrEditCommentMutation } from "../lib/pull-requests-queries";
@@ -23,6 +21,7 @@ import { useInlineConfirm } from "../lib/use-inline-confirm";
 import { readableFailure } from "../lib/use-pull-request-actions";
 import { usePullRequestScope } from "./pull-request-context";
 import { PullRequestMarkdownEditor } from "./pull-request-markdown";
+import { Button, IconButton } from "@tryatlas/design";
 
 /** The remark, as much of it as editing needs. */
 export interface EditableRemark {

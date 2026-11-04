@@ -8,11 +8,13 @@ theme key always resolves in this order: explicit `keys` value, palette
 source, base-token source, then the Atlas default for the active appearance.
 
 Every key, its description, its sources and its transform are declared once, in
-**`crates/atlas-theme/keys.toml`**. The TS registry the resolver reads, the key
-list Rust reads, the `keys` property of the JSON Schema, and the key table below
-are all generated from it by `bun run theme:keys`, and `bun run test` fails if
-any of them is stale. Editing a key means editing that file; `resolve-theme.ts`
-is the only place the derivation order itself lives.
+**`keys.toml`**, which belongs to `@tryatlas/design` (ADR-0027). The package
+generates the TS registry the resolver reads and the key list and rule table
+Rust reads; `bun run theme:keys` copies those, `keys.toml` and the built-in
+themes into `crates/atlas-theme/`, and generates the `keys` property of the JSON
+Schema and the key table below from the copy. `bun run test` fails if any of
+them is stale. Editing a key means editing the package's `keys.toml`; its
+`resolve-theme.ts` is the only place the derivation order itself lives.
 
 **A key exists only where an author needs that surface to differ from the base
 tokens.** Everything else Atlas derives and does not ask about: a status badge's
@@ -23,6 +25,14 @@ disappear, it became a **derived variable** (table at the bottom) or a plain
 base token. Removing a key is a soft break: an unknown key still loads,
 with a warning, so a theme written for a newer Atlas keeps working on an older
 one and the other way round.
+
+**There is no legacy theme support.** A theme file declares `schema = 1`. A
+file naming another schema, or one in an older shape (a `[colors]` table of
+`--atlas-*` variables, say), fails to load like any other bad file: Settings →
+Appearance lists it as skipped, with the reason, and every other theme,
+including the default `atlas`, still loads. A `themeLight` or `themeDark` that
+named it falls back to `atlas` for the session. Nothing converts an old file;
+re-import its source or rewrite it as schema 1.
 
 An explicit key is written as a dotted TOML key (or as nested tables). A key
 may not also be a prefix, so use `terminal.ansi.red`, never both `terminal`
@@ -40,7 +50,7 @@ field that only sometimes works is worse than one that does not exist.
 ## Consuming a key
 
 Most code never touches this file: the applier writes every resolved key to
-`:root` as `--atlas-<key with dots and underscores as dashes>`, so a Tailwind
+`:root` as `--<key with dots and underscores as dashes>`, so a Tailwind
 utility or a `var()` follows the theme with no work and recolours on a switch
 with no re-render. Prefer that.
 
@@ -54,7 +64,7 @@ recharts colour prop, mermaid's `themeVariables`, and a canvas 2D `fillStyle`
 | `themeColor(key)` | the resolved colour for a theme key |
 | `themeDerived(name)` | the resolved colour for a derived variable |
 | `themeBase(token)` | the resolved colour for a base token (`chart-1`, `card`, …) |
-| `themeHex(key)` / `hexOf(value)` | the same as pixi's 24-bit integer |
+| `themeHex(key)` | the same as pixi's 24-bit integer (`hexOf(value)` from `@tryatlas/design/theme` converts a colour string; one it cannot parse gives `0`) |
 | `onThemeApplied(fn)` | imperative repaint hook — a live xterm, a running pixi scene |
 | `useThemeVersion()` | React re-render hook — recharts, mermaid |
 
@@ -78,12 +88,14 @@ something lighter than the terminal background it sits just above. One key
 still uses it, `terminal.ansi.bright_white`, where "paler" is the literal
 intent whatever the background.
 
-Adding a fourth means editing `crates/atlas-theme/keys.toml`'s vocabulary
-comment, the `OPERATIONS` table in `scripts/generate-theme-keys.mjs`, and the
-registry preamble it emits — the transform itself is one line of `color.ts`.
+Adding a fourth is a package change: the operation, its vocabulary comment in
+`keys.toml` and the resolver all live in `@tryatlas/design`. Desktop only
+describes operations, in the `OPERATIONS` table of
+`scripts/generate-theme-keys.mjs`, so after the bump `bun run theme:keys`
+rejects the new one until a row there says how to print it.
 
 <!-- generated:theme-keys -->
-<!-- Generated from crates/atlas-theme/keys.toml by `bun run theme:keys`. Edit that file, not this block. -->
+<!-- Generated from crates/atlas-theme/keys.toml by `bun run theme:keys`. That file is @tryatlas/design's, copied in: change it in the package, never here. -->
 
 ## How a missing base token is derived
 
@@ -139,7 +151,7 @@ seeds; a theme that sets only those still sets every token.
 
 ## Full key list and derivation sources
 
-All **73** keys, in the order and grouping of `crates/atlas-theme/keys.toml`.
+All **81** keys, in the order and grouping of `crates/atlas-theme/keys.toml`.
 **Source** is the first thing Atlas tries after an explicit `keys` value:
 `P:x` is `palette.x`, `B:x` is `base.x`, and `D` is the Atlas default for the
 active appearance, shown here as dark / light. **Transform** is applied to
@@ -302,9 +314,24 @@ The agent identity chip.
 | `agent.chip.foreground` | B:foreground → D | — | `#ffffff` / `#575279` | Agent identity chip text. |
 | `agent.chip.background` | B:foreground → D | alpha 0.06 | `rgba(255,255,255,0.06)` / `rgba(0,0,0,0.06)` | Agent identity chip fill. |
 
+### Identity hues
+
+The eight hues that name a thing — a label, a project dot — never a status.
+
+| Key | Source | Transform | D (dark / light) | What it colours |
+|---|---|---|---|---|
+| `hue.red` | P:red → D | — | `#f44747` / `#c62828` | The red identity hue: labels, project dots, meters. |
+| `hue.orange` | P:orange → D | — | `#e0b070` / `#b06000` | The orange identity hue: labels, project dots, meters. |
+| `hue.yellow` | P:yellow → D | — | `#e0ca66` / `#8f7a00` | The yellow identity hue: labels, project dots, meters. |
+| `hue.green` | P:green → D | — | `#9ecf8a` / `#3f7f2f` | The green identity hue: labels, project dots, meters. |
+| `hue.cyan` | P:cyan → D | — | `#7fd1e8` / `#1f7f99` | The cyan identity hue: labels, project dots, meters. |
+| `hue.blue` | P:blue → D | — | `#6796e6` / `#1f5fb0` | The blue identity hue: labels, project dots, meters. |
+| `hue.purple` | P:purple → D | — | `#c9a2f5` / `#7b3fb5` | The purple identity hue: labels, project dots, meters. |
+| `hue.pink` | P:pink → D | — | `#f0a0c8` / `#b03a6a` | The pink identity hue: labels, project dots, meters. |
+
 ## Derived variables
 
-Atlas writes these **6** `--atlas-…` custom properties too, but
+Atlas writes these **6** custom properties too, but
 they are **not** theme keys: each is a pure transform of a key that is, so a
 theme steers it through that key. Writing one in a theme file is an
 unknown-key warning.
@@ -320,66 +347,21 @@ unknown-key warning.
 
 <!-- /generated:theme-keys -->
 
-## Legacy CSS-variable map
+## Scales that are not theme keys
 
-**These names no longer exist.** They were aliases in `tokens.css` through the
-sweep, which rewrote all 2,594 `var(--alias)` call sites and deleted them — a
-name in the left column will resolve to nothing. The table is kept because a
-theme written against an older Atlas, a stale branch, or a snippet in an issue
-will still be full of them, and this is the translation.
-
-The table is exhaustive for the former `tokens.css` colour variables; names
-within a cell each map to the single token or key in the next cell.
-
-| Former variable(s) | Source now |
-|---|---|
-| `--bg-base`, `--bg-surface`, `--bg-primary` | base `background` |
-| `--bg-sidebar` | base `sidebar` |
-| `--bg-raised`, `--bg-secondary`, `--bg-elevated` | base `card` |
-| `--bg-overlay`, `--bg-tertiary` | base `popover` |
-| `--bg-input`, `--bg-canvas`, `--bg-rail`, `--panel-rail-bg`, `--panel-bg` | `panel.input.background`, `panel.background` |
-| `--bg-elevated-2`, `--panel-bg-2` | base `card` |
-| `--bg-tab-active`, `--bg-tab-inactive` | base `accent`, base `sidebar` |
-| `--bg-hover`, `--bg-selected`, `--bg-active`, `--selection-bg` | `element.hover`, `element.selected`, `element.active`, `selection.background` |
-| `--text-primary`, `--text-secondary`, `--text-tertiary`, `--text-inverse` | base `foreground`, `secondary-foreground`, `muted-foreground`, `primary-foreground` |
-| `--text-ghost`, `--text-muted` | `text.disabled`, base `muted-foreground` |
-| `--border-default`, `--border-focus`, `--border-variant` | **gone** — use `var(--border)`, `border.strong`, `border.subtle` |
-| `--border-subtle`, `--border-strong` | corresponding `border.*` key |
-| `--accent-primary`, `--accent-primary-hover`, `--accent-primary-muted`, `--accent-secondary` | base `primary`, `primary.hover`, `primary.muted`, base `muted-foreground` |
-| `--status-success`, `--status-warning`, `--status-error`, `--status-info` | corresponding `status.*.foreground` key |
-| `--status-*-muted`, `--status-success-bg` | corresponding `status.*.background` **derived variable** |
-| `--status-purple`, `--status-orange`, `--text-accent`, `--atlas-ants-color` | **gone** — no consumer; the marching-ants colour is set per call site |
-| `--danger`, `--warning` | base `destructive`, `status.warning.foreground` |
-| `--stat-added`, `--stat-removed`, `--capture-live` | `diff.added.text`, `diff.removed.text`, `status.success.foreground` |
-| `--diff-add-line-bg`, `--diff-add-side-bg` | `diff.added.background` (one fill for both renderers) |
-| `--diff-remove-line-bg`, `--diff-remove-side-bg` | `diff.removed.background` |
-| `--diff-emph-add-bg`, `--diff-emph-remove-bg` | `diff.added.emphasis`, `diff.removed.emphasis` |
-| `--diff-added-text`, `--diff-removed-text`, `--diff-context-bg` | corresponding `diff.*` key |
-| `--diff-added-bg`, `--diff-removed-bg`, `--diff-modified-bg` | **gone** — no consumer |
-| `--cm-bg`, `--cm-fg`, `--cm-caret`, `--cm-gutter-*`, `--cm-active-*`, `--cm-selection-*`, `--cm-bracket-*` | corresponding `editor.*` key |
-| `--cm-fold-bg`, `--cm-fold-border`, `--cm-fold-fg` | base `secondary`, `border`, `secondary-foreground` |
-| `--cm-comment`, `--cm-keyword`, `--cm-string`, `--cm-number`, `--cm-type`, `--cm-func`, `--cm-variable`, `--cm-tag`, `--cm-attr`, `--cm-constant`, `--cm-regexp`, `--cm-property` | corresponding `syntax.*` key |
-| `--cm-meta` | `syntax.attribute` — CodeMirror already coloured `tags.meta` with it |
-| `--comms-outer`, `--comms-surface` | base `sidebar`, base `background` |
-| `--comms-unread`, `--comms-unread-deep` | `status.success.foreground` |
-| `--comms-mention-text`, `--comms-mention-bg` | base `foreground`, the `element.emphasis` derived variable |
-| `--comms-mention-other-bg`, `--comms-mention-other-text` | **gone** — no consumer |
-| `--agent-*-chip`, `--agent-*-chip-bg` | **gone** — the chip is `agent.chip.foreground` / `agent.chip.background`, and the vendors' brand hues are constants in `features/agents/lib/agent-brand.ts` |
-
-`--font-size-*` and `--space-*` are gone too, and radius, shadow, z-index and
-motion are not theme keys: those scales live in the Tailwind namespaces, and
-[`design-system.md`](./design-system.md) is their reference. A theme does set
-`radius`, the three fonts, `tracking-normal` and the seven `shadow-*` ramps —
-they are base tokens, listed with the rest of the shadcn set above.
-
-Two more former aliases that were not colours: `--shadow-overlay` is
-`shadow-md`, and `--z-max` is whichever named layer the site belongs to
-(`z-popover` for a menu, `z-drag` for the hint overlay).
+The radius, elevation, z-index and motion scales are not theme keys. Radius
+and elevation use Tailwind's namespaces; z-index and the durations are
+Atlas's own custom scales. [`design-system.md`](./design-system.md) is the
+reference for all four. A theme does set `radius`, `tracking-normal` and the
+seven `shadow-*` ramps, which are base tokens listed with the rest of the shadcn
+set above. It can also set the three fonts (`font-sans`, `font-serif`,
+`font-mono`): these are optional base tokens with no row in that table.
 
 ## Regenerating checked assets
 
-After editing `crates/atlas-theme/keys.toml` — adding, removing, renaming a key,
-or changing what one derives from:
+After bumping `@tryatlas/design` — the package is where a key is added, removed
+or renamed, or what one derives from changes; `crates/atlas-theme/keys.toml` is
+a copy and is never edited by hand:
 
 ```bash
 bun run theme:keys          # rewrites all four generated files

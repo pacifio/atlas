@@ -9,12 +9,6 @@
 import { forwardRef, useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, Plus, Star, X, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Button } from "@/ui/button";
-import { Icon } from "@/ui/icon";
-import { IconButton } from "@/ui/icon-button";
-import { Input } from "@/ui/input";
-import { Switch } from "@/ui/switch";
-import { Hint } from "@/ui/tooltip";
 import { arrangeModels, type ArrangedModel } from "@/features/agents/lib/agent-models";
 import { profileFor } from "@/features/agents/lib/agent-profiles";
 import { favoriteKey, useModelFavorites } from "@/features/chat/lib/model-favorites";
@@ -26,6 +20,7 @@ import {
 } from "../../stores/model-pricing-store";
 import { SettingsGroup, SettingsSection } from "../layout/settings-layout";
 import { configureAgent, type AgentItem } from "./agent-install";
+import { Button, Icon, IconButton, Input, Switch, Hint } from "@tryatlas/design";
 
 /** A starred model's star, filled. */
 const StarFilled: LucideIcon = forwardRef((props, ref) => (

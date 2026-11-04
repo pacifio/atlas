@@ -69,7 +69,7 @@ export function ContextMeter({ used, size }: { used: number; size: number }) {
           two lines as its neighbours — a value, then one row beneath it. */}
       <p className="mt-1 flex items-baseline gap-1.5">
         <span className="font-mono text-md font-medium tracking-tight tabular-nums">{pct}%</span>
-        <span className="truncate font-mono text-3xs text-[var(--atlas-text-disabled)]">
+        <span className="truncate font-mono text-3xs text-disabled">
           {formatTokens(used)}/{formatTokens(size)}
         </span>
       </p>

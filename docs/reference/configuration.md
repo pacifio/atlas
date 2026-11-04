@@ -208,7 +208,7 @@ bookkeeping).
 | `sidebarSort` | `"recent"` \| `"created"` | `"recent"` | Sessions › Layout › Sort sessions by | exactly one of these two strings |
 | `autoSettleAfterDays` | integer | `3` | Sessions › Layout › Settle idle sessions after | 0 ≤ n ≤ 90 |
 | `timeFormat` | `"system"` \| `"12h"` \| `"24h"` | `"system"` | General › System › Time format | exactly one of these three strings |
-| `uiFontFamily` | string | `""` | Appearance › Typography › Interface font | a CSS font-family list, at most 200 characters, with no `{`, `}`, `;`, `<` or `>`; empty uses the system font |
+| `uiFontFamily` | string | `""` | Appearance › Typography › Interface font | a CSS font-family list, at most 200 characters, with no `{`, `}`, `;`, `<` or `>`; empty uses the theme's font, else Geist |
 | `codeFontFamily` | string | `""` | Appearance › Typography › Code font | a CSS font-family list, at most 200 characters, with no `{`, `}`, `;`, `<` or `>`; empty uses the default |
 | `composerFontFamily` | string | `""` | Appearance › Typography › Composer font | a CSS font-family list, at most 200 characters, with no `{`, `}`, `;`, `<` or `>`; empty uses the interface font |
 | `terminalFontFamily` | string | `""` | Appearance › Typography › Terminal font | a CSS font-family list, at most 200 characters, with no `{`, `}`, `;`, `<` or `>`; empty uses the code font |

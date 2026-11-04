@@ -332,6 +332,12 @@ fn new_watcher(
         None,
         move |result: notify_debouncer_full::DebounceEventResult| match result {
             Ok(events) => {
+                // The sync reads its sources; on Linux a read is an event
+                // (`fs_events`).
+                let events = crate::fs_events::changes(events);
+                if events.is_empty() {
+                    return;
+                }
                 let paths = || events.iter().flat_map(|e| e.paths.iter());
                 let touched = paths().any(|p| {
                     atlas_instruction_sync::is_source_path(&root, p) || imports.lock().contains(p)

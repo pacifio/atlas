@@ -8,7 +8,7 @@ import { DEFAULT_DRAWER_HEIGHT, useSessionDrawerStore } from "../stores/session-
 import { drawerTabId } from "../lib/session-drawer";
 import { SessionTerminalDrawer } from "./session-terminal-drawer";
 
-// The real panel mounts the block terminal and its PTY; the drawer only hands
+// The real panel mounts the xterm terminal and its PTY; the drawer only hands
 // it a tab id, a visibility and a variant.
 const panelRenders = vi.fn();
 vi.mock("./terminal-panel", () => ({

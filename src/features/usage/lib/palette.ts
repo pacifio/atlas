@@ -24,10 +24,14 @@
  * module-level constants this replaced could not.
  */
 import { useMemo } from "react";
-import { mix, withAlpha } from "@/features/theme/color";
-import { modelVendorColor, type ModelVendor } from "@/features/agents/lib/agent-brand";
+import {
+  modelVendorColor,
+  modelVendorOf,
+  type ModelVendor,
+} from "@/features/agents/lib/agent-brand";
 import { NATIVE_AGENT_ID } from "@/types/agent";
 import { themeBase, themeColor, useThemeVersion } from "@/features/theme/theme-values";
+import { mix, withAlpha } from "@tryatlas/design/theme";
 
 /** The five series tokens, in the order a theme author sees them. */
 const SERIES_TOKENS = ["chart-1", "chart-2", "chart-3", "chart-4", "chart-5"] as const;
@@ -107,18 +111,6 @@ export interface Tint {
   bg: string;
 }
 
-/** Which family a model id belongs to, or `null` for one we cannot place. */
-function modelVendor(model: string): ModelVendor | null {
-  const m = model.toLowerCase();
-  if (/claude|opus|sonnet|haiku|fable|mythos/.test(m)) return "claude";
-  if (/gpt|codex|\bo[134]\b/.test(m)) return "codex";
-  if (/gemini|palm/.test(m)) return "gemini";
-  if (/llama|mistral|qwen|deepseek|phi|gemma/.test(m)) return "local";
-  if (/cursor/.test(m)) return "cursor";
-  if (/kilo/.test(m)) return "kilo";
-  return null;
-}
-
 /** The same question for an agent id. The native agent is Atlas itself, so it
  *  wears the app's own identity chip (the neutral pair below) rather than a
  *  vendor's hue — the same choice `agent-brand.ts` makes for it. */
@@ -157,7 +149,7 @@ export function useIdentityTints(): IdentityTints {
       return { fg: hue, bg: withAlpha(hue, 0.1) };
     };
     return {
-      modelTint: (model) => tintOf(modelVendor(model)),
+      modelTint: (model) => tintOf(modelVendorOf(model)),
       agentTint: (agent) => tintOf(agentVendor(agent)),
     };
     // `version` is the dependency for the same reason as above: the neutral

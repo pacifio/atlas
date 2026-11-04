@@ -51,8 +51,9 @@ fn wants_light(mode: ThemeMode, system_is_light: bool) -> bool {
 }
 
 fn background_of(theme: &Theme, wants_light: bool) -> Option<Color> {
-    // Same fallback order as `chooseVariant` in `resolve-theme.ts`: the
-    // requested variant, then whichever one the theme does have.
+    // Same fallback order as `chooseVariant` in `@tryatlas/design`'s
+    // `src/theme/resolve-theme.ts`: the requested variant, then whichever
+    // one the theme does have.
     let (variant, dark) = match (wants_light, &theme.light, &theme.dark) {
         (true, Some(light), _) => (light, false),
         (false, _, Some(dark)) => (dark, true),

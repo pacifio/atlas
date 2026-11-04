@@ -2,7 +2,7 @@
 //
 // The open drawer: a resizable box around an ordinary `TerminalPanel`
 // (variant `drawer`) over the drawer's terminal tab — the same panes, side
-// list, block renderer, xterm and PTY IPC as a terminal tab. Loaded on the
+// list, xterm and PTY IPC as a terminal tab. Loaded on the
 // first open (`session-terminal-drawer.tsx` is the gate the chat panel
 // renders), so a session that never opens its drawer never loads the terminal
 // stack for it.
@@ -156,7 +156,7 @@ export default function SessionTerminalDrawerBody({ tabId, scope }: SessionTermi
       ref={rootRef}
       aria-label="Session terminal"
       data-session-terminal-drawer={scope}
-      className="relative flex shrink-0 flex-col border-t border-border bg-[var(--atlas-terminal-background)]"
+      className="relative flex shrink-0 flex-col border-t border-border bg-[var(--terminal-background)]"
       style={{ height }}
       onFocus={onFocus}
       onBlur={onBlur}

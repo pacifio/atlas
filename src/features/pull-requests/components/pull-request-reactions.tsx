@@ -7,8 +7,6 @@ import { toast } from "sonner";
 import { SmilePlus } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { Popover, PopoverContent, PopoverTrigger } from "@/ui/popover";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/ui/tooltip";
 
 import {
   applyPendingReactions,
@@ -21,6 +19,14 @@ import { usePrReactMutation } from "../lib/pull-requests-queries";
 import type { PrReaction, PrReactionContent } from "../lib/pull-requests-types";
 import { usePullRequestScope } from "./pull-request-context";
 import { AddReactionPill, ReactionPill } from "./pull-request-triggers";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@tryatlas/design";
 
 const NO_PENDING: ReadonlyMap<PrReactionContent, boolean> = new Map();
 

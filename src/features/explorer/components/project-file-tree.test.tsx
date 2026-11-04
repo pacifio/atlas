@@ -218,6 +218,20 @@ describe("compacted folders", () => {
   });
 });
 
+describe("select all", () => {
+  it("selects every visible row on ⌘A", async () => {
+    const view = render(<ProjectFileTree root="/p" activeFile={null} />);
+    await settle();
+    const tree = view.container.querySelector<HTMLElement>("[data-tree-root]")!;
+    await act(async () => fireEvent.keyDown(tree, { key: "a", metaKey: true }));
+    const selected = screen
+      .queryAllByRole("treeitem")
+      .filter((el) => el.getAttribute("aria-selected") === "true")
+      .map((el) => (el as HTMLElement).dataset.relPath);
+    expect(selected).toEqual(["src", "vendor", "README.md"]);
+  });
+});
+
 describe("the row menu", () => {
   it("opens a file in the default app through Rust, not the opener plugin's JS", async () => {
     render(<ProjectFileTree root="/p" activeFile={null} />);

@@ -1,7 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, CaseSensitive, Search, X } from "lucide-react";
-import { IconButton } from "@/ui/icon-button";
-import { Hint } from "@/ui/tooltip";
 import {
   MAX_PLAIN_FIND_MATCHES,
   findInText,
@@ -9,6 +7,7 @@ import {
   releasePlainFindCache,
   type PlainFindMatch,
 } from "../lib/plain-find";
+import { IconButton, Hint } from "@tryatlas/design";
 
 /**
  * ⌘F in a file tab whose editor cannot open its own find panel: a read-only

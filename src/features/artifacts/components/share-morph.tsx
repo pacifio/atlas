@@ -530,7 +530,7 @@ function PublicLink({
             type="button"
             disabled={busy}
             onClick={onRevoke}
-            className="shrink-0 cursor-pointer rounded-full px-2 py-1 text-2xs text-error transition-colors duration-fast hover:bg-[var(--atlas-status-error-background)] disabled:opacity-40"
+            className="shrink-0 cursor-pointer rounded-full px-2 py-1 text-2xs text-error transition-colors duration-fast hover:bg-error-muted disabled:opacity-40"
           >
             Stop sharing
           </button>

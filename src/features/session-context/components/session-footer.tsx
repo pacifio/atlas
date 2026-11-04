@@ -44,13 +44,13 @@ import { OPEN_CHAT_FIND_EVENT } from "@/features/chat/lib/use-pane-find";
 import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { cn } from "@/lib/utils";
-import { HintGroup, HintItem } from "@/ui/hint-group";
 import { jumpToCommentAnchor } from "@/features/chat/lib/jump-to-comment";
 import {
   useChatCommentsStore,
   useCommentCount,
   type CommentTargetIds,
 } from "@/features/chat/stores/chat-comments-store";
+import { HintGroup, HintItem } from "@tryatlas/design";
 
 /** `--morph-close-dur` plus a beat: the portal outlives the shrink. */
 const MORPH_UNMOUNT_MS = 300;
@@ -232,7 +232,7 @@ function RoundButton({
           "border border-border-strong bg-background text-[var(--muted-foreground)] outline-none transition-colors",
           disabled
             ? "cursor-default opacity-40"
-            : "cursor-pointer hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]",
+            : "cursor-pointer hover:bg-element-hover hover:text-[var(--foreground)]",
         )}
       >
         {/* 10px in a 22px circle: the glyph sits inside the ring with air

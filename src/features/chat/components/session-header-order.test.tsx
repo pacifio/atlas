@@ -19,10 +19,10 @@ vi.mock("@tauri-apps/api/event", () => ({
 vi.mock("@/features/session-context/components/session-details-button", () => ({
   SessionDetailsButton: () => <button type="button" aria-label="Session details" />,
 }));
-import { HintGroup } from "@/ui/hint-group";
 import { useChatStore } from "../stores/chat-store";
 import { useRcStore } from "../stores/rc-store";
 import { SessionHeaderControls } from "./session-header";
+import { HintGroup } from "@tryatlas/design";
 
 afterEach(cleanup);
 

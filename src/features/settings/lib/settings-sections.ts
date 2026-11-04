@@ -162,6 +162,22 @@ const EXTRA_SEARCH_ITEMS: readonly SearchItem[] = [
     terms: "config.toml open edit unknown keys reset recreate defaults",
   },
   {
+    id: "clear-cache",
+    title: "Clear cache",
+    where: "Privacy › Local data",
+    section: "privacy",
+    anchor: "clear-cache",
+    terms: "cache webkit storage disk space troubleshoot",
+  },
+  {
+    id: "reset-atlas",
+    title: "Reset Atlas",
+    where: "Privacy › Local data",
+    section: "privacy",
+    anchor: "reset-atlas",
+    terms: "reset wipe delete local data first run start over factory troubleshoot",
+  },
+  {
     id: "send-feedback",
     title: "Send feedback",
     where: "General › Help",

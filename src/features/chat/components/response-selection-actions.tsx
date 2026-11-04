@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Quote } from "lucide-react";
 import { Popover as PopoverPrimitive } from "@base-ui/react/popover";
-import { Popover, PopoverContent } from "@/ui/popover";
 import { CommentButton } from "@/features/artifacts/components/comment-thread";
 import { cn } from "@/lib/utils";
 import { CiteForm, citeShareTarget } from "./cite-popover";
@@ -13,6 +12,7 @@ import {
   useHasCloudTarget,
 } from "../stores/chat-comments-store";
 import { actionPosition, chatKeyOf, isCitable, selectedAnchor } from "../lib/response-selection";
+import { Popover, PopoverContent } from "@tryatlas/design";
 
 /** One pill for both actions, so their height, padding and radius cannot
  *  drift apart. The design system's pill: control-xs tall, 2xs type,

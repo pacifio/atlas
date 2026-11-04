@@ -7,10 +7,10 @@ import { ExternalLink, GitPullRequestArrow, RefreshCw } from "lucide-react";
 
 import { openPullRequest } from "@/features/git/lib/git-pr-api";
 import { cn } from "@/lib/utils";
-import { Button } from "@/ui/button";
 
 import { prErrorMessage } from "../lib/pr-errors";
 import type { PrError } from "../lib/pull-requests-types";
+import { Button } from "@tryatlas/design";
 
 function GhostBar({ className }: { className?: string }) {
   return <span aria-hidden className={cn("block h-3 rounded bg-muted", className)} />;

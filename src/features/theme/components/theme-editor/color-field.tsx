@@ -7,12 +7,24 @@
 import { memo, useEffect, useRef, useState } from "react";
 import { RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { ColorHueSlider, ColorSaturationValuePlane } from "@/ui/color-picker";
-import { Icon } from "@/ui/icon";
-import { Input } from "@/ui/input";
-import { Popover, PopoverContent, PopoverTrigger } from "@/ui/popover";
-import { Hint } from "@/ui/tooltip";
-import { colorToCss, hsvToHex, parseColor, toHsv, type HsvColor } from "../../color";
+import {
+  alphaOf,
+  colorToCss,
+  hsvToHex,
+  parseColor,
+  toHsv,
+  type HsvColor,
+} from "@tryatlas/design/theme";
+import {
+  ColorHueSlider,
+  ColorSaturationValuePlane,
+  Icon,
+  Input,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+  Hint,
+} from "@tryatlas/design";
 
 /** `#rrggbb` for anything `parseColor` reads, alpha dropped: what the picker
  *  edits. A colour with alpha keeps it (`alphaOf`) and gets it back on save. */
@@ -21,10 +33,6 @@ function opaqueHex(value: string): string {
   // ratchet-allow: the picker needs some concrete point to start from when a
   // slot's value is unreadable; it is a picker position, never painted UI.
   return color ? colorToCss({ ...color, a: 1 }) : "#000000";
-}
-
-function alphaOf(value: string): number {
-  return parseColor(value)?.a ?? 1;
 }
 
 function withAlphaOf(hex: string, alpha: number): string {

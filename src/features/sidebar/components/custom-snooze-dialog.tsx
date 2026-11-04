@@ -14,18 +14,18 @@ import {
   localTime,
   type CustomSnooze,
 } from "@/features/chat/lib/session-snooze";
-import { Button } from "@/ui/button";
 import {
+  Button,
   Dialog,
   DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/ui/dialog";
-import { Input } from "@/ui/input";
-import { Segmented } from "@/ui/segmented";
-import { Select } from "@/ui/select";
+  Input,
+  Segmented,
+  Select,
+} from "@tryatlas/design";
 
 type Request = { readonly resolve: (until: string | null) => void };
 const useRequest = create<{ request: Request | null }>(() => ({ request: null }));

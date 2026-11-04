@@ -6,6 +6,7 @@ pub mod agent_memory;
 pub mod agent_secrets;
 pub mod agent_transcript;
 pub mod agents;
+pub mod app_data_reset;
 pub mod app_state;
 pub mod artifacts_cloud;
 pub mod atlas_config;

@@ -1,17 +1,23 @@
 # The theme-key registry — the one hand-edited source for every Atlas theme key,
 # and for how every shadcn base token a theme leaves out is derived (ADR-0022).
 #
-# GENERATED FROM THIS FILE (never edit those by hand; run `bun run theme:keys`):
+# This file lives in @tryatlas/design (ADR-0027); desktop copies it into
+# crates/atlas-theme/ verbatim. Edit it there, never in a copy.
 #
-#   src/features/theme/theme-key-registry.ts   the TS registry the resolver reads
-#   crates/atlas-theme/theme-keys.txt          the key list + descriptions Rust reads
-#   crates/atlas-theme/base-rules.txt          the `[[base]]` rules, which Rust's
-#                                              interpreter runs for import and export
-#   crates/atlas-theme/schema/theme-v1.json    the `keys` property, so `#:schema`
-#                                              gives authors completion and flags a typo
-#   docs/reference/theme-keys.md               the generated part of the reference
+# GENERATED FROM THIS FILE in the package (never edit those by hand; run
+# `bun run theme`):
 #
-# `bun run theme:keys:check` (and `bun run test`) fail when any of them is stale.
+#   src/theme/theme-key-registry.ts   the TS registry the resolver reads
+#   theme-rules/theme-keys.txt        the key list + descriptions Rust reads
+#   theme-rules/base-rules.txt        the `[[base]]` rules, which Rust's
+#                                     interpreter runs for import and export
+#   src/styles/themes.css             every built-in theme, resolved
+#
+# Desktop generates the rest from its copy: the JSON Schema's `keys` property
+# (so `#:schema` gives authors completion) and the table in
+# docs/reference/theme-keys.md.
+#
+# `bun run theme:check` (and `bun run test`) fail when any of them is stale.
 #
 # ── An entry ──────────────────────────────────────────────────────────────────
 #
@@ -393,6 +399,10 @@ description = "Added and removed regions, inline and side-by-side."
 [[group]]
 name = "Agents and indicators"
 description = "The agent identity chip."
+
+[[group]]
+name = "Identity hues"
+description = "The eight hues that name a thing — a label, a project dot — never a status."
 
 
 # ── Borders ───────────────────────────────────────────────────────────────────
@@ -1095,7 +1105,6 @@ dark = "#0a0a0a"
 light = "#faf4ed"
 
 
-
 # ── Agents and indicators ─────────────────────────────────────────────────────
 
 [[key]]
@@ -1124,6 +1133,84 @@ op = "alpha"
 amount = 0.06
 dark = "rgba(255,255,255,0.06)"
 light = "rgba(0,0,0,0.06)"
+
+
+# ── Identity hues ─────────────────────────────────────────────────────────────
+#
+# The `--color-hue-*` utilities (`bg-hue-orange`, `Tag`, `HueDot`) read these.
+# They used to borrow other roles — orange was `syntax.number`, pink was
+# `syntax.escape`, the rest the ANSI slots — and a theme that coloured those
+# roles for code (Atlas's own syntax is Pierre's, where numbers are cyan) turned
+# an "orange" label cyan. A hue now reads the theme's own palette hue of the same
+# name, so it is whatever that theme means by orange, and a theme that wants a
+# different chip colour from its palette sets the key. The defaults, for a
+# theme that writes no palette, are the Atlas theme's chips: its palette,
+# except dark yellow, where the palette has a terminal's pure #ffff00 and the
+# Atlas theme pins a label yellow (see themes/atlas.toml).
+
+[[key]]
+name = "hue.red"
+group = "Identity hues"
+description = "The red identity hue: labels, project dots, meters."
+palette = "red"
+dark = "#f44747"
+light = "#c62828"
+
+[[key]]
+name = "hue.orange"
+group = "Identity hues"
+description = "The orange identity hue: labels, project dots, meters."
+palette = "orange"
+dark = "#e0b070"
+light = "#b06000"
+
+[[key]]
+name = "hue.yellow"
+group = "Identity hues"
+description = "The yellow identity hue: labels, project dots, meters."
+palette = "yellow"
+dark = "#e0ca66"
+light = "#8f7a00"
+
+[[key]]
+name = "hue.green"
+group = "Identity hues"
+description = "The green identity hue: labels, project dots, meters."
+palette = "green"
+dark = "#9ecf8a"
+light = "#3f7f2f"
+
+[[key]]
+name = "hue.cyan"
+group = "Identity hues"
+description = "The cyan identity hue: labels, project dots, meters."
+palette = "cyan"
+dark = "#7fd1e8"
+light = "#1f7f99"
+
+[[key]]
+name = "hue.blue"
+group = "Identity hues"
+description = "The blue identity hue: labels, project dots, meters."
+palette = "blue"
+dark = "#6796e6"
+light = "#1f5fb0"
+
+[[key]]
+name = "hue.purple"
+group = "Identity hues"
+description = "The purple identity hue: labels, project dots, meters."
+palette = "purple"
+dark = "#c9a2f5"
+light = "#7b3fb5"
+
+[[key]]
+name = "hue.pink"
+group = "Identity hues"
+description = "The pink identity hue: labels, project dots, meters."
+palette = "pink"
+dark = "#f0a0c8"
+light = "#b03a6a"
 
 
 # ── Derived variables ─────────────────────────────────────────────────────────

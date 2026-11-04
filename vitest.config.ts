@@ -35,6 +35,17 @@ export default defineConfig({
       },
     },
     include: ["tests/**/*.test.ts", "src/**/*.test.{ts,tsx}"],
+    server: {
+      deps: {
+        // The package's TimelineCalendar, run through Vite rather than loaded
+        // by Node, so its own `@tanstack/react-virtual` and `motion/react`
+        // imports see a test file's `vi.mock`s. The board and inbox tests make
+        // the virtualizer total that way: in happy-dom every element measures
+        // zero, and the real one renders no rows. Only this entry: inlining the
+        // whole package would hand every primitive those mocks too.
+        inline: [/@tryatlas\/design\/dist\/components\/blocks\/timeline-calendar/],
+      },
+    },
     // The workspace `target/` holds vendored dependency sources; without
     // this Vitest walks 38 GB of build artifacts.
     exclude: ["**/node_modules/**", "**/target/**", "**/dist/**"],

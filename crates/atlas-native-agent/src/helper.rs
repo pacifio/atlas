@@ -13,6 +13,10 @@
 //!   above, from a copy of this exe under the engine home's `.sandbox-bin`).
 //! - **`--atlas-engine-run-as-arg0-exec-helper`**, on Unix, for a sandboxed
 //!   command that asked for a specific `argv[0]`.
+//! - **arg0 `atlas-engine-linux-sandbox`**, on Linux. The seccomp +
+//!   bubblewrap sandbox every restricted command runs under. Dispatched on
+//!   the *name* the process was started under, not a flag; the alias that
+//!   carries that name is made by `crate::linux_sandbox`.
 //!
 //! The engine's binaries all start through `atlas-engine-arg0`, which does this
 //! dispatch. Atlas embeds the engine instead, and for a long time handled
@@ -33,6 +37,10 @@
 /// Call this first thing in `main`, before Tauri, any logging, or any thread:
 /// a helper's only interface is its stdio and exit code.
 pub fn run_engine_helper_if_asked() {
+    // Before argv[1]: the sandbox helper's own arguments are its command
+    // line, and nothing in them is one of the flags below.
+    #[cfg(target_os = "linux")]
+    crate::linux_sandbox::dispatch_if_sandbox_alias();
     let Some(argv1) = std::env::args_os().nth(1) else {
         return;
     };

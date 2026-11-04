@@ -29,6 +29,22 @@ describe("notification icon", () => {
     expect(opencode && opencode.kind === "svg" && opencode.svg).toContain("color:#9ca3af");
   });
 
+  it("inlines the package's token fills so a standalone OpenCode mark is not solid black", async () => {
+    const opencode = await iconSourceFor("opencode", "dark");
+    const svg = opencode && opencode.kind === "svg" ? opencode.svg : "";
+    expect(svg).not.toContain("fill-foreground");
+    expect(svg).toContain('fill="currentColor"');
+    expect(svg).toContain('fill-opacity="0.25"');
+    expect(svg).toContain("color:#9ca3af");
+  });
+
+  it("names the SVG namespace, without which an <img> draws nothing", async () => {
+    const claude = await iconSourceFor("claude-code", "dark");
+    expect(claude && claude.kind === "svg" && claude.svg).toContain(
+      'xmlns="http://www.w3.org/2000/svg"',
+    );
+  });
+
   it("has no image for an agent with no mark", async () => {
     expect(await iconSourceFor("some-unknown-agent", "dark")).toBeNull();
   });

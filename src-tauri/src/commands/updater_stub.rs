@@ -1,8 +1,9 @@
-//! No-op auto-updater stand-in for targets with no installer flow (Linux).
+//! No-op auto-updater stand-in for targets with no updater (the BSDs and
+//! anything else that is neither macOS, Windows nor Linux).
 //!
 //! The real implementations (`updater_macos.rs`, `updater_windows.rs`) stage a
-//! downloaded DMG/MSI and install it on restart — nothing equivalent exists
-//! for the Linux builds yet. This stub keeps `lib.rs` and the frontend's
+//! downloaded DMG/MSI and install it on restart, and `updater_linux.rs`
+//! announces a release. This stub keeps `lib.rs` and the frontend's
 //! `invoke()` surface platform-agnostic: every verb still exists and reports
 //! "no update", so the UI hydrates normally instead of showing a failed call.
 //!

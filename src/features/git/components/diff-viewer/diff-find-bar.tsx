@@ -10,8 +10,6 @@ import {
 import type { CodeViewDiffItem } from "@pierre/diffs";
 import type { CodeViewHandle } from "@pierre/diffs/react";
 import { ArrowDown, ArrowUp, CaseSensitive, Search, X } from "lucide-react";
-import { IconButton } from "@/ui/icon-button";
-import { Hint } from "@/ui/tooltip";
 import {
   clearMatches,
   createPaintedRanges,
@@ -23,6 +21,7 @@ import {
   rotateTo,
   type DiffFindMatch,
 } from "../../lib/diff-find";
+import { IconButton, Hint } from "@tryatlas/design";
 
 /**
  * ⌘F in the review diff: a query, a match count, previous and next.

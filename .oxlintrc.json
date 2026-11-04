@@ -4,7 +4,9 @@
   "jsPlugins": ["@shadcn/lint"],
   "settings": {
     "shadcn": {
-      "ui": "@/ui"
+      "ui": "@tryatlas/design",
+      "themeImports": ["^@tryatlas/design/"],
+      "ignoreImports": ["^react-resizable-panels$"]
     }
   },
   "categories": {
@@ -42,78 +44,43 @@
         "allow": [
           "atlas-ants",
           "atlas-arc-spin",
-          "atlas-bubble-btn",
           "atlas-bubble-in",
-          "atlas-bubble-link",
-          "atlas-bubble-sep",
-          "atlas-bubble-wrap",
-          "atlas-callout",
           "atlas-callout-body",
-          "atlas-callout-emoji",
-          "atlas-cmd-suggest",
           "atlas-code",
-          "atlas-code-copy",
-          "atlas-code-header",
-          "atlas-code-lang",
           "atlas-entry",
           "atlas-fade-in",
           "atlas-group-slide-left",
           "atlas-group-slide-right",
           "atlas-live-pulse",
+          "atlas-live-thought",
           "atlas-loader",
           "atlas-marker",
           "atlas-marker-running",
           "atlas-md-pending",
           "atlas-mention-picker",
-          "atlas-menu-pop",
           "atlas-panel-in-br",
           "atlas-panel-in-tl",
           "atlas-pill-in",
           "atlas-pill-swap",
           "atlas-pixel-cell",
           "atlas-project-rail",
-          "atlas-prose",
-          "atlas-prose--user",
+          "atlas-prose-wrap",
           "atlas-radar-ping",
           "atlas-radar-sweep",
           "atlas-row",
-          "atlas-scroll-mask-b",
-          "atlas-slash-body",
-          "atlas-slash-chev",
-          "atlas-slash-eyebrow",
-          "atlas-slash-group",
-          "atlas-slash-hint",
-          "atlas-slash-iconwrap",
-          "atlas-slash-item",
-          "atlas-slash-kbd",
-          "atlas-slash-menu",
           "atlas-slash-picker",
-          "atlas-slash-title",
           "atlas-split-in",
           "atlas-stream-caret",
-          "atlas-tab",
-          "atlas-tab-label",
-          "atlas-terminal-output",
           "atlas-thinking-shimmer",
           "atlas-timeline-beam",
           "atlas-timeline-row",
           "atlas-tiptap",
-          "atlas-toggle",
-          "atlas-toggle-body",
-          "atlas-toggle-chev",
-          "atlas-toggle-header",
-          "atlas-toggle-title",
-          "atlas-toggle-title-input",
           "atlas-usage-in",
           "atlas-welcome-glow",
           "atlas-welcome-swatch",
           "hide-scrollbar",
           "hljs",
-          "is-active",
-          "lucide",
-          "lucide-github",
           "nodrag",
-          "prose-chat",
           "reader-content"
         ]
       }
@@ -147,17 +114,11 @@
       }
     },
     {
-      "files": ["src/ui/**"],
-      "rules": {
-        "shadcn/no-restyle": "off"
-      }
-    },
-    {
       "files": [
         "src/features/menu/components/menu-bar.tsx",
         "src/features/spaces/components/space-chrome.tsx",
         "src/features/comms/components/call-menu.tsx",
-        "src/features/capture/components/capture-popover.tsx"
+        "src/features/capture/components/views/connect-picker-view.tsx"
       ],
       "rules": {
         "shadcn/no-restyle": "off"

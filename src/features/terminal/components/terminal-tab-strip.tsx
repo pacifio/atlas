@@ -9,11 +9,10 @@ import {
 import { CircleDashed, Maximize2, Plus, Rows2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { tildePath } from "@/lib/paths";
-import { HintGroup, HintItem } from "@/ui/hint-group";
-import { IconButton } from "@/ui/icon-button";
 import { fadeMask } from "@/features/layout/components/pane-tab-strip";
 import { useTerminalStore, type PaneNode } from "../stores/terminal-store";
 import { terminalSessions, type TerminalSession } from "../lib/terminal-session";
+import { HintGroup, HintItem, IconButton } from "@tryatlas/design";
 
 /**
  * A pane's terminals as a strip of tabs across its top: solid, rounded tabs
@@ -349,15 +348,13 @@ const EMPTY: Summary = { cwd: "", exited: false, command: null };
 const noSubscribe = () => () => {};
 
 /** The few fields a tab shows, as a value that only changes when they do —
- *  the session publishes on every parsed chunk, and a tab re-rendering at
- *  output rate behind a busy build would be all cost. */
+ *  the snapshot also carries fields the tab does not draw (`searchRequest`). */
 function useSummary(session: TerminalSession | undefined): Summary {
   const cache = useRef<Summary>(EMPTY);
   const get = useCallback((): Summary => {
     if (!session) return EMPTY;
     const snap = session.getSnapshot();
-    const last = snap.blocks[snap.blocks.length - 1];
-    const command = last && last.running && last.command !== "" ? last.command : null;
+    const command = snap.command;
     const c = cache.current;
     if (c.cwd === snap.cwd && c.exited === snap.exited && c.command === command) return c;
     cache.current = { cwd: snap.cwd, exited: snap.exited, command };

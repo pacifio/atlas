@@ -1,4 +1,4 @@
-import { memo, type CSSProperties } from "react";
+import { memo, useState, type CSSProperties, type FocusEvent, type KeyboardEvent } from "react";
 import type { DraggableSyntheticListeners } from "@dnd-kit/core";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -34,17 +34,17 @@ import { AgentIcon } from "@/features/org-agent/lib/agent-icon";
 import { cn } from "@/lib/utils";
 import { copyText } from "@/lib/clipboard";
 import { requestCloseTab } from "@/features/chat/lib/close-tab";
+import { AtlasIcon } from "@/components/brand-marks";
+import { FileIcon, type FallbackIcon } from "@/features/icon-theme/components/file-icon";
+import type { TabType } from "@/lib/constants";
+import { groupOf, useLayoutStore, type Tab } from "../stores/layout-store";
 import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
   ContextMenuTrigger,
-} from "@/ui/context-menu";
-import { AtlasIcon } from "@/components/atlas-icon";
-import { FileIcon, type FallbackIcon } from "@/features/icon-theme/components/file-icon";
-import type { TabType } from "@/lib/constants";
-import { groupOf, useLayoutStore, type Tab } from "../stores/layout-store";
+} from "@tryatlas/design";
 
 // Typed as the icon-theme fallback rather than `React.ElementType`: these are
 // what a tab falls back to when the icon theme has nothing for it, and
@@ -106,6 +106,52 @@ interface PaneTabProps {
   /** Whether the tab has the right-click menu (close, close others, copy
    *  path). The projectless strip's pseudo-tabs have none. */
   menu?: boolean;
+  /** The strip's one Tab stop (roving focus): the active tab, or the first
+   *  when none is. Defaults to `active`. */
+  tabStop?: boolean;
+}
+
+/**
+ * Roving focus for a tab strip, on its `role="tablist"`: the strip is one Tab
+ * stop, and ←/→/Home/End move focus between its tabs. Focus only; Enter or
+ * Space on a tab selects it, as a click does.
+ */
+function onTabListKeyDown(e: KeyboardEvent<HTMLElement>) {
+  if (e.key !== "ArrowLeft" && e.key !== "ArrowRight" && e.key !== "Home" && e.key !== "End") {
+    return;
+  }
+  const tabs = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]'));
+  const from = tabs.indexOf(e.target as HTMLElement);
+  if (from === -1) return;
+  e.preventDefault();
+  const to =
+    e.key === "Home"
+      ? 0
+      : e.key === "End"
+        ? tabs.length - 1
+        : (from + (e.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+  tabs[to]?.focus();
+}
+
+/**
+ * The tablist's roving focus. While focus is inside the strip the Tab stop
+ * follows it, so Shift+Tab from a tab the arrows reached leaves the strip
+ * rather than landing on the active tab; once focus leaves, the stop falls
+ * back to the strip's default. Spread `listProps` on the `role="tablist"`.
+ */
+export function useTabListFocus() {
+  const [focusedId, setFocusedId] = useState<string | null>(null);
+  const listProps = {
+    onKeyDown: onTabListKeyDown,
+    onFocus: (e: FocusEvent<HTMLElement>) => {
+      const id = (e.target as HTMLElement).closest<HTMLElement>("[data-tab-id]")?.dataset.tabId;
+      if (id) setFocusedId(id);
+    },
+    onBlur: (e: FocusEvent<HTMLElement>) => {
+      if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocusedId(null);
+    },
+  };
+  return { focusedId, listProps };
 }
 
 /**
@@ -133,6 +179,7 @@ export function PaneTab({
   running,
   onSelect,
   menu,
+  tabStop = active,
   drag,
 }: PaneTabProps & { drag?: TabDrag }) {
   const Icon = icon ?? tabIcons[tab.type as TabType] ?? MessageSquare;
@@ -149,7 +196,7 @@ export function PaneTab({
       ref={drag?.setNodeRef}
       role="tab"
       aria-selected={active}
-      tabIndex={0}
+      tabIndex={tabStop ? 0 : -1}
       title={filePath ?? undefined}
       data-tab-id={tab.id}
       data-active-tab={active || undefined}
@@ -198,8 +245,12 @@ export function PaneTab({
         </span>
         {tab.closable && (
           // No tooltip: an × on the tab you are pointing at is not ambiguous.
+          // Out of the Tab order: the strip is one Tab stop, and a tab closes
+          // from the keyboard with ⌘W or its right-click menu.
           <button
-            aria-label="Close tab"
+            type="button"
+            tabIndex={-1}
+            aria-label={`Close ${tab.title}`}
             onClick={(e) => {
               e.stopPropagation();
               close();

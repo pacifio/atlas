@@ -58,7 +58,7 @@ describe("MessageBody", () => {
     expect(chip.closest("[data-mention-pill]")?.getAttribute("title")).toBe("grace@x.test");
     expect(screen.queryByText(/u_grace/)).toBe(null);
     // The face is part of the pill, not just the name.
-    expect(container.querySelector("[data-mention-pill] span[style*='background']")).not.toBe(null);
+    expect(container.querySelector("[data-mention-pill] .bg-muted")).not.toBe(null);
   });
 
   it("styles a mention of you differently from a mention of someone else", async () => {

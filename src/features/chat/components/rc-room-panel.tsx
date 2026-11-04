@@ -46,12 +46,6 @@ import { AccountAvatar } from "@/features/auth/components/account-avatar";
 import { GlassIconButton } from "@/features/sidebar/components/glass-icon-button";
 import { useMembersStore } from "@/features/organisations/stores/members-store";
 import { cn } from "@/lib/utils";
-import { Button } from "@/ui/button";
-import { HintGroup, HintItem } from "@/ui/hint-group";
-import { IconButton } from "@/ui/icon-button";
-import { ScrollFade, useScrollEdges } from "@/ui/scroll-fade";
-import { Select } from "@/ui/select";
-import { Switch } from "@/ui/switch";
 
 import {
   rc,
@@ -63,6 +57,16 @@ import {
 } from "../lib/rc-api";
 import { useRcPeople, type RcPeopleResolver } from "../lib/rc-people";
 import type { RemoteControl } from "../lib/use-remote-control";
+import {
+  Button,
+  HintGroup,
+  HintItem,
+  IconButton,
+  ScrollFade,
+  useScrollEdges,
+  Select,
+  Switch,
+} from "@tryatlas/design";
 
 const SURFACE_ICON: Record<RcSurface, typeof Globe> = {
   web: Globe,
@@ -82,9 +86,9 @@ const STATE_WORD: Record<RcLinkState, string> = {
   ended: "Ended",
 };
 const STATE_DOT: Record<RcLinkState, string> = {
-  connecting: "bg-[var(--atlas-status-warning-foreground)]",
-  live: "bg-[var(--atlas-status-success-foreground)]",
-  offline: "bg-[var(--atlas-status-warning-foreground)]",
+  connecting: "bg-warning",
+  live: "bg-success",
+  offline: "bg-warning",
   ended: "bg-[var(--muted-foreground)]",
 };
 
@@ -126,7 +130,7 @@ export function RcRoomPanel({ sessionId, remote }: { sessionId: string; remote: 
             room.state === "live"
               ? {
                   ["--atlas-pulse-color" as string]:
-                    "color-mix(in oklab, var(--atlas-status-success-foreground) 40%, transparent)",
+                    "color-mix(in oklab, var(--status-success-foreground) 40%, transparent)",
                 }
               : undefined
           }
@@ -493,12 +497,10 @@ function Invite({
           field with its glyph, and the glass round button beside it. */}
       <div className="mt-2 flex items-center gap-2">
         <Select
-          value={choice}
+          value={choice || null}
           onValueChange={setChoice}
           options={options}
-          placeholder={
-            choice ? undefined : options.length ? "Choose a teammate" : "Everyone's invited"
-          }
+          placeholder={options.length ? "Choose a teammate" : "Everyone's invited"}
           disabled={options.length === 0 || working}
           size="md"
           shape="pill"

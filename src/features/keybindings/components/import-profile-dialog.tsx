@@ -1,16 +1,16 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { Button } from "@/ui/button";
+import { useKeybindingsStore } from "../stores/keybindings-store";
 import {
+  Button,
   Dialog,
   DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/ui/dialog";
-import { useKeybindingsStore } from "../stores/keybindings-store";
+} from "@tryatlas/design";
 
 /**
  * Paste a profile someone copied with "Copy as JSON". A textarea rather than
@@ -79,14 +79,10 @@ export function ImportProfileDialog({
           className={cn(
             "h-48 w-full resize-none rounded-md border bg-background p-2 font-mono text-xs",
             "text-foreground outline-none placeholder:text-muted-foreground",
-            error ? "border-[var(--atlas-status-error-foreground)]" : "border-border",
+            error ? "border-error" : "border-border",
           )}
         />
-        {error && (
-          <p className="text-xs text-[var(--atlas-status-error-foreground)]">
-            Can't import: {error}
-          </p>
-        )}
+        {error && <p className="text-xs text-error">Can't import: {error}</p>}
         <DialogFooter>
           <Button variant="ghost" size="sm" onClick={() => close(false)}>
             Cancel

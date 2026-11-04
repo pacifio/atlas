@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { type NodeProps } from "@xyflow/react";
+import { CANVAS_FIELD_CLASS, CanvasNodeFrame } from "@tryatlas/design";
 import { cn } from "@/lib/utils";
 import { useCanvasStore } from "../stores/canvas-store";
 import { NodeHandles } from "./node-handles";
@@ -39,26 +40,26 @@ export const TextNode = memo(function TextNode({ id, data, selected }: NodeProps
 
   return (
     <div
-      className={cn(
-        "group relative rounded",
-        selected && "outline outline-1 outline-[var(--primary)]/50",
-      )}
+      className={cn("group relative rounded", selected && "outline outline-1 outline-primary/50")}
       onDoubleClick={() => setEditing(true)}
     >
       <NodeHandles selected={selected} />
-      <div
-        ref={ref}
-        className={cn(
-          "whitespace-pre-wrap break-words min-w-[40px] min-h-[1.25em] px-1 py-0.5 outline-none",
-          "text-lg leading-snug text-[var(--foreground)] caret-[var(--primary)]",
-          editing ? "nodrag cursor-text select-text" : "cursor-default select-none",
-        )}
-        contentEditable={editing}
-        suppressContentEditableWarning
-        onBlur={commit}
-      >
-        {d.text}
-      </div>
+      {/* Not `CanvasText`: the ref has to be the element the user types in. */}
+      <CanvasNodeFrame kind="text" selected={selected}>
+        <div
+          ref={ref}
+          className={cn(
+            CANVAS_FIELD_CLASS.text,
+            "whitespace-pre-wrap break-words min-w-[40px] min-h-[1.25em] px-1 py-0.5",
+            editing ? "nodrag cursor-text select-text" : "cursor-default select-none",
+          )}
+          contentEditable={editing}
+          suppressContentEditableWarning
+          onBlur={commit}
+        >
+          {d.text}
+        </div>
+      </CanvasNodeFrame>
     </div>
   );
 });

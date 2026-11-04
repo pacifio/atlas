@@ -212,17 +212,14 @@ pub struct EngineSettings {
     /// Under the default `WorkspaceWrite` policy that turns every sandboxed
     /// tool call into a no-op that still ends the turn normally.
     ///
-    /// `None` in production and that is correct today: **Atlas ships macOS
-    /// only**, and nothing in the app is the helper. The field exists because
-    /// the integration tests do have a helper — the test binary itself, under
-    /// an arg0 alias — and without a way to hand it over the sandboxed-command
-    /// tests can only pass on macOS.
-    ///
-    /// A real Linux build would have to earn this rather than set it:
-    /// `run_engine_helper_if_asked` dispatches on `argv[1]` only, so Atlas
-    /// re-entered under the *arg0* `atlas-engine-linux-sandbox` would still boot
-    /// the app. Only once that is dispatched too could this point at Atlas's
-    /// own executable. That is deliberately not implemented here.
+    /// `None` from [`EngineSettings::new`], on every platform. The app sets
+    /// it on Linux with [`EngineSettings::with_app_linux_sandbox_helper`],
+    /// which points it at an alias of Atlas's own executable; that is only
+    /// true of a binary whose `main` calls `run_engine_helper_if_asked`, which
+    /// dispatches the alias (`crate::linux_sandbox`). The integration tests
+    /// set it to their own test binary under the same alias instead. Nothing
+    /// guesses it: a path to a binary that does not dispatch would boot that
+    /// binary, a test harness or a second app, as the sandbox.
     pub linux_sandbox_exe: Option<PathBuf>,
     pub approval_policy: AskForApproval,
     pub sandbox_mode: SandboxMode,
@@ -258,7 +255,8 @@ impl EngineSettings {
             cwd,
             self_exe: std::env::current_exe().ok(),
             // Never guessed. `current_exe()` is this helper only in a process
-            // that dispatches on arg0, and Atlas does not — see the field's docs.
+            // that dispatches on arg0, which only the app's binary does — see
+            // the field's docs and `with_app_linux_sandbox_helper`.
             linux_sandbox_exe: None,
             // D5: the sandbox is on from day one on macOS, in the engine's own
             // default approval/sandbox mode. `WorkspaceWrite` plus
@@ -277,6 +275,31 @@ impl EngineSettings {
             },
             client_version: env!("CARGO_PKG_VERSION").to_string(),
         }
+    }
+
+    /// Makes Atlas's own executable the engine's Linux sandbox helper.
+    ///
+    /// Call only from the app, whose `main` dispatches the helper alias
+    /// (`run_engine_helper_if_asked`). Installs the alias in the engine home
+    /// (`crate::linux_sandbox::install_alias`) and points
+    /// `linux_sandbox_exe` at it. When that fails the field stays `None`,
+    /// the engine refuses sandboxed commands as it did before Linux was
+    /// supported, and the reason is logged.
+    #[cfg(target_os = "linux")]
+    pub fn with_app_linux_sandbox_helper(mut self) -> Self {
+        let Some(exe) = self.self_exe.as_deref() else {
+            tracing::warn!("native agent: no executable path, so no Linux sandbox helper");
+            return self;
+        };
+        match crate::linux_sandbox::install_alias(self.home.path(), exe) {
+            Ok(path) => self.linux_sandbox_exe = Some(path),
+            Err(e) => tracing::warn!(
+                error = %e,
+                "native agent: could not install the Linux sandbox helper alias; \
+                 sandboxed commands will be refused",
+            ),
+        }
+        self
     }
 
     /// Lowers the stream-retry ceiling, so a test can reach exhaustion without

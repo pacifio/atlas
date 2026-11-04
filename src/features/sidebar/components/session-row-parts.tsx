@@ -10,14 +10,14 @@
 import { useSyncExternalStore, type ReactNode } from "react";
 import {
   AgentMonogram,
-  ClaudeIcon,
-  CodexIcon,
-  CursorIcon,
-  ExternalAgentIcon,
-  KiloIcon,
-  OpenCodeIcon,
-} from "@/components/agent-icons";
-import { AtlasIcon } from "@/components/atlas-icon";
+  ClaudeCodeMark,
+  CodexMark,
+  CursorAgentMark,
+  ExternalAgentMark,
+  KiloMark,
+  OpenCodeMark,
+} from "@tryatlas/design";
+import { AtlasIcon } from "@/components/brand-marks";
 import { agentMeta } from "@/features/agents/lib/agent-meta";
 import { useChatStore } from "@/features/chat/stores/chat-store";
 import type { SidebarAgent } from "@/features/chat/lib/sidebar-agents";
@@ -146,15 +146,15 @@ export function SessionAgentIcon({
   className?: string;
 }) {
   const size = cn("size-3", className);
-  if (agent === "codex") return <CodexIcon className={size} />;
-  if (agent === "opencode") return <OpenCodeIcon className={size} />;
-  if (agent === "cursor") return <CursorIcon className={size} />;
-  if (agent === "kilo") return <KiloIcon className={size} />;
+  if (agent === "codex") return <CodexMark className={size} />;
+  if (agent === "opencode") return <OpenCodeMark className={size} />;
+  if (agent === "cursor") return <CursorAgentMark className={size} />;
+  if (agent === "kilo") return <KiloMark className={size} />;
   if (agent === "atlas-agent") return <AtlasIcon size={12} className={className} />;
-  if (agent === "claude") return <ClaudeIcon className={size} />;
+  if (agent === "claude") return <ClaudeCodeMark className={size} />;
   const meta = agentMeta(agent);
   return meta.iconDataUrl ? (
-    <ExternalAgentIcon dataUrl={meta.iconDataUrl} size={12} />
+    <ExternalAgentMark dataUrl={meta.iconDataUrl} size={12} />
   ) : (
     <AgentMonogram label={meta.label} size={12} />
   );
@@ -257,9 +257,10 @@ export function WorkingRing({ className }: { className?: string }) {
       viewBox="0 0 16 16"
       // A continuous, deliberately slow rotation — the stock `animate-spin` at
       // 1s reads as "loading" rather than "working" — and no slow-spin token
-      // exists. Reduced motion stops it.
+      // exists. Reduced motion stops it. On Linux the spin is stepped (see the
+      // platform block in globals.css); 36 steps keeps this 3 s turn at 12 fps.
       className={cn(
-        "size-3.5 shrink-0 animate-spin [animation-duration:3s] motion-reduce:animate-none",
+        "size-3.5 shrink-0 animate-spin [animation-duration:3s] [--atlas-linux-spin-steps:36] motion-reduce:animate-none",
         className,
       )}
     >

@@ -29,7 +29,7 @@ import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import type { PluggableList } from "unified";
 import { Image as ImageIcon } from "lucide-react";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { Code, CodeFence } from "@tryatlas/design";
 import { useAppStore } from "@/features/app/stores/app-store";
 import { rehypeFileChips } from "@/lib/file-chip-hast";
 import { openFileChipUnder, useFileChipHost } from "@/lib/file-chip-host";
@@ -111,6 +111,7 @@ function ExternalLink({
   children?: React.ReactNode;
   className?: string;
 }) {
+  const { onOpenLink } = useContext(MentionContext);
   return (
     <a
       href={href}
@@ -121,7 +122,7 @@ function ExternalLink({
       // not load it in place. Same contract as `call-menu.tsx`.
       onClick={(e) => {
         e.preventDefault();
-        if (isOpenable(href)) void openUrl(href).catch(() => {});
+        if (isOpenable(href)) onOpenLink(href);
       }}
       className={cn("underline underline-offset-2 text-foreground", className)}
     >
@@ -161,15 +162,10 @@ const COMPONENTS: Components = {
   code(props) {
     const { node: _node, className, children, ...rest } = props;
     if (!className) {
-      return (
-        <code
-          className="rounded px-1 py-px font-mono text-xs bg-[var(--atlas-element-selected)] text-foreground"
-          {...rest}
-        >
-          {children}
-        </code>
-      );
+      return <Code {...rest}>{children}</Code>;
     }
+    // A fence's `<code>`, bare: `CodeFence` (the `pre` below) owns the box and
+    // cancels the highlighter's own `.hljs` padding and background.
     return (
       <code className={className} {...rest}>
         {children}
@@ -178,19 +174,10 @@ const COMPONENTS: Components = {
   },
 
   pre(props) {
-    const lang = fenceLanguage(props.node);
     return (
-      <pre
-        className={cn(
-          "my-1.5 overflow-x-auto rounded-md px-2.5 py-2 font-mono text-xs leading-[1.55] hide-scrollbar",
-          "bg-card border border-border-subtle",
-        )}
-      >
-        {lang && (
-          <span className="mb-1 block text-3xs uppercase tracking-wide opacity-45">{lang}</span>
-        )}
+      <CodeFence language={fenceLanguage(props.node)} className="my-1.5">
         {props.children}
-      </pre>
+      </CodeFence>
     );
   },
 
@@ -240,7 +227,7 @@ const COMPONENTS: Components = {
         checked={!!props.checked}
         disabled
         readOnly
-        className="mr-1.5 align-[-1px] accent-[var(--primary)] pointer-events-none"
+        className="mr-1.5 align-[-1px] accent-primary pointer-events-none"
       />
     ) : null,
 
@@ -287,7 +274,7 @@ const COMPONENTS: Components = {
       <table className="w-max min-w-full border-collapse text-xs">{props.children}</table>
     </div>
   ),
-  thead: (props) => <thead className="bg-[var(--atlas-element-hover)]">{props.children}</thead>,
+  thead: (props) => <thead className="bg-element-hover">{props.children}</thead>,
   th: (props) => (
     <th className="whitespace-nowrap border-b border-border-subtle px-2 py-1 text-left text-2xs font-semibold text-secondary-foreground">
       {props.children}

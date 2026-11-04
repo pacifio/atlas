@@ -20,6 +20,7 @@ import {
   ChartNoAxesColumn,
   Circle,
   Code,
+  Eraser,
   Columns2,
   FileSearch,
   Folder,
@@ -34,8 +35,10 @@ import {
   Map as MapIcon,
   Maximize2,
   MessageSquare,
+  MessageSquarePlus,
   Network,
   PanelRight,
+  RotateCcw,
   ScrollText,
   Search,
   Settings,
@@ -46,8 +49,6 @@ import {
   TextSearch,
 } from "lucide-react";
 import { AgentIcon } from "@/features/org-agent/lib/agent-icon";
-import { Icon } from "@/ui/icon";
-import { CommandDialog, CommandDialogPopup } from "@/ui/command";
 import type { TabType } from "@/lib/constants";
 import { useAppStore } from "@/features/app/stores/app-store";
 import { recentsForOrg } from "@/features/app/lib/recent-projects";
@@ -62,12 +63,15 @@ import { useActiveOrgProjects } from "@/features/projects/lib/org-scope";
 import { pickAndAddProject } from "@/features/projects/lib/pick-project";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
 import { openNewAgentChat } from "@/features/chat/lib/open-agent-session";
+import { openAskAgent } from "@/features/ask-agent/lib/ask-agent";
+import { focusedAskContext } from "@/features/ask-agent/lib/focused-context";
 import { activateProject, openProjectSettings } from "@/features/sidebar/lib/sidebar-actions";
 import { useActiveSessionId } from "@/features/sidebar/hooks/use-sidebar-sessions";
 import { findSession } from "@/features/sidebar/lib/find-session";
 import { ProjectBadge } from "@/features/sidebar/components/session-row-parts";
 import { openPullRequestListTab } from "@/features/pull-requests/lib/open-pull-request-list-tab";
 import { openSettingsSection } from "@/features/settings/lib/open-settings";
+import { confirmAppDataReset } from "@/features/app/lib/app-data-reset";
 import { runAction } from "@/features/keybindings/lib/action-registry";
 import {
   editorName,
@@ -109,6 +113,7 @@ import {
   useCommandEscape,
 } from "./command-palette-content";
 import { FileSearch as FileSearchView } from "./file-search";
+import { Icon, CommandDialog, CommandDialogPopup } from "@tryatlas/design";
 
 /** The overlay, mounted once at the app root. */
 export function CommandPalette() {
@@ -317,6 +322,15 @@ function OpenCommandPalette(props: {
     });
   }
   actionItems.push(
+    // Whatever was focused before the palette opened (a registered row, or
+    // selected text as a quote), else an empty box.
+    action(
+      "action:ask-agent",
+      "Ask agent about…",
+      MessageSquarePlus,
+      () => openAskAgent(focusedAskContext()),
+      { searchTerms: ["ask agent", "agent", "send to agent", "fix", "explain", "selection"] },
+    ),
     action(
       "action:go-to-file",
       "Go to file",
@@ -504,6 +518,22 @@ function OpenCommandPalette(props: {
         action("layout:show-git-graph", "Show git graph", GitBranch, () =>
           revealSourceControl("git-graph"),
         ),
+      ],
+    },
+    {
+      value: "app-data",
+      label: "Local data",
+      items: [
+        action(
+          "app-data:clear-cache",
+          "Clear cache and restart",
+          Eraser,
+          () => void confirmAppDataReset("cache"),
+          { searchTerms: ["clear cache", "webkit", "storage", "local data", "troubleshoot"] },
+        ),
+        action("app-data:reset", "Reset Atlas", RotateCcw, () => void confirmAppDataReset("all"), {
+          searchTerms: ["reset", "wipe", "first run", "start over", "local data"],
+        }),
       ],
     },
     {

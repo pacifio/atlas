@@ -141,7 +141,6 @@ export const NON_RUST = [
   "scripts/",
   ".husky/",
   ".vscode/",
-  ".design-sync/",
   ".github/ISSUE_TEMPLATE/",
   ".github/pr-assets/",
   ".github/assets/",

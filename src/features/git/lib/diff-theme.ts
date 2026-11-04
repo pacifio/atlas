@@ -4,7 +4,7 @@
 // Shiki writes a token's colour into the HTML it produces, and the diff viewer
 // tokenizes in workers and caches what they return. A theme of literal colours
 // would make every theme switch re-tokenize every open diff. A theme of
-// variables is tokenized once: the HTML carries `var(--atlas-syntax-keyword)`,
+// variables is tokenized once: the HTML carries `var(--syntax-keyword)`,
 // and the variable resolves through the viewer's shadow root to whatever
 // `applyTheme` last wrote on `:root`. A switch repaints and nothing else.
 //
@@ -51,21 +51,21 @@ type Role =
 /** Spelled out in full: a variable named by a template would hide from the
  *  suite that checks every `var(--…)` resolves. */
 const ROLE_VAR: Record<Role, string> = {
-  comment: "var(--atlas-syntax-comment)",
-  keyword: "var(--atlas-syntax-keyword)",
-  string: "var(--atlas-syntax-string)",
-  number: "var(--atlas-syntax-number)",
-  type: "var(--atlas-syntax-type)",
-  function: "var(--atlas-syntax-function)",
-  variable: "var(--atlas-syntax-variable)",
-  operator: "var(--atlas-syntax-operator)",
-  tag: "var(--atlas-syntax-tag)",
-  attribute: "var(--atlas-syntax-attribute)",
-  constant: "var(--atlas-syntax-constant)",
-  regexp: "var(--atlas-syntax-regexp)",
-  escape: "var(--atlas-syntax-escape)",
-  definition: "var(--atlas-syntax-definition)",
-  property: "var(--atlas-syntax-property)",
+  comment: "var(--syntax-comment)",
+  keyword: "var(--syntax-keyword)",
+  string: "var(--syntax-string)",
+  number: "var(--syntax-number)",
+  type: "var(--syntax-type)",
+  function: "var(--syntax-function)",
+  variable: "var(--syntax-variable)",
+  operator: "var(--syntax-operator)",
+  tag: "var(--syntax-tag)",
+  attribute: "var(--syntax-attribute)",
+  constant: "var(--syntax-constant)",
+  regexp: "var(--syntax-regexp)",
+  escape: "var(--syntax-escape)",
+  definition: "var(--syntax-definition)",
+  property: "var(--syntax-property)",
 };
 
 const role = (name: Role) => ROLE_VAR[name];
@@ -122,15 +122,15 @@ const SCOPES: ReadonlyArray<readonly [Role, readonly string[]]> = [
 /** The colours both halves of {@link DIFF_THEME_NAMES} share; only the name
  *  and the `type` differ between them. */
 export const DIFF_THEME: Omit<ThemeRegistration, "name" | "type"> = {
-  fg: "var(--atlas-editor-foreground)",
-  bg: "var(--atlas-editor-background)",
+  fg: "var(--editor-foreground)",
+  bg: "var(--editor-background)",
   colors: {
-    "editor.foreground": "var(--atlas-editor-foreground)",
-    "editor.background": "var(--atlas-editor-background)",
+    "editor.foreground": "var(--editor-foreground)",
+    "editor.background": "var(--editor-background)",
     // The viewer's addition / deletion / modification hues, which its bars,
     // file-type icons and line tints derive from.
-    "gitDecoration.addedResourceForeground": "var(--atlas-diff-added-text)",
-    "gitDecoration.deletedResourceForeground": "var(--atlas-diff-removed-text)",
+    "gitDecoration.addedResourceForeground": "var(--diff-added-text)",
+    "gitDecoration.deletedResourceForeground": "var(--diff-removed-text)",
     "gitDecoration.modifiedResourceForeground": "var(--atlas-diff-modified-text)",
   },
   tokenColors: [
@@ -139,8 +139,8 @@ export const DIFF_THEME: Omit<ThemeRegistration, "name" | "type"> = {
       settings: { foreground: role(name) },
     })),
     { scope: ["markup.italic", "emphasis"], settings: { fontStyle: "italic" } },
-    { scope: ["markup.inserted"], settings: { foreground: "var(--atlas-diff-added-text)" } },
-    { scope: ["markup.deleted"], settings: { foreground: "var(--atlas-diff-removed-text)" } },
+    { scope: ["markup.inserted"], settings: { foreground: "var(--diff-added-text)" } },
+    { scope: ["markup.deleted"], settings: { foreground: "var(--diff-removed-text)" } },
   ],
 };
 

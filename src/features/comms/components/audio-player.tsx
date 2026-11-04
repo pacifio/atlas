@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { Download, Pause, Play, Volume2, VolumeX } from "lucide-react";
+import { HintGroup, HintItem, Icon, IconButton } from "@tryatlas/design";
 import { cn } from "@/lib/utils";
-import { HintGroup, HintItem } from "@/ui/hint-group";
 import { ArcProgress } from "./arc-progress";
 
 /**
@@ -58,6 +58,10 @@ async function decodePeaks(src: string): Promise<number[] | null> {
     return null;
   }
 }
+
+/** Seconds an arrow key moves the playhead; Page Up/Down move further. */
+const SEEK_STEP_S = 5;
+const SEEK_PAGE_S = 30;
 
 function formatTime(s: number): string {
   if (!Number.isFinite(s)) return "0:00";
@@ -127,21 +131,54 @@ export const AudioPlayer = memo(function AudioPlayer({
     else el.pause();
   }, [src, onRequestSrc]);
 
-  const seek = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+  /** Move the playhead to `seconds`, clamped to the clip. False when there is
+   *  no clip loaded to seek in. */
+  const seekTo = useCallback((seconds: (duration: number, now: number) => number) => {
     const el = audioRef.current;
-    if (!el || !Number.isFinite(el.duration) || el.duration === 0) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
-    el.currentTime = frac * el.duration;
+    if (!el || !Number.isFinite(el.duration) || el.duration === 0) return false;
+    el.currentTime = Math.min(el.duration, Math.max(0, seconds(el.duration, el.currentTime)));
     setTime(el.currentTime);
+    return true;
   }, []);
+
+  const seek = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+      seekTo((d) => frac * d);
+    },
+    [seekTo],
+  );
+
+  // The slider's keys: arrows step 5 s, Page Up/Down 30 s, Home and End jump
+  // to either end.
+  const seekKey = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      const step: Record<string, (d: number, now: number) => number> = {
+        ArrowRight: (_, now) => now + SEEK_STEP_S,
+        ArrowUp: (_, now) => now + SEEK_STEP_S,
+        ArrowLeft: (_, now) => now - SEEK_STEP_S,
+        ArrowDown: (_, now) => now - SEEK_STEP_S,
+        PageUp: (_, now) => now + SEEK_PAGE_S,
+        PageDown: (_, now) => now - SEEK_PAGE_S,
+        Home: () => 0,
+        End: (d) => d,
+      };
+      const to = step[e.key];
+      if (to && seekTo(to)) e.preventDefault();
+    },
+    [seekTo],
+  );
 
   const frac = duration > 0 ? time / duration : 0;
   const bars = peaks ?? UNIFORM;
 
   return (
     <HintGroup>
-      <div className="flex w-full max-w-[420px] items-center gap-2 rounded-lg border border-border bg-card px-2.5 py-2">
+      <div
+        data-audio-player=""
+        className="flex w-full max-w-[420px] items-center gap-2 rounded-lg border border-border bg-card px-2.5 py-2"
+      >
         {src && (
           <audio
             ref={audioRef}
@@ -160,22 +197,31 @@ export const AudioPlayer = memo(function AudioPlayer({
         )}
 
         <HintItem label={playing ? "Pause" : "Play"}>
-          <button
-            type="button"
-            onClick={toggle}
+          <IconButton
+            icon={
+              buffering ? (
+                // While the caller buffers, the control holds its download
+                // arc and stays disabled: there is nothing to play yet.
+                <span className="flex text-success">
+                  <ArcProgress
+                    got={bufferProgress?.got ?? 0}
+                    total={bufferProgress?.total ?? 0}
+                    label="Loading audio"
+                  />
+                </span>
+              ) : playing ? (
+                Pause
+              ) : (
+                <Icon icon={Play} size="sm" className="ml-px" />
+              )
+            }
+            label={playing ? "Pause" : "Play"}
+            size="sm"
+            variant="secondary"
+            shape="round"
             disabled={buffering}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-element-active text-foreground transition-colors hover:bg-element-hover cursor-pointer"
-          >
-            {buffering ? (
-              <span className="text-[var(--atlas-status-success-foreground)]">
-                <ArcProgress got={bufferProgress?.got ?? 0} total={bufferProgress?.total ?? 0} />
-              </span>
-            ) : playing ? (
-              <Pause size={12} />
-            ) : (
-              <Play size={12} className="ml-px" />
-            )}
-          </button>
+            onClick={toggle}
+          />
         </HintItem>
 
         <div className="min-w-0 flex-1">
@@ -183,11 +229,17 @@ export const AudioPlayer = memo(function AudioPlayer({
             role="slider"
             aria-label={`Seek ${filename}`}
             aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={Math.round(frac * 100)}
+            aria-valuemax={Math.round(duration)}
+            aria-valuenow={Math.round(time)}
+            aria-valuetext={`${formatTime(time)} of ${formatTime(duration)}`}
+            aria-disabled={!src || undefined}
+            // Focusable once there is a clip to seek in; before that the
+            // only thing to do is press Play, which is its own Tab stop.
+            tabIndex={src ? 0 : undefined}
             onClick={seek}
+            onKeyDown={seekKey}
             className={cn(
-              "flex h-[26px] items-center gap-px",
+              "flex h-[26px] items-center gap-px rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring",
               src ? "cursor-pointer" : "opacity-60",
             )}
           >
@@ -198,7 +250,7 @@ export const AudioPlayer = memo(function AudioPlayer({
                   key={i}
                   className={cn(
                     "min-w-0 flex-1 rounded-full transition-colors duration-100",
-                    played ? "bg-[var(--atlas-status-success-foreground)]" : "bg-border-strong",
+                    played ? "bg-success" : "bg-border-strong",
                   )}
                   style={{ height: `${Math.round(4 + p * 18)}px` }}
                 />
@@ -215,23 +267,16 @@ export const AudioPlayer = memo(function AudioPlayer({
 
         <div className="flex shrink-0 items-center gap-0.5">
           <HintItem label={muted ? "Unmute" : "Mute"}>
-            <button
-              type="button"
+            <IconButton
+              icon={muted ? VolumeX : Volume2}
+              label={muted ? "Unmute" : "Mute"}
+              size="xs"
               onClick={() => setMuted((v) => !v)}
-              className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-element-hover hover:text-foreground cursor-pointer"
-            >
-              {muted ? <VolumeX size={12} /> : <Volume2 size={12} />}
-            </button>
+            />
           </HintItem>
           {onDownload && (
             <HintItem label="Download">
-              <button
-                type="button"
-                onClick={onDownload}
-                className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-element-hover hover:text-foreground cursor-pointer"
-              >
-                <Download size={12} />
-              </button>
+              <IconButton icon={Download} label="Download" size="xs" onClick={onDownload} />
             </HintItem>
           )}
         </div>

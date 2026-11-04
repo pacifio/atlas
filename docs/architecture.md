@@ -49,7 +49,8 @@ Organized by **feature**, not file type:
 
 ```
 src/features/<feature>/
-  components/   — React components
+  components/   — React components; containers at the top level
+    views/      — views: render from props alone (see "Containers and views")
   stores/       — Zustand store(s) for this feature
   lib/          — pure helpers, and the invoke()/listen() wrappers (<domain>-api.ts)
 ```
@@ -57,8 +58,34 @@ src/features/<feature>/
 `src/features/` holds ~30 slices: app, chat, editor, terminal, browser, git, github, explorer, knowledge, canvas, layout, log, monitor, settings, memory, mission-control, model-chat, organisations, packs, projects, skills, telemetry, updater, and more.
 
 - **Cross-feature widgets** live in `src/components/`.
-- **UI primitives** live in `src/ui/`.
+- **UI primitives** come from the design package, `@tryatlas/design` (ADR-0027).
 - **Shared helpers** live in `src/lib/`. `@/` aliases `src/`.
+
+### The design package and themes
+
+`@tryatlas/design` is installed from a git tag, pinned exactly in `package.json`
+(ADR-0027). It owns the primitives, the scales and named utilities, `keys.toml`
+(every theme key and how it derives), the TypeScript resolver, the built-in
+themes and the ratchet's rules. Change it there and bump the pin. A theme
+reaches the screen like this:
+
+1. Rust (`crates/atlas-theme`) loads the built-in themes and the user's
+   `~/.config/atlas/themes/*.toml` (`atlas-dev` under `bun run dev:app`; an
+   absolute `XDG_CONFIG_HOME` replaces `~/.config`), against the key list and rule tables
+   `bun run theme:keys` copied from the package. A file that is not
+   `schema = 1` is skipped with a warning and the default `atlas` theme still
+   loads; there is no legacy format.
+2. `src/features/theme/apply-theme.ts` resolves the theme with the package's
+   `resolveTheme` and writes every value under `html:root` in
+   `<style id="atlas-resolved-theme">`. A key's variable is its name with `.`
+   and `_` as `-`, unprefixed: `element.hover` is `--element-hover`.
+3. `src/styles/globals.css` imports `styles-core.css`, the package stylesheet
+   without its built-in theme blocks, so the utilities read those variables.
+4. Renderers that need a concrete value (xterm, pixi, recharts, mermaid,
+   canvas) read `src/features/theme/theme-values.ts` and subscribe to theme
+   changes (`theme-subscription-contract.test.ts`).
+
+Reference: `docs/reference/design-system.md` and `docs/reference/theme-keys.md`.
 
 ### State management
 
@@ -78,6 +105,28 @@ src/features/<feature>/
 
 This is a deliberate performance boundary, not an oversight to fix by moving more state into the store. Lifting chat messages, document text, or terminal bytes into Zustand degrades streaming, typing, and PTY throughput — every keystroke would touch Immer.
 
+### Containers and views
+
+A feature surface is split in two (ADR-0027's boundary rule):
+
+- **The container** (`components/<name>.tsx`) does the wiring. It reads stores, calls the feature's `*-api.ts` wrappers, listens for and dispatches `atlas:*` events, and renders a view with plain props.
+- **The view** (any file under `components/views/`, conventionally `<name>-view.tsx`) only renders. It may keep local UI state (`useState`, `useRef`, `useReducer`), run DOM-only effects, handle keys and call the callbacks it was given. It may not import a store or a `*-api` wrapper, touch `@tauri-apps/*`, call `invoke()` or `.getState()`, or use a hook that wraps a store.
+
+A view is what can move into `@tryatlas/design`, render from fixtures, and be redesigned without touching the data path. Rust still owns authoritative state: a view gets what it draws, never the chat log, document text or terminal bytes as a prop dump.
+
+```tsx
+// components/session-masthead.tsx: the container
+const prices = useModelPricingStore.use.prices();
+const cost = spent > 0 ? costOf(spend, priceForModel(prices, s.model)) : null;
+return <SessionMastheadView detail={detail} pr={pr} cost={cost} spent={spent} … />;
+
+// components/views/session-masthead-view.tsx: the view takes `cost`, never the store
+```
+
+**Agent identity.** `agentMeta(id)` (`agents/lib/agent-meta.ts`) reads the registry store, so a view does not call it. A view that shows an agent's name or mark calls `useAgentMeta(id)` from `agents/lib/agent-meta-context.ts`, or takes an `AgentMeta` or a label as a prop. The resolution is pure (`resolveAgentMeta(id, snapshot)` in `agent-identity.ts`); `AgentMetaProvider`, mounted in `main.tsx`, binds the context to the live registry. Pure libs that label agents (`artifacts/lib/board.ts`, `usage/lib/derive.ts`) take a required `resolveAgent` argument, which a container gets from `useAgentMetaResolver()` (code outside React, such as the session export, passes `agentMeta`).
+
+**The guard.** `tests/view-purity-contract.test.ts` checks every file under a `views/` directory for direct imports of stores, `agent-meta.ts`, `*-api` wrappers and `@tauri-apps`, and for store or `invoke()` calls; a view that crosses the line type-checks and renders exactly like a pure one, so nothing else sees it. Its `PURE_SHARED_MODULES` (agent identity, the agent marks, the board and usage derivations) are checked through their whole value-import graph, and a failure names the import chain.
+
 Other stores: `project/stores/project-store.ts` (current project, recents), `git/stores/git-store.ts` (branch, status, lane-assigned commit graph), `log/stores/log-store.ts` (ring-buffered event log, 500 in memory, + on-disk pinned rows), `knowledge/stores/knowledge-store.ts`, `canvas/stores/canvas-store.ts` (ReactFlow nodes/edges), `monitor/stores/usage-store.ts` (token usage per provider/model).
 
 ### Tabs and the split-column layout
@@ -88,7 +137,7 @@ Other stores: `project/stores/project-store.ts` (current project, recents), `git
 - **Up to 3 columns** (`groupOrder`, capped at 3). Each tab carries a `groupId` naming its column.
 - A maintained `activeTabId` mirrors the focused column's active tab, so most readers don't need to know splits exist.
 
-`src/lib/constants.ts` holds `TAB_TYPES` (the tab-type registry); `src/features/layout/components/center-panel.tsx` holds the lazy-import map keyed off it. New panel type = lazy import in `center-panel.tsx` + entry in `TAB_TYPES` + entry in `NEW_TAB_OPTIONS` if it should reach the `+` menu.
+`src/lib/constants.ts` holds `TAB_TYPES` (the tab-type registry); `src/features/layout/components/tab-panels.tsx` holds the lazy-import map and render switch keyed off it (`center-panel.tsx` lays out the split columns that host them). New panel type = placement in `TAB_PLACEMENT` (ADR-0024) + entry in `TAB_TYPES` + lazy import and render branch in `tab-panels.tsx` + entry in `SURFACES` (`src/features/layout/lib/surfaces.ts`) if ⌘T should offer it + entry in `PERSISTENT_TYPES_LIST` if it stays mounted across tab switches.
 
 **Persistent module types — editor, terminal, browser, knowledge-graph, pdf — stay mounted across tab switches** via `display: contents` / `display: none` instead of unmounting. Remounting would rebuild the file view and drop its unsaved edits, kill the PTY's rendered scrollback, or tear down the native embedded webview.
 
@@ -338,10 +387,9 @@ atlas/
 │   ├── App.tsx, main.tsx         entry points
 │   ├── features/                 one folder per feature (~30 slices)
 │   ├── components/                cross-feature widgets
-│   ├── ui/                        primitives (Kbd, etc.)
 │   ├── hooks/                     shared React hooks
 │   ├── lib/                       utilities (cn, createSelectors, constants)
-│   ├── styles/                    Tailwind 4 + design tokens
+│   ├── styles/                    desktop-only CSS over @tryatlas/design's styles-core.css
 │   └── types/                     shared TS types (agent.ts, acp.ts, etc.)
 │
 ├── src-tauri/                    Tauri host (Rust)

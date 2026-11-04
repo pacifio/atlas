@@ -22,6 +22,17 @@ export interface UpdateProgress {
   phase: string;
 }
 
+/**
+ * `atlas:update-available`. Every platform emits it when a newer version is
+ * found; only Linux listens, and only Linux sends `url` (the release page),
+ * because only Linux never downloads the update itself.
+ */
+export interface UpdateAvailable {
+  version: string;
+  currentVersion: string;
+  url?: string;
+}
+
 export interface UpdateReady {
   version: string;
 }
@@ -51,6 +62,9 @@ export const updater = {
 
 export const listenUpdateProgress = (handler: (e: UpdateProgress) => void): Promise<UnlistenFn> =>
   listen<UpdateProgress>("atlas:update-progress", (e) => handler(e.payload));
+
+export const listenUpdateAvailable = (handler: (e: UpdateAvailable) => void): Promise<UnlistenFn> =>
+  listen<UpdateAvailable>("atlas:update-available", (e) => handler(e.payload));
 
 export const listenUpdateReady = (handler: (e: UpdateReady) => void): Promise<UnlistenFn> =>
   listen<UpdateReady>("atlas:update-ready", (e) => handler(e.payload));

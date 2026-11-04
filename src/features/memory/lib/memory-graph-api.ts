@@ -3,7 +3,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { MemoryGraphData } from "../components/memory-graph-canvas";
+import type { GraphLayout, MemoryGraphData } from "./memory-graph-types";
 
 export interface EmbedStatus {
   downloaded: boolean;
@@ -38,6 +38,10 @@ export const memoryGraph = {
     }),
   query: (projectPath: string, query: string, topK = 12) =>
     invoke<QueryHit[]>("memory_index_query", { projectPath, query, topK }),
+  layoutLoad: (projectPath: string) =>
+    invoke<GraphLayout | null>("memory_graph_layout_load", { projectPath }),
+  layoutSave: (projectPath: string, layout: GraphLayout) =>
+    invoke<void>("memory_graph_layout_save", { projectPath, layout }),
 };
 
 export const listenMemoryEmbedProgress = (

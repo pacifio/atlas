@@ -1,14 +1,12 @@
 import { useState } from "react";
 import { GitBranch } from "lucide-react";
 import { toast } from "sonner";
-import { cn } from "@/lib/utils";
 import { switchBranchIfClean } from "@/features/git/lib/git-remote-api";
 import { isGitError } from "@/features/git/lib/git-errors";
 import { useGitStore } from "@/features/git/stores/git-store";
 import { busySessions } from "@/features/projects/lib/stop-agents-confirm";
 import { useBranchChangeStore } from "../stores/branch-change-store";
-import { COMPOSER_STRIP, COMPOSER_STRIP_ACTION } from "./composer-strip";
-import { ComposerStripClose } from "./composer-strip-close";
+import { ChatNoticeView } from "./views/chat-notice-view";
 
 /**
  * The agent's last turn left the checkout on another branch than the one it
@@ -55,30 +53,16 @@ export function BranchChangedBar({ tabId }: { tabId: string }) {
   };
 
   return (
-    <div
+    <ChatNoticeView
+      placement="tucked"
+      icon={GitBranch}
       data-testid="branch-changed-bar"
-      role="status"
-      className={COMPOSER_STRIP}
+      live
       title={`The last turn switched this checkout to ${change.now}`}
+      action={{ label: "Restore branch", onClick: () => void restore(), disabled: restoring }}
+      onDismiss={() => clear(tabId)}
     >
-      <span className="flex min-w-0 items-center gap-1.5">
-        <GitBranch size={11} className="shrink-0 text-muted-foreground" />
-        <span className="min-w-0 truncate">
-          <span className="text-muted-foreground">Branch changed — was </span>
-          <span className="font-mono text-foreground">{change.was}</span>
-        </span>
-      </span>
-      <span className="flex shrink-0 items-center gap-0.5">
-        <button
-          type="button"
-          onClick={() => void restore()}
-          disabled={restoring}
-          className={cn(COMPOSER_STRIP_ACTION, "cursor-pointer")}
-        >
-          Restore branch
-        </button>
-        <ComposerStripClose onClick={() => clear(tabId)} />
-      </span>
-    </div>
+      Branch changed — was <span className="font-mono text-foreground">{change.was}</span>
+    </ChatNoticeView>
   );
 }

@@ -159,16 +159,27 @@ async fn start_engine_inner(
     // failure at the first tool call.
     let runtime_paths = ExecServerRuntimePaths::from_optional_paths(
         settings.self_exe.clone(),
-        // `None` in every shipping build: the macOS seatbelt path needs no
-        // helper. This is the one the Linux seccomp path refuses without, and
-        // the integration tests are the only thing that supplies it today —
-        // see `EngineSettings::linux_sandbox_exe`.
+        // `None` on macOS, whose seatbelt path needs no helper. The Linux
+        // seccomp path refuses without it; the app supplies it there, and the
+        // integration tests supply their own — see
+        // `EngineSettings::linux_sandbox_exe`.
         settings.linux_sandbox_exe.clone(),
     )
     .context(
         "the engine needs the path to Atlas's own executable for sandboxed execution \
          (D5); std::env::current_exe() did not resolve",
     )?;
+
+    // A helper that bubblewrap cannot run fails at the first sandboxed
+    // command, with bwrap's own terse message as the command's output. Say
+    // why, once, at startup, where someone reading the log will look.
+    #[cfg(target_os = "linux")]
+    if settings.linux_sandbox_exe.is_some() {
+        let probe = tokio::task::spawn_blocking(crate::linux_sandbox::bubblewrap_problem);
+        if let Ok(Some(problem)) = probe.await {
+            tracing::warn!("native agent: {problem}");
+        }
+    }
 
     let environment_manager = Box::pin(EnvironmentManager::from_atlas_agent_home(
         settings.home.path(),

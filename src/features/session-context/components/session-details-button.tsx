@@ -23,8 +23,6 @@ import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useExternalEditorStore } from "@/features/external-editor/stores/external-editor-store";
 import { resolvePreferredEditor } from "@/features/external-editor/lib/preferred-editor";
 import { cn } from "@/lib/utils";
-import { HintItem } from "@/ui/hint-group";
-import { IconButton } from "@/ui/icon-button";
 
 import {
   OPEN_SESSION_IN_EDITOR_EVENT,
@@ -35,6 +33,7 @@ import { useDetailsProjectPath } from "../lib/details-project-path";
 import { useSessionWorkPath } from "../lib/session-work-path";
 import { selectDockedOpen, useSessionDetailsStore } from "../stores/session-details-store";
 import { openWithPreference } from "./workspace-section";
+import { HintItem, IconButton } from "@tryatlas/design";
 
 const loadCard = () => import("./session-details-card");
 const SessionDetailsCard = lazy(() => loadCard().then((m) => ({ default: m.SessionDetailsCard })));

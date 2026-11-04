@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { createSelectors } from "@/lib/create-selectors";
-import type { ThemeAppearance } from "../lib/theme-api";
+import type { ThemeAppearance } from "@tryatlas/design/theme";
 
 /**
  * Whether the theme editor is open, and on what. The panel is mounted once at the app root and floats

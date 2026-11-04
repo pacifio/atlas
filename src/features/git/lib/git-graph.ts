@@ -56,7 +56,7 @@ export function commitCountLabel(loaded: number, total: number): string {
   return loaded < total ? `${fmt(loaded)} of ${fmt(total)} ${noun}` : `${fmt(total)} ${noun}`;
 }
 
-// Render-only constants — used by the panel + commit-node components.
+// Render-only constants — used by the graph view and its commit rows.
 export const LANE_WIDTH = 14;
 export const ROW_HEIGHT = 28;
 export const GRAPH_LEFT_PAD = 14;

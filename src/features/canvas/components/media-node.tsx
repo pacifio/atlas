@@ -1,7 +1,7 @@
 import { memo, useEffect, useState } from "react";
 import { type NodeProps } from "@xyflow/react";
-import { invoke } from "@tauri-apps/api/core";
-import { cn } from "@/lib/utils";
+import { CanvasMedia, CanvasNodeFrame } from "@tryatlas/design";
+import { canvasMediaDataUrl } from "../lib/canvas-api";
 import { NodeHandles } from "./node-handles";
 
 export interface MediaNodeData extends Record<string, unknown> {
@@ -26,18 +26,17 @@ export const MediaNode = memo(function MediaNode({ data, selected }: NodeProps) 
   const d = data as MediaNodeData;
   const cacheKey = `${d.projectPath}|${d.src}`;
   const [url, setUrl] = useState<string | null>(() => mediaUrlCache.get(cacheKey) ?? null);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
+    setFailed(false);
     const cached = mediaUrlCache.get(cacheKey);
     if (cached) {
       setUrl(cached);
       return;
     }
     let alive = true;
-    void invoke<string>("canvas_media_data_url", {
-      projectPath: d.projectPath,
-      src: d.src,
-    })
+    void canvasMediaDataUrl(d.projectPath, d.src)
       .then((u) => {
         mediaUrlCache.delete(cacheKey);
         mediaUrlCache.set(cacheKey, u);
@@ -47,38 +46,34 @@ export const MediaNode = memo(function MediaNode({ data, selected }: NodeProps) 
         }
         if (alive) setUrl(u);
       })
-      .catch(() => alive && setUrl(null));
+      .catch(() => {
+        if (!alive) return;
+        setUrl(null);
+        setFailed(true);
+      });
     return () => {
       alive = false;
     };
   }, [cacheKey, d.projectPath, d.src]);
 
   return (
-    // Root stays overflow-visible so the connection handles aren't clipped; the
-    // image is clipped by an inner rounded wrapper instead.
+    // Root stays overflow-visible so the connection handles aren't clipped;
+    // the media clips itself. The width is the node's and the image's own
+    // aspect sets the height, so only the placeholder needs one.
     <div className="group relative" style={{ width: d.width ?? 320 }}>
       <NodeHandles selected={selected} />
-      <div
-        className={cn(
-          "rounded-xl overflow-hidden border shadow-2xl bg-[var(--card)]/40",
-          selected ? "border-[var(--primary)]/60" : "border-border hover:border-border-strong",
-        )}
-      >
-        {url ? (
-          <img
-            src={url}
-            alt=""
-            draggable={false}
-            // WebKit initiates a native image drag that steals the pointer from
-            // React Flow, so the node won't move — kill it with -webkit-user-drag.
-            className="block w-full h-auto select-none [-webkit-user-drag:none]"
-          />
-        ) : (
-          <div className="flex items-center justify-center h-[160px] text-xs text-muted-foreground">
-            Loading image…
-          </div>
-        )}
-      </div>
+      <CanvasNodeFrame kind="media" selected={selected}>
+        <CanvasMedia
+          state={failed ? "error" : url === null ? "loading" : "ready"}
+          src={url ?? undefined}
+          kind="image"
+          alt=""
+          loadingLabel="Loading image…"
+          // At its own height the image must be a block, or the line box
+          // leaves a descender gap under it.
+          className={url ? "h-auto [&>img]:block" : "h-[160px]"}
+        />
+      </CanvasNodeFrame>
     </div>
   );
 });

@@ -10,7 +10,7 @@ import {
 } from "../stores/terminal-store";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useIsTabVisible } from "@/features/layout/lib/use-tab-visible";
-import { BlockTerminal } from "./block-terminal";
+import { TerminalView } from "./terminal-view";
 import { terminalSessions } from "../lib/terminal-session";
 import { useIsFocusedTerminal } from "../lib/focus";
 import { pickPaneInDirection, type Direction, type RectLike } from "../lib/pane-navigation";
@@ -49,7 +49,7 @@ interface TerminalPanelProps {
  * the chrome in a flat, absolutely-positioned layer — so that restructuring
  * the tree could never remount a terminal and kill its shell. That invariant
  * is now the session registry's (`terminal-session.ts`): a remount re-parents
- * the session's surface and re-renders cached blocks, and costs nothing else.
+ * the session's xterm surface, and costs nothing else.
  * So the geometry can be what the DOM says it is, and the ResizeObservers,
  * double-rAF retries and stale-rect guards are gone with it.
  */
@@ -201,7 +201,7 @@ export function TerminalPanel({ tabId, projectId, visible, variant = "tab" }: Te
     <div
       ref={rootRef}
       data-when-scope="terminalFocus"
-      className="relative h-full min-h-0 overflow-hidden bg-[var(--atlas-terminal-background)]"
+      className="relative h-full min-h-0 overflow-hidden bg-[var(--terminal-background)]"
     >
       {zoomed ? (
         <PaneView pane={zoomed} tabId={tabId} panelVisible={panelVisible} drawer={drawer} zoomed />
@@ -306,7 +306,7 @@ function PaneView({
     <div
       className={cn(
         "flex h-full flex-col",
-        isActivePane && groupFocused && "ring-1 ring-[var(--atlas-element-hover)] ring-inset",
+        isActivePane && groupFocused && "ring-1 ring-element-hover ring-inset",
       )}
     >
       {drawer && pane.terminals.length < 2 ? null : (
@@ -359,7 +359,7 @@ function TerminalSlot({
         pointerEvents: isActiveInPane ? "auto" : "none",
       }}
     >
-      <BlockTerminal
+      <TerminalView
         isActive={focused}
         visible={panelVisible && isActiveInPane}
         terminalKey={ptyId}

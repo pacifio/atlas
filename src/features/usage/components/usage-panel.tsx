@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Card } from "@/components/usage-primitives";
-import { GradualBlur } from "@/components/gradual-blur";
+import { Button, Callout, GradualBlur } from "@tryatlas/design";
 import { useProjectStore } from "@/features/projects/stores/project-store";
 import { useUsageStore } from "../stores/usage-store";
 import { useUsageView } from "../lib/use-usage-view";
@@ -76,7 +76,7 @@ export function UsagePanel() {
   const attribution = attributionLine(data?.ledgerSince ?? null, range);
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[var(--background)]">
+    <div className="flex h-full min-h-0 flex-col bg-background">
       <UsageHeader
         range={range}
         onRange={setRange}
@@ -93,18 +93,33 @@ export function UsagePanel() {
           onScroll={onScroll}
         >
           {!data && loading && (
-            <div className="p-6 text-sm text-[var(--muted-foreground)]">Reading usage…</div>
+            <div className="p-6 text-sm text-muted-foreground">Reading usage…</div>
           )}
           {error && (
-            <div className="p-6 text-sm text-[var(--atlas-status-error-foreground)]">
-              Failed to load: {error}
+            <div className="p-4">
+              <Callout
+                tone="error"
+                role="alert"
+                action={
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={loading}
+                    onClick={() => void refresh({ force: true })}
+                  >
+                    Try again
+                  </Button>
+                }
+              >
+                Failed to load: {error}
+              </Callout>
             </div>
           )}
           {data && view.all.length === 0 && !loading && (
             <div className="p-4">
               <Card index={0} section="empty">
-                <div className="text-xs font-medium text-[var(--foreground)]">Nothing yet</div>
-                <div className="mt-0.5 text-2xs leading-snug text-[var(--muted-foreground)]">
+                <div className="text-xs font-medium text-foreground">Nothing yet</div>
+                <div className="mt-0.5 text-2xs leading-snug text-muted-foreground">
                   Usage appears after the first agent turn in one of this organization's projects.
                 </div>
               </Card>
@@ -112,7 +127,7 @@ export function UsagePanel() {
           )}
           {data && view.all.length > 0 && (
             <div className="flex flex-col gap-3 p-4">
-              <div ref={captureRef} className="flex flex-col gap-3 bg-[var(--background)]">
+              <div ref={captureRef} className="flex flex-col gap-3 bg-background">
                 <StatStrip
                   totals={view.totals}
                   prevTotals={view.prevTotals}
@@ -155,9 +170,9 @@ export function UsagePanel() {
                 sessions={view.sessions}
                 sessionsTotal={data.sessionsTotal}
                 ranked={{
-                  projects: rankBy(view.rows, "project", "tokens", data),
-                  agents: rankBy(view.rows, "agent", "tokens", data),
-                  models: rankBy(view.rows, "model", "tokens", data),
+                  projects: rankBy(view.rows, "project", "tokens", data, view.resolveAgent),
+                  agents: rankBy(view.rows, "agent", "tokens", data, view.resolveAgent),
+                  models: rankBy(view.rows, "model", "tokens", data, view.resolveAgent),
                 }}
                 data={data}
                 search={search}

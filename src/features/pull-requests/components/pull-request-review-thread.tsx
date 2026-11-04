@@ -18,8 +18,6 @@ import {
 
 import { timeAgo } from "@/lib/time-ago";
 import { cn } from "@/lib/utils";
-import { Button } from "@/ui/button";
-import { IconButton } from "@/ui/icon-button";
 
 import { classifyPrError } from "../lib/pr-errors";
 import { findingKey } from "../lib/pull-request-logic";
@@ -28,11 +26,13 @@ import { usePrReplyMutation, usePrResolveMutation } from "../lib/pull-requests-q
 import type { PrReviewThread, PrThreadComment } from "../lib/pull-requests-types";
 import { readableFailure } from "../lib/use-pull-request-actions";
 import type { PendingReviewComment } from "../stores/pull-request-review-store";
+import { AddressWithAgentButton } from "./pull-request-ask-buttons";
 import { PullRequestCommentActions } from "./pull-request-comment-actions";
 import { usePullRequestScope } from "./pull-request-context";
 import { PullRequestMarkdown, TEXTAREA_CLASS } from "./pull-request-markdown";
 import { ActorLabel } from "./pull-request-presentation";
 import { ReactionBar } from "./pull-request-reactions";
+import { Button, IconButton } from "@tryatlas/design";
 
 const CARD_CLASS =
   "mx-3 my-2 rounded-lg border border-border bg-background p-3 font-sans text-sm text-foreground shadow-sm";
@@ -146,17 +146,17 @@ export function ReviewThreadCard({
     }
   };
 
-  const StatusIcon = thread.isResolved ? CircleCheck : Circle;
+  const StateGlyph = thread.isResolved ? CircleCheck : Circle;
   return (
     <div className={CARD_CLASS} contentEditable={false} onPointerDown={stop}>
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <StatusIcon
+        <StateGlyph
           aria-hidden
           className={cn("size-3.5 shrink-0", thread.isResolved && "text-success")}
         />
         <button
           type="button"
-          className="cursor-pointer hover:text-foreground"
+          className="cursor-pointer whitespace-nowrap hover:text-foreground"
           aria-expanded={expanded}
           onClick={() => setExpanded((open) => !open)}
         >
@@ -164,12 +164,15 @@ export function ReviewThreadCard({
           {commentCount === 1 ? "comment" : "comments"}
         </button>
         {thread.isOutdated ? <span>Outdated</span> : null}
-        {/* An open thread can go to an agent, on the pull request's branch. */}
+        {/* An open thread can go to the session of the user's pick, or to a
+            new one on the pull request's branch. */}
+        {agent?.fixFinding && !thread.isResolved ? (
+          <AddressWithAgentButton className="ml-auto" feedback={{ kind: "thread", thread }} />
+        ) : null}
         {agent?.fixFinding && !thread.isResolved ? (
           <Button
             size="xs"
             variant="ghost"
-            className="ml-auto"
             disabled={agent.pending !== null}
             onClick={() => agent.fixFinding?.({ kind: "thread", thread })}
           >

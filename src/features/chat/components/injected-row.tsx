@@ -28,7 +28,7 @@ export const InjectedRowView = memo(function InjectedRowView({ row }: { row: Inj
   return (
     <div data-testid="injected-row" className={cn(CONTENT_COLUMN, "pt-2 pb-3")}>
       <div className="flex min-h-[26px] items-center gap-2 text-base text-[var(--muted-foreground)]">
-        <span className="flex w-4 shrink-0 justify-center text-[var(--atlas-status-info-foreground)]">
+        <span className="flex w-4 shrink-0 justify-center text-info">
           <Icon size={ICON_PX} strokeWidth={ICON_STROKE} />
         </span>
         <span className="min-w-0 truncate" title={headline}>

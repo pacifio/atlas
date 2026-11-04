@@ -3,47 +3,7 @@ import { immer } from "zustand/middleware/immer";
 import { createSelectors } from "@/lib/create-selectors";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/features/app/stores/app-store";
-
-/** Active annotation tool. `none` = read/select (PDF stays interactive). */
-export type PdfTool = "none" | "highlight" | "pencil" | "note" | "erase";
-
-/** All geometry is normalized to 0..1 of the page, so annotations stay
- *  anchored across zoom/scroll regardless of the rendered pixel size. */
-export interface Point {
-  x: number;
-  y: number;
-}
-
-interface Base {
-  id: string;
-  page: number;
-  color: string;
-  createdAt: string;
-}
-export interface HighlightAnnotation extends Base {
-  kind: "highlight";
-  rect: { x: number; y: number; w: number; h: number };
-}
-export interface PencilAnnotation extends Base {
-  kind: "pencil";
-  points: Point[];
-}
-export interface NoteAnnotation extends Base {
-  kind: "note";
-  x: number;
-  y: number;
-  text: string;
-}
-export type PdfAnnotation = HighlightAnnotation | PencilAnnotation | NoteAnnotation;
-
-/** Default swatch — colors that read on white pages. */
-export const PDF_COLORS = [
-  "#F5C542", // amber (highlight default)
-  "#6796E6", // blue
-  "#5CC28A", // green
-  "#F44747", // red
-  "#C4A5E7", // purple
-];
+import { PDF_COLORS, type PdfAnnotation, type PdfTool } from "../lib/pdf-annotations";
 
 interface PdfAnnotationState {
   tool: PdfTool;
@@ -164,7 +124,3 @@ export const usePdfAnnotationStore = createSelectors(
     })),
   ),
 );
-
-export function newAnnotationId(): string {
-  return `ann-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
-}

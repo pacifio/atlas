@@ -3,11 +3,11 @@
 // "Replay all tips", the same reset Settings → General → Tips runs.
 
 import { Lightbulb, RotateCcw } from "lucide-react";
-import { Icon } from "@/ui/icon";
 import { REPLAYABLE_TIPS } from "@/features/tips/lib/tip-registry";
 import { useTipsStore } from "@/features/tips/stores/tips-store";
 import { replayAllTips } from "@/features/tips/lib/replay-tips";
 import type { CommandPaletteActionItem, CommandPaletteSubmenuItem } from "./command-palette-logic";
+import { Icon } from "@tryatlas/design";
 
 export function paletteTipItems(): {
   showTipItem: CommandPaletteSubmenuItem;

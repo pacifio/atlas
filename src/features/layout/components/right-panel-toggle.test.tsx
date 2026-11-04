@@ -7,9 +7,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 
-import { HintGroup } from "@/ui/hint-group";
 import { useLayoutStore } from "../stores/layout-store";
 import { RightPanelToggle } from "./right-panel-toggle";
+import { HintGroup } from "@tryatlas/design";
 
 const layout = () => useLayoutStore.getState();
 const toggle = () => screen.getByRole("button", { name: /panel$/ });

@@ -1,7 +1,11 @@
 import { memo, useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Loader2, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { FixWithAgentButton } from "@/features/ask-agent/components/ask-agent-button";
 import { useGitStore } from "../../stores/git-store";
+import { useShipStore } from "../../stores/ship-store";
+import { gitErrorContext } from "../../lib/git-errors";
+import { opOutputText } from "../../lib/ask-git";
 
 /**
  * Live output strip for a streaming git operation (`atlas:git:op`): appears
@@ -9,10 +13,17 @@ import { useGitStore } from "../../stores/git-store";
  * line, auto-scrolls while running, and stays up on failure so the hook's
  * actual complaint is readable. GitHub Desktop shows hook output in its
  * commit popover for the same reason — a silent slow pre-commit hook reads
- * as a hung app.
+ * as a hung app. A failure offers "Fix with agent" with everything it printed,
+ * unless "Commit, push & PR" stopped on it: its progress block offers the same.
  */
 export function GitOpOutput() {
   const activeOp = useGitStore.use.activeOp();
+  const repoPath = useGitStore.use.repoPath();
+  // The command "Commit, push & PR" stopped on, while it is stopped.
+  const shipFailedOn = useShipStore((s) => {
+    const run = repoPath ? s.runs[repoPath] : undefined;
+    return run?.phase === "failed" ? (run.error?.command ?? null) : null;
+  });
   const [collapsed, setCollapsed] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -38,38 +49,43 @@ export function GitOpOutput() {
   if (!activeOp || activeOp.lines.length === 0) return null;
 
   const failed = !activeOp.running && activeOp.error !== null;
+  const fix =
+    failed && activeOp.error && activeOp.error.command !== shipFailedOn
+      ? gitErrorContext(activeOp.error, repoPath, opOutputText(activeOp.lines))
+      : null;
 
   return (
-    <div className="shrink-0 border-t border-border">
-      <button
-        onClick={() => setCollapsed((c) => !c)}
-        className="flex w-full items-center gap-1.5 px-2 h-[22px] text-2xs text-muted-foreground hover:text-secondary-foreground"
-      >
-        {collapsed ? <ChevronRight size={10} /> : <ChevronDown size={10} />}
-        {activeOp.running ? (
-          <>
-            <Loader2 size={10} className="animate-spin" />
-            <span>
-              Running {activeOp.kind}
-              {activeOp.kind === "commit" ? " (hooks may be running)" : ""}…
-            </span>
-          </>
-        ) : failed ? (
-          <>
-            <XCircle size={10} className="text-[var(--atlas-status-error-foreground)]" />
-            <span className="text-[var(--atlas-status-error-foreground)]">
-              {activeOp.kind} failed — output below
-            </span>
-          </>
-        ) : (
-          <span>{activeOp.kind} output</span>
-        )}
-        <span className="ml-auto font-mono">{activeOp.lines.length} lines</span>
-      </button>
+    <div className="shrink-0 border-t border-border-subtle">
+      <div className="flex items-center pr-1">
+        <button
+          onClick={() => setCollapsed((c) => !c)}
+          className="flex min-w-0 flex-1 items-center gap-1.5 px-2 h-control-sm text-2xs font-medium text-muted-foreground transition-colors duration-fast hover:bg-element-hover hover:text-secondary-foreground"
+        >
+          {collapsed ? <ChevronRight size={10} /> : <ChevronDown size={10} />}
+          {activeOp.running ? (
+            <>
+              <Loader2 size={10} className="animate-spin" />
+              <span>
+                Running {activeOp.kind}
+                {activeOp.kind === "commit" ? " (hooks may be running)" : ""}…
+              </span>
+            </>
+          ) : failed ? (
+            <>
+              <XCircle size={10} className="text-error" />
+              <span className="text-error">{activeOp.kind} failed — output below</span>
+            </>
+          ) : (
+            <span>{activeOp.kind} output</span>
+          )}
+          <span className="ml-auto font-mono tabular-nums">{activeOp.lines.length} lines</span>
+        </button>
+        {fix && <FixWithAgentButton error={fix} size="xs" />}
+      </div>
       {!collapsed && (
         <div
           ref={scrollRef}
-          className="max-h-[120px] overflow-y-auto hide-scrollbar bg-[var(--background)] px-2 py-1 select-text cursor-text"
+          className="max-h-[120px] overflow-y-auto hide-scrollbar bg-background px-2 py-1.5 select-text cursor-text"
         >
           {/* Keyed by `seq`: when the cap trims the front, existing rows
               keep their keys and only the new ones mount. */}
@@ -87,8 +103,8 @@ const OpLineRow = memo(function OpLineRow({ text, error }: { text: string; error
   return (
     <div
       className={cn(
-        "font-mono text-2xs leading-[15px] whitespace-pre-wrap break-all",
-        error ? "text-[var(--atlas-status-error-foreground)]" : "text-secondary-foreground",
+        "font-mono text-2xs whitespace-pre-wrap break-all",
+        error ? "text-error" : "text-secondary-foreground",
       )}
     >
       {text}

@@ -4,13 +4,11 @@
 
 import { useState } from "react";
 import { RefreshCw } from "lucide-react";
-import { Select, type SelectOption } from "@/ui/select";
-import { IconButton } from "@/ui/icon-button";
-import { Hint } from "@/ui/tooltip";
 import { useScopedSetting } from "@/features/settings/lib/use-scoped-setting";
 import { useExternalEditorStore } from "../stores/external-editor-store";
 import type { ExternalEditor } from "../lib/external-editor-api";
 import { editorName, usePreferredEditor } from "../lib/preferred-editor";
+import { Select, type SelectOption, IconButton, Hint } from "@tryatlas/design";
 
 /** The select's options: Automatic (naming what it resolves to), every
  *  detected editor, and a saved id that is no longer installed, marked, so

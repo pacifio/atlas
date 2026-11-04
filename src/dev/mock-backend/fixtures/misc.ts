@@ -762,6 +762,9 @@ export const miscHandlers: MockHandlers = {
   // nothing and no `atlas:quit-requested` is ever emitted to answer.
   quit_guard_ready: nothing,
   quit_guard_answer: nothing,
+  // "Clear cache" / "Reset Atlas" schedule a wipe for the next launch and
+  // restart. A browser has neither the data nor a restart, so it does nothing.
+  app_data_reset: nothing,
   "plugin:window|set_badge_count": nothing,
 
   // ── updater ─────────────────────────────────────────────────────────────

@@ -40,6 +40,8 @@ Most Atlas features cross three layers — React UI, a Tauri command, and a work
 
 Match the patterns already in the codebase: feature folder under `src/features/<feature>/`, Zustand store wrapped in `createSelectors`, Tailwind composed through `cn()`, IPC verbs grouped into a single `commands/<domain>.rs`. If your change doesn't fit any of them, propose the structure in the issue.
 
+Split a new surface into a container and views. The container (`components/<name>.tsx`) reads stores, calls the `*-api.ts` wrappers and handles `atlas:*` events; the views (`components/views/<name>-view.tsx`) render from props and callbacks alone. A view that needs an agent's name or mark calls `useAgentMeta(id)` or takes it as a prop, never `agentMeta()`, which reads a store. `tests/view-purity-contract.test.ts` enforces this, because nothing else can see a view that quietly imports a store. [Containers and views](docs/architecture.md#containers-and-views) has the full rule.
+
 New heavy dependencies need discussion first. The current list is deliberate.
 
 ## Design changes
@@ -48,9 +50,11 @@ Share the proposal in the issue before implementing anything that changes UI or 
 
 Atlas has a lot of surfaces — a change that looks right in one panel often reads wrong across the other twelve. A design pass up front is faster than a rewrite after review.
 
+Build UI from the `@tryatlas/design` primitives, scales and theme tokens ([design-system.md](docs/reference/design-system.md)). A change to a primitive, a shared scale or a theme key belongs in the [`tryatlas/design`](https://github.com/tryatlas/design) package, then a bump of desktop's pinned tag (ADR-0027); the few desktop-only scales (the titlebar height, the composer radius) stay in `src/styles/globals.css`. The design-system ratchet test fails on hand-written sizes and colours.
+
 ## Quickstart
 
-**macOS is the only currently-supported platform.** Linux and Windows build from the same Tauri codebase but are untested — a Windows build is planned, and reports from either OS are genuinely welcome in the meantime.
+**macOS and Linux are the supported platforms.** Linux support is what [docs/reference/linux-support.md](docs/reference/linux-support.md) says it is: glibc 2.35 or newer and WebKitGTK 4.1, shipped as deb, rpm, Arch, AppImage and tarball. Windows builds from the same Tauri codebase but is untested — a Windows build is planned, and reports are genuinely welcome in the meantime.
 
 You need:
 
@@ -169,6 +173,12 @@ PR straight into `main` only when the change has no version-branch dependency an
 **An issue is closed when its fix merges into the version branch**, not when it reaches `main`. GitHub only auto-closes `Fixes #N` on merges into the default branch, and releases go out when they're ready rather than on a schedule, so waiting for `main` would leave fixed issues looking open for weeks — and invite a second PR for the same fix. The maintainer who merges closes the issue by hand, with a comment naming the PR and the branch. If an open issue looks unclaimed, check the version branch's open and merged PRs before starting on it.
 
 Releases are tagged `alpha-X.Y.Z`, with occasional `exp-X.Y.Z-X.Y.Z` snapshots.
+
+### Releasing for Linux
+
+Pushing an `alpha-*` tag runs `.github/workflows/release-linux.yml`: it builds x86-64 and aarch64 on Ubuntu 22.04 (the glibc floor), packages a tarball, AppImage, deb, rpm and, on x86-64, an Arch package, then **verifies** them with `scripts/verify-linux-release.sh` (the binary loads within the floor, every package installs on clean Debian, Ubuntu, Fedora and Arch containers and starts, the GUI comes up under Xvfb) before one publish job attests, signs and releases both architectures. A pull request that touches a release input runs the same build and verification without publishing, so a red Linux release is seen before the tag.
+
+After publishing, set `uri_linux_x86_64` and `uri_linux_aarch64` in PostHog remote config to the release page; that is what tells Linux installs a new version exists. Then run the by-hand matrix in `docs/qa/linux-smoke-matrix.md`. Supported distros, what each package needs and how signing works are in `docs/reference/linux-support.md`.
 
 ### Versioning
 

@@ -1,28 +1,49 @@
-import { useEffect, useState } from "react";
-import { RefreshCw, ArrowDown, ArrowUp, UploadCloud, Loader2, GitMerge } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { HintGroup, HintItem } from "@/ui/hint-group";
+import { lazy, Suspense, useEffect, useState } from "react";
+import {
+  RefreshCw,
+  ArrowDown,
+  ArrowUp,
+  UploadCloud,
+  Loader2,
+  GitMerge,
+  Archive,
+  MoreHorizontal,
+} from "lucide-react";
 import { useGitStore } from "../../stores/git-store";
 import { handleGitError } from "../../lib/git-errors";
 import { fetchHint } from "../../lib/auto-fetch";
 import { gitErrorText, notifyGitRemoteOp } from "@/features/notifications/lib/outcome-notifier";
+import { PanelSkeleton } from "@/components/panel-skeleton";
 import { BranchSwitcher } from "./branch-switcher";
 import { MergeBranchDialog } from "./merge-branch-dialog";
 import { GitErrorDialog } from "./git-error-dialog";
 import { PullChoiceDialog } from "./pull-choice-dialog";
 import { ChangesView } from "./changes-view";
-import { HistoryView } from "./history-view";
-import { StashesView } from "./stashes-view";
+import {
+  Button,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  HintGroup,
+  HintItem,
+  IconButton,
+} from "@tryatlas/design";
 
-type View = "changes" | "history" | "stashes";
+// xyflow-free but virtualised and IPC-heavy: loaded only when History opens.
+const GitGraphPanel = lazy(() =>
+  import("../git-graph-panel").then((m) => ({ default: m.GitGraphPanel })),
+);
+
+export type GitManagerView = "changes" | "history";
 
 /**
- * Unified Source-Control manager — GitHub-Desktop-style toolbar (branch
- * switcher + fetch/pull/push with ahead/behind) over Changes / History /
- * Stashes views. Lives in the source-control surface and is the single place to run
- * the project repo's git workflow.
+ * The repository half of source control: the branch bar (the branch, its
+ * sync with the remote, and a menu for merge and stash) over Changes or
+ * History. The branch bar is shared because both views are about the same
+ * branch; the dialogs live here because the bar's operations open them.
  */
-export function GitManagerPanel() {
+export function GitManagerPanel({ view }: { view: GitManagerView }) {
   const isRepo = useGitStore.use.isRepo();
   const repoPath = useGitStore.use.repoPath();
   const ahead = useGitStore.use.ahead();
@@ -31,7 +52,6 @@ export function GitManagerPanel() {
   const files = useGitStore.use.files();
   const actions = useGitStore.use.actions();
 
-  const [view, setView] = useState<View>("changes");
   const [busy, setBusy] = useState<string | null>(null);
   const [mergeOpen, setMergeOpen] = useState(false);
   // Only the progress bar's input, never the whole op: `activeOp` changes on
@@ -85,31 +105,24 @@ export function GitManagerPanel() {
 
   const current = branchesFull.find((b) => b.isCurrent);
   const hasUpstream = !!current?.upstream;
-  const changedCount = files.length;
+  const mergeLabel = `Merge a branch into ${current?.name ?? "the current branch"}…`;
 
   return (
-    <div className="h-full flex flex-col relative">
+    <div className="relative flex h-full flex-col">
       {/* Weighted progress for streaming network ops (fetch/pull/push/clone). */}
       {progress && (
         <div
-          className="absolute top-0 left-0 h-[2px] bg-primary transition-[width] duration-200 z-10"
+          className="absolute top-0 left-0 z-panel h-0.5 bg-primary transition-[width] duration-base"
           style={{ width: `${Math.min(100, progress.percent)}%` }}
           title={progress.title}
         />
       )}
-      {/* Toolbar: branch + sync */}
+      {/* The branch bar: which branch, and how it stands with its remote.
+          Too narrow, the branch name truncates before anything else gives. */}
       <HintGroup>
-        <div className="shrink-0 flex items-center gap-1 px-1.5 h-[29px] border-b border-border">
+        <div className="flex h-control-lg shrink-0 items-center gap-0.5 border-b border-border-subtle px-1.5">
           <BranchSwitcher />
-          <HintItem label={`Merge a branch into ${current?.name ?? "the current branch"}`}>
-            <button
-              onClick={() => setMergeOpen(true)}
-              className="flex items-center justify-center w-6 h-6 rounded text-secondary-foreground hover:text-foreground hover:bg-element-hover transition-colors cursor-pointer shrink-0"
-            >
-              <GitMerge size={12} />
-            </button>
-          </HintItem>
-          <div className="ml-auto flex items-center gap-0.5">
+          <div className="ml-auto flex shrink-0 items-center gap-0.5">
             <FetchButton
               repoPath={repoPath}
               onClick={() => run("fetch", () => actions.fetch())}
@@ -141,27 +154,37 @@ export function GitManagerPanel() {
                 label="Publish"
               />
             )}
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={<IconButton size="sm" icon={MoreHorizontal} label="More git actions" />}
+              />
+              <DropdownMenuContent align="end" className="min-w-56">
+                <DropdownMenuItem onClick={() => setMergeOpen(true)}>
+                  <GitMerge />
+                  {mergeLabel}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={files.length === 0}
+                  title={files.length === 0 ? "There are no changes to stash." : undefined}
+                  onClick={() => void actions.stashPush().catch((e: unknown) => handleGitError(e))}
+                >
+                  <Archive />
+                  Stash all changes
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
       </HintGroup>
 
-      {/* View tabs */}
-      <div className="shrink-0 flex items-center gap-0.5 px-1.5 h-[29px] border-b border-border">
-        <ViewTab active={view === "changes"} onClick={() => setView("changes")}>
-          Changes{changedCount > 0 ? ` (${changedCount})` : ""}
-        </ViewTab>
-        <ViewTab active={view === "history"} onClick={() => setView("history")}>
-          History
-        </ViewTab>
-        <ViewTab active={view === "stashes"} onClick={() => setView("stashes")}>
-          Stashes
-        </ViewTab>
-      </div>
-
-      <div className="flex-1 min-h-0">
-        {view === "changes" && <ChangesView />}
-        {view === "history" && <HistoryView />}
-        {view === "stashes" && <StashesView />}
+      <div className="min-h-0 flex-1">
+        {view === "changes" ? (
+          <ChangesView />
+        ) : (
+          <Suspense fallback={<PanelSkeleton label="Loading…" />}>
+            <GitGraphPanel />
+          </Suspense>
+        )}
       </div>
 
       <MergeBranchDialog open={mergeOpen} onOpenChange={setMergeOpen} />
@@ -216,43 +239,18 @@ function ToolbarBtn({
   label?: string;
 }) {
   const button = (
-    <button
+    <Button
+      variant="ghost"
+      size="sm"
       onClick={onClick}
       disabled={busy}
       // A labelled button explains itself; its title only adds the detail.
       title={label ? title : undefined}
-      className="flex items-center gap-1 h-6 px-1.5 rounded text-2xs font-medium text-muted-foreground hover:text-foreground hover:bg-element-hover transition-colors disabled:opacity-50"
     >
       {busy ? <Loader2 size={12} className="animate-spin" /> : icon}
       {label && <span>{label}</span>}
-      {badge !== undefined && (
-        <span className="font-mono text-3xs text-secondary-foreground">{badge}</span>
-      )}
-    </button>
+      {badge !== undefined && <span className="font-mono tabular-nums">{badge}</span>}
+    </Button>
   );
   return label ? button : <HintItem label={title}>{button}</HintItem>;
-}
-
-function ViewTab({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "px-2 h-6 rounded text-xs font-medium transition-colors",
-        active
-          ? "text-foreground bg-element-selected"
-          : "text-muted-foreground hover:text-secondary-foreground hover:bg-element-hover",
-      )}
-    >
-      {children}
-    </button>
-  );
 }

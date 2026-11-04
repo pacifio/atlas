@@ -11,11 +11,10 @@ import { Maximize2, X } from "lucide-react";
 
 import { revealAgentPanel } from "@/features/layout/lib/org-agent";
 import { EASE_PANEL } from "@/lib/motion";
-import { HintGroup, HintItem } from "@/ui/hint-group";
-import { IconButton } from "@/ui/icon-button";
 
 import { askTitle, useOrgAgentStore } from "../stores/org-agent-store";
 import { OrgAgentThread } from "./org-agent-thread";
+import { HintGroup, HintItem, IconButton } from "@tryatlas/design";
 
 export function OrgAgentFloat() {
   const floatingId = useOrgAgentStore.use.floatingId();

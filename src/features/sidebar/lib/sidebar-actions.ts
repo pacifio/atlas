@@ -162,6 +162,8 @@ export async function renameSession(session: SidebarSession, title: string): Pro
 }
 
 export async function deleteSession(session: SidebarSession): Promise<void> {
+  // Rust refuses anyway (ADR-0001 Rule 7); the menu item is disabled for it.
+  if (session.liveElsewhere) return;
   if (!(await confirmDeleteChat(session.title))) return;
   try {
     // One call for every agent: Atlas's row always, the agent's copy only

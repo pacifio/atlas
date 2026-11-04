@@ -24,6 +24,7 @@ import {
   exitPlanOptions,
   LONG_COMMAND,
   LONG_COMMAND_RESULT,
+  outwardOptions,
   PLAN_MARKDOWN,
   permissionToolCall,
   standardOptions,
@@ -126,6 +127,19 @@ const at = (s: FakeSession) => ({ agent_id: s.key.agent_id, session_id: s.key.se
 
 export function sendDelta(delta: AgentDelta): Promise<void> {
   return emit("atlas:agents", delta);
+}
+
+/** Send a delta to the most recent session, built from its ids, for deltas no
+ *  helper here covers (`plan_updated`, `context_usage`, `rate_limits`, …). */
+export async function emitForLatest(
+  make: (ids: ReturnType<typeof at>) => AgentDelta,
+): Promise<void> {
+  const s = latest();
+  if (!s) {
+    console.warn("[mock-backend] emitForLatest: no session bound yet");
+    return;
+  }
+  await sendDelta(make(at(s)));
 }
 
 /** Name a session as the agent would (`title_updated`): a seeded chat opens titled, not "New chat". */
@@ -446,6 +460,38 @@ export function finishTurn(sessionId?: string, stopReason = "end_turn"): Promise
   });
 }
 
+/** The user stopped the turn: `turn_finished` with `stop_reason: "cancelled"`.
+ *  The store sweeps the turn's live calls to failed. */
+export function cancelTurn(sessionId?: string): Promise<void> {
+  failLiveCalls(sessionId);
+  return finishTurn(sessionId, "cancelled");
+}
+
+/** The held snapshot's running and pending calls, failed as the store fails
+ *  them on a cancel or a failure, so a re-read agrees with the live turn. */
+function failLiveCalls(sessionId?: string): void {
+  for (const m of latest(sessionId)?.messages ?? []) {
+    m.tool_calls = m.tool_calls.map((call) =>
+      call.status === "running" || call.status === "pending" ? { ...call, status: "failed" } : call,
+    );
+  }
+}
+
+/** The turn failed (`turn_failed`), in the projector's order: the error
+ *  status, then the failure. The store fails the live calls and adds an
+ *  `Error: <error>` message. */
+export async function failTurn(
+  error: string,
+  errorKind: "auth" | "transient" | "fatal" | "process_dead" | "unknown",
+  sessionId?: string,
+): Promise<void> {
+  const s = latest(sessionId);
+  if (!s) return;
+  failLiveCalls(sessionId);
+  await setStatus("error", sessionId);
+  await sendDelta({ kind: "turn_failed", ...at(s), error, turn_seq: 0, error_kind: errorKind });
+}
+
 // ── The computer sleeping mid-turn ───────────────────────────────────────
 //
 // Rust's `sleep_watch.rs` notices the machine slept under a running turn and
@@ -472,6 +518,29 @@ export async function sleepMidTurn(): Promise<void> {
   await setStatus("idle");
 }
 
+/** A rate-limited provider being retried after a backoff: the retry notice
+ *  over the composer (`__atlasMock.actions.showRetry`). */
+export async function showRetry(): Promise<void> {
+  const s = latest();
+  if (!s) return;
+  await sendDelta({
+    kind: "retry_status",
+    ...at(s),
+    attempt: 2,
+    max_attempts: 5,
+    delay_ms: 8000,
+    last_error: '429 Too Many Requests\n{"error":"rate_limited"}',
+  });
+}
+
+/** The agent process exiting under the session: the disconnected notice
+ *  with its Restart action (`__atlasMock.actions.disconnectAgent`). */
+export async function disconnectAgent(): Promise<void> {
+  const s = latest();
+  if (!s) return;
+  await sendDelta({ kind: "agent_disconnected", ...at(s), reason: "process exited" });
+}
+
 /** A turn that failed on waking (`__atlasMock.actions.sleepMidTurnFailed`). */
 export async function sleepMidTurnFailed(): Promise<void> {
   const s = latest();
@@ -480,15 +549,7 @@ export async function sleepMidTurnFailed(): Promise<void> {
   await streamText("Reading the test suite to see which fixtures depend on the old");
   await sendDelta({ kind: "slept_mid_turn", ...at(s), turn_seq: 0, slept_secs: 3400 });
   await new Promise((r) => setTimeout(r, AFTER_WAKE_MS));
-  // The projector's order: the error status, then the failure itself.
-  await setStatus("error");
-  await sendDelta({
-    kind: "turn_failed",
-    ...at(s),
-    error: "error decoding response body",
-    turn_seq: 0,
-    error_kind: "transient",
-  });
+  await failTurn("error decoding response body", "transient");
 }
 
 // ── Permission requests ──────────────────────────────────────────────────
@@ -531,6 +592,10 @@ export async function raisePermission(opts: {
   title: string;
   kind: string;
   rawInput: unknown;
+  /** An organisation tool's own name — makes it an outward action's card. */
+  toolName?: string;
+  /** The call's text blocks: an outward card's recipient, then its body. */
+  content?: string[];
   options: PermissionOptionRef[];
   result: OpenPermission["result"];
   reply: OpenPermission["reply"];
@@ -565,6 +630,8 @@ export async function raisePermission(opts: {
       title: opts.title,
       kind: opts.kind,
       rawInput: opts.rawInput,
+      toolName: opts.toolName,
+      content: opts.content,
     }),
     options: opts.options,
   });
@@ -710,6 +777,199 @@ export function requestPermissionQuestionMulti(): Promise<void> {
     // Silent either way: a composed answer is sent as an ordinary message and
     // gets the usual `agents_send` echo; Escape needs no narration.
     reply: () => null,
+  });
+}
+
+const OUTWARD_REPLY_BODY = [
+  "Thanks Sam, good catch. The retry loop only covers the first request,",
+  "so a dropped connection on the second one still surfaces as an error.",
+  "I'll move the retry into the client wrapper and add a test for it.",
+].join("\n");
+
+/** An outward action (ADR-0014): a reply on a teammate's comment, posted in
+ *  the user's name. Enter and the Allow digits do nothing on this card
+ *  (`__atlasMock.actions.requestPermissionOutward`). */
+export function requestPermissionOutward(): Promise<void> {
+  const id = permId();
+  const input = { thread_id: "thr_42", body: OUTWARD_REPLY_BODY };
+  return raisePermission({
+    transcriptCall: tool.other("atlas_org.org_comment_reply", input, { id, status: "pending" }),
+    title: "Reply on Sam Lee's comment",
+    kind: "other",
+    rawInput: input,
+    toolName: "atlas_org.org_comment_reply",
+    content: ["Sam Lee · on src/features/sync/client.ts:118", OUTWARD_REPLY_BODY],
+    options: outwardOptions(),
+    result: (allowed) => (allowed ? "Reply posted." : "Declined."),
+    reply: (decision, option) =>
+      decision.kind === "cancelled" || !option || !isAllowKind(option.kind)
+        ? "Okay, I won't post that."
+        : "Posted the reply.",
+  });
+}
+
+/** An outward message with only Allow and Decline — no primary, no ↵
+ *  (`__atlasMock.actions.requestPermissionOutwardMessage`). */
+export function requestPermissionOutwardMessage(): Promise<void> {
+  const id = permId();
+  const body =
+    "The staging deploy is green. I'll start the migration at 3pm unless anyone objects.";
+  const input = { channel: "eng-platform", body };
+  return raisePermission({
+    transcriptCall: tool.other("atlas_org.org_send", input, { id, status: "pending" }),
+    title: "Send a message to #eng-platform",
+    kind: "other",
+    rawInput: input,
+    toolName: "atlas_org.org_send",
+    content: ["#eng-platform · 14 members", body],
+    options: [
+      { optionId: "allow_once", name: "Send", kind: "allow_once" },
+      { optionId: "reject_once", name: "Decline", kind: "reject_once" },
+    ],
+    result: (allowed) => (allowed ? "Message sent." : "Declined."),
+    reply: (decision, option) =>
+      decision.kind === "cancelled" || !option || !isAllowKind(option.kind)
+        ? "Okay, I won't send it."
+        : "Sent.",
+  });
+}
+
+/** An outward action's card while the host is still describing it: only
+ *  Decline, no body (`__atlasMock.actions.requestPermissionOutwardPreparing`). */
+export function requestPermissionOutwardPreparing(): Promise<void> {
+  const id = permId();
+  const input = { thread_id: "thr_42" };
+  return raisePermission({
+    transcriptCall: tool.other("atlas_org.org_comment_reply", input, { id, status: "pending" }),
+    title: "Preparing the approval…",
+    kind: "other",
+    rawInput: input,
+    toolName: "atlas_org.org_comment_reply",
+    options: [{ optionId: "reject_once", name: "Decline", kind: "reject_once" }],
+    result: () => "Declined.",
+    reply: () => "Okay, I won't post anything.",
+  });
+}
+
+/** Raise a session elicitation (`elicitation_requested`) on the latest
+ *  session, the way the agent host does for ACP `elicitation/create`. */
+function raiseElicitation(
+  fields: Pick<
+    Extract<AgentDelta, { kind: "elicitation_requested" }>,
+    "mode" | "message" | "requested_schema" | "url"
+  >,
+): Promise<void> {
+  const s = latest();
+  if (!s) {
+    console.warn("[mock-backend] requestElicitation: no session bound yet");
+    return Promise.resolve();
+  }
+  return sendDelta({
+    kind: "elicitation_requested",
+    ...at(s),
+    request_id: `elicit-${++seq}`,
+    ...fields,
+  });
+}
+
+/** A form elicitation with every field kind the dialog renders: text,
+ *  number, boolean, enum and multi-enum, one required
+ *  (`__atlasMock.actions.requestElicitationForm`). */
+export function requestElicitationForm(): Promise<void> {
+  return raiseElicitation({
+    mode: "form",
+    message: "I need a few details before I open the release branch.",
+    requested_schema: {
+      type: "object",
+      required: ["branch"],
+      properties: {
+        branch: {
+          type: "string",
+          title: "Branch name",
+          description: "Created from the current HEAD.",
+        },
+        reviewers: { type: "number", title: "Reviewers needed", default: 2 },
+        draft: { type: "boolean", title: "Open as a draft" },
+        environment: {
+          type: "string",
+          title: "Deploy preview to",
+          enum: ["staging", "production"],
+          enumNames: ["Staging", "Production"],
+        },
+        labels: {
+          type: "array",
+          title: "Labels",
+          items: { type: "string", enum: ["release", "infra", "docs"] },
+        },
+      },
+    },
+  });
+}
+
+/** A URL elicitation: open a page, then say when done
+ *  (`__atlasMock.actions.requestElicitationUrl`). */
+export function requestElicitationUrl(): Promise<void> {
+  return raiseElicitation({
+    mode: "url",
+    message: "Approve the deploy in the dashboard, then come back here.",
+    url: "https://example.invalid/deploys/approve",
+  });
+}
+
+/** AskUserQuestion bridged as an elicitation (a titled `oneOf` per question
+ *  with its `_custom` companion), which renders the question card with
+ *  Decline (`__atlasMock.actions.requestElicitationQuestion`). */
+export function requestElicitationQuestion(): Promise<void> {
+  return raiseElicitation({
+    mode: "form",
+    message: "Where should the socket client live?",
+    requested_schema: {
+      type: "object",
+      properties: {
+        question_0: {
+          type: "string",
+          title: "Client layer",
+          oneOf: [
+            { const: "Rust", title: "Rust", description: "Socket in Rust" },
+            { const: "TypeScript", title: "TypeScript" },
+          ],
+        },
+        question_0_custom: {
+          type: "string",
+          title: "Other",
+          description: "Type your own answer instead of choosing an option above (optional).",
+          _meta: {
+            _askUserQuestionCustomAnswer: { questionId: "question_0", isCustomAnswer: true },
+          },
+        },
+      },
+    },
+  });
+}
+
+/** A question asked during sign-in, outside any session — the device-code
+ *  page on the existing `atlas:agent-elicitation` channel
+ *  (`__atlasMock.actions.requestSignInElicitation`). */
+export function requestSignInElicitation(): Promise<void> {
+  return emit("atlas:agent-elicitation", {
+    agentId: "agent-atlas-agent",
+    requestId: `signin-elicit-${++seq}`,
+    mode: "url",
+    message: "Finish signing in in your browser. Your code is WDJB-MJHT.",
+    url: "https://example.invalid/device",
+  });
+}
+
+/** The native agent's no-grant state on the composer
+ *  (`__atlasMock.actions.aiGrantNoGrant`). */
+export async function aiGrantNoGrant(): Promise<void> {
+  const { useAiGrantStore } = await import("@/features/chat/stores/ai-grant-store");
+  useAiGrantStore.setState({
+    entitlement: {
+      state: "noGrant",
+      message: "Organisation 01JC9Z3Q6V8K2M4N5P7R9T1W3Y has no AI grant.",
+    },
+    dismissed: false,
   });
 }
 

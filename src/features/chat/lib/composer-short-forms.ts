@@ -23,7 +23,7 @@ export const SESSION_MENTION = "sessionMention";
  *  to the closing quote; a bare value runs to the next whitespace. The
  *  transcript's reader (`markdown-render.ts`) matches the same tokens. */
 const SHORT_FORM_RE =
-  /(?<![\w/])((?:@(?:file|folder|symbol|note|repo|workspace|branch|msg|session|member|conversation|recorded-session|comment|paste|cite|review))|(?:#(?:command|agent|rule))):(?:"([^"\n]+)"|(?!")(\S+))/g;
+  /(?<![\w/])((?:@(?:file|folder|symbol|note|repo|workspace|branch|msg|session|member|conversation|recorded-session|comment|paste|cite|review|ctx))|(?:#(?:command|agent|rule))):(?:"([^"\n]+)"|(?!")(\S+))/g;
 
 /** A short-form token found in text. */
 export interface ShortFormToken {

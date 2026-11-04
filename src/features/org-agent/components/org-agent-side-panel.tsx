@@ -14,17 +14,15 @@ import { useTipOnMount } from "@/features/tips/lib/use-tip-on-mount";
 import { useEffect, useRef } from "react";
 import { Maximize2, MessageSquare, Minus, PictureInPicture2, Plus, X } from "lucide-react";
 
-import { GradualBlur } from "@/components/gradual-blur";
 import { fadeMask } from "@/features/layout/components/pane-tab-strip";
 import { revealAgentPage } from "@/features/layout/lib/org-agent";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useStripEdges } from "@/features/terminal/components/terminal-tab-strip";
 import { cn } from "@/lib/utils";
-import { HintGroup, HintItem } from "@/ui/hint-group";
-import { IconButton } from "@/ui/icon-button";
 
 import { askBusy, askTitle, askWaiting, useOrgAgentStore } from "../stores/org-agent-store";
 import { OrgAgentThread } from "./org-agent-thread";
+import { GradualBlur, HintGroup, HintItem, IconButton } from "@tryatlas/design";
 
 export function OrgAgentSidePanel() {
   useTipOnMount("ask-atlas");

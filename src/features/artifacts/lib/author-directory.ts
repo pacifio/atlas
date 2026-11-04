@@ -73,7 +73,7 @@ export function firstName(full: string): string {
 }
 
 /** `OrgMember` in the shape `AccountAvatar` reads. */
-function avatarOf(member: OrgMember): AccountUser {
+export function avatarOf(member: OrgMember): AccountUser {
   // `id` is the human, not the membership: the avatar's colour is derived from
   // it, and keying on the membership id would recolour the same person in
   // every Organisation they belong to.

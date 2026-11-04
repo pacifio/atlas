@@ -10,10 +10,6 @@
 import { Minus, Plus } from "lucide-react";
 import { isMac } from "@/lib/platform";
 import { cn } from "@/lib/utils";
-import { Button } from "@/ui/button";
-import { IconButton } from "@/ui/icon-button";
-import { Select } from "@/ui/select";
-import { Hint } from "@/ui/tooltip";
 import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
 import { useSettingsStore } from "../../stores/settings-store";
 import { APP_ICONS } from "../../lib/app-icons";
@@ -32,6 +28,7 @@ import { ThemesSection } from "../appearance/themes-section";
 import { IconThemesSection } from "../appearance/icon-themes-section";
 import { TypographySection } from "../appearance/typography-section";
 import { WELCOME_PALETTE } from "@/features/chat/components/welcome-glow";
+import { Button, IconButton, Select, Hint } from "@tryatlas/design";
 
 const CHAT_WIDTHS = [
   { value: "normal", label: "Normal", description: "760 pixels, the easiest line length to read." },

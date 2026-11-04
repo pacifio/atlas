@@ -51,7 +51,6 @@ import type {
   ConflictState,
 } from "@/features/git/components/git-manager/conflicts-view";
 import type { CommitSession } from "@/features/git/components/commit-view";
-import type { RawGitStatus } from "@/features/terminal/components/block-terminal";
 import type { GitSummary } from "@/features/projects/stores/project-git-store";
 import type { BranchCompare } from "@/features/session-context/lib/session-git-api";
 import type { TypedHandlers, Unread } from "../types";
@@ -678,7 +677,7 @@ function blame(file: string): BlameLine[] {
 // write only has to move that state: the next refresh then shows it. What
 // triggers the refresh is the same thing that triggers it for real — Rust's
 // `emit_synthetic_change` fires `atlas:git-changed` after every mutation and
-// the store re-runs `git_snapshot` / `git_log` / `git_diff_all` on it. Long
+// the store re-runs `git_snapshot` / `git_log` on it. Long
 // operations additionally stream `atlas:git:op` (started → output → progress
 // → done), which is what drives the commit busy state, the progress bar and
 // the live output strip.
@@ -744,6 +743,74 @@ function fail(
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Multiplies every streaming op's step delay: a scenario slows the ops down
+ *  so a run's in-between states (a commit's hooks, a push) can be looked at. */
+let opPace = 1;
+
+/** Pushes still to be refused by the pre-push hook (`gitFailNextPush`). */
+let pushHookFailures = 0;
+
+/** The pre-push hook's run, ending in its refusal. */
+const PRE_PUSH_FAIL_STEPS: OpStep[] = [
+  { line: "husky - pre-push hook", delay: 180 },
+  { line: "$ bun run test:contracts" },
+  { line: " ✓ tests/ipc-contract.test.ts (14 tests)" },
+  { line: " ✗ tests/design-system-ratchet.test.ts > no colour literals" },
+  { line: "   src/features/billing/plan-card.tsx:42  bg-[#1f6feb]" },
+  { line: "husky - pre-push hook exited with code 1 (error)" },
+];
+
+/** A push the pre-push hook refuses, as `atlas_git` reports it. */
+function prePushRefusal(): GitErrorPayload {
+  return fail(
+    "hook-failed",
+    "The pre-push hook failed: tests/design-system-ratchet.test.ts found a colour literal in src/features/billing/plan-card.tsx:42.",
+    {
+      rawStderr:
+        "husky - pre-push hook exited with code 1 (error)\nerror: failed to push some refs",
+      command: "git push --progress",
+      exitCode: 1,
+    },
+  );
+}
+
+/** The pre-push hook's refusal while `gitFailNextPush` has one owed; else
+ *  `null`, and the push runs as usual. */
+function refusedPush(opId: unknown): Promise<string> | null {
+  if (pushHookFailures <= 0) return null;
+  pushHookFailures -= 1;
+  return runOp("push", opId, PRE_PUSH_FAIL_STEPS, (): string => {
+    throw prePushRefusal();
+  });
+}
+
+/** Run the next streaming ops at `factor` times their usual pace. */
+export function gitOpPace(factor: number): string {
+  opPace = factor;
+  return `git ops run at ${factor}× their usual delays`;
+}
+
+/** The next push (or publish) is refused by the pre-push hook; the one after
+ *  it goes through, so Retry lands. */
+export function gitFailNextPush(): string {
+  pushHookFailures = 1;
+  return "the next push fails in the pre-push hook";
+}
+
+/** An empty working tree: nothing to stage or commit. */
+export function gitCleanTree(): string {
+  for (const change of CHANGES) dropChange(change.path);
+  notifyChanged();
+  return "working tree clean";
+}
+
+/** Stage every change, as if the user pressed Stage all. */
+export function gitStageAll(): string {
+  for (const change of CHANGES) staged.set(change.path, true);
+  notifyChanged();
+  return "every change staged";
+}
+
 /** One `atlas:git:op` event minus the fields `runOp` fills in, per phase. */
 type OpPhase = GitOpEvent extends infer E
   ? E extends GitOpEvent
@@ -778,7 +845,7 @@ async function runOp<T>(kind: string, opId: unknown, steps: OpStep[], finish: ()
   };
   send({ phase: "started" });
   for (const step of steps) {
-    await sleep(step.delay ?? 110);
+    await sleep((step.delay ?? 110) * opPace);
     if (step.line !== undefined) {
       send({ phase: "output", lines: [{ stream: step.stream ?? "stderr", line: step.line }] });
     }
@@ -1070,7 +1137,6 @@ export interface GitResponses {
   git_workspace_summary: GitSummary;
   git_branch_compare: BranchCompare;
   git_snapshot: GitSnapshotWire;
-  git_status_fresh: RawGitStatus;
   git_inprogress: InProgress;
   git_branches_full: BranchInfo[];
   git_list_branches: GitBranch[];
@@ -1088,7 +1154,6 @@ export interface GitResponses {
   git_graph_build: BuiltGraph;
   git_diff_line_status: DiffLineStatus;
   git_diff_file: string;
-  git_diff_all: string;
   git_diff_preview: DiffPreview;
   git_diff_file_contents: DiffFileContents;
   git_diff_file_patch: DiffFilePatch;
@@ -1238,18 +1303,6 @@ export const gitHandlers: TypedHandlers<GitResponses> = {
       inProgress: anyInProgress() ? { ...inProgress } : null,
     };
   },
-  // The terminal's cwd badge, not the git panel — same state, older wire shape.
-  git_status_fresh: (): RawGitStatus => ({
-    is_repo: true,
-    branch: currentBranch().name,
-    files: statusRows().map((row) => ({
-      path: row.path,
-      status: row.status,
-      staged: row.staged,
-    })),
-    ahead: currentBranch().ahead,
-    behind: currentBranch().behind,
-  }),
   git_inprogress: (): InProgress => ({ ...inProgress }),
   git_branches_full: (): BranchInfo[] => copy(BRANCHES),
   git_list_branches: (): GitBranch[] =>
@@ -1359,10 +1412,6 @@ export const gitHandlers: TypedHandlers<GitResponses> = {
     if (!change || change.binary) return "";
     return unifiedDiff(change.before(), change.after(), change.path);
   },
-  git_diff_all: (): string =>
-    CHANGES.filter((change) => !change.binary)
-      .map((change) => unifiedDiff(change.before(), change.after(), change.path))
-      .join(""),
   // The review diff. The branch has no commits of its own on top of
   // `origin/main`, so the range holds the same change set.
   // Only the fake repository has changes. Another folder (a project attached
@@ -1528,6 +1577,7 @@ export const gitHandlers: TypedHandlers<GitResponses> = {
    * it goes through: behind → 0 clears the guard.
    */
   git_push: ({ forceWithLease, opId }) =>
+    refusedPush(opId) ??
     runOp("push", opId, PUSH_STEPS, (): string => {
       const branch = currentBranch();
       if (!branch.upstream) {
@@ -1664,6 +1714,7 @@ export const gitHandlers: TypedHandlers<GitResponses> = {
     }),
 
   git_publish_branch: ({ opId }) =>
+    refusedPush(opId) ??
     runOp("push", opId, PUSH_STEPS, (): string => {
       const branch = currentBranch();
       const remote = String(remotes[0]?.name ?? "origin");

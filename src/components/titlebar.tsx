@@ -1,13 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { RailGlyph } from "@/ui/animated-icon";
 import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
 import { Popover } from "@base-ui/react/popover";
 import { useAppStore } from "@/features/app/stores/app-store";
 import { useProjectStore } from "@/features/projects/stores/project-store";
-import { ArrowDownToLine, Hammer, Loader2, Minus, Search, Square, Copy, X } from "lucide-react";
+import { ArrowDownToLine, Hammer, Minus, Search, Square, Copy, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppProfile } from "@/lib/app-profile";
-import { HintGroup, HintItem } from "@/ui/hint-group";
 import { TitlebarDock, type DockItem } from "./titlebar-dock";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -31,6 +29,8 @@ import { RightPanelToggle } from "@/features/layout/components/right-panel-toggl
 import { AccountButton } from "@/features/auth/components/account-button";
 import { HelpSubmenu } from "./help-submenu";
 import { endPeek, releasePeek, requestPeek } from "@/features/sidebar/lib/sidebar-peek";
+import { RailGlyph, HintGroup, HintItem, Spinner } from "@tryatlas/design";
+import { beginDragOnMove, isWindowSurface } from "./titlebar-chrome";
 
 /**
  * The native window, for dragging and zooming. Resolved once per module and
@@ -51,23 +51,13 @@ if (isTauri()) {
     .catch(() => {});
 }
 
-/** True when a press on `target` belongs to the window, not to a control. A
- *  tab is a control here: dragging a tab must never drag the window. */
-function isWindowSurface(target: EventTarget | null) {
-  const el = target as HTMLElement | null;
-  return !el?.closest(
-    "button, a, input, select, textarea, [role='menuitem'], [role='tab'], [data-no-window-drag]",
-  );
-}
-
 /**
  * Window dragging and double-click-to-zoom for any stretch of the bar.
  *
  * Manual, not `data-tauri-drag-region` (that CSS hook doesn't work in this
- * app). Calling `startDragging()` straight from mousedown hands the event
- * stream to the OS drag session and swallows the double-click, so the drag
- * only begins once the pointer moves past a small threshold; a stationary
- * click or double-click flows through to `onDoubleClick`.
+ * app). The drag only begins once the pointer moves past a small threshold
+ * (`beginDragOnMove`), so a stationary click or double-click flows through to
+ * `onDoubleClick`.
  *
  * Double-click is AppKit's zoom on macOS — Tauri's `toggleMaximize()` doesn't
  * map to it, so a native `performZoom:` command does — and maximize on Windows
@@ -76,20 +66,7 @@ function isWindowSurface(target: EventTarget | null) {
 export function useWindowDrag() {
   const onMouseDown = (e: React.MouseEvent) => {
     if (e.button !== 0 || !isWindowSurface(e.target)) return;
-    const startX = e.clientX;
-    const startY = e.clientY;
-    const onMove = (ev: MouseEvent) => {
-      if (Math.hypot(ev.clientX - startX, ev.clientY - startY) > 4) {
-        cleanup();
-        void nativeWindow?.startDragging();
-      }
-    };
-    const cleanup = () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", cleanup);
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", cleanup);
+    beginDragOnMove(e, () => void nativeWindow?.startDragging());
   };
   const onDoubleClick = (e: React.MouseEvent) => {
     if (!isWindowSurface(e.target)) return;
@@ -196,7 +173,7 @@ export function Titlebar() {
  * buttons) plus a gap, divided by the interface zoom like the bar's height,
  * because the lights do not scale with it. Vertically the lights are centred
  * by `trafficLightPosition.y` = bar height / 2 − 2 (see `--titlebar-height` in
- * `tokens.css`), re-applied after launch and title changes by
+ * `globals.css`), re-applied after launch and title changes by
  * `commands::window::apply_traffic_light_inset`. The inset is dropped in
  * fullscreen, which hides the lights; Windows and Linux have none on the left.
  */
@@ -384,7 +361,7 @@ export function WindowControls() {
   }, []);
 
   const button =
-    "flex h-titlebar w-[46px] items-center justify-center text-muted-foreground transition-colors duration-100";
+    "flex h-titlebar w-(--caption-button-width) items-center justify-center text-muted-foreground transition-colors duration-100";
 
   return (
     <HintGroup>
@@ -577,7 +554,7 @@ function ProjectLabel({
  * The one saturated element in a monochrome titlebar, which is the point: it
  * must be impossible to mistake a dev window for the shipped app. Blue rather
  * than the old purple because purple appears nowhere else in Atlas, while blue
- * is already the app's informational hue (`--atlas-status-info-foreground`).
+ * is already the app's informational hue (`--status-info-foreground`).
  *
  * Built from three stacked layers rather than a flat fill — a vertical
  * gradient body, a blurred crown highlight, and an inset rim — so it reads as
@@ -739,18 +716,15 @@ function useUpdateItem(): DockItem | null {
     label,
     onClick,
     disabled: checking || downloading,
-    icon: checking ? (
-      <Loader2 size={14} className="animate-spin" />
-    ) : downloading ? (
-      progress != null ? (
+    icon:
+      checking || (downloading && progress == null) ? (
+        <Spinner size="md" label="" />
+      ) : downloading && progress != null ? (
         <ArcProgress value={progress} />
       ) : (
-        <Loader2 size={14} className="animate-spin" />
-      )
-    ) : (
-      <ArrowDownToLine size={14} />
-    ),
-    badge: ready ? <DockBadge className="bg-[var(--primary)]" /> : undefined,
+        <ArrowDownToLine size={14} />
+      ),
+    badge: ready ? <DockBadge className="bg-primary" /> : undefined,
   };
 }
 
@@ -761,7 +735,7 @@ function DockBadge({ className, label }: { className?: string; label?: string })
     <span
       className={cn(
         "pointer-events-none absolute right-[3px] top-[3px] size-[6px] rounded-full",
-        "ring-1 ring-[var(--background)]",
+        "ring-1 ring-background",
         className,
       )}
       aria-label={label}

@@ -1,6 +1,6 @@
 import { Dialog } from "@base-ui/react/dialog";
 import { cn } from "@/lib/utils";
-import { DialogOverlay } from "@/ui/dialog";
+import { DialogOverlay } from "@tryatlas/design";
 
 interface ConfirmDeleteProps {
   open: boolean;
@@ -91,7 +91,7 @@ export function FileTreeConfirmDelete({
             {/* Red on a red wash, not black on solid red.
 
                 The two destructive tokens are a pair and this button was
-                wearing half of each: a fill of `--atlas-status-error-foreground`
+                wearing half of each: a fill of `--status-error-foreground`
                 (the saturated status red) lettered in `--destructive-foreground`,
                 which every dark theme defines as a near-black because it belongs
                 on *that theme's* lighter `--destructive` chip. The result was a

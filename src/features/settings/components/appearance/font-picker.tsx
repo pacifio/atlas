@@ -4,7 +4,7 @@
  *
  * The list is the machine's own (`fonts-api.ts`), read again every time the
  * picker opens, so a font installed from Google Fonts a minute ago is there.
- * First comes the default ("System font", "Same as code", …), last a way to
+ * First comes the default ("Geist", "Same as code", …), last a way to
  * write a fallback list by hand, which `config.toml` has always taken and
  * still does: "Berkeley Mono, SF Mono" is a list, not a font, so it is shown
  * as one and edited as text.
@@ -20,10 +20,8 @@ import { AlertTriangle, Check, ChevronDown, ExternalLink, PenLine, Search } from
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { Icon } from "@/ui/icon";
-import { Input } from "@/ui/input";
-import { Hint } from "@/ui/tooltip";
 import { cssFamily, listFontFamilies, parseFontValue, type FontFamily } from "../../lib/fonts-api";
+import { Icon, Input, Hint } from "@tryatlas/design";
 
 const DEFAULT_ITEM = "\u0000default";
 const GOOGLE_FONTS = "https://fonts.google.com";
@@ -47,7 +45,7 @@ export function FontPicker({
   /** The setting's CSS font-family list; empty is the default. */
   value: string;
   onChange: (next: string) => void;
-  /** What the default is called: "System font", "Same as code". */
+  /** What the default is called: "Geist", "Same as code". */
   defaultLabel: string;
   /** The CSS family the default item is drawn in. */
   defaultFamily: string;

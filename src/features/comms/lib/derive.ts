@@ -10,6 +10,7 @@ import type {
   OrgMemberProfile,
 } from "../types";
 import { formatTime, timeFormat } from "@/lib/format-time";
+import { hueFor, type LabelTone } from "@tryatlas/design";
 
 /** The server sends reaction ROWS and no aggregate; this is where counts come
  *  from. Ordered by first appearance so the chips don't reshuffle on a change. */
@@ -57,7 +58,18 @@ export interface MessageGroup {
   messages: CommsMessage[];
 }
 
-export function groupMessages(messages: CommsMessage[], me: string): MessageGroup[] {
+/**
+ * Runs of messages by one author within a few minutes of each other.
+ *
+ * `breakBefore` names a message that always heads its own group: the first
+ * unread one, so the "New messages" rule can sit between two groups rather
+ * than through the middle of one.
+ */
+export function groupMessages(
+  messages: CommsMessage[],
+  me: string,
+  breakBefore: string | null = null,
+): MessageGroup[] {
   const groups: MessageGroup[] = [];
   for (const m of messages) {
     const last = groups[groups.length - 1];
@@ -75,6 +87,7 @@ export function groupMessages(messages: CommsMessage[], me: string): MessageGrou
       // BETWEEN groups, so without this two messages minutes apart either side
       // of midnight would stay in one group and the divider would never render.
       !crossesDay(previous.created_at, m.created_at) &&
+      m.id !== breakBefore &&
       m.created_at - previous.created_at < GROUP_WINDOW_MS;
     if (contiguous) last.messages.push(m);
     else
@@ -86,6 +99,23 @@ export function groupMessages(messages: CommsMessage[], me: string): MessageGrou
       });
   }
   return groups;
+}
+
+/**
+ * The first message the reader has not seen: after `lastReadSeq`, written by
+ * someone else, and not deleted. `null` when there is no read position (the
+ * conversation has nothing unread) or nothing loaded qualifies.
+ */
+export function firstUnreadId(
+  messages: readonly CommsMessage[],
+  lastReadSeq: number | null,
+  me: string,
+): string | null {
+  if (lastReadSeq === null) return null;
+  for (const m of messages) {
+    if (m.seq > lastReadSeq && m.author_id !== me && !m.deleted) return m.id;
+  }
+  return null;
 }
 
 function crossesDay(a: number, b: number): boolean {
@@ -185,13 +215,26 @@ export function initials(name: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
-/** Stable per-user hue so an avatar keeps its colour across sessions. Kept in
- *  the muted band so a wall of avatars never out-shouts the text. */
-export function avatarHue(id: string): number {
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-  return h % 360;
+/** A collaborator's identity hue in a shared draft — their caret, its flag
+ *  and the ring on their avatar. The package's `hueFor`, so web and desktop
+ *  give each person the same tone. */
+export function peerTone(userId: string): LabelTone {
+  return hueFor(userId);
 }
+
+/** Full class strings per tone, so Tailwind sees every one of them: `bg` for
+ *  the caret and its flag, `ring` for the same person's avatar. */
+export const INK: Record<LabelTone, { bg: string; ring: string }> = {
+  grey: { bg: "bg-hue-grey", ring: "ring-hue-grey" },
+  red: { bg: "bg-hue-red", ring: "ring-hue-red" },
+  orange: { bg: "bg-hue-orange", ring: "ring-hue-orange" },
+  yellow: { bg: "bg-hue-yellow", ring: "ring-hue-yellow" },
+  green: { bg: "bg-hue-green", ring: "ring-hue-green" },
+  cyan: { bg: "bg-hue-cyan", ring: "ring-hue-cyan" },
+  blue: { bg: "bg-hue-blue", ring: "ring-hue-blue" },
+  purple: { bg: "bg-hue-purple", ring: "ring-hue-purple" },
+  pink: { bg: "bg-hue-pink", ring: "ring-hue-pink" },
+};
 
 /** Body limits are in UTF-8 BYTES, not characters — emoji and CJK count 3–4×. */
 export function utf8Bytes(s: string): number {
@@ -218,4 +261,41 @@ export function hasUnreadConversation(
     if (listed.has(read.conv_id)) return true;
   }
   return false;
+}
+
+/** Whole minutes above a minute, seconds below — the web log's phrasing. */
+export function formatDuration(from: number, to: number): string {
+  const s = Math.max(0, Math.round((to - from) / 1000));
+  if (s < 60) return `${s} sec`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60);
+  const rem = m % 60;
+  return rem === 0 ? `${h} hr` : `${h} hr ${rem} min`;
+}
+
+/**
+ * Who else is in a draft, in words, by first name: "Priya is here",
+ * "Priya and Tobi", "Priya and 3 others". Empty when nobody is.
+ */
+export function presenceLabel(names: readonly string[]): string {
+  const first = (name: string) => name.trim().split(/\s+/)[0] || name;
+  if (names.length === 0) return "";
+  if (names.length === 1) return `${first(names[0])} is here`;
+  if (names.length === 2) return `${first(names[0])} and ${first(names[1])}`;
+  return `${first(names[0])} and ${names.length - 1} others`;
+}
+
+/** The typing hint's sentence. There is no "stopped typing" frame — the store
+ *  ages entries out on a timer. */
+export function typingLabel(names: string[]): string {
+  if (names.length === 1) return `${names[0]} is typing`;
+  if (names.length === 2) return `${names[0]} and ${names[1]} are typing`;
+  return `${names.length} people are typing`;
+}
+
+export function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }

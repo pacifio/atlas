@@ -3,6 +3,7 @@ mod app_icon;
 mod arrow_keys;
 mod auth;
 mod commands;
+mod fs_events;
 mod keep_awake;
 mod logging;
 #[cfg(target_os = "macos")]
@@ -106,6 +107,11 @@ pub fn run() {
         &context.config().identifier,
     ));
 
+    // A "Clear cache" / "Reset Atlas" the previous process scheduled runs here,
+    // before logging opens its file and before the WebView opens its store.
+    // See `commands::app_data_reset`.
+    let data_reset = commands::app_data_reset::apply_pending(atlas_profile::current());
+
     // Pick the rustls crypto provider, once, before anything can open a TLS
     // connection.
     //
@@ -132,6 +138,9 @@ pub fn run() {
     // Install a tracing subscriber that prints `tracing::info!` etc. to
     // stderr. Verbosity is controlled by `RUST_LOG`; see `logging.rs`.
     logging::init();
+    if let Some(applied) = &data_reset {
+        applied.log();
+    }
 
     // Load a `.env` from the current dir (if any) so source / fork builds can
     // point telemetry at their own PostHog OSS project via POSTHOG_KEY /
@@ -610,17 +619,12 @@ pub fn run() {
             commands::browser::browser_embed_set_visible,
             commands::browser::browser_embed_destroy,
             commands::terminal::terminal_create,
-            commands::terminal::terminal_zsh_dir,
             commands::terminal::terminal_write,
             commands::terminal::terminal_write_text,
             commands::terminal::terminal_resize,
-            commands::terminal::terminal_kill_foreground,
             commands::terminal::terminal_close,
             commands::terminal::terminal_ack,
             commands::terminal::terminal_resolve_path,
-            commands::terminal::resolve_path,
-            commands::terminal::terminal_path_complete,
-            commands::terminal::terminal_list_commands,
             commands::fs_entries::read_directories,
             commands::fs::read_file_content,
             commands::fs::read_file_base64,
@@ -641,9 +645,7 @@ pub fn run() {
             commands::external_editor::external_editors_detect,
             commands::external_editor::external_editor_open,
             commands::fs::fs_add_to_gitignore,
-            commands::git::git_status_fresh,
             commands::git::git_log,
-            commands::git::git_diff_all,
             commands::git::git_workspace_summary,
             commands::git::git_branch_compare,
             commands::usage_dashboard::usage_dashboard,
@@ -811,6 +813,7 @@ pub fn run() {
             commands::capture::capture_commit_sessions,
             commands::capture::artifacts_board,
             commands::capture::artifacts_checkpoints,
+            commands::capture::artifacts_trace,
             commands::mention_search::mention_search,
             commands::mention_search::mention_cache_set_knowledge,
             commands::mention_search::mention_cache_clear,
@@ -1099,6 +1102,7 @@ pub fn run() {
             commands::skills::pack_components_list,
             commands::quit_guard::quit_guard_ready,
             commands::quit_guard::quit_guard_answer,
+            commands::app_data_reset::app_data_reset,
         ])
         .build(context)
         .expect("error while building Atlas")

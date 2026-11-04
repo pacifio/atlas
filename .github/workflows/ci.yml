@@ -75,8 +75,9 @@ env:
 # job on `macos-latest` (Apple Silicon), its Windows compile check on
 # `windows-11-arm`. The team develops on Apple Silicon, so
 # a red job reproduces on the same architecture it failed on, and Linux and
-# Windows releases are moving to ARM too. Until they do, `release-linux.yml`
-# still builds x86-64 on `ubuntu-latest`, and no CI job compiles or tests x86-64.
+# Windows releases are moving to ARM too. No job here compiles or tests x86-64;
+# `release-linux.yml` builds and verifies the x86-64 and aarch64 Linux releases,
+# including a dry run on pull requests that touch a release input.
 #
 # `ubuntu-24.04-arm` is the ARM twin of what `ubuntu-latest` points at today.
 # There is no `ubuntu-latest-arm` label, and a job naming a label no runner

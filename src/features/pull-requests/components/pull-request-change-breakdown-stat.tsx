@@ -6,14 +6,13 @@
 
 import { memo } from "react";
 
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/ui/tooltip";
-
 import {
   CHANGE_KIND_LABELS,
   type ChangedFileKind,
   type PullRequestChangeBreakdown,
 } from "../lib/pull-request-change-breakdown";
 import { DiffStat } from "./pull-request-presentation";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@tryatlas/design";
 
 const KINDS = Object.keys(CHANGE_KIND_LABELS) as ChangedFileKind[];
 
