@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Loader2 } from "lucide-react";
-import { ImageZoomView } from "@/features/media/components/image-zoom-view";
-import { CopyGlyph } from "@tryatlas/design";
+import { SvgViewerView } from "./views/svg-viewer-view";
 
 interface SvgViewerProps {
   filePath: string;
@@ -49,30 +47,12 @@ export function SvgViewer({ filePath }: SvgViewerProps) {
   };
 
   return (
-    <div className="h-full w-full flex flex-col bg-[var(--background)]">
-      <div className="flex items-center gap-2 px-3 h-[32px] border-b border-[var(--border)] shrink-0">
-        <span className="flex-1 min-w-0 truncate text-xs font-mono text-[var(--muted-foreground)]">
-          {filePath}
-        </span>
-        <button
-          onClick={copy}
-          disabled={!code}
-          title="Copy SVG source"
-          className="flex items-center gap-1 px-2 h-6 rounded text-2xs cursor-pointer outline-none transition-colors text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-element-hover disabled:opacity-40 disabled:cursor-default"
-        >
-          <CopyGlyph copied={copied} size="sm" />
-          {copied ? "Copied" : "Copy code"}
-        </button>
-      </div>
-      <div className="flex-1 min-h-0">
-        {src ? (
-          <ImageZoomView src={src} alt={name} fill checkerboard />
-        ) : (
-          <div className="h-full flex items-center justify-center text-[var(--muted-foreground)]">
-            <Loader2 size={16} className="animate-spin" />
-          </div>
-        )}
-      </div>
-    </div>
+    <SvgViewerView
+      filePath={filePath}
+      name={name}
+      src={src}
+      copied={copied}
+      onCopy={() => void copy()}
+    />
   );
 }

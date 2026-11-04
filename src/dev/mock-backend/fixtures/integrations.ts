@@ -31,7 +31,7 @@ import type {
   FeedbackReceipt,
 } from "@/features/feedback/lib/feedback-api";
 import type { ClonedRepo, GithubRepo, RepoMeta } from "@/features/github/types";
-import type { PdfAnnotation } from "@/features/pdf/stores/pdf-annotation-store";
+import type { PdfAnnotation } from "@/features/pdf/lib/pdf-annotations";
 import type { TypedHandlers, Unit, Unread } from "../types";
 import { abs, MOCK_ORG_ID } from "../project";
 

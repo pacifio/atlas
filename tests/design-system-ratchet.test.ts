@@ -94,12 +94,12 @@ const EXEMPT_FILES: Record<string, string> = {
     "and the wire format those choices persist in. Theming them would repaint " +
     "other people's notes.",
   "src/features/spaces/lib/space-wire.test.ts": "Shape 2. Fixtures for the palette above.",
-  "src/features/pdf/stores/pdf-annotation-store.ts":
-    "Shape 2. Highlighter and ink colours the user picks and that are written " +
-    "into the annotation, i.e. into the document.",
-  "src/features/pdf/components/pdf-toolbar.tsx":
-    "Shape 2. Renders the swatches for the ink colours above; the swatch has " +
-    "to be the colour it applies.",
+  "src/features/pdf/lib/pdf-annotations.ts":
+    "Shape 2. The highlighter and ink colours the user picks. Each is written " +
+    "into the annotation as its persisted id and painted on the page, which is " +
+    "paper (decision 3), so the swatch, the saved value and the ink are one hex.",
+  "src/features/pdf/lib/pdf-annotations.test.ts":
+    "Shape 2. Pins the persisted ink ids above, which must never change.",
   "src/features/terminal/lib/line-emulator.ts":
     "Not a colour: it BUILDS `rgb(r,g,b)` strings out of the numeric " +
     "parameters of an ANSI escape sequence. The rule matches the format, not a " +

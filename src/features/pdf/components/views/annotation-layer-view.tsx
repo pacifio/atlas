@@ -1,19 +1,28 @@
 import { useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { Trash2 } from "lucide-react";
+import { Button, Icon, Textarea } from "@tryatlas/design";
 import {
-  usePdfAnnotationStore,
   newAnnotationId,
   type PdfAnnotation,
+  type PdfTool,
   type Point,
-} from "../stores/pdf-annotation-store";
-import { highlightRect, type LineBand } from "../lib/highlight-rect";
+} from "../../lib/pdf-annotations";
+import { highlightRect, type LineBand } from "../../lib/highlight-rect";
 
-interface AnnotationLayerProps {
-  pdfPath: string;
+export interface AnnotationLayerViewProps {
   page: number;
   /** Rendered pixel size of the PDF page this layer overlays. */
   pageW: number;
   pageH: number;
+  /** This page's annotations only. */
+  annotations: PdfAnnotation[];
+  tool: PdfTool;
+  color: string;
+  selectedId: string | null;
+  onAdd: (annotation: PdfAnnotation) => void;
+  onRemove: (id: string) => void;
+  onSelect: (id: string | null) => void;
+  onNoteTextChange: (id: string, text: string) => void;
 }
 
 interface Draft {
@@ -31,14 +40,19 @@ const HIGHLIGHT_OPACITY = 0.32;
  * tool is "none" the layer is click-through so PDF text selection/links work;
  * note pins stay interactive regardless so notes can always be read/edited.
  */
-export function AnnotationLayer({ pdfPath, page, pageW, pageH }: AnnotationLayerProps) {
-  const tool = usePdfAnnotationStore.use.tool();
-  const color = usePdfAnnotationStore.use.color();
-  const selectedId = usePdfAnnotationStore.use.selectedId();
-  const byPath = usePdfAnnotationStore.use.byPath();
-  const { add, remove, select, updateNoteText } = usePdfAnnotationStore.use.actions();
-
-  const annotations = (byPath[pdfPath] ?? []).filter((a) => a.page === page);
+export function AnnotationLayerView({
+  page,
+  pageW,
+  pageH,
+  annotations,
+  tool,
+  color,
+  selectedId,
+  onAdd: add,
+  onRemove: remove,
+  onSelect: select,
+  onNoteTextChange: updateNoteText,
+}: AnnotationLayerViewProps) {
   const [draft, setDraft] = useState<Draft | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
 
@@ -56,7 +70,7 @@ export function AnnotationLayer({ pdfPath, page, pageW, pageH }: AnnotationLayer
     svgRef.current?.setPointerCapture(e.pointerId);
     const p = norm(e);
     if (tool === "note") {
-      add(pdfPath, {
+      add({
         id: newAnnotationId(),
         kind: "note",
         page,
@@ -126,7 +140,7 @@ export function AnnotationLayer({ pdfPath, page, pageW, pageH }: AnnotationLayer
     const rect =
       draft.kind === "highlight" && draft.rect ? highlightRect(draft.rect, textRuns()) : null;
     if (rect) {
-      add(pdfPath, {
+      add({
         id: newAnnotationId(),
         kind: "highlight",
         page,
@@ -135,7 +149,7 @@ export function AnnotationLayer({ pdfPath, page, pageW, pageH }: AnnotationLayer
         createdAt: new Date().toISOString(),
       });
     } else if (draft.kind === "pencil" && draft.points && draft.points.length > 1) {
-      add(pdfPath, {
+      add({
         id: newAnnotationId(),
         kind: "pencil",
         page,
@@ -148,7 +162,7 @@ export function AnnotationLayer({ pdfPath, page, pageW, pageH }: AnnotationLayer
   };
 
   const eraseClick = (a: PdfAnnotation) => {
-    if (tool === "erase") remove(pdfPath, a.id);
+    if (tool === "erase") remove(a.id);
   };
 
   const notes = annotations.filter(
@@ -247,10 +261,10 @@ export function AnnotationLayer({ pdfPath, page, pageW, pageH }: AnnotationLayer
         <button
           key={n.id}
           type="button"
-          onClick={() => (tool === "erase" ? remove(pdfPath, n.id) : select(n.id))}
+          onClick={() => (tool === "erase" ? remove(n.id) : select(n.id))}
           // ratchet-allow: a note pin drawn ON the PDF page, filled with the
           // highlighter colour the user picked (same argument as the exempt
-          // `pdf-annotation-store` and `pdf-toolbar`). Atlas's theme does not
+          // `lib/pdf-annotations.ts`). Atlas's theme does not
           // reach inside someone else's document.
           className="absolute flex h-5 w-5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-black/20 text-2xs font-bold text-black/70 shadow-sm"
           style={{
@@ -275,28 +289,20 @@ export function AnnotationLayer({ pdfPath, page, pageW, pageH }: AnnotationLayer
             pointerEvents: "auto",
           }}
         >
-          <textarea
+          <Textarea
             autoFocus
             value={selectedNote.text}
-            onChange={(e) => updateNoteText(pdfPath, selectedNote.id, e.target.value)}
+            onChange={(e) => updateNoteText(selectedNote.id, e.target.value)}
             placeholder="Write a note…"
-            className="h-20 w-full resize-none rounded-sm border border-border bg-background p-1.5 text-sm text-foreground outline-none placeholder:text-muted-foreground"
+            className="h-20 resize-none"
           />
           <div className="mt-1.5 flex items-center justify-between">
-            <button
-              type="button"
-              onClick={() => remove(pdfPath, selectedNote.id)}
-              className="inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-xs text-error hover:bg-error-muted"
-            >
-              <Trash2 size={11} /> Delete
-            </button>
-            <button
-              type="button"
-              onClick={() => select(null)}
-              className="rounded-sm px-2 py-0.5 text-xs text-secondary-foreground hover:bg-element-hover hover:text-foreground"
-            >
+            <Button size="xs" variant="ghost-destructive" onClick={() => remove(selectedNote.id)}>
+              <Icon icon={Trash2} size="xs" /> Delete
+            </Button>
+            <Button size="xs" variant="ghost" onClick={() => select(null)}>
               Done
-            </button>
+            </Button>
           </div>
         </div>
       )}
