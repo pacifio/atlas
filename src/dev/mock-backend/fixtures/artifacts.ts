@@ -717,7 +717,16 @@ function standardTimeline(seed: Seed, index: number): TimelineEntry[] {
       kind: "response",
       at: t(6),
       turnSeq: 1,
-      text: `Done in \`${file}\`. Want me to take the same pass through the tests?`,
+      // A fence, so the response shows a code block's language and Copy corner.
+      text: [
+        `Done in \`${file}\`. The change at its heart:`,
+        "",
+        "```ts",
+        "export const ring = (focused: boolean) => (focused ? 2 : 0);",
+        "```",
+        "",
+        "Want me to take the same pass through the tests?",
+      ].join("\n"),
     }),
   ];
   // No branch means no repository — `docs` is a plain folder in the git

@@ -48,8 +48,6 @@
           "atlas-callout-body",
           "atlas-cmd-suggest",
           "atlas-code",
-          "atlas-code-copy",
-          "atlas-code-lang",
           "atlas-entry",
           "atlas-fade-in",
           "atlas-group-slide-left",
@@ -67,8 +65,7 @@
           "atlas-pill-swap",
           "atlas-pixel-cell",
           "atlas-project-rail",
-          "atlas-prose",
-          "atlas-prose--user",
+          "atlas-prose-wrap",
           "atlas-radar-ping",
           "atlas-radar-sweep",
           "atlas-row",
@@ -89,7 +86,6 @@
           "hide-scrollbar",
           "hljs",
           "nodrag",
-          "prose-chat",
           "reader-content"
         ]
       }

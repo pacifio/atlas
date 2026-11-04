@@ -282,7 +282,7 @@ export function Body({
   if (markdown) {
     return (
       <div className="break-words">
-        <CachedMarkdown source={full ?? entry.text ?? ""} />
+        <CachedMarkdown source={full ?? entry.text ?? ""} className="atlas-prose-wrap" />
         {truncated && <p className="-ml-1 mt-1">{notice}</p>}
       </div>
     );

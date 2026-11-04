@@ -150,10 +150,7 @@ function Assistant({
             key={i}
             className="max-w-[92%] break-words rounded-2xl rounded-bl-md border border-border-subtle bg-[var(--card)] px-3.5 py-2.5"
           >
-            <CachedMarkdown
-              source={part.body}
-              className="text-base leading-[1.6] text-[var(--secondary-foreground)]"
-            />
+            <CachedMarkdown source={part.body} className="atlas-prose-wrap" />
           </div>
         ),
       )}
