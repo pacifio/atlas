@@ -354,17 +354,13 @@ export function ComposerAddMenuView({
         {/* Registry entry point: opens Settings → Agents. Agent SWITCHING
             lives on the agent pill, not here — this menu is about what you
             attach to a message, and the pill's picker now offers one-click
-            installs of its own (see FeaturedAgentOffers). A plain button, not
-            a menu item: making it one changes keyboard reach (ATL-718). */}
+            installs of its own (see FeaturedAgentOffers). A menu item, so the
+            arrow keys reach it like every other row. */}
         <DropdownMenuSeparator />
-        <button
-          type="button"
-          onClick={onAddMoreAgents}
-          className="flex w-full cursor-pointer items-center gap-1.5 rounded px-2 py-1.5 text-xs text-secondary-foreground transition-colors hover:text-foreground"
-        >
+        <DropdownMenuItem onClick={onAddMoreAgents}>
           <Icon icon={Plus} size="sm" />
-          Add more agents
-        </button>
+          <span>Add more agents</span>
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );

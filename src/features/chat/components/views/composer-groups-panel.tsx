@@ -3,7 +3,7 @@
 // owns the open group, the session's modes and models, and the picks.
 
 import type { ReactNode, Ref } from "react";
-import { Check, ChevronDown, Loader2, Plus, RotateCw } from "lucide-react";
+import { Check, ChevronDown, Cpu, Loader2, Plus, RotateCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AgentMark } from "@/components/brand-marks";
 import {
@@ -21,7 +21,7 @@ import {
 import { ModelPicker, type PickerAgent } from "../model-picker";
 import { FeaturedAgentOffers } from "../featured-agent-offers";
 import { composerPillClass, composerPillLabelClass } from "../../lib/composer-pill-class";
-import { Hint } from "@tryatlas/design";
+import { Button, EmptyState, Hint, Spinner } from "@tryatlas/design";
 
 type AcpMode = { id: string; name: string; description?: string | null };
 type PickerModel = PickerAgent["models"][number];
@@ -216,16 +216,28 @@ export function ComposerGroupsPanel({
                 }
                 emptyState={(a) =>
                   // An empty native list is the gateway not having answered
-                  // (ADR-0007), and the Refresh beside the search is the fix.
-                  a === "atlas-agent" ? (
-                    <div className="px-2 py-2 text-xs text-muted-foreground">
-                      No models
-                      <span className="mt-0.5 block caption">
-                        Couldn't load the model list. Check your connection or sign in, then
-                        refresh.
-                      </span>
+                  // (ADR-0007): loading while the fetch is out, then a
+                  // Refresh in the body. Never a hardcoded fallback list.
+                  a !== "atlas-agent" ? undefined : refreshingModels ? (
+                    <div
+                      role="status"
+                      className="flex items-center gap-2 px-2 py-2 text-xs text-muted-foreground"
+                    >
+                      <Spinner size="sm" label="" />
+                      Loading models…
                     </div>
-                  ) : undefined
+                  ) : (
+                    <EmptyState
+                      icon={Cpu}
+                      title="No models from the gateway"
+                      description="Couldn't load the model list. Check your connection or sign in, then refresh."
+                      action={
+                        <Button size="sm" variant="outline" onClick={() => void onRefreshModels()}>
+                          Refresh
+                        </Button>
+                      }
+                    />
+                  )
                 }
                 addView={
                   <div>

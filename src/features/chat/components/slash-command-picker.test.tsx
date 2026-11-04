@@ -91,4 +91,18 @@ describe("SlashCommandPicker", () => {
     expect(rendered).toBeGreaterThan(0);
     expect(rendered).toBeLessThan(40);
   });
+
+  it("is a listbox of options, the highlighted one selected", () => {
+    const root = picker(skills(3), "");
+    expect(root.querySelector('[role="listbox"]')).not.toBeNull();
+    const options = root.querySelectorAll('[role="option"]');
+    expect(options).toHaveLength(3);
+    expect(options[0].getAttribute("aria-selected")).toBe("true");
+    expect(options[1].getAttribute("aria-selected")).toBe("false");
+  });
+
+  it("hints Tab completes in the footer", () => {
+    const root = picker(skills(1), "");
+    expect(root.textContent).toContain("⇥ complete");
+  });
 });
