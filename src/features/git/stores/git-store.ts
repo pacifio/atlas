@@ -338,6 +338,8 @@ function ensureGitStatusFreshListener(): void {
 interface GitState {
   isRepo: boolean;
   branch: string;
+  /** HEAD is detached: `branch` names no branch. */
+  detached: boolean;
   branches: GitBranch[];
   branchesFull: BranchInfo[];
   files: GitFileStatus[];
@@ -446,6 +448,7 @@ export const useGitStore = createSelectors(
       return {
         isRepo: false,
         branch: "",
+        detached: false,
         branches: [],
         branchesFull: [],
         files: [],
@@ -488,6 +491,7 @@ export const useGitStore = createSelectors(
               set((s) => {
                 s.isRepo = snap.isRepo;
                 s.branch = snap.branch;
+                s.detached = snap.detached;
                 s.files = sameFiles(
                   s.files,
                   snap.files.map((f) => ({

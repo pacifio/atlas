@@ -125,6 +125,13 @@ export const CommitRowView = memo(function CommitRowView({
           ))}
           <span className={cn("truncate text-xs", selected && "font-medium")}>{row.message}</span>
         </div>
+        {/* Compact (the History section) keeps one column: the author's face,
+            with the name, date and sha on hover — what the old flat log showed. */}
+        {compact && (
+          <span title={`${row.author} · ${row.date} · ${row.shortSha}`} className="shrink-0">
+            <CommitAvatar email={row.email} repoPath={repoPath} size={14} />
+          </span>
+        )}
         {!compact && (
           <>
             <div className="flex w-[200px] shrink-0 items-center gap-1.5">

@@ -127,17 +127,22 @@ function GraphBody({
               />
             </HintItem>
             {/* `IconButton`'s own square on a plain button: the glyph spins
-                while refreshing, which the primitive's fixed glyph can't. */}
-            <HintItem label="Refresh">
-              <button
-                type="button"
-                aria-label="Refresh"
-                onClick={onRefresh}
-                className={iconButtonVariants({ size: "sm" })}
-              >
-                <Icon icon={RefreshCw} size="sm" className={cn(refreshing && "animate-spin")} />
-              </button>
-            </HintItem>
+                while refreshing, which the primitive's fixed glyph can't.
+                Inline, the branch bar above already has a refresh-shaped
+                Fetch and the watcher keeps the graph current, so a second
+                refresh glyph only shows in fullscreen, where that bar is not. */}
+            {fullscreen && (
+              <HintItem label="Refresh">
+                <button
+                  type="button"
+                  aria-label="Refresh"
+                  onClick={onRefresh}
+                  className={iconButtonVariants({ size: "sm" })}
+                >
+                  <Icon icon={RefreshCw} size="sm" className={cn(refreshing && "animate-spin")} />
+                </button>
+              </HintItem>
+            )}
           </div>
         </HintGroup>
       </div>

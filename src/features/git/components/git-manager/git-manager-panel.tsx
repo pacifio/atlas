@@ -1,27 +1,49 @@
-import { useEffect, useState } from "react";
-import { RefreshCw, ArrowDown, ArrowUp, UploadCloud, Loader2, GitMerge } from "lucide-react";
+import { lazy, Suspense, useEffect, useState } from "react";
+import {
+  RefreshCw,
+  ArrowDown,
+  ArrowUp,
+  UploadCloud,
+  Loader2,
+  GitMerge,
+  Archive,
+  MoreHorizontal,
+} from "lucide-react";
 import { useGitStore } from "../../stores/git-store";
 import { handleGitError } from "../../lib/git-errors";
 import { fetchHint } from "../../lib/auto-fetch";
 import { gitErrorText, notifyGitRemoteOp } from "@/features/notifications/lib/outcome-notifier";
+import { PanelSkeleton } from "@/components/panel-skeleton";
 import { BranchSwitcher } from "./branch-switcher";
 import { MergeBranchDialog } from "./merge-branch-dialog";
 import { GitErrorDialog } from "./git-error-dialog";
 import { PullChoiceDialog } from "./pull-choice-dialog";
 import { ChangesView } from "./changes-view";
-import { HistoryView } from "./history-view";
-import { StashesView } from "./stashes-view";
-import { Button, IconButton, HintGroup, HintItem } from "@tryatlas/design";
+import {
+  Button,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  HintGroup,
+  HintItem,
+  IconButton,
+} from "@tryatlas/design";
 
-type View = "changes" | "history" | "stashes";
+// xyflow-free but virtualised and IPC-heavy: loaded only when History opens.
+const GitGraphPanel = lazy(() =>
+  import("../git-graph-panel").then((m) => ({ default: m.GitGraphPanel })),
+);
+
+export type GitManagerView = "changes" | "history";
 
 /**
- * Unified Source-Control manager — one header row (the Changes / History /
- * Stashes switch, then the branch switcher and fetch/pull/push with
- * ahead/behind) over the selected view. Lives in the source-control surface and is the single place to run
- * the project repo's git workflow.
+ * The repository half of source control: the branch bar (the branch, its
+ * sync with the remote, and a menu for merge and stash) over Changes or
+ * History. The branch bar is shared because both views are about the same
+ * branch; the dialogs live here because the bar's operations open them.
  */
-export function GitManagerPanel() {
+export function GitManagerPanel({ view }: { view: GitManagerView }) {
   const isRepo = useGitStore.use.isRepo();
   const repoPath = useGitStore.use.repoPath();
   const ahead = useGitStore.use.ahead();
@@ -30,7 +52,6 @@ export function GitManagerPanel() {
   const files = useGitStore.use.files();
   const actions = useGitStore.use.actions();
 
-  const [view, setView] = useState<View>("changes");
   const [busy, setBusy] = useState<string | null>(null);
   const [mergeOpen, setMergeOpen] = useState(false);
   // Only the progress bar's input, never the whole op: `activeOp` changes on
@@ -84,46 +105,24 @@ export function GitManagerPanel() {
 
   const current = branchesFull.find((b) => b.isCurrent);
   const hasUpstream = !!current?.upstream;
-  const changedCount = files.length;
-  const mergeLabel = `Merge a branch into ${current?.name ?? "the current branch"}`;
+  const mergeLabel = `Merge a branch into ${current?.name ?? "the current branch"}…`;
 
   return (
-    <div className="h-full flex flex-col relative">
+    <div className="relative flex h-full flex-col">
       {/* Weighted progress for streaming network ops (fetch/pull/push/clone). */}
       {progress && (
         <div
-          className="absolute top-0 left-0 h-0.5 bg-primary transition-[width] duration-base z-panel"
+          className="absolute top-0 left-0 z-panel h-0.5 bg-primary transition-[width] duration-base"
           style={{ width: `${Math.min(100, progress.percent)}%` }}
           title={progress.title}
         />
       )}
-      {/* One header row: the view switch, then the branch and its sync, in
-          that tab order. Too narrow for both, the branch group wraps onto a
-          second line (still right-aligned) instead of clipping, and there the
-          branch name truncates before anything else gives. */}
+      {/* The branch bar: which branch, and how it stands with its remote.
+          Too narrow, the branch name truncates before anything else gives. */}
       <HintGroup>
-        <div className="shrink-0 flex flex-wrap items-center gap-x-1 gap-y-0.5 px-1.5 py-1 border-b border-border-subtle">
-          <div className="flex items-center gap-0.5">
-            <ViewTab active={view === "changes"} onClick={() => setView("changes")}>
-              Changes{changedCount > 0 ? ` (${changedCount})` : ""}
-            </ViewTab>
-            <ViewTab active={view === "history"} onClick={() => setView("history")}>
-              History
-            </ViewTab>
-            <ViewTab active={view === "stashes"} onClick={() => setView("stashes")}>
-              Stashes
-            </ViewTab>
-          </div>
-          <div className="ml-auto flex min-w-0 max-w-full items-center gap-0.5">
-            <BranchSwitcher />
-            <HintItem label={mergeLabel}>
-              <IconButton
-                size="sm"
-                icon={GitMerge}
-                label={mergeLabel}
-                onClick={() => setMergeOpen(true)}
-              />
-            </HintItem>
+        <div className="flex h-control-lg shrink-0 items-center gap-0.5 border-b border-border-subtle px-1.5">
+          <BranchSwitcher />
+          <div className="ml-auto flex shrink-0 items-center gap-0.5">
             <FetchButton
               repoPath={repoPath}
               onClick={() => run("fetch", () => actions.fetch())}
@@ -155,14 +154,37 @@ export function GitManagerPanel() {
                 label="Publish"
               />
             )}
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={<IconButton size="sm" icon={MoreHorizontal} label="More git actions" />}
+              />
+              <DropdownMenuContent align="end" className="min-w-56">
+                <DropdownMenuItem onClick={() => setMergeOpen(true)}>
+                  <GitMerge />
+                  {mergeLabel}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={files.length === 0}
+                  title={files.length === 0 ? "There are no changes to stash." : undefined}
+                  onClick={() => void actions.stashPush().catch((e: unknown) => handleGitError(e))}
+                >
+                  <Archive />
+                  Stash all changes
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
       </HintGroup>
 
-      <div className="flex-1 min-h-0">
-        {view === "changes" && <ChangesView />}
-        {view === "history" && <HistoryView />}
-        {view === "stashes" && <StashesView />}
+      <div className="min-h-0 flex-1">
+        {view === "changes" ? (
+          <ChangesView />
+        ) : (
+          <Suspense fallback={<PanelSkeleton label="Loading…" />}>
+            <GitGraphPanel />
+          </Suspense>
+        )}
       </div>
 
       <MergeBranchDialog open={mergeOpen} onOpenChange={setMergeOpen} />
@@ -231,22 +253,4 @@ function ToolbarBtn({
     </Button>
   );
   return label ? button : <HintItem label={title}>{button}</HintItem>;
-}
-
-/** A view switch: the selected one carries the pressed ring, the rest sit
- *  back as ghosts — the same pair as the section row above it. */
-function ViewTab({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <Button variant="ghost" size="sm" aria-pressed={active} onClick={onClick}>
-      {children}
-    </Button>
-  );
 }
