@@ -6,7 +6,8 @@
 // Its menu is the organisation's projects, searchable once the list is long
 // (a right click or the gear on a project opens its settings) — choosing one
 // opens it — then Add project, the open project's settings and pull
-// requests, and the session import. At its foot
+// requests, the session import, and removing the open project from Atlas
+// (its folder stays on disk). At its foot
 // sits the organisation: a submenu holding the organisation menu itself
 // (switching, with locked organisations explained; create; members, with why
 // they are unavailable; the id; sync), the same menu the title bar's
@@ -25,6 +26,7 @@ import {
   Plus,
   Search,
   Settings,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
@@ -41,7 +43,7 @@ import { type SidebarProject } from "../lib/sidebar-sessions";
 import { openProjectSettings } from "../lib/sidebar-actions";
 import { ProjectBadge } from "./session-row-parts";
 import { GlassIconButton } from "./glass-icon-button";
-import { Icon } from "@tryatlas/design";
+import { DropdownMenuItem, Icon } from "@tryatlas/design";
 
 /** Past this many projects the menu grows a search field. */
 export const SEARCH_THRESHOLD = 6;
@@ -84,6 +86,9 @@ export function SidebarProjectPicker() {
         activeProjectId={activeProjectId}
         onSwitch={(project) => void useProjectStore.getState().actions.switchTo(project.id)}
         onProjectSettings={(project) => openProjectSettings(project.path)}
+        onRemoveProject={(project) =>
+          void useProjectStore.getState().actions.closeProject(project.id)
+        }
         onImportSessions={() => setImportOpen(true)}
       />
       <ImportThreadsModal open={importOpen} onOpenChange={setImportOpen} />
@@ -96,12 +101,15 @@ export function ProjectPicker({
   activeProjectId,
   onSwitch,
   onProjectSettings,
+  onRemoveProject,
   onImportSessions,
 }: {
   projects: readonly SidebarProject[];
   activeProjectId: string | null;
   onSwitch: (project: SidebarProject) => void;
   onProjectSettings: (project: SidebarProject) => void;
+  /** Forget the project in Atlas. Never touches its folder on disk. */
+  onRemoveProject: (project: SidebarProject) => void;
   onImportSessions: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -263,6 +271,19 @@ export function ProjectPicker({
                   <Download aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
                   <span className="min-w-0 flex-1 truncate">Import sessions from agents…</span>
                 </DropdownMenu.Item>
+                {current ? (
+                  <DropdownMenuItem
+                    variant="destructive"
+                    onClick={() => onRemoveProject(current)}
+                    className="h-control-md w-full"
+                  >
+                    <X aria-hidden />
+                    <span className="min-w-0 flex-1 truncate">
+                      Remove {current.name} from Atlas
+                    </span>
+                    <span className="shrink-0 text-2xs text-muted-foreground">Keeps files</span>
+                  </DropdownMenuItem>
+                ) : null}
               </div>
 
               {org.active ? (
