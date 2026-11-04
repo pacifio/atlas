@@ -44,7 +44,7 @@ import { freshInstall } from "./fresh-install";
 import { gitConflict } from "./git-conflict";
 import { inboxLong } from "./inbox-long";
 import { knowledge } from "./knowledge";
-import { memorySetup } from "./memory-setup";
+import { memoryHistoryEdited, memorySetup } from "./memory-setup";
 import { northwind } from "./northwind";
 import { pullRequestScenarios } from "./pull-request";
 import { sessionContext } from "./session-context";
@@ -111,6 +111,7 @@ const all: Scenario[] = [
   collab,
   northwind,
   memorySetup,
+  memoryHistoryEdited,
   sessionContext,
   ...pullRequestScenarios,
   sessionProjects,
