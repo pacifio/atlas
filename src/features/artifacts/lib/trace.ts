@@ -6,6 +6,7 @@
  * running, who a missing author is — are tested without a renderer.
  */
 
+import { avatarSrc } from "@/features/auth/components/account-avatar";
 import type { TraceAuthor, TraceCheckpoint, TraceSession } from "../components/checkpoint-trace";
 import type { TraceCheckpointRow, TraceSessionRow } from "../types";
 import { authorOf, type AuthorDirectory } from "./author-directory";
@@ -21,7 +22,9 @@ import type { TraceRange } from "./trace-api";
 export function traceAuthor(authorId: string | null, directory: AuthorDirectory): TraceAuthor {
   const who = authorOf(authorId, directory);
   const id = who.isSelf ? (directory.currentUserId ?? "self") : (authorId ?? "unknown");
-  return { id, name: who.label, avatarUrl: null };
+  // The photo when the roster has one; without it the block draws the
+  // person's initials in their own hue.
+  return { id, name: who.label, avatarUrl: avatarSrc(who.avatar?.avatarPath ?? null) };
 }
 
 /**

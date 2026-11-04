@@ -14,12 +14,10 @@
 import { Segmented } from "@tryatlas/design";
 import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 
-import { AccountAvatar } from "@/features/auth/components/account-avatar";
-import { AccountAvatarView } from "@/features/auth/components/views/account-avatar-view";
 import { DestinationActions } from "@/features/layout/components/destination-actions";
 
 import type { OpenSession } from "../stores/artifacts-store";
-import { avatarOf, type AuthorDirectory } from "../lib/author-directory";
+import type { AuthorDirectory } from "../lib/author-directory";
 import { foldTraceRows } from "../lib/trace";
 import type { TraceRange } from "../lib/trace-api";
 import { useTraceData } from "../lib/use-trace-data";
@@ -27,7 +25,6 @@ import type { BoardSession, ProjectFilter } from "../types";
 import { AgentGlyph } from "./agent-glyph";
 import {
   CheckpointTrace,
-  type TraceAuthor,
   type TraceCheckpoint,
   type TraceGroupBy,
   type TraceSession,
@@ -131,17 +128,6 @@ export function TraceView({
     [targetFor],
   );
 
-  const renderAvatar = useCallback(
-    (author: TraceAuthor, size: number) => {
-      const member = directory.byId.get(author.id);
-      if (member) return <AccountAvatar user={avatarOf(member)} size={size} />;
-      // Someone the roster cannot name — left the Organisation, or a roster
-      // that has not loaded. A neutral mark, never a guessed face.
-      return <AccountAvatarView name="" email="" src={null} size={size} />;
-    },
-    [directory],
-  );
-
   const renderAgentMark = useCallback((s: TraceSession) => {
     const id = latest.current.rows.get(s.id)?.agent;
     return id ? <AgentGlyph agent={id} size={12} /> : null;
@@ -181,7 +167,6 @@ export function TraceView({
         }
         onOpenSession={onOpenSession}
         onOpenCheckpoint={onOpenCheckpoint}
-        renderAvatar={renderAvatar}
         renderAgentMark={renderAgentMark}
         loading={trace.loading}
         error={blocking ? trace.error : undefined}
