@@ -14,3 +14,4 @@ code, only corrected when they were wrong.
 - `org-name-rename-staleness.md` - why an organisation rename never reaches the desktop.
 - `org-tool-server-prefix.md` - the measured fixed-prefix cost of the organisation tool server.
 - `linux-release-plan.md` - what the Linux release is missing to be production grade, and a phased fix that leaves macOS untouched.
+- `deb-dependencies-cargo-deb.md` - whether cargo-deb's `$auto` (dpkg-shlibdeps) should replace the release deb's hand-written Depends.
