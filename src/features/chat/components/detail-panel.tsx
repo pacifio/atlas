@@ -269,12 +269,12 @@ function SubagentBody({
           </div>
         )}
 
-        {/* The answer, rendered as prose. `atlas-prose` is the transcript's own
-            block styling, so a child's lists and code fences look exactly like
-            the parent's. */}
+        {/* The answer, rendered as prose: the transcript's own block styling
+            (`prose-session`, and no fence bar), so a child's lists and code
+            fences look exactly like the parent's. */}
         {child.result ? (
           <div className="select-text">
-            <CachedMarkdown source={child.result} unstyled priority={0} className="atlas-prose" />
+            <CachedMarkdown source={child.result} codeActions={null} priority={0} />
           </div>
         ) : (
           <p className="text-xs leading-relaxed text-muted-foreground">

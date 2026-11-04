@@ -104,17 +104,19 @@ export const UserRowView = memo(function UserRowView({
             ref={clampRef}
             style={row.expanded ? undefined : { maxHeight: clampHeight, overflow: "hidden" }}
           >
-            {/* `.atlas-prose` goes on the markdown root itself, as it does for
-                the agent's prose: the block rules are `> *` selectors, and on
-                the bubble they matched this wrapper instead of the paragraphs,
-                so a multi-paragraph prompt rendered with no gaps at all. */}
+            {/* The prose classes go on the markdown root itself, as they do
+                for the agent's prose: the block rules are `> *` selectors, and
+                on the bubble they matched this wrapper instead of the
+                paragraphs, so a multi-paragraph prompt rendered with no gaps
+                at all. `prose-session-user` is the bubble's step up the type
+                scale (22px lines, `row-metrics.ts`). */}
             <CachedMarkdown
               source={row.text}
-              unstyled
+              codeActions={null}
               priority={priority}
               fileRoot={fileRoot}
               trustedPaths={row.trustedPaths}
-              className="atlas-prose atlas-prose--user"
+              className="prose-session-user"
             />
           </div>
         </div>

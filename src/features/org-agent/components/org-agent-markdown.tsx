@@ -135,7 +135,7 @@ export const OrgAgentMarkdown = memo(function OrgAgentMarkdown({
           type="button"
           data-atlas-link=""
           className={cn(
-            // The prose's own link colour and hover (`.atlas-prose a`).
+            // The prose's own link colour (`.prose-session a`).
             "inline cursor-pointer whitespace-nowrap text-info underline-offset-2 hover:underline",
             mono && "font-mono",
           )}
@@ -205,7 +205,7 @@ export const OrgAgentMarkdown = memo(function OrgAgentMarkdown({
   }, [handles, onOpen]);
 
   return (
-    <div className={cn("atlas-prose min-w-0 break-words select-text", className)}>
+    <div className={cn("prose-session min-w-0 break-words select-text", className)}>
       <ReactMarkdown
         remarkPlugins={PLUGINS}
         skipHtml

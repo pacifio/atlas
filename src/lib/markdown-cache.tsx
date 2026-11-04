@@ -11,12 +11,13 @@
 // synchronously on the main thread — they're cheap and avoid a paint flash.
 // If the worker can't start, we fall back to the previous gated-idle parse.
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+import { renderCodeActions, type CodeActionsContext } from "@/components/markdown-code-actions";
 import { hasFileIcons, paintFileIcons } from "@/features/icon-theme/lib/icon-markup";
 import { isTypingHot } from "./input-activity";
 import { onMarkdownClick, onMarkdownCopy, onMarkdownKeyDown } from "./markdown-links";
 import MarkdownWorker from "./markdown.worker?worker";
-import "@/styles/hljs.css";
 import { cn } from "./utils";
 import { isScrollHot } from "./scroll-hot";
 
@@ -107,6 +108,12 @@ function ensureRenderer(): Promise<RenderModule> {
 /** Start loading the main-thread renderer chunk. Safe to call repeatedly. */
 export function primeMarkdownRenderer(): void {
   void ensureRenderer();
+}
+
+/** The main-thread renderer, loaded: after it resolves, a small block renders
+ *  synchronously on its first render (what a test needs to assert on). */
+export function loadMarkdownRenderer(): Promise<void> {
+  return ensureRenderer().then(() => {});
 }
 
 /** Synchronous parse on the main thread, with caching — but only if the
@@ -471,21 +478,16 @@ function pumpTransient(w: Worker): void {
   }
 }
 
-interface CachedMarkdownProps {
+export interface CachedMarkdownProps {
   source: string;
   className?: string;
   /**
-   * Drop the default `prose-chat` typography classes and style the output
-   * purely from `className`.
-   *
-   * The new transcript needs this: its heights are PREDICTED from the metrics
-   * pinned in `.atlas-prose`, and `prose-chat`'s element rules (`.prose-chat p`,
-   * specificity 0,1,1) would win over `.atlas-prose > *` (0,1,0) and silently
-   * change the real margins out from under the prediction. Opting out is
-   * cleaner than escalating specificity in a fight the two stylesheets would
-   * keep having.
+   * What sits in each code fence's top-right corner, revealed on hover:
+   * `renderCodeActions` (the language and Copy) unless given. `null` puts
+   * nothing there: the transcript's rows, which today show no fence bar
+   * (showing one there is a D24 change awaiting ATL-718).
    */
-  unstyled?: boolean;
+  codeActions?: ((ctx: CodeActionsContext) => ReactNode) | null;
   /**
    * Parse-queue priority — higher parses sooner. Callers pass the row's position
    * in the thread, so the newest messages (the ones on screen after a history
@@ -515,11 +517,15 @@ interface CachedMarkdownProps {
  * don't re-parse markdown or re-run highlight.js. Large strings defer
  * the first parse to a `requestIdleCallback` so initial mount paint
  * isn't blocked; subsequent remounts hit the cache and skip the deferral.
+ *
+ * The root is always the package's `.prose-session` typography, the same as
+ * its `StreamingMarkdown`; `className` adds to it (`prose-session-user` for a
+ * prompt bubble). Token colours come from the package's `syntax.css`.
  */
 export function CachedMarkdown({
   source,
   className,
-  unstyled,
+  codeActions = renderCodeActions,
   priority = 0,
   fileRoot,
   trustedPaths,
@@ -573,28 +579,12 @@ export function CachedMarkdown({
     // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [key, priority]);
 
-  // One delegated click handler: copy-code buttons, file chips, and safe
-  // external links (`markdown-links.ts`).
+  // One delegated click handler: file chips and safe external links
+  // (`markdown-links.ts`). The fences' Copy buttons are React's own.
   useEffect(() => {
     const node = ref.current;
     if (!node) return;
-    const onClick = (e: MouseEvent) => {
-      const target = e.target as HTMLElement | null;
-      // Copy-code button (injected below).
-      const copyBtn = target?.closest?.(".atlas-code-copy");
-      if (copyBtn instanceof HTMLElement) {
-        e.preventDefault();
-        const pre = copyBtn.closest("pre");
-        const text = pre?.querySelector("code")?.textContent ?? pre?.textContent ?? "";
-        void navigator.clipboard.writeText(text).catch(() => {});
-        copyBtn.textContent = "Copied";
-        window.setTimeout(() => {
-          copyBtn.textContent = "Copy";
-        }, 1200);
-        return;
-      }
-      onMarkdownClick(e);
-    };
+    const onClick = (e: MouseEvent) => void onMarkdownClick(e);
     node.addEventListener("click", onClick);
     node.addEventListener("keydown", onMarkdownKeyDown);
     node.addEventListener("copy", onMarkdownCopy);
@@ -613,42 +603,38 @@ export function CachedMarkdown({
     if (node && html && hasFileIcons(html)) paintFileIcons(node);
   }, [html]);
 
-  // Inject a language label + copy button into each code block once the
-  // cached HTML lands (and again whenever it changes).
-  useEffect(() => {
+  // A host for `codeActions` in each code fence, once the HTML lands (and
+  // again when it changes: replacing the HTML drops the old hosts with it).
+  // Before paint, so a cached block remounting shows its corner in the same
+  // frame as its text. `data-enhanced` keeps a fence from getting two hosts
+  // when the effect runs again over the same HTML (StrictMode, a toggle).
+  const [fences, setFences] = useState<readonly Fence[]>(NO_FENCES);
+  const withActions = codeActions !== null;
+  useLayoutEffect(() => {
     const node = ref.current;
-    if (!node) return;
+    if (!node || html === null || !withActions) {
+      setFences(NO_FENCES);
+      return;
+    }
+    const found: Fence[] = [];
     node.querySelectorAll("pre").forEach((pre) => {
-      if ((pre as HTMLElement).dataset.enhanced) return;
-      (pre as HTMLElement).dataset.enhanced = "1";
-      const code = pre.querySelector("code");
-      const lang = Array.from(code?.classList ?? [])
-        .find((c) => c.startsWith("language-"))
-        ?.slice("language-".length);
-      const bar = document.createElement("div");
-      bar.className = "atlas-code-bar";
-      if (lang && lang !== "text" && lang !== "plaintext") {
-        const l = document.createElement("span");
-        l.className = "atlas-code-lang";
-        l.textContent = lang;
-        bar.appendChild(l);
+      let host = pre.dataset.enhanced
+        ? pre.querySelector<HTMLElement>(":scope > [data-code-actions]")
+        : null;
+      if (!host) {
+        pre.dataset.enhanced = "1";
+        pre.classList.add("group/pre", "relative");
+        host = document.createElement("div");
+        host.dataset.codeActions = "";
+        host.className = CODE_ACTIONS_HOST;
+        pre.appendChild(host);
       }
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "atlas-code-copy";
-      btn.setAttribute("aria-label", "Copy code");
-      btn.textContent = "Copy";
-      bar.appendChild(btn);
-      pre.appendChild(bar);
+      found.push({ host, pre, lang: fenceLang(pre) });
     });
-  }, [html]);
+    setFences(found.length ? found : NO_FENCES);
+  }, [html, withActions]);
 
-  const cls = cn(
-    unstyled
-      ? "select-text"
-      : "prose-chat text-[var(--foreground)] leading-relaxed break-words select-text",
-    className,
-  );
+  const cls = cn("prose-session select-text", className);
 
   // Not yet parsed (a large block waiting on the worker) — render the RAW
   // SOURCE rather than nothing.
@@ -670,5 +656,42 @@ export function CachedMarkdown({
     );
   }
 
-  return <div ref={ref} className={cls} dangerouslySetInnerHTML={{ __html: html }} />;
+  return (
+    <>
+      <div ref={ref} className={cls} dangerouslySetInnerHTML={{ __html: html }} />
+      {codeActions &&
+        fences.map((fence, i) =>
+          createPortal(
+            codeActions({
+              lang: fence.lang,
+              getText: () => fence.pre.querySelector("code")?.textContent ?? "",
+            }),
+            fence.host,
+            String(i),
+          ),
+        )}
+    </>
+  );
+}
+
+/** A code fence with a host for its actions. */
+interface Fence {
+  host: HTMLElement;
+  pre: HTMLElement;
+  lang: string | null;
+}
+
+const NO_FENCES: readonly Fence[] = [];
+
+/** The actions' corner: hidden until the pointer is over the fence. Today's
+ *  reveal; showing it on keyboard focus too is a D24 change awaiting ATL-718. */
+const CODE_ACTIONS_HOST =
+  "absolute top-1.5 right-1.5 flex items-center gap-1.5 opacity-0 transition-opacity group-hover/pre:opacity-100";
+
+/** The fence's language from its `language-*` class; none for plain text. */
+function fenceLang(pre: HTMLElement): string | null {
+  const lang = Array.from(pre.querySelector("code")?.classList ?? [])
+    .find((c) => c.startsWith("language-"))
+    ?.slice("language-".length);
+  return lang && lang !== "text" && lang !== "plaintext" ? lang : null;
 }
