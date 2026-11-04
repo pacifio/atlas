@@ -68,7 +68,7 @@ export function AccountButton({
       onClick={connecting ? toggleDialog : undefined}
       aria-label={title}
       className={cn(
-        "relative flex items-center justify-center transition-all duration-150",
+        "relative flex items-center justify-center transition-colors duration-150",
         // The same square as every other control in the bar (`IconButton`'s
         // `sm`), docked or not — the bar reads as one toolbar only if nothing
         // in it is a different size.

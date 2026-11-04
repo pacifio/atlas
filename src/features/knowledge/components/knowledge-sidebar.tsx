@@ -278,7 +278,7 @@ export function KnowledgeSidebar({
               <Hint label="Clear recently opened">
                 <button
                   onClick={onClearRecents}
-                  className="flex h-4 w-4 items-center justify-center rounded text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:text-error transition-all cursor-pointer"
+                  className="flex h-4 w-4 items-center justify-center rounded text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:text-error transition-[color,opacity] cursor-pointer"
                 >
                   <Trash2 size={11} />
                 </button>

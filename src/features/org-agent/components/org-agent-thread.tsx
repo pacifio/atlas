@@ -281,7 +281,7 @@ function Welcome({ onPick }: { onPick: (question: string) => void }) {
               type="button"
               disabled={!ready}
               onClick={() => onPick(text)}
-              className="group flex cursor-pointer items-center gap-3 rounded-xl border border-border bg-card p-2.5 text-left transition-all duration-150 hover:border-border-strong hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+              className="group flex cursor-pointer items-center gap-3 rounded-xl border border-border bg-card p-2.5 text-left transition-colors duration-150 hover:border-border-strong hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
             >
               <span className="grid size-7 shrink-0 place-items-center rounded-lg border border-border-subtle bg-card text-muted-foreground transition-colors group-hover:text-foreground">
                 <Icon size={13} />
@@ -291,7 +291,7 @@ function Welcome({ onPick }: { onPick: (question: string) => void }) {
               </span>
               <ArrowRight
                 size={12}
-                className="shrink-0 -translate-x-1 text-muted-foreground opacity-0 transition-all group-hover:translate-x-0 group-hover:opacity-100"
+                className="shrink-0 -translate-x-1 text-muted-foreground opacity-0 transition-[translate,opacity] group-hover:translate-x-0 group-hover:opacity-100"
               />
             </button>
           ))}

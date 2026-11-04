@@ -248,7 +248,7 @@ export function ProviderModelPills({
                       <button
                         onClick={() => setViewProvider(p.id)}
                         className={cn(
-                          "flex h-7 w-7 items-center justify-center rounded-md transition-all",
+                          "flex h-7 w-7 items-center justify-center rounded-md transition-[background-color,opacity]",
                           p.id === viewProvider
                             ? "bg-[var(--element-selected,var(--element-hover))]"
                             : keyed

@@ -167,3 +167,36 @@ describe("retired `--atlas-` theme-key names", () => {
     expect(hits, "drop the `--atlas-` prefix: a theme key's variable is `--<key>`").toEqual([]);
   });
 });
+
+/**
+ * `transition-all` (and `transition: all`) is banned, with no exit.
+ *
+ * It animates whatever changes next, not what the author meant: a padding
+ * that follows a count, a width, a height. Each of those is a layout
+ * animation, recalculating the page every frame, and nothing reports it — the
+ * class type-checks, lints and looks fine on a fast machine. A transition
+ * names the properties it animates: `transition-colors` for a hover colour,
+ * `transition-opacity`, or `transition-[translate,opacity]` when movement goes
+ * with it (movement by `translate`/`transform`, which stay on the compositor).
+ * Desktop-only for now: `@tryatlas/design/ratchet` takes no extra rules, and
+ * the package itself has no `transition-all` either.
+ */
+describe("`transition-all`", () => {
+  it("is used nowhere", () => {
+    const banned = /\btransition-all\b|\btransition(?:-property)?\s*:\s*["'`]?all\b/g;
+    const files = [...walk(path.join(REPO_ROOT, "src")), path.join(REPO_ROOT, "index.html")];
+    expect(files.length).toBeGreaterThan(0);
+    const hits = files.flatMap((file) =>
+      readFileSync(file, "utf8")
+        .split("\n")
+        .flatMap((line, i) =>
+          (line.match(banned) ?? []).map(
+            (match) => `${path.relative(REPO_ROOT, file)}:${i + 1}: ${match}`,
+          ),
+        ),
+    );
+    expect(hits, "name the properties: transition-colors, transition-[translate,opacity]…").toEqual(
+      [],
+    );
+  });
+});
