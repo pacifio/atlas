@@ -100,7 +100,12 @@ export const Toggle = Node.create({
           },
           node: { attrs: { title?: string; open?: boolean } },
         ) {
-          const title = (node.attrs.title || "Untitled").replace(/</g, "&lt;");
+          // The title is read back as HTML text, so a literal `&amp;` or
+          // `&lt;` in it would load as `&` or `<`. Only an `&` that starts an
+          // entity is escaped, so a plain "Q&A" is written as it reads.
+          const title = (node.attrs.title || "Untitled")
+            .replace(/&(?=#?\w+;)/g, "&amp;")
+            .replace(/</g, "&lt;");
           const open = node.attrs.open ? " open" : "";
           state.write(`<details${open}>\n<summary>${title}</summary>\n\n`);
           state.renderContent(node);

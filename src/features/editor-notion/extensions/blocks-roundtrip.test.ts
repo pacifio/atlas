@@ -111,6 +111,25 @@ describe("custom blocks round-trip", () => {
     expect(rt(html)).toBe(once);
   });
 
+  it("a toggle title with an ampersand or an entity in it round-trips unchanged", () => {
+    for (const title of ["Q&A", "Use &amp; for &", "a &lt; b < c"]) {
+      rt(`<details open>\n<summary>x</summary>\n\nbody\n\n</details>`);
+      editor!.commands.command(({ tr }) => {
+        tr.setNodeAttribute(0, "title", title);
+        return true;
+      });
+      const storage = editor!.storage as unknown as Record<string, { getMarkdown: () => string }>;
+      const saved = storage.markdown.getMarkdown();
+      expectStable(saved);
+      rt(saved);
+      expect(editor!.state.doc.firstChild?.attrs.title).toBe(title);
+    }
+    // A plain ampersand is written as it reads.
+    expect(rt("<details open>\n<summary>Q&A</summary>\n\nbody\n\n</details>")).toContain(
+      "<summary>Q&A</summary>",
+    );
+  });
+
   it("a closed toggle stays closed", () => {
     const out = rt("<details>\n<summary>Closed</summary>\n\nbody\n\n</details>");
     expect(out).toContain("<details>\n<summary>Closed</summary>");
