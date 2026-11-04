@@ -25,7 +25,7 @@ import { useAppStore } from "@/features/app/stores/app-store";
 import { DiffView } from "../diff-view";
 import { classifyFile } from "@/lib/file-types";
 import { FileTreeConfirmDelete } from "@/features/explorer/components/file-tree-confirm-delete";
-import { Button, IconButton, Input, HintGroup, HintItem } from "@tryatlas/design";
+import { Button, Checkbox, IconButton, Input, HintGroup, HintItem } from "@tryatlas/design";
 
 /** Expand/collapse toggle for an optional commit-form field. The chevron
  *  flips with state; a collapsed field that still holds text shows a dot so
@@ -541,12 +541,7 @@ export function ChangesView() {
         )}
         <div className="flex items-center gap-2">
           <label className="flex items-center gap-1.5 caption cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={amend}
-              onChange={(e) => setAmend(e.target.checked)}
-              className="accent-primary"
-            />
+            <Checkbox checked={amend} onCheckedChange={setAmend} />
             Amend last commit
           </label>
           {/* The house pill, same as the session-capture footer's actions and
