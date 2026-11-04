@@ -1,5 +1,12 @@
 import { Fragment, memo, useEffect, useRef } from "react";
-import { AlertCircle, ChevronRight, GitCompare, Link2, LoaderCircle } from "lucide-react";
+import {
+  AlertCircle,
+  ChevronRight,
+  GitCompare,
+  Link2,
+  LoaderCircle,
+  MessageSquarePlus,
+} from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { FileIcon } from "@/features/icon-theme/components/file-icon";
@@ -171,6 +178,18 @@ export const ProjectTreeRow = memo(function ProjectTreeRow({
             />
           )}
           {error && <AlertCircle size={11} className="text-error" aria-label={error} />}
+          {row.kind === "file" && (
+            <button
+              type="button"
+              tabIndex={-1}
+              data-tree-action="ask"
+              aria-label={`Ask agent about ${row.name}`}
+              title="Ask agent about this file"
+              className="hidden size-4 items-center justify-center rounded text-muted-foreground group-hover:flex hover:bg-element-hover hover:text-foreground"
+            >
+              <MessageSquarePlus size={11} />
+            </button>
+          )}
           {changed && (
             <button
               type="button"

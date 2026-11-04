@@ -27,6 +27,13 @@ export interface FileRangeContext {
   excerpt: string;
 }
 
+/** A whole file, by path, as the surface shows it. No excerpt: the agent
+ *  reads the file itself. */
+export interface FileContext {
+  kind: "file";
+  path: string;
+}
+
 /** One hunk of a diff, `@@` header included. */
 export interface DiffHunkContext {
   kind: "diff_hunk";
@@ -72,6 +79,7 @@ export interface QuoteContext {
 }
 
 export type AgentContext =
+  | FileContext
   | FileRangeContext
   | DiffHunkContext
   | MemoryEntryContext
@@ -104,6 +112,8 @@ function capTail(text: string, max = CONTEXT_LOG_MAX_CHARS): string {
 /** `ctx` with every body within budget, so every chip that exists is. */
 export function capContext(ctx: AgentContext): AgentContext {
   switch (ctx.kind) {
+    case "file":
+      return ctx;
     case "file_range":
       return { ...ctx, excerpt: capHead(ctx.excerpt) };
     case "diff_hunk":
@@ -135,6 +145,8 @@ function rangeOf(start: number, end: number): string {
 /** The chip's label: short, one line, says what it is. */
 export function contextLabel(ctx: AgentContext): string {
   switch (ctx.kind) {
+    case "file":
+      return shortLabel(ctx.path);
     case "file_range":
       return shortLabel(`${ctx.path}:${rangeOf(ctx.startLine, ctx.endLine)}`);
     case "diff_hunk":
@@ -154,6 +166,8 @@ export function contextLabel(ctx: AgentContext): string {
 export function contextTitle(ctx: AgentContext): string {
   const head = (text: string) => capHead(text.split("\n").slice(0, 12).join("\n"), 600);
   switch (ctx.kind) {
+    case "file":
+      return ctx.path;
     case "file_range":
       return `${ctx.path}, lines ${rangeOf(ctx.startLine, ctx.endLine)}\n${head(ctx.excerpt)}`;
     case "diff_hunk":
@@ -204,6 +218,8 @@ function langOf(path: string): string {
 /** The source, as the block's header says it. */
 function sourceLine(ctx: AgentContext): string {
   switch (ctx.kind) {
+    case "file":
+      return `the file \`${ctx.path}\``;
     case "file_range":
       return `\`${ctx.path}\`, lines ${rangeOf(ctx.startLine, ctx.endLine)}`;
     case "diff_hunk":
@@ -231,6 +247,8 @@ export function contextAsText(m: Pick<MentionAgentContext, "id" | "context">): s
   const ctx = m.context;
   const head = `Context (@ctx:${m.id}), ${sourceLine(ctx)}:`;
   switch (ctx.kind) {
+    case "file":
+      return `Context (@ctx:${m.id}), ${sourceLine(ctx)}.`;
     case "file_range":
       return `${head}\n${fenced(ctx.excerpt, langOf(ctx.path))}`;
     case "diff_hunk":

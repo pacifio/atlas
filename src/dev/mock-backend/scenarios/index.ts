@@ -41,6 +41,7 @@ import { chatSlashCommands } from "./chat-slash-commands";
 import { chatTools } from "./chat-tools";
 import { chatTurnChanges, chatTurnChangesLong, chatTurnChangesNative } from "./chat-turn-changes";
 import { askAgent } from "./ask-agent";
+import { askFiles } from "./ask-files";
 import { captureHealthy } from "./capture-healthy";
 import { collab } from "./collab";
 import { designSystem } from "./design-system";
@@ -131,6 +132,7 @@ const all: Scenario[] = [
   chatTurnChangesNative,
   gitConflict,
   askAgent,
+  askFiles,
   diffLarge,
   diffComments,
   filesLarge,

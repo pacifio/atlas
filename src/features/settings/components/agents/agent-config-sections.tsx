@@ -237,7 +237,8 @@ function ConfigFileRow({
   const name = file.name.split("/").pop() ?? file.name;
   const open = async () => {
     try {
-      openFileAs(await agentConfig.openConfigFile(path, file.empty), "text");
+      // A settings file is opened to be set: for editing.
+      openFileAs(await agentConfig.openConfigFile(path, file.empty), "text", { edit: true });
     } catch (e) {
       toast.error(`Couldn't open ${name}: ${String(e)}`);
     }

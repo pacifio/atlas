@@ -36,6 +36,13 @@ import { applyBlame, blameInline } from "../lib/blame-inline";
 import { applyDiffStatus, diffGutter } from "../lib/diff-gutter";
 import { detectLanguage, loadLanguageExtension, PLAINTEXT } from "../lib/languages";
 import { applyReveal } from "../lib/cm-reveal";
+import {
+  askAgentGutter,
+  askLinesAt,
+  excerptOf,
+  type AskHandler,
+  type AskLines,
+} from "../lib/ask-gutter";
 import type { EditorPosition } from "../lib/editor-views";
 import type { RevealTarget } from "../lib/reveal";
 
@@ -52,6 +59,9 @@ export interface CodeMirrorFileViewHandle {
   setDiffStatus: (status: DiffLineStatus) => void;
   /** Hand the inline blame its per-line snapshot. */
   setBlame: (lines: BlameLine[]) => void;
+  /** The lines an ask would be about now (the selection's, or the cursor's)
+   *  and their text, for ⌘K's "Ask agent about…". */
+  askLines: () => { lines: AskLines; excerpt: string } | undefined;
 }
 
 export interface CodeMirrorFileViewProps {
@@ -64,6 +74,13 @@ export interface CodeMirrorFileViewProps {
   wordWrap: boolean;
   /** Read only, and unhighlighted: a file too large to edit safely. */
   readOnly?: boolean;
+  /** Edits allowed. Off, the text can still be selected, searched and asked
+   *  about, but not changed (`EditorState.readOnly`). Ignored for a
+   *  `readOnly` file, which is never editable. */
+  editable?: boolean;
+  /** Ask the agent about lines: the gutter's button, the selection's chip,
+   *  ⌘↵ (`ask-gutter.ts`). */
+  onAsk?: AskHandler;
   /** Inline blame at the end of the cursor's line (`gitBlameInline`). */
   blame: boolean;
   reveal?: (RevealTarget & { nonce: number }) | undefined;
@@ -80,11 +97,13 @@ export function CodeMirrorFileView({
   version,
   wordWrap,
   readOnly = false,
+  editable = true,
   blame,
   reveal,
   onRevealed,
   onChange,
   onReady,
+  onAsk,
   handleRef,
 }: CodeMirrorFileViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -102,9 +121,11 @@ export function CodeMirrorFileView({
   onChangeRef.current = onChange;
   const onReadyRef = useRef(onReady);
   onReadyRef.current = onReady;
+  const onAskRef = useRef(onAsk);
+  onAskRef.current = onAsk;
   // What the latest props asked for, read when the (async) view is built.
-  const latest = useRef({ contents, wordWrap, blame, readOnly });
-  latest.current = { contents, wordWrap, blame, readOnly };
+  const latest = useRef({ contents, wordWrap, blame, readOnly, editable });
+  latest.current = { contents, wordWrap, blame, readOnly, editable };
 
   useImperativeHandle(
     handleRef,
@@ -137,6 +158,12 @@ export function CodeMirrorFileView({
       setBlame: (lines) => {
         if (viewRef.current) applyBlame(viewRef.current, lines);
       },
+      askLines: () => {
+        const view = viewRef.current;
+        if (!view) return undefined;
+        const lines = askLinesAt(view.state);
+        return { lines, excerpt: excerptOf(view.state.doc, lines) };
+      },
     }),
     [],
   );
@@ -159,6 +186,7 @@ export function CodeMirrorFileView({
         extensions: [
           compartments.theme.of(editorThemeExtensions()),
           langExt,
+          askAgentGutter(() => onAskRef.current),
           lineNumbers(),
           highlightActiveLineGutter(),
           diffGutter(),
@@ -171,9 +199,7 @@ export function CodeMirrorFileView({
           history(),
           highlightSelectionMatches(),
           compartments.wrap.of(now.wordWrap ? EditorView.lineWrapping : []),
-          compartments.readOnly.of(
-            now.readOnly ? [EditorState.readOnly.of(true), EditorView.editable.of(false)] : [],
-          ),
+          compartments.readOnly.of(lockFor(now.readOnly, now.editable)),
           keymap.of([indentWithTab, ...defaultKeymap, ...historyKeymap, ...searchKeymap]),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) onChangeRef.current(update.state.doc.toString());
@@ -214,6 +240,12 @@ export function CodeMirrorFileView({
 
   useEffect(() => {
     viewRef.current?.dispatch({
+      effects: compartments.readOnly.reconfigure(lockFor(readOnly, editable)),
+    });
+  }, [readOnly, editable, viewReady, compartments]);
+
+  useEffect(() => {
+    viewRef.current?.dispatch({
       effects: compartments.blame.reconfigure(blame ? blameInline() : []),
     });
   }, [blame, viewReady, compartments]);
@@ -249,4 +281,12 @@ export function CodeMirrorFileView({
       className="relative min-h-0 min-w-0 flex-1 overflow-hidden [&_.cm-editor]:h-full [&_.cm-scroller]:overflow-auto"
     />
   );
+}
+
+/** How locked the text is: a file too large to edit is not even focusable;
+ *  one that is only not being edited keeps its caret and selection, so it
+ *  can be searched, copied and asked about. */
+function lockFor(readOnly: boolean, editable: boolean) {
+  if (readOnly) return [EditorState.readOnly.of(true), EditorView.editable.of(false)];
+  return editable ? [] : [EditorState.readOnly.of(true)];
 }

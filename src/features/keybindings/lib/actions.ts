@@ -504,6 +504,15 @@ export const ACTIONS = [
     defaults: ["cmd+s"],
   },
   {
+    // A file opens read-only, to be read and asked about; this is the
+    // deliberate switch into editing it by hand, and back out.
+    id: "editor.toggleEdit",
+    title: "Edit file / stop editing",
+    category: "File",
+    when: "editorFocus",
+    defaults: ["cmd+e"],
+  },
+  {
     // The file's own find and replace: the editor's panel, over the whole
     // document rather than the rows on screen.
     id: "editor.find",

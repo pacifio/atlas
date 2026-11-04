@@ -75,6 +75,14 @@ describe("each kind, as the agent reads it", () => {
     );
   });
 
+  it("points at a whole file by path, without a body", () => {
+    const whole: AgentContext = { kind: "file", path: "src/lib/api.ts" };
+    expect(contextAsText({ id: "w1", context: whole })).toBe(
+      "Context (@ctx:w1), the file `src/lib/api.ts`.",
+    );
+    expect(contextLabel(whole)).toBe("src/lib/api.ts");
+  });
+
   it("fences an excerpt so its own backticks cannot close it", () => {
     const text = contextAsText({ id: "x", context: { kind: "quote", text: "a ```` b" } });
     expect(text).toContain("`````\na ```` b\n`````");
