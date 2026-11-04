@@ -82,4 +82,36 @@ describe("ChatNoticeView", () => {
     render(<ChatNoticeView placement="tucked">msg</ChatNoticeView>);
     expect(screen.queryByRole("button")).toBeNull();
   });
+  it("draws extra actions after the action, in order, each firing its own", async () => {
+    const first = vi.fn();
+    const second = vi.fn();
+    render(
+      <ChatNoticeView
+        placement="tucked"
+        action={{ label: "Refresh", onClick: first }}
+        extraActions={[{ label: "Purchase", onClick: second }]}
+      >
+        msg
+      </ChatNoticeView>,
+    );
+    expect(screen.getAllByRole("button").map((b) => b.textContent)).toEqual([
+      "Refresh",
+      "Purchase",
+    ]);
+    await userEvent.click(screen.getByRole("button", { name: "Purchase" }));
+    expect(second).toHaveBeenCalledOnce();
+    expect(first).not.toHaveBeenCalled();
+  });
+
+  it("holds a busy action off", () => {
+    render(
+      <ChatNoticeView
+        placement="tucked"
+        action={{ label: "Syncing…", onClick: vi.fn(), busy: true }}
+      >
+        msg
+      </ChatNoticeView>,
+    );
+    expect(screen.getByRole("button", { name: "Syncing…" }).hasAttribute("disabled")).toBe(true);
+  });
 });
