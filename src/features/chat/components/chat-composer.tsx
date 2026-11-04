@@ -9,7 +9,7 @@ import type { MentionData } from "../lib/mentions";
 import { CONTENT_COLUMN } from "../lib/row-metrics";
 import { MessageInput } from "./message-input";
 import { AgentUpdateBar } from "./agent-update-bar";
-import { DisconnectedBannerView } from "./views/disconnected-banner-view";
+import { ChatNoticeView } from "./views/chat-notice-view";
 
 /** Shown when the session's agent process died: one explicit affordance to
  *  respawn + resume. Sending a message does the same thing implicitly.
@@ -35,21 +35,30 @@ function DisconnectedBanner({ tabId }: { tabId: string }) {
     useAgentRegistryStore.getState().catalog.length > 0 &&
     !agentCatalogEntry(pluginId)?.installed;
   if (removed) return null;
+  const agentLabel = agentMeta(agentType).label;
   return (
-    <DisconnectedBannerView
-      bindError={bindError}
-      updatedTo={updatedTo}
-      agentLabel={agentMeta(agentType).label}
-      restarting={restarting}
-      onRestart={async () => {
-        setRestarting(true);
-        try {
-          await rebindDisconnectedSession(tabId);
-        } finally {
-          setRestarting(false);
-        }
+    <ChatNoticeView
+      placement="above"
+      data-testid="disconnected-banner"
+      action={{
+        label: restarting ? "Restarting…" : "Restart agent",
+        disabled: restarting,
+        onClick: async () => {
+          setRestarting(true);
+          try {
+            await rebindDisconnectedSession(tabId);
+          } finally {
+            setRestarting(false);
+          }
+        },
       }}
-    />
+    >
+      {bindError
+        ? `The agent exited while starting (${bindError.slice(0, 160)}). Your message is back in the queue — restart to try again.`
+        : updatedTo
+          ? `${agentLabel} was updated to v${updatedTo}. Your conversation is safe — your next message continues it on the new version.`
+          : "The agent process exited. Your conversation is safe — restart to continue where you left off."}
+    </ChatNoticeView>
   );
 }
 

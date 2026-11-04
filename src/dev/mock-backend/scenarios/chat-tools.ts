@@ -6,6 +6,7 @@ import type { Scenario } from "../types";
 import { ended, lines, text, thinking, tool, tools, user, t } from "../fixtures/chat";
 import {
   appendToolOutput,
+  disconnectAgent,
   finishTurn,
   playTranscript,
   requestPermission,
@@ -15,6 +16,7 @@ import {
   requestPermissionQuestionMulti,
   setSeedTranscript,
   setStatus,
+  showRetry,
   upsertSubagent,
   upsertToolCall,
 } from "../fake-agent";
@@ -231,5 +233,8 @@ export const chatTools: Scenario = {
     requestPermissionPlan,
     requestPermissionQuestion,
     requestPermissionQuestionMulti,
+    // The composer notices: a retry countdown, and the agent exiting.
+    showRetry,
+    disconnectAgent,
   },
 };

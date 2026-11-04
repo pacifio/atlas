@@ -472,6 +472,29 @@ export async function sleepMidTurn(): Promise<void> {
   await setStatus("idle");
 }
 
+/** A rate-limited provider being retried after a backoff: the retry notice
+ *  over the composer (`__atlasMock.actions.showRetry`). */
+export async function showRetry(): Promise<void> {
+  const s = latest();
+  if (!s) return;
+  await sendDelta({
+    kind: "retry_status",
+    ...at(s),
+    attempt: 2,
+    max_attempts: 5,
+    delay_ms: 8000,
+    last_error: '429 Too Many Requests\n{"error":"rate_limited"}',
+  });
+}
+
+/** The agent process exiting under the session: the disconnected notice
+ *  with its Restart action (`__atlasMock.actions.disconnectAgent`). */
+export async function disconnectAgent(): Promise<void> {
+  const s = latest();
+  if (!s) return;
+  await sendDelta({ kind: "agent_disconnected", ...at(s), reason: "process exited" });
+}
+
 /** A turn that failed on waking (`__atlasMock.actions.sleepMidTurnFailed`). */
 export async function sleepMidTurnFailed(): Promise<void> {
   const s = latest();
