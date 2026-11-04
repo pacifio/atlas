@@ -8,9 +8,8 @@ import type { Binding, CaptureHealth } from "../types";
  * the success tone or the word "Capturing" while capture is faulted.** A
  * stopped recorder painted green is the one lie this indicator cannot afford.
  *
- * Not wired into the dot or the radar label yet: the radar's switch from
- * today's two-state label (Capturing / Paused) to these five is a proposed
- * behaviour change awaiting review (ATL-718).
+ * Read by the titlebar dot (`StatusDot`) and the popover radar's label
+ * (`CaptureRadar`), so the two always agree.
  */
 export type CaptureIndicatorKind = "unbound" | "paused" | "capturing" | "degraded" | "stopped";
 

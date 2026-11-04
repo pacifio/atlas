@@ -158,7 +158,7 @@ export function CapturePopover({
           is a recorder, and "it is listening" is the one thing worth saying
           before any of the detail. Unbound, the form below already says what
           this is, so there is nothing for a header to add. */}
-      {binding && <CaptureRadar live={binding.enabled} health={health} />}
+      {binding && <CaptureRadar binding={binding} health={health} />}
 
       <div className="px-3.5 py-3">
         {view.kind === "main" && (

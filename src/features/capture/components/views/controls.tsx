@@ -1,3 +1,4 @@
+import type { KeyboardEvent } from "react";
 import { Check, Lock } from "lucide-react";
 
 import { Button, Spinner } from "@tryatlas/design";
@@ -54,9 +55,9 @@ export function GhostButton({
  * first thing in the popover the tallest, and the choice is genuinely one line
  * of consequence, not two paragraphs.
  *
- * Each option is its own Tab stop, activated with Enter or Space. Arrow keys
- * between the two (a roving radio group) are a proposed behaviour change
- * awaiting review (ATL-718), so this stays a pair of `role="radio"` buttons.
+ * The group is one Tab stop (the chosen option); the arrow keys move to the
+ * next enabled option and choose it, as a radio group does. The parent
+ * `role="radiogroup"` wires the keys with `rovingKeys(e, "radio", true)`.
  */
 export function ModeOption({
   selected,
@@ -64,9 +65,13 @@ export function ModeOption({
   reason,
   label,
   onSelect,
+  tabStop = selected,
 }: {
   selected: boolean;
   disabled: boolean;
+  /** Whether this option is the group's Tab stop: the chosen one, unless
+   *  the chosen one has become unavailable. */
+  tabStop?: boolean;
   /** Why it can't be picked — carried on the control itself, not just below it. */
   reason?: string | null;
   label: string;
@@ -79,6 +84,7 @@ export function ModeOption({
       role="radio"
       aria-checked={selected}
       aria-disabled={disabled}
+      tabIndex={tabStop ? 0 : -1}
       disabled={disabled}
       title={disabled ? (reason ?? undefined) : undefined}
       onClick={onSelect}
@@ -105,10 +111,17 @@ export function Tabs({
 }) {
   // Two *ways in*, not two views of one thing, so the selected one is drawn
   // the way a chosen option is (an outlined button) rather than as a page
-  // tab. Each is its own Tab stop: arrow keys between them are a proposed
-  // behaviour change awaiting review (ATL-718).
+  // tab. One Tab stop, the selected tab (Create when the selected one cannot
+  // be used); the arrow keys move between the enabled tabs and Enter or Space
+  // opens one, so arrowing past a tab never swaps the form under the reader.
+  const selectedDisabled = tab === "connect" && connectDisabled;
   return (
-    <div role="tablist" aria-label={label} className="flex gap-1">
+    <div
+      role="tablist"
+      aria-label={label}
+      className="flex gap-1"
+      onKeyDown={(e) => rovingKeys(e, "tab", false)}
+    >
       {(
         [
           ["create", "Create"],
@@ -124,6 +137,7 @@ export function Tabs({
             size="sm"
             role="tab"
             aria-selected={on}
+            tabIndex={(on && !selectedDisabled) || (selectedDisabled && id === "create") ? 0 : -1}
             disabled={disabled}
             title={disabled ? (connectReason ?? undefined) : undefined}
             onClick={() => onTabChange(id)}
@@ -134,4 +148,40 @@ export function Tabs({
       })}
     </div>
   );
+}
+
+const NEXT = new Set(["ArrowRight", "ArrowDown"]);
+const PREV = new Set(["ArrowLeft", "ArrowUp"]);
+
+/**
+ * Arrow-key movement inside a one-Tab-stop group of `role` buttons: ←/↑ and
+ * →/↓ move to the previous or next enabled one and wrap, Home and End jump to
+ * either end. Disabled options are skipped. `activate` clicks the option focus
+ * lands on — a radio group's rule, where moving IS choosing.
+ */
+export function rovingKeys(
+  e: KeyboardEvent<HTMLElement>,
+  role: "tab" | "radio",
+  activate: boolean,
+): void {
+  if (!NEXT.has(e.key) && !PREV.has(e.key) && e.key !== "Home" && e.key !== "End") return;
+  const options = Array.from(
+    e.currentTarget.querySelectorAll<HTMLElement>(
+      `[role="${role}"]:not(:disabled):not([aria-disabled="true"])`,
+    ),
+  );
+  const at = options.indexOf(document.activeElement as HTMLElement);
+  if (at < 0) return;
+  e.preventDefault();
+  const n = options.length;
+  const to =
+    e.key === "Home"
+      ? 0
+      : e.key === "End"
+        ? n - 1
+        : NEXT.has(e.key)
+          ? (at + 1) % n
+          : (at - 1 + n) % n;
+  options[to].focus();
+  if (activate && to !== at) options[to].click();
 }

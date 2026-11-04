@@ -87,10 +87,13 @@ export function CreateChannelMenuView({
 
         <button
           type="button"
+          role="checkbox"
+          aria-checked={isPrivate}
           onClick={() => setIsPrivate((v) => !v)}
           className="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left text-xs text-secondary-foreground transition-colors duration-fast hover:bg-element-hover"
         >
           <span
+            aria-hidden
             className={cn(
               "flex h-[14px] w-[14px] items-center justify-center rounded border transition-colors duration-fast",
               isPrivate

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import { ChevronDown, ExternalLink, FileText, Phone, Video } from "lucide-react";
 import {
   Badge,
@@ -49,6 +49,7 @@ export function CallActivityView({
   const hasRecording = call.recording_state === "ready";
   const verb = live ? "started" : "ended";
   const kind = call.mode === "video" ? "video call" : "call";
+  const recordingId = useId();
 
   return (
     <div data-view="call-activity" className="relative flex gap-2 px-3 py-0.5">
@@ -171,10 +172,16 @@ export function CallActivityView({
         )}
 
         {hasRecording && (
-          // A plain disclosure button, as today: the package Collapsible's
-          // aria-expanded/aria-controls wiring is a D24 proposal (ATL-718).
+          // A disclosure: the button says whether the tracks below are open
+          // and which region it opens.
           <div className="-ml-1 mt-1 flex">
-            <Button variant="ghost" size="xs" onClick={onRecordingToggle}>
+            <Button
+              variant="ghost"
+              size="xs"
+              aria-expanded={recordingOpen}
+              aria-controls={recordingId}
+              onClick={onRecordingToggle}
+            >
               <span
                 className={cn(
                   "flex transition-transform duration-fast",
@@ -189,7 +196,7 @@ export function CallActivityView({
         )}
 
         {recordingOpen && hasRecording && (
-          <div className="mt-1 flex flex-col gap-1">
+          <div id={recordingId} className="mt-1 flex flex-col gap-1">
             {recording.status === "loading" && (
               <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 <Spinner size="sm" label="" />

@@ -1,7 +1,15 @@
 import type { ReactNode } from "react";
 import { FileText, Folder, Image as ImageIcon, Music, Play, RefreshCw } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { EmptyState, Hint, Icon, IconButton, SectionHeader } from "@tryatlas/design";
+import {
+  Button,
+  EmptyState,
+  Hint,
+  Icon,
+  IconButton,
+  SectionHeader,
+  Spinner,
+} from "@tryatlas/design";
 import { CommsAvatar } from "../comms-avatar";
 import type { OrgMemberProfile } from "../../types";
 
@@ -37,7 +45,19 @@ export function FilesTabView({
       className="hide-scrollbar flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-2 pb-3 pt-2"
     >
       {media.length === 0 && audio.length === 0 && files.length === 0 && (
-        <EmptyState icon={Folder} title="No files in loaded history." />
+        // Loaded history may simply not reach back far enough: offer the same
+        // way further back the section headers do.
+        <EmptyState
+          icon={Folder}
+          title="No files in loaded history."
+          description="Files shared here show up as history loads."
+          action={
+            <Button variant="outline" size="sm" disabled={loadingOlder} onClick={onLoadOlder}>
+              {loadingOlder ? <Spinner size="sm" label="" /> : <Icon icon={RefreshCw} size="sm" />}
+              Load older messages
+            </Button>
+          }
+        />
       )}
 
       {media.length > 0 && (

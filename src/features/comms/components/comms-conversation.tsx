@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useComposerFileDrop } from "@/features/chat/hooks/use-composer-file-drop";
 import { openSpaceTab } from "@/features/spaces/lib/open-space";
@@ -19,6 +19,7 @@ import { useCommsStore } from "../stores/comms-store";
 import {
   conversationTitle,
   dmCounterpart,
+  firstUnreadId,
   groupMessages,
   isNewDay,
   typingLabel,
@@ -33,6 +34,7 @@ type Item =
       seq: number;
       newDay: boolean;
       dayAt: number;
+      unreadBefore: boolean;
       group: MessageGroupData;
     }
   | { kind: "call"; key: string; seq: number; call: ChatCall };
@@ -63,6 +65,20 @@ export const CommsConversation = memo(function CommsConversation({
   const actions = useCommsStore.use.actions();
 
   const members = useMemo(() => new Map(memberList.map((m) => [m.id, m])), [memberList]);
+
+  // Where this visit's unread messages start, read once per conversation and
+  // BEFORE `markRead` (an effect, so after this render) zeroes the badge. It
+  // holds for the whole visit — the rule stays put while new messages arrive
+  // and while the reader reads past it — and is read afresh on return.
+  const unreadAnchor = useRef<{ convId: string; lastReadSeq: number | null } | null>(null);
+  if (unreadAnchor.current?.convId !== conv.id) {
+    const read = useCommsStore.getState().reads.find((r) => r.conv_id === conv.id);
+    unreadAnchor.current = {
+      convId: conv.id,
+      lastReadSeq: read && read.unread > 0 ? read.last_read_seq : null,
+    };
+  }
+  const lastReadSeq = unreadAnchor.current.lastReadSeq;
   const byId = useMemo(() => new Map(messages.map((m) => [m.id, m])), [messages]);
   const lookup = useMemo(() => (id: string) => byId.get(id), [byId]);
 
@@ -74,7 +90,8 @@ export const CommsConversation = memo(function CommsConversation({
   // org-wide `seq`, so they interleave rather than sitting in a sidebar. Ended
   // calls stay: the row IS the record that the call happened.
   const groups = useMemo(() => {
-    const grouped = groupMessages(messages, me);
+    const breakBefore = firstUnreadId(messages, lastReadSeq, me);
+    const grouped = groupMessages(messages, me, breakBefore);
     return grouped.map((group, i): Item => {
       const prevGroup = grouped[i - 1];
       const prev = prevGroup?.messages[prevGroup.messages.length - 1];
@@ -85,10 +102,11 @@ export const CommsConversation = memo(function CommsConversation({
         seq: head.seq,
         newDay: isNewDay(prev, head),
         dayAt: head.created_at,
+        unreadBefore: head.id === breakBefore,
         group,
       };
     });
-  }, [messages, me]);
+  }, [messages, me, lastReadSeq]);
   // Merged in a second pass, so a call frame (any conversation's) never
   // re-runs the grouping above.
   const items = useMemo(() => {
@@ -112,6 +130,25 @@ export const CommsConversation = memo(function CommsConversation({
   );
 
   const transcriptRef = useRef<TranscriptHandle>(null);
+
+  // Whether the server may hold history older than what is loaded. Assumed
+  // until a page comes back empty (or fails), then off for this visit.
+  const [olderFor, setOlderFor] = useState<{ convId: string; hasOlder: boolean }>({
+    convId: conv.id,
+    hasOlder: true,
+  });
+  // Each visit starts hopeful: leaving and coming back pages again.
+  if (olderFor.convId !== conv.id) setOlderFor({ convId: conv.id, hasOlder: true });
+  const hasOlder = olderFor.convId === conv.id ? olderFor.hasOlder : true;
+  const loadOlder = useCallback(async () => {
+    const oldest = () => (useCommsStore.getState().messages[conv.id] ?? [])[0]?.seq;
+    const before = oldest();
+    if (before === undefined) return false;
+    await useCommsStore.getState().actions.loadOlder(conv.id);
+    const arrived = oldest() !== before;
+    if (!arrived) setOlderFor({ convId: conv.id, hasOlder: false });
+    return arrived;
+  }, [conv.id]);
 
   // Jump to a message and flash it. If the target is older than the loaded
   // window, page history in (bounded) until it appears — the store's
@@ -300,6 +337,7 @@ export const CommsConversation = memo(function CommsConversation({
           ref={transcriptRef}
           items={items}
           renderItem={renderItem}
+          containsMessage={containsMessage}
           status={status}
           error={loadError ?? undefined}
           onRetry={() => actions.retryConversation(conv.id)}
@@ -321,6 +359,8 @@ export const CommsConversation = memo(function CommsConversation({
               : null
           }
           messageCount={messages.length}
+          hasOlder={hasOlder}
+          onLoadOlder={loadOlder}
           dropActive={isDropTarget}
           convKey={conv.id}
           composer={
@@ -340,3 +380,7 @@ export const CommsConversation = memo(function CommsConversation({
 });
 
 const EMPTY_MESSAGES: never[] = [];
+
+function containsMessage(item: Item, messageId: string): boolean {
+  return item.kind === "group" && item.group.messages.some((m) => m.id === messageId);
+}

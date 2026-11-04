@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   aggregateReactions,
   conversationTitle,
+  firstUnreadId,
   formatBytes,
   formatDuration,
   groupMessages,
@@ -10,6 +11,7 @@ import {
   isNewDay,
   memberName,
   peerTone,
+  presenceLabel,
   typingLabel,
   utf8Bytes,
 } from "./derive";
@@ -145,6 +147,52 @@ describe("groupMessages", () => {
   it("marks own groups from the author id", () => {
     expect(groupMessages([msg({ id: "m1", author_id: "u_a" })], "u_a")[0].own).toBe(true);
     expect(groupMessages([msg({ id: "m1", author_id: "u_a" })], "u_b")[0].own).toBe(false);
+  });
+
+  it("starts a new stack at breakBefore, so the unread rule falls between groups", () => {
+    const run = [
+      msg({ id: "m1", created_at: 1788170400000 }),
+      msg({ id: "m2", created_at: 1788170460000 }),
+      msg({ id: "m3", created_at: 1788170520000 }),
+    ];
+    expect(groupMessages(run, "u_b")).toHaveLength(1);
+    const split = groupMessages(run, "u_b", "m2");
+    expect(split.map((g) => g.key)).toEqual(["m1", "m2"]);
+    expect(split[1].messages.map((m) => m.id)).toEqual(["m2", "m3"]);
+  });
+});
+
+describe("presenceLabel", () => {
+  it("says who is here by first name", () => {
+    expect(presenceLabel([])).toBe("");
+    expect(presenceLabel(["Priya Shah"])).toBe("Priya is here");
+    expect(presenceLabel(["Priya Shah", "Tobi Ade"])).toBe("Priya and Tobi");
+    expect(presenceLabel(["Priya", "Tobi", "Mira", "Sam", "Ada"])).toBe("Priya and 4 others");
+  });
+});
+
+describe("firstUnreadId", () => {
+  const run = [
+    msg({ id: "m1", seq: 1, author_id: "u_b" }),
+    msg({ id: "m2", seq: 2, author_id: "u_a" }),
+    msg({ id: "m3", seq: 3, author_id: "u_b", deleted: true }),
+    msg({ id: "m4", seq: 4, author_id: "u_b" }),
+  ];
+
+  it("is null without a read position", () => {
+    expect(firstUnreadId(run, null, "u_a")).toBeNull();
+  });
+
+  it("skips my own messages and deleted ones", () => {
+    expect(firstUnreadId(run, 1, "u_a")).toBe("m4");
+  });
+
+  it("can be the first loaded message", () => {
+    expect(firstUnreadId(run, 0, "u_a")).toBe("m1");
+  });
+
+  it("is null when everything after the read position is mine", () => {
+    expect(firstUnreadId(run, 4, "u_a")).toBeNull();
   });
 });
 

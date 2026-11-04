@@ -9,7 +9,7 @@ import { HealthDetailView } from "./views/health-detail-view";
 /**
  * The health banner's container: owns the retry and its in-flight state.
  *
- * **The banner is the retry.** Clicking it re-runs `capture_retry_watcher`,
+ * **Retry** re-runs `capture_retry_watcher`,
  * which restarts the git watcher and answers with the health that *results* —
  * so the banner either clears or keeps saying what is still wrong, rather than
  * clearing optimistically and returning on the next poll. The retry is offered

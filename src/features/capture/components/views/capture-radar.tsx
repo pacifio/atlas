@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 
 import { cn } from "@/lib/utils";
 
-import type { CaptureHealth } from "../../types";
+import type { Binding, CaptureHealth } from "../../types";
+import { captureIndicator } from "../../lib/capture-indicator";
 import { CaptureDot } from "../capture-status";
 
 /**
@@ -51,7 +52,19 @@ function blipAt({ r, deg }: { r: number; deg: number }) {
  * it inherits the status colours and costs nothing to ship. Only the
  * highlighted blip needs state, and it only ticks while the popover is open.
  */
-export function CaptureRadar({ live, health }: { live: boolean; health: CaptureHealth | null }) {
+export function CaptureRadar({
+  binding,
+  health,
+}: {
+  binding: Binding;
+  health: CaptureHealth | null;
+}) {
+  // The sweep runs while the binding is on, whatever the health: a faulted
+  // recorder is still switched on, and its sweep turns the fault's tone.
+  const live = binding.enabled;
+  // The label is the shared indicator's, the same model the titlebar dot
+  // reads, so the two never disagree (a stopped project is never "Capturing").
+  const indicator = captureIndicator(binding, health);
   const [blip, setBlip] = useState(0);
 
   useEffect(() => {
@@ -149,8 +162,8 @@ export function CaptureRadar({ live, health }: { live: boolean; health: CaptureH
       />
 
       <span className="absolute bottom-3 left-3.5 flex items-center gap-1.5">
-        <CaptureDot tone={live ? "success" : "neutral"} />
-        <span className="eyebrow">{live ? "Capturing" : "Paused"}</span>
+        <CaptureDot tone={indicator.tone} />
+        <span className="eyebrow">{indicator.label}</span>
       </span>
     </div>
   );

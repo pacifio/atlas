@@ -112,6 +112,7 @@ export function NewDmMenuView({
               <button
                 key={m.id}
                 type="button"
+                aria-pressed={selected}
                 onClick={() => toggle(m.id)}
                 className="flex w-full cursor-pointer items-center gap-2 px-3 py-[5px] text-left transition-colors duration-fast hover:bg-element-hover"
               >

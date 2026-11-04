@@ -59,6 +59,10 @@ async function decodePeaks(src: string): Promise<number[] | null> {
   }
 }
 
+/** Seconds an arrow key moves the playhead; Page Up/Down move further. */
+const SEEK_STEP_S = 5;
+const SEEK_PAGE_S = 30;
+
 function formatTime(s: number): string {
   if (!Number.isFinite(s)) return "0:00";
   const m = Math.floor(s / 60);
@@ -127,14 +131,44 @@ export const AudioPlayer = memo(function AudioPlayer({
     else el.pause();
   }, [src, onRequestSrc]);
 
-  const seek = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+  /** Move the playhead to `seconds`, clamped to the clip. False when there is
+   *  no clip loaded to seek in. */
+  const seekTo = useCallback((seconds: (duration: number, now: number) => number) => {
     const el = audioRef.current;
-    if (!el || !Number.isFinite(el.duration) || el.duration === 0) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
-    el.currentTime = frac * el.duration;
+    if (!el || !Number.isFinite(el.duration) || el.duration === 0) return false;
+    el.currentTime = Math.min(el.duration, Math.max(0, seconds(el.duration, el.currentTime)));
     setTime(el.currentTime);
+    return true;
   }, []);
+
+  const seek = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+      seekTo((d) => frac * d);
+    },
+    [seekTo],
+  );
+
+  // The slider's keys: arrows step 5 s, Page Up/Down 30 s, Home and End jump
+  // to either end.
+  const seekKey = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      const step: Record<string, (d: number, now: number) => number> = {
+        ArrowRight: (_, now) => now + SEEK_STEP_S,
+        ArrowUp: (_, now) => now + SEEK_STEP_S,
+        ArrowLeft: (_, now) => now - SEEK_STEP_S,
+        ArrowDown: (_, now) => now - SEEK_STEP_S,
+        PageUp: (_, now) => now + SEEK_PAGE_S,
+        PageDown: (_, now) => now - SEEK_PAGE_S,
+        Home: () => 0,
+        End: (d) => d,
+      };
+      const to = step[e.key];
+      if (to && seekTo(to)) e.preventDefault();
+    },
+    [seekTo],
+  );
 
   const frac = duration > 0 ? time / duration : 0;
   const bars = peaks ?? UNIFORM;
@@ -169,7 +203,11 @@ export const AudioPlayer = memo(function AudioPlayer({
                 // While the caller buffers, the control holds its download
                 // arc and stays disabled: there is nothing to play yet.
                 <span className="flex text-success">
-                  <ArcProgress got={bufferProgress?.got ?? 0} total={bufferProgress?.total ?? 0} />
+                  <ArcProgress
+                    got={bufferProgress?.got ?? 0}
+                    total={bufferProgress?.total ?? 0}
+                    label="Loading audio"
+                  />
                 </span>
               ) : playing ? (
                 Pause
@@ -191,11 +229,17 @@ export const AudioPlayer = memo(function AudioPlayer({
             role="slider"
             aria-label={`Seek ${filename}`}
             aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={Math.round(frac * 100)}
+            aria-valuemax={Math.round(duration)}
+            aria-valuenow={Math.round(time)}
+            aria-valuetext={`${formatTime(time)} of ${formatTime(duration)}`}
+            aria-disabled={!src || undefined}
+            // Focusable once there is a clip to seek in; before that the
+            // only thing to do is press Play, which is its own Tab stop.
+            tabIndex={src ? 0 : undefined}
             onClick={seek}
+            onKeyDown={seekKey}
             className={cn(
-              "flex h-[26px] items-center gap-px",
+              "flex h-[26px] items-center gap-px rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring",
               src ? "cursor-pointer" : "opacity-60",
             )}
           >

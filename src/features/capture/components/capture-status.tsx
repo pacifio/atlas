@@ -8,6 +8,7 @@
 
 import type { Binding, CaptureHealth } from "../types";
 import { cn } from "@/lib/utils";
+import { captureIndicator } from "../lib/capture-indicator";
 
 /**
  * The recording dot: the success tone while capture is live.
@@ -49,7 +50,8 @@ export function CaptureDot({
 /**
  * The titlebar dot. The success tone while capturing; a fault keeps its own
  * tone, since painting a stopped recorder green would be the one lie this
- * indicator cannot afford.
+ * indicator cannot afford. The tone is `captureIndicator`'s, the model the
+ * popover radar's label reads too.
  */
 export function StatusDot({
   binding,
@@ -58,14 +60,7 @@ export function StatusDot({
   binding: Binding | null;
   health: CaptureHealth | null;
 }) {
-  const tone =
-    health?.state === "stopped"
-      ? "error"
-      : health?.state === "degraded"
-        ? "warning"
-        : binding?.enabled
-          ? "success"
-          : "neutral";
+  const { tone } = captureIndicator(binding, health);
 
   return (
     <span className={cn("flex items-center", tone === "neutral" && "opacity-70")}>
