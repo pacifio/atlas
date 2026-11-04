@@ -29,11 +29,11 @@ export function SleepPill({ tabId }: { tabId: string }) {
     <div
       data-testid="sleep-pill"
       role="status"
-      className="atlas-pill-in mb-2 flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--card)] text-xs text-[var(--secondary-foreground)]"
+      className="atlas-pill-in mb-2 flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border bg-card text-xs text-secondary-foreground"
     >
       <MoonStar size={12} className="shrink-0 text-warning" />
-      <span className="font-medium text-[var(--foreground)]">{wokePillLabel(slept)}</span>
-      <span className="truncate text-[var(--muted-foreground)]">picking the reply back up</span>
+      <span className="font-medium text-foreground">{wokePillLabel(slept)}</span>
+      <span className="truncate text-muted-foreground">picking the reply back up</span>
     </div>
   );
 }

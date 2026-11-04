@@ -147,7 +147,7 @@ export const LoadingState = memo(function LoadingState({
           <span
             key={i}
             className={cn(
-              "size-[2.5px] bg-[var(--foreground)]",
+              "size-[2.5px] bg-foreground",
               round ? "rounded-full" : "rounded-none",
               d !== null && "atlas-pixel-cell",
             )}
@@ -164,10 +164,7 @@ export const LoadingState = memo(function LoadingState({
         ))}
       </span>
       <span className="atlas-thinking-shimmer text-xs leading-[16px] font-medium">{label}</span>
-      <span
-        ref={elapsed}
-        className="font-mono text-2xs tabular-nums text-[var(--muted-foreground)]"
-      />
+      <span ref={elapsed} className="font-mono text-2xs tabular-nums text-muted-foreground" />
     </div>
   );
   if (!stalledContent || !stalled) return indicator;

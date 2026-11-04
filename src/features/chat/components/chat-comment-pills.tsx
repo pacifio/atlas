@@ -17,7 +17,7 @@ import { memo, useMemo } from "react";
 import { CommenterAvatar } from "@/components/commenter-avatar";
 import { CommentButton, facesOf } from "@/features/artifacts/components/comment-thread";
 import { visibleCount, type Comment } from "@/features/artifacts/lib/comments-api";
-import { cn } from "@/lib/utils";
+import { GroupCommentPillView } from "./views/group-comment-pill-view";
 
 import {
   tabCommentsFor,
@@ -114,27 +114,19 @@ export const GroupCommentPill = memo(function GroupCommentPill({
     }
     return facesOf(all, directory);
   }, [count, directory, tabId, keysKey]);
-  if (count === 0) return null;
   return (
-    <button
-      type="button"
-      onClick={onOpen}
-      aria-label={`${count} ${count === 1 ? "comment" : "comments"} on these tool calls`}
-      className={cn(
-        "ml-auto flex h-5 shrink-0 cursor-pointer items-center gap-1 rounded-full border border-border bg-card pl-0.5 pr-1.5",
-        "text-[var(--secondary-foreground)] hover:bg-element-hover hover:text-[var(--foreground)]",
-      )}
-    >
-      {faces.length > 0 && (
-        <span className="flex shrink-0 items-center -space-x-1.5">
-          {faces.map((face) => (
-            <span key={face.authorId} className="rounded-full ring-1 ring-[var(--card)]">
-              <CommenterAvatar commenter={face} directory={directory} size={14} />
-            </span>
-          ))}
-        </span>
-      )}
-      <span className="text-2xs tabular-nums">{count > 9 ? "9+" : count}</span>
-    </button>
+    <GroupCommentPillView
+      count={count}
+      onOpen={onOpen}
+      faces={
+        directory
+          ? faces.map((face) => (
+              <span key={face.authorId} className="rounded-full ring-1 ring-card">
+                <CommenterAvatar commenter={face} directory={directory} size={14} />
+              </span>
+            ))
+          : []
+      }
+    />
   );
 });
