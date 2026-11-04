@@ -385,7 +385,7 @@ export function KnowledgePanel({ tabId }: { tabId?: string }) {
     <div
       ref={rootRef}
       className="relative h-full flex"
-      style={{ background: "var(--atlas-panel-background)" }}
+      style={{ background: "var(--panel-background)" }}
     >
       {finderOpen && (
         <KnowledgeFinder

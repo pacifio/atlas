@@ -167,7 +167,7 @@ export const AudioPlayer = memo(function AudioPlayer({
             className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-element-active text-foreground transition-colors hover:bg-element-hover cursor-pointer"
           >
             {buffering ? (
-              <span className="text-[var(--atlas-status-success-foreground)]">
+              <span className="text-success">
                 <ArcProgress got={bufferProgress?.got ?? 0} total={bufferProgress?.total ?? 0} />
               </span>
             ) : playing ? (
@@ -198,7 +198,7 @@ export const AudioPlayer = memo(function AudioPlayer({
                   key={i}
                   className={cn(
                     "min-w-0 flex-1 rounded-full transition-colors duration-100",
-                    played ? "bg-[var(--atlas-status-success-foreground)]" : "bg-border-strong",
+                    played ? "bg-success" : "bg-border-strong",
                   )}
                   style={{ height: `${Math.round(4 + p * 18)}px` }}
                 />

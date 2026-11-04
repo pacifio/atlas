@@ -95,11 +95,7 @@ export function UsagePanel() {
           {!data && loading && (
             <div className="p-6 text-sm text-[var(--muted-foreground)]">Reading usage…</div>
           )}
-          {error && (
-            <div className="p-6 text-sm text-[var(--atlas-status-error-foreground)]">
-              Failed to load: {error}
-            </div>
-          )}
+          {error && <div className="p-6 text-sm text-error">Failed to load: {error}</div>}
           {data && view.all.length === 0 && !loading && (
             <div className="p-4">
               <Card index={0} section="empty">

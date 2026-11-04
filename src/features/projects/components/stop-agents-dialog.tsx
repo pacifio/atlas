@@ -48,7 +48,7 @@ export function StopAgentsDialog() {
                 onClick={() => settle(false)}
                 className={cn(
                   pillButton,
-                  "bg-[var(--card)] text-[var(--secondary-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]",
+                  "bg-[var(--card)] text-[var(--secondary-foreground)] hover:bg-element-hover hover:text-[var(--foreground)]",
                 )}
               >
                 Go back

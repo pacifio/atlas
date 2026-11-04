@@ -45,15 +45,15 @@ export function WelcomeStateView({
               // card, with a soft negatively-spread shadow under it. `shadow-md`
               // is the menu elevation and turned a 2px lift into a floating slab.
               // ratchet-allow: a hover lift halo, deliberately softer than any elevation step
-              className="group relative flex flex-col gap-2.5 rounded-xl border border-[var(--border)] bg-[var(--card)] p-3 text-left transition-all duration-150 hover:-translate-y-0.5 hover:border-[var(--atlas-border-strong)] hover:bg-[var(--muted)] hover:shadow-[0_8px_24px_-12px_rgba(0,0,0,0.7)] cursor-pointer"
+              className="group relative flex flex-col gap-2.5 rounded-xl border border-[var(--border)] bg-[var(--card)] p-3 text-left transition-all duration-150 hover:-translate-y-0.5 hover:border-border-strong hover:bg-[var(--muted)] hover:shadow-[0_8px_24px_-12px_rgba(0,0,0,0.7)] cursor-pointer"
             >
               <div className="flex items-center justify-between">
-                <span className="grid h-7 w-7 place-items-center rounded-lg border border-[var(--atlas-border-subtle)] bg-[var(--card)] text-[var(--muted-foreground)] transition-colors group-hover:text-[var(--foreground)]">
+                <span className="grid h-7 w-7 place-items-center rounded-lg border border-border-subtle bg-[var(--card)] text-[var(--muted-foreground)] transition-colors group-hover:text-[var(--foreground)]">
                   <Icon size={13} />
                 </span>
                 <ArrowRight
                   size={13}
-                  className="-translate-x-1 text-[var(--atlas-text-disabled)] opacity-0 transition-all group-hover:translate-x-0 group-hover:text-[var(--secondary-foreground)] group-hover:opacity-100"
+                  className="-translate-x-1 text-disabled opacity-0 transition-all group-hover:translate-x-0 group-hover:text-[var(--secondary-foreground)] group-hover:opacity-100"
                 />
               </div>
               <span className="text-sm font-medium leading-snug text-[var(--secondary-foreground)] transition-colors group-hover:text-[var(--foreground)]">

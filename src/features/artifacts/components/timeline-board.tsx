@@ -159,7 +159,7 @@ export function TimelineBoard({
             aria-label="Search sessions"
             spellCheck={false}
             maxLength={256}
-            className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-[var(--atlas-text-disabled)]"
+            className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-disabled"
           />
           {query && (
             <button

@@ -5,7 +5,7 @@
 // and its rows (`details-rows.tsx`): 32px, medium, a soft fill on hover.
 
 export const MENU_SURFACE =
-  "flex max-h-[min(480px,70vh)] min-h-0 w-[300px] flex-col overflow-hidden rounded-xl border border-[var(--details-line)] bg-[color-mix(in_srgb,var(--popover)_44%,var(--background))] [--details-line:color-mix(in_srgb,var(--atlas-border-strong)_60%,var(--background))] text-popover-foreground shadow-md atlas-panel-in-tl select-none";
+  "flex max-h-[min(480px,70vh)] min-h-0 w-[300px] flex-col overflow-hidden rounded-xl border border-[var(--details-line)] bg-[color-mix(in_srgb,var(--popover)_44%,var(--background))] [--details-line:color-mix(in_srgb,var(--border-strong)_60%,var(--background))] text-popover-foreground shadow-md atlas-panel-in-tl select-none";
 
 /** The search row at the top, ruled off from the list by the card's line. */
 export const MENU_SEARCH =

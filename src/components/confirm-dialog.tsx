@@ -39,7 +39,7 @@ export function ConfirmDialog({ scope }: { scope?: string }) {
                 onClick={() => settle("cancel")}
                 className={cn(
                   pillButton,
-                  "bg-[var(--card)] text-[var(--secondary-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]",
+                  "bg-[var(--card)] text-[var(--secondary-foreground)] hover:bg-element-hover hover:text-[var(--foreground)]",
                 )}
               >
                 Cancel
@@ -51,7 +51,7 @@ export function ConfirmDialog({ scope }: { scope?: string }) {
                     pillButton,
                     pending.alternateDestructive
                       ? "border-error/40 bg-[var(--card)] text-error hover:bg-error/10"
-                      : "bg-[var(--card)] text-[var(--foreground)] hover:bg-[var(--atlas-element-hover)]",
+                      : "bg-[var(--card)] text-[var(--foreground)] hover:bg-element-hover",
                   )}
                 >
                   {pending.alternateLabel}
@@ -63,7 +63,7 @@ export function ConfirmDialog({ scope }: { scope?: string }) {
                   pillButton,
                   pending.destructive
                     ? "border-error/40 bg-[var(--card)] text-error hover:bg-error/10"
-                    : "bg-[var(--card)] text-[var(--foreground)] hover:bg-[var(--atlas-element-hover)]",
+                    : "bg-[var(--card)] text-[var(--foreground)] hover:bg-element-hover",
                 )}
               >
                 {pending.confirmLabel}

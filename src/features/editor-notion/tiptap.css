@@ -62,7 +62,7 @@
 .atlas-tiptap .ProseMirror a {
   color: var(--foreground);
   text-decoration: underline;
-  text-decoration-color: var(--atlas-border-strong);
+  text-decoration-color: var(--border-strong);
   text-underline-offset: 2px;
 }
 
@@ -92,7 +92,7 @@
 }
 
 .atlas-tiptap .ProseMirror blockquote {
-  border-left: 2px solid var(--atlas-border-strong);
+  border-left: 2px solid var(--border-strong);
   color: var(--secondary-foreground);
   padding-left: 12px;
   margin-left: 0;
@@ -146,7 +146,7 @@
   width: 14px;
   height: 14px;
   border-radius: 3px;
-  border: 1.5px solid var(--atlas-border-strong);
+  border: 1.5px solid var(--border-strong);
   background: transparent;
   cursor: pointer;
   display: inline-flex;
@@ -224,7 +224,7 @@
 /* Selection */
 .atlas-tiptap .ProseMirror::selection,
 .atlas-tiptap .ProseMirror *::selection {
-  background: var(--atlas-selection-background);
+  background: var(--selection-background);
   color: var(--foreground);
 }
 
@@ -239,7 +239,7 @@
   max-height: 360px;
   overflow-y: auto;
   background: var(--popover);
-  border: 1px solid var(--atlas-border-strong);
+  border: 1px solid var(--border-strong);
   border-radius: 10px;
   box-shadow: var(--shadow-lg);
   font-family: var(--font-sans);
@@ -278,7 +278,7 @@
 
 .atlas-slash-item:hover,
 .atlas-slash-item.is-active {
-  background: var(--atlas-element-hover);
+  background: var(--element-hover);
   color: var(--foreground);
 }
 
@@ -287,7 +287,7 @@
   height: 26px;
   border-radius: 6px;
   background: var(--card);
-  border: 1px solid var(--atlas-border-subtle);
+  border: 1px solid var(--border-subtle);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -330,7 +330,7 @@
   gap: 1px;
   padding: 3px;
   background: var(--popover);
-  border: 1px solid var(--atlas-border-strong);
+  border: 1px solid var(--border-strong);
   border-radius: 8px;
   box-shadow: var(--shadow-md);
   z-index: 1000;
@@ -353,19 +353,19 @@
 }
 
 .atlas-bubble-btn:hover {
-  background: var(--atlas-element-hover);
+  background: var(--element-hover);
   color: var(--foreground);
 }
 
 .atlas-bubble-btn.is-active {
-  background: var(--atlas-element-active);
+  background: var(--element-active);
   color: var(--foreground);
 }
 
 .atlas-bubble-sep {
   width: 1px;
   height: 18px;
-  background: var(--atlas-border-subtle);
+  background: var(--border-subtle);
   margin: 0 2px;
 }
 
@@ -380,7 +380,7 @@
   width: 220px;
   height: 22px;
   padding: 0 6px;
-  background: var(--atlas-panel-input-background);
+  background: var(--panel-input-background);
   border: 1px solid var(--border);
   border-radius: 4px;
   color: var(--foreground);
@@ -390,7 +390,7 @@
 }
 
 .atlas-bubble-link input:focus {
-  border-color: var(--atlas-border-strong);
+  border-color: var(--border-strong);
 }
 
 /* ── Callout (Tiptap node) ─────────────────────────────────────── */
@@ -402,7 +402,7 @@
   padding: 10px 14px;
   margin: 6px 0 10px;
   background: var(--card);
-  border: 1px solid var(--atlas-border-subtle);
+  border: 1px solid var(--border-subtle);
   border-left: 2px solid var(--foreground);
   border-radius: 7px;
 }
@@ -444,7 +444,7 @@
 }
 
 .atlas-tiptap .atlas-toggle-header:hover {
-  background: var(--atlas-element-hover);
+  background: var(--element-hover);
 }
 
 .atlas-tiptap .atlas-toggle-chev {
@@ -478,7 +478,7 @@
 .atlas-tiptap .atlas-toggle-body {
   padding-left: 28px;
   margin-top: 4px;
-  border-left: 1px solid var(--atlas-border-subtle);
+  border-left: 1px solid var(--border-subtle);
   margin-left: 12px;
 }
 
@@ -488,7 +488,7 @@
   position: relative;
   margin: 8px 0;
   border-radius: 8px;
-  border: 1px solid var(--atlas-border-subtle);
+  border: 1px solid var(--border-subtle);
   background: var(--background);
   overflow: hidden;
 }
@@ -498,7 +498,7 @@
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  border-bottom: 1px solid var(--atlas-border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
   font-size: 11px;
 }
 
@@ -535,7 +535,7 @@
 
 .atlas-tiptap .atlas-code-copy:hover {
   color: var(--foreground);
-  background: var(--atlas-element-hover);
+  background: var(--element-hover);
 }
 
 .atlas-tiptap .atlas-code pre {
@@ -565,18 +565,18 @@
 .atlas-tiptap .hljs-keyword,
 .atlas-tiptap .hljs-built_in,
 .atlas-tiptap .hljs-tag .hljs-name {
-  color: var(--atlas-syntax-keyword);
+  color: var(--syntax-keyword);
 }
 .atlas-tiptap .hljs-title,
 .atlas-tiptap .hljs-title.function_ {
-  color: var(--atlas-syntax-function);
+  color: var(--syntax-function);
 }
 .atlas-tiptap .hljs-string,
 .atlas-tiptap .hljs-attr {
-  color: var(--atlas-syntax-string);
+  color: var(--syntax-string);
 }
 .atlas-tiptap .hljs-number {
-  color: var(--atlas-syntax-number);
+  color: var(--syntax-number);
 }
 .atlas-tiptap .hljs-comment {
   color: var(--muted-foreground);
@@ -584,10 +584,10 @@
 }
 .atlas-tiptap .hljs-type,
 .atlas-tiptap .hljs-class {
-  color: var(--atlas-syntax-type);
+  color: var(--syntax-type);
 }
 .atlas-tiptap .hljs-meta {
-  color: var(--atlas-syntax-attribute);
+  color: var(--syntax-attribute);
 }
 
 /* ── Inline mention chip ──────────────────────────────────────── */
@@ -599,7 +599,7 @@
   padding: 1px 6px 1px 5px;
   border-radius: 4px;
   background: var(--card);
-  border: 1px solid var(--atlas-border-subtle);
+  border: 1px solid var(--border-subtle);
   color: var(--secondary-foreground);
   font-size: 12px;
   font-weight: 500;
@@ -641,7 +641,7 @@
 }
 
 .atlas-block-handle-btn:hover {
-  background: var(--atlas-element-hover);
+  background: var(--element-hover);
   color: var(--secondary-foreground);
 }
 

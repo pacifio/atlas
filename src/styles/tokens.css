@@ -106,7 +106,7 @@
      all. The key resolves to the theme's own foreground at 6%, so dark keeps
      exactly today's value and light gets the dark edge it wanted — and a theme
      author who disagrees can set it. */
-  --inset-highlight: inset 0 1px 0 0 var(--atlas-element-highlight);
+  --inset-highlight: inset 0 1px 0 0 var(--element-highlight);
 
   /* Control heights (decision 25). 22 / 28 / 30 snap to the nearest step. */
   --control-xs: 20px;
@@ -237,8 +237,8 @@
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 600;
-  color: var(--atlas-agent-chip-foreground);
-  background: var(--atlas-agent-chip-background);
+  color: var(--agent-chip-foreground);
+  background: var(--agent-chip-background);
   border: 1px solid var(--border);
   flex: none;
 }
@@ -250,88 +250,88 @@
 }
 
 /* generated:atlas-dark-fallback — do not edit.
-   Every `--atlas-*` variable at its Atlas-dark value: the floor for a frame
+   Every theme-key variable at its Atlas-dark value: the floor for a frame
    with no resolved theme. Rewritten by
    `ATLAS_WRITE_TOKENS=1 bunx vitest run src/features/theme/tokens-fallback.test.ts`. */
 :root {
-  --atlas-border-subtle: #141414;
-  --atlas-border-strong: #3d3d3d;
-  --atlas-element-hover: rgba(255, 255, 255, 0.04);
-  --atlas-element-selected: rgba(255, 255, 255, 0.06);
-  --atlas-element-active: rgba(255, 255, 255, 0.08);
-  --atlas-element-highlight: rgba(255, 255, 255, 0.06);
-  --atlas-primary-hover: #ffffff;
-  --atlas-primary-muted: rgba(255, 255, 255, 0.06);
-  --atlas-text-disabled: #3f3f3f;
-  --atlas-status-success-foreground: #9ecf8a;
-  --atlas-status-warning-foreground: #ffff00;
-  --atlas-status-error-foreground: #f44747;
-  --atlas-status-info-foreground: #6796e6;
-  --atlas-selection-background: rgba(255, 255, 255, 0.18);
-  --atlas-terminal-foreground: #ffffff;
-  --atlas-terminal-background: #000000;
-  --atlas-terminal-cursor: #ffffff;
-  --atlas-terminal-ansi-black: #1f1f1f;
-  --atlas-terminal-ansi-red: #f44747;
-  --atlas-terminal-ansi-green: #9ecf8a;
-  --atlas-terminal-ansi-yellow: #ffff00;
-  --atlas-terminal-ansi-blue: #6796e6;
-  --atlas-terminal-ansi-magenta: #c9a2f5;
-  --atlas-terminal-ansi-cyan: #7fd1e8;
-  --atlas-terminal-ansi-white: #ffffff;
-  --atlas-terminal-ansi-bright-black: #585858;
-  --atlas-terminal-ansi-bright-red: #fa6a63;
-  --atlas-terminal-ansi-bright-green: #add69c;
-  --atlas-terminal-ansi-bright-yellow: #feff5c;
-  --atlas-terminal-ansi-bright-blue: #7da6eb;
-  --atlas-terminal-ansi-bright-magenta: #d1b0f7;
-  --atlas-terminal-ansi-bright-cyan: #94d8ec;
-  --atlas-terminal-ansi-bright-white: #ffffff;
-  --atlas-syntax-comment: #737373;
-  --atlas-syntax-keyword: #ff678d;
-  --atlas-syntax-string: #5ecc71;
-  --atlas-syntax-number: #68cdf2;
-  --atlas-syntax-type: #d568ea;
-  --atlas-syntax-function: #9d6afb;
-  --atlas-syntax-variable: #a3a3a3;
-  --atlas-syntax-operator: #636363;
-  --atlas-syntax-tag: #ff855e;
-  --atlas-syntax-attribute: #60d199;
-  --atlas-syntax-constant: #08c0ef;
-  --atlas-syntax-regexp: #64d1db;
-  --atlas-syntax-escape: #61d5c0;
-  --atlas-syntax-definition: #9d6afb;
-  --atlas-syntax-property: #ffa359;
-  --atlas-editor-background: #000000;
-  --atlas-editor-foreground: #d4d4d4;
-  --atlas-editor-caret: #d4d4d4;
-  --atlas-editor-gutter-background: #000000;
-  --atlas-editor-gutter-foreground: #666666;
-  --atlas-editor-active-line-background: #ffffff0a;
-  --atlas-editor-active-line-gutter-foreground: #d4d4d4;
-  --atlas-editor-selection-background: #303030;
-  --atlas-editor-match-bracket-background: #2d2d2d;
-  --atlas-editor-match-bracket-border: #3d3d3d;
-  --atlas-search-match-background: rgba(255, 255, 0, 0.22);
-  --atlas-search-match-active-background: rgba(255, 255, 0, 0.5);
-  --atlas-scrollbar-thumb-background: rgba(255, 255, 255, 0.16);
-  --atlas-scrollbar-thumb-hover: rgba(255, 255, 255, 0.26);
-  --atlas-panel-background: #0a0a0a;
-  --atlas-panel-input-background: #0a0a0a;
-  --atlas-diff-added-background: #0d2211;
-  --atlas-diff-added-emphasis: rgba(158, 207, 138, 0.34);
-  --atlas-diff-added-text: #9ecf8a;
-  --atlas-diff-removed-background: #220d0d;
-  --atlas-diff-removed-emphasis: rgba(244, 71, 71, 0.34);
-  --atlas-diff-removed-text: #f44747;
-  --atlas-diff-context-background: #0a0a0a;
-  --atlas-agent-chip-foreground: #ffffff;
-  --atlas-agent-chip-background: rgba(255, 255, 255, 0.06);
-  --atlas-status-success-background: rgba(158, 207, 138, 0.12);
-  --atlas-status-warning-background: rgba(255, 255, 0, 0.12);
-  --atlas-status-error-background: rgba(244, 71, 71, 0.12);
-  --atlas-status-info-background: rgba(103, 150, 230, 0.12);
-  --atlas-element-emphasis: rgba(255, 255, 255, 0.16);
-  --atlas-terminal-selection: rgba(255, 255, 255, 0.3);
+  --border-subtle: #141414;
+  --border-strong: #3d3d3d;
+  --element-hover: rgba(255, 255, 255, 0.04);
+  --element-selected: rgba(255, 255, 255, 0.06);
+  --element-active: rgba(255, 255, 255, 0.08);
+  --element-highlight: rgba(255, 255, 255, 0.06);
+  --primary-hover: #ffffff;
+  --primary-muted: rgba(255, 255, 255, 0.06);
+  --text-disabled: #3f3f3f;
+  --status-success-foreground: #9ecf8a;
+  --status-warning-foreground: #ffff00;
+  --status-error-foreground: #f44747;
+  --status-info-foreground: #6796e6;
+  --selection-background: rgba(255, 255, 255, 0.18);
+  --terminal-foreground: #ffffff;
+  --terminal-background: #000000;
+  --terminal-cursor: #ffffff;
+  --terminal-ansi-black: #1f1f1f;
+  --terminal-ansi-red: #f44747;
+  --terminal-ansi-green: #9ecf8a;
+  --terminal-ansi-yellow: #ffff00;
+  --terminal-ansi-blue: #6796e6;
+  --terminal-ansi-magenta: #c9a2f5;
+  --terminal-ansi-cyan: #7fd1e8;
+  --terminal-ansi-white: #ffffff;
+  --terminal-ansi-bright-black: #585858;
+  --terminal-ansi-bright-red: #fa6a63;
+  --terminal-ansi-bright-green: #add69c;
+  --terminal-ansi-bright-yellow: #feff5c;
+  --terminal-ansi-bright-blue: #7da6eb;
+  --terminal-ansi-bright-magenta: #d1b0f7;
+  --terminal-ansi-bright-cyan: #94d8ec;
+  --terminal-ansi-bright-white: #ffffff;
+  --syntax-comment: #737373;
+  --syntax-keyword: #ff678d;
+  --syntax-string: #5ecc71;
+  --syntax-number: #68cdf2;
+  --syntax-type: #d568ea;
+  --syntax-function: #9d6afb;
+  --syntax-variable: #a3a3a3;
+  --syntax-operator: #636363;
+  --syntax-tag: #ff855e;
+  --syntax-attribute: #60d199;
+  --syntax-constant: #08c0ef;
+  --syntax-regexp: #64d1db;
+  --syntax-escape: #61d5c0;
+  --syntax-definition: #9d6afb;
+  --syntax-property: #ffa359;
+  --editor-background: #000000;
+  --editor-foreground: #d4d4d4;
+  --editor-caret: #d4d4d4;
+  --editor-gutter-background: #000000;
+  --editor-gutter-foreground: #666666;
+  --editor-active-line-background: #ffffff0a;
+  --editor-active-line-gutter-foreground: #d4d4d4;
+  --editor-selection-background: #303030;
+  --editor-match-bracket-background: #2d2d2d;
+  --editor-match-bracket-border: #3d3d3d;
+  --search-match-background: rgba(255, 255, 0, 0.22);
+  --search-match-active-background: rgba(255, 255, 0, 0.5);
+  --scrollbar-thumb-background: rgba(255, 255, 255, 0.16);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.26);
+  --panel-background: #0a0a0a;
+  --panel-input-background: #0a0a0a;
+  --diff-added-background: #0d2211;
+  --diff-added-emphasis: rgba(158, 207, 138, 0.34);
+  --diff-added-text: #9ecf8a;
+  --diff-removed-background: #220d0d;
+  --diff-removed-emphasis: rgba(244, 71, 71, 0.34);
+  --diff-removed-text: #f44747;
+  --diff-context-background: #0a0a0a;
+  --agent-chip-foreground: #ffffff;
+  --agent-chip-background: rgba(255, 255, 255, 0.06);
+  --status-success-background: rgba(158, 207, 138, 0.12);
+  --status-warning-background: rgba(255, 255, 0, 0.12);
+  --status-error-background: rgba(244, 71, 71, 0.12);
+  --status-info-background: rgba(103, 150, 230, 0.12);
+  --element-emphasis: rgba(255, 255, 255, 0.16);
+  --terminal-selection: rgba(255, 255, 255, 0.3);
 }
 /* /generated:atlas-dark-fallback */

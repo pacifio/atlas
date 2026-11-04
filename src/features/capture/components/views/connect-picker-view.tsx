@@ -59,7 +59,7 @@ export function ConnectPickerView({
           Fetching this Organization's Projects…
         </p>
       ) : options === null ? (
-        <p className="rounded-lg bg-[var(--atlas-status-warning-background)] px-2.5 py-1.5 text-xs text-[var(--atlas-status-warning-foreground)]">
+        <p className="rounded-lg bg-warning-muted px-2.5 py-1.5 text-xs text-warning">
           {listError
             ? `Could not list this Organization's Projects: ${listError}`
             : "Could not reach the server. Check the connection and reopen this tab."}
@@ -73,7 +73,7 @@ export function ConnectPickerView({
       ) : (
         <>
           {options.warning && (
-            <p className="rounded-lg bg-[var(--atlas-status-warning-background)] px-2.5 py-1.5 text-xs text-[var(--atlas-status-warning-foreground)]">
+            <p className="rounded-lg bg-warning-muted px-2.5 py-1.5 text-xs text-warning">
               {options.warning}
             </p>
           )}

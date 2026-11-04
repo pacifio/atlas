@@ -84,12 +84,12 @@ export function ConnectDialog() {
           <div className="p-4">
             {done ? (
               <div className="flex items-center gap-2 px-1 py-5 text-xs text-secondary-foreground">
-                <Check size={14} className="text-[var(--atlas-status-success-foreground)]" />
+                <Check size={14} className="text-success" />
                 Connected.
               </div>
             ) : error ? (
               <div className="px-1 py-4">
-                <p className="text-xs text-[var(--atlas-status-error-foreground)]">{error}</p>
+                <p className="text-xs text-error">{error}</p>
                 <button
                   onClick={() => void beginSignIn()}
                   className="mt-3 rounded border border-border px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-element-hover"
@@ -118,10 +118,7 @@ export function ConnectDialog() {
                       >
                         {copied ? (
                           <>
-                            <Check
-                              size={12}
-                              className="text-[var(--atlas-status-success-foreground)]"
-                            />
+                            <Check size={12} className="text-success" />
                             Copied
                           </>
                         ) : (

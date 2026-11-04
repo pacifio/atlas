@@ -114,14 +114,7 @@ function StepIcon({ status, active }: { status: string; active: boolean }) {
   }
   return (
     <svg width={16} height={16} viewBox="0 0 16 16" className="shrink-0" aria-hidden>
-      <circle
-        cx="8"
-        cy="8"
-        r="6.5"
-        fill="none"
-        stroke="var(--atlas-border-strong)"
-        strokeWidth="1.5"
-      />
+      <circle cx="8" cy="8" r="6.5" fill="none" stroke="var(--border-strong)" strokeWidth="1.5" />
     </svg>
   );
 }
@@ -184,8 +177,8 @@ export const PlanTasksPill = memo(function PlanTasksPill({ tabId }: { tabId: str
         className={cn(
           "flex h-6.5 items-center gap-1.5 rounded-full border px-2 text-2xs font-medium leading-none transition-colors cursor-pointer",
           open
-            ? "border-[var(--atlas-border-strong)] bg-[var(--atlas-element-selected)] text-[var(--foreground)]"
-            : "border-[var(--border)] bg-[var(--card)] text-[var(--secondary-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]",
+            ? "border-border-strong bg-element-selected text-[var(--foreground)]"
+            : "border-[var(--border)] bg-[var(--card)] text-[var(--secondary-foreground)] hover:bg-element-hover hover:text-[var(--foreground)]",
         )}
         title="Implementation plan"
       >

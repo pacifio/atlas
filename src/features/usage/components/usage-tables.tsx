@@ -79,8 +79,8 @@ export function UsageTables({
     models: ranked.models.length,
   };
   return (
-    <div className="flex flex-col rounded-lg border border-[var(--atlas-element-selected)] bg-[var(--card)]">
-      <div className="flex h-[36px] shrink-0 items-center gap-1 border-b border-[var(--atlas-element-selected)] px-2">
+    <div className="flex flex-col rounded-lg border border-element-selected bg-[var(--card)]">
+      <div className="flex h-[36px] shrink-0 items-center gap-1 border-b border-element-selected px-2">
         {TABS.map((t) => (
           <button
             key={t.id}
@@ -103,8 +103,8 @@ export function UsageTables({
               className={cn(
                 "rounded-full px-1.5 py-px text-3xs tabular-nums transition-colors",
                 tab === t.id
-                  ? "bg-[var(--atlas-element-active)] text-[var(--secondary-foreground)]"
-                  : "bg-[var(--atlas-element-hover)] text-[var(--muted-foreground)]",
+                  ? "bg-element-active text-[var(--secondary-foreground)]"
+                  : "bg-element-hover text-[var(--muted-foreground)]",
               )}
             >
               {fmtNum(counts[t.id])}
@@ -112,7 +112,7 @@ export function UsageTables({
           </button>
         ))}
         <div className="flex-1" />
-        <div className="flex h-control-md w-[200px] items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--background)] px-2 focus-within:border-[var(--atlas-border-strong)]">
+        <div className="flex h-control-md w-[200px] items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--background)] px-2 focus-within:border-border-strong">
           <Search size={11} className="shrink-0 text-[var(--muted-foreground)]" />
           <input
             value={search}
@@ -126,7 +126,7 @@ export function UsageTables({
             render={
               <button
                 type="button"
-                className="flex h-control-md items-center gap-1.5 rounded-md border border-[var(--border)] px-2 text-xs text-[var(--secondary-foreground)] outline-none hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]"
+                className="flex h-control-md items-center gap-1.5 rounded-md border border-[var(--border)] px-2 text-xs text-[var(--secondary-foreground)] outline-none hover:bg-element-hover hover:text-[var(--foreground)]"
                 title="Sort"
               >
                 <ArrowDownWideNarrow size={12} className="text-[var(--muted-foreground)]" />
@@ -148,7 +148,7 @@ export function UsageTables({
                       // `RadioItem` closed it, and picking one sort order is a
                       // one-shot choice, so the old behaviour is restored.
                       closeOnClick
-                      className="flex h-control-md cursor-default items-center px-3 outline-none hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] data-checked:text-[var(--foreground)]"
+                      className="flex h-control-md cursor-default items-center px-3 outline-none hover:bg-element-hover hover:text-[var(--foreground)] data-checked:text-[var(--foreground)]"
                     >
                       {SORT_LABEL[k]}
                     </DropdownMenu.RadioItem>
@@ -222,7 +222,7 @@ function SessionsTable({
   const capped = data.sessions.length < sessionsTotal;
   return (
     <>
-      <div className="flex h-control-md shrink-0 items-center border-b border-[var(--atlas-element-selected)] px-3 text-3xs font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
+      <div className="flex h-control-md shrink-0 items-center border-b border-element-selected px-3 text-3xs font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
         <span className={COL.title}>Session</span>
         <span className={COL.project}>Project</span>
         <span className={COL.agent}>Agent</span>
@@ -244,16 +244,14 @@ function SessionsTable({
               return (
                 <div
                   key={item.key}
-                  className="absolute left-0 top-0 flex w-full items-center border-b border-[var(--atlas-border-subtle)] px-3 text-xs hover:bg-[var(--atlas-element-hover)]"
+                  className="absolute left-0 top-0 flex w-full items-center border-b border-border-subtle px-3 text-xs hover:bg-element-hover"
                   style={{ height: ROW_H, transform: `translateY(${item.start}px)` }}
                 >
                   <span className={cn(COL.title, "flex min-w-0 items-center gap-2 pr-3")}>
                     <span
                       className={cn(
                         "h-1.5 w-1.5 shrink-0 rounded-full",
-                        s.ledgered
-                          ? "bg-[var(--atlas-status-success-foreground)]"
-                          : "bg-[var(--atlas-text-disabled)]",
+                        s.ledgered ? "bg-success" : "bg-disabled",
                       )}
                       title={s.ledgered ? "Dated per turn" : "Dated to its last-active day"}
                     />
@@ -304,7 +302,7 @@ function SessionsTable({
         )}
       </div>
       {capped && (
-        <div className="flex h-control-md shrink-0 items-center border-t border-[var(--atlas-element-selected)] px-3 text-2xs text-[var(--muted-foreground)]">
+        <div className="flex h-control-md shrink-0 items-center border-t border-element-selected px-3 text-2xs text-[var(--muted-foreground)]">
           Showing the {fmtNum(data.sessions.length)} most recent of {fmtNum(sessionsTotal)}{" "}
           sessions.
         </div>
@@ -356,7 +354,7 @@ function RollupTable({
   const top = list.reduce((m, r) => Math.max(m, tokensOf(r.metrics)), 0);
   return (
     <>
-      <div className="flex h-control-md shrink-0 items-center border-b border-[var(--atlas-element-selected)] px-3 text-3xs font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
+      <div className="flex h-control-md shrink-0 items-center border-b border-element-selected px-3 text-3xs font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
         <span className="min-w-[160px] flex-1">{axis}</span>
         <span className="w-[160px] shrink-0">Share</span>
         <span className="w-[72px] shrink-0 text-right">Tokens</span>
@@ -374,7 +372,7 @@ function RollupTable({
         {list.map((r, i) => (
           <div
             key={r.key}
-            className="flex h-[30px] items-center border-b border-[var(--atlas-border-subtle)] px-3 text-xs hover:bg-[var(--atlas-element-hover)]"
+            className="flex h-[30px] items-center border-b border-border-subtle px-3 text-xs hover:bg-element-hover"
           >
             <span className="flex min-w-[160px] flex-1 items-center gap-2 truncate pr-3">
               {axis === "agent" ? (

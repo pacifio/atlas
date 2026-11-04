@@ -260,7 +260,7 @@ export function MembersModal({
               </button>
             ))}
             <div className="flex-1" />
-            <div className="flex items-center gap-1.5 h-6 rounded-md border border-border bg-card px-2 min-w-[200px] focus-within:border-[var(--atlas-border-strong)]">
+            <div className="flex items-center gap-1.5 h-6 rounded-md border border-border bg-card px-2 min-w-[200px] focus-within:border-border-strong">
               <Search size={11} className="text-muted-foreground shrink-0" />
               <input
                 value={query}
@@ -299,7 +299,7 @@ export function MembersModal({
                     : undefined
                 }
                 onClick={() => void submitInvite()}
-                className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--card)] px-3 py-1.5 text-xs font-medium leading-none text-foreground cursor-pointer transition-colors hover:bg-[var(--atlas-element-hover)] disabled:cursor-not-allowed disabled:opacity-40 shrink-0"
+                className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--card)] px-3 py-1.5 text-xs font-medium leading-none text-foreground cursor-pointer transition-colors hover:bg-element-hover disabled:cursor-not-allowed disabled:opacity-40 shrink-0"
               >
                 {inviting ? <Loader2 size={11} className="animate-spin" /> : <UserPlus size={11} />}
                 Invite
@@ -430,7 +430,7 @@ function LeaveOrgDialog({
             <button
               onClick={onCancel}
               disabled={leaving}
-              className="px-3 h-8 rounded-md text-sm text-[var(--secondary-foreground)] hover:bg-[var(--atlas-element-active)] hover:text-[var(--foreground)] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-3 h-8 rounded-md text-sm text-[var(--secondary-foreground)] hover:bg-element-active hover:text-[var(--foreground)] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Cancel
             </button>
@@ -535,7 +535,7 @@ function MemberRow({
                           <DropdownMenu.Item
                             key={r}
                             onClick={() => onRole(r)}
-                            className="px-2.5 h-6 flex items-center justify-between outline-none hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] cursor-pointer"
+                            className="px-2.5 h-6 flex items-center justify-between outline-none hover:bg-element-hover hover:text-[var(--foreground)] cursor-pointer"
                           >
                             {ROLE_LABELS[r]}
                             {member.role === r && <Check size={11} />}
@@ -554,7 +554,7 @@ function MemberRow({
                       className={cn(
                         "px-2.5 h-6 flex items-center gap-1.5 outline-none",
                         access.actionAllowed
-                          ? "hover:bg-[var(--atlas-element-hover)] hover:text-error cursor-pointer"
+                          ? "hover:bg-element-hover hover:text-error cursor-pointer"
                           : "opacity-40 cursor-not-allowed",
                       )}
                     >
@@ -680,7 +680,7 @@ function EmailChipsInput({
     <div
       // FIXED height, never `min-h` + wrap: the bar must not grow the moment a
       // chip appears. Overflowing chips scroll sideways instead.
-      className="flex-1 min-w-0 flex items-center gap-1 h-7 rounded-md border border-border bg-card px-1.5 overflow-x-auto hide-scrollbar focus-within:border-[var(--atlas-border-strong)] cursor-text"
+      className="flex-1 min-w-0 flex items-center gap-1 h-7 rounded-md border border-border bg-card px-1.5 overflow-x-auto hide-scrollbar focus-within:border-border-strong cursor-text"
       onClick={(e) => {
         // Clicking the padding should focus the field, like a real input.
         const input = e.currentTarget.querySelector("input");
@@ -776,7 +776,7 @@ function RolePicker({
               <DropdownMenu.Item
                 key={r}
                 onClick={() => onSelect(r)}
-                className="px-2.5 h-6 flex items-center justify-between outline-none hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] cursor-pointer"
+                className="px-2.5 h-6 flex items-center justify-between outline-none hover:bg-element-hover hover:text-[var(--foreground)] cursor-pointer"
               >
                 {ROLE_LABELS[r]}
                 {role === r && <Check size={11} />}

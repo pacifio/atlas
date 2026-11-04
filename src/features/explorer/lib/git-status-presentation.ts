@@ -9,13 +9,13 @@ export type GitStatusPresentation = {
 };
 
 const PRESENTATIONS: Record<string, GitStatusPresentation> = {
-  M: { color: "var(--atlas-status-warning-foreground)", priority: 3 },
-  D: { color: "var(--atlas-status-error-foreground)", priority: 4 },
-  U: { color: "var(--atlas-status-error-foreground)", priority: 4 },
-  R: { color: "var(--atlas-status-info-foreground)", priority: 2 },
-  C: { color: "var(--atlas-status-info-foreground)", priority: 2 },
-  A: { color: "var(--atlas-status-success-foreground)", priority: 1 },
-  "?": { color: "var(--atlas-status-info-foreground)", priority: 2 },
+  M: { color: "var(--status-warning-foreground)", priority: 3 },
+  D: { color: "var(--status-error-foreground)", priority: 4 },
+  U: { color: "var(--status-error-foreground)", priority: 4 },
+  R: { color: "var(--status-info-foreground)", priority: 2 },
+  C: { color: "var(--status-info-foreground)", priority: 2 },
+  A: { color: "var(--status-success-foreground)", priority: 1 },
+  "?": { color: "var(--status-info-foreground)", priority: 2 },
 };
 
 /** Returns the status color and its severity for files and collapsed folders. */

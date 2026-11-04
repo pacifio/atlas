@@ -115,17 +115,13 @@ export function CallStat({ calls }: { calls: TimelineEntry[] }) {
   return (
     <>
       {stat.parts.length > 0 && (
-        <span className="truncate font-mono text-xs text-[var(--atlas-text-disabled)]">
-          {stat.parts.join(" · ")}
-        </span>
+        <span className="truncate font-mono text-xs text-disabled">{stat.parts.join(" · ")}</span>
       )}
       {stat.added > 0 && (
-        <span className="font-mono text-xs text-[var(--atlas-diff-added-text)]">+{stat.added}</span>
+        <span className="font-mono text-xs text-[var(--diff-added-text)]">+{stat.added}</span>
       )}
       {stat.removed > 0 && (
-        <span className="font-mono text-xs text-[var(--atlas-diff-removed-text)]">
-          −{stat.removed}
-        </span>
+        <span className="font-mono text-xs text-[var(--diff-removed-text)]">−{stat.removed}</span>
       )}
     </>
   );
@@ -207,7 +203,7 @@ function CallTable({
         <button
           type="button"
           onClick={() => setShown((cur) => cur + CALL_WINDOW_GROW)}
-          className="flex h-9 w-full cursor-pointer items-center justify-center bg-[var(--card)] font-mono text-xs text-[var(--muted-foreground)] transition-colors hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]"
+          className="flex h-9 w-full cursor-pointer items-center justify-center bg-[var(--card)] font-mono text-xs text-[var(--muted-foreground)] transition-colors hover:bg-element-hover hover:text-[var(--foreground)]"
         >
           Show {Math.min(CALL_WINDOW_GROW, hidden)} more of {hidden}…
         </button>
@@ -262,15 +258,13 @@ const CallRow = memo(function CallRow({
     <div>
       <div
         className={cn(
-          "group/row flex items-center gap-2 bg-[var(--card)] px-3 transition-colors hover:bg-[var(--atlas-element-hover)]",
+          "group/row flex items-center gap-2 bg-[var(--card)] px-3 transition-colors hover:bg-element-hover",
           dense ? "h-8" : "h-9",
-          divider && "border-b border-[var(--atlas-border-subtle)]",
+          divider && "border-b border-border-subtle",
         )}
       >
         {!dense && (
-          <span className="shrink-0 font-mono text-xs text-[var(--atlas-text-disabled)]">
-            {time(call.at)}
-          </span>
+          <span className="shrink-0 font-mono text-xs text-disabled">{time(call.at)}</span>
         )}
         <button
           type="button"
@@ -286,9 +280,7 @@ const CallRow = memo(function CallRow({
           <span
             className={cn(
               "min-w-0 truncate text-sm",
-              failed
-                ? "text-[var(--atlas-status-error-foreground)]"
-                : "text-[var(--secondary-foreground)]",
+              failed ? "text-error" : "text-[var(--secondary-foreground)]",
             )}
           >
             {line.verb}
@@ -298,7 +290,7 @@ const CallRow = memo(function CallRow({
                 <span
                   className={cn(
                     line.fileDetail &&
-                      "text-[var(--atlas-text-disabled)] underline decoration-dotted underline-offset-[3px] group-hover/marker:text-[var(--secondary-foreground)]",
+                      "text-disabled underline decoration-dotted underline-offset-[3px] group-hover/marker:text-[var(--secondary-foreground)]",
                   )}
                 >
                   {line.detail}
@@ -309,7 +301,7 @@ const CallRow = memo(function CallRow({
           <ChevronRight
             size={12}
             className={cn(
-              "shrink-0 text-[var(--atlas-border-strong)] transition-transform",
+              "shrink-0 text-border-strong transition-transform",
               expanded && "rotate-90",
             )}
           />
@@ -333,7 +325,7 @@ const CallRow = memo(function CallRow({
       </div>
 
       {expanded && (
-        <div className="space-y-2.5 border-b border-[var(--atlas-border-subtle)] bg-[var(--background)] px-3 py-3">
+        <div className="space-y-2.5 border-b border-border-subtle bg-[var(--background)] px-3 py-3">
           {call.paths.length > 0 && (
             <p className="font-mono text-xs text-[var(--muted-foreground)]">
               {call.paths.join("  ·  ")}
@@ -368,7 +360,7 @@ const CallRow = memo(function CallRow({
             )
           )}
           {!call.arguments && !call.result && !call.resultBinary && (
-            <p className="font-mono text-xs text-[var(--atlas-text-disabled)]">
+            <p className="font-mono text-xs text-disabled">
               Nothing else was recorded for this call.
             </p>
           )}

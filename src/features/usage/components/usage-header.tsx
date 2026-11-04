@@ -96,13 +96,11 @@ function ExportMenu({
                   <button
                     type="button"
                     onClick={() => onExport(item.kind)}
-                    className="flex h-control-md w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-xs text-[var(--secondary-foreground)] outline-none transition-colors hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]"
+                    className="flex h-control-md w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-xs text-[var(--secondary-foreground)] outline-none transition-colors hover:bg-element-hover hover:text-[var(--foreground)]"
                   >
                     <item.icon size={12} className="shrink-0 text-[var(--muted-foreground)]" />
                     <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                    <span className="shrink-0 text-2xs text-[var(--atlas-text-disabled)]">
-                      {item.hint}
-                    </span>
+                    <span className="shrink-0 text-2xs text-disabled">{item.hint}</span>
                   </button>
                 }
               />

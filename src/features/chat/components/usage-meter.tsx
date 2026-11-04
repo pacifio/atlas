@@ -37,10 +37,10 @@ export function TickMeter({
           const lit = at <= pct;
           const color =
             at >= 100
-              ? "var(--atlas-status-error-foreground)"
+              ? "var(--status-error-foreground)"
               : at >= warnAt
-                ? "var(--atlas-status-warning-foreground)"
-                : "var(--atlas-status-success-foreground)";
+                ? "var(--status-warning-foreground)"
+                : "var(--status-success-foreground)";
           return (
             <span
               key={i}

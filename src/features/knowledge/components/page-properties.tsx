@@ -54,8 +54,8 @@ export function PageProperties({
     <div
       style={{
         marginTop: 14,
-        borderTop: "1px solid var(--atlas-border-subtle)",
-        borderBottom: "1px solid var(--atlas-border-subtle)",
+        borderTop: "1px solid var(--border-subtle)",
+        borderBottom: "1px solid var(--border-subtle)",
       }}
     >
       <button
@@ -214,7 +214,7 @@ function StatusEditor({
           height: 22,
           color: value ? "var(--foreground)" : "var(--muted-foreground)",
           background: value ? "var(--card)" : "transparent",
-          borderColor: "var(--atlas-border-subtle)",
+          borderColor: "var(--border-subtle)",
           cursor: "pointer",
         }}
       >
@@ -275,7 +275,7 @@ function StatusEditor({
                 style={{
                   height: 20,
                   cursor: "pointer",
-                  borderColor: "var(--atlas-border-subtle)",
+                  borderColor: "var(--border-subtle)",
                 }}
               >
                 {p}
@@ -393,7 +393,7 @@ function TagsEditor({ tags, onChange }: { tags: string[]; onChange: (tags: strin
           className="pill pill-bare text-xs"
           style={{
             height: 20,
-            borderColor: "var(--atlas-border-subtle)",
+            borderColor: "var(--border-subtle)",
             paddingRight: 4,
             display: "inline-flex",
             alignItems: "center",
@@ -439,7 +439,7 @@ function TagsEditor({ tags, onChange }: { tags: string[]; onChange: (tags: strin
           className="text-xs"
           style={{
             background: "transparent",
-            border: "1px dashed var(--atlas-border-subtle)",
+            border: "1px dashed var(--border-subtle)",
             borderRadius: 9999,
             padding: "0 8px",
             height: 20,

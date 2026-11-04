@@ -346,7 +346,7 @@ export function SpacePages({
                           e.stopPropagation();
                           session.deletePage(page.id);
                         }}
-                        className="flex size-control-sm cursor-pointer items-center justify-center rounded-full border border-border text-muted-foreground transition-colors hover:bg-element-hover hover:text-[var(--atlas-status-error-foreground)] disabled:cursor-not-allowed disabled:opacity-30"
+                        className="flex size-control-sm cursor-pointer items-center justify-center rounded-full border border-border text-muted-foreground transition-colors hover:bg-element-hover hover:text-error disabled:cursor-not-allowed disabled:opacity-30"
                       >
                         <Trash2 size={10} />
                       </button>

@@ -111,8 +111,8 @@ export function CommandSuggestions({
               className={cn(
                 "w-full text-left px-2.5 h-control-sm flex items-center gap-2 text-sm font-mono",
                 isActive
-                  ? "bg-[var(--atlas-element-selected)] text-[var(--foreground)]"
-                  : "text-[var(--secondary-foreground)] hover:bg-[var(--atlas-element-hover)]",
+                  ? "bg-element-selected text-[var(--foreground)]"
+                  : "text-[var(--secondary-foreground)] hover:bg-element-hover",
               )}
             >
               <Icon

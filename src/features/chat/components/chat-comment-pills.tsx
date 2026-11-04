@@ -122,7 +122,7 @@ export const GroupCommentPill = memo(function GroupCommentPill({
       aria-label={`${count} ${count === 1 ? "comment" : "comments"} on these tool calls`}
       className={cn(
         "ml-auto flex h-5 shrink-0 cursor-pointer items-center gap-1 rounded-full border border-border bg-card pl-0.5 pr-1.5",
-        "text-[var(--secondary-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]",
+        "text-[var(--secondary-foreground)] hover:bg-element-hover hover:text-[var(--foreground)]",
       )}
     >
       {faces.length > 0 && (

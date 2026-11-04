@@ -112,10 +112,8 @@ export function UnboundCreateView({
       {/* The preview read failed: Continue has nothing to disclose, so say
        *  so where it blocks, with the retry right there. */}
       {mode === "cloud" && importPreview === null && (
-        <div className="flex items-center justify-between gap-2 rounded-lg bg-[var(--atlas-status-warning-background)] px-2.5 py-1.5">
-          <span className="text-xs text-[var(--atlas-status-warning-foreground)]">
-            Couldn't read this Project's history.
-          </span>
+        <div className="flex items-center justify-between gap-2 rounded-lg bg-warning-muted px-2.5 py-1.5">
+          <span className="text-xs text-warning">Couldn't read this Project's history.</span>
           <button
             type="button"
             onClick={onRetryPreview}

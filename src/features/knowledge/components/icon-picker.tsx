@@ -176,7 +176,7 @@ export function IconPicker({ value, anchorRect, onPick, onClose }: IconPickerPro
                   width: 30,
                   height: 30,
                   borderRadius: 5,
-                  background: value === e ? "var(--atlas-element-active)" : "transparent",
+                  background: value === e ? "var(--element-active)" : "transparent",
                   border: 0,
                   lineHeight: 1,
                   cursor: "pointer",
@@ -185,7 +185,7 @@ export function IconPicker({ value, anchorRect, onPick, onClose }: IconPickerPro
                   justifyContent: "center",
                 }}
                 onMouseEnter={(ev) => {
-                  if (value !== e) ev.currentTarget.style.background = "var(--atlas-element-hover)";
+                  if (value !== e) ev.currentTarget.style.background = "var(--element-hover)";
                 }}
                 onMouseLeave={(ev) => {
                   if (value !== e) ev.currentTarget.style.background = "transparent";
@@ -202,7 +202,7 @@ export function IconPicker({ value, anchorRect, onPick, onClose }: IconPickerPro
         style={{
           marginTop: 6,
           paddingTop: 8,
-          borderTop: "1px solid var(--atlas-border-subtle)",
+          borderTop: "1px solid var(--border-subtle)",
           display: "flex",
           gap: 6,
           alignItems: "center",
@@ -225,7 +225,7 @@ export function IconPicker({ value, anchorRect, onPick, onClose }: IconPickerPro
             flex: 1,
             height: 26,
             padding: "0 8px",
-            background: "var(--atlas-panel-input-background)",
+            background: "var(--panel-input-background)",
             border: "1px solid var(--border)",
             borderRadius: 5,
             color: "var(--foreground)",

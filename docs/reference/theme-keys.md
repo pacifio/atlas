@@ -40,7 +40,7 @@ field that only sometimes works is worse than one that does not exist.
 ## Consuming a key
 
 Most code never touches this file: the applier writes every resolved key to
-`:root` as `--atlas-<key with dots and underscores as dashes>`, so a Tailwind
+`:root` as `--<key with dots and underscores as dashes>`, so a Tailwind
 utility or a `var()` follows the theme with no work and recolours on a switch
 with no re-render. Prefer that.
 
@@ -304,7 +304,7 @@ The agent identity chip.
 
 ## Derived variables
 
-Atlas writes these **6** `--atlas-…` custom properties too, but
+Atlas writes these **6** custom properties too, but
 they are **not** theme keys: each is a pure transform of a key that is, so a
 theme steers it through that key. Writing one in a theme file is an
 unknown-key warning.
@@ -324,7 +324,11 @@ unknown-key warning.
 
 **These names no longer exist.** They were aliases in `tokens.css` through the
 sweep, which rewrote all 2,594 `var(--alias)` call sites and deleted them — a
-name in the left column will resolve to nothing. The table is kept because a
+name in the left column will resolve to nothing. The exceptions are
+`--border-subtle`, `--border-strong`, `--diff-added-text` and
+`--diff-removed-text`: since theme keys dropped the `--atlas-` prefix
+(ADR-0027) they are those keys' own variables again, with the meaning given
+below. The table is kept because a
 theme written against an older Atlas, a stale branch, or a snippet in an issue
 will still be full of them, and this is the translation.
 

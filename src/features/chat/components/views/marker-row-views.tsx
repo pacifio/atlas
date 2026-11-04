@@ -76,7 +76,7 @@ export const MarkerRowBody = memo(function MarkerRowBody({
             <span
               className={cn(
                 fileLink &&
-                  "text-[var(--atlas-text-disabled)] underline decoration-dotted underline-offset-[3px] group-hover/marker:text-[var(--secondary-foreground)]",
+                  "text-disabled underline decoration-dotted underline-offset-[3px] group-hover/marker:text-[var(--secondary-foreground)]",
               )}
             >
               {row.detail}
@@ -86,12 +86,8 @@ export const MarkerRowBody = memo(function MarkerRowBody({
       </span>
       {(row.added > 0 || row.removed > 0) && (
         <span className="ml-auto shrink-0 font-mono text-2xs tabular-nums">
-          {row.added > 0 && (
-            <span className="text-[var(--atlas-diff-added-text)]">+{row.added}</span>
-          )}
-          {row.removed > 0 && (
-            <span className="ml-1 text-[var(--atlas-status-error-foreground)]">−{row.removed}</span>
-          )}
+          {row.added > 0 && <span className="text-[var(--diff-added-text)]">+{row.added}</span>}
+          {row.removed > 0 && <span className="ml-1 text-error">−{row.removed}</span>}
         </span>
       )}
       {/* The step's own time, in the same gutter and style as a block's live
@@ -99,7 +95,7 @@ export const MarkerRowBody = memo(function MarkerRowBody({
       {row.durationMs !== undefined && row.durationMs >= 1000 && (
         <span
           className={cn(
-            "shrink-0 font-mono text-2xs text-[var(--atlas-text-disabled)] tabular-nums",
+            "shrink-0 font-mono text-2xs text-disabled tabular-nums",
             row.added === 0 && row.removed === 0 && "ml-auto",
           )}
         >
@@ -197,7 +193,7 @@ export const MarkerGroupRowBody = memo(function MarkerGroupRowBody({
         // written straight to the DOM and is blank for its first second, so
         // any separator React rendered beside it would dangle on its own
         // until the first tick.
-        <span className="ml-auto flex shrink-0 items-center gap-1.5 font-mono text-2xs text-[var(--atlas-text-disabled)] tabular-nums">
+        <span className="ml-auto flex shrink-0 items-center gap-1.5 font-mono text-2xs text-disabled tabular-nums">
           {row.liveDone > 0 && <span>{row.liveDone} done</span>}
           {row.liveStartedAt !== null && <LiveElapsed startedAt={row.liveStartedAt} minMs={1000} />}
         </span>
@@ -285,7 +281,7 @@ export const SubagentRowBody = memo(function SubagentRowBody({
         title={`${row.name} — open in side panel`}
         className={cn(
           "atlas-marker w-full min-w-0 cursor-pointer text-left text-base",
-          failed ? "text-[var(--atlas-status-error-foreground)]" : "text-[var(--muted-foreground)]",
+          failed ? "text-error" : "text-[var(--muted-foreground)]",
           "hover:text-[var(--secondary-foreground)]",
         )}
       >
@@ -295,7 +291,7 @@ export const SubagentRowBody = memo(function SubagentRowBody({
         <span className={cn("min-w-0 truncate", running && "atlas-marker-running")}>
           {row.name}
         </span>
-        <span className="ml-auto flex shrink-0 items-center gap-1.5 font-mono text-2xs text-[var(--atlas-text-disabled)] tabular-nums">
+        <span className="ml-auto flex shrink-0 items-center gap-1.5 font-mono text-2xs text-disabled tabular-nums">
           {/* Only when the child reported work: a mail child's count is 0
               however much it did, and "0 calls" would say it did nothing. */}
           {row.workCount > 0 && <span>{formatCalls(row.workCount)}</span>}

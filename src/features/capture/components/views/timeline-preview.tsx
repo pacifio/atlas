@@ -29,7 +29,7 @@ export function TimelinePreview() {
         <span className="text-3xs font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">
           Timeline
         </span>
-        <span className="ml-auto text-3xs text-[var(--atlas-text-disabled)]">preview</span>
+        <span className="ml-auto text-3xs text-disabled">preview</span>
       </div>
 
       <div className="relative mt-2">
@@ -38,9 +38,9 @@ export function TimelinePreview() {
             poking out past the first and last node. The nodes themselves are
             laid out in flow — hand-positioning them meant re-deriving a magic
             offset every time the row height changed. */}
-        <span className="absolute bottom-[7px] left-[3px] top-[7px] w-px bg-[var(--atlas-element-active)]" />
+        <span className="absolute bottom-[7px] left-[3px] top-[7px] w-px bg-element-active" />
         <span
-          className="atlas-timeline-beam absolute left-[2px] top-[3px] h-2.5 w-[3px] rounded-full bg-[var(--atlas-status-success-foreground)]"
+          className="atlas-timeline-beam absolute left-[2px] top-[3px] h-2.5 w-[3px] rounded-full bg-success"
           style={{ "--atlas-beam-travel": "42px" } as React.CSSProperties}
         />
 
@@ -55,7 +55,7 @@ export function TimelinePreview() {
                 className={cn(
                   "relative size-[7px] shrink-0 rounded-full border",
                   row.dot === "commit"
-                    ? "border-[var(--atlas-status-success-foreground)] bg-[var(--atlas-status-success-foreground)]"
+                    ? "border-success bg-success"
                     : "border-border-strong bg-[var(--card)]",
                 )}
               />
@@ -69,9 +69,7 @@ export function TimelinePreview() {
               >
                 {row.text}
               </span>
-              <span className="shrink-0 text-3xs text-[var(--atlas-text-disabled)]">
-                {row.meta}
-              </span>
+              <span className="shrink-0 text-3xs text-disabled">{row.meta}</span>
             </div>
           ))}
         </div>

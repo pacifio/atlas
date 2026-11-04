@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { DERIVED_VAR_REGISTRY, THEME_KEY_REGISTRY } from "@/features/theme/theme-key-registry";
 
 /**
  * The design-system ratchet (decision 33) — closed at zero.
@@ -76,7 +77,7 @@ const RULES: Rule[] = [
   },
   {
     id: "colour-literal",
-    instead: "a base token or an --atlas-* theme key; see docs/reference/theme-keys.md.",
+    instead: "a base token or a theme key; see docs/reference/theme-keys.md.",
     pattern: /#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(/g,
   },
   {
@@ -393,4 +394,30 @@ describe("design-system ratchet", () => {
       ).toBe(0);
     });
   }
+});
+
+/**
+ * Theme keys lost their `--atlas-` prefix (ADR-0027): `element.hover` is
+ * `--element-hover`, and the old spelling is not aliased. A `var()` naming the
+ * old one resolves to nothing and paints transparent, which nothing else in
+ * the toolchain reports, so the old spellings are banned outright, across all
+ * of `src/` and `index.html`, with no `ratchet-allow` exit. App variables that
+ * are not theme keys (`--atlas-chat-column`, `--atlas-boot-*`, the font
+ * settings) keep their prefix and are not matched.
+ */
+describe("retired `--atlas-` theme-key names", () => {
+  it("are named nowhere", () => {
+    const names = [...THEME_KEY_REGISTRY, ...DERIVED_VAR_REGISTRY]
+      .map(({ cssVar }) => cssVar.slice(2))
+      .sort((a, b) => b.length - a.length);
+    const retired = new RegExp(`--atlas-(?:${names.join("|")})(?![\\w-])`, "g");
+    const files = [...walk(path.join(REPO_ROOT, "src")), path.join(REPO_ROOT, "index.html")];
+    const hits = files.flatMap((file) =>
+      (readFileSync(file, "utf8").match(retired) ?? []).map(
+        (name) => `${path.relative(REPO_ROOT, file)}: ${name}`,
+      ),
+    );
+    expect(names.length).toBeGreaterThan(0);
+    expect(hits, "drop the `--atlas-` prefix: a theme key's variable is `--<key>`").toEqual([]);
+  });
 });

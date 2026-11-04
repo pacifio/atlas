@@ -77,7 +77,7 @@ export function EfficiencyCard({
       </div>
 
       {ranked.length > 1 && (
-        <div className="mt-3 border-t border-[var(--atlas-element-selected)] pt-2">
+        <div className="mt-3 border-t border-element-selected pt-2">
           <div className="flex h-5 items-center text-3xs font-medium uppercase tracking-wider text-[var(--muted-foreground)]">
             <span className="min-w-0 flex-1">By {groupBy}</span>
             <span className="w-[64px] text-right">Cache hit</span>

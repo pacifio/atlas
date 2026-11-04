@@ -190,7 +190,7 @@ export function SessionChatPanel({
           <button
             type="button"
             onClick={onClose}
-            className="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded text-[var(--muted-foreground)] transition-colors hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]"
+            className="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded text-[var(--muted-foreground)] transition-colors hover:bg-element-hover hover:text-[var(--foreground)]"
           >
             <X size={14} />
           </button>
@@ -226,7 +226,7 @@ export function SessionChatPanel({
       </div>
 
       {error && (
-        <p className="shrink-0 border-t border-[var(--atlas-status-error-foreground)]/25 bg-[var(--atlas-status-error-background)] px-3 py-2 text-sm leading-[1.5] text-[var(--atlas-status-error-foreground)]">
+        <p className="shrink-0 border-t border-error/25 bg-error-muted px-3 py-2 text-sm leading-[1.5] text-error">
           {error}
         </p>
       )}
@@ -291,7 +291,7 @@ function ThreadPicker({
         render={
           <button
             type="button"
-            className="flex min-w-0 cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-1 text-sm text-[var(--foreground)] transition-colors hover:bg-[var(--atlas-element-hover)]"
+            className="flex min-w-0 cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-1 text-sm text-[var(--foreground)] transition-colors hover:bg-element-hover"
           >
             <span className="truncate">{title}</span>
             <ChevronDown size={12} className="shrink-0 text-[var(--muted-foreground)]" />
@@ -322,7 +322,7 @@ function ThreadPicker({
                 filtered.map((meta) => (
                   <div
                     key={meta.id}
-                    className="group flex items-center gap-1.5 rounded-md px-2 py-1.5 transition-colors hover:bg-[var(--atlas-element-hover)]"
+                    className="group flex items-center gap-1.5 rounded-md px-2 py-1.5 transition-colors hover:bg-element-hover"
                   >
                     <button
                       type="button"
@@ -342,7 +342,7 @@ function ThreadPicker({
                       <span className="min-w-0 flex-1 truncate text-sm text-[var(--secondary-foreground)]">
                         {meta.title}
                       </span>
-                      <span className="shrink-0 font-mono text-2xs text-[var(--atlas-text-disabled)]">
+                      <span className="shrink-0 font-mono text-2xs text-disabled">
                         {timeAgo(meta.updatedAt)}
                       </span>
                     </button>
@@ -350,7 +350,7 @@ function ThreadPicker({
                       <button
                         type="button"
                         onClick={() => onDelete(meta.id)}
-                        className="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-[var(--atlas-text-disabled)] opacity-0 transition-all hover:text-[var(--atlas-status-error-foreground)] group-hover:opacity-100 focus-visible:opacity-100"
+                        className="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-disabled opacity-0 transition-all hover:text-error group-hover:opacity-100 focus-visible:opacity-100"
                       >
                         <Trash2 size={11} />
                       </button>
@@ -366,7 +366,7 @@ function ThreadPicker({
                 onNew();
                 setOpen(false);
               }}
-              className="flex h-8 shrink-0 cursor-pointer items-center gap-2 border-t border-[var(--border)] px-2.5 text-sm text-[var(--secondary-foreground)] transition-colors hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]"
+              className="flex h-8 shrink-0 cursor-pointer items-center gap-2 border-t border-[var(--border)] px-2.5 text-sm text-[var(--secondary-foreground)] transition-colors hover:bg-element-hover hover:text-[var(--foreground)]"
             >
               <Plus size={12} />
               New chat
@@ -403,7 +403,7 @@ function NeedsKey({ loaded }: { loaded: boolean }) {
       <button
         type="button"
         onClick={openProviderSettings}
-        className="mt-1 flex h-7 cursor-pointer items-center rounded-full border border-[var(--border)] bg-[var(--card)] px-3 text-sm text-[var(--secondary-foreground)] transition-colors hover:border-[var(--atlas-border-strong)] hover:text-[var(--foreground)]"
+        className="mt-1 flex h-7 cursor-pointer items-center rounded-full border border-[var(--border)] bg-[var(--card)] px-3 text-sm text-[var(--secondary-foreground)] transition-colors hover:border-border-strong hover:text-[var(--foreground)]"
       >
         Add a key in Settings
       </button>
@@ -462,16 +462,16 @@ function Starters({ disabled, onPick }: { disabled: boolean; onPick: (question: 
                 "group atlas-fade-in flex flex-col gap-2 rounded-xl border border-[var(--border)] bg-[var(--card)] p-2.5 text-left transition-all duration-150",
                 disabled
                   ? "cursor-default opacity-50"
-                  : "cursor-pointer hover:-translate-y-0.5 hover:border-[var(--atlas-border-strong)] hover:bg-[var(--card)] hover:shadow-md",
+                  : "cursor-pointer hover:-translate-y-0.5 hover:border-border-strong hover:bg-[var(--card)] hover:shadow-md",
               )}
             >
               <div className="flex items-center justify-between">
-                <span className="grid size-6 place-items-center rounded-lg border border-[var(--atlas-border-subtle)] bg-[var(--card)] text-[var(--muted-foreground)] transition-colors group-hover:text-[var(--foreground)]">
+                <span className="grid size-6 place-items-center rounded-lg border border-border-subtle bg-[var(--card)] text-[var(--muted-foreground)] transition-colors group-hover:text-[var(--foreground)]">
                   <Icon size={12} />
                 </span>
                 <ArrowRight
                   size={12}
-                  className="-translate-x-1 text-[var(--atlas-text-disabled)] opacity-0 transition-all group-hover:translate-x-0 group-hover:text-[var(--secondary-foreground)] group-hover:opacity-100"
+                  className="-translate-x-1 text-disabled opacity-0 transition-all group-hover:translate-x-0 group-hover:text-[var(--secondary-foreground)] group-hover:opacity-100"
                 />
               </div>
               <span className="text-sm font-medium leading-snug text-[var(--secondary-foreground)] transition-colors group-hover:text-[var(--foreground)]">
@@ -532,7 +532,7 @@ function Composer({
       {/* `relative z-10` is load-bearing: the strip above is positioned, and
           positioned elements paint over non-positioned siblings regardless of
           DOM order — without this the strip would cover the composer. */}
-      <div className="relative z-10 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] shadow-sm focus-within:border-[var(--atlas-border-strong)]">
+      <div className="relative z-10 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] shadow-sm focus-within:border-border-strong">
         <ChatInput
           ref={inputRef}
           // Fixed, not conditional: `ChatInput` reads its placeholder when the

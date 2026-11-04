@@ -313,12 +313,12 @@ export function MemoryTreeView({
                         width={CARD_W}
                         height={CARD_H}
                         rx={6}
-                        fill={lit ? "var(--atlas-element-selected)" : "var(--card)"}
+                        fill={lit ? "var(--element-selected)" : "var(--card)"}
                         stroke={
                           lit
                             ? HL
                             : isRoot || t.id === hoverId
-                              ? "var(--atlas-border-strong)"
+                              ? "var(--border-strong)"
                               : "var(--border)"
                         }
                         strokeWidth={1}

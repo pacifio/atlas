@@ -18,7 +18,7 @@ const BASE =
   "text-sm font-medium leading-none";
 
 /** Addressed to you, or to everyone — the brighter of the two. */
-const SELF = "border-border-strong bg-[var(--atlas-element-emphasis)] text-[var(--foreground)]";
+const SELF = "border-border-strong bg-[var(--element-emphasis)] text-[var(--foreground)]";
 /** Someone else: the same neutral surface every other pill in the app uses. */
 const OTHER = "border-border bg-card text-secondary-foreground";
 

@@ -314,8 +314,8 @@ function pill(on: boolean): string {
     "flex h-6.5 cursor-pointer items-center gap-1 rounded-full border px-2 text-2xs leading-none font-medium transition-colors",
     "disabled:cursor-not-allowed disabled:opacity-50",
     on
-      ? "border-[var(--atlas-border-strong)] bg-[var(--atlas-element-selected)] text-[var(--foreground)]"
-      : "border-[var(--border)] bg-[var(--card)] text-[var(--secondary-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]",
+      ? "border-border-strong bg-element-selected text-[var(--foreground)]"
+      : "border-[var(--border)] bg-[var(--card)] text-[var(--secondary-foreground)] hover:bg-element-hover hover:text-[var(--foreground)]",
   );
 }
 
@@ -427,7 +427,7 @@ function Composer({
               "relative min-h-[44px] border border-[var(--border)] bg-[var(--background)] shadow-sm",
               collapsed ? "rounded-composer" : "rounded-xl",
               "transition-[border-radius,border-color,box-shadow] duration-base ease-out-strong motion-reduce:transition-none",
-              "focus-within:border-[color-mix(in_srgb,var(--atlas-border-strong)_50%,var(--border))]",
+              "focus-within:border-[color-mix(in_srgb,var(--border-strong)_50%,var(--border))]",
               "focus-within:ring-1 focus-within:ring-[var(--primary)]/10",
             )}
           >
@@ -453,7 +453,7 @@ function Composer({
                   "absolute top-[8px] right-[8px] flex h-[28px] w-[28px] items-center justify-center rounded-lg border transition-colors",
                   !stopping && (empty || !connected)
                     ? "cursor-not-allowed border-transparent text-[var(--muted-foreground)]"
-                    : "cursor-pointer border-transparent text-[var(--foreground)] hover:border-[var(--border)] hover:bg-[var(--atlas-element-hover)]",
+                    : "cursor-pointer border-transparent text-[var(--foreground)] hover:border-[var(--border)] hover:bg-element-hover",
                 )}
               >
                 {stopping ? (
@@ -471,7 +471,7 @@ function Composer({
       <div ref={tray} hidden={!trayShown}>
         <div
           inert={collapsed}
-          className="mx-5 flex items-center justify-between gap-2 rounded-b-xl border border-t-0 border-[var(--border)] bg-[var(--atlas-panel-input-background)] px-2 pt-2 pb-1.5"
+          className="mx-5 flex items-center justify-between gap-2 rounded-b-xl border border-t-0 border-[var(--border)] bg-panel-input px-2 pt-2 pb-1.5"
         >
           <Tray compact={compact} onMention={() => input.current?.insertText("@")} />
         </div>

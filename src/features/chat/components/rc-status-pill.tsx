@@ -11,9 +11,9 @@ import { driverLabel, type RcLinkState } from "../lib/rc-api";
 import type { RemoteControl } from "../lib/use-remote-control";
 
 const DOT: Record<RcLinkState, string> = {
-  connecting: "bg-[var(--atlas-status-warning-foreground)]",
-  live: "bg-[var(--atlas-status-success-foreground)] atlas-live-pulse",
-  offline: "bg-[var(--atlas-status-warning-foreground)]",
+  connecting: "bg-warning",
+  live: "bg-success atlas-live-pulse",
+  offline: "bg-warning",
   ended: "bg-[var(--muted-foreground)]",
 };
 
@@ -70,7 +70,7 @@ export function RcStatusPill({ control }: { control: RemoteControl }) {
           room.state === "live"
             ? {
                 ["--atlas-pulse-color" as string]:
-                  "color-mix(in oklab, var(--atlas-status-success-foreground) 40%, transparent)",
+                  "color-mix(in oklab, var(--status-success-foreground) 40%, transparent)",
               }
             : undefined
         }

@@ -97,11 +97,8 @@ export function Detected({
  */
 export function GitMissingBanner() {
   return (
-    <div className="flex items-start gap-2 rounded-lg border border-dashed border-[var(--atlas-status-warning-foreground)]/40 px-2.5 py-2">
-      <GitBranch
-        size={12}
-        className="mt-0.5 shrink-0 text-[var(--atlas-status-warning-foreground)]"
-      />
+    <div className="flex items-start gap-2 rounded-lg border border-dashed border-warning/40 px-2.5 py-2">
+      <GitBranch size={12} className="mt-0.5 shrink-0 text-warning" />
       <p className="min-w-0 text-xs text-[var(--secondary-foreground)]">
         Git is not installed on this machine. Sessions are still recorded, but they cannot be linked
         to commits and cannot be shared with an Organization.
@@ -119,7 +116,7 @@ export function GitMissingBanner() {
  */
 export function GitInitOffer({ busy, onGitInit }: { busy: boolean; onGitInit: () => void }) {
   return (
-    <div className="flex items-start gap-2 rounded-lg border border-dashed border-[var(--atlas-element-active)] px-2.5 py-2">
+    <div className="flex items-start gap-2 rounded-lg border border-dashed border-element-active px-2.5 py-2">
       <GitBranch size={12} className="mt-0.5 shrink-0 text-[var(--muted-foreground)]" />
       <div className="min-w-0">
         <p className="text-xs text-[var(--secondary-foreground)]">

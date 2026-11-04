@@ -27,12 +27,10 @@ export function Checkpoint({
     <div
       className={cn(
         "mt-2.5 overflow-hidden rounded-md border",
-        orphaned
-          ? "border-dashed border-[var(--atlas-border-strong)]"
-          : "border-[var(--border)] bg-[var(--card)]",
+        orphaned ? "border-dashed border-border-strong" : "border-[var(--border)] bg-[var(--card)]",
       )}
     >
-      <div className="flex items-center gap-2.5 border-b border-[var(--atlas-border-subtle)] bg-[var(--card)] px-3 py-2">
+      <div className="flex items-center gap-2.5 border-b border-border-subtle bg-[var(--card)] px-3 py-2">
         <GitCommitHorizontal size={13} className="shrink-0 text-[var(--muted-foreground)]" />
         <span className="shrink-0 font-mono text-xs text-[var(--muted-foreground)]">
           {entry.commitSha?.slice(0, 7)}
@@ -58,19 +56,19 @@ export function Checkpoint({
          *  whole subsystem exists to avoid. */}
         {orphaned && (
           <span
-            className="shrink-0 rounded-full bg-[var(--atlas-status-warning-background)] px-2 py-px font-mono text-2xs text-[var(--atlas-status-warning-foreground)]"
+            className="shrink-0 rounded-full bg-warning-muted px-2 py-px font-mono text-2xs text-warning"
             title="This commit is no longer in history — rewritten or squashed. The Session record is kept."
           >
             orphaned
           </span>
         )}
         {entry.insertions > 0 && (
-          <span className="shrink-0 font-mono text-xs text-[var(--atlas-diff-added-text)]">
+          <span className="shrink-0 font-mono text-xs text-[var(--diff-added-text)]">
             +{entry.insertions}
           </span>
         )}
         {entry.deletions > 0 && (
-          <span className="shrink-0 font-mono text-xs text-[var(--atlas-diff-removed-text)]">
+          <span className="shrink-0 font-mono text-xs text-[var(--diff-removed-text)]">
             −{entry.deletions}
           </span>
         )}
@@ -87,7 +85,7 @@ export function Checkpoint({
             </li>
           ))}
           {entry.files.length > 12 && (
-            <li className="font-mono text-xs leading-[1.75] text-[var(--atlas-text-disabled)]">
+            <li className="font-mono text-xs leading-[1.75] text-disabled">
               +{entry.files.length - 12} more
             </li>
           )}
@@ -105,7 +103,7 @@ export function Checkpoint({
       {/* Suppressed when orphaned: the branch no longer contains this commit,
        *  so showing it would assert exactly the link that was lost. */}
       {entry.branch && !orphaned && (
-        <p className="border-t border-[var(--atlas-border-subtle)] px-3 py-1.5 font-mono text-xs text-[var(--atlas-text-disabled)]">
+        <p className="border-t border-border-subtle px-3 py-1.5 font-mono text-xs text-disabled">
           {entry.branch}
         </p>
       )}

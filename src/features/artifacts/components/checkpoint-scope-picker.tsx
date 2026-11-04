@@ -271,10 +271,8 @@ function Row({
         <span className="block truncate text-xs text-[var(--foreground)]">{title}</span>
         <span className="flex items-center gap-1.5 font-mono text-2xs text-[var(--muted-foreground)]">
           <span className="min-w-0 truncate">{meta}</span>
-          {added > 0 && <span className="text-[var(--atlas-diff-added-text)]">+{added}</span>}
-          {removed > 0 && (
-            <span className="text-[var(--atlas-status-error-foreground)]">−{removed}</span>
-          )}
+          {added > 0 && <span className="text-[var(--diff-added-text)]">+{added}</span>}
+          {removed > 0 && <span className="text-error">−{removed}</span>}
         </span>
       </span>
       {checked && <Check size={12} className="mt-px shrink-0 text-[var(--foreground)]" />}

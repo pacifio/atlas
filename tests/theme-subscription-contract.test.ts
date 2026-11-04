@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
  * Every consumer that reads a RESOLVED theme colour must have a way to hear
  * that the theme changed.
  *
- * Most of Atlas recolours for free, because a CSS rule naming `var(--atlas-…)`
+ * Most of Atlas recolours for free, because a CSS rule naming a theme key (`var(--element-hover)`)
  * is late-bound: `applyTheme` rewrites the `:root` block and the next paint is
  * the new theme. The exceptions are the subsystems that cannot use a custom
  * property — a canvas, a WebGL scene, an xterm `ITheme`, a recharts `fill`, a

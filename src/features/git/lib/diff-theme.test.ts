@@ -42,7 +42,7 @@ describe("the diff theme", () => {
     // Both halves colour tokens from the active Atlas theme's syntax keys, so
     // light mode gets the light theme's code colours and nothing re-tokenizes.
     const html = JSON.stringify(result.code);
-    expect(html).toMatch(/--diffs-token-light:var\(--atlas-syntax-keyword\)/);
-    expect(html).toMatch(/--diffs-token-dark:var\(--atlas-syntax-keyword\)/);
+    expect(html).toMatch(/--diffs-token-light:var\(--syntax-keyword\)/);
+    expect(html).toMatch(/--diffs-token-dark:var\(--syntax-keyword\)/);
   });
 });

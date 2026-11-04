@@ -162,7 +162,7 @@ export function KnowledgeGraph() {
     <div
       ref={containerRef}
       className="h-full w-full relative"
-      style={{ background: "var(--atlas-panel-background)" }}
+      style={{ background: "var(--panel-background)" }}
     >
       {loading ? (
         <LoadingState />

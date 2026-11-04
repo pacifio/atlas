@@ -82,9 +82,9 @@ const STATE_WORD: Record<RcLinkState, string> = {
   ended: "Ended",
 };
 const STATE_DOT: Record<RcLinkState, string> = {
-  connecting: "bg-[var(--atlas-status-warning-foreground)]",
-  live: "bg-[var(--atlas-status-success-foreground)]",
-  offline: "bg-[var(--atlas-status-warning-foreground)]",
+  connecting: "bg-warning",
+  live: "bg-success",
+  offline: "bg-warning",
   ended: "bg-[var(--muted-foreground)]",
 };
 
@@ -126,7 +126,7 @@ export function RcRoomPanel({ sessionId, remote }: { sessionId: string; remote: 
             room.state === "live"
               ? {
                   ["--atlas-pulse-color" as string]:
-                    "color-mix(in oklab, var(--atlas-status-success-foreground) 40%, transparent)",
+                    "color-mix(in oklab, var(--status-success-foreground) 40%, transparent)",
                 }
               : undefined
           }

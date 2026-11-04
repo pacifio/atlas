@@ -83,7 +83,7 @@ export function DailyGlyphChart({
           {[0, 0.5, 1].map((f) => (
             <span
               key={f}
-              className="pointer-events-none absolute inset-x-0 border-t border-[var(--atlas-element-selected)]"
+              className="pointer-events-none absolute inset-x-0 border-t border-element-selected"
               style={{ top: `${f * 100}%` }}
               aria-hidden
             />
@@ -119,7 +119,7 @@ export function DailyGlyphChart({
                   })}
                   {hover === i && (
                     <span
-                      className="pointer-events-none absolute inset-y-0 -inset-x-px bg-[var(--atlas-element-hover)]"
+                      className="pointer-events-none absolute inset-y-0 -inset-x-px bg-element-hover"
                       aria-hidden
                     />
                   )}
@@ -163,7 +163,7 @@ export function DailyGlyphChart({
                   </div>
                 ) : null,
               )}
-              <div className="mt-1.5 flex items-center justify-between border-t border-[var(--atlas-element-selected)] pt-1.5">
+              <div className="mt-1.5 flex items-center justify-between border-t border-element-selected pt-1.5">
                 <span className="text-2xs uppercase tracking-wider text-[var(--muted-foreground)]">
                   Total
                 </span>
@@ -202,10 +202,10 @@ export function DailyGlyphChart({
               key={k.key}
               className="flex items-center gap-1 text-2xs text-[var(--secondary-foreground)]"
             >
-              <span className="text-[var(--atlas-text-disabled)]">[</span>
+              <span className="text-disabled">[</span>
               <span className="h-1.5 w-1.5 rounded-full" style={{ background: k.color }} />
               <span className="max-w-[160px] truncate">{k.label}</span>
-              <span className="text-[var(--atlas-text-disabled)]">]</span>
+              <span className="text-disabled">]</span>
             </span>
           ))}
         </div>

@@ -28,9 +28,7 @@ export function HealthDetailView({
   onRetry: () => void;
 }) {
   const stopped = health.state === "stopped";
-  const tone = stopped
-    ? "var(--atlas-status-error-foreground)"
-    : "var(--atlas-status-warning-foreground)";
+  const tone = stopped ? "var(--status-error-foreground)" : "var(--status-warning-foreground)";
 
   return (
     <button
@@ -46,8 +44,8 @@ export function HealthDetailView({
       )}
       style={{
         backgroundColor: stopped
-          ? "var(--atlas-status-error-background)"
-          : "var(--atlas-status-warning-background)",
+          ? "var(--status-error-background)"
+          : "var(--status-warning-background)",
         ["--atlas-ants-color" as string]: `color-mix(in oklab, ${tone} 55%, transparent)`,
       }}
     >
@@ -59,9 +57,7 @@ export function HealthDetailView({
             title={issue.nextStep || undefined}
             className={cn(
               "flex items-center gap-1.5 text-xs",
-              issue.state === "stopped"
-                ? "text-[var(--atlas-status-error-foreground)]"
-                : "text-[var(--atlas-status-warning-foreground)]",
+              issue.state === "stopped" ? "text-error" : "text-warning",
             )}
           >
             {index === 0 &&

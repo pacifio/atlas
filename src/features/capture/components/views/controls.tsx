@@ -27,7 +27,7 @@ export function PrimaryButton({
       type="button"
       disabled={busy || disabled}
       onClick={onClick}
-      className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--card)] px-3 py-1.5 text-xs font-medium leading-none text-[var(--foreground)] transition-colors hover:bg-[var(--atlas-element-hover)] disabled:cursor-not-allowed disabled:opacity-40"
+      className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--card)] px-3 py-1.5 text-xs font-medium leading-none text-[var(--foreground)] transition-colors hover:bg-element-hover disabled:cursor-not-allowed disabled:opacity-40"
     >
       {busy && <Loader2 size={11} className="animate-spin" />}
       {label}
@@ -49,7 +49,7 @@ export function GhostButton({
       type="button"
       disabled={disabled}
       onClick={onClick}
-      className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--card)] px-3 py-1.5 text-xs font-medium leading-none text-[var(--secondary-foreground)] transition-colors hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-40"
+      className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--card)] px-3 py-1.5 text-xs font-medium leading-none text-[var(--secondary-foreground)] transition-colors hover:bg-element-hover hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-40"
     >
       {label}
     </button>
@@ -137,10 +137,10 @@ export function Tabs({
             className={cn(
               "h-6 rounded-full border px-2.5 text-xs transition-colors",
               disabled
-                ? "cursor-not-allowed border-[var(--atlas-element-hover)] bg-[var(--atlas-element-hover)] text-[var(--muted-foreground)] opacity-40"
+                ? "cursor-not-allowed border-element-hover bg-element-hover text-[var(--muted-foreground)] opacity-40"
                 : on
-                  ? "cursor-pointer border-[var(--atlas-element-active)] bg-[var(--atlas-element-active)] text-[var(--foreground)]"
-                  : "cursor-pointer border-[var(--atlas-element-selected)] bg-[var(--atlas-element-hover)] text-[var(--muted-foreground)] hover:bg-[var(--atlas-element-selected)] hover:text-[var(--secondary-foreground)]",
+                  ? "cursor-pointer border-element-active bg-element-active text-[var(--foreground)]"
+                  : "cursor-pointer border-element-selected bg-element-hover text-[var(--muted-foreground)] hover:bg-element-selected hover:text-[var(--secondary-foreground)]",
             )}
             onClick={() => onTabChange(id)}
           >

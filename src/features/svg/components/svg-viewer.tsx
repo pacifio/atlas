@@ -58,7 +58,7 @@ export function SvgViewer({ filePath }: SvgViewerProps) {
           onClick={copy}
           disabled={!code}
           title="Copy SVG source"
-          className="flex items-center gap-1 px-2 h-6 rounded text-2xs cursor-pointer outline-none transition-colors text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--atlas-element-hover)] disabled:opacity-40 disabled:cursor-default"
+          className="flex items-center gap-1 px-2 h-6 rounded text-2xs cursor-pointer outline-none transition-colors text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-element-hover disabled:opacity-40 disabled:cursor-default"
         >
           <CopyGlyph copied={copied} size="sm" />
           {copied ? "Copied" : "Copy code"}

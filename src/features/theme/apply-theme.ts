@@ -42,7 +42,7 @@ let activeTheme: ResolvedTheme | null = null;
  * properties. `vars` is the WHOLE resolved map, which `index.html` writes into
  * the same `<style id="atlas-resolved-theme">` this module owns. It used to be
  * only the seven, and the app's first render — which happens three IPC round
- * trips before the first `applyTheme` — had no `--atlas-*` variable at all:
+ * trips before the first `applyTheme` — had no theme-key variable at all:
  * transparent surfaces, and a dark flash for anyone on a light theme. A couple
  * of hundred short strings is still nothing to parse on the critical path.
  */

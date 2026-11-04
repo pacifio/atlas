@@ -187,8 +187,8 @@ const PickerRow = memo(function PickerRow({
     className: cn(
       "text-left px-3 flex items-center gap-2 text-sm",
       isActive
-        ? "bg-[var(--atlas-element-selected)] text-[var(--foreground)]"
-        : "text-[var(--secondary-foreground)] hover:bg-[var(--atlas-element-hover)]",
+        ? "bg-element-selected text-[var(--foreground)]"
+        : "text-[var(--secondary-foreground)] hover:bg-element-hover",
     ),
   };
   if (row.type === "category") {

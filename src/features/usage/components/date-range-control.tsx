@@ -144,7 +144,7 @@ function MonthGrid({
         <button
           type="button"
           aria-label="Previous month"
-          className="flex size-5 items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]"
+          className="flex size-5 items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-element-hover hover:text-[var(--foreground)]"
           onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1))}
         >
           <ChevronLeft size={12} />
@@ -153,7 +153,7 @@ function MonthGrid({
         <button
           type="button"
           aria-label="Next month"
-          className="flex size-5 items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-50"
+          className="flex size-5 items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-element-hover hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-50"
           disabled={dayKey(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1)) > today}
           onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1))}
         >
@@ -187,15 +187,15 @@ function MonthGrid({
                 edge
                   ? "rounded-md bg-[var(--foreground)] text-[var(--primary-foreground)]"
                   : inSel
-                    ? "bg-[var(--atlas-element-active)] text-[var(--foreground)]"
-                    : "rounded-md text-[var(--secondary-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]",
+                    ? "bg-element-active text-[var(--foreground)]"
+                    : "rounded-md text-[var(--secondary-foreground)] hover:bg-element-hover hover:text-[var(--foreground)]",
                 // Future days have not happened — hard-disabled, drawn in the
                 // "unavailable" tone with no hover feedback at all. Before-data
                 // days are still pickable (click handling is unchanged), just
                 // unlikely to show anything, so they get the dimmer but still
                 // "live" muted tone the rest of the calendar uses, and keep
                 // their hover state.
-                future && "cursor-default text-[var(--atlas-text-disabled)] hover:bg-transparent",
+                future && "cursor-default text-disabled hover:bg-transparent",
                 before && !inSel && "text-[var(--muted-foreground)]",
                 day === today &&
                   !edge &&

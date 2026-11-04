@@ -108,10 +108,7 @@ function highlightMatches(text: string, query: string, max = Infinity) {
   }
   return parts.map((part, i) =>
     i % 2 === 1 ? (
-      <mark
-        key={i}
-        className="bg-[var(--atlas-element-selected)] text-[var(--foreground)] rounded-sm"
-      >
+      <mark key={i} className="bg-element-selected text-[var(--foreground)] rounded-sm">
         {part}
       </mark>
     ) : (
@@ -279,8 +276,8 @@ export const SlashCommandPicker = forwardRef<SlashCommandPickerHandle, SlashComm
                     className={cn(
                       "absolute top-0 left-0 w-full text-left px-3 h-[26px] flex items-center gap-2 text-sm",
                       isActive
-                        ? "bg-[var(--atlas-element-selected)] text-[var(--foreground)]"
-                        : "text-[var(--secondary-foreground)] hover:bg-[var(--atlas-element-hover)]",
+                        ? "bg-element-selected text-[var(--foreground)]"
+                        : "text-[var(--secondary-foreground)] hover:bg-element-hover",
                     )}
                     title={cmd.description}
                   >

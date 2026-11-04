@@ -70,7 +70,7 @@ export const SpaceNoteNode = memo(function SpaceNoteNode({ id, data, selected }:
         selected ? "border-[var(--primary)]/60" : "border-border-subtle hover:border-border",
       )}
     >
-      <div className="pointer-events-none absolute inset-0 rounded-2xl bg-gradient-to-b from-[var(--atlas-element-highlight)] to-transparent opacity-60" />
+      <div className="pointer-events-none absolute inset-0 rounded-2xl bg-gradient-to-b from-[var(--element-highlight)] to-transparent opacity-60" />
       <NodeHandles selected={selected} />
       <div className="relative flex items-center gap-2 border-b border-border-subtle px-3 py-2">
         <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-element-hover">
@@ -161,7 +161,7 @@ export const SpaceShapeNode = memo(function SpaceShapeNode({ id, data, selected 
   const d = data as SpaceNodeCommonData;
   // Web parity: a shape's label is its `title` field, centered.
   const title = useMergedField(id, "title", d.title);
-  const stroke = selected ? "var(--primary)" : "var(--atlas-border-strong)";
+  const stroke = selected ? "var(--primary)" : "var(--border-strong)";
 
   return (
     <div className="group relative h-full w-full">
@@ -195,7 +195,7 @@ export const SpaceGroupNode = memo(function SpaceGroupNode({ id, data, selected 
       className={cn(
         "group relative h-full w-full rounded-xl border-2 border-dashed",
         selected ? "border-[var(--primary)]/50" : "border-border-subtle",
-        "bg-[var(--atlas-element-hover)]",
+        "bg-element-hover",
       )}
     >
       <NodeHandles selected={selected} />

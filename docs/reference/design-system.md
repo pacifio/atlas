@@ -32,6 +32,9 @@ after any change to this page.
    names for a base token or a theme key, and the sweep spent them. Write the
    shadcn name (`bg-card`, `text-muted-foreground`) or the theme key
    (`bg-element-hover`, `text-disabled`). Do not add a synonym for either.
+   Where no utility exists, a theme key's variable is its name with `.` and `_`
+   as `-` and no prefix (ADR-0027): `element.hover` is `var(--element-hover)`.
+   The old `--atlas-` spelling is gone and the ratchet bans it.
 
 ## Type
 

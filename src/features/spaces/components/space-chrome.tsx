@@ -147,7 +147,7 @@ export function SpaceHeaderPill({
                       setOpen(false);
                     }}
                     className={cn(
-                      "flex cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors hover:bg-[var(--atlas-element-hover)]",
+                      "flex cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors hover:bg-element-hover",
                       p.id === activePageId ? "text-foreground" : "text-secondary-foreground",
                     )}
                   >
@@ -432,7 +432,7 @@ export function SpaceActionPill({
                     key={f.format}
                     type="button"
                     onClick={() => void run(f.format)}
-                    className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-xs text-secondary-foreground transition-colors hover:bg-[var(--atlas-element-hover)] hover:text-foreground"
+                    className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-xs text-secondary-foreground transition-colors hover:bg-element-hover hover:text-foreground"
                   >
                     <f.icon size={12} className="shrink-0 text-muted-foreground" />
                     {f.label}

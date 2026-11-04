@@ -36,9 +36,9 @@ export const UsagePill = memo(function UsagePill({ tabId }: { tabId: string }) {
 
   const tint =
     pill.tint === "error"
-      ? "text-[var(--atlas-status-error-foreground)]"
+      ? "text-error"
       : pill.tint === "warn"
-        ? "text-[var(--atlas-status-warning-foreground)]"
+        ? "text-warning"
         : pill.state === "compacting"
           ? "text-[var(--primary)]"
           : "text-[var(--muted-foreground)]";

@@ -45,7 +45,7 @@
          paints with, and the WHOLE resolved variable map, written into the
          same `<style id="atlas-resolved-theme">` applyTheme later rewrites —
          so React's first render, which lands before the first applyTheme,
-         already has every `--atlas-*` key in the right theme. The block's text
+         already has every theme key in the right theme. The block's text
          must stay byte-identical to `resolvedThemeCss()` there;
          `apply-theme.test.ts` runs this script to check. A first run, a
          cleared profile or a private window finds nothing and every rule

@@ -93,7 +93,7 @@ export function PagesPanel({ width = 240 }: { width?: number }) {
               e.stopPropagation();
               deleteTreeEntry(entry.id);
             }}
-            className="hidden shrink-0 rounded p-0.5 text-muted-foreground hover:text-[var(--atlas-status-error-foreground)] group-hover/row:block"
+            className="hidden shrink-0 rounded p-0.5 text-muted-foreground hover:text-error group-hover/row:block"
           >
             <Trash2 size={11} />
           </button>

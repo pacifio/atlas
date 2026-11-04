@@ -62,7 +62,7 @@
 #
 # ── `[[derived]]`: a colour Atlas writes but no theme may set ─────────────────
 #
-# Some `--atlas-…` variables the app reads are not judgement calls. A status
+# Some theme variables the app reads are not judgement calls. A status
 # BADGE fill is its status FOREGROUND at 12% — an author who wants a different
 # green wants a different green, not two greens that must be kept in step. So
 # those live here instead of as keys: Atlas resolves them to exactly the value

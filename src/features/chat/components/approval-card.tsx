@@ -251,8 +251,8 @@ export function ApprovalCard({
                 onClick={() => (q.multiSelect ? toggle(o.label) : pick(o.label))}
                 className={cn(
                   "flex min-h-9 w-full items-start gap-3 rounded-lg px-2 py-1.5 text-left transition-colors outline-none",
-                  "focus-visible:bg-[var(--atlas-element-hover)] focus-visible:ring-1 focus-visible:ring-[var(--atlas-border-strong)]",
-                  on ? "bg-[var(--atlas-element-active)]" : "hover:bg-[var(--atlas-element-hover)]",
+                  "focus-visible:bg-element-hover focus-visible:ring-1 focus-visible:ring-border-strong",
+                  on ? "bg-element-active" : "hover:bg-element-hover",
                 )}
               >
                 {/* Radio circle / check square, drawn by hand so the tone
@@ -262,9 +262,7 @@ export function ApprovalCard({
                   className={cn(
                     "mt-[3px] grid size-[15px] shrink-0 place-items-center border transition-colors",
                     q.multiSelect ? "rounded-sm" : "rounded-full",
-                    on
-                      ? "border-[var(--primary)] bg-[var(--primary)]"
-                      : "border-[var(--atlas-border-strong)]",
+                    on ? "border-[var(--primary)] bg-[var(--primary)]" : "border-border-strong",
                   )}
                 >
                   {on &&
@@ -284,9 +282,7 @@ export function ApprovalCard({
                     </span>
                   )}
                 </span>
-                <span className="mt-0.5 shrink-0 font-mono text-2xs text-[var(--atlas-text-disabled)]">
-                  {i + 1}
-                </span>
+                <span className="mt-0.5 shrink-0 font-mono text-2xs text-disabled">{i + 1}</span>
               </button>
             );
           })}
@@ -306,7 +302,7 @@ export function ApprovalCard({
             // here". The translucent tint it replaces read as a darker band
             // laid across the card rather than as an input.
             className={cn(
-              "h-10 w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 text-base text-[var(--foreground)] outline-none transition-colors placeholder:text-[var(--muted-foreground)] focus:border-[var(--atlas-border-strong)]",
+              "h-10 w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 text-base text-[var(--foreground)] outline-none transition-colors placeholder:text-[var(--muted-foreground)] focus:border-border-strong",
               q.options.length > 0 && "mt-1.5",
             )}
           />
@@ -323,8 +319,8 @@ export function ApprovalCard({
                 className={cn(
                   "grid size-8 place-items-center rounded-full transition-colors",
                   step === 0
-                    ? "cursor-default text-[var(--atlas-text-disabled)]"
-                    : "cursor-pointer text-[var(--muted-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]",
+                    ? "cursor-default text-disabled"
+                    : "cursor-pointer text-[var(--muted-foreground)] hover:bg-element-hover hover:text-[var(--foreground)]",
                 )}
               >
                 <ArrowLeft size={15} />
@@ -355,7 +351,7 @@ export function ApprovalCard({
                   clearAdvance();
                   onSkip();
                 }}
-                className="ml-auto cursor-pointer rounded-full px-2.5 py-1.5 text-sm text-[var(--muted-foreground)] transition-colors hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]"
+                className="ml-auto cursor-pointer rounded-full px-2.5 py-1.5 text-sm text-[var(--muted-foreground)] transition-colors hover:bg-element-hover hover:text-[var(--foreground)]"
               >
                 {skipLabel}
               </button>
@@ -372,8 +368,8 @@ export function ApprovalCard({
                 className={cn(
                   "flex h-9 items-center gap-1.5 rounded-full px-3 text-sm font-medium transition-colors",
                   isAnswered(answer)
-                    ? "cursor-pointer bg-[var(--primary)] text-[var(--primary-foreground)] hover:bg-[var(--atlas-primary-hover)]"
-                    : "cursor-default bg-[var(--atlas-element-hover)] text-[var(--atlas-text-disabled)]",
+                    ? "cursor-pointer bg-[var(--primary)] text-[var(--primary-foreground)] hover:bg-primary-hover"
+                    : "cursor-default bg-element-hover text-disabled",
                 )}
               >
                 {last && questions.length > 1 && <span>Submit</span>}

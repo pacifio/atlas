@@ -64,7 +64,7 @@ function Body({ text, directory }: { text: string; directory: OrgDirectory }) {
         part.mention ? (
           <span
             key={i}
-            className="rounded bg-[var(--atlas-element-emphasis)] px-1 text-[var(--foreground)]"
+            className="rounded bg-[var(--element-emphasis)] px-1 text-[var(--foreground)]"
           >
             @{directory.byId.get(part.text)?.name ?? part.text}
           </span>
@@ -150,7 +150,7 @@ export function Composer({
           </span>
         ) : (
           <span
-            className="shrink-0 rounded-full bg-[var(--atlas-element-selected)]"
+            className="shrink-0 rounded-full bg-element-selected"
             style={{ width: AVATAR_PX, height: AVATAR_PX }}
           />
         )}
@@ -204,8 +204,8 @@ export function Composer({
             className={cn(
               "absolute right-[5px] top-[5px] flex size-5 items-center justify-center rounded-md border transition-colors",
               ready
-                ? "cursor-pointer border-transparent text-[var(--foreground)] hover:border-[var(--border)] hover:bg-[var(--atlas-element-hover)]"
-                : "cursor-not-allowed border-transparent text-[var(--atlas-text-disabled)]",
+                ? "cursor-pointer border-transparent text-[var(--foreground)] hover:border-[var(--border)] hover:bg-element-hover"
+                : "cursor-not-allowed border-transparent text-disabled",
             )}
           >
             {busy ? (
@@ -217,14 +217,12 @@ export function Composer({
         </div>
       </div>
       {over && (
-        <p className="mt-1 text-3xs text-[var(--atlas-status-error-foreground)]">
+        <p className="mt-1 text-3xs text-error">
           {totalLength.toLocaleString()} / {COMMENT_BODY_MAX.toLocaleString()} characters
           {bodyPrefixLength > 0 ? " (including the selected passage)" : ""}
         </p>
       )}
-      {error && (
-        <p className="mt-1 text-3xs text-[var(--atlas-status-error-foreground)]">{error}</p>
-      )}
+      {error && <p className="mt-1 text-3xs text-error">{error}</p>}
     </div>
   );
 }

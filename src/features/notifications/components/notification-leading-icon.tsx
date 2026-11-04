@@ -21,16 +21,16 @@ import { catalogEntry, type NotificationKind } from "../lib/catalog";
 import { leadingBadge, type LeadingBadge } from "../lib/leading-badge";
 
 const BADGE_STYLE: Record<LeadingBadge, { bg: string; Icon: typeof Check }> = {
-  done: { bg: "bg-[var(--atlas-status-success-foreground)]", Icon: Check },
-  failed: { bg: "bg-[var(--atlas-status-error-foreground)]", Icon: X },
+  done: { bg: "bg-success", Icon: Check },
+  failed: { bg: "bg-error", Icon: X },
   "needs-you": { bg: "bg-[var(--primary)]", Icon: Hand },
-  warning: { bg: "bg-[var(--atlas-status-warning-foreground)]", Icon: AlertTriangle },
+  warning: { bg: "bg-warning", Icon: AlertTriangle },
 };
 
 /** Source icon for kinds that do not come from an agent. */
 function SourceIcon({ kind, size }: { kind: NotificationKind; size: number }) {
   const common = { size, strokeWidth: 1.5 };
-  const error = "text-[var(--atlas-status-error-foreground)]";
+  const error = "text-error";
   if (kind === "atlas-signed-out") return <KeyRound {...common} className="text-primary" />;
   if (kind === "app-update-ready") return <Download {...common} className="text-primary" />;
   if (kind === "model-download-done")
@@ -39,7 +39,7 @@ function SourceIcon({ kind, size }: { kind: NotificationKind; size: number }) {
   if (kind === "git-op-done")
     return <GitBranch {...common} className="text-secondary-foreground" />;
   if (kind === "git-op-failed") return <GitBranch {...common} className={error} />;
-  const warn = "text-[var(--atlas-status-warning-foreground)]";
+  const warn = "text-warning";
   if (kind === "git-autofetch-failing" || kind === "git-behind")
     return <GitBranch {...common} className={warn} />;
   if (kind === "config-error") return <AlertTriangle {...common} className={warn} />;
@@ -49,10 +49,8 @@ function SourceIcon({ kind, size }: { kind: NotificationKind; size: number }) {
     return <GitPullRequest {...common} className="text-secondary-foreground" />;
   const source = catalogEntry(kind).source;
   if (source === "chat") return <MessageSquare {...common} className="text-primary" />;
-  if (kind === "terminal-failed")
-    return <AlertTriangle {...common} className="text-[var(--atlas-status-error-foreground)]" />;
-  if (kind === "terminal-attention")
-    return <BellRing {...common} className="text-[var(--atlas-status-warning-foreground)]" />;
+  if (kind === "terminal-failed") return <AlertTriangle {...common} className="text-error" />;
+  if (kind === "terminal-attention") return <BellRing {...common} className="text-warning" />;
   if (source === "terminal")
     return <SquareTerminal {...common} className="text-secondary-foreground" />;
   return <Sparkles {...common} className="text-secondary-foreground" />;

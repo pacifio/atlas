@@ -27,7 +27,7 @@ export function ClassTrackers({ totals }: { totals: Metrics }) {
   return (
     <Card index={1} section="classes" className="!px-0 !py-0">
       <div
-        className="grid divide-x divide-[var(--atlas-element-selected)]"
+        className="grid divide-x divide-element-selected"
         style={{ gridTemplateColumns: `repeat(${classes.length}, minmax(0, 1fr))` }}
       >
         {classes.map((c) => {

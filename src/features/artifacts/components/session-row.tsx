@@ -142,7 +142,7 @@ function Line({ left, right }: { left: ReactNode; right?: ReactNode }) {
 
 function Dot() {
   return (
-    <span aria-hidden className="text-[var(--atlas-text-disabled)]">
+    <span aria-hidden className="text-disabled">
       ·
     </span>
   );
@@ -188,9 +188,9 @@ export function ProjectMark({ name, className }: { name: string; className?: str
 export function DiffStat({ added, removed }: { added: number; removed: number }) {
   return (
     <span className="inline-flex shrink-0 items-center gap-1.5 text-2xs tabular-nums">
-      <span className="text-[var(--atlas-diff-added-text)]">+{added}</span>
+      <span className="text-[var(--diff-added-text)]">+{added}</span>
       {/* U+2212 MINUS, not a hyphen: it lines up with the plus. */}
-      <span className="text-[var(--atlas-diff-removed-text)]">−{removed}</span>
+      <span className="text-[var(--diff-removed-text)]">−{removed}</span>
     </span>
   );
 }

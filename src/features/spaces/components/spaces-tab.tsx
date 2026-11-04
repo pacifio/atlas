@@ -55,28 +55,28 @@ function SpaceHost({ convId }: { convId: string }) {
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       {archived && (
-        <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle bg-[var(--atlas-element-hover)] px-3 py-1 text-2xs text-muted-foreground">
+        <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle bg-element-hover px-3 py-1 text-2xs text-muted-foreground">
           This conversation is archived — the canvas is read-only. Cursors still show who is
           looking.
         </div>
       )}
       {stale && (
-        <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle bg-[var(--atlas-element-hover)] px-3 py-1 text-2xs text-muted-foreground">
+        <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle bg-element-hover px-3 py-1 text-2xs text-muted-foreground">
           This Space was made with a newer version of Atlas — viewing only. Update to edit it.
         </div>
       )}
       {session.readOnly === "actor_ceiling" && (
-        <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle bg-[var(--atlas-element-hover)] px-3 py-1 text-2xs text-muted-foreground">
+        <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle bg-element-hover px-3 py-1 text-2xs text-muted-foreground">
           This page is full — you are viewing. Re-open the page when a seat frees up.
         </div>
       )}
       {connection === "unavailable" && (
-        <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle bg-[var(--atlas-element-hover)] px-3 py-1 text-2xs text-error">
+        <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle bg-element-hover px-3 py-1 text-2xs text-error">
           This Space refused the connection — you may no longer be a member.
         </div>
       )}
       {session.banner && (
-        <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle bg-[var(--atlas-element-hover)] px-3 py-1 text-2xs text-muted-foreground">
+        <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle bg-element-hover px-3 py-1 text-2xs text-muted-foreground">
           <AlertTriangle size={11} className="shrink-0" />
           <span className="min-w-0 flex-1 truncate">{session.banner}</span>
           <Hint label="Dismiss">

@@ -61,7 +61,7 @@ interface ComposerAddMenuProps {
 
 const ITEM_CLASS =
   "flex items-center gap-2 px-3 h-[26px] text-xs cursor-default outline-none " +
-  "text-[var(--secondary-foreground)] data-[highlighted]:bg-[var(--atlas-element-hover)] " +
+  "text-[var(--secondary-foreground)] data-[highlighted]:bg-element-hover " +
   "data-[highlighted]:text-[var(--foreground)]";
 
 const CONTENT_CLASS =
@@ -154,7 +154,7 @@ export function ComposerAddMenu({
                 "bg-[var(--card)] text-[var(--secondary-foreground)] transition-colors outline-none",
                 disabled
                   ? "opacity-50 cursor-default"
-                  : "hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] cursor-pointer",
+                  : "hover:bg-element-hover hover:text-[var(--foreground)] cursor-pointer",
               )}
             >
               <PlusMinusGlyph open={open} size="md" />
@@ -329,10 +329,7 @@ function GithubSubmenu({
                             className="shrink-0 text-[var(--muted-foreground)]"
                           />
                           <span className="truncate">{c.display_name}</span>
-                          <Check
-                            size={11}
-                            className="ml-auto shrink-0 text-[var(--atlas-status-success-foreground)]"
-                          />
+                          <Check size={11} className="ml-auto shrink-0 text-success" />
                         </DropdownMenu.Item>
                       ))}
                       <DropdownMenu.Separator className="my-1 h-px bg-[var(--border)]" />
@@ -369,10 +366,7 @@ function GithubSubmenu({
                           title={repo.description || repo.full_name}
                         >
                           {already ? (
-                            <Check
-                              size={11}
-                              className="mt-0.5 shrink-0 text-[var(--atlas-status-success-foreground)]"
-                            />
+                            <Check size={11} className="mt-0.5 shrink-0 text-success" />
                           ) : (
                             <Download
                               size={11}

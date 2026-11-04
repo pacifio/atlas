@@ -53,7 +53,7 @@ function QueueChip({
       <Hint label="Remove from queue" side="top">
         <button
           onClick={onRemove}
-          className="flex items-center justify-center w-4 h-4 rounded-full hover:bg-[var(--atlas-element-hover)] text-[var(--muted-foreground)] hover:text-[var(--atlas-status-error-foreground)] cursor-pointer shrink-0"
+          className="flex items-center justify-center w-4 h-4 rounded-full hover:bg-element-hover text-[var(--muted-foreground)] hover:text-error cursor-pointer shrink-0"
         >
           <X size={10} />
         </button>

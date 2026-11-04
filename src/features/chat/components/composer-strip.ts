@@ -17,5 +17,5 @@ export const COMPOSER_STRIP =
 /** A text action on the strip's right: quiet until hovered. */
 export const COMPOSER_STRIP_ACTION =
   "flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 transition-colors " +
-  "text-[var(--secondary-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] " +
+  "text-[var(--secondary-foreground)] hover:bg-element-hover hover:text-[var(--foreground)] " +
   "disabled:cursor-default disabled:text-[var(--muted-foreground)]/40 disabled:hover:bg-transparent";

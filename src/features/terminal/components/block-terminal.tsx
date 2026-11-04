@@ -69,11 +69,7 @@ function renderHL(text: string, query: string): ReactNode {
     }
     if (idx > i) nodes.push(text.slice(i, idx));
     nodes.push(
-      <mark
-        key={k++}
-        data-term-match
-        className="rounded-sm bg-[var(--atlas-status-warning-foreground)]/40 text-inherit"
-      >
+      <mark key={k++} data-term-match className="rounded-sm bg-warning/40 text-inherit">
         {text.slice(idx, idx + q.length)}
       </mark>,
     );
@@ -328,7 +324,7 @@ export const BlockTerminal = memo(function BlockTerminal({
         ref={xtermHostRef}
         // Keep Atlas's footer outside the app-controlled terminal viewport so
         // the stop control never covers top/htop clocks, menus, or editor UI.
-        className="absolute inset-x-0 top-0 bottom-[29px] z-10 bg-[var(--atlas-terminal-background)] px-1 py-1"
+        className="absolute inset-x-0 top-0 bottom-[29px] z-10 bg-[var(--terminal-background)] px-1 py-1"
         style={{
           visibility: altScreen ? "visible" : "hidden",
           pointerEvents: altScreen ? "auto" : "none",
@@ -358,7 +354,7 @@ export const BlockTerminal = memo(function BlockTerminal({
               <button
                 type="button"
                 onClick={() => navMatch(-1)}
-                className="rounded p-0.5 text-[var(--muted-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]"
+                className="rounded p-0.5 text-[var(--muted-foreground)] hover:bg-element-hover hover:text-[var(--foreground)]"
               >
                 <ChevronUp size={13} />
               </button>
@@ -367,7 +363,7 @@ export const BlockTerminal = memo(function BlockTerminal({
               <button
                 type="button"
                 onClick={() => navMatch(1)}
-                className="rounded p-0.5 text-[var(--muted-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]"
+                className="rounded p-0.5 text-[var(--muted-foreground)] hover:bg-element-hover hover:text-[var(--foreground)]"
               >
                 <ChevronDown size={13} />
               </button>
@@ -376,7 +372,7 @@ export const BlockTerminal = memo(function BlockTerminal({
               <button
                 type="button"
                 onClick={closeSearch}
-                className="rounded p-0.5 text-[var(--muted-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]"
+                className="rounded p-0.5 text-[var(--muted-foreground)] hover:bg-element-hover hover:text-[var(--foreground)]"
               >
                 <X size={13} />
               </button>
@@ -456,7 +452,7 @@ function BlockPasswordInput({ onSubmit }: { onSubmit: (pw: string) => void }) {
     inputRef.current?.focus();
   }, []);
   return (
-    <div className="flex items-center gap-2 border-t border-[var(--atlas-border-subtle)] bg-[var(--background)] px-3 py-2">
+    <div className="flex items-center gap-2 border-t border-border-subtle bg-[var(--background)] px-3 py-2">
       <Lock size={12} className="shrink-0 text-[var(--primary)]" />
       <input
         ref={inputRef}
@@ -576,16 +572,13 @@ const BlockCard = memo(function BlockCard({
       }
     >
       {hasHeader && (
-        <div className="flex items-center gap-2 border-b border-[var(--atlas-border-subtle)] px-2.5 h-control-md text-sm">
+        <div className="flex items-center gap-2 border-b border-border-subtle px-2.5 h-control-md text-sm">
           {block.running ? (
             <Loader2 size={12} className="shrink-0 animate-spin text-[var(--primary)]" />
           ) : block.exitCode && block.exitCode !== 0 ? (
-            <XCircle size={12} className="shrink-0 text-[var(--atlas-status-error-foreground)]" />
+            <XCircle size={12} className="shrink-0 text-error" />
           ) : (
-            <CheckCircle2
-              size={12}
-              className="shrink-0 text-[var(--atlas-status-success-foreground)]"
-            />
+            <CheckCircle2 size={12} className="shrink-0 text-success" />
           )}
           <button
             type="button"
@@ -598,7 +591,7 @@ const BlockCard = memo(function BlockCard({
 
           {block.firehose && (
             <span
-              className="flex shrink-0 items-center gap-1 rounded bg-[var(--atlas-status-warning-foreground)]/15 px-1.5 py-0.5 text-3xs text-[var(--atlas-status-warning-foreground)]"
+              className="flex shrink-0 items-center gap-1 rounded bg-warning/15 px-1.5 py-0.5 text-3xs text-warning"
               title="Large output — live view is throttled to keep the UI responsive"
             >
               {block.running ? "large output · throttled" : "large output"}
@@ -641,9 +634,7 @@ const BlockCard = memo(function BlockCard({
             )}
             {duration && <span>{duration}</span>}
             {!block.running && block.exitCode != null && block.exitCode !== 0 && (
-              <span className="text-[var(--atlas-status-error-foreground)]">
-                exit {block.exitCode}
-              </span>
+              <span className="text-error">exit {block.exitCode}</span>
             )}
           </div>
         </div>
@@ -689,7 +680,7 @@ function BlockAction({
       <button
         type="button"
         onClick={onClick}
-        className="flex h-5 w-5 items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]"
+        className="flex h-5 w-5 items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-element-hover hover:text-[var(--foreground)]"
       >
         <Icon size={11} className={cn("transition-transform", rotated && "-rotate-90")} />
       </button>

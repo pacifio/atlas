@@ -386,9 +386,7 @@ export function CommsComposer({
                   onClick={() => insertMention(m)}
                   className={cn(
                     "flex h-control-md w-full items-center gap-1.5 px-2 text-left transition-colors cursor-pointer",
-                    i === highlighted
-                      ? "bg-[var(--atlas-element-selected)]"
-                      : "hover:bg-[var(--atlas-element-hover)]",
+                    i === highlighted ? "bg-element-selected" : "hover:bg-element-hover",
                   )}
                 >
                   <CommsAvatar member={m} size={16} />
@@ -718,7 +716,7 @@ function AttachmentChip({
       {attachment.state === "uploading" && (
         <span
           aria-hidden
-          className="absolute inset-y-0 left-0 bg-[var(--atlas-status-success-foreground)]/20 transition-[width] duration-200"
+          className="absolute inset-y-0 left-0 bg-success/20 transition-[width] duration-200"
           style={{ width: `${pct}%` }}
         />
       )}

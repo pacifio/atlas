@@ -43,10 +43,7 @@ export function RcDriverBar({ tabId }: { tabId: string }) {
     return (
       <div data-testid="rc-driver-bar" role="status" className={COMPOSER_STRIP}>
         <span className="flex min-w-0 items-center gap-1.5">
-          <RadioTower
-            size={11}
-            className="shrink-0 text-[var(--atlas-status-warning-foreground)]"
-          />
+          <RadioTower size={11} className="shrink-0 text-warning" />
           <span className="min-w-0 truncate">
             <span className="font-semibold text-[var(--foreground)]">{driverLabel(driver)}</span>
             <span className="text-[var(--muted-foreground)]">
@@ -76,7 +73,7 @@ export function RcDriverBar({ tabId }: { tabId: string }) {
   return (
     <div data-testid="rc-request-bar" role="status" className={COMPOSER_STRIP}>
       <span className="flex min-w-0 items-center gap-1.5">
-        <Hand size={11} className="shrink-0 text-[var(--atlas-status-warning-foreground)]" />
+        <Hand size={11} className="shrink-0 text-warning" />
         <span className="min-w-0 truncate">
           <span className="font-semibold text-[var(--foreground)]">{driverLabel(request)}</span>
           <span className="text-[var(--muted-foreground)]">

@@ -147,13 +147,13 @@ const Row = memo(function Row({
       ref={(node) => register(head.id, node)}
       className={cn(
         "atlas-entry grid grid-cols-[32px_minmax(0,1fr)] gap-3.5 rounded-md transition-colors",
-        isLanded && "ring-1 ring-[var(--atlas-border-strong)]",
+        isLanded && "ring-1 ring-border-strong",
       )}
     >
       <div className="relative flex justify-center">
         <span
           aria-hidden
-          className="absolute left-1/2 -ml-px w-px bg-[var(--atlas-border-subtle)]"
+          className="absolute left-1/2 -ml-px w-px bg-border-subtle"
           style={{
             top: first ? NODE_CENTRE : 0,
             bottom: last ? `calc(100% - ${NODE_CENTRE}px)` : 0,
@@ -168,7 +168,7 @@ const Row = memo(function Row({
             className={cn(
               "text-base font-medium",
               group.kind === "checkpoint"
-                ? "text-[var(--atlas-status-success-foreground)]"
+                ? "text-success"
                 : group.kind === "prompt"
                   ? "text-[var(--foreground)]"
                   : "text-[var(--secondary-foreground)]",
@@ -176,12 +176,10 @@ const Row = memo(function Row({
           >
             {kindLabel(group)}
           </span>
-          <span className="text-[var(--atlas-border-strong)]">·</span>
+          <span className="text-border-strong">·</span>
           <span className="font-mono text-xs text-[var(--muted-foreground)]">{time(head.at)}</span>
           {group.kind === "tool_call" && group.entries.length > 1 && (
-            <span className="font-mono text-xs text-[var(--atlas-text-disabled)]">
-              {group.entries.length} calls
-            </span>
+            <span className="font-mono text-xs text-disabled">{group.entries.length} calls</span>
           )}
           {group.kind === "tool_call" && <CallStat calls={group.entries} />}
 
@@ -283,7 +281,7 @@ const ActivityLog = memo(function ActivityLog({
             {member ? (
               <AccountAvatar user={avatarUser(member)} size={14} />
             ) : (
-              <span className="size-[14px] shrink-0 rounded-full bg-[var(--atlas-element-selected)]" />
+              <span className="size-[14px] shrink-0 rounded-full bg-element-selected" />
             )}
             <span className="min-w-0 truncate text-xs text-[var(--muted-foreground)]">
               <span className="text-[var(--secondary-foreground)]">{line.actorName}</span>{" "}
@@ -294,12 +292,10 @@ const ActivityLog = memo(function ActivityLog({
                   : line.targetName
                     ? `replied to ${line.targetName}'s comment`
                     : "replied to a comment"}
-              <span aria-hidden className="px-1 text-[var(--atlas-text-disabled)]">
+              <span aria-hidden className="px-1 text-disabled">
                 ·
               </span>
-              <span className="text-[var(--atlas-text-disabled)]">
-                {timeAgo(line.at, { suffix: true })}
-              </span>
+              <span className="text-disabled">{timeAgo(line.at, { suffix: true })}</span>
             </span>
           </div>
         );
@@ -339,19 +335,19 @@ function Node({
 
   const tone =
     kind === "checkpoint"
-      ? "border-[var(--atlas-status-success-foreground)]/35 bg-[var(--atlas-status-success-foreground)]/10 text-[var(--atlas-status-success-foreground)]"
+      ? "border-success/35 bg-success/10 text-success"
       : failed
         ? // Still legible as a failure without a ring: the fill carries it.
-          "bg-[var(--atlas-status-error-foreground)]/70"
+          "bg-error/70"
         : bare
-          ? "bg-[var(--atlas-border-strong)]"
-          : // Prompt + response rings at half strength. At full `--atlas-border-strong`
+          ? "bg-border-strong"
+          : // Prompt + response rings at half strength. At full `--border-strong`
             // the outline competed with the glyph inside it, so the rail read as
             // a column of buttons rather than a quiet index of who did what.
             kind === "prompt"
-            ? "border-[var(--atlas-border-strong)]/50 bg-[var(--card)] text-[var(--secondary-foreground)]"
+            ? "border-border-strong/50 bg-[var(--card)] text-[var(--secondary-foreground)]"
             : kind === "response"
-              ? "border-[var(--atlas-border-strong)]/50 bg-[var(--card)] text-[var(--secondary-foreground)]"
+              ? "border-border-strong/50 bg-[var(--card)] text-[var(--secondary-foreground)]"
               : "border-[var(--border)] bg-[var(--card)] text-[var(--muted-foreground)]";
 
   // Tool calls and thinking stay small. They are punctuation between turns, not

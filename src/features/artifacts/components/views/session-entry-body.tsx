@@ -74,7 +74,7 @@ export function Clamp({ children }: { children: ReactNode }) {
           <button
             type="button"
             onClick={() => setExpanded((v) => !v)}
-            className="flex h-7 cursor-pointer items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--card)] px-3 text-sm text-[var(--secondary-foreground)] shadow-md transition-colors hover:border-[var(--atlas-border-strong)] hover:text-[var(--foreground)]"
+            className="flex h-7 cursor-pointer items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--card)] px-3 text-sm text-[var(--secondary-foreground)] shadow-md transition-colors hover:border-border-strong hover:text-[var(--foreground)]"
           >
             <ChevronDown
               size={12}
@@ -150,35 +150,30 @@ function MemoryBlock({ block }: { block: InjectedBlock }) {
   const lines = block.body ? block.body.split("\n").length : 0;
 
   return (
-    <div className="overflow-hidden rounded-lg border border-[var(--atlas-border-subtle)] bg-[var(--card)]">
+    <div className="overflow-hidden rounded-lg border border-border-subtle bg-[var(--card)]">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-[var(--atlas-element-hover)]"
+        className="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-element-hover"
       >
         <AtlasIcon size={12} className="shrink-0 rounded-sm" />
         <span className="text-sm text-[var(--secondary-foreground)]">
           {MEMORY_LABELS[block.label] ?? block.label.toLowerCase()}
         </span>
-        <span className="font-mono text-xs text-[var(--atlas-text-disabled)]">
-          from Atlas memory
-        </span>
+        <span className="font-mono text-xs text-disabled">from Atlas memory</span>
         <span className="flex-1" />
         {lines > 0 && (
-          <span className="font-mono text-xs text-[var(--atlas-text-disabled)]">
+          <span className="font-mono text-xs text-disabled">
             {lines} line{lines === 1 ? "" : "s"}
           </span>
         )}
         <ChevronRight
           size={12}
-          className={cn(
-            "text-[var(--atlas-border-strong)] transition-transform",
-            open && "rotate-90",
-          )}
+          className={cn("text-border-strong transition-transform", open && "rotate-90")}
         />
       </button>
       {open && (
-        <div className="hide-scrollbar max-h-[320px] overflow-auto whitespace-pre-wrap break-words border-t border-[var(--atlas-border-subtle)] px-3.5 py-2.5 font-mono text-xs leading-[1.7] text-[var(--muted-foreground)]">
+        <div className="hide-scrollbar max-h-[320px] overflow-auto whitespace-pre-wrap break-words border-t border-border-subtle px-3.5 py-2.5 font-mono text-xs leading-[1.7] text-[var(--muted-foreground)]">
           {block.body || "(empty)"}
         </div>
       )}
@@ -197,7 +192,7 @@ function Block({
   projectPath: string;
 }) {
   return (
-    <div className="mt-2.5 whitespace-pre-wrap break-words rounded-md border border-[var(--atlas-border-subtle)] bg-[var(--card)] px-3.5 py-3 font-mono text-sm leading-[1.75] text-[var(--secondary-foreground)]">
+    <div className="mt-2.5 whitespace-pre-wrap break-words rounded-md border border-border-subtle bg-[var(--card)] px-3.5 py-3 font-mono text-sm leading-[1.75] text-[var(--secondary-foreground)]">
       <Body entry={entry} projectPath={projectPath} raw={text} />
     </div>
   );

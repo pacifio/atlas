@@ -118,7 +118,7 @@ export function SessionDetailsCard({
       // colour for the outline, the section dividers and the footer's rule
       // (`--details-line`): the strong border colour, 40% toward the page.
       // The sections scroll; the footer stays.
-      className="flex w-[300px] min-h-0 flex-col overflow-hidden rounded-xl border border-[var(--details-line)] bg-[color-mix(in_srgb,var(--popover)_44%,var(--background))] [--details-line:color-mix(in_srgb,var(--atlas-border-strong)_60%,var(--background))] text-popover-foreground shadow-md"
+      className="flex w-[300px] min-h-0 flex-col overflow-hidden rounded-xl border border-[var(--details-line)] bg-[color-mix(in_srgb,var(--popover)_44%,var(--background))] [--details-line:color-mix(in_srgb,var(--border-strong)_60%,var(--background))] text-popover-foreground shadow-md"
     >
       <div className="hide-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain">
         <div ref={setContent} className="flex flex-col">

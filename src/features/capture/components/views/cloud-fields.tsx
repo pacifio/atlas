@@ -118,10 +118,8 @@ function SlugStatus({
       )}
       {state.kind === "taken" && (
         <>
-          <X size={10} className="text-[var(--atlas-status-error-foreground)]" />
-          <span className="text-[var(--atlas-status-error-foreground)]">
-            taken in this Organization
-          </span>
+          <X size={10} className="text-error" />
+          <span className="text-error">taken in this Organization</span>
           {onConnectInstead && (
             <button
               type="button"
@@ -135,7 +133,7 @@ function SlugStatus({
       )}
       {state.kind === "unknown" && (
         <>
-          <span className="text-[var(--atlas-status-warning-foreground)]">couldn't check</span>
+          <span className="text-warning">couldn't check</span>
           <button
             type="button"
             onClick={state.retry}

@@ -140,14 +140,12 @@ export default function MarkdownImpl({ children, className, fileRoot }: Markdown
           },
           tr(props) {
             return (
-              <tr className="border-b border-[var(--atlas-border-subtle)] last:border-b-0">
-                {props.children}
-              </tr>
+              <tr className="border-b border-border-subtle last:border-b-0">{props.children}</tr>
             );
           },
           td(props) {
             return (
-              <td className="px-3 py-2 align-top text-sm text-[var(--foreground)] border-r border-[var(--atlas-border-subtle)] last:border-r-0 break-words">
+              <td className="px-3 py-2 align-top text-sm text-[var(--foreground)] border-r border-border-subtle last:border-r-0 break-words">
                 {props.children}
               </td>
             );

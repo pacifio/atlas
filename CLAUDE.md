@@ -121,7 +121,7 @@ allowlisted by exact name in `.oxlintrc.json` (`shadcn-lint-allowlist.test.ts` k
 that list honest — never add a wildcard).
 
 **Anything reading a _resolved_ colour needs a theme subscription**
-(`theme-subscription-contract.test.ts`). CSS naming `var(--atlas-…)` recolours for
+(`theme-subscription-contract.test.ts`). CSS naming a theme key, `var(--element-hover)`, recolours for
 free; xterm, pixi, recharts and friends cannot, so they must hear the change.
 
 **The IPC and event seams are opaque strings to `tsc`.** `invoke("name")`, the

@@ -84,7 +84,7 @@ export function PromptBubble({
         className={cn(
           // ratchet-allow: 20px sits above the `rounded-*` scale (xl = 12px), and
           // a full radius would turn a many-line bubble into an ellipse.
-          "min-w-0 max-w-full rounded-[20px] bg-[var(--atlas-primary-muted)] px-4 py-2.5 text-sm whitespace-pre-wrap break-words text-foreground select-text",
+          "min-w-0 max-w-full rounded-[20px] bg-primary-muted px-4 py-2.5 text-sm whitespace-pre-wrap break-words text-foreground select-text",
           pending && "opacity-70",
         )}
       >

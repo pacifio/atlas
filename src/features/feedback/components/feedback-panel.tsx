@@ -140,11 +140,7 @@ export function FeedbackPanel() {
       {sent ? (
         <div role="status" className="flex flex-col items-center gap-2 px-6 py-7">
           <div className="grid h-9 w-9 place-items-center rounded-full border border-border-subtle bg-element-hover">
-            <Check
-              size={16}
-              strokeWidth={1.75}
-              className="text-[var(--atlas-status-success-foreground)]"
-            />
+            <Check size={16} strokeWidth={1.75} className="text-success" />
           </div>
           <p className="text-sm text-foreground">Thanks — we got it.</p>
           <button
@@ -233,10 +229,7 @@ export function FeedbackPanel() {
           </div>
 
           {error && (
-            <p
-              role="alert"
-              className="px-3.5 pb-2 text-2xs text-[var(--atlas-status-error-foreground)]"
-            >
+            <p role="alert" className="px-3.5 pb-2 text-2xs text-error">
               {error}
             </p>
           )}

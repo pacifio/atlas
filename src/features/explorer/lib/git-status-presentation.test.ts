@@ -38,15 +38,15 @@ function rng(seed: number) {
 
 describe("gitStatusPresentation", () => {
   it("uses warning for modified files and info blue for untracked files", () => {
-    expect(gitStatusPresentation("M").color).toBe("var(--atlas-status-warning-foreground)");
-    expect(gitStatusPresentation("?").color).toBe("var(--atlas-status-info-foreground)");
+    expect(gitStatusPresentation("M").color).toBe("var(--status-warning-foreground)");
+    expect(gitStatusPresentation("?").color).toBe("var(--status-info-foreground)");
   });
 
   it("retains distinct semantic colors for added, deleted, renamed, and conflicted files", () => {
-    expect(gitStatusPresentation("A").color).toBe("var(--atlas-status-success-foreground)");
-    expect(gitStatusPresentation("D").color).toBe("var(--atlas-status-error-foreground)");
-    expect(gitStatusPresentation("R").color).toBe("var(--atlas-status-info-foreground)");
-    expect(gitStatusPresentation("U").color).toBe("var(--atlas-status-error-foreground)");
+    expect(gitStatusPresentation("A").color).toBe("var(--status-success-foreground)");
+    expect(gitStatusPresentation("D").color).toBe("var(--status-error-foreground)");
+    expect(gitStatusPresentation("R").color).toBe("var(--status-info-foreground)");
+    expect(gitStatusPresentation("U").color).toBe("var(--status-error-foreground)");
   });
 
   it("keeps the most prominent descendant status on collapsed folders", () => {
@@ -69,8 +69,8 @@ describe("buildGitStatusOverlay", () => {
       ],
       ROOT,
     );
-    expect(fileColors.get("/repo/src/a.ts")).toBe("var(--atlas-status-warning-foreground)");
-    expect(fileColors.get("/repo/src/b.ts")).toBe("var(--atlas-status-error-foreground)");
+    expect(fileColors.get("/repo/src/a.ts")).toBe("var(--status-warning-foreground)");
+    expect(fileColors.get("/repo/src/b.ts")).toBe("var(--status-error-foreground)");
   });
 
   it("marks every ancestor directory below the root, and never the root", () => {
@@ -86,8 +86,8 @@ describe("buildGitStatusOverlay", () => {
       ],
       ROOT,
     );
-    expect(dirtyDirs.get("/repo/src")?.color).toBe("var(--atlas-status-error-foreground)");
-    expect(dirtyDirs.get("/repo/src/deep")?.color).toBe("var(--atlas-status-error-foreground)");
+    expect(dirtyDirs.get("/repo/src")?.color).toBe("var(--status-error-foreground)");
+    expect(dirtyDirs.get("/repo/src/deep")?.color).toBe("var(--status-error-foreground)");
   });
 
   it("does not lower an ancestor when a weaker file follows a stronger one", () => {
@@ -98,7 +98,7 @@ describe("buildGitStatusOverlay", () => {
       ],
       ROOT,
     );
-    expect(dirtyDirs.get("/repo/src")?.color).toBe("var(--atlas-status-error-foreground)");
+    expect(dirtyDirs.get("/repo/src")?.color).toBe("var(--status-error-foreground)");
   });
 
   it("matches the naive full-walk implementation on randomized trees", () => {

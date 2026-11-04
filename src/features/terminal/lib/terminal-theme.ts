@@ -5,7 +5,7 @@
  * scrolls off into history while the alt screen is live:
  *
  *  - the BLOCK renderer (`line-emulator.ts`) emits React inline styles, so it
- *    can name `var(--atlas-terminal-ansi-red)` and recolour with no work at
+ *    can name `var(--terminal-ansi-red)` and recolour with no work at
  *    all when the applier rewrites `:root`;
  *  - the alt-screen SURFACE is xterm, whose `ITheme` is 19 concrete strings
  *    handed to a WebGL renderer — a `var()` would arrive as literal text.

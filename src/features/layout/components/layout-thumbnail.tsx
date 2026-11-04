@@ -36,7 +36,7 @@ export function LayoutThumbnail({ template }: { template: LayoutTemplate }) {
         {template.columns.map((col, i) => (
           <div
             key={i}
-            className="flex-1 min-w-0 rounded-sm bg-[var(--card)] border border-[var(--atlas-border-subtle)] flex items-center justify-center"
+            className="flex-1 min-w-0 rounded-sm bg-[var(--card)] border border-border-subtle flex items-center justify-center"
           >
             <ColIcon type={col.type} />
           </div>

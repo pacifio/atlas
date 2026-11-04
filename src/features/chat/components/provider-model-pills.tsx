@@ -61,7 +61,7 @@ function loadModelIds(provider: string): Promise<string[]> {
 }
 
 const PILL_CLASS =
-  "flex min-w-0 items-center gap-1.5 px-2 h-6.5 rounded-full border border-[var(--border)] bg-[var(--card)] text-2xs leading-none font-medium text-[var(--secondary-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] transition-colors outline-none cursor-pointer";
+  "flex min-w-0 items-center gap-1.5 px-2 h-6.5 rounded-full border border-[var(--border)] bg-[var(--card)] text-2xs leading-none font-medium text-[var(--secondary-foreground)] hover:bg-element-hover hover:text-[var(--foreground)] transition-colors outline-none cursor-pointer";
 
 export function ProviderModelPills({
   provider,
@@ -193,7 +193,7 @@ export function ProviderModelPills({
       <button
         key={id}
         onClick={() => pickModel(id)}
-        className="flex w-full items-center gap-2 px-2.5 h-[26px] text-left text-xs font-mono text-[var(--secondary-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] cursor-pointer outline-none"
+        className="flex w-full items-center gap-2 px-2.5 h-[26px] text-left text-xs font-mono text-[var(--secondary-foreground)] hover:bg-element-hover hover:text-[var(--foreground)] cursor-pointer outline-none"
       >
         {starred && (
           <Star size={10} className="shrink-0 fill-[var(--primary)] text-[var(--primary)]" />
@@ -240,7 +240,7 @@ export function ProviderModelPills({
             <div className="flex max-h-[420px]">
               {/* Provider rail — ALWAYS shown, lists every chat provider. Ones
                   without a key are dimmed; selecting one shows the setup prompt. */}
-              <div className="flex w-9 shrink-0 flex-col items-center gap-1 border-r border-[var(--atlas-border-subtle)] py-1.5 min-h-0 overflow-y-auto hide-scrollbar">
+              <div className="flex w-9 shrink-0 flex-col items-center gap-1 border-r border-border-subtle py-1.5 min-h-0 overflow-y-auto hide-scrollbar">
                 {CHAT_PROVIDERS.map((p) => {
                   const keyed = hasKey(p.id);
                   return (
@@ -250,10 +250,10 @@ export function ProviderModelPills({
                         className={cn(
                           "flex h-7 w-7 items-center justify-center rounded-md transition-all",
                           p.id === viewProvider
-                            ? "bg-[var(--atlas-element-selected,var(--atlas-element-hover))]"
+                            ? "bg-[var(--element-selected,var(--element-hover))]"
                             : keyed
-                              ? "opacity-60 hover:opacity-100 hover:bg-[var(--atlas-element-hover)]"
-                              : "opacity-25 hover:opacity-60 hover:bg-[var(--atlas-element-hover)]",
+                              ? "opacity-60 hover:opacity-100 hover:bg-element-hover"
+                              : "opacity-25 hover:opacity-60 hover:bg-element-hover",
                         )}
                       >
                         <ProviderLogo id={p.id} size={15} />
@@ -267,7 +267,7 @@ export function ProviderModelPills({
                 {hasKey(viewProvider) ? (
                   <>
                     {/* Search + pricing refresh */}
-                    <div className="flex items-center gap-1.5 h-8 border-b border-[var(--atlas-border-subtle)] px-2.5">
+                    <div className="flex items-center gap-1.5 h-8 border-b border-border-subtle px-2.5">
                       <Search size={12} className="shrink-0 text-[var(--muted-foreground)]" />
                       <input
                         autoFocus
@@ -281,7 +281,7 @@ export function ProviderModelPills({
                         <button
                           onClick={() => void refreshPricing()}
                           disabled={pricingLoading}
-                          className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--atlas-element-hover)] cursor-pointer disabled:cursor-default"
+                          className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-element-hover cursor-pointer disabled:cursor-default"
                         >
                           <RefreshCw size={11} className={cn(pricingLoading && "animate-spin")} />
                         </button>
@@ -303,9 +303,7 @@ export function ProviderModelPills({
                                 Recommended for coding
                               </div>
                               {pinned.map((id) => renderModel(id, true))}
-                              {rest.length > 0 && (
-                                <div className="my-1 h-px bg-[var(--atlas-border-subtle)]" />
-                              )}
+                              {rest.length > 0 && <div className="my-1 h-px bg-border-subtle" />}
                             </>
                           )}
                           {rest.map((id) => renderModel(id, false))}
@@ -325,7 +323,7 @@ export function ProviderModelPills({
                     </div>
                     <button
                       onClick={openApiKeys}
-                      className="rounded-md border border-[var(--border)] bg-[var(--background)] px-3 py-1.5 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--atlas-element-hover)] transition-colors cursor-pointer"
+                      className="rounded-md border border-[var(--border)] bg-[var(--background)] px-3 py-1.5 text-xs font-medium text-[var(--foreground)] hover:bg-element-hover transition-colors cursor-pointer"
                     >
                       Set up key in Settings
                     </button>

@@ -63,7 +63,7 @@ describe("interface contrast", () => {
       distance(plain.keys["border.strong"], background),
     );
     // The CSS and the typed record agree, so xterm and the charts see it too.
-    expect(high.cssVars["--atlas-border-strong"]).toBe(high.keys["border.strong"]);
+    expect(high.cssVars["--border-strong"]).toBe(high.keys["border.strong"]);
     expect(high.cssVars["--border"]).toBe(high.base.border);
   });
 });

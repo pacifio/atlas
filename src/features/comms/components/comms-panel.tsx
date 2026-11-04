@@ -257,7 +257,7 @@ export function CommsPanel({ split = false }: { split?: boolean } = {}) {
               <button
                 type="button"
                 onClick={() => actions.newTab()}
-                className="flex h-6 w-6 items-center justify-center rounded-full border border-[var(--border)] text-[var(--secondary-foreground)] transition-colors hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] outline-none cursor-pointer"
+                className="flex h-6 w-6 items-center justify-center rounded-full border border-[var(--border)] text-[var(--secondary-foreground)] transition-colors hover:bg-element-hover hover:text-[var(--foreground)] outline-none cursor-pointer"
               >
                 <Plus size={14} />
               </button>
@@ -361,8 +361,8 @@ function TabButton({
         "transition-[background-color,color] duration-150",
         "pr-6",
         active
-          ? "bg-[var(--atlas-element-selected)] text-foreground"
-          : "text-muted-foreground hover:bg-[var(--atlas-element-hover)] hover:text-secondary-foreground",
+          ? "bg-element-selected text-foreground"
+          : "text-muted-foreground hover:bg-element-hover hover:text-secondary-foreground",
       )}
     >
       {icon}
@@ -371,7 +371,7 @@ function TabButton({
       {mentions > 0 ? (
         <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--foreground)]" />
       ) : unread > 0 ? (
-        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--atlas-status-success-foreground)]" />
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-success" />
       ) : null}
 
       <Hint label="Close tab">
@@ -385,7 +385,7 @@ function TabButton({
             "absolute right-1 top-1/2 -translate-y-1/2",
             "inline-flex h-4 w-4 items-center justify-center rounded-full",
             "text-muted-foreground opacity-0 scale-90 group-hover/tab:opacity-100 group-hover/tab:scale-100 focus-visible:opacity-100 focus-visible:scale-100",
-            "transition-[opacity,transform] duration-150 hover:bg-[var(--atlas-element-emphasis)] hover:text-foreground cursor-pointer",
+            "transition-[opacity,transform] duration-150 hover:bg-[var(--element-emphasis)] hover:text-foreground cursor-pointer",
           )}
         >
           <X size={10} strokeWidth={2.2} />

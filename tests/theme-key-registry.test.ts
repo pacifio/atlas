@@ -9,6 +9,11 @@ import {
   cssVar,
   keyDescription,
 } from "../scripts/generate-theme-keys.mjs";
+import {
+  BASE_RULE_REGISTRY,
+  DERIVED_VAR_REGISTRY,
+  THEME_KEY_REGISTRY,
+} from "@/features/theme/theme-key-registry";
 
 /**
  * The theme-key registry has one source: `crates/atlas-theme/keys.toml`.
@@ -90,17 +95,59 @@ describe("the generated theme-key registry", () => {
     expect(fromRust).toEqual(source.keys.map((key) => key.name));
   });
 
-  /** The CSS variable name is the contract with every `var(--atlas-…)` call. */
+  /** The CSS variable name is the contract with every `var(--…)` call. */
   it("keeps the CSS variable spelling of every key", () => {
     const registry = read(OUTPUTS.registry);
     for (const key of source.keys) {
-      expect(cssVar(key.name)).toBe(
-        `--atlas-${key.name.replaceAll(".", "-").replaceAll("_", "-")}`,
-      );
+      expect(cssVar(key.name)).toBe(`--${key.name.replaceAll(".", "-").replaceAll("_", "-")}`);
     }
-    expect(registry).toContain(
-      'cssVar: `--atlas-${key.replaceAll(".", "-").replaceAll("_", "-")}`',
-    );
+    expect(registry).toContain('cssVar: `--${key.replaceAll(".", "-").replaceAll("_", "-")}`');
+  });
+
+  /**
+   * Keys carry no prefix (ADR-0027), so `.` and `_` both becoming `-` is the
+   * whole mapping, and it shares one `:root` namespace with the derived
+   * variables, the shadcn base tokens and Tailwind's `@theme`. Two names on one
+   * variable is invisible at runtime: the later write wins and the other
+   * consumer paints the wrong colour. The generator refuses such a source too;
+   * this holds the generated registry to it.
+   */
+  it("maps every key to a CSS variable nothing else uses", () => {
+    const owners = new Map<string, string[]>();
+    const claim = (variable: string, owner: string) =>
+      owners.set(variable, [...(owners.get(variable) ?? []), owner]);
+
+    for (const rule of BASE_RULE_REGISTRY) claim(`--${rule.token}`, `base.${rule.token}`);
+    for (const font of ["font-sans", "font-serif", "font-mono"]) claim(`--${font}`, `base.${font}`);
+    // Every variable a Tailwind `@theme` block declares: a key landing on one
+    // would be read as that namespace's value (`--text-*` is a font size).
+    const globals = read("src/styles/globals.css");
+    for (const start of [...globals.matchAll(/@theme\b[^{]*\{/g)].map((m) => m.index!)) {
+      let depth = 0;
+      let end = globals.indexOf("{", start);
+      do {
+        if (globals[end] === "{") depth++;
+        if (globals[end] === "}") depth--;
+        end++;
+      } while (depth > 0);
+      for (const [, variable] of globals.slice(start, end).matchAll(/(--[\w-]+)\s*:/g)) {
+        if (!owners.get(variable)?.includes("@theme")) claim(variable, "@theme");
+      }
+    }
+    for (const definition of THEME_KEY_REGISTRY) claim(definition.cssVar, definition.key);
+    for (const definition of DERIVED_VAR_REGISTRY) claim(definition.cssVar, definition.name);
+
+    const keyVars = [
+      ...THEME_KEY_REGISTRY.map((definition) => definition.cssVar),
+      ...DERIVED_VAR_REGISTRY.map((definition) => definition.cssVar),
+    ];
+    // Floor guard, so an empty registry cannot pass vacuously.
+    expect(keyVars.length).toBe(source.keys.length + source.derived.length);
+    for (const variable of keyVars) expect(variable).not.toMatch(/^--atlas-/);
+    const collisions = keyVars
+      .filter((variable) => owners.get(variable)!.length > 1)
+      .map((variable) => `${variable}: ${owners.get(variable)!.join(", ")}`);
+    expect(collisions).toEqual([]);
   });
 
   /**

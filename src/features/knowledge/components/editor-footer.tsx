@@ -140,7 +140,7 @@ export function EditorFooter({ wordCount, charCount, projectPath, entryId }: Edi
         height: 24,
         gap: 14,
         padding: "0 14px",
-        background: "var(--atlas-panel-background)",
+        background: "var(--panel-background)",
       }}
     >
       <span>

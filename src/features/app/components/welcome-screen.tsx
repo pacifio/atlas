@@ -49,7 +49,7 @@ export function WelcomeScreen() {
         {/* Primary action */}
         <button
           onClick={handleOpenFolder}
-          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-md border border-[var(--border)] bg-[var(--card)] hover:bg-[var(--atlas-element-hover)] hover:border-[var(--atlas-border-strong)] transition-colors text-left group"
+          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-md border border-[var(--border)] bg-[var(--card)] hover:bg-element-hover hover:border-border-strong transition-colors text-left group"
         >
           <FolderOpen size={14} className="text-[var(--primary)] shrink-0" />
           <span className="text-sm font-medium text-[var(--foreground)]">Open Folder</span>
@@ -73,7 +73,7 @@ export function WelcomeScreen() {
               {recentProjects.map((project) => (
                 <div
                   key={project.path}
-                  className="group flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-[var(--atlas-element-hover)] transition-colors cursor-pointer"
+                  className="group flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-element-hover transition-colors cursor-pointer"
                   onClick={() => openProject(project.path)}
                 >
                   <Folder size={14} className="text-[var(--primary)] shrink-0" />
@@ -91,7 +91,7 @@ export function WelcomeScreen() {
                         e.stopPropagation();
                         removeRecent(project.path);
                       }}
-                      className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 p-1 rounded hover:bg-[var(--atlas-element-active)] text-[var(--muted-foreground)] transition-opacity"
+                      className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 p-1 rounded hover:bg-element-active text-[var(--muted-foreground)] transition-opacity"
                     >
                       <X size={10} />
                     </button>

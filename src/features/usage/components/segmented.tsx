@@ -62,7 +62,6 @@ export function Segmented<T extends string>({
 /** A non-radio segment sharing a `Segmented` track — the custom-range trigger. */
 export const SEGMENT_TRIGGER =
   "flex h-full cursor-pointer items-center gap-1 rounded-full px-2 text-xs leading-none outline-none transition-colors";
-export const SEGMENT_ACTIVE =
-  "bg-[var(--atlas-element-active)] font-medium text-[var(--foreground)]";
+export const SEGMENT_ACTIVE = "bg-element-active font-medium text-[var(--foreground)]";
 export const SEGMENT_IDLE =
   "text-[var(--muted-foreground)] hover:text-[var(--secondary-foreground)]";

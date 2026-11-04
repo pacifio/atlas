@@ -54,18 +54,18 @@ export function useProjectIcon(path: string | null | undefined): string | null {
 /** The theme's terminal colours: a categorical set every theme restates, so
  *  a monogram recolours with the theme instead of carrying fixed hues. */
 export const PROJECT_MONOGRAM_COLORS = [
-  "var(--atlas-terminal-ansi-red)",
-  "var(--atlas-terminal-ansi-yellow)",
-  "var(--atlas-terminal-ansi-green)",
-  "var(--atlas-terminal-ansi-cyan)",
-  "var(--atlas-terminal-ansi-blue)",
-  "var(--atlas-terminal-ansi-magenta)",
-  "var(--atlas-terminal-ansi-bright-red)",
-  "var(--atlas-terminal-ansi-bright-yellow)",
-  "var(--atlas-terminal-ansi-bright-green)",
-  "var(--atlas-terminal-ansi-bright-cyan)",
-  "var(--atlas-terminal-ansi-bright-blue)",
-  "var(--atlas-terminal-ansi-bright-magenta)",
+  "var(--terminal-ansi-red)",
+  "var(--terminal-ansi-yellow)",
+  "var(--terminal-ansi-green)",
+  "var(--terminal-ansi-cyan)",
+  "var(--terminal-ansi-blue)",
+  "var(--terminal-ansi-magenta)",
+  "var(--terminal-ansi-bright-red)",
+  "var(--terminal-ansi-bright-yellow)",
+  "var(--terminal-ansi-bright-green)",
+  "var(--terminal-ansi-bright-cyan)",
+  "var(--terminal-ansi-bright-blue)",
+  "var(--terminal-ansi-bright-magenta)",
 ] as const;
 
 function normalizeName(name: string): string {

@@ -61,10 +61,7 @@ export const CommentRow = memo(function CommentRow({
     // The row survives so replies keep their places, and saying so is more
     // honest than a gap where a comment used to be.
     return (
-      <p
-        className="text-2xs italic text-[var(--atlas-text-disabled)]"
-        style={{ paddingLeft: REPLY_INDENT }}
-      >
+      <p className="text-2xs italic text-disabled" style={{ paddingLeft: REPLY_INDENT }}>
         Comment deleted
       </p>
     );
@@ -92,12 +89,10 @@ export const CommentRow = memo(function CommentRow({
               {name}
             </span>
             {comment.guestName && <GuestChip />}
-            <span className="shrink-0 font-mono text-3xs text-[var(--atlas-text-disabled)]">
+            <span className="shrink-0 font-mono text-3xs text-disabled">
               {time(comment.createdAt)}
             </span>
-            {comment.editedAt && (
-              <span className="shrink-0 text-3xs text-[var(--atlas-text-disabled)]">edited</span>
-            )}
+            {comment.editedAt && <span className="shrink-0 text-3xs text-disabled">edited</span>}
             <span className="flex-1" />
             {busy && <Loader2 size={10} className="animate-spin text-[var(--muted-foreground)]" />}
             {/* Link first, then delete. Every comment can be linked — it
@@ -134,7 +129,7 @@ export const CommentRow = memo(function CommentRow({
                 type="button"
                 aria-label="Delete comment"
                 onClick={() => run(() => actions.remove(comment.id))}
-                className="flex shrink-0 cursor-pointer items-center rounded p-0.5 text-[var(--muted-foreground)] opacity-0 transition-colors hover:text-[var(--atlas-status-error-foreground)] group-hover/comment:opacity-100"
+                className="flex shrink-0 cursor-pointer items-center rounded p-0.5 text-[var(--muted-foreground)] opacity-0 transition-colors hover:text-error group-hover/comment:opacity-100"
               >
                 <Trash2 size={11} />
               </button>
@@ -262,9 +257,9 @@ function Votes({
           className={cn(
             "min-w-3 px-0.5 text-center font-mono text-2xs tabular-nums",
             current === 1
-              ? "text-[var(--atlas-status-success-foreground)]"
+              ? "text-success"
               : current === -1
-                ? "text-[var(--atlas-status-info-foreground)]"
+                ? "text-info"
                 : "text-[var(--muted-foreground)]",
           )}
         >
@@ -301,17 +296,9 @@ function VoteArrow({
   const label = count > 0 ? `${what}d by ${voters}` : what;
   const className = cn(
     "flex size-4 items-center justify-center rounded-sm transition-colors",
-    pressed
-      ? side === 1
-        ? "text-[var(--atlas-status-success-foreground)]"
-        : "text-[var(--atlas-status-info-foreground)]"
-      : "text-[var(--muted-foreground)]",
-    onClick && "cursor-pointer hover:bg-[var(--atlas-element-hover)]",
-    onClick &&
-      !pressed &&
-      (side === 1
-        ? "hover:text-[var(--atlas-status-success-foreground)]"
-        : "hover:text-[var(--atlas-status-info-foreground)]"),
+    pressed ? (side === 1 ? "text-success" : "text-info") : "text-[var(--muted-foreground)]",
+    onClick && "cursor-pointer hover:bg-element-hover",
+    onClick && !pressed && (side === 1 ? "hover:text-success" : "hover:text-info"),
   );
   const glyph = <Icon size={12} className={cn(pressed && "fill-current")} />;
   if (!onClick) {
@@ -356,7 +343,7 @@ function Action({
       type="button"
       disabled={disabled}
       onClick={onClick}
-      className="flex cursor-pointer items-center gap-1 rounded px-1 py-px text-2xs text-[var(--muted-foreground)] transition-colors hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-40"
+      className="flex cursor-pointer items-center gap-1 rounded px-1 py-px text-2xs text-[var(--muted-foreground)] transition-colors hover:bg-element-hover hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-40"
     >
       {children}
     </button>

@@ -445,7 +445,7 @@ function ReactionRow({
           className={cn(
             "flex h-[21px] items-center gap-1 rounded-full border px-1.5 text-xs leading-none transition-colors cursor-pointer",
             c.mine
-              ? "border-[var(--atlas-status-success-foreground)]/60 bg-[var(--atlas-status-success-foreground)]/15 text-foreground"
+              ? "border-success/60 bg-success/15 text-foreground"
               : "border-border bg-card text-secondary-foreground hover:bg-element-hover",
           )}
         >
@@ -584,7 +584,7 @@ function AttachmentView({ attachment, convId }: { attachment: ChatAttachment; co
       className="group/file flex max-w-[420px] cursor-pointer items-center gap-2 rounded-lg border border-border bg-card px-2.5 py-2 transition-colors hover:border-border-strong hover:bg-element-hover"
     >
       {progress ? (
-        <span className="flex h-[15px] w-[15px] shrink-0 items-center justify-center text-[var(--atlas-status-success-foreground)]">
+        <span className="flex h-[15px] w-[15px] shrink-0 items-center justify-center text-success">
           <ArcProgress got={progress.got} total={progress.total} />
         </span>
       ) : (

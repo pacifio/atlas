@@ -100,10 +100,10 @@ function formatCommitDate(date: string): string {
 }
 
 function lineBg(type: DiffLine["type"] | undefined): string {
-  if (type === "add") return "var(--atlas-diff-added-background)";
-  if (type === "remove") return "var(--atlas-diff-removed-background)";
+  if (type === "add") return "var(--diff-added-background)";
+  if (type === "remove") return "var(--diff-removed-background)";
   if (type === undefined) return "color-mix(in srgb, var(--foreground) 1.8%, transparent)";
-  return "var(--atlas-diff-context-background)";
+  return "var(--diff-context-background)";
 }
 
 /**
@@ -345,12 +345,10 @@ export function DiffFilesView({
                   <div
                     key={vr.key}
                     {...measured}
-                    style={{ ...base, backgroundColor: "var(--atlas-diff-context-background)" }}
+                    style={{ ...base, backgroundColor: "var(--diff-context-background)" }}
                     className="flex h-6 items-center border-x border-border px-2 font-mono text-2xs"
                   >
-                    <span className="truncate text-[var(--atlas-status-info-foreground)]/70 select-text">
-                      {row.header}
-                    </span>
+                    <span className="truncate text-info/70 select-text">{row.header}</span>
                   </div>
                 );
               }
@@ -360,7 +358,7 @@ export function DiffFilesView({
                   <div
                     key={vr.key}
                     {...measured}
-                    style={{ ...base, backgroundColor: "var(--atlas-diff-context-background)" }}
+                    style={{ ...base, backgroundColor: "var(--diff-context-background)" }}
                     className="flex h-6 items-center border-x border-border px-3 text-2xs text-muted-foreground"
                   >
                     {row.text}
@@ -373,7 +371,7 @@ export function DiffFilesView({
                   <div key={vr.key} {...measured} style={{ ...base, height: 12 }}>
                     <div
                       className="h-2 rounded-b-md border-x border-b border-border"
-                      style={{ backgroundColor: "var(--atlas-diff-context-background)" }}
+                      style={{ backgroundColor: "var(--diff-context-background)" }}
                     />
                   </div>
                 );

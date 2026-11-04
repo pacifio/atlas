@@ -522,7 +522,7 @@ function SubTabStrip({
         type="button"
         onClick={openSpace}
         title="Open this conversation's Space"
-        className="ml-auto flex h-control-sm shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-border bg-[var(--atlas-element-selected)] px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-[var(--atlas-element-active)] hover:text-foreground"
+        className="ml-auto flex h-control-sm shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-border bg-element-selected px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-element-active hover:text-foreground"
       >
         <Frame size={11} />
         Spaces

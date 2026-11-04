@@ -118,7 +118,7 @@ export function NewDmMenu() {
                       key={m.id}
                       type="button"
                       onClick={() => toggle(m.id)}
-                      className="flex w-full items-center gap-2 px-3 py-[5px] text-left transition-colors hover:bg-[var(--atlas-element-hover)] cursor-pointer"
+                      className="flex w-full items-center gap-2 px-3 py-[5px] text-left transition-colors hover:bg-element-hover cursor-pointer"
                     >
                       <CommsAvatar member={m} size={20} />
                       <span className="min-w-0 flex-1">
@@ -142,7 +142,7 @@ export function NewDmMenu() {
                   type="button"
                   disabled={picked.size === 0 || pending}
                   onClick={() => void start()}
-                  className="flex h-[26px] w-full items-center justify-center gap-1.5 rounded-md bg-[var(--atlas-element-active)] text-xs font-medium text-foreground transition-colors hover:bg-[var(--atlas-element-emphasis)] disabled:cursor-not-allowed disabled:opacity-45 cursor-pointer"
+                  className="flex h-[26px] w-full items-center justify-center gap-1.5 rounded-md bg-element-active text-xs font-medium text-foreground transition-colors hover:bg-[var(--element-emphasis)] disabled:cursor-not-allowed disabled:opacity-45 cursor-pointer"
                 >
                   {pending && <Loader2 size={11} className="animate-spin" />}
                   Message

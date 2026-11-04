@@ -223,23 +223,20 @@ function CodeSample() {
       style={{
         fontFamily: CODE_FONT,
         fontSize: editorFontSize, // ratchet-allow: the sample IS the editor size setting, previewed at its value
-        backgroundColor: "var(--atlas-editor-background)",
-        color: "var(--atlas-editor-foreground)",
+        backgroundColor: "var(--editor-background)",
+        color: "var(--editor-foreground)",
         lineHeight: 1.6,
       }}
     >
       <pre className="px-3 py-2.5">
-        <span style={{ color: "var(--atlas-syntax-keyword)" }}>export function</span>{" "}
-        <span style={{ color: "var(--atlas-syntax-function)" }}>formatUser</span>(user: User) {"{"}
+        <span style={{ color: "var(--syntax-keyword)" }}>export function</span>{" "}
+        <span style={{ color: "var(--syntax-function)" }}>formatUser</span>(user: User) {"{"}
         {"\n"}
         {"  "}
-        <span style={{ color: "var(--atlas-syntax-keyword)" }}>return</span>{" "}
-        <span style={{ color: "var(--atlas-syntax-string)" }}>
-          {"`${user.name} <${user.email}>`"}
-        </span>
-        ;{"\n"}
-        {"}"}{" "}
-        <span style={{ color: "var(--atlas-syntax-comment)" }}>{"// 0O 1lI {}[] => !== ->"}</span>
+        <span style={{ color: "var(--syntax-keyword)" }}>return</span>{" "}
+        <span style={{ color: "var(--syntax-string)" }}>{"`${user.name} <${user.email}>`"}</span>;
+        {"\n"}
+        {"}"} <span style={{ color: "var(--syntax-comment)" }}>{"// 0O 1lI {}[] => !== ->"}</span>
       </pre>
     </div>
   );
@@ -254,19 +251,19 @@ function TerminalSample() {
       style={{
         fontFamily: TERMINAL_FONT,
         fontSize: terminalFontSize, // ratchet-allow: the sample IS the terminal size setting, previewed at its value
-        backgroundColor: "var(--atlas-terminal-background)",
-        color: "var(--atlas-terminal-foreground)",
+        backgroundColor: "var(--terminal-background)",
+        color: "var(--terminal-foreground)",
         lineHeight: 1.5,
       }}
     >
       <pre className="px-3 py-2.5">
-        <span style={{ color: "var(--atlas-terminal-ansi-green)" }}>~/atlas</span>{" "}
-        <span style={{ color: "var(--atlas-terminal-ansi-blue)" }}>main</span> ❯ bun test
+        <span style={{ color: "var(--terminal-ansi-green)" }}>~/atlas</span>{" "}
+        <span style={{ color: "var(--terminal-ansi-blue)" }}>main</span> ❯ bun test
         {"\n"}
-        <span style={{ color: "var(--atlas-terminal-ansi-green)" }}>✓</span> 412 passed{"  "}
-        <span style={{ color: "var(--atlas-terminal-ansi-yellow)" }}>2 skipped</span>
+        <span style={{ color: "var(--terminal-ansi-green)" }}>✓</span> 412 passed{"  "}
+        <span style={{ color: "var(--terminal-ansi-yellow)" }}>2 skipped</span>
         {"  "}
-        <span style={{ color: "var(--atlas-terminal-ansi-red)" }}>0 failed</span>
+        <span style={{ color: "var(--terminal-ansi-red)" }}>0 failed</span>
       </pre>
     </div>
   );
