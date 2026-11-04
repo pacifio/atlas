@@ -1,7 +1,7 @@
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useMemoryStore } from "../stores/memory-store";
 
-/** Open the entry in Memory ▸ Shared ▸ Memories, expanded. The Memory tab is
+/** Open the entry in Memory ▸ Memories, chosen. The Memory tab is
  *  one per column, so this focuses the open one or opens it. */
 export function openMemoryEntry(id: number): void {
   useMemoryStore.getState().actions.focusEntry(id);

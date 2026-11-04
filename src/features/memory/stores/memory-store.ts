@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { createSelectors } from "@/lib/create-selectors";
-import type { MemorySubTab } from "../lib/memory-types";
+import type { AgentFilesView, MemorySubTab } from "../lib/memory-types";
 import { memoryPolicy, type Policy } from "../lib/memory-policy-api";
 
 /**
@@ -25,8 +25,10 @@ type PolicyPhase =
 interface MemoryStoreState {
   /** Active sub-tab, preserved across remounts. */
   subTab: MemorySubTab;
-  /** An entry to open in Shared ▸ Memories (the "Memory updated" card's row
-   *  click). The Memories table expands it, then clears it. */
+  /** The Agent files tab's lens, preserved across remounts. */
+  filesView: AgentFilesView;
+  /** An entry to open in Memories (the "Memory updated" card's row click).
+   *  The Memories list selects it, then clears it. */
   focusEntryId: number | null;
   /** Which project the caches below belong to (reset on change). */
   project: string | null;
@@ -38,7 +40,8 @@ interface MemoryStoreState {
 
   actions: {
     setSubTab: (t: MemorySubTab) => void;
-    /** Switch to Shared and ask its Memories table to open entry `id`. */
+    setFilesView: (v: AgentFilesView) => void;
+    /** Switch to Memories and ask its list to open entry `id`. */
     focusEntry: (id: number) => void;
     clearFocusEntry: () => void;
     /** Drop caches when the project changes. */
@@ -53,7 +56,8 @@ interface MemoryStoreState {
 
 export const useMemoryStore = createSelectors(
   create<MemoryStoreState>()((set, get) => ({
-    subTab: "graph",
+    subTab: "memories",
+    filesView: "preferences",
     focusEntryId: null,
     project: null,
     policies: null,
@@ -61,7 +65,8 @@ export const useMemoryStore = createSelectors(
     policyError: null,
     actions: {
       setSubTab: (t) => set({ subTab: t }),
-      focusEntry: (id) => set({ subTab: "shared", focusEntryId: id }),
+      setFilesView: (v) => set({ filesView: v }),
+      focusEntry: (id) => set({ subTab: "memories", focusEntryId: id }),
       clearFocusEntry: () => set({ focusEntryId: null }),
 
       ensureProject: (projectPath) => {

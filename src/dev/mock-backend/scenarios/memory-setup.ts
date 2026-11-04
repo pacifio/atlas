@@ -65,3 +65,53 @@ export const memoryHistoryEdited: Scenario = {
   },
   setup: memorySetup.setup,
 };
+
+/** The Memory tab, populated: the default story (twenty-odd memories from
+ *  three agents and you, four sessions of activity, eight decisions waiting in
+ *  Review: unconfirmed lines, a duplicate, a contradiction and two nightly
+ *  proposals), opened on arrival. */
+export const memoryPopulated: Scenario = {
+  name: "memory",
+  description: "Memory tab, populated: memories, activity and a review queue.",
+  setup: memorySetup.setup,
+};
+
+/** A project nothing has been remembered in yet: every tab's empty state. */
+export const memoryEmpty: Scenario = {
+  name: "memory-empty",
+  description: "Memory tab for a project with no shared memory yet (the empty states).",
+  commands: {
+    memory_list_entries: () => [],
+    memory_list_events: () => [],
+    memory_review: () => ({ candidates: [], merges: [], conflicts: [], dreams: [] }),
+  },
+  setup: memorySetup.setup,
+};
+
+const LOCKED = "database is locked: memory.sqlite (another Atlas holds it)";
+
+/** The record cannot be read: the tabs say so and offer a retry, instead of
+ *  claiming the project remembers nothing. */
+export const memoryError: Scenario = {
+  name: "memory-error",
+  description: "Memory tab whose shared-memory record fails to open (the error states).",
+  commands: {
+    memory_list_entries: () => {
+      throw new Error(LOCKED);
+    },
+    memory_review: () => {
+      throw new Error(LOCKED);
+    },
+  },
+  setup: memorySetup.setup,
+};
+
+/** The record never answers: the loading ghosts, held still for review. */
+export const memoryLoading: Scenario = {
+  name: "memory-loading",
+  description: "Memory tab while the record is still being read (the loading ghosts).",
+  commands: {
+    memory_list_entries: () => new Promise(() => {}),
+  },
+  setup: memorySetup.setup,
+};

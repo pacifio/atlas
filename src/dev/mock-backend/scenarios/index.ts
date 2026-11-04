@@ -49,7 +49,14 @@ import { freshInstall } from "./fresh-install";
 import { gitConflict } from "./git-conflict";
 import { inboxLong } from "./inbox-long";
 import { knowledge } from "./knowledge";
-import { memoryHistoryEdited, memorySetup } from "./memory-setup";
+import {
+  memoryEmpty,
+  memoryError,
+  memoryHistoryEdited,
+  memoryLoading,
+  memoryPopulated,
+  memorySetup,
+} from "./memory-setup";
 import { northwind } from "./northwind";
 import {
   commsConnecting,
@@ -131,6 +138,10 @@ const all: Scenario[] = [
   northwind,
   memorySetup,
   memoryHistoryEdited,
+  memoryPopulated,
+  memoryEmpty,
+  memoryError,
+  memoryLoading,
   sessionContext,
   ...pullRequestScenarios,
   ...sourceControlScenarios,
