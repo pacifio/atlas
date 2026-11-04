@@ -292,10 +292,10 @@ export function InboxPanel() {
                   items={items}
                   renderRow={renderRow}
                   root={scroller as RefObject<HTMLElement | null>}
-                  // Off, as on the board: the column's own `pb-32` already
-                  // follows the list, and the package's end space does not
-                  // count it (see `timeline-board.tsx`).
-                  endSpace={false}
+                  // Measured, as on the board: the column's own `pb-32` and
+                  // the load-more sentinel follow the list, so the end space
+                  // leaves room only for what they don't already give.
+                  endSpace="measure"
                 />
                 {load.cursor && <MoreSentinel state={more} onReach={loadMore} />}
               </>

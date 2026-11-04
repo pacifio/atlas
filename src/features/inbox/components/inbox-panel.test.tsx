@@ -63,8 +63,8 @@ vi.mock("@tanstack/react-virtual", () => ({
       })),
     getTotalSize: () => count * 80,
     measureElement: () => {},
-    // The package calendar indexes this for its end space even with
-    // `endSpace` off; a missing array would throw.
+    // The package calendar indexes this for its end space (measured
+    // here); a missing array would throw.
     measurementsCache: [],
   }),
 }));

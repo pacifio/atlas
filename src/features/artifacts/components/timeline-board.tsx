@@ -113,13 +113,12 @@ export function TimelineBoard({
                 items={items}
                 renderRow={renderRow}
                 root={scroller as RefObject<HTMLElement | null>}
-                // Off: the package sizes its end space as if the list ended the
-                // scroller, but this column's `pb-32` (room under the search
-                // bar) and the note follow it, so the last day overshot the
-                // sticky date and scrolled clean off the top, leaving an empty
-                // column under the wrong date. Without it the last day stops
-                // short of the top, as it always has.
-                endSpace={false}
+                // Measured: this column's `pb-32` (room under the search bar)
+                // and the note follow the list in the scroller, and a plain
+                // `endSpace` would add its room on top of theirs, so the last
+                // day overshot the sticky date. `"measure"` subtracts them, so
+                // the end stops with the last day under the date.
+                endSpace="measure"
               />
             ) : loading ? (
               // Geometry-matched rows rather than a spinner: the shape of what
