@@ -33,8 +33,8 @@ export const memorySetup: Scenario = {
   },
 };
 
-/** Whether "I made this edit" has been confirmed in this page load. */
-let historyAccepted = false;
+/** Projects whose "I made this edit" was confirmed in this page load. */
+const acceptedProjects = new Set<string>();
 
 /** The memory history was edited outside Atlas: the destination bar's health
  *  line says so and offers "I made this edit". Confirming it clears the
@@ -43,11 +43,13 @@ export const memoryHistoryEdited: Scenario = {
   name: "memory-history-edited",
   description: "Memory tab whose history was edited outside Atlas (the broken-chain health line).",
   init: () => {
-    historyAccepted = false;
+    acceptedProjects.clear();
   },
   commands: {
-    memory_health_status: () => {
-      const broken = historyAccepted ? [] : [{ kind: "chain_broken" as const }];
+    memory_health_status: ({ projectPath }) => {
+      const broken = acceptedProjects.has(String(projectPath))
+        ? []
+        : [{ kind: "chain_broken" as const }];
       return {
         checkedAt: Date.now(),
         record: { checkedAt: Date.now(), found: broken, repaired: [], deferred: broken },
@@ -56,7 +58,7 @@ export const memoryHistoryEdited: Scenario = {
       };
     },
     memory_accept_history: ({ projectPath }) => {
-      historyAccepted = true;
+      acceptedProjects.add(String(projectPath));
       void emit("atlas:memory-health", { cwd: String(projectPath) });
       return true;
     },
