@@ -9,15 +9,18 @@ to **`@tryatlas/design`** ([ADR-0027](../adr/0027-one-design-package-filled-from
 in the `tryatlas/design` repo, which desktop installs at a pinned tag. They were
 copied out of desktop and are changed there now. `src/styles/globals.css`
 imports the package's stylesheet first — `styles-core.css`, which is
-`styles.css` without `themes.css`. Desktop applies themes through its own
-engine (`applyTheme`, or `index.html`'s replay of the last one), so the
-generated theme blocks would never match and there is no `:root` theme floor:
+`styles.css` with `default-theme.css` in place of `themes.css`. Desktop
+applies themes through its own engine (`applyTheme`, or `index.html`'s replay
+of the last one), so the generated theme blocks would never match; the Atlas
+theme at `:root` is the floor a first launch paints until that engine writes
+the active theme over it at `html:root`:
 
-| file (in the package)    | holds                                                                                                                                         |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/styles/tokens.css`  | the non-colour custom properties — font stacks, control heights, radius derivation, elevation, motion durations and z-index layers            |
-| `src/styles/themes.css`  | generated: every built-in theme resolved, one block per theme and appearance; in `styles.css` only, so desktop does not load it              |
-| `src/styles/utilities.css` | the Tailwind namespaces (`@theme`), the named utilities (`@utility`), and the global focus and border rules                                 |
+| file (in the package)          | holds                                                                                                                                                           |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/styles/tokens.css`        | the non-colour custom properties — font stacks, control heights, radius derivation, elevation, motion durations and z-index layers                              |
+| `src/styles/themes.css`        | generated: every built-in theme resolved, one block per theme and appearance; in `styles.css` only, so desktop does not load it                                 |
+| `src/styles/default-theme.css` | generated: the Atlas theme alone at `:root`, dark unless the OS prefers light (`data-appearance` overrides); in `styles-core.css`, desktop's first-launch floor |
+| `src/styles/utilities.css`     | the Tailwind namespaces (`@theme`), the named utilities (`@utility`), and the global focus and border rules                                                     |
 
 `globals.css` keeps only what is desktop's: the 13px root, the titlebar height,
 `font-terminal`, `rounded-composer` and the feature CSS. Primitives are imported

@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { Loader2, MessageCircle, Rss } from "lucide-react";
+import { DitherField } from "@tryatlas/design";
 import { useAuthStore } from "@/features/auth/stores/auth-store";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
-import { themeDerived } from "@/features/theme/theme-values";
 import type { Organisation } from "@/features/organisations/types";
 
 /**
@@ -36,7 +36,11 @@ export function CommsNotConnected({ org }: { org: Organisation | null }) {
 
   return (
     <div className="relative flex min-w-0 flex-1 flex-col items-center justify-center gap-2.5 overflow-hidden px-8 text-center">
-      <DitherBackdrop />
+      {/* Dots at the package defaults are the look this panel always had: the
+          foreground at 16% on a 4px grid, hollow in the middle for the copy.
+          Unlike the field it replaced, it holds still under reduced motion
+          (one frame, no drift) and parks while off screen. */}
+      <DitherField mode="dots" />
       <span className="relative flex h-9 w-9 items-center justify-center rounded-full bg-card text-secondary-foreground">
         <MessageCircle size={16} />
       </span>
@@ -73,136 +77,5 @@ export function CommsNotConnected({ org }: { org: Organisation | null }) {
         </button>
       )}
     </div>
-  );
-}
-
-/**
- * A retro ordered-dither field that drifts like slow cloud cover.
- *
- * Canvas, not SVG: a Bayer-thresholded noise field at this size is tens of
- * thousands of dots, which as DOM nodes would dwarf the panel it decorates.
- * No transforms and no compositor animation — each frame is a plain pixel
- * repaint, so the vibrant panel's blend layer sees a still element.
- *
- * The DRIFT is deliberately stepped at ~12fps: ordered dither reads as retro
- * precisely because it snaps, tweening it just looks like noise — and a
- * placeholder screen does not get a 60fps budget. The loop parks entirely
- * while the window is hidden and dies with the component.
- *
- * The look: two octaves of value noise make soft "waves" blown sideways by a
- * slow wind term, a 4×4 Bayer matrix turns intensity into dot density, and a
- * radial falloff hollows out the middle so the copy sits on calm black.
- */
-function DitherBackdrop() {
-  const ref = useRef<HTMLCanvasElement>(null);
-
-  useEffect(() => {
-    const canvas = ref.current;
-    if (!canvas) return;
-    let raf = 0;
-    let last = 0;
-    const FRAME_MS = 80; // ~12fps — the retro step IS the aesthetic
-    const CELL = 4;
-
-    const draw = (t: number) => {
-      const parent = canvas.parentElement;
-      if (!parent) return;
-      const { clientWidth: w, clientHeight: h } = parent;
-      if (w === 0 || h === 0) return;
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      const bw = Math.ceil(w * dpr);
-      const bh = Math.ceil(h * dpr);
-      if (canvas.width !== bw || canvas.height !== bh) {
-        canvas.width = bw;
-        canvas.height = bh;
-      }
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.clearRect(0, 0, w, h);
-      // A canvas takes a colour as a VALUE, so it cannot name the variable and
-      // has to read the resolved one. `element.emphasis` is the theme's own
-      // foreground at 16% — identical to the white it used to hardcode on a
-      // dark theme, and an equally visible dark speckle on a light one, where
-      // hardcoded white was invisible.
-      //
-      // theme-subscription-allow: re-read on every frame rather than cached at
-      // construction, and this loop never parks except while the document is
-      // hidden — so a switch lands within one 80ms step with nothing to
-      // subscribe to.
-      ctx.fillStyle = themeDerived("element.emphasis");
-
-      // Wind: mostly sideways, a little lift, plus a slow phase evolution so
-      // shapes morph rather than only translate.
-      const wx = t * 0.012;
-      const wy = t * 0.003;
-      const phase = t * 0.0004;
-      const noise = (x: number, y: number) => {
-        const a = Math.sin(x * 0.012 + Math.sin(y * 0.009 + phase) * 2.1);
-        const b = Math.sin(y * 0.011 - Math.cos(x * 0.007 - phase) * 1.7);
-        const c = Math.sin((x + y) * 0.004 + 1.3 + phase * 2);
-        return (a + b + c) / 3; // -1..1
-      };
-      const bayer = [
-        [0, 8, 2, 10],
-        [12, 4, 14, 6],
-        [3, 11, 1, 9],
-        [15, 7, 13, 5],
-      ];
-      const cx = w / 2;
-      const cy = h / 2;
-      const maxR = Math.hypot(cx, cy);
-
-      for (let gy = 0; gy < h / CELL; gy++) {
-        for (let gx = 0; gx < w / CELL; gx++) {
-          const x = gx * CELL;
-          const y = gy * CELL;
-          let v = (noise(x + wx, y + wy) + 1) / 2;
-          const r = Math.hypot(x - cx, y - cy) / maxR;
-          v *= Math.min(1, Math.max(0, (r - 0.22) / 0.55));
-          if (v * 16 > bayer[gy % 4][gx % 4]) {
-            ctx.fillRect(x, y, 1.5, 1.5);
-          }
-        }
-      }
-    };
-
-    const tick = (now: number) => {
-      raf = requestAnimationFrame(tick);
-      // Step gate: repaint only when a frame's worth of drift has accrued.
-      if (now - last < FRAME_MS) return;
-      last = now;
-      draw(now);
-    };
-
-    const start = () => {
-      if (!raf && document.visibilityState === "visible") {
-        raf = requestAnimationFrame(tick);
-      }
-    };
-    const stop = () => {
-      if (raf) cancelAnimationFrame(raf);
-      raf = 0;
-    };
-    const onVisibility = () => {
-      if (document.visibilityState === "visible") start();
-      else stop();
-    };
-
-    draw(0);
-    start();
-    document.addEventListener("visibilitychange", onVisibility);
-    const parent = canvas.parentElement;
-    const ro = parent ? new ResizeObserver(() => draw(last)) : null;
-    if (parent && ro) ro.observe(parent);
-    return () => {
-      stop();
-      document.removeEventListener("visibilitychange", onVisibility);
-      ro?.disconnect();
-    };
-  }, []);
-
-  return (
-    <canvas ref={ref} aria-hidden className="pointer-events-none absolute inset-0 h-full w-full" />
   );
 }

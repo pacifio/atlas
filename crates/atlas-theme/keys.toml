@@ -1144,9 +1144,9 @@ light = "rgba(0,0,0,0.06)"
 # an "orange" label cyan. A hue now reads the theme's own palette hue of the same
 # name, so it is whatever that theme means by orange, and a theme that wants a
 # different chip colour from its palette sets the key. The defaults, for a
-# theme that writes no palette, are the Atlas theme's palette — except dark
-# yellow, where Atlas's palette has a terminal's pure #ffff00 and a label wants
-# the softer yellow the ANSI default uses.
+# theme that writes no palette, are the Atlas theme's chips: its palette,
+# except dark yellow, where the palette has a terminal's pure #ffff00 and the
+# Atlas theme pins a label yellow (see themes/atlas.toml).
 
 [[key]]
 name = "hue.red"
@@ -1169,7 +1169,7 @@ name = "hue.yellow"
 group = "Identity hues"
 description = "The yellow identity hue: labels, project dots, meters."
 palette = "yellow"
-dark = "#e5c07b"
+dark = "#e0ca66"
 light = "#8f7a00"
 
 [[key]]

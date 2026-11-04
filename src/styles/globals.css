@@ -7,10 +7,11 @@
 /* The design system (`@tryatlas/design`, ADR-0027): Geist and Geist Mono, the
    non-colour scales, the Tailwind bridge and the named utilities. The `-core`
    sheet leaves out the package's built-in themes as resolved CSS blocks,
-   which desktop never selects: it applies themes through its own engine, so
-   NO theme variable has a value until `applyTheme` writes the active theme
-   under `html:root` (or index.html's boot script replays the last one from
-   localStorage). Everything below is desktop's own. */
+   which desktop never selects: it applies themes through its own engine. In
+   their place it carries the Atlas theme alone at `:root` (dark unless the OS
+   prefers light) — the floor a first launch paints — and `applyTheme` writes
+   the active theme over it under `html:root` (or index.html's boot script
+   replays the last one from localStorage). Everything below is desktop's own. */
 @import "@tryatlas/design/styles-core.css";
 @import "./diff-syntax.css";
 @import "./xyflow.css";

@@ -117,9 +117,9 @@ const baseStore = create<ThemeState>()((set, get) => ({
         // the handler that existed to survive the first, rejecting the promise
         // no caller awaits. Failing to theme is not a reason to fail: the app
         // stays on what `index.html` replayed from the launch cache. On a
-        // first run there is no cache, and since desktop imports the
-        // package's `styles-core.css` there is no `:root` theme floor either:
-        // the theme keys stay unset.
+        // first run there is no cache, and it stays on the package's
+        // `styles-core.css` floor instead: the Atlas theme at `:root`, dark
+        // unless the OS prefers light.
         const loaded =
           (await loadTheme(id)) ?? (id === FALLBACK_THEME ? null : await loadTheme(FALLBACK_THEME));
         // A newer `apply` started while this one was loading. It owns the

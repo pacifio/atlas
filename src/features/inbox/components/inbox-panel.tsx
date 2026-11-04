@@ -25,10 +25,7 @@ import {
 import { CommenterAvatar, type Commenter } from "@/components/commenter-avatar";
 import { useArtifactsStore } from "@/features/artifacts/stores/artifacts-store";
 import { ProjectMark } from "@/features/artifacts/components/session-row";
-import {
-  TimelineCalendar,
-  type CalendarItem,
-} from "@/features/artifacts/components/timeline-calendar";
+import { TimelineCalendar, type CalendarItem } from "@tryatlas/design/timeline-calendar";
 import { dayHeading, startOfDay } from "@/features/artifacts/lib/board";
 import { DestinationActions } from "@/features/layout/components/destination-actions";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
@@ -295,6 +292,10 @@ export function InboxPanel() {
                   items={items}
                   renderRow={renderRow}
                   root={scroller as RefObject<HTMLElement | null>}
+                  // Off, as on the board: the column's own `pb-32` already
+                  // follows the list, and the package's end space does not
+                  // count it (see `timeline-board.tsx`).
+                  endSpace={false}
                 />
                 {load.cursor && <MoreSentinel state={more} onReach={loadMore} />}
               </>

@@ -49,11 +49,11 @@
          must stay byte-identical to `resolvedThemeCss()` there;
          `apply-theme.test.ts` runs this script to check. A first run, a
          cleared profile or a private window finds nothing: the skeleton falls
-         back to the literals below, and theme keys stay unset until the first
-         applyTheme (desktop imports the package's `styles-core.css`, which
-         gives them no `:root` floor), so on a first run React's first render
-         is unthemed until then. This script can only ever shorten that
-         window — never cause one. -->
+         back to the literals below, and React's first render takes the theme
+         keys from the package's `styles-core.css` floor: the Atlas theme at
+         `:root`, dark unless the OS prefers light, until the first applyTheme
+         writes the chosen theme over it at `html:root`. This script only
+         replays the last choice sooner — it never decides one. -->
     <script>
       (function () {
         try {

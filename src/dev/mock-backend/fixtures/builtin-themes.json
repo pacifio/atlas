@@ -76,6 +76,7 @@
         "editor.match_bracket.background": "#2d2d2d",
         "editor.match_bracket.border": "#3d3d3d",
         "editor.selection.background": "#303030",
+        "hue.yellow": "#e0ca66",
         "panel.background": "#0a0a0a",
         "panel.input.background": "#0a0a0a",
         "syntax.attribute": "#60d199",
