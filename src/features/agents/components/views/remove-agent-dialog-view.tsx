@@ -17,7 +17,6 @@ import {
   AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
-  AlertDialogOverlay,
   AlertDialogPortal,
   AlertDialogTitle,
   Icon,
@@ -42,6 +41,9 @@ function RemoveAction({ onRemove }: { onRemove: () => void }) {
   const [armed, setArmed] = useState(false);
   return (
     <AlertDialogAction
+      // Outlined, as today: the filled red is louder than this confirm has
+      // ever been, and Keep — not Remove — is the default answer.
+      variant="destructive-outline"
       onClick={onRemove}
       onPointerEnter={() => setArmed(true)}
       onPointerLeave={() => setArmed(false)}
@@ -69,7 +71,14 @@ export function RemoveAgentDialogView({
   return (
     <AlertDialog open={open} onOpenChange={(o) => !o && onKeep()}>
       <AlertDialogPortal>
-        <AlertDialogOverlay data-testid="remove-agent-backdrop" onClick={onKeep} />
+        <AlertDialogPrimitive.Backdrop
+          data-testid="remove-agent-backdrop"
+          // `AlertDialogOverlay` plus the frosted scrim every blocking prompt
+          // carries (`DialogOverlay blur`); the alert overlay has no `blur`
+          // of its own and owns its effects.
+          className="fixed inset-0 z-overlay scrim backdrop-blur-sm data-open:animate-fade-in data-closed:animate-fade-out"
+          onClick={onKeep}
+        />
         <AlertDialogPrimitive.Popup
           data-testid="remove-agent-dialog"
           initialFocus={keepRef}
