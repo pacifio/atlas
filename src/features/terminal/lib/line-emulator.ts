@@ -58,7 +58,7 @@ interface HotRow {
 /**
  * The 16 ANSI slots, as the theme keys that define them.
  *
- * Emitted as a `--atlas-terminal-ansi-*` custom property rather than as a
+ * Emitted as a `--terminal-ansi-*` custom property rather than as a
  * resolved hex, which is the one thing that makes a scrolled-back block follow
  * the theme. Blocks
  * are IMMUTABLE by design: a committed `ResolvedLine` keeps its object identity
@@ -72,22 +72,22 @@ interface HotRow {
  * `var()`. The two renderers agree because they read one set of keys.
  */
 const PALETTE_16 = [
-  "var(--atlas-terminal-ansi-black)",
-  "var(--atlas-terminal-ansi-red)",
-  "var(--atlas-terminal-ansi-green)",
-  "var(--atlas-terminal-ansi-yellow)",
-  "var(--atlas-terminal-ansi-blue)",
-  "var(--atlas-terminal-ansi-magenta)",
-  "var(--atlas-terminal-ansi-cyan)",
-  "var(--atlas-terminal-ansi-white)",
-  "var(--atlas-terminal-ansi-bright-black)",
-  "var(--atlas-terminal-ansi-bright-red)",
-  "var(--atlas-terminal-ansi-bright-green)",
-  "var(--atlas-terminal-ansi-bright-yellow)",
-  "var(--atlas-terminal-ansi-bright-blue)",
-  "var(--atlas-terminal-ansi-bright-magenta)",
-  "var(--atlas-terminal-ansi-bright-cyan)",
-  "var(--atlas-terminal-ansi-bright-white)",
+  "var(--terminal-ansi-black)",
+  "var(--terminal-ansi-red)",
+  "var(--terminal-ansi-green)",
+  "var(--terminal-ansi-yellow)",
+  "var(--terminal-ansi-blue)",
+  "var(--terminal-ansi-magenta)",
+  "var(--terminal-ansi-cyan)",
+  "var(--terminal-ansi-white)",
+  "var(--terminal-ansi-bright-black)",
+  "var(--terminal-ansi-bright-red)",
+  "var(--terminal-ansi-bright-green)",
+  "var(--terminal-ansi-bright-yellow)",
+  "var(--terminal-ansi-bright-blue)",
+  "var(--terminal-ansi-bright-magenta)",
+  "var(--terminal-ansi-bright-cyan)",
+  "var(--terminal-ansi-bright-white)",
 ];
 
 function color256(n: number): string {

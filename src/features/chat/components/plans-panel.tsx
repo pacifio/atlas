@@ -119,7 +119,7 @@ export function PlansPanel({ onClose }: PlansPanelProps) {
           <Hint label="Hide plans">
             <button
               onClick={onClose}
-              className="p-1 rounded hover:bg-[var(--atlas-element-hover)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] cursor-pointer transition-colors"
+              className="p-1 rounded hover:bg-element-hover text-[var(--muted-foreground)] hover:text-[var(--foreground)] cursor-pointer transition-colors"
             >
               <ChevronRight size={12} />
             </button>
@@ -140,10 +140,7 @@ export function PlansPanel({ onClose }: PlansPanelProps) {
               return (
                 <div
                   key={p.id}
-                  className={cn(
-                    "px-3 py-2.5",
-                    !isLast && "border-b border-[var(--atlas-border-subtle)]",
-                  )}
+                  className={cn("px-3 py-2.5", !isLast && "border-b border-border-subtle")}
                 >
                   {/* Header row: user message + expand toggle */}
                   <button
@@ -187,7 +184,7 @@ export function PlansPanel({ onClose }: PlansPanelProps) {
 
                   {/* Expanded plan markdown */}
                   {isOpen && (
-                    <div className="pl-[18px] mt-2 rounded-md border border-[var(--atlas-border-subtle)] bg-[var(--background)] px-3 py-2 max-h-[420px] overflow-auto">
+                    <div className="pl-[18px] mt-2 rounded-md border border-border-subtle bg-[var(--background)] px-3 py-2 max-h-[420px] overflow-auto">
                       <Markdown className="text-sm" fileRoot={projectPath}>
                         {p.plan}
                       </Markdown>

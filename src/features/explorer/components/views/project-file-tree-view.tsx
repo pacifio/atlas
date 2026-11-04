@@ -294,7 +294,7 @@ export function ProjectFileTreeFrame({
   onDismissDelete: () => void;
 }) {
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[var(--atlas-editor-background)]">
+    <div className="flex h-full min-h-0 flex-col bg-[var(--editor-background)]">
       {header}
       {truncated && (
         <div className="shrink-0 px-3 py-1 text-xs text-muted-foreground">
@@ -313,8 +313,7 @@ export function ProjectFileTreeFrame({
             data-tree-root
             className={cn(
               "group/tree relative min-h-0 flex-1 overflow-auto py-1 outline-none",
-              dropTarget === ROOT_DROP &&
-                "bg-[var(--atlas-primary-muted)] ring-1 ring-primary/40 ring-inset",
+              dropTarget === ROOT_DROP && "bg-primary-muted ring-1 ring-primary/40 ring-inset",
             )}
             onMouseDown={onContainerMouseDown}
             onClick={onClick}

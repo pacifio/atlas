@@ -61,7 +61,7 @@ export const ReadmeView = memo(function ReadmeView({ source, root }: Props) {
             </h1>
           ),
           h2: (p) => (
-            <h2 className="text-xl font-semibold tracking-tight mt-7 mb-3 pb-1.5 border-b border-[var(--atlas-border-subtle)]">
+            <h2 className="text-xl font-semibold tracking-tight mt-7 mb-3 pb-1.5 border-b border-border-subtle">
               {p.children}
             </h2>
           ),
@@ -118,7 +118,7 @@ export const ReadmeView = memo(function ReadmeView({ source, root }: Props) {
               {p.children}
             </blockquote>
           ),
-          hr: () => <hr className="my-6 border-[var(--atlas-border-subtle)]" />,
+          hr: () => <hr className="my-6 border-border-subtle" />,
           table: (p) => (
             <div className="my-4 rounded-md border border-[var(--border)] overflow-x-auto">
               <table className="w-full text-base border-collapse">{p.children}</table>
@@ -131,12 +131,10 @@ export const ReadmeView = memo(function ReadmeView({ source, root }: Props) {
             </th>
           ),
           tr: (p) => (
-            <tr className="border-b border-[var(--atlas-border-subtle)] last:border-b-0">
-              {p.children}
-            </tr>
+            <tr className="border-b border-border-subtle last:border-b-0">{p.children}</tr>
           ),
           td: (p) => (
-            <td className="px-3 py-2 align-top text-base text-[var(--foreground)] border-r border-[var(--atlas-border-subtle)] last:border-r-0 break-words">
+            <td className="px-3 py-2 align-top text-base text-[var(--foreground)] border-r border-border-subtle last:border-r-0 break-words">
               {p.children}
             </td>
           ),

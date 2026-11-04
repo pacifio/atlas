@@ -62,7 +62,7 @@ export function ComposerTray({
         inert={collapsed}
         // Fill: the panel-input background (near-black on the default
         // dark theme), a shade off the input card above, not a full step.
-        className="mx-5 flex items-center justify-between gap-2 rounded-b-xl border border-t-0 border-[var(--border)] bg-[var(--atlas-panel-input-background)] px-2 pb-1.5 pt-2"
+        className="mx-5 flex items-center justify-between gap-2 rounded-b-xl border border-t-0 border-[var(--border)] bg-panel-input px-2 pb-1.5 pt-2"
       >
         <div className="flex min-w-0 items-center gap-1">
           <ComposerAddMenu

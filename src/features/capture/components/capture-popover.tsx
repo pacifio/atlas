@@ -148,7 +148,7 @@ export function CapturePopover({
         // isolate the compositing layer and flatten the blur to flat
         // transparency (see the note beside the keyframes in globals.css).
         !embedded &&
-          "rounded-xl border border-[var(--atlas-element-active)] bg-[var(--card)]/95 shadow-md backdrop-blur-2xl atlas-panel-in-tl",
+          "rounded-xl border border-element-active bg-[var(--card)]/95 shadow-md backdrop-blur-2xl atlas-panel-in-tl",
       )}
     >
       {/* A bound project opens onto the radar rather than a title bar: the panel
@@ -363,9 +363,7 @@ export function CapturePopover({
         )}
 
         {error && (
-          <p className="mt-2 rounded-lg bg-[var(--atlas-status-error-background)] px-2.5 py-1.5 text-xs text-[var(--atlas-status-error-foreground)]">
-            {error}
-          </p>
+          <p className="mt-2 rounded-lg bg-error-muted px-2.5 py-1.5 text-xs text-error">{error}</p>
         )}
       </div>
     </div>

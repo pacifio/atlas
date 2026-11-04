@@ -286,7 +286,7 @@ export function AnnotationLayer({ pdfPath, page, pageW, pageH }: AnnotationLayer
             <button
               type="button"
               onClick={() => remove(pdfPath, selectedNote.id)}
-              className="inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-xs text-[var(--atlas-status-error-foreground)] hover:bg-[var(--atlas-status-error-background)]"
+              className="inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-xs text-error hover:bg-error-muted"
             >
               <Trash2 size={11} /> Delete
             </button>

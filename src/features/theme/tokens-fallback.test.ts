@@ -7,12 +7,12 @@ import { resolveTheme } from "./resolve-theme";
 import { DERIVED_VAR_REGISTRY, THEME_KEY_REGISTRY } from "./theme-key-registry";
 
 /**
- * `tokens.css` carries every `--atlas-*` variable at its Atlas-dark value, as
+ * `tokens.css` carries every theme-key variable at its Atlas-dark value, as
  * the floor under everything else.
  *
  * It used to define only the base tokens, so any frame without a resolved
  * theme — a first run before the first `applyTheme`, or a session where both
- * the chosen theme and the Atlas fallback failed to load — had no `--atlas-*`
+ * the chosen theme and the Atlas fallback failed to load — had no theme-key
  * variable at all, and every surface that paints with one came out
  * transparent. The launch cache (`index.html`) covers every later start; this
  * block covers the ones it cannot.
@@ -31,15 +31,20 @@ const TOKENS = path.resolve(
 const BEGIN = "/* generated:atlas-dark-fallback";
 const END = "/* /generated:atlas-dark-fallback */";
 
+/** The theme keys and derived variables; the base tokens live above the block. */
+const KEY_VARS = new Set<string>(
+  [...THEME_KEY_REGISTRY, ...DERIVED_VAR_REGISTRY].map(({ cssVar }) => cssVar),
+);
+
 function expectedBlock(): string {
   const atlas = BUILTIN_THEMES.find((theme) => theme.id === "atlas")!;
   const resolved = resolveTheme(atlas, "dark");
   const lines = Object.entries(resolved.cssVars)
-    .filter(([name]) => name.startsWith("--atlas-"))
+    .filter(([name]) => KEY_VARS.has(name))
     .map(([name, value]) => `  ${name}: ${value};`);
   return [
     `${BEGIN} — do not edit.`,
-    "   Every `--atlas-*` variable at its Atlas-dark value: the floor for a frame",
+    "   Every theme-key variable at its Atlas-dark value: the floor for a frame",
     "   with no resolved theme. Rewritten by",
     "   `ATLAS_WRITE_TOKENS=1 bunx vitest run src/features/theme/tokens-fallback.test.ts`. */",
     ":root {",

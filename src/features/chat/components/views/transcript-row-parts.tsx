@@ -53,11 +53,7 @@ export function AgentOrb({ running, failed }: { running: boolean; failed: boolea
       aria-hidden
       className={cn(
         "size-2 rounded-full",
-        failed
-          ? "bg-[var(--atlas-status-error-foreground)]"
-          : running
-            ? "bg-[var(--primary)] atlas-marker-running"
-            : "bg-[var(--atlas-text-disabled)]",
+        failed ? "bg-error" : running ? "bg-[var(--primary)] atlas-marker-running" : "bg-disabled",
       )}
     />
   );

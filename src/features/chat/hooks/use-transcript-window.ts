@@ -62,7 +62,7 @@ const ANCHOR_GAP = 24;
 // content column fills the transcript's width once the pane is narrower than
 // the reading measure (the overview rail open does it), and an outer ring then
 // sat past the scroller's edges — clipped on both sides, top and bottom only.
-const LANDED_CLASSES = ["ring-1", "ring-inset", "ring-[var(--atlas-border-strong)]", "rounded-lg"];
+const LANDED_CLASSES = ["ring-1", "ring-inset", "ring-border-strong", "rounded-lg"];
 const LANDED_MS = 2_000;
 
 /** How long the sticky anchor keeps correcting after a load. Long enough for a

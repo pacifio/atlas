@@ -41,7 +41,7 @@ export function CommsNotConnected({ org }: { org: Organisation | null }) {
         <MessageCircle size={16} />
       </span>
       {/* Text hierarchy is one rung brighter than the chrome's default. This is
-          the only content on the panel, so `--atlas-text-disabled` — the dim rung for
+          the only content on the panel, so `--text-disabled` — the dim rung for
           decoration and disabled state — left the one explanation unreadable
           against the near-black surface. */}
       <div className="relative text-sm font-medium text-foreground">
@@ -62,7 +62,7 @@ export function CommsNotConnected({ org }: { org: Organisation | null }) {
           // one element — the vibrant-panel rule bans transform ANIMATION near
           // blur, not a still frosted control (the drop overlay already blurs
           // inside this panel).
-          className="relative mt-1 flex h-control-lg items-center gap-1.5 rounded-full border border-border-strong bg-[var(--atlas-element-active)] px-4 text-sm font-medium text-foreground inset-highlight backdrop-blur-md transition-colors hover:bg-[var(--atlas-element-emphasis)] disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
+          className="relative mt-1 flex h-control-lg items-center gap-1.5 rounded-full border border-border-strong bg-element-active px-4 text-sm font-medium text-foreground inset-highlight backdrop-blur-md transition-colors hover:bg-[var(--element-emphasis)] disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
         >
           {syncing ? (
             <Loader2 size={12} className="shrink-0 animate-spin" />

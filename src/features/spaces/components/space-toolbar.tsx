@@ -242,7 +242,7 @@ function DockMenu({
                     setOpen(false);
                   }}
                   className={cn(
-                    "flex cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors hover:bg-[var(--atlas-element-hover)]",
+                    "flex cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors hover:bg-element-hover",
                     dock === d.dock ? "text-foreground" : "text-secondary-foreground",
                   )}
                 >

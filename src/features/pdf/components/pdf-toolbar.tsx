@@ -55,8 +55,8 @@ export function PdfToolbar({ fileName, zoom, dirty, onZoomIn, onZoomOut }: PdfTo
                 className={cn(
                   "flex h-6 w-6 items-center justify-center rounded transition-colors",
                   tool === t
-                    ? "bg-[var(--atlas-element-selected)] text-[var(--foreground)]"
-                    : "text-[var(--muted-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]",
+                    ? "bg-element-selected text-[var(--foreground)]"
+                    : "text-[var(--muted-foreground)] hover:bg-element-hover hover:text-[var(--foreground)]",
                 )}
               >
                 <Icon size={13} />
@@ -115,7 +115,7 @@ export function PdfToolbar({ fileName, zoom, dirty, onZoomIn, onZoomOut }: PdfTo
             <button
               type="button"
               onClick={onZoomOut}
-              className="flex h-6 w-6 items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]"
+              className="flex h-6 w-6 items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-element-hover hover:text-[var(--foreground)]"
             >
               <ZoomOut size={13} />
             </button>
@@ -127,7 +127,7 @@ export function PdfToolbar({ fileName, zoom, dirty, onZoomIn, onZoomOut }: PdfTo
             <button
               type="button"
               onClick={onZoomIn}
-              className="flex h-6 w-6 items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]"
+              className="flex h-6 w-6 items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-element-hover hover:text-[var(--foreground)]"
             >
               <ZoomIn size={13} />
             </button>

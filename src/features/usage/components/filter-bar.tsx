@@ -82,7 +82,7 @@ export function FilterBar({
         <button
           type="button"
           onClick={onClear}
-          className="flex h-6 items-center gap-1 rounded-full px-2 text-2xs text-[var(--muted-foreground)] transition-colors hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]"
+          className="flex h-6 items-center gap-1 rounded-full px-2 text-2xs text-[var(--muted-foreground)] transition-colors hover:bg-element-hover hover:text-[var(--foreground)]"
         >
           <X size={10} /> Clear
         </button>
@@ -135,13 +135,13 @@ function FacetPill({
             className={cn(
               "flex h-control-md items-center rounded-full border px-2 text-2xs font-medium leading-none transition-colors outline-none disabled:cursor-not-allowed disabled:opacity-50",
               on
-                ? "border-[var(--atlas-border-strong)] bg-[var(--atlas-element-selected)] text-[var(--foreground)]"
-                : "border-[var(--border)] bg-[var(--card)] text-[var(--secondary-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]",
+                ? "border-border-strong bg-element-selected text-[var(--foreground)]"
+                : "border-[var(--border)] bg-[var(--card)] text-[var(--secondary-foreground)] hover:bg-element-hover hover:text-[var(--foreground)]",
             )}
           >
             <span className="max-w-[160px] truncate">{label}</span>
             {selected.length > 1 && (
-              <span className="ml-1 rounded-full bg-[var(--atlas-element-active)] px-1 text-3xs tabular-nums">
+              <span className="ml-1 rounded-full bg-element-active px-1 text-3xs tabular-nums">
                 {selected.length}
               </span>
             )}
@@ -188,9 +188,9 @@ function FacetPill({
                   key={o.value}
                   checked={sel.has(o.value)}
                   onCheckedChange={() => onToggle(axis, o.value)}
-                  className="flex h-control-md cursor-default items-center gap-2 px-3 outline-none hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] data-checked:text-[var(--foreground)]"
+                  className="flex h-control-md cursor-default items-center gap-2 px-3 outline-none hover:bg-element-hover hover:text-[var(--foreground)] data-checked:text-[var(--foreground)]"
                 >
-                  <span className="flex size-3.5 shrink-0 items-center justify-center rounded border border-[var(--atlas-border-strong)]">
+                  <span className="flex size-3.5 shrink-0 items-center justify-center rounded border border-border-strong">
                     <DropdownMenu.CheckboxItemIndicator>
                       <Check size={10} />
                     </DropdownMenu.CheckboxItemIndicator>

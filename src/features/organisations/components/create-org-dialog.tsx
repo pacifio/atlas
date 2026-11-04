@@ -186,7 +186,7 @@ export function CreateOrgDialog({
           )}
         >
           <Hint label="Close">
-            <Dialog.Close className="absolute right-2.5 top-2.5 flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--atlas-element-active)] hover:text-[var(--foreground)]">
+            <Dialog.Close className="absolute right-2.5 top-2.5 flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-element-active hover:text-[var(--foreground)]">
               <X size={13} />
             </Dialog.Close>
           </Hint>
@@ -278,7 +278,7 @@ export function CreateOrgDialog({
                           isDisabled
                             ? "cursor-not-allowed border-border bg-panel-input text-[var(--muted-foreground)] opacity-40"
                             : on
-                              ? "cursor-pointer border-border-strong bg-[var(--atlas-element-selected)] text-[var(--foreground)]"
+                              ? "cursor-pointer border-border-strong bg-element-selected text-[var(--foreground)]"
                               : "cursor-pointer border-border bg-panel-input text-[var(--muted-foreground)] hover:text-[var(--secondary-foreground)]",
                         )}
                       >
@@ -321,7 +321,7 @@ export function CreateOrgDialog({
                           isDisabled
                             ? "cursor-not-allowed border-border bg-panel-input text-[var(--muted-foreground)] opacity-40"
                             : on
-                              ? "cursor-pointer border-border-strong bg-[var(--atlas-element-selected)] text-[var(--foreground)]"
+                              ? "cursor-pointer border-border-strong bg-element-selected text-[var(--foreground)]"
                               : "cursor-pointer border-border bg-panel-input text-[var(--muted-foreground)] hover:text-[var(--secondary-foreground)]",
                         )}
                       >
@@ -339,7 +339,7 @@ export function CreateOrgDialog({
                 onClick={() => onOpenChange(false)}
                 className={cn(
                   pillButton,
-                  "bg-[var(--card)] text-[var(--secondary-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]",
+                  "bg-[var(--card)] text-[var(--secondary-foreground)] hover:bg-element-hover hover:text-[var(--foreground)]",
                 )}
               >
                 Cancel
@@ -349,7 +349,7 @@ export function CreateOrgDialog({
                 onClick={() => void submit()}
                 className={cn(
                   pillButton,
-                  "bg-[var(--card)] text-[var(--foreground)] hover:bg-[var(--atlas-element-hover)]",
+                  "bg-[var(--card)] text-[var(--foreground)] hover:bg-element-hover",
                   "disabled:cursor-not-allowed disabled:opacity-40",
                 )}
               >

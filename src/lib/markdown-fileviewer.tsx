@@ -142,7 +142,7 @@ export const MarkdownFile = memo(function MarkdownFile({
           ),
 
           h2: (p) => (
-            <h2 className="mt-7 mb-3 border-b border-[var(--atlas-border-subtle)] pb-1.5 text-xl font-semibold tracking-tight">
+            <h2 className="mt-7 mb-3 border-b border-border-subtle pb-1.5 text-xl font-semibold tracking-tight">
               {p.children}
             </h2>
           ),
@@ -222,7 +222,7 @@ export const MarkdownFile = memo(function MarkdownFile({
             </blockquote>
           ),
 
-          hr: () => <hr className="my-6 border-[var(--atlas-border-subtle)]" />,
+          hr: () => <hr className="my-6 border-border-subtle" />,
 
           table: (p) => (
             <div
@@ -236,9 +236,7 @@ export const MarkdownFile = memo(function MarkdownFile({
           thead: (p) => <thead className="bg-[var(--card)]">{p.children}</thead>,
 
           tr: (p) => (
-            <tr className="border-b border-[var(--atlas-border-subtle)] last:border-b-0">
-              {p.children}
-            </tr>
+            <tr className="border-b border-border-subtle last:border-b-0">{p.children}</tr>
           ),
 
           th: (p) => (
@@ -248,7 +246,7 @@ export const MarkdownFile = memo(function MarkdownFile({
           ),
 
           td: (p) => (
-            <td className="border-r border-[var(--atlas-border-subtle)] px-3 py-2 align-top whitespace-nowrap text-base text-[var(--foreground)] last:border-r-0">
+            <td className="border-r border-border-subtle px-3 py-2 align-top whitespace-nowrap text-base text-[var(--foreground)] last:border-r-0">
               {p.children}
             </td>
           ),

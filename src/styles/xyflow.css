@@ -19,7 +19,7 @@
 
 .react-flow {
   /* Edges read as structure, like the graph edges and the dot grid. */
-  --xy-edge-stroke: var(--atlas-border-strong);
+  --xy-edge-stroke: var(--border-strong);
   --xy-edge-stroke-selected: var(--primary);
   --xy-connectionline-stroke: var(--primary);
   --xy-edge-label-background-color: var(--card);
@@ -27,15 +27,15 @@
 
   /* A handle has to read against the node it sits on AND the canvas behind
      it, so the ring is the canvas background rather than a border colour. */
-  --xy-handle-background-color: var(--atlas-border-strong);
+  --xy-handle-background-color: var(--border-strong);
   --xy-handle-border-color: var(--background);
 
-  --xy-selection-background-color: var(--atlas-element-selected);
-  --xy-selection-border: 1px dotted var(--atlas-border-strong);
+  --xy-selection-background-color: var(--element-selected);
+  --xy-selection-border: 1px dotted var(--border-strong);
 
   --xy-node-background-color: var(--card);
   --xy-node-color: var(--card-foreground);
   --xy-node-border: 1px solid var(--border);
   --xy-node-boxshadow-selected: 0 0 0 1px var(--primary);
-  --xy-node-group-background-color: var(--atlas-element-hover);
+  --xy-node-group-background-color: var(--element-hover);
 }

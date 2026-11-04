@@ -22,8 +22,8 @@ const GLOBALS = readFileSync(path.join(ROOT, "src/styles/globals.css"), "utf8");
 const GUTTER = readFileSync(path.join(ROOT, "src/features/editor/lib/diff-gutter.ts"), "utf8");
 
 const PALETTE_VARS = [
-  "--atlas-diff-added-text",
-  "--atlas-diff-removed-text",
+  "--diff-added-text",
+  "--diff-removed-text",
   "--atlas-diff-changed-bar",
   "--atlas-diff-modified-text",
 ];
@@ -69,8 +69,8 @@ describe("the diff palette", () => {
     // Additions, removals and changes stay three different colours.
     const value = (name: string) => rule.match(new RegExp(`${name}:\\s*([^;]+);`))?.[1]?.trim();
     const marks = [
-      value("--atlas-diff-added-text"),
-      value("--atlas-diff-removed-text"),
+      value("--diff-added-text"),
+      value("--diff-removed-text"),
       value("--atlas-diff-changed-bar"),
     ];
     expect(new Set(marks).size).toBe(3);
@@ -82,7 +82,7 @@ describe("the diff palette", () => {
   });
 
   it("is what the review diff draws with: variables only, no resolved colours", () => {
-    for (const name of ["--atlas-diff-added-text", "--atlas-diff-removed-text"]) {
+    for (const name of ["--diff-added-text", "--diff-removed-text"]) {
       expect(DIFF_VIEW_CSS).toContain(`var(${name})`);
     }
     expect(DIFF_VIEW_CSS).toContain(
@@ -90,26 +90,20 @@ describe("the diff palette", () => {
     );
     // Line tints mix the palette hue in, rather than leaving the viewer to
     // derive them from colours it read once.
-    expect(DIFF_VIEW_CSS).toMatch(
-      /--diffs-bg-addition-override:[^;]*var\(--atlas-diff-added-text\)/,
-    );
-    expect(DIFF_VIEW_CSS).toMatch(
-      /--diffs-bg-deletion-override:[^;]*var\(--atlas-diff-removed-text\)/,
-    );
+    expect(DIFF_VIEW_CSS).toMatch(/--diffs-bg-addition-override:[^;]*var\(--diff-added-text\)/);
+    expect(DIFF_VIEW_CSS).toMatch(/--diffs-bg-deletion-override:[^;]*var\(--diff-removed-text\)/);
     expect(DIFF_VIEW_CSS).not.toMatch(/#[0-9a-f]{3,8}\b|rgba?\(/i);
     const colors = DIFF_THEME.colors ?? {};
-    expect(colors["gitDecoration.addedResourceForeground"]).toBe("var(--atlas-diff-added-text)");
-    expect(colors["gitDecoration.deletedResourceForeground"]).toBe(
-      "var(--atlas-diff-removed-text)",
-    );
+    expect(colors["gitDecoration.addedResourceForeground"]).toBe("var(--diff-added-text)");
+    expect(colors["gitDecoration.deletedResourceForeground"]).toBe("var(--diff-removed-text)");
     expect(colors["gitDecoration.modifiedResourceForeground"]).toBe(
       "var(--atlas-diff-modified-text)",
     );
   });
 
   it("is what the file view's change bars draw with", () => {
-    expect(GUTTER).toContain("var(--atlas-diff-added-text)");
+    expect(GUTTER).toContain("var(--diff-added-text)");
     expect(GUTTER).toContain("var(--atlas-diff-changed-bar)");
-    expect(GUTTER).toContain("var(--atlas-diff-removed-text)");
+    expect(GUTTER).toContain("var(--diff-removed-text)");
   });
 });

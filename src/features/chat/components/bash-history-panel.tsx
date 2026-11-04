@@ -130,7 +130,7 @@ export function BashHistoryPanel({ messages, onJump, onClose }: BashHistoryPanel
           <Hint label="Hide bash history">
             <button
               onClick={onClose}
-              className="p-1 rounded hover:bg-[var(--atlas-element-hover)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] cursor-pointer transition-colors"
+              className="p-1 rounded hover:bg-element-hover text-[var(--muted-foreground)] hover:text-[var(--foreground)] cursor-pointer transition-colors"
             >
               <ChevronRight size={12} />
             </button>
@@ -171,8 +171,8 @@ export function BashHistoryPanel({ messages, onJump, onClose }: BashHistoryPanel
                       onClick={() => onJump(e.messageIndex)}
                       className={cn(
                         "group w-full text-left px-3 py-2 transition-colors flex flex-col gap-1 cursor-pointer",
-                        "text-[var(--secondary-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] opacity-80 hover:opacity-100",
-                        !isLast && "border-b border-[var(--atlas-border-subtle)]",
+                        "text-[var(--secondary-foreground)] hover:bg-element-hover hover:text-[var(--foreground)] opacity-80 hover:opacity-100",
+                        !isLast && "border-b border-border-subtle",
                       )}
                       title={e.command}
                     >

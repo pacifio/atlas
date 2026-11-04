@@ -148,7 +148,7 @@ function Assistant({
         ) : (
           <div
             key={i}
-            className="max-w-[92%] break-words rounded-2xl rounded-bl-md border border-[var(--atlas-border-subtle)] bg-[var(--card)] px-3.5 py-2.5"
+            className="max-w-[92%] break-words rounded-2xl rounded-bl-md border border-border-subtle bg-[var(--card)] px-3.5 py-2.5"
           >
             <CachedMarkdown
               source={part.body}
@@ -192,7 +192,7 @@ function Sources({ sources }: { sources: SourceRef[] }) {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex cursor-pointer items-center gap-1 text-xs text-[var(--atlas-text-disabled)] transition-colors hover:text-[var(--secondary-foreground)]"
+        className="flex cursor-pointer items-center gap-1 text-xs text-disabled transition-colors hover:text-[var(--secondary-foreground)]"
       >
         <ChevronDown size={11} className={cn("transition-transform", open && "rotate-180")} />
         Grounded in {sources.length} {sources.length === 1 ? "source" : "sources"}
@@ -212,8 +212,8 @@ function Sources({ sources }: { sources: SourceRef[] }) {
                 className={cn(
                   "flex h-[22px] max-w-full items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--card)] px-2 text-xs transition-colors",
                   jumpable
-                    ? "cursor-pointer text-[var(--muted-foreground)] hover:border-[var(--atlas-border-strong)] hover:text-[var(--foreground)]"
-                    : "cursor-default text-[var(--atlas-text-disabled)]",
+                    ? "cursor-pointer text-[var(--muted-foreground)] hover:border-border-strong hover:text-[var(--foreground)]"
+                    : "cursor-default text-disabled",
                 )}
               >
                 <SourceGlyph kind={source.kind} />
@@ -231,9 +231,7 @@ function SourceGlyph({ kind }: { kind: string }) {
   const props = { size: 10, strokeWidth: 1.7, className: "shrink-0" } as const;
   switch (kind) {
     case "checkpoint":
-      return (
-        <Check {...props} className="shrink-0 text-[var(--atlas-status-success-foreground)]" />
-      );
+      return <Check {...props} className="shrink-0 text-success" />;
     case "tool_call":
       return <Terminal {...props} />;
     case "file":

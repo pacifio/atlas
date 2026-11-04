@@ -72,7 +72,7 @@ export function OrgAvatar({
           width: size,
           height: size,
           fontSize: Math.max(8, Math.round(size * 0.42)),
-          background: org.color ?? "var(--atlas-element-hover)",
+          background: org.color ?? "var(--element-hover)",
         }}
       >
         {initials(org.name)}
@@ -101,7 +101,7 @@ export function OrgAvatar({
         // An org colour, when set, tints the keycap rather than replacing it —
         // the depth survives either way.
         background: org.color
-          ? `linear-gradient(180deg, ${org.color} 0%, var(--atlas-element-active) 165%)`
+          ? `linear-gradient(180deg, ${org.color} 0%, var(--element-active) 165%)`
           : "linear-gradient(180deg, var(--popover) 0%, var(--card) 100%)",
       }}
     >
@@ -305,7 +305,7 @@ export function useOrgMenu(): {
                       setRefreshing(false);
                     }
                   }}
-                  className="flex size-5 shrink-0 items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] outline-none transition-colors cursor-pointer disabled:opacity-50"
+                  className="flex size-5 shrink-0 items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-element-hover hover:text-[var(--foreground)] outline-none transition-colors cursor-pointer disabled:opacity-50"
                 >
                   <RefreshCw size={10} className={refreshing ? "animate-spin" : ""} />
                 </button>
@@ -315,7 +315,7 @@ export function useOrgMenu(): {
 
           <div className="hide-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain py-1">
             {filteredOrgs.length === 0 && (
-              <div className="px-2.5 py-3 text-center text-xs text-[var(--atlas-text-disabled)]">
+              <div className="px-2.5 py-3 text-center text-xs text-disabled">
                 No organizations match.
               </div>
             )}
@@ -424,7 +424,7 @@ export function useOrgMenu(): {
             close();
             setCreateOpen(true);
           }}
-          className="mt-1.5 flex h-control-md w-full shrink-0 items-center gap-2 rounded-md px-1.5 text-xs outline-none transition-colors hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] cursor-pointer"
+          className="mt-1.5 flex h-control-md w-full shrink-0 items-center gap-2 rounded-md px-1.5 text-xs outline-none transition-colors hover:bg-element-hover hover:text-[var(--foreground)] cursor-pointer"
         >
           <Plus size={12} className="shrink-0 text-[var(--muted-foreground)]" />
           <span className="flex-1 text-left">Create organization…</span>
@@ -438,7 +438,7 @@ export function useOrgMenu(): {
               close();
               setMembersOpen(true);
             }}
-            className="flex h-control-md w-full shrink-0 items-center gap-2 rounded-md px-1.5 text-xs outline-none transition-colors hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] cursor-pointer"
+            className="flex h-control-md w-full shrink-0 items-center gap-2 rounded-md px-1.5 text-xs outline-none transition-colors hover:bg-element-hover hover:text-[var(--foreground)] cursor-pointer"
           >
             <Users size={12} className="shrink-0 text-[var(--muted-foreground)]" />
             <span className="flex-1 text-left">Invite &amp; Manage members</span>
@@ -465,7 +465,7 @@ export function useOrgMenu(): {
               else toast.error("Could not copy the organization ID");
             }}
             title={copyableOrgId}
-            className="flex h-control-md w-full shrink-0 items-center gap-2 rounded-md px-1.5 text-xs outline-none transition-colors hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] cursor-pointer"
+            className="flex h-control-md w-full shrink-0 items-center gap-2 rounded-md px-1.5 text-xs outline-none transition-colors hover:bg-element-hover hover:text-[var(--foreground)] cursor-pointer"
           >
             <Copy size={12} className="shrink-0 text-[var(--muted-foreground)]" />
             <span className="flex-1 text-left">Copy organization ID</span>
@@ -523,7 +523,7 @@ export function useOrgMenu(): {
                 ? "Create this organization in your Atlas account"
                 : "Sign in to sync this organization"
             }
-            className="flex h-control-md w-full items-center gap-2 rounded-md px-1.5 text-xs text-[var(--secondary-foreground)] outline-none transition-colors hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] cursor-pointer"
+            className="flex h-control-md w-full items-center gap-2 rounded-md px-1.5 text-xs text-[var(--secondary-foreground)] outline-none transition-colors hover:bg-element-hover hover:text-[var(--foreground)] cursor-pointer"
           >
             <Cloud size={12} className="shrink-0" />
             <span className="flex-1 text-left truncate">Turn on sync for {active.name}…</span>
@@ -624,7 +624,7 @@ function DeleteOrgDialog({
             <button
               onClick={onClose}
               disabled={deleting}
-              className="px-3 h-8 rounded-md text-sm text-[var(--secondary-foreground)] hover:bg-[var(--atlas-element-active)] hover:text-[var(--foreground)] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-3 h-8 rounded-md text-sm text-[var(--secondary-foreground)] hover:bg-element-active hover:text-[var(--foreground)] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Cancel
             </button>

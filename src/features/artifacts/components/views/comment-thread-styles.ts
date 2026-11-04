@@ -4,13 +4,13 @@
 /**
  * Rules and dividers, pulled 30% toward the surface behind them.
  *
- * `--atlas-border-strong` at full strength reads as structure competing with
+ * `--border-strong` at full strength reads as structure competing with
  * the text; `--border` disappeared against the translucent panel entirely. The
  * same mix the Timeline nav uses for its rail, and for the same reason: a line
  * that only has to say "these are separate" should not be the loudest thing in
  * the popover.
  */
-export const RULE = "color-mix(in srgb, var(--atlas-border-strong) 70%, var(--background))";
+export const RULE = "color-mix(in srgb, var(--border-strong) 70%, var(--background))";
 
 /** Diameter of every face in the thread — comments and both composers. */
 export const AVATAR_PX = 18;

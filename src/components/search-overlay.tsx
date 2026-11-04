@@ -150,7 +150,7 @@ export function SearchOverlay({
                   className={cn(
                     "h-6 min-w-6 px-1 rounded-md font-mono text-2xs shrink-0 transition-colors",
                     options[key]
-                      ? "bg-[var(--atlas-element-hover)] text-[var(--foreground)]"
+                      ? "bg-element-hover text-[var(--foreground)]"
                       : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]",
                   )}
                 >
@@ -190,7 +190,7 @@ export function SearchOverlay({
                 {session.searchHistory.slice(0, 8).map((q, i) => (
                   <div
                     key={`${q}-${i}`}
-                    className="flex items-center px-4 py-1.5 hover:bg-[var(--atlas-element-hover)] group"
+                    className="flex items-center px-4 py-1.5 hover:bg-element-hover group"
                   >
                     <button
                       onClick={() => {
@@ -231,7 +231,7 @@ export function SearchOverlay({
                 onMouseEnter={() => setSelectedIndex(i)}
                 className={cn(
                   "w-full text-left px-4 py-1.5 transition-colors",
-                  i === selectedIndex ? "bg-[var(--atlas-element-hover)]" : "",
+                  i === selectedIndex ? "bg-element-hover" : "",
                 )}
               >
                 <div className="flex items-center gap-2">

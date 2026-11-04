@@ -37,7 +37,7 @@ export interface ThemeKeyRule {
 
 export interface ThemeKeyDefinition<Key extends string = string> {
   key: Key;
-  cssVar: `--atlas-${string}`;
+  cssVar: `--${string}`;
   rule: ThemeKeyRule;
 }
 
@@ -300,7 +300,7 @@ function define<const Key extends string>(
   const { dark, light = dark, ...rest } = rule;
   return {
     key,
-    cssVar: `--atlas-${key.replaceAll(".", "-").replaceAll("_", "-")}`,
+    cssVar: `--${key.replaceAll(".", "-").replaceAll("_", "-")}`,
     rule: { ...rest, atlasDefault: { dark, light } },
   };
 }
@@ -849,7 +849,7 @@ export const THEME_KEY_DEFINITION_BY_KEY = Object.fromEntries(
 
 export interface DerivedVarDefinition<Name extends string = string> {
   name: Name;
-  cssVar: `--atlas-${string}`;
+  cssVar: `--${string}`;
   /** The settable key this transforms, or null when it transforms a base token. */
   from: ThemeKey | null;
   /** The base token this transforms, or null when it transforms a key. */
@@ -864,13 +864,13 @@ function derive<const Name extends string>(
 ): DerivedVarDefinition<Name> {
   return {
     name,
-    cssVar: `--atlas-${name.replaceAll(".", "-").replaceAll("_", "-")}`,
+    cssVar: `--${name.replaceAll(".", "-").replaceAll("_", "-")}`,
     ...rule,
   };
 }
 
 /**
- * Colours Atlas still writes as `--atlas-…` custom properties, but that no
+ * Colours Atlas still writes as CSS custom properties, but that no
  * theme may set: each is a pure transform of a key that IS settable, so a
  * theme author steers it through that key and never restates it. They are
  * deliberately absent from `theme-keys.txt` and from the JSON Schema, which is

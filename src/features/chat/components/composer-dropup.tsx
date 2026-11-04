@@ -27,11 +27,11 @@ export function composerPillClass(open: boolean, opts: { disabled?: boolean } = 
   return cn(
     "flex h-6.5 items-center rounded-full border px-1.5 text-2xs font-medium leading-none transition-colors",
     open
-      ? "border-[var(--atlas-border-strong)] bg-[var(--atlas-element-selected)] text-[var(--foreground)]"
+      ? "border-border-strong bg-element-selected text-[var(--foreground)]"
       : "border-[var(--border)] bg-[var(--card)] text-[var(--secondary-foreground)]",
     opts.disabled
       ? "cursor-default"
-      : "cursor-pointer hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]",
+      : "cursor-pointer hover:bg-element-hover hover:text-[var(--foreground)]",
   );
 }
 

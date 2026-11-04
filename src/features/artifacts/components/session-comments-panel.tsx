@@ -136,7 +136,7 @@ export function CommentsPanelBase({
       <header className="flex h-9 shrink-0 items-center gap-2 border-b border-[var(--border)] pl-3 pr-2">
         <MessageSquare size={13} className="shrink-0 text-[var(--muted-foreground)]" />
         <span className="text-xs font-medium text-[var(--foreground)]">Comments</span>
-        <span className="font-mono text-2xs text-[var(--atlas-text-disabled)]">
+        <span className="font-mono text-2xs text-disabled">
           {shown.length}
           {narrowed && threads.length !== shown.length && ` / ${threads.length}`}
         </span>
@@ -152,7 +152,7 @@ export function CommentsPanelBase({
           <button
             type="button"
             onClick={onClose}
-            className="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded text-[var(--muted-foreground)] transition-colors hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]"
+            className="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded text-[var(--muted-foreground)] transition-colors hover:bg-element-hover hover:text-[var(--foreground)]"
           >
             <X size={14} />
           </button>
@@ -257,7 +257,7 @@ const ThreadRow = memo(function ThreadRow({
       type="button"
       onClick={() => onJump(thread.anchorId)}
       className={cn(
-        "flex w-full cursor-pointer flex-col items-start gap-1 border-b border-[var(--border)] px-3 py-2.5 text-left transition-colors hover:bg-[var(--atlas-element-hover)]",
+        "flex w-full cursor-pointer flex-col items-start gap-1 border-b border-[var(--border)] px-3 py-2.5 text-left transition-colors hover:bg-element-hover",
         // Resolved is done, not gone: still listed when asked for, but it
         // should not compete with the threads that still need an answer.
         thread.resolved && "opacity-55",
@@ -279,10 +279,8 @@ const ThreadRow = memo(function ThreadRow({
           {name}
         </span>
         <span className="flex-1" />
-        {thread.resolved && (
-          <Check size={10} className="shrink-0 text-[var(--atlas-status-success-foreground)]" />
-        )}
-        <span className="shrink-0 font-mono text-3xs text-[var(--atlas-text-disabled)]">
+        {thread.resolved && <Check size={10} className="shrink-0 text-success" />}
+        <span className="shrink-0 font-mono text-3xs text-disabled">
           {timeAgo(thread.lastActivityAt, { suffix: true })}
         </span>
       </span>
@@ -298,7 +296,7 @@ const ThreadRow = memo(function ThreadRow({
       {/* The comment itself, unprefixed — the byline above already said who. */}
       <span className="line-clamp-2 w-full text-xs leading-snug text-[var(--secondary-foreground)]">
         {thread.root.deletedAt ? (
-          <span className="italic text-[var(--atlas-text-disabled)]">deleted this comment</span>
+          <span className="italic text-disabled">deleted this comment</span>
         ) : (
           // Mentions are stored as `<@user-id>`; the preview names them, as
           // the thread itself does.
@@ -317,7 +315,7 @@ const ThreadRow = memo(function ThreadRow({
           {/* The glyph says this line points *somewhere* — the row is a link to
            *  a node, and the anchor kind alone reads as a label rather than a
            *  destination. */}
-          <CornerDownRight size={10} className="shrink-0 text-[var(--atlas-text-disabled)]" />
+          <CornerDownRight size={10} className="shrink-0 text-disabled" />
           <span className="min-w-0 truncate">{label}</span>
         </span>
         {/* Top-level comments and replies apart: a second comment on the same
@@ -375,9 +373,7 @@ function FilterMenu({
           <Tick on={filters.showResolved} />
           Show resolved
           {resolvedCount > 0 && (
-            <span className="ml-auto pl-2 font-mono text-2xs text-[var(--atlas-text-disabled)]">
-              {resolvedCount}
-            </span>
+            <span className="ml-auto pl-2 font-mono text-2xs text-disabled">{resolvedCount}</span>
           )}
         </DropdownMenuItem>
 
@@ -441,7 +437,7 @@ function Empty({
         </button>
       )}
       {!hasAny && (
-        <p className="mt-1.5 text-2xs text-[var(--atlas-text-disabled)]">
+        <p className="mt-1.5 text-2xs text-disabled">
           Comment on any step from its row in the transcript.
         </p>
       )}

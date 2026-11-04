@@ -62,7 +62,7 @@ export const ProseRowView = memo(function ProseRowView({
               it was said: no clock rather than a wrong one. */}
           {!row.timestampApproximate && (
             <>
-              <span aria-hidden className="shrink-0 text-2xs text-[var(--atlas-text-disabled)]">
+              <span aria-hidden className="shrink-0 text-2xs text-disabled">
                 ·
               </span>
               <span className="shrink-0 font-mono text-2xs text-[var(--muted-foreground)]">

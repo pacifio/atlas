@@ -187,7 +187,7 @@ function SpaceSurface({
       sourceHandle: ANCHOR_TO_HANDLE[e.sourceAnchor],
       targetHandle: ANCHOR_TO_HANDLE[e.targetAnchor],
       type: "smoothstep",
-      style: { stroke: e.color ?? "var(--atlas-border-strong)", strokeWidth: 1.5 },
+      style: { stroke: e.color ?? "var(--border-strong)", strokeWidth: 1.5 },
     }));
   }, [revision, session.doc]);
 
@@ -614,7 +614,7 @@ function SpaceSurface({
             // structural ramp's top rung — the same weight the dots had as a
             // fixed 18%-white, and the only one still legible on a light
             // variant.
-            color="var(--atlas-border-strong)"
+            color="var(--border-strong)"
           />
           <SpaceCursors actors={actors} />
         </ReactFlow>

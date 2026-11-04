@@ -21,10 +21,7 @@ export function StatusRow({
       <Icon
         size={11}
         strokeWidth={1.75}
-        className={cn(
-          "shrink-0",
-          ok ? "text-[var(--secondary-foreground)]" : "text-[var(--atlas-text-disabled)]",
-        )}
+        className={cn("shrink-0", ok ? "text-[var(--secondary-foreground)]" : "text-disabled")}
       />
       <span
         className={cn(
@@ -35,9 +32,7 @@ export function StatusRow({
       >
         {value}
       </span>
-      <span className="shrink-0 text-3xs uppercase tracking-[0.08em] text-[var(--atlas-text-disabled)]">
-        {caption}
-      </span>
+      <span className="shrink-0 text-3xs uppercase tracking-[0.08em] text-disabled">{caption}</span>
     </div>
   );
 }

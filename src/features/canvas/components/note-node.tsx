@@ -31,7 +31,7 @@ export const NoteNode = memo(function NoteNode({ data, selected }: NodeProps) {
       )}
     >
       {/* Inner glow */}
-      <div className="absolute inset-0 rounded-2xl bg-gradient-to-b from-[var(--atlas-element-highlight)] to-transparent opacity-60 pointer-events-none" />
+      <div className="absolute inset-0 rounded-2xl bg-gradient-to-b from-[var(--element-highlight)] to-transparent opacity-60 pointer-events-none" />
 
       {/* Connection handles — one per side (4-way linking). */}
       <NodeHandles selected={selected} />

@@ -301,10 +301,10 @@ export function DiffView({
                     key={vr.index}
                     data-index={vr.index}
                     ref={virtualizer.measureElement}
-                    style={{ ...base, backgroundColor: "var(--atlas-diff-context-background)" }}
+                    style={{ ...base, backgroundColor: "var(--diff-context-background)" }}
                     className="group/hunk flex items-center gap-2 px-2 h-[22px] border-x border-border text-2xs font-mono text-muted-foreground"
                   >
-                    <span className="truncate flex-1 text-[var(--atlas-status-info-foreground)]/70 select-text">
+                    <span className="truncate flex-1 text-info/70 select-text">
                       {row.hunk.header}
                     </span>
                     {selectable && hunkActions && (
@@ -352,7 +352,7 @@ export function DiffView({
                                 row.hunkIndex,
                               )
                             }
-                            className="px-1.5 h-[16px] rounded border border-border text-3xs text-secondary-foreground hover:text-[var(--atlas-status-error-foreground)] hover:bg-element-hover"
+                            className="px-1.5 h-[16px] rounded border border-border text-3xs text-secondary-foreground hover:text-error hover:bg-element-hover"
                           >
                             {label("Discard")}
                           </button>
@@ -373,7 +373,7 @@ export function DiffView({
                     style={{
                       ...base,
                       height: 8,
-                      backgroundColor: "var(--atlas-diff-context-background)",
+                      backgroundColor: "var(--diff-context-background)",
                     }}
                     className="border-x border-b border-border rounded-b-md"
                   />
@@ -408,10 +408,10 @@ export function DiffView({
                     outlineOffset: isSelected ? -1 : undefined,
                     backgroundColor:
                       line.type === "add"
-                        ? "var(--atlas-diff-added-background)"
+                        ? "var(--diff-added-background)"
                         : line.type === "remove"
-                          ? "var(--atlas-diff-removed-background)"
-                          : "var(--atlas-diff-context-background)",
+                          ? "var(--diff-removed-background)"
+                          : "var(--diff-context-background)",
                   }}
                   className="flex text-xs font-mono leading-[20px] select-text border-x border-border"
                 >

@@ -109,10 +109,10 @@ export function DiffCounts({
         className,
       )}
     >
-      <span aria-hidden className="text-[var(--atlas-diff-added-text)]">
+      <span aria-hidden className="text-[var(--diff-added-text)]">
         +{formatDiffCount(added)}
       </span>
-      <span aria-hidden className="text-[var(--atlas-diff-removed-text)]">
+      <span aria-hidden className="text-[var(--diff-removed-text)]">
         −{formatDiffCount(removed)}
       </span>
     </span>

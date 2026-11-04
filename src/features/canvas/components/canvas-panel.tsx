@@ -184,7 +184,7 @@ function CanvasSurface({
         sourceHandle: e.sourceHandle ?? undefined,
         targetHandle: e.targetHandle ?? undefined,
         type: "smoothstep",
-        style: { stroke: "var(--atlas-border-strong)", strokeWidth: 1.5 },
+        style: { stroke: "var(--border-strong)", strokeWidth: 1.5 },
       })),
     [edges],
   );
@@ -459,7 +459,7 @@ function CanvasSurface({
             // structural ramp's top rung — the same weight the dots had as a
             // fixed 18%-white, and the only one still legible on a light
             // variant.
-            color="var(--atlas-border-strong)"
+            color="var(--border-strong)"
           />
         </ReactFlow>
 

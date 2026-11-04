@@ -176,10 +176,10 @@ export const DiffStat = memo(function DiffStat({
       aria-label={`${additions} additions, ${deletions} deletions`}
       className={cn("inline-flex items-center gap-1 font-mono text-2xs tabular-nums", className)}
     >
-      <span aria-hidden className="text-[var(--atlas-diff-added-text)]">
+      <span aria-hidden className="text-[var(--diff-added-text)]">
         +{formatCompactCount(additions)}
       </span>
-      <span aria-hidden className="text-[var(--atlas-diff-removed-text)]">
+      <span aria-hidden className="text-[var(--diff-removed-text)]">
         −{formatCompactCount(deletions)}
       </span>
     </span>
@@ -202,10 +202,10 @@ export const HeaderStat = memo(function HeaderStat({
       aria-label={`${additions} additions, ${deletions} deletions`}
       className="inline-grid grid-cols-[4ch_4ch] gap-2 text-right font-mono text-xs tabular-nums"
     >
-      <span aria-hidden className="text-[var(--atlas-diff-added-text)]">
+      <span aria-hidden className="text-[var(--diff-added-text)]">
         +{formatCompactCount(additions)}
       </span>
-      <span aria-hidden className="text-[var(--atlas-diff-removed-text)]">
+      <span aria-hidden className="text-[var(--diff-removed-text)]">
         −{formatCompactCount(deletions)}
       </span>
     </span>
@@ -217,9 +217,9 @@ export const HeaderStat = memo(function HeaderStat({
 function chevronToneOf(fileDiff: FileDiffMetadata): string {
   switch (fileDiff.type) {
     case "new":
-      return "text-[var(--atlas-diff-added-text)]";
+      return "text-[var(--diff-added-text)]";
     case "deleted":
-      return "text-[var(--atlas-diff-removed-text)]";
+      return "text-[var(--diff-removed-text)]";
     case "change":
     case "rename-pure":
     case "rename-changed":
@@ -776,7 +776,7 @@ export function DiffPanelView({
       ref={rootRef}
       tabIndex={-1}
       data-diff-panel
-      className="flex h-full min-h-0 flex-col bg-[var(--atlas-editor-background)] outline-none"
+      className="flex h-full min-h-0 flex-col bg-[var(--editor-background)] outline-none"
     >
       {header}
       {source.placeholder ? null : source.banner}

@@ -577,7 +577,7 @@ function ProjectLabel({
  * The one saturated element in a monochrome titlebar, which is the point: it
  * must be impossible to mistake a dev window for the shipped app. Blue rather
  * than the old purple because purple appears nowhere else in Atlas, while blue
- * is already the app's informational hue (`--atlas-status-info-foreground`).
+ * is already the app's informational hue (`--status-info-foreground`).
  *
  * Built from three stacked layers rather than a flat fill — a vertical
  * gradient body, a blurred crown highlight, and an inset rim — so it reads as

@@ -69,7 +69,7 @@ export const CallActivity = memo(function CallActivity({
           className={cn(
             "relative z-panel mt-[3px] flex h-5 w-5 items-center justify-center rounded-full border",
             live
-              ? "border-border-strong bg-[var(--atlas-element-active)] text-foreground"
+              ? "border-border-strong bg-element-active text-foreground"
               : "border-border-subtle bg-card text-muted-foreground",
           )}
         >
@@ -121,7 +121,7 @@ export const CallActivity = memo(function CallActivity({
             </span>
           )}
           {live && (
-            <span className="rounded-full bg-[var(--atlas-element-active)] px-1.5 py-px text-2xs font-medium text-foreground">
+            <span className="rounded-full bg-element-active px-1.5 py-px text-2xs font-medium text-foreground">
               Ongoing
             </span>
           )}

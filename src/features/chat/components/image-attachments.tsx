@@ -46,7 +46,7 @@ export const ImageAttachmentStrip = memo(function ImageAttachmentStrip({
               className={cn(
                 "block h-16 w-16 overflow-hidden rounded-lg border border-[var(--border)] cursor-zoom-in",
                 "transition-[border-color,transform] duration-fast ease-out-strong",
-                "hover:border-[var(--atlas-border-strong)] active:scale-[0.97]",
+                "hover:border-border-strong active:scale-[0.97]",
               )}
             >
               <img src={src} alt="" className="h-full w-full object-cover" draggable={false} />

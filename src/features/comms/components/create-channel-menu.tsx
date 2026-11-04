@@ -90,13 +90,13 @@ export function CreateChannelMenu() {
               <button
                 type="button"
                 onClick={() => setIsPrivate((v) => !v)}
-                className="flex items-center gap-2 px-3 py-2 text-left text-xs text-secondary-foreground transition-colors hover:bg-[var(--atlas-element-hover)] cursor-pointer"
+                className="flex items-center gap-2 px-3 py-2 text-left text-xs text-secondary-foreground transition-colors hover:bg-element-hover cursor-pointer"
               >
                 <span
                   className={cn(
                     "flex h-[14px] w-[14px] items-center justify-center rounded border transition-colors",
                     isPrivate
-                      ? "border-border-strong bg-[var(--atlas-element-emphasis)] text-foreground"
+                      ? "border-border-strong bg-[var(--element-emphasis)] text-foreground"
                       : "border-border text-transparent",
                   )}
                 >
@@ -111,7 +111,7 @@ export function CreateChannelMenu() {
                   type="button"
                   disabled={!name.trim() || pending}
                   onClick={() => void create()}
-                  className="flex h-[26px] w-full items-center justify-center gap-1.5 rounded-md bg-[var(--atlas-element-active)] text-xs font-medium text-foreground transition-colors hover:bg-[var(--atlas-element-emphasis)] disabled:cursor-not-allowed disabled:opacity-45 cursor-pointer"
+                  className="flex h-[26px] w-full items-center justify-center gap-1.5 rounded-md bg-element-active text-xs font-medium text-foreground transition-colors hover:bg-[var(--element-emphasis)] disabled:cursor-not-allowed disabled:opacity-45 cursor-pointer"
                 >
                   {pending && <Loader2 size={11} className="animate-spin" />}
                   Create channel

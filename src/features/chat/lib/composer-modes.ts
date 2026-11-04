@@ -11,10 +11,9 @@ import type { ClaudePermissionMode } from "@/types/agent";
 export function acpModeColor(modeId: string | undefined): string {
   const id = (modeId ?? "").toLowerCase();
   if (/full|bypass|\ball\b|danger|yolo|unrestricted/.test(id))
-    return "var(--atlas-status-error-foreground)";
+    return "var(--status-error-foreground)";
   if (/read.?only|\bplan\b|ask|suggest/.test(id)) return "var(--primary)";
-  if (/auto|default|edit|accept|agent|project/.test(id))
-    return "var(--atlas-status-success-foreground)";
+  if (/auto|default|edit|accept|agent|project/.test(id)) return "var(--status-success-foreground)";
   return "var(--muted-foreground)";
 }
 
@@ -39,13 +38,13 @@ export const GROUP_ORDER: ComposerGroup[] = ["model", "mode"];
 export function claudeModeDotClass(mode: ClaudePermissionMode): string {
   switch (mode) {
     case "acceptEdits":
-      return "bg-[var(--atlas-status-success-foreground)]";
+      return "bg-success";
     case "plan":
       return "bg-[var(--primary)]";
     case "bypassPermissions":
-      return "bg-[var(--atlas-status-error-foreground)]";
+      return "bg-error";
     case "auto":
-      return "bg-[var(--atlas-status-warning-foreground)]";
+      return "bg-warning";
     default:
       return "bg-[var(--muted-foreground)]";
   }

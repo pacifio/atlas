@@ -158,7 +158,7 @@ function PanelBody({
               <button
                 type="button"
                 onClick={() => void copyText(output).then((ok) => ok && copy.flash())}
-                className="flex h-5 w-5 items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] cursor-pointer"
+                className="flex h-5 w-5 items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-element-hover hover:text-[var(--foreground)] cursor-pointer"
               >
                 <CopyGlyph copied={copy.copied} size="sm" />
               </button>
@@ -168,7 +168,7 @@ function PanelBody({
       />
       <div className="flex-1 overflow-auto hide-scrollbar">
         {tc && Object.keys(tc.arguments ?? {}).length > 0 && (
-          <div className="border-b border-[var(--atlas-border-subtle)] px-3 py-2">
+          <div className="border-b border-border-subtle px-3 py-2">
             <div className="pb-1 text-3xs uppercase tracking-wider text-[var(--muted-foreground)]">
               Arguments
             </div>
@@ -253,7 +253,7 @@ function SubagentBody({
           type="button"
           aria-label="Back"
           onClick={onClose}
-          className="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]"
+          className="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-element-hover hover:text-[var(--foreground)]"
         >
           <ArrowLeft size={13} />
         </button>
@@ -262,10 +262,10 @@ function SubagentBody({
           className={cn(
             "size-2 shrink-0 rounded-full",
             child.status === "failed"
-              ? "bg-[var(--atlas-status-error-foreground)]"
+              ? "bg-error"
               : running
                 ? "bg-[var(--primary)] atlas-marker-running"
-                : "bg-[var(--atlas-text-disabled)]",
+                : "bg-disabled",
           )}
         />
         <span className="min-w-0 flex-1 truncate text-xs font-medium text-[var(--foreground)]">
@@ -283,7 +283,7 @@ function SubagentBody({
             from the child's side. */}
         {child.prompt && (
           <div className="mb-4 flex justify-end">
-            <p className="max-w-full min-w-0 select-text rounded-xl bg-[var(--atlas-primary-muted)] px-3.5 py-2 text-sm whitespace-pre-wrap text-[var(--foreground)]">
+            <p className="max-w-full min-w-0 select-text rounded-xl bg-primary-muted px-3.5 py-2 text-sm whitespace-pre-wrap text-[var(--foreground)]">
               {child.prompt}
             </p>
           </div>
@@ -309,10 +309,7 @@ function SubagentBody({
                 className="atlas-marker text-xs text-[var(--muted-foreground)]"
                 title={call.toolName}
               >
-                <span
-                  aria-hidden
-                  className="size-1 shrink-0 rounded-full bg-[var(--atlas-text-disabled)]"
-                />
+                <span aria-hidden className="size-1 shrink-0 rounded-full bg-disabled" />
                 <span className="min-w-0 truncate">{call.toolName}</span>
               </p>
             ))}
@@ -344,12 +341,12 @@ function SubagentBody({
               <button
                 type="button"
                 onClick={() => void copyText(child.result ?? "").then((ok) => ok && copy.flash())}
-                className="flex size-5 cursor-pointer items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]"
+                className="flex size-5 cursor-pointer items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-element-hover hover:text-[var(--foreground)]"
               >
                 <CopyGlyph copied={copy.copied} size="sm" />
               </button>
             </HintItem>
-            <span className="font-mono text-2xs text-[var(--atlas-text-disabled)] tabular-nums">
+            <span className="font-mono text-2xs text-disabled tabular-nums">
               {settledFigure(elapsedMs(child, Date.now()))}
             </span>
           </div>
@@ -390,7 +387,7 @@ function Header({
             <button
               type="button"
               onClick={onClose}
-              className="rounded p-1 text-[var(--muted-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] cursor-pointer"
+              className="rounded p-1 text-[var(--muted-foreground)] hover:bg-element-hover hover:text-[var(--foreground)] cursor-pointer"
             >
               <ChevronRight size={12} />
             </button>

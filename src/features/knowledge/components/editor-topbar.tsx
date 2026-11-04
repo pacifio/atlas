@@ -43,7 +43,7 @@ export function EditorTopbar({
         height: 36,
         gap: 8,
         padding: "0 14px",
-        background: "var(--atlas-panel-background)",
+        background: "var(--panel-background)",
       }}
     >
       {onToggleSidebar && (

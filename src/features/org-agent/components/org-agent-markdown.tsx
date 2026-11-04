@@ -136,7 +136,7 @@ export const OrgAgentMarkdown = memo(function OrgAgentMarkdown({
           data-atlas-link=""
           className={cn(
             // The prose's own link colour and hover (`.atlas-prose a`).
-            "inline cursor-pointer whitespace-nowrap text-[var(--atlas-status-info-foreground)] underline-offset-2 hover:underline",
+            "inline cursor-pointer whitespace-nowrap text-info underline-offset-2 hover:underline",
             mono && "font-mono",
           )}
           onClick={() => onOpen(target)}

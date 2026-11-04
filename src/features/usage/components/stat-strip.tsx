@@ -94,7 +94,7 @@ export function StatStrip({
   ];
   return (
     <Card index={0} section="stats" className="!px-0 !py-0">
-      <div className="grid grid-cols-5 divide-x divide-[var(--atlas-element-selected)]">
+      <div className="grid grid-cols-5 divide-x divide-element-selected">
         {cells.map((c) => (
           <StatCell
             key={c.key}

@@ -57,7 +57,7 @@ export function ComposerSendButton({
             // button at 8px top centers at 22px at EVERY UI scale.
             "absolute top-[8px] right-[8px] flex items-center justify-center w-[28px] h-[28px] rounded-lg border transition-colors",
             enabled
-              ? "border-transparent text-[var(--foreground)] hover:bg-[var(--atlas-element-hover)] hover:border-[var(--border)] cursor-pointer"
+              ? "border-transparent text-[var(--foreground)] hover:bg-element-hover hover:border-[var(--border)] cursor-pointer"
               : "border-transparent text-[var(--muted-foreground)] cursor-not-allowed",
           )}
         >

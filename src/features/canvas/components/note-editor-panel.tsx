@@ -122,7 +122,7 @@ export function NoteEditorPanel({ noteId, projectPath, onClose }: NoteEditorPane
                   deleteNote(noteId);
                   onClose();
                 }}
-                className="p-1 rounded hover:bg-element-hover text-[var(--muted-foreground)] hover:text-[var(--atlas-status-error-foreground)] cursor-pointer transition-colors"
+                className="p-1 rounded hover:bg-element-hover text-[var(--muted-foreground)] hover:text-error cursor-pointer transition-colors"
               >
                 <Trash2 size={12} />
               </button>

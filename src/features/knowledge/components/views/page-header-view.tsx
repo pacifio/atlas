@@ -44,7 +44,7 @@ export function PageHeaderView({
           style={{
             height: 180,
             borderRadius: 10,
-            border: "1px solid var(--atlas-border-subtle)",
+            border: "1px solid var(--border-subtle)",
             margin: "0 0 14px",
             background: coverBackground,
             position: "relative",
@@ -96,7 +96,7 @@ export function PageHeaderView({
               height: 44,
               borderRadius: 9,
               background: "var(--card)",
-              border: "1px solid var(--atlas-border-subtle)",
+              border: "1px solid var(--border-subtle)",
               lineHeight: 1,
               display: "inline-flex",
               alignItems: "center",

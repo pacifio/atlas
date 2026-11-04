@@ -74,7 +74,7 @@ export const CommitRowView = memo(function CommitRowView({
         "group flex items-center cursor-pointer select-none",
         selected
           ? "bg-[var(--primary)]/15 text-[var(--foreground)]"
-          : "hover:bg-[var(--atlas-element-hover)] text-[var(--secondary-foreground)]",
+          : "hover:bg-element-hover text-[var(--secondary-foreground)]",
       )}
       style={{ height: ROW_HEIGHT }}
     >

@@ -134,7 +134,7 @@ export function PinnedMenu({
                         if (msg) onJump(msg.id);
                       }}
                       className={
-                        "flex w-full cursor-pointer flex-col gap-1 px-3 py-2.5 text-left transition-colors hover:bg-[var(--atlas-element-hover)]" +
+                        "flex w-full cursor-pointer flex-col gap-1 px-3 py-2.5 text-left transition-colors hover:bg-element-hover" +
                         (i === filtered.length - 1 ? "" : " border-b border-border-subtle")
                       }
                     >

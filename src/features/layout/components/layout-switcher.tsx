@@ -80,8 +80,8 @@ export function LayoutSwitcher({
                 className={cn(
                   "text-left rounded-xl border p-2.5 transition-colors outline-none",
                   i === selected
-                    ? "border-[var(--primary)] bg-[var(--atlas-element-active)]"
-                    : "border-[var(--border)] bg-[var(--card)] hover:border-[var(--atlas-border-strong)]",
+                    ? "border-[var(--primary)] bg-element-active"
+                    : "border-[var(--border)] bg-[var(--card)] hover:border-border-strong",
                 )}
               >
                 <LayoutThumbnail template={t} />

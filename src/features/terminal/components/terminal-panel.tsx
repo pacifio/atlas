@@ -201,7 +201,7 @@ export function TerminalPanel({ tabId, projectId, visible, variant = "tab" }: Te
     <div
       ref={rootRef}
       data-when-scope="terminalFocus"
-      className="relative h-full min-h-0 overflow-hidden bg-[var(--atlas-terminal-background)]"
+      className="relative h-full min-h-0 overflow-hidden bg-[var(--terminal-background)]"
     >
       {zoomed ? (
         <PaneView pane={zoomed} tabId={tabId} panelVisible={panelVisible} drawer={drawer} zoomed />
@@ -306,7 +306,7 @@ function PaneView({
     <div
       className={cn(
         "flex h-full flex-col",
-        isActivePane && groupFocused && "ring-1 ring-[var(--atlas-element-hover)] ring-inset",
+        isActivePane && groupFocused && "ring-1 ring-element-hover ring-inset",
       )}
     >
       {drawer && pane.terminals.length < 2 ? null : (

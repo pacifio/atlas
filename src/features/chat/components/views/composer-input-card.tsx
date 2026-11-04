@@ -50,7 +50,7 @@ export function ComposerInputCard({
           "transition-[border-radius,border-color,box-shadow] duration-base ease-out-strong motion-reduce:transition-none",
           // Focus treatment at HALF strength: the full border-focus +
           // /20 accent ring read far too loud on the nested surface.
-          "focus-within:border-[color-mix(in_srgb,var(--atlas-border-strong)_50%,var(--border))]",
+          "focus-within:border-[color-mix(in_srgb,var(--border-strong)_50%,var(--border))]",
           "focus-within:ring-1 focus-within:ring-[var(--primary)]/10",
           // The disabled dim, scoped to the field the lock actually
           // applies to (see the shell above). No red tint — the send

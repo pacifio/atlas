@@ -40,7 +40,7 @@ export const WorkHeaderRowView = memo(function WorkHeaderRowView({
   );
   return (
     <Column className="pt-2 pb-2">
-      <div className="flex items-center border-b border-[var(--atlas-border-subtle)] pb-2">
+      <div className="flex items-center border-b border-border-subtle pb-2">
         {row.foldable ? (
           <button
             type="button"
@@ -73,9 +73,9 @@ export const SeparatorRowView = memo(function SeparatorRowView({ row }: { row: S
   return (
     <Column className="flex h-[34px] items-center">
       <div className="flex w-full select-none items-center gap-2">
-        <span className="h-px flex-1 bg-[var(--atlas-border-subtle)]" />
+        <span className="h-px flex-1 bg-border-subtle" />
         <span className="shrink-0 text-2xs text-[var(--muted-foreground)]">{row.label}</span>
-        <span className="h-px flex-1 bg-[var(--atlas-border-subtle)]" />
+        <span className="h-px flex-1 bg-border-subtle" />
       </div>
     </Column>
   );

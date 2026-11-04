@@ -140,7 +140,7 @@ export function KnowledgeSidebar({
   return (
     <aside
       className="flex flex-col min-h-0 shrink-0 border-r border-border-subtle"
-      style={{ width, background: "var(--atlas-panel-background)" }}
+      style={{ width, background: "var(--panel-background)" }}
     >
       {/* Header — matches the project file-tree's typography
           (10px / semibold / tracking-wider, UI font) so the two
@@ -332,7 +332,7 @@ export function KnowledgeSidebar({
                   style={{
                     height: 26,
                     fontFamily: "var(--font-mono)",
-                    background: isActive ? "var(--atlas-element-active)" : undefined,
+                    background: isActive ? "var(--element-active)" : undefined,
                   }}
                   title={repo.path}
                 >

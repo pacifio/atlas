@@ -66,7 +66,7 @@ export const ShapeNode = memo(function ShapeNode({ id, data, selected }: NodePro
     updateNote(id, { text: ref.current?.innerText ?? "" });
   }, [id, updateNote]);
 
-  const stroke = selected ? "var(--primary)" : "var(--atlas-border-strong)";
+  const stroke = selected ? "var(--primary)" : "var(--border-strong)";
 
   return (
     // React Flow owns the box size (so NodeResizer can drive it); the shape fills

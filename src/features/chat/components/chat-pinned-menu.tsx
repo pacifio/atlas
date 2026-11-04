@@ -65,9 +65,9 @@ export function ChatPinnedMenu({
       </HintItem>
       <Popover.Portal>
         <Popover.Positioner className="z-popover" align="end" sideOffset={6}>
-          <Popover.Popup className="overflow-hidden rounded-xl select-none inset-highlight shadow-md border border-[var(--atlas-element-active)] bg-[var(--card)]/95 backdrop-blur-2xl atlas-panel-in-tl">
+          <Popover.Popup className="overflow-hidden rounded-xl select-none inset-highlight shadow-md border border-element-active bg-[var(--card)]/95 backdrop-blur-2xl atlas-panel-in-tl">
             <div className="flex max-h-[min(420px,60vh)] w-[320px] flex-col">
-              <div className="flex h-[32px] shrink-0 items-center gap-1.5 border-b border-[var(--atlas-element-hover)] px-3">
+              <div className="flex h-[32px] shrink-0 items-center gap-1.5 border-b border-element-hover px-3">
                 <Search size={11} className="shrink-0 text-[var(--muted-foreground)]" />
                 <input
                   value={query}
@@ -80,18 +80,14 @@ export function ChatPinnedMenu({
 
               <div className="hide-scrollbar min-h-0 flex-1 overflow-y-auto">
                 {filtered.length === 0 && (
-                  <div className="py-6 text-center text-xs text-[var(--atlas-text-disabled)]">
-                    No pins match.
-                  </div>
+                  <div className="py-6 text-center text-xs text-disabled">No pins match.</div>
                 )}
                 {filtered.map((pin, i) => (
                   <div
                     key={pin.messageId}
                     className={cn(
-                      "group/pin flex items-start gap-2 px-3 py-2.5 transition-colors hover:bg-[var(--atlas-element-hover)]",
-                      i === filtered.length - 1
-                        ? ""
-                        : "border-b border-[var(--atlas-element-hover)]",
+                      "group/pin flex items-start gap-2 px-3 py-2.5 transition-colors hover:bg-element-hover",
+                      i === filtered.length - 1 ? "" : "border-b border-element-hover",
                     )}
                   >
                     <button

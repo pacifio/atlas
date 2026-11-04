@@ -138,7 +138,7 @@ export function ImageZoomView({ src, alt, fill, checkerboard }: ImageZoomViewPro
             <button
               type="button"
               onClick={zoomButton(1 / 1.3)}
-              className="flex h-6 w-6 items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]"
+              className="flex h-6 w-6 items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-element-hover hover:text-[var(--foreground)]"
             >
               <ZoomOut size={13} />
             </button>
@@ -150,7 +150,7 @@ export function ImageZoomView({ src, alt, fill, checkerboard }: ImageZoomViewPro
             <button
               type="button"
               onClick={zoomButton(1.3)}
-              className="flex h-6 w-6 items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]"
+              className="flex h-6 w-6 items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-element-hover hover:text-[var(--foreground)]"
             >
               <ZoomIn size={13} />
             </button>
@@ -159,7 +159,7 @@ export function ImageZoomView({ src, alt, fill, checkerboard }: ImageZoomViewPro
             <button
               type="button"
               onClick={reset}
-              className="flex h-6 w-6 items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]"
+              className="flex h-6 w-6 items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-element-hover hover:text-[var(--foreground)]"
             >
               <Maximize size={12} />
             </button>

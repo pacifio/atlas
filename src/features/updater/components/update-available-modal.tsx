@@ -48,7 +48,7 @@ export function UpdateAvailableModal() {
         >
           {isError ? (
             <div className="w-[52px] h-[52px] rounded-2xl bg-element-active border border-border grid place-items-center">
-              <AlertTriangle size={24} className="text-[var(--atlas-status-error-foreground)]" />
+              <AlertTriangle size={24} className="text-error" />
             </div>
           ) : (
             <AtlasIcon size={52} className="rounded-2xl" />
@@ -93,7 +93,7 @@ export function UpdateAvailableModal() {
               <button
                 type="button"
                 onClick={dismissModal}
-                className="w-full h-9 rounded-lg text-sm font-medium bg-element-active text-foreground border border-border hover:bg-[var(--atlas-element-emphasis)] transition-colors"
+                className="w-full h-9 rounded-lg text-sm font-medium bg-element-active text-foreground border border-border hover:bg-[var(--element-emphasis)] transition-colors"
               >
                 Later
               </button>

@@ -177,7 +177,7 @@ function BranchPicker({
                         "flex w-full items-center gap-2 px-3 h-control-md text-xs text-left cursor-pointer outline-none",
                         current
                           ? "text-[var(--foreground)]"
-                          : "text-[var(--secondary-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] focus-visible:bg-[var(--atlas-element-hover)]",
+                          : "text-[var(--secondary-foreground)] hover:bg-element-hover hover:text-[var(--foreground)] focus-visible:bg-element-hover",
                       )}
                     >
                       <span className="truncate flex-1">{b}</span>

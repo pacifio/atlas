@@ -29,7 +29,7 @@ export const JumpToBottomPill = memo(function JumpToBottomPill({
           "border border-[var(--border)] bg-[var(--card)]",
           "text-xs leading-none font-medium text-[var(--secondary-foreground)]",
           "shadow-sm cursor-pointer transition-colors",
-          "hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]",
+          "hover:bg-element-hover hover:text-[var(--foreground)]",
         )}
       >
         <ChevronDown size={11} />

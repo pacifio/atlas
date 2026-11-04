@@ -17,7 +17,7 @@ export function NotEnabled() {
       {/* The control is deliberately not repeated here. Capture is per project
        *  and this board spans all of them, so the honest place to switch it on
        *  is the project pill in the titlebar, which names the one it applies to. */}
-      <p className="mt-3 max-w-[420px] text-xs text-[var(--atlas-text-disabled)]">
+      <p className="mt-3 max-w-[420px] text-xs text-disabled">
         Click the project name in the titlebar to turn it on.
       </p>
     </div>
@@ -42,7 +42,7 @@ export function NotFound({ reason, onBack }: { reason: string | null; onBack: ()
       <button
         type="button"
         onClick={onBack}
-        className="mt-3 cursor-pointer rounded-md border border-[var(--border)] px-3 py-1.5 text-sm text-[var(--secondary-foreground)] transition-colors hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]"
+        className="mt-3 cursor-pointer rounded-md border border-[var(--border)] px-3 py-1.5 text-sm text-[var(--secondary-foreground)] transition-colors hover:bg-element-hover hover:text-[var(--foreground)]"
       >
         Back to sessions
       </button>

@@ -77,11 +77,11 @@ function ExportItem({
     <button
       type="button"
       onClick={onClick}
-      className="flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-[var(--secondary-foreground)] transition-colors hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]"
+      className="flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-[var(--secondary-foreground)] transition-colors hover:bg-element-hover hover:text-[var(--foreground)]"
     >
       {label}
       <span className="flex-1" />
-      <span className="font-mono text-2xs text-[var(--atlas-text-disabled)]">{hint}</span>
+      <span className="font-mono text-2xs text-disabled">{hint}</span>
     </button>
   );
 }

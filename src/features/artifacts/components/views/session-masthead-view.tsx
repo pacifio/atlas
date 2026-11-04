@@ -116,7 +116,7 @@ export function SessionMastheadView({
         </span>
         {s.needsAttention && (
           <span
-            className="flex h-[22px] items-center gap-1.5 rounded-full border border-[var(--atlas-status-warning-foreground)]/25 bg-[var(--atlas-status-warning-background)] px-2.5 font-mono text-xs text-[var(--atlas-status-warning-foreground)]"
+            className="flex h-[22px] items-center gap-1.5 rounded-full border border-warning/25 bg-warning-muted px-2.5 font-mono text-xs text-warning"
             title={s.attentionReason ?? undefined}
           >
             <TriangleAlert size={11} />
@@ -212,12 +212,12 @@ function Metric({
       <p
         className={cn(
           "mt-1.5 truncate font-mono text-lg font-medium tracking-[-0.02em]",
-          absent ? "text-[var(--atlas-text-disabled)]" : "text-[var(--foreground)]",
+          absent ? "text-disabled" : "text-[var(--foreground)]",
         )}
       >
         {value}
       </p>
-      <p className="mt-0.5 truncate font-mono text-2xs text-[var(--atlas-text-disabled)]">{sub}</p>
+      <p className="mt-0.5 truncate font-mono text-2xs text-disabled">{sub}</p>
     </Cell>
   );
 }
@@ -237,13 +237,13 @@ function Chip({ children }: { children: ReactNode }) {
  */
 function LiveChip() {
   return (
-    <span className="flex h-[22px] items-center gap-1.5 rounded-full border border-[var(--atlas-status-success-foreground)]/25 bg-[var(--atlas-status-success-background)] px-2.5 font-mono text-xs text-[var(--atlas-status-success-foreground)]">
+    <span className="flex h-[22px] items-center gap-1.5 rounded-full border border-success/25 bg-success-muted px-2.5 font-mono text-xs text-success">
       <span
         aria-hidden
-        className="atlas-live-pulse size-1.5 rounded-full bg-[var(--atlas-status-success-foreground)]"
+        className="atlas-live-pulse size-1.5 rounded-full bg-success"
         style={{
           ["--atlas-pulse-color" as string]:
-            "color-mix(in oklab, var(--atlas-status-success-foreground) 40%, transparent)",
+            "color-mix(in oklab, var(--status-success-foreground) 40%, transparent)",
         }}
       />
       live

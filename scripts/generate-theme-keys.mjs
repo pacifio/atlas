@@ -319,9 +319,14 @@ export function readSource() {
   // `.` and `_` both become `-`, so `a.b_c` and `a.b.c` would write the same
   // CSS variable and the second would silently win. Cheap to check, invisible
   // otherwise, and exactly the kind of thing a phase-2 rename could introduce.
-  // Derived variables share the `--atlas-` namespace, so they are checked with
-  // the keys rather than beside them.
+  // Keys carry no prefix (ADR-0027), so they share one namespace with the
+  // derived variables and with the shadcn base tokens (`--border`, `--ring`, …,
+  // and the `--font-*` stacks): a key that wrote `--border` would overwrite the
+  // base token for every consumer.
   const byVar = new Map();
+  for (const token of [...tokens, "font-sans", "font-serif", "font-mono"]) {
+    byVar.set(`--${token}`, `base.${token}`);
+  }
   for (const key of [...keys, ...derived]) {
     if (typeof key.name !== "string") continue;
     const existing = byVar.get(cssVar(key.name));
@@ -370,9 +375,9 @@ export function readSource() {
 
 // ─── Shared derivation vocabulary ────────────────────────────────────────────
 
-/** `--atlas-…`, matching `define()` in the generated registry. */
+/** `--…`, matching `define()` in the generated registry. */
 export function cssVar(name) {
-  return `--atlas-${name.replaceAll(".", "-").replaceAll("_", "-")}`;
+  return `--${name.replaceAll(".", "-").replaceAll("_", "-")}`;
 }
 
 /** Compact source chain for the docs table: `P:green → B:destructive → D`. */
@@ -439,7 +444,7 @@ export interface ThemeKeyRule {
 
 export interface ThemeKeyDefinition<Key extends string = string> {
   key: Key;
-  cssVar: \`--atlas-\${string}\`;
+  cssVar: \`--\${string}\`;
   rule: ThemeKeyRule;
 }
 
@@ -506,7 +511,7 @@ function define<const Key extends string>(
   const { dark, light = dark, ...rest } = rule;
   return {
     key,
-    cssVar: \`--atlas-\${key.replaceAll(".", "-").replaceAll("_", "-")}\`,
+    cssVar: \`--\${key.replaceAll(".", "-").replaceAll("_", "-")}\`,
     rule: { ...rest, atlasDefault: { dark, light } },
   };
 }
@@ -527,7 +532,7 @@ export const THEME_KEY_DEFINITION_BY_KEY = Object.fromEntries(
 
 export interface DerivedVarDefinition<Name extends string = string> {
   name: Name;
-  cssVar: \`--atlas-\${string}\`;
+  cssVar: \`--\${string}\`;
   /** The settable key this transforms, or null when it transforms a base token. */
   from: ThemeKey | null;
   /** The base token this transforms, or null when it transforms a key. */
@@ -542,13 +547,13 @@ function derive<const Name extends string>(
 ): DerivedVarDefinition<Name> {
   return {
     name,
-    cssVar: \`--atlas-\${name.replaceAll(".", "-").replaceAll("_", "-")}\`,
+    cssVar: \`--\${name.replaceAll(".", "-").replaceAll("_", "-")}\`,
     ...rule,
   };
 }
 
 /**
- * Colours Atlas still writes as \`--atlas-…\` custom properties, but that no
+ * Colours Atlas still writes as CSS custom properties, but that no
  * theme may set: each is a pure transform of a key that IS settable, so a
  * theme author steers it through that key and never restates it. They are
  * deliberately absent from \`theme-keys.txt\` and from the JSON Schema, which is
@@ -712,7 +717,7 @@ function renderDocs({ groups, keys, derived, baseRules }, current) {
     out.push(
       "## Derived variables",
       "",
-      `Atlas writes these **${derived.length}** \`--atlas-…\` custom properties too, but`,
+      `Atlas writes these **${derived.length}** custom properties too, but`,
       "they are **not** theme keys: each is a pure transform of a key that is, so a",
       "theme steers it through that key. Writing one in a theme file is an",
       "unknown-key warning.",

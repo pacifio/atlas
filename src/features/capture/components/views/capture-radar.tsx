@@ -62,16 +62,16 @@ export function CaptureRadar({ live, health }: { live: boolean; health: CaptureH
 
   const tone =
     health?.state === "stopped"
-      ? "var(--atlas-status-error-foreground)"
+      ? "var(--status-error-foreground)"
       : health?.state === "degraded"
-        ? "var(--atlas-status-warning-foreground)"
-        : "var(--atlas-status-success-foreground)";
+        ? "var(--status-warning-foreground)"
+        : "var(--status-success-foreground)";
 
   const active = blipAt(RADAR_BLIPS[blip]);
 
   return (
     <div
-      className="relative overflow-hidden border-b border-[var(--atlas-element-hover)] bg-background/40"
+      className="relative overflow-hidden border-b border-element-hover bg-background/40"
       style={{ height: RADAR_HEIGHT }}
     >
       {/* Range rings: true circles centred on the dish. `border-t` draws only
@@ -82,7 +82,7 @@ export function CaptureRadar({ live, health }: { live: boolean; health: CaptureH
         <span
           key={r}
           aria-hidden
-          className="absolute rounded-full border-t border-dashed border-[var(--atlas-element-selected)]"
+          className="absolute rounded-full border-t border-dashed border-element-selected"
           style={{
             width: r * 2,
             height: r * 2,
@@ -144,7 +144,7 @@ export function CaptureRadar({ live, health }: { live: boolean; health: CaptureH
           so the origin of every ring is visibly a thing rather than a corner. */}
       <span
         aria-hidden
-        className="absolute size-[92px] rounded-full border border-[var(--atlas-element-selected)] bg-[var(--card)]"
+        className="absolute size-[92px] rounded-full border border-element-selected bg-[var(--card)]"
         style={{ left: RADAR_ORIGIN_X - 46, top: RADAR_HEIGHT - 46 }}
       />
 

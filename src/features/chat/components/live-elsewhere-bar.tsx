@@ -25,10 +25,7 @@ export function LiveElsewhereBar({ tabId }: { tabId: string }) {
   return (
     <div data-testid="live-elsewhere-bar" role="status" className={COMPOSER_STRIP}>
       <span className="flex min-w-0 items-center gap-1.5">
-        <TerminalSquare
-          size={11}
-          className="shrink-0 text-[var(--atlas-status-warning-foreground)]"
-        />
+        <TerminalSquare size={11} className="shrink-0 text-warning" />
         <span className="min-w-0 truncate text-[var(--muted-foreground)]">
           This session is active in another process (likely a terminal). Sending here will fork it.
         </span>

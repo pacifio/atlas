@@ -183,10 +183,10 @@ function QuotaRow({
         mounted={mounted}
         color={
           pct >= 90
-            ? "var(--atlas-status-error-foreground)"
+            ? "var(--status-error-foreground)"
             : pct >= 70
-              ? "var(--atlas-status-warning-foreground)"
-              : "var(--atlas-status-success-foreground)"
+              ? "var(--status-warning-foreground)"
+              : "var(--status-success-foreground)"
         }
       />
     </div>
@@ -253,13 +253,9 @@ function Session({
     cells.push([
       "Lines",
       <span key="lines">
-        <span className="text-[var(--atlas-status-success-foreground)]">
-          +{session.insertions ?? 0}
-        </span>
+        <span className="text-success">+{session.insertions ?? 0}</span>
         <span className="mx-0.5 text-[var(--muted-foreground)]">/</span>
-        <span className="text-[var(--atlas-status-error-foreground)]">
-          −{session.deletions ?? 0}
-        </span>
+        <span className="text-error">−{session.deletions ?? 0}</span>
       </span>,
     ]);
   }

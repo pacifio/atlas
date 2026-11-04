@@ -90,8 +90,8 @@ export function ComposerGroupsPanel({
     cn(
       "flex items-center px-1.5 h-6.5 rounded-full border text-2xs leading-none font-medium transition-colors cursor-pointer",
       active
-        ? "border-[var(--atlas-border-strong)] bg-[var(--atlas-element-selected)] text-[var(--foreground)]"
-        : "border-[var(--border)] bg-[var(--card)] text-[var(--secondary-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]",
+        ? "border-border-strong bg-element-selected text-[var(--foreground)]"
+        : "border-[var(--border)] bg-[var(--card)] text-[var(--secondary-foreground)] hover:bg-element-hover hover:text-[var(--foreground)]",
     );
 
   return (
@@ -140,9 +140,7 @@ export function ComposerGroupsPanel({
                       onClick={() => onPickClaudeMode(m)}
                       className={cn(
                         "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors cursor-pointer",
-                        active
-                          ? "bg-[var(--atlas-element-selected)]"
-                          : "hover:bg-[var(--atlas-element-hover)]",
+                        active ? "bg-element-selected" : "hover:bg-element-hover",
                       )}
                     >
                       <span
@@ -171,9 +169,7 @@ export function ComposerGroupsPanel({
                         onClick={() => onPickAcpMode(m.id)}
                         className={cn(
                           "flex w-full items-start gap-1.5 rounded-md px-2 py-1.5 text-left transition-colors cursor-pointer",
-                          active
-                            ? "bg-[var(--atlas-element-selected)]"
-                            : "hover:bg-[var(--atlas-element-hover)]",
+                          active ? "bg-element-selected" : "hover:bg-element-hover",
                         )}
                       >
                         <span

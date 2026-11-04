@@ -80,9 +80,7 @@ export function FeaturedAgentOffers({
               }
               className={cn(
                 "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors",
-                disabled
-                  ? "cursor-default opacity-40"
-                  : "cursor-pointer hover:bg-[var(--atlas-element-hover)]",
+                disabled ? "cursor-default opacity-40" : "cursor-pointer hover:bg-element-hover",
               )}
             >
               {/* Same tile as the marketplace's, and the same reason for the

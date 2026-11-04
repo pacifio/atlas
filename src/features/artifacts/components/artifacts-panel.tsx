@@ -261,11 +261,7 @@ export function ArtifactsPanel() {
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[var(--background)]">
-      {error && (
-        <p className="shrink-0 bg-[var(--atlas-status-error-background)] px-4 py-1.5 text-xs text-[var(--atlas-status-error-foreground)]">
-          {error}
-        </p>
-      )}
+      {error && <p className="shrink-0 bg-error-muted px-4 py-1.5 text-xs text-error">{error}</p>}
 
       {/* Flat, edge to edge. This was a rounded card inset 4px on a lighter
           frame — a panel inside the column's own. The column border is the

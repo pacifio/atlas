@@ -24,14 +24,14 @@
   /* shadcn's accent is a selected/hover surface. Atlas's former brand
      "accent" has been renamed primary; do not collapse the two again. */
   --color-accent: var(--accent);
-  --color-accent-hover: var(--atlas-element-hover);
+  --color-accent-hover: var(--element-hover);
   --color-accent-muted: var(--muted);
   --color-accent-secondary: var(--secondary);
   --color-accent-foreground: var(--accent-foreground);
   /* The hover face of `primary`, so a filled control can change on hover
      without an opacity modifier (which Tailwind compiles to `color-mix`). */
-  --color-primary-hover: var(--atlas-primary-hover);
-  --color-primary-muted: var(--atlas-primary-muted);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-muted: var(--primary-muted);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
   --color-border: var(--border);
@@ -69,36 +69,36 @@
      one pixel is what the 2026-09-17 audit opened with, and the sweep spent
      them: those utilities are gone and their call sites write the shadcn name.
      Do not reintroduce a synonym for a base token. */
-  --color-element-hover: var(--atlas-element-hover);
-  --color-element-active: var(--atlas-element-active);
-  --color-element-selected: var(--atlas-element-selected);
-  --color-panel: var(--atlas-panel-background);
-  --color-panel-input: var(--atlas-panel-input-background);
-  --color-disabled: var(--atlas-text-disabled);
+  --color-element-hover: var(--element-hover);
+  --color-element-active: var(--element-active);
+  --color-element-selected: var(--element-selected);
+  --color-panel: var(--panel-background);
+  --color-panel-input: var(--panel-input-background);
+  --color-disabled: var(--text-disabled);
 
-  --color-border-subtle: var(--atlas-border-subtle);
-  --color-border-strong: var(--atlas-border-strong);
+  --color-border-subtle: var(--border-subtle);
+  --color-border-strong: var(--border-strong);
 
-  --color-success: var(--atlas-status-success-foreground);
-  --color-warning: var(--atlas-status-warning-foreground);
-  --color-error: var(--atlas-status-error-foreground);
-  --color-info: var(--atlas-status-info-foreground);
+  --color-success: var(--status-success-foreground);
+  --color-warning: var(--status-warning-foreground);
+  --color-error: var(--status-error-foreground);
+  --color-info: var(--status-info-foreground);
   /* The tinted fill behind a status foreground — what a Badge sits on. */
-  --color-success-muted: var(--atlas-status-success-background);
-  --color-warning-muted: var(--atlas-status-warning-background);
-  --color-error-muted: var(--atlas-status-error-background);
-  --color-info-muted: var(--atlas-status-info-background);
+  --color-success-muted: var(--status-success-background);
+  --color-warning-muted: var(--status-warning-background);
+  --color-error-muted: var(--status-error-background);
+  --color-info-muted: var(--status-info-background);
   /* Between error and warning, for a severity scale that needs a step above
      warning (the Security Agent's High). Derived, so every theme has it. */
   --color-severe: color-mix(
     in oklab,
-    var(--atlas-status-error-foreground) 50%,
-    var(--atlas-status-warning-foreground)
+    var(--status-error-foreground) 50%,
+    var(--status-warning-foreground)
   );
   --color-severe-muted: color-mix(
     in oklab,
-    var(--atlas-status-error-background) 50%,
-    var(--atlas-status-warning-background)
+    var(--status-error-background) 50%,
+    var(--status-warning-background)
   );
 
   --font-sans: var(--font-sans);
@@ -819,7 +819,7 @@
   margin: 0;
 }
 .atlas-composer .ProseMirror ::selection {
-  background: var(--atlas-selection-background);
+  background: var(--selection-background);
 }
 .atlas-composer-placeholder {
   position: absolute;
@@ -892,7 +892,7 @@
   top: 8px;
   left: 10px;
   right: 38px;
-  color: var(--atlas-text-disabled);
+  color: var(--text-disabled);
 }
 
 .atlas-mention-chip {
@@ -954,16 +954,16 @@
   color: var(--primary);
 }
 .atlas-mention-chip[data-mention-kind="symbol"] {
-  color: var(--atlas-status-success-foreground);
+  color: var(--status-success-foreground);
 }
 .atlas-mention-chip[data-mention-kind="knowledge"] {
   color: var(--primary);
 }
 .atlas-mention-chip[data-mention-kind="repo"] {
-  color: var(--atlas-status-success-foreground);
+  color: var(--status-success-foreground);
 }
 .atlas-mention-chip[data-mention-kind="paper"] {
-  color: var(--atlas-status-warning-foreground);
+  color: var(--status-warning-foreground);
 }
 .atlas-mention-chip[data-mention-kind="branch"] {
   color: var(--secondary-foreground);
@@ -981,10 +981,10 @@
   color: var(--primary);
 }
 .atlas-mention-chip[data-mention-kind="recorded_session"] {
-  color: var(--atlas-status-success-foreground);
+  color: var(--status-success-foreground);
 }
 .atlas-mention-chip[data-mention-kind="comment"] {
-  color: var(--atlas-status-warning-foreground);
+  color: var(--status-warning-foreground);
 }
 
 /* Hover preview card for media (`@file` image/video) mention chips. Portalled
@@ -1355,7 +1355,7 @@
      hidden (still mounted) chat, whose glow must not restyle the bar. */
   [data-session-column]:has(.atlas-welcome-glow:not([data-atlas-offstage] *)) > [data-pane-header] {
     --muted-foreground: color-mix(in oklab, var(--foreground) 62%, transparent);
-    --atlas-text-disabled: color-mix(in oklab, var(--foreground) 40%, transparent);
+    --text-disabled: color-mix(in oklab, var(--foreground) 40%, transparent);
   }
   :is(.atlas-welcome-glow, .atlas-welcome-swatch)[data-palette="ember"] {
     --welcome-hue: #a3281c;
@@ -1414,15 +1414,15 @@
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: var(--atlas-scrollbar-thumb-background);
+    background: var(--scrollbar-thumb-background);
     border-radius: 9999px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: var(--atlas-scrollbar-thumb-hover);
+    background: var(--scrollbar-thumb-hover);
   }
 
   ::selection {
-    background: var(--atlas-selection-background);
+    background: var(--selection-background);
     color: var(--foreground);
   }
 
@@ -1491,8 +1491,8 @@
      succeeds. Every fallback hex mirrors the `atlas` theme in
      `features/editor/themes/themes.ts` — keep the two in step. */
   .cm-editor {
-    background-color: var(--atlas-editor-background, #000);
-    color: var(--atlas-editor-foreground, #d4d4d4);
+    background-color: var(--editor-background, #000);
+    color: var(--editor-foreground, #d4d4d4);
     /* `font-size` + `line-height` live on the editor so both .cm-content
        and .cm-gutters measure the SAME row height — CodeMirror reads the
        computed line-height off the content via ResizeObserver to position
@@ -1506,34 +1506,34 @@
     line-height: calc(var(--atlas-editor-font-size, 13px) * 20 / 13);
   }
   .cm-content {
-    color: var(--atlas-editor-foreground, #d4d4d4);
-    caret-color: var(--atlas-editor-caret, #d4d4d4);
+    color: var(--editor-foreground, #d4d4d4);
+    caret-color: var(--editor-caret, #d4d4d4);
   }
   .cm-gutters {
-    background-color: var(--atlas-editor-gutter-background, #000);
-    color: var(--atlas-editor-gutter-foreground, #666);
+    background-color: var(--editor-gutter-background, #000);
+    color: var(--editor-gutter-foreground, #666);
     border: none;
   }
   .cm-activeLineGutter {
-    color: var(--atlas-editor-active-line-gutter-foreground, #d4d4d4);
+    color: var(--editor-active-line-gutter-foreground, #d4d4d4);
     background-color: transparent;
   }
   .cm-activeLine {
-    background-color: var(--atlas-editor-active-line-background, rgba(255, 255, 255, 0.04));
+    background-color: var(--editor-active-line-background, rgba(255, 255, 255, 0.04));
   }
   .cm-selectionBackground,
   .cm-focused .cm-selectionBackground,
   .cm-content ::selection {
-    background-color: var(--atlas-editor-selection-background, #303030) !important;
+    background-color: var(--editor-selection-background, #303030) !important;
   }
   .cm-cursor,
   .cm-dropCursor {
-    border-left-color: var(--atlas-editor-caret, #d4d4d4);
+    border-left-color: var(--editor-caret, #d4d4d4);
     border-left-width: 2px;
   }
   .cm-matchingBracket {
-    background-color: var(--atlas-editor-match-bracket-background, #2d2d2d);
-    outline: 1px solid var(--atlas-editor-match-bracket-border, #3d3d3d);
+    background-color: var(--editor-match-bracket-background, #2d2d2d);
+    outline: 1px solid var(--editor-match-bracket-border, #3d3d3d);
   }
   .cm-foldPlaceholder {
     background-color: var(--secondary, #1a1a1a);
@@ -1608,7 +1608,7 @@
     cursor: pointer;
   }
   .reader-content a:hover {
-    color: var(--atlas-primary-hover);
+    color: var(--primary-hover);
   }
   .reader-content img {
     max-width: 100%;
@@ -1668,7 +1668,7 @@
   }
   .reader-content hr {
     border: none;
-    border-top: 1px solid var(--atlas-border-subtle);
+    border-top: 1px solid var(--border-subtle);
     margin: 1em 0;
   }
   .reader-content nav,
@@ -2178,7 +2178,7 @@
 
 /* Active match in the terminal search (brighter than the other matches). */
 .term-match-active {
-  background: var(--atlas-status-warning-foreground) !important;
+  background: var(--status-warning-foreground) !important;
   color: #000 !important;
 }
 
@@ -2281,7 +2281,7 @@ html[data-word-wrap="off"] .prose-chat pre {
 }
 .atlas-code-copy:hover {
   color: var(--foreground);
-  background: var(--atlas-element-hover);
+  background: var(--element-hover);
 }
 .prose-chat code {
   padding: 0.125rem 0.25rem;
@@ -2310,7 +2310,7 @@ html[data-word-wrap="off"] .prose-chat pre {
    them. Session messages are `.atlas-prose`; other markdown is `.prose-chat`. */
 .prose-chat a,
 .atlas-prose a {
-  color: var(--atlas-status-info-foreground);
+  color: var(--status-info-foreground);
   text-decoration: none;
 }
 .prose-chat a:hover,
@@ -2358,7 +2358,7 @@ html[data-word-wrap="off"] .prose-chat pre {
   border-right: none;
 }
 .prose-chat tr {
-  border-bottom: 1px solid var(--atlas-border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
 }
 .prose-chat tbody tr:last-child {
   border-bottom: none;
@@ -2368,7 +2368,7 @@ html[data-word-wrap="off"] .prose-chat pre {
   vertical-align: top;
   font-size: 12px;
   color: var(--foreground);
-  border-right: 1px solid var(--atlas-border-subtle);
+  border-right: 1px solid var(--border-subtle);
   word-break: break-word;
 }
 .prose-chat td:last-child {
@@ -2607,7 +2607,7 @@ html[data-word-wrap="off"] .prose-chat pre {
 .atlas-prose td {
   padding: 7px 12px;
   vertical-align: top;
-  border-bottom: 1px solid var(--atlas-border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
 }
 /* Markdown has no headerless table: `| | |` over a delimiter row is the only
    way to write one, and it renders as a blank band above the first real row.
@@ -2692,7 +2692,7 @@ html[data-word-wrap="off"] .prose-chat pre {
 }
 
 :root {
-  --atlas-rail-divider: color-mix(in srgb, var(--atlas-border-strong) 65%, var(--background));
+  --atlas-rail-divider: color-mix(in srgb, var(--border-strong) 65%, var(--background));
 }
 
 .atlas-project-rail {
@@ -3149,8 +3149,8 @@ html[data-chat-width="full"] {
    (`diff-gutter.ts`), and a modified file's mark in the review diff (its
    header icon, its tree row). */
 :root {
-  --atlas-diff-changed-bar: var(--atlas-status-info-foreground);
-  --atlas-diff-modified-text: var(--atlas-status-warning-foreground);
+  --atlas-diff-changed-bar: var(--status-info-foreground);
+  --atlas-diff-modified-text: var(--status-warning-foreground);
 }
 
 /* `diffPalette = "blue-orange"`: the theme's own info blue and warning orange
@@ -3161,30 +3161,14 @@ html[data-chat-width="full"] {
    used, so both step back to the gutter's neutral: three marks, three
    colours. */
 html:root[data-diff-palette="blue-orange"] {
-  --atlas-diff-changed-bar: var(--atlas-editor-gutter-foreground);
-  --atlas-diff-modified-text: var(--atlas-editor-gutter-foreground);
-  --atlas-diff-added-text: var(--atlas-status-info-foreground);
-  --atlas-diff-added-background: color-mix(
-    in srgb,
-    var(--atlas-status-info-foreground) 13%,
-    transparent
-  );
-  --atlas-diff-added-emphasis: color-mix(
-    in srgb,
-    var(--atlas-status-info-foreground) 34%,
-    transparent
-  );
-  --atlas-diff-removed-text: var(--atlas-status-warning-foreground);
-  --atlas-diff-removed-background: color-mix(
-    in srgb,
-    var(--atlas-status-warning-foreground) 13%,
-    transparent
-  );
-  --atlas-diff-removed-emphasis: color-mix(
-    in srgb,
-    var(--atlas-status-warning-foreground) 34%,
-    transparent
-  );
+  --atlas-diff-changed-bar: var(--editor-gutter-foreground);
+  --atlas-diff-modified-text: var(--editor-gutter-foreground);
+  --diff-added-text: var(--status-info-foreground);
+  --diff-added-background: color-mix(in srgb, var(--status-info-foreground) 13%, transparent);
+  --diff-added-emphasis: color-mix(in srgb, var(--status-info-foreground) 34%, transparent);
+  --diff-removed-text: var(--status-warning-foreground);
+  --diff-removed-background: color-mix(in srgb, var(--status-warning-foreground) 13%, transparent);
+  --diff-removed-emphasis: color-mix(in srgb, var(--status-warning-foreground) 34%, transparent);
 }
 
 /* A thinking row's live thought (`ThinkingRowView`): at most four lines, the

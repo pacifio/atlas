@@ -301,7 +301,7 @@ function PermissionModalImpl({ tabId, onSendMessage }: PermissionModalProps) {
                         "text-sm text-foreground transition-colors hover:bg-background",
                       )}
                     >
-                      <AlertTriangle className="size-3.5 shrink-0 text-[var(--atlas-status-error-foreground)]" />
+                      <AlertTriangle className="size-3.5 shrink-0 text-error" />
                       <span className="flex-1">
                         Yes, and bypass permissions
                         <span className="block text-xs text-secondary-foreground">
@@ -395,7 +395,7 @@ function PermissionModalImpl({ tabId, onSendMessage }: PermissionModalProps) {
             }}
             rows={1}
             placeholder="Tell the agent what to do instead…"
-            className="w-full resize-none rounded-md border border-border bg-background px-2.5 py-1.5 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-[var(--atlas-border-strong)]"
+            className="w-full resize-none rounded-md border border-border bg-background px-2.5 py-1.5 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-border-strong"
           />
         </div>
       </div>
@@ -422,9 +422,9 @@ function PermissionOption({
   const label = relabelAgentBrand(option.name, agentType);
 
   const tone = isPrimary
-    ? "border-transparent bg-[var(--primary)] text-[var(--background)] hover:bg-[var(--atlas-primary-hover)]"
+    ? "border-transparent bg-[var(--primary)] text-[var(--background)] hover:bg-primary-hover"
     : reject
-      ? "border-border bg-background text-[var(--atlas-status-error-foreground)] hover:bg-[var(--atlas-status-error-background)]"
+      ? "border-border bg-background text-error hover:bg-error-muted"
       : "border-border bg-background text-foreground hover:bg-element-hover";
 
   return (

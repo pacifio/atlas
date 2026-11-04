@@ -115,14 +115,12 @@ export function ChatSearchPalette({
                     }}
                     className={cn(
                       "w-full flex items-start gap-3 px-4 py-2 text-left cursor-pointer",
-                      active
-                        ? "bg-[var(--atlas-element-selected)]"
-                        : "hover:bg-[var(--atlas-element-hover)]",
+                      active ? "bg-element-selected" : "hover:bg-element-hover",
                     )}
                   >
                     <span
                       className={cn(
-                        "mt-0.5 w-5 h-5 rounded-full flex items-center justify-center shrink-0 bg-[var(--atlas-primary-muted)]",
+                        "mt-0.5 w-5 h-5 rounded-full flex items-center justify-center shrink-0 bg-primary-muted",
                       )}
                     >
                       <User size={10} className="text-[var(--primary)]" />

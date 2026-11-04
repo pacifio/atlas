@@ -12,7 +12,7 @@ export function BacklinksFooter({
         marginTop: 32,
         padding: "14px 16px",
         background: "var(--card)",
-        border: "1px solid var(--atlas-border-subtle)",
+        border: "1px solid var(--border-subtle)",
         borderRadius: 10,
       }}
     >
@@ -43,12 +43,12 @@ export function BacklinksFooter({
               padding: "8px 10px",
               borderRadius: 7,
               background: "var(--background)",
-              border: "1px solid var(--atlas-border-subtle)",
+              border: "1px solid var(--border-subtle)",
               textAlign: "left",
               cursor: "pointer",
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.background = "var(--atlas-element-hover)";
+              e.currentTarget.style.background = "var(--element-hover)";
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.background = "var(--background)";

@@ -328,11 +328,7 @@ function DiagramViewer({ svg, code }: { svg: string; code: string }) {
             <Maximize2 size={11} />
           </IconButton>
           <IconButton label="Copy diagram source" onClick={copy}>
-            {copied ? (
-              <Check size={11} className="text-[var(--atlas-status-success-foreground)]" />
-            ) : (
-              <Copy size={11} />
-            )}
+            {copied ? <Check size={11} className="text-success" /> : <Copy size={11} />}
           </IconButton>
           <IconButton label="Export as PNG" onClick={() => void exportPng()} disabled={saving}>
             <Download size={11} />
@@ -413,11 +409,7 @@ function Fullscreen({
           </IconButton>
           <span aria-hidden className="mx-1 h-3.5 w-px bg-[var(--border)]" />
           <IconButton label="Copy diagram source" onClick={onCopy}>
-            {copied ? (
-              <Check size={12} className="text-[var(--atlas-status-success-foreground)]" />
-            ) : (
-              <Copy size={12} />
-            )}
+            {copied ? <Check size={12} className="text-success" /> : <Copy size={12} />}
           </IconButton>
           <IconButton label="Export as PNG" onClick={onExport} disabled={saving}>
             <Download size={12} />
@@ -460,8 +452,8 @@ function IconButton({
         className={cn(
           "flex size-5 items-center justify-center rounded-full transition-colors",
           disabled
-            ? "cursor-default text-[var(--atlas-text-disabled)]"
-            : "cursor-pointer text-[var(--muted-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]",
+            ? "cursor-default text-disabled"
+            : "cursor-pointer text-[var(--muted-foreground)] hover:bg-element-hover hover:text-[var(--foreground)]",
         )}
       >
         {children}

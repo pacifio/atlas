@@ -148,7 +148,7 @@ export function MemoryGraphCanvas({
     <div
       ref={containerRef}
       className="h-full w-full relative"
-      style={{ background: "var(--atlas-panel-background, var(--background))" }}
+      style={{ background: "var(--panel-background, var(--background))" }}
     >
       {size.width > 0 && size.height > 0 && layout !== undefined && (
         <Scene

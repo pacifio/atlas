@@ -156,7 +156,7 @@ export default function SessionTerminalDrawerBody({ tabId, scope }: SessionTermi
       ref={rootRef}
       aria-label="Session terminal"
       data-session-terminal-drawer={scope}
-      className="relative flex shrink-0 flex-col border-t border-border bg-[var(--atlas-terminal-background)]"
+      className="relative flex shrink-0 flex-col border-t border-border bg-[var(--terminal-background)]"
       style={{ height }}
       onFocus={onFocus}
       onBlur={onBlur}

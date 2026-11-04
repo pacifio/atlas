@@ -79,14 +79,10 @@ export function ImportProfileDialog({
           className={cn(
             "h-48 w-full resize-none rounded-md border bg-background p-2 font-mono text-xs",
             "text-foreground outline-none placeholder:text-muted-foreground",
-            error ? "border-[var(--atlas-status-error-foreground)]" : "border-border",
+            error ? "border-error" : "border-border",
           )}
         />
-        {error && (
-          <p className="text-xs text-[var(--atlas-status-error-foreground)]">
-            Can't import: {error}
-          </p>
-        )}
+        {error && <p className="text-xs text-error">Can't import: {error}</p>}
         <DialogFooter>
           <Button variant="ghost" size="sm" onClick={() => close(false)}>
             Cancel

@@ -113,23 +113,16 @@ export function PdfViewer({ filePath, tabId }: PdfViewerProps) {
         onZoomOut={() => setZoom((z) => Math.max(0.5, z - 0.2))}
       />
 
-      <div
-        ref={scrollRef}
-        className="flex flex-1 justify-center overflow-auto bg-[var(--atlas-panel-background)] p-8"
-      >
+      <div ref={scrollRef} className="flex flex-1 justify-center overflow-auto bg-panel p-8">
         {error ? (
-          <div className="mt-20 text-sm text-[var(--atlas-status-error-foreground)]">{error}</div>
+          <div className="mt-20 text-sm text-error">{error}</div>
         ) : pdfFile ? (
           <Document
             file={pdfFile}
             onLoadSuccess={(pdf) => setNumPages(pdf.numPages)}
             onLoadError={(e) => setError(e.message || "Failed to load PDF document.")}
             loading={<PdfSpinner label="Loading PDF" />}
-            error={
-              <div className="mt-20 text-sm text-[var(--atlas-status-error-foreground)]">
-                Failed to load PDF document.
-              </div>
-            }
+            error={<div className="mt-20 text-sm text-error">Failed to load PDF document.</div>}
             className="flex flex-col items-center gap-4"
           >
             {Array.from({ length: numPages }, (_, i) => (

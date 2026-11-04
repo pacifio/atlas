@@ -11,7 +11,7 @@
  * to diff spans, so its root bg/color never apply.
  *
  * Since PR 2 both files resolve the SAME theme keys — `hljs.css` names
- * `--atlas-syntax-*` directly, this one reaches them through the `--cm-*`
+ * `--syntax-*` directly, this one reaches them through the `--cm-*`
  * aliases — so the two agree by construction. The scope survives because a diff
  * row needs per-line backgrounds the markdown pipeline has no concept of.
  *
@@ -25,70 +25,70 @@
 
 .diff-syntax .hljs-comment,
 .diff-syntax .hljs-quote {
-  color: var(--atlas-syntax-comment, #8f8f8f);
+  color: var(--syntax-comment, #8f8f8f);
   font-style: italic;
 }
 
 .diff-syntax .hljs-keyword,
 .diff-syntax .hljs-built_in {
-  color: var(--atlas-syntax-keyword, #c9a2f5);
+  color: var(--syntax-keyword, #c9a2f5);
   font-style: italic;
 }
 
 .diff-syntax .hljs-string,
 .diff-syntax .hljs-meta .hljs-string {
-  color: var(--atlas-syntax-string, #9ecf8a);
+  color: var(--syntax-string, #9ecf8a);
 }
 
 .diff-syntax .hljs-number,
 .diff-syntax .hljs-literal {
-  color: var(--atlas-syntax-number, #e0b070);
+  color: var(--syntax-number, #e0b070);
 }
 
 .diff-syntax .hljs-type,
 .diff-syntax .hljs-title.class_,
 .diff-syntax .hljs-class .hljs-title {
-  color: var(--atlas-syntax-type, #7fd1e8);
+  color: var(--syntax-type, #7fd1e8);
 }
 
 /* Bare title (rare fallthrough) reads as a type/name. */
 .diff-syntax .hljs-title {
-  color: var(--atlas-syntax-type, #7fd1e8);
+  color: var(--syntax-type, #7fd1e8);
 }
 
 /* The one accent: function/method names — must out-specify the bare title. */
 .diff-syntax .hljs-title.function_,
 .diff-syntax .hljs-function .hljs-title {
-  color: var(--atlas-syntax-function, #ffff00);
+  color: var(--syntax-function, #ffff00);
 }
 
 .diff-syntax .hljs-variable {
-  color: var(--atlas-syntax-variable, #eaeaea);
+  color: var(--syntax-variable, #eaeaea);
 }
 
 .diff-syntax .hljs-tag,
 .diff-syntax .hljs-name {
-  color: var(--atlas-syntax-tag, #7fd1e8);
+  color: var(--syntax-tag, #7fd1e8);
 }
 
 .diff-syntax .hljs-attr,
 .diff-syntax .hljs-attribute {
-  color: var(--atlas-syntax-attribute, #d9b47a);
+  color: var(--syntax-attribute, #d9b47a);
 }
 
 .diff-syntax .hljs-symbol,
 .diff-syntax .hljs-bullet {
-  color: var(--atlas-syntax-constant, #e0b070);
+  color: var(--syntax-constant, #e0b070);
 }
 
 .diff-syntax .hljs-regexp {
-  color: var(--atlas-syntax-regexp, #e59a72);
+  color: var(--syntax-regexp, #e59a72);
 }
 
 .diff-syntax .hljs-property {
-  color: var(--atlas-syntax-property, #c8c8c8);
+  color: var(--syntax-property, #c8c8c8);
 }
 
 .diff-syntax .hljs-meta {
-  color: var(--atlas-syntax-attribute, #d9b47a);
+  color: var(--syntax-attribute, #d9b47a);
 }

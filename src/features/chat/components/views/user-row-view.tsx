@@ -89,7 +89,7 @@ export const UserRowView = memo(function UserRowView({
             // whose curve cuts off the first and last line at the corners.
             // ratchet-allow: 20px sits above the `rounded-*` scale (xl = 12px), and
             // a full radius clips multi-line bubbles.
-            "min-w-0 max-w-full rounded-[20px] bg-[var(--atlas-primary-muted)] px-4 py-2.5 select-text",
+            "min-w-0 max-w-full rounded-[20px] bg-primary-muted px-4 py-2.5 select-text",
             // Entrance only for THE message sent just now (id-scoped).
             justSent && "atlas-bubble-in",
           )}

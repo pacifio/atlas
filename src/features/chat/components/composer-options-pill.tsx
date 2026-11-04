@@ -101,7 +101,7 @@ export const ComposerOptionsPill = memo(function ComposerOptionsPill({ tabId }: 
                         void setAcpConfigOption(tabId, opt.id, !opt.value);
                         close();
                       }}
-                      className="flex w-full items-start gap-1.5 rounded-md px-2 py-1.5 text-left transition-colors cursor-pointer hover:bg-[var(--atlas-element-hover)]"
+                      className="flex w-full items-start gap-1.5 rounded-md px-2 py-1.5 text-left transition-colors cursor-pointer hover:bg-element-hover"
                     >
                       <span className="min-w-0 flex-1">
                         <span className="flex items-center gap-1.5 text-xs font-medium text-[var(--foreground)]">
@@ -131,9 +131,7 @@ export const ComposerOptionsPill = memo(function ComposerOptionsPill({ tabId }: 
                             }}
                             className={cn(
                               "flex w-full items-start gap-1.5 rounded-md px-2 py-1.5 text-left transition-colors cursor-pointer",
-                              active
-                                ? "bg-[var(--atlas-element-selected)]"
-                                : "hover:bg-[var(--atlas-element-hover)]",
+                              active ? "bg-element-selected" : "hover:bg-element-hover",
                             )}
                           >
                             <span className="min-w-0 flex-1">

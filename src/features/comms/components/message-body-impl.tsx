@@ -163,7 +163,7 @@ const COMPONENTS: Components = {
     if (!className) {
       return (
         <code
-          className="rounded px-1 py-px font-mono text-xs bg-[var(--atlas-element-selected)] text-foreground"
+          className="rounded px-1 py-px font-mono text-xs bg-element-selected text-foreground"
           {...rest}
         >
           {children}
@@ -287,7 +287,7 @@ const COMPONENTS: Components = {
       <table className="w-max min-w-full border-collapse text-xs">{props.children}</table>
     </div>
   ),
-  thead: (props) => <thead className="bg-[var(--atlas-element-hover)]">{props.children}</thead>,
+  thead: (props) => <thead className="bg-element-hover">{props.children}</thead>,
   th: (props) => (
     <th className="whitespace-nowrap border-b border-border-subtle px-2 py-1 text-left text-2xs font-semibold text-secondary-foreground">
       {props.children}

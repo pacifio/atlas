@@ -17,8 +17,7 @@ export const SECTION_LABEL = "text-xs font-medium text-[var(--secondary-foregrou
 export const HINT = "mt-1 text-2xs text-[var(--muted-foreground)]";
 
 /** A read-only group of facts (detection, disclosure lines). */
-export const GROUP =
-  "rounded-lg border border-[var(--atlas-element-selected)] bg-[var(--atlas-element-hover)] px-2.5 py-2";
+export const GROUP = "rounded-lg border border-element-selected bg-element-hover px-2.5 py-2";
 
 /** Selectable pill — the Type/Region language from the organisation modal. */
 export function pillClass(state: "on" | "off" | "disabled") {

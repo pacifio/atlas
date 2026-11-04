@@ -258,7 +258,7 @@ export function FilterMenu({
                     count={failedCount}
                     on={failedOnly}
                     enabled={failedCount > 0}
-                    dot="var(--atlas-status-error-foreground)"
+                    dot="var(--status-error-foreground)"
                     onClick={() => setFailedOnly(!failedOnly)}
                   />
                 </Section>
@@ -353,10 +353,10 @@ function CheckpointList({
                     {changed > 0 && (
                       <>
                         <span>·</span>
-                        <span className="text-[var(--atlas-diff-added-text)]">
+                        <span className="text-[var(--diff-added-text)]">
                           +{checkpoint.insertions}
                         </span>
-                        <span className="text-[var(--atlas-diff-removed-text)]">
+                        <span className="text-[var(--diff-removed-text)]">
                           −{checkpoint.deletions}
                         </span>
                       </>
@@ -413,9 +413,9 @@ function FilterChip({
       className={cn(
         "flex h-[26px] items-center gap-1.5 rounded-full border px-2.5 text-sm transition-colors",
         !enabled
-          ? "cursor-default border-[var(--atlas-border-subtle)] text-[var(--atlas-text-disabled)]"
+          ? "cursor-default border-border-subtle text-disabled"
           : on
-            ? "cursor-pointer border-border bg-[var(--atlas-element-active)] text-[var(--foreground)]"
+            ? "cursor-pointer border-border bg-element-active text-[var(--foreground)]"
             : "cursor-pointer border-border text-secondary-foreground hover:bg-element-hover hover:text-foreground",
       )}
     >

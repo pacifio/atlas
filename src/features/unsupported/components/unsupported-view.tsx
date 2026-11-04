@@ -44,7 +44,7 @@ export function UnsupportedView({ filePath }: UnsupportedViewProps) {
           </div>
           <button
             onClick={handleOpenInFinder}
-            className="flex items-center gap-1.5 px-3 h-7 rounded border border-[var(--border)] bg-[var(--card)] hover:bg-[var(--atlas-element-hover)] text-xs text-[var(--secondary-foreground)] hover:text-[var(--foreground)] cursor-pointer transition-colors"
+            className="flex items-center gap-1.5 px-3 h-7 rounded border border-[var(--border)] bg-[var(--card)] hover:bg-element-hover text-xs text-[var(--secondary-foreground)] hover:text-[var(--foreground)] cursor-pointer transition-colors"
           >
             <FolderOpen size={12} />
             Open in Finder

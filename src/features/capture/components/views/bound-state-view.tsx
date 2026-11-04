@@ -100,7 +100,7 @@ export function BoundStateView({
       {/* A Cloud Project whose bulk import was never approved imports
        *  nothing, forever, on purpose. Say so where it can be resolved. */}
       {binding.mode === "cloud" && !binding.importApproved && (
-        <div className="flex items-center justify-between gap-2 rounded-lg border border-dashed border-[var(--atlas-element-active)] px-2.5 py-1.5">
+        <div className="flex items-center justify-between gap-2 rounded-lg border border-dashed border-element-active px-2.5 py-1.5">
           <span className="text-xs text-[var(--secondary-foreground)]">
             History import is waiting for your review.
           </span>
@@ -117,8 +117,8 @@ export function BoundStateView({
 
       {/* Failed rows: the retry is a deliberate human action, never automatic. */}
       {failed > 0 && (
-        <div className="flex items-center justify-between gap-2 rounded-lg bg-[var(--atlas-status-warning-background)] px-2.5 py-1.5">
-          <span className="text-xs text-[var(--atlas-status-warning-foreground)]">
+        <div className="flex items-center justify-between gap-2 rounded-lg bg-warning-muted px-2.5 py-1.5">
+          <span className="text-xs text-warning">
             {failed} record{failed === 1 ? "" : "s"} could not be sent.
           </span>
           <button
@@ -151,7 +151,7 @@ export function BoundStateView({
               type="button"
               disabled
               title={cloudReason}
-              className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-full border border-[var(--atlas-element-selected)] bg-[var(--atlas-element-hover)] px-2.5 py-1 text-xs text-[var(--muted-foreground)] opacity-40"
+              className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-full border border-element-selected bg-element-hover px-2.5 py-1 text-xs text-[var(--muted-foreground)] opacity-40"
             >
               <Cloud size={11} />
               Sync
@@ -161,7 +161,7 @@ export function BoundStateView({
               type="button"
               disabled={busy}
               onClick={onPromote}
-              className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-[var(--atlas-element-selected)] bg-[var(--atlas-element-hover)] px-2.5 py-1 text-xs text-[var(--secondary-foreground)] transition-colors hover:bg-[var(--atlas-element-selected)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-40"
+              className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-element-selected bg-element-hover px-2.5 py-1 text-xs text-[var(--secondary-foreground)] transition-colors hover:bg-element-selected hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-40"
             >
               <ArrowUpRight size={11} />
               Sync
@@ -177,7 +177,7 @@ export function BoundStateView({
               type="button"
               disabled
               title={cloudReason}
-              className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-full border border-[var(--atlas-element-selected)] bg-[var(--atlas-element-hover)] px-2.5 py-1 text-xs text-[var(--muted-foreground)] opacity-40"
+              className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-full border border-element-selected bg-element-hover px-2.5 py-1 text-xs text-[var(--muted-foreground)] opacity-40"
             >
               <ArrowLeftRight size={11} />
               Change
@@ -188,7 +188,7 @@ export function BoundStateView({
               disabled={busy}
               onClick={onSwitch}
               title="Sync to a different Project"
-              className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-[var(--atlas-element-selected)] bg-[var(--atlas-element-hover)] px-2.5 py-1 text-xs text-[var(--secondary-foreground)] transition-colors hover:bg-[var(--atlas-element-selected)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-40"
+              className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-element-selected bg-element-hover px-2.5 py-1 text-xs text-[var(--secondary-foreground)] transition-colors hover:bg-element-selected hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-40"
             >
               <ArrowLeftRight size={11} />
               Change

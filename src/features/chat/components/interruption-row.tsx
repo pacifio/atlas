@@ -48,7 +48,7 @@ export const InterruptionRowView = memo(function InterruptionRowView({
   return (
     <div data-testid="interruption-row" className={cn(CONTENT_COLUMN, "pt-1 pb-4")}>
       <div className="flex min-h-[26px] items-center gap-2 text-base text-[var(--muted-foreground)]">
-        <span className="flex w-4 shrink-0 justify-center text-[var(--atlas-status-warning-foreground)]">
+        <span className="flex w-4 shrink-0 justify-center text-warning">
           <MoonStar size={ICON_PX} strokeWidth={ICON_STROKE} />
         </span>
         {/* Not `flex-1`: the actions follow the sentence they answer rather

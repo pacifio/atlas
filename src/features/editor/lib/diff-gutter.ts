@@ -68,7 +68,7 @@ const diffGutterTheme = EditorView.baseTheme({
     boxSizing: "border-box",
   },
   ".cm-changebar-added": {
-    background: "var(--atlas-diff-added-text)",
+    background: "var(--diff-added-text)",
   },
   // There's no dedicated "changed" role in the diff theme keys (only
   // added/removed/context) — this is a status colour by design.
@@ -80,7 +80,7 @@ const diffGutterTheme = EditorView.baseTheme({
   // line's bar with a downward red wedge.
   ".cm-changebar-deleted": {
     background: "transparent",
-    borderTop: "2px solid var(--atlas-diff-removed-text)",
+    borderTop: "2px solid var(--diff-removed-text)",
   },
 });
 

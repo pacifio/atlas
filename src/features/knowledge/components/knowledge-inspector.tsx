@@ -170,7 +170,7 @@ export function KnowledgeInspector({
                       cursor: "pointer",
                     }}
                     onMouseEnter={(e) => {
-                      e.currentTarget.style.background = "var(--atlas-element-hover)";
+                      e.currentTarget.style.background = "var(--element-hover)";
                     }}
                     onMouseLeave={(e) => {
                       e.currentTarget.style.background = "transparent";
