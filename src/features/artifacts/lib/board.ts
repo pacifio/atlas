@@ -12,7 +12,7 @@
  */
 
 import { stripInjectedContext } from "@/features/chat/lib/atlas-context";
-import { agentMeta } from "@/features/agents/lib/agent-meta";
+import type { AgentMetaResolver } from "@/features/agents/lib/agent-identity";
 import { formatWith } from "@/lib/format-time";
 
 import type { BoardSession, SessionSummary } from "../types";
@@ -200,8 +200,12 @@ export function stripAgentMarkup(title: string): string {
   return "";
 }
 
-/** The agent's display name, from the plugin id the wire carries. */
-export function agentLabel(agent: string): string {
+/** The agent's display name, from the plugin id the wire carries.
+ *
+ *  `resolveAgent` names registry-installed agents. A container passes
+ *  `useAgentMetaResolver()` (or `agentMeta` outside React); there is no
+ *  default, so a caller that forgets it is a type error, not a store read. */
+export function agentLabel(agent: string, resolveAgent: AgentMetaResolver): string {
   if (agent.includes("claude")) return "Claude Code";
   if (agent.includes("codex")) return "Codex";
   if (agent.includes("opencode")) return "OpenCode";
@@ -210,7 +214,7 @@ export function agentLabel(agent: string): string {
   if (agent.includes("atlas-agent")) return "Atlas";
   // Registry-installed external agent: resolve its marketplace name (falls
   // back to a prettified id for purged metadata).
-  return agentMeta(agent).label;
+  return resolveAgent(agent).label;
 }
 
 /** Local midnight, the key every day bucket is grouped on. */
@@ -433,7 +437,7 @@ export interface Facet {
 }
 
 /** Every filter option the current board offers, with its row count. */
-export function facets(sessions: BoardSession[]): Facet[] {
+export function facets(sessions: BoardSession[], resolveAgent: AgentMetaResolver): Facet[] {
   const collect = (
     key: FacetKey,
     label: string,
@@ -465,7 +469,13 @@ export function facets(sessions: BoardSession[]): Facet[] {
       (s) => [s.projectPath],
       (v) => v.split("/").pop() ?? v,
     ),
-    collect("agent", "Agent", "All agents", (s) => (s.agent ? [s.agent] : []), agentLabel),
+    collect(
+      "agent",
+      "Agent",
+      "All agents",
+      (s) => (s.agent ? [s.agent] : []),
+      (v) => agentLabel(v, resolveAgent),
+    ),
     collect(
       "model",
       "Model",

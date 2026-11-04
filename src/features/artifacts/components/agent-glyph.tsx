@@ -16,7 +16,7 @@
 import { AgentIcons, AgentMonogram, ExternalAgentIcon } from "@/components/agent-icons";
 import { AtlasIcon } from "@/components/atlas-icon";
 import { agentBrandColor } from "@/features/agents/lib/agent-brand";
-import { agentMeta } from "@/features/agents/lib/agent-meta";
+import { useAgentMeta } from "@/features/agents/lib/agent-meta-context";
 
 export function AgentGlyph({
   agent,
@@ -27,6 +27,8 @@ export function AgentGlyph({
   mono?: boolean;
   size?: number;
 }) {
+  // First, so the hook order never depends on which branch returns.
+  const meta = useAgentMeta(agent);
   // The brand hue is a constant, not a theme key: see `agent-brand.ts`.
   const dim = { width: size, height: size, color: mono ? undefined : agentBrandColor(agent) };
   if (agent.includes("claude")) return <AgentIcons.Claude style={dim} />;
@@ -36,7 +38,6 @@ export function AgentGlyph({
   if (agent.includes("kilo")) return <AgentIcons.Kilo style={dim} />;
   if (agent.includes("atlas-agent")) return <AtlasIcon size={size} className="rounded-sm" />;
   // Registry-installed external agent: manifest SVG, else a monogram.
-  const meta = agentMeta(agent);
   if (meta.iconDataUrl) return <ExternalAgentIcon dataUrl={meta.iconDataUrl} size={size} />;
   return <AgentMonogram label={meta.label} size={size} />;
 }

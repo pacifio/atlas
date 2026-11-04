@@ -49,7 +49,8 @@ Organized by **feature**, not file type:
 
 ```
 src/features/<feature>/
-  components/   — React components
+  components/   — React components; containers at the top level
+    views/      — views: render from props alone (see "Containers and views")
   stores/       — Zustand store(s) for this feature
   lib/          — pure helpers, and the invoke()/listen() wrappers (<domain>-api.ts)
 ```
@@ -77,6 +78,28 @@ src/features/<feature>/
 | Terminal | split/pane layout (`terminal/stores/terminal-store.ts`) | `atlas-terminal`'s PTY session owns the byte buffer |
 
 This is a deliberate performance boundary, not an oversight to fix by moving more state into the store. Lifting chat messages, document text, or terminal bytes into Zustand degrades streaming, typing, and PTY throughput — every keystroke would touch Immer.
+
+### Containers and views
+
+A feature surface is split in two (ADR-0027's boundary rule):
+
+- **The container** (`components/<name>.tsx`) does the wiring. It reads stores, calls the feature's `*-api.ts` wrappers, listens for and dispatches `atlas:*` events, and renders a view with plain props.
+- **The view** (any file under `components/views/`, conventionally `<name>-view.tsx`) only renders. It may keep local UI state (`useState`, `useRef`, `useReducer`), run DOM-only effects, handle keys and call the callbacks it was given. It may not import a store or a `*-api` wrapper, touch `@tauri-apps/*`, call `invoke()` or `.getState()`, or use a hook that wraps a store.
+
+A view is what can move into `@tryatlas/design`, render from fixtures, and be redesigned without touching the data path. Rust still owns authoritative state: a view gets what it draws, never the chat log, document text or terminal bytes as a prop dump.
+
+```tsx
+// components/session-masthead.tsx: the container
+const prices = useModelPricingStore.use.prices();
+const cost = spent > 0 ? costOf(spend, priceForModel(prices, s.model)) : null;
+return <SessionMastheadView detail={detail} pr={pr} cost={cost} spent={spent} … />;
+
+// components/views/session-masthead-view.tsx: the view takes `cost`, never the store
+```
+
+**Agent identity.** `agentMeta(id)` (`agents/lib/agent-meta.ts`) reads the registry store, so a view does not call it. A view that shows an agent's name or mark calls `useAgentMeta(id)` from `agents/lib/agent-meta-context.ts`, or takes an `AgentMeta` or a label as a prop. The resolution is pure (`resolveAgentMeta(id, snapshot)` in `agent-identity.ts`); `AgentMetaProvider`, mounted in `main.tsx`, binds the context to the live registry. Pure libs that label agents (`artifacts/lib/board.ts`, `usage/lib/derive.ts`) take a required `resolveAgent` argument, which a container gets from `useAgentMetaResolver()` (code outside React, such as the session export, passes `agentMeta`).
+
+**The guard.** `tests/view-purity-contract.test.ts` checks every file under a `views/` directory for direct imports of stores, `agent-meta.ts`, `*-api` wrappers and `@tauri-apps`, and for store or `invoke()` calls; a view that crosses the line type-checks and renders exactly like a pure one, so nothing else sees it. Its `PURE_SHARED_MODULES` (agent identity, the agent marks, the board and usage derivations) are checked through their whole value-import graph, and a failure names the import chain.
 
 Other stores: `project/stores/project-store.ts` (current project, recents), `git/stores/git-store.ts` (branch, status, lane-assigned commit graph), `log/stores/log-store.ts` (ring-buffered event log, 500 in memory, + on-disk pinned rows), `knowledge/stores/knowledge-store.ts`, `canvas/stores/canvas-store.ts` (ReactFlow nodes/edges), `monitor/stores/usage-store.ts` (token usage per provider/model).
 

@@ -7,6 +7,7 @@
  * unknown, not 0.
  */
 
+import type { AgentMetaResolver } from "@/features/agents/lib/agent-identity";
 import { agentLabel, prettyModel } from "@/features/artifacts/lib/board";
 import {
   BYOK_AGENT,
@@ -114,10 +115,10 @@ export function projectLabel(path: string, data?: UsageDashboard | null): string
   return known?.projectName ?? path.split("/").filter(Boolean).pop() ?? path;
 }
 
-export function agentDisplay(agent: string): string {
+export function agentDisplay(agent: string, resolveAgent: AgentMetaResolver): string {
   if (agent === BYOK_AGENT) return "BYOK";
   if (agent === UNKNOWN) return "Unknown agent";
-  return agentLabel(agent);
+  return agentLabel(agent, resolveAgent);
 }
 
 export function modelDisplay(model: string): string {
@@ -126,11 +127,16 @@ export function modelDisplay(model: string): string {
   return prettyModel(bare) ?? bare;
 }
 
-export function labelFor(key: string, g: GroupBy, data?: UsageDashboard | null): string {
+export function labelFor(
+  key: string,
+  g: GroupBy,
+  data: UsageDashboard | null,
+  resolveAgent: AgentMetaResolver,
+): string {
   return g === "project"
     ? projectLabel(key, data)
     : g === "agent"
-      ? agentDisplay(key)
+      ? agentDisplay(key, resolveAgent)
       : modelDisplay(key);
 }
 
@@ -145,7 +151,11 @@ export interface FacetOption {
 }
 
 /** Every value present on each axis, heaviest first — computed over range-filtered rows. */
-export function facetsOf(rows: DailyBucket[], data: UsageDashboard | null) {
+export function facetsOf(
+  rows: DailyBucket[],
+  data: UsageDashboard | null,
+  resolveAgent: AgentMetaResolver,
+) {
   const collect = (g: GroupBy): FacetOption[] => {
     const acc = new Map<string, { tokens: number; rows: number }>();
     for (const r of rows) {
@@ -156,7 +166,7 @@ export function facetsOf(rows: DailyBucket[], data: UsageDashboard | null) {
       acc.set(k, cur);
     }
     return [...acc.entries()]
-      .map(([value, v]) => ({ value, label: labelFor(value, g, data), ...v }))
+      .map(([value, v]) => ({ value, label: labelFor(value, g, data, resolveAgent), ...v }))
       .sort((a, b) => b.tokens - a.tokens || a.label.localeCompare(b.label));
   };
   return { projects: collect("project"), agents: collect("agent"), models: collect("model") };
@@ -178,6 +188,7 @@ export function rankBy(
   g: GroupBy,
   metric: Metric,
   data: UsageDashboard | null,
+  resolveAgent: AgentMetaResolver,
 ): RankedKey[] {
   const acc = new Map<string, Metrics>();
   for (const r of rows) {
@@ -190,7 +201,7 @@ export function rankBy(
       const value = metricOf(metrics, metric);
       return {
         key,
-        label: labelFor(key, g, data),
+        label: labelFor(key, g, data, resolveAgent),
         metrics,
         value,
         share: total > 0 ? value / total : 0,
@@ -261,6 +272,7 @@ export function series(
   data: UsageDashboard | null,
   color: (i: number) => string,
   otherColor: string,
+  resolveAgent: AgentMetaResolver,
 ): Series {
   const from =
     range.from ??
@@ -269,7 +281,7 @@ export function series(
   const bucket: "day" | "week" = spanDays(from, range.to) > WEEK_BUCKET_ABOVE_DAYS ? "week" : "day";
   const bucketOf = bucket === "day" ? (d: string) => d : weekKey;
 
-  const ranked = rankBy(rows, g, metric, data);
+  const ranked = rankBy(rows, g, metric, data, resolveAgent);
   const top = ranked.slice(0, MAX_SERIES);
   const hasOther = ranked.length > MAX_SERIES;
   const keys: SeriesKey[] = top.map((r, i) => ({
@@ -433,8 +445,9 @@ export function insights(args: {
   data: UsageDashboard | null;
   fmtCost: (n: number) => string;
   fmtTokens: (n: number) => string;
+  resolveAgent: AgentMetaResolver;
 }): Insight[] {
-  const { rows, totals, prevTotals, sessions, data, fmtCost, fmtTokens } = args;
+  const { rows, totals, prevTotals, sessions, data, fmtCost, fmtTokens, resolveAgent } = args;
   const out: Insight[] = [];
   const tokens = tokensOf(totals);
 
@@ -453,7 +466,7 @@ export function insights(args: {
   }
 
   if (totals.cost > 0) {
-    const top = rankBy(rows, "agent", "cost", data)[0];
+    const top = rankBy(rows, "agent", "cost", data, resolveAgent)[0];
     if (top && top.share > 0) {
       out.push({
         id: "top-agent",
@@ -462,7 +475,7 @@ export function insights(args: {
         rest: `— ${fmtCost(top.value)} of ${fmtCost(totals.cost)} estimated.`,
       });
     }
-    const model = rankBy(rows, "model", "cost", data)[0];
+    const model = rankBy(rows, "model", "cost", data, resolveAgent)[0];
     if (model && model.share > 0) {
       out.push({
         id: "top-model",

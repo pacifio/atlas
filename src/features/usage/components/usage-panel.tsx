@@ -151,9 +151,9 @@ export function UsagePanel() {
                 sessions={view.sessions}
                 sessionsTotal={data.sessionsTotal}
                 ranked={{
-                  projects: rankBy(view.rows, "project", "tokens", data),
-                  agents: rankBy(view.rows, "agent", "tokens", data),
-                  models: rankBy(view.rows, "model", "tokens", data),
+                  projects: rankBy(view.rows, "project", "tokens", data, view.resolveAgent),
+                  agents: rankBy(view.rows, "agent", "tokens", data, view.resolveAgent),
+                  models: rankBy(view.rows, "model", "tokens", data, view.resolveAgent),
                 }}
                 data={data}
                 search={search}
