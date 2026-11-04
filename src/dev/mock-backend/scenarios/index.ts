@@ -78,6 +78,7 @@ import { sessionProjects } from "./session-projects";
 import { sidebar } from "./sidebar";
 import { timelineEmpty } from "./timeline-empty";
 import { timelineLong } from "./timeline-long";
+import { canvas } from "./canvas";
 // Every blocking prompt a session raises (permission cards, plan review,
 // elicitations, the AI grant strip) lives in `permission-actions.ts`, shared
 // with `chat-tools`.
@@ -164,6 +165,7 @@ const all: Scenario[] = [
   timelineEmpty,
   timelineLong,
   timelineTrace,
+  canvas,
   inboxLong,
   freshInstall,
   commsNotConnected,

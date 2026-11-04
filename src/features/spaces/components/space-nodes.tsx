@@ -1,7 +1,14 @@
 import { memo, useEffect, useRef, useState } from "react";
 import { NodeResizer, type NodeProps } from "@xyflow/react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { StickyNote, ImageOff, Loader2 } from "lucide-react";
+import {
+  CANVAS_FIELD_CLASS,
+  CanvasFrame,
+  CanvasMedia,
+  CanvasNodeFrame,
+  CanvasNote,
+  CanvasShape,
+} from "@tryatlas/design";
 import { cn } from "@/lib/utils";
 import { NodeHandles } from "@/features/canvas/components/node-handles";
 import { moveNode, nodesMap, resizeNode, writeField, type SpaceShapeType } from "../lib/space-doc";
@@ -62,37 +69,32 @@ export const SpaceNoteNode = memo(function SpaceNoteNode({ id, data, selected }:
   const body = useMergedField(id, "body", d.body);
 
   return (
-    <div
-      className={cn(
-        "group relative flex h-full w-full flex-col overflow-visible rounded-2xl",
-        "bg-card/70 backdrop-blur-3xl backdrop-saturate-150",
-        "border shadow-lg transition-colors",
-        selected ? "border-primary/60" : "border-border-subtle hover:border-border",
-      )}
-    >
-      <div className="pointer-events-none absolute inset-0 rounded-2xl bg-gradient-to-b from-[var(--element-highlight)] to-transparent opacity-60" />
+    <div className="group relative h-full w-full">
       <NodeHandles selected={selected} />
-      <div className="relative flex items-center gap-2 border-b border-border-subtle px-3 py-2">
-        <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-element-hover">
-          <StickyNote size={12} className="text-secondary-foreground" />
-        </div>
-        <input
-          ref={title.ref}
-          defaultValue={d.title}
-          onChange={title.onChange}
-          readOnly={title.readOnly}
-          placeholder="Untitled"
-          className="nodrag min-w-0 flex-1 bg-transparent text-base font-semibold text-foreground outline-none placeholder:text-muted-foreground"
+      <CanvasNodeFrame kind="note" selected={selected}>
+        <CanvasNote
+          title={
+            <input
+              ref={title.ref}
+              defaultValue={d.title}
+              onChange={title.onChange}
+              readOnly={title.readOnly}
+              placeholder="Untitled"
+              className={cn("nodrag", CANVAS_FIELD_CLASS.noteTitle)}
+            />
+          }
+          body={
+            <textarea
+              ref={body.ref}
+              defaultValue={d.body}
+              onChange={body.onChange}
+              readOnly={body.readOnly}
+              placeholder="Write something…"
+              className={cn("nodrag flex-1", CANVAS_FIELD_CLASS.noteBody)}
+            />
+          }
         />
-      </div>
-      <textarea
-        ref={body.ref}
-        defaultValue={d.body}
-        onChange={body.onChange}
-        readOnly={body.readOnly}
-        placeholder="Write something…"
-        className="nodrag relative min-h-0 flex-1 resize-none rounded-b-2xl bg-transparent px-3 py-2.5 text-sm leading-relaxed text-secondary-foreground outline-none placeholder:italic placeholder:text-muted-foreground"
-      />
+      </CanvasNodeFrame>
       <SpaceResizer id={id} selected={selected} minWidth={160} minHeight={100} />
     </div>
   );
@@ -112,14 +114,20 @@ export const SpaceTextNode = memo(function SpaceTextNode({ id, data, selected }:
       )}
     >
       <NodeHandles selected={selected} />
-      <textarea
-        ref={text.ref}
-        defaultValue={d.text}
-        onChange={text.onChange}
-        readOnly={text.readOnly}
-        placeholder="Text"
-        className="nodrag h-full w-full resize-none whitespace-pre-wrap break-words bg-transparent px-1 py-0.5 text-lg leading-snug text-foreground caret-primary outline-none placeholder:text-muted-foreground"
-      />
+      {/* Not `CanvasText`: the field has to stay this node's own textarea. */}
+      <CanvasNodeFrame kind="text" selected={selected}>
+        <textarea
+          ref={text.ref}
+          defaultValue={d.text}
+          onChange={text.onChange}
+          readOnly={text.readOnly}
+          placeholder="Text"
+          className={cn(
+            "nodrag h-full whitespace-pre-wrap break-words px-1 py-0.5",
+            CANVAS_FIELD_CLASS.text,
+          )}
+        />
+      </CanvasNodeFrame>
       <SpaceResizer id={id} selected={selected} minWidth={80} minHeight={40} />
     </div>
   );
@@ -127,57 +135,33 @@ export const SpaceTextNode = memo(function SpaceTextNode({ id, data, selected }:
 
 // ---------------------------------------------------------------------------
 
-/** The local canvas's shape recipe, plus the contract's triangle. Normalized
- *  100×100 viewBox stretched to the box; non-scaling stroke. */
-function ShapeSvg({ type, stroke }: { type: SpaceShapeType; stroke: string }) {
-  const common = {
-    fill: "var(--card)",
-    fillOpacity: 0.7,
-    stroke,
-    strokeWidth: 1.5,
-    vectorEffect: "non-scaling-stroke" as const,
-  };
-  return (
-    <svg
-      className="absolute inset-0 h-full w-full"
-      viewBox="0 0 100 100"
-      preserveAspectRatio="none"
-      aria-hidden
-    >
-      {type === "ellipse" ? (
-        <ellipse cx={50} cy={50} rx={49} ry={49} {...common} />
-      ) : type === "diamond" ? (
-        <polygon points="50,1 99,50 50,99 1,50" {...common} />
-      ) : type === "triangle" ? (
-        <polygon points="50,1 99,99 1,99" {...common} />
-      ) : (
-        <rect x={1} y={1} width={98} height={98} {...common} />
-      )}
-    </svg>
-  );
-}
-
 export const SpaceShapeNode = memo(function SpaceShapeNode({ id, data, selected }: NodeProps) {
   const d = data as SpaceNodeCommonData;
   // Web parity: a shape's label is its `title` field, centered.
   const title = useMergedField(id, "title", d.title);
-  const stroke = selected ? "var(--primary)" : "var(--border-strong)";
 
   return (
     <div className="group relative h-full w-full">
       <SpaceResizer id={id} selected={selected} minWidth={40} minHeight={40} />
       <NodeHandles selected={selected} />
-      <ShapeSvg type={d.shapeType ?? "rectangle"} stroke={stroke} />
-      <div className="absolute inset-0 flex items-center justify-center p-3">
-        <textarea
-          ref={title.ref}
-          defaultValue={d.title}
-          onChange={title.onChange}
-          readOnly={title.readOnly}
-          rows={1}
-          className="nodrag max-h-full w-full resize-none whitespace-pre-wrap break-words bg-transparent text-center text-sm leading-snug text-foreground caret-primary outline-none"
+      <CanvasNodeFrame kind="shape" selected={selected}>
+        <CanvasShape
+          shape={d.shapeType ?? "rectangle"}
+          label={
+            <textarea
+              ref={title.ref}
+              defaultValue={d.title}
+              onChange={title.onChange}
+              readOnly={title.readOnly}
+              rows={1}
+              className={cn(
+                "nodrag max-h-full whitespace-pre-wrap break-words",
+                CANVAS_FIELD_CLASS.shapeLabel,
+              )}
+            />
+          }
         />
-      </div>
+      </CanvasNodeFrame>
     </div>
   );
 });
@@ -191,22 +175,22 @@ export const SpaceGroupNode = memo(function SpaceGroupNode({ id, data, selected 
   const title = useMergedField(id, "title", d.title);
 
   return (
-    <div
-      className={cn(
-        "group relative h-full w-full rounded-xl border-2 border-dashed",
-        selected ? "border-primary/50" : "border-border-subtle",
-        "bg-element-hover",
-      )}
-    >
+    <div className="group relative h-full w-full">
       <NodeHandles selected={selected} />
-      <input
-        ref={title.ref}
-        defaultValue={d.title}
-        onChange={title.onChange}
-        readOnly={title.readOnly}
-        placeholder="Group"
-        className="nodrag absolute -top-6 left-1 bg-transparent text-xs font-medium text-muted-foreground outline-none placeholder:text-muted-foreground/60"
-      />
+      <CanvasNodeFrame kind="frame" selected={selected}>
+        <CanvasFrame
+          label={
+            <input
+              ref={title.ref}
+              defaultValue={d.title}
+              onChange={title.onChange}
+              readOnly={title.readOnly}
+              placeholder="Group"
+              className={cn("nodrag", CANVAS_FIELD_CLASS.frameLabel)}
+            />
+          }
+        />
+      </CanvasNodeFrame>
       <SpaceResizer id={id} selected={selected} minWidth={120} minHeight={80} />
     </div>
   );
@@ -249,35 +233,18 @@ export const SpaceMediaNode = memo(function SpaceMediaNode({ id, data, selected 
   return (
     <div className="group relative h-full w-full">
       <NodeHandles selected={selected} />
-      <div
-        className={cn(
-          "h-full w-full overflow-hidden rounded-xl border transition-colors",
-          selected ? "border-primary/60" : "border-border-subtle",
-          "bg-card",
-        )}
-      >
-        {failed ? (
-          <div className="flex h-full w-full flex-col items-center justify-center gap-1 text-muted-foreground">
-            <ImageOff size={16} />
-            <span className="text-2xs">Media unavailable</span>
-          </div>
-        ) : url === null ? (
-          <div className="flex h-full w-full items-center justify-center text-muted-foreground">
-            <Loader2 size={16} className="animate-spin" />
-          </div>
-        ) : d.mediaKind === "video" ? (
-          // oxlint-disable-next-line jsx-a11y/media-has-caption
-          <video src={url} controls className="h-full w-full object-contain" />
-        ) : (
-          <img src={url} alt="" draggable={false} className="h-full w-full object-contain" />
-        )}
-      </div>
+      <CanvasNodeFrame kind="media" selected={selected}>
+        <CanvasMedia
+          state={failed ? "error" : url === null ? "loading" : "ready"}
+          src={url ?? undefined}
+          kind={d.mediaKind === "video" ? "video" : "image"}
+          alt=""
+        />
+      </CanvasNodeFrame>
       <SpaceResizer id={id} selected={selected} />
     </div>
   );
 });
-
-// ---------------------------------------------------------------------------
 
 /** Size writes go through the doc's clamp (`max(40, round)`), and only while
  *  actively resizing — xyflow measurement passes must never write LWW sizes. */
