@@ -43,18 +43,72 @@ describe("custom blocks round-trip", () => {
     expect(once.split(`${FENCE}bash`)).toHaveLength(3);
   });
 
-  // KNOWN BUG, pre-existing: the toggle's `parseHTML` reads `<details>` whole,
-  // so the `<summary>` text is parsed as body content too and every load + save
-  // adds one more copy of the title as a paragraph. Fixing it means changing
-  // `parseHTML`, which this restyle must not touch. This pins the bug, so the
-  // fix turns it red: then assert `toBe(once)` instead.
-  it("KNOWN BUG: a toggle's title is added to its body on every save", () => {
+  it("a note with toggles saves to the same markdown after a load + save", () => {
     const once = rt(guide!.content);
-    const twice = rt(once);
-    expect(twice).not.toBe(once);
-    expect(twice.split("Sign-in redirects in a loop")).toHaveLength(
-      once.split("Sign-in redirects in a loop").length + 1,
+    expect(rt(once)).toBe(once);
+    expect(once.split("Sign-in redirects in a loop")).toHaveLength(
+      guide!.content.split("Sign-in redirects in a loop").length,
     );
+  });
+
+  /**
+   * Saved once, then reloaded and saved again five times: byte-identical. The
+   * first save writes the serializer's canonical form (a blank line before
+   * `</details>`, "Untitled" for an empty title); no save after it may change
+   * a byte.
+   */
+  function expectStable(markdown: string): string {
+    const once = rt(markdown);
+    let out = once;
+    for (let i = 0; i < 5; i++) out = rt(out);
+    expect(out).toBe(once);
+    return once;
+  }
+
+  it("a note with toggles is unchanged after several load + save rounds", () => {
+    expectStable(guide!.content);
+  });
+
+  it("a toggle nested in a toggle round-trips unchanged", () => {
+    const md = [
+      "<details open>",
+      "<summary>Outer</summary>",
+      "",
+      "outer body",
+      "",
+      "<details>",
+      "<summary>Inner</summary>",
+      "",
+      "inner body",
+      "",
+      "</details>",
+      "",
+      "</details>",
+    ].join("\n");
+    const out = expectStable(md);
+    expect(out.match(/<details/g)).toHaveLength(2);
+    for (const text of ["Outer", "outer body", "Inner", "inner body"]) {
+      expect(out.split(text)).toHaveLength(2);
+    }
+    expect(out.indexOf("<summary>Inner</summary>")).toBeGreaterThan(out.indexOf("outer body"));
+  });
+
+  it("a toggle with an empty title round-trips unchanged", () => {
+    const out = expectStable("<details open>\n<summary></summary>\n\nbody\n\n</details>");
+    expect(out).toContain("<summary>Untitled</summary>");
+    expect(out.match(/body/g)).toHaveLength(1);
+  });
+
+  it("a toggle with an empty body round-trips unchanged", () => {
+    const out = expectStable("<details open>\n<summary>Empty</summary>\n\n</details>");
+    expect(out.match(/Empty/g)).toHaveLength(1);
+  });
+
+  it("a toggle in the editor's own HTML shape loads back without its title in the body", () => {
+    const once = rt("<details open>\n<summary>Copied</summary>\n\nbody\n\n</details>");
+    const html = editor!.getHTML();
+    expect(html).toContain('class="atlas-toggle-body"');
+    expect(rt(html)).toBe(once);
   });
 
   it("a closed toggle stays closed", () => {

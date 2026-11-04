@@ -19,6 +19,19 @@ declare module "@tiptap/core" {
 }
 
 /**
+ * The body of a `<details>`: the editor's own `.atlas-toggle-body` wrapper
+ * (copy/paste), or, for the markdown file's bare GFM shape, a detached copy
+ * with the toggle's own `<summary>` removed.
+ */
+function toggleBody(details: HTMLElement): HTMLElement {
+  const wrapper = details.querySelector<HTMLElement>(":scope > .atlas-toggle-body");
+  if (wrapper) return wrapper;
+  const body = details.cloneNode(true) as HTMLElement;
+  body.querySelector(":scope > summary")?.remove();
+  return body;
+}
+
+/**
  * Atlas Toggle — matches `atlas-knowledge.jsx::Toggle` (lines 667–692).
  * A chevron + clickable summary; the body is editable when open.
  * Round-trips through markdown as `<details><summary>…</summary>…</details>`
@@ -34,7 +47,8 @@ export const Toggle = Node.create({
     return {
       title: {
         default: "Untitled",
-        parseHTML: (el) => el.querySelector("summary")?.textContent?.trim() ?? "Untitled",
+        // `:scope >` so a nested toggle's summary is never read as this one's.
+        parseHTML: (el) => el.querySelector(":scope > summary")?.textContent?.trim() ?? "Untitled",
       },
       open: {
         default: true,
@@ -44,7 +58,10 @@ export const Toggle = Node.create({
   },
 
   parseHTML() {
-    return [{ tag: "details" }];
+    // The title lives in the `title` attribute, so the body is parsed from
+    // everything except the `<summary>`; reading `<details>` whole put the
+    // title into the body again on every load + save.
+    return [{ tag: "details", contentElement: toggleBody }];
   },
 
   renderHTML({ HTMLAttributes, node }) {
