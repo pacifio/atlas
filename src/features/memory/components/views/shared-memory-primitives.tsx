@@ -1,9 +1,15 @@
-import { useEffect, useRef, useState } from "react";
-import { ChevronDown, Check } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import { AgentMark } from "@/components/agent-mark";
 import { agentMetaForSource, pluginIdForSource } from "../../lib/memory-agent";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/ui/badge";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/ui/dropdown-menu";
 import { iconButtonVariants } from "@/ui/icon-button";
 import { HintItem } from "@/ui/hint-group";
 import { KIND_LABEL, sourceLabel } from "../../lib/shared-memory-format";
@@ -50,7 +56,9 @@ export function SegBtn({
   );
 }
 
-/** Dropdown column filter — "All …" + one entry per distinct value. */
+/** Dropdown column filter — "All …" + one entry per distinct value. On the
+ *  house `DropdownMenu`: arrow keys, typeahead, Esc and outside-click
+ *  dismissal, focus return, and the house menu look and motion. */
 export function FilterMenu({
   label,
   value,
@@ -64,102 +72,63 @@ export function FilterMenu({
   onChange: (v: string) => void;
   format?: (v: string) => string;
 }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    window.addEventListener("mousedown", onDown);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("mousedown", onDown);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
   const active = !!value;
   const display = active ? (format ? format(value) : value) : label;
 
   return (
-    <div ref={ref} className="relative">
-      {/* The Usage facet pill: a round-ended hairline, stronger and filled
-          once it narrows the table. */}
-      <button
-        onClick={() => setOpen((o) => !o)}
-        title={`Filter by ${label.toLowerCase()}`}
-        className={cn(
-          "flex h-control-sm cursor-pointer items-center gap-1 rounded-full border px-2 text-2xs font-medium",
-          "transition-colors duration-fast ease-out-strong",
-          active
-            ? "border-border-strong bg-element-selected text-foreground"
-            : "border-border text-secondary-foreground hover:bg-element-hover hover:text-foreground",
-        )}
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={<FilterPill active={active} title={`Filter by ${label.toLowerCase()}`} />}
       >
         <span className="max-w-[120px] truncate">{display}</span>
         <ChevronDown
           size={10}
-          className={cn(
-            "shrink-0 text-muted-foreground transition-transform duration-fast",
-            open && "rotate-180",
-          )}
+          className="shrink-0 text-muted-foreground transition-transform duration-fast group-data-popup-open:rotate-180"
         />
-      </button>
-      {open && (
-        <div className="hide-scrollbar absolute top-full left-0 z-popover mt-1.5 max-h-[280px] min-w-[170px] animate-scale-in overflow-y-auto rounded-lg border border-border bg-popover p-1 shadow-md">
-          <FilterOption
-            label={`All ${label.toLowerCase()}s`}
-            active={!value}
-            onClick={() => {
-              onChange("");
-              setOpen(false);
-            }}
-          />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" sideOffset={6} className="max-w-64">
+        <DropdownMenuRadioGroup
+          value={value}
+          onValueChange={(next) => {
+            if (next !== value) onChange(next as string);
+          }}
+        >
+          <DropdownMenuRadioItem value="" closeOnClick>
+            All {label.toLowerCase()}s
+          </DropdownMenuRadioItem>
           {options.map((o) => (
-            <FilterOption
-              key={o}
-              label={format ? format(o) : o}
-              active={value === o}
-              onClick={() => {
-                onChange(o);
-                setOpen(false);
-              }}
-            />
+            <DropdownMenuRadioItem key={o} value={o} closeOnClick>
+              <span className="min-w-0 truncate">{format ? format(o) : o}</span>
+            </DropdownMenuRadioItem>
           ))}
-        </div>
-      )}
-    </div>
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
-function FilterOption({
-  label,
+/** The Usage facet pill a `FilterMenu` opens from: a round-ended hairline,
+ *  stronger and filled once it narrows the table. An unfiltered pill holds
+ *  its hover wash while its menu is open. The menu's trigger renders it and merges in its
+ *  own props (handlers, ref, `data-popup-open`). */
+function FilterPill({
   active,
-  onClick,
-}: {
-  label: string;
-  active: boolean;
-  onClick: () => void;
-}) {
+  className,
+  ...props
+}: React.ComponentProps<"button"> & { active: boolean }) {
   return (
     <button
-      onClick={onClick}
+      type="button"
+      {...props}
       className={cn(
-        "flex h-control-md w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-xs",
+        "group flex h-control-sm cursor-pointer items-center gap-1 rounded-full border px-2 text-2xs font-medium",
         "transition-colors duration-fast ease-out-strong",
         active
-          ? "text-foreground"
-          : "text-secondary-foreground hover:bg-element-hover hover:text-foreground",
+          ? "border-border-strong bg-element-selected text-foreground"
+          : "border-border text-secondary-foreground hover:bg-element-hover hover:text-foreground data-popup-open:bg-element-hover data-popup-open:text-foreground",
+        className,
       )}
-    >
-      <span className="min-w-0 flex-1 truncate">{label}</span>
-      {active && <Check size={11} className="shrink-0 text-foreground" />}
-    </button>
+    />
   );
 }
 

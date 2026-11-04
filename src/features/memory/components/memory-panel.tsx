@@ -8,7 +8,8 @@ import { MemoryGraphView } from "./memory-graph-view";
 import { MemoryPolicyView } from "./memory-policy-view";
 import { MemorySharingControls } from "./memory-sharing-controls";
 import { SharedMemoryView } from "./shared-memory-view";
-import { Notice, Toolbar, Track, TrackSegment } from "./views/memory-chrome";
+import { Notice, Track, TrackSegment } from "./views/memory-chrome";
+import { DestinationActions } from "@/features/layout/components/destination-actions";
 import { useAppStore } from "@/features/app/stores/app-store";
 import { useMemoryStore } from "../stores/memory-store";
 
@@ -40,27 +41,32 @@ export function MemoryPanel() {
 
   return (
     <div className="flex h-full flex-col bg-background">
-      {/* Header: nav (left) · sharing controls (right). No glyphs on the nav:
-          three distinct nouns need no icons to tell them apart (the Usage
-          tables' tabs make the same call), and two of them shared one. */}
-      <Toolbar className="px-2">
-        <Track>
-          <TrackSegment active={sub === "graph"} onClick={() => setSubTab("graph")}>
-            Graph
-          </TrackSegment>
-          <TrackSegment active={sub === "policy"} onClick={() => setSubTab("policy")}>
-            Policy
-          </TrackSegment>
-          <TrackSegment active={sub === "shared"} onClick={() => setSubTab("shared")}>
-            Shared
-          </TrackSegment>
-        </Track>
+      {/* The controls live in the destination bar (ADR-0024), which already
+          says "Memory": the nav just after the title, then the health line
+          and the sharing controls against the bar's trailing end. Tab order
+          follows: back, nav, health, sharing. No glyphs on the nav: three
+          distinct nouns need no icons to tell them apart (the Usage tables'
+          tabs make the same call), and two of them shared one. */}
+      <DestinationActions>
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <Track>
+            <TrackSegment active={sub === "graph"} onClick={() => setSubTab("graph")}>
+              Graph
+            </TrackSegment>
+            <TrackSegment active={sub === "policy"} onClick={() => setSubTab("policy")}>
+              Policy
+            </TrackSegment>
+            <TrackSegment active={sub === "shared"} onClick={() => setSubTab("shared")}>
+              Shared
+            </TrackSegment>
+          </Track>
 
-        <div className="ml-auto flex items-center gap-2">
-          <MemoryHealthLine projectPath={projectPath} />
-          <MemorySharingControls projectPath={projectPath} />
+          <div className="ml-auto flex min-w-0 items-center gap-2">
+            <MemoryHealthLine projectPath={projectPath} />
+            <MemorySharingControls projectPath={projectPath} />
+          </div>
         </div>
-      </Toolbar>
+      </DestinationActions>
 
       <div className="min-h-0 flex-1">
         {sub === "graph" ? (
@@ -94,14 +100,16 @@ function MemoryHealthLine({ projectPath }: { projectPath: string | null }) {
     }
   };
   return (
-    <span className="caption flex items-center gap-1.5">
-      {line}
+    // It shares the destination bar with the title and the nav, so the
+    // line gives way (truncates) before anything else does.
+    <span className="caption flex min-w-0 items-center gap-1.5" title={line}>
+      <span className="truncate">{line}</span>
       {chainBroken(status) && (
         <>
           <button
             type="button"
             onClick={() => setConfirm(true)}
-            className="cursor-pointer underline underline-offset-2 transition-colors duration-fast hover:text-foreground"
+            className="shrink-0 cursor-pointer underline underline-offset-2 transition-colors duration-fast hover:text-foreground"
           >
             I made this edit
           </button>
