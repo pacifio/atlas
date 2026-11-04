@@ -4,11 +4,12 @@
 // Props only. The container (`permission-modal.tsx`) reads the queue, answers
 // on the wire, and owns the window keydown handler that maps digits, Enter and
 // Esc onto these options — that handler is the card's safety logic, so it
-// stays with the data, not here.
+// stays with the data, not here. The card takes no focus when it appears: the
+// composer keeps it.
 
 import type { Ref } from "react";
-import { CheckCircle2, XCircle, AlertTriangle, Loader2 } from "lucide-react";
-import { Kbd } from "@tryatlas/design";
+import { AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
+import { Button, Icon, Kbd, Spinner, Textarea } from "@tryatlas/design";
 import { cn } from "@/lib/utils";
 import { CONTENT_COLUMN } from "../../lib/row-metrics";
 import type {
@@ -56,14 +57,14 @@ export function PermissionCardView({
   return (
     <div className={cn(CONTENT_COLUMN, "pt-2")}>
       <div
-        // A card resting in the composer stack, not a menu: `shadow-md` is the
-        // menu elevation (0 16px 48px at 90%) and read as a black slab over the
-        // transcript. This sits between `shadow-sm` and that, with no step to name.
-        // ratchet-allow: an in-flow raised card, softer than the menu elevation
-        className="w-full overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] shadow-[0_8px_24px_rgba(0,0,0,0.35)]"
+        data-testid="permission-card"
+        // A card resting in the composer stack, flat on its border like the
+        // composer below it: no elevation, so it reads as part of the stack
+        // rather than a menu floating over the transcript.
+        className="w-full overflow-hidden rounded-xl border border-border bg-card"
       >
         <div className="flex items-start gap-2 px-3 pt-3">
-          <div className="flex-1 min-w-0">
+          <div className="min-w-0 flex-1">
             {heading.kind === "preparing" ? (
               <OutwardPreparingHeading preparing={heading.preparing} />
             ) : heading.kind === "outward" ? (
@@ -95,7 +96,7 @@ export function PermissionCardView({
         </div>
 
         <div className="border-t border-border px-3 py-2.5">
-          <textarea
+          <Textarea
             ref={draftRef}
             value={draft}
             onChange={(e) => onDraftChange(e.target.value)}
@@ -107,7 +108,9 @@ export function PermissionCardView({
             }}
             rows={1}
             placeholder="Tell the agent what to do instead…"
-            className="w-full resize-none rounded-md border border-border bg-background px-2.5 py-1.5 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-border-strong"
+            // One line until the user types more: the package field opens at
+            // four lines, which would double the card for a fallback.
+            className="min-h-0 resize-none"
           />
         </div>
       </div>
@@ -115,7 +118,8 @@ export function PermissionCardView({
   );
 }
 
-/** The numbered option list — shared with the plan review. */
+/** The numbered option list — shared with the plan review. Every option the
+ *  wire sent, in wire order, each with its digit. */
 export function PermissionOptionList({
   options,
   onSelect,
@@ -137,6 +141,8 @@ export function PermissionOptionList({
   );
 }
 
+const TONE_GLYPH = { allow: CheckCircle2, reject: XCircle, other: AlertTriangle } as const;
+
 function PermissionOption({
   index,
   option,
@@ -147,40 +153,22 @@ function PermissionOption({
   onSelect: () => void;
 }) {
   const { isPrimary } = option;
-  const reject = option.tone === "reject";
-  const Icon = option.tone === "allow" ? CheckCircle2 : reject ? XCircle : AlertTriangle;
-
-  const tone = isPrimary
-    ? "border-transparent bg-[var(--primary)] text-[var(--background)] hover:bg-primary-hover"
-    : reject
-      ? "border-border bg-background text-error hover:bg-error-muted"
-      : "border-border bg-background text-foreground hover:bg-element-hover";
-
   return (
-    <button
-      type="button"
+    <Button
+      // The filled button is the one Enter picks; a reject wears the error
+      // outline; everything else is a plain outline.
+      variant={isPrimary ? "default" : option.tone === "reject" ? "destructive-outline" : "outline"}
+      size="lg"
       onClick={onSelect}
-      className={cn(
-        "flex w-full min-w-0 items-center gap-2.5 rounded-md border px-2.5 py-2 text-left text-sm transition-colors outline-none",
-        tone,
-      )}
+      // A row, not a chip: full width, left-aligned, and a label that wraps
+      // rather than running off the card.
+      className="h-auto min-h-9 w-full justify-start whitespace-normal text-left"
     >
-      {index > 0 && (
-        <span
-          className={cn(
-            "flex h-4 w-4 shrink-0 items-center justify-center rounded text-2xs font-semibold",
-            isPrimary
-              ? "bg-[var(--background)]/15 text-[var(--background)]"
-              : "bg-card text-secondary-foreground",
-          )}
-        >
-          {index}
-        </span>
-      )}
-      <Icon className="size-3.5 shrink-0" />
-      <span className="min-w-0 flex-1 font-medium break-words">{option.label}</span>
+      <Kbd variant={isPrimary ? "inverse" : "default"}>{index}</Kbd>
+      <Icon icon={TONE_GLYPH[option.tone]} size="md" />
+      <span className="min-w-0 flex-1 py-2 break-words">{option.label}</span>
       {isPrimary && <Kbd variant="inverse">↵</Kbd>}
-    </button>
+    </Button>
   );
 }
 
@@ -207,7 +195,7 @@ export function OutwardPreparingHeading({ preparing }: { preparing: OutwardPrepa
   return (
     <div role="status" aria-live="polite" data-testid="outward-preparing">
       <div className="flex items-center gap-2 text-base font-medium leading-snug text-foreground">
-        <Loader2 className="size-4 shrink-0 animate-spin text-secondary-foreground" aria-hidden />
+        <Spinner size="lg" label="" />
         <span>{preparing.title}</span>
       </div>
       <div className="mt-0.5 text-xs text-secondary-foreground">{preparing.note}</div>

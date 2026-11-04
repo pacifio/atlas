@@ -3,13 +3,30 @@
 //
 // Props only. `plan` is a slot — the container renders the markdown into it,
 // because the markdown renderer reaches the opener plugin. The container also
-// owns the window keydown handler (digits, Enter, Esc) and the answer path.
+// owns the window keydown handler (digits, Enter, Esc) and the answer path;
+// Esc reaches both that handler and the dialog's own `onOpenChange`, as it
+// always has.
+//
+// Composed from the package's dialog parts rather than `DialogContent`: the
+// review is wider than any content size and anchored near the top, and it
+// keeps the frosted scrim (`DialogOverlay blur`) the package reserves for
+// blocking prompts, which `DialogContent`'s built-in overlay cannot carry.
 
 import type { ReactNode } from "react";
-import { Dialog } from "@base-ui/react/dialog";
+import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { AlertTriangle, ClipboardList } from "lucide-react";
-import { DialogOverlay, Kbd } from "@tryatlas/design";
-import { cn } from "@/lib/utils";
+import {
+  Button,
+  Dialog,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogOverlay,
+  DialogPortal,
+  DialogTitle,
+  Icon,
+  Kbd,
+} from "@tryatlas/design";
 import { PermissionOptionList, type PermissionOptionItem } from "./permission-card-view";
 
 export function PlanReviewView({
@@ -30,28 +47,25 @@ export function PlanReviewView({
   onCancel: () => void;
 }) {
   return (
-    <Dialog.Root open onOpenChange={(open) => !open && onCancel()}>
-      <Dialog.Portal>
+    <Dialog open onOpenChange={(open) => !open && onCancel()}>
+      <DialogPortal>
         <DialogOverlay blur />
-        <Dialog.Popup
-          className={cn(
-            // Anchor near the top (not vertically centered) with a viewport
-            // cap, so a long plan never pushes the modal — and its Cancel
-            // footer — below the window. The plan panel scrolls internally.
-            "fixed left-1/2 top-[5vh] z-modal -translate-x-1/2",
-            "flex max-h-[90vh] w-[880px] max-w-[94vw] flex-col overflow-hidden",
-            "rounded-md border border-border bg-card",
-            "shadow-md animate-scale-in text-foreground",
-          )}
+        <DialogPrimitive.Popup
+          data-testid="plan-review"
+          // Anchored near the top (not vertically centred) with a viewport
+          // cap, so a long plan never pushes the dialog — and its Cancel
+          // footer — below the window. The plan panel scrolls internally.
+          // The surface is the package dialog's: `rounded-xl`, `shadow-lg`.
+          className="fixed top-[5vh] left-1/2 z-modal flex max-h-[90vh] w-[880px] max-w-[94vw] -translate-x-1/2 flex-col overflow-hidden rounded-xl border border-border bg-card text-foreground shadow-lg outline-none data-open:animate-scale-in data-closed:animate-scale-out"
         >
           <div className="flex items-start gap-3 border-b border-border px-4 py-3">
-            <ClipboardList className="mt-0.5 size-4 text-primary" />
-            <div className="flex-1">
-              <Dialog.Title className="text-sm font-medium">Review plan</Dialog.Title>
-              <Dialog.Description className="mt-0.5 text-xs text-secondary-foreground">
+            <Icon icon={ClipboardList} size="lg" className="mt-0.5 text-primary" />
+            <DialogHeader className="min-w-0 flex-1">
+              <DialogTitle>Review plan</DialogTitle>
+              <DialogDescription>
                 The agent proposed a plan before continuing. Review it, then approve or reject.
-              </Dialog.Description>
-            </div>
+              </DialogDescription>
+            </DialogHeader>
             {queueNote && (
               <span className="shrink-0 rounded-sm bg-background px-2 py-0.5 text-xs text-secondary-foreground">
                 {queueNote}
@@ -66,37 +80,35 @@ export function PlanReviewView({
               <div className="min-h-0 min-w-0 flex-1 overflow-auto px-4 py-3">
                 <PermissionOptionList options={options} onSelect={(id) => onSelect(id)} />
                 {bypassOptionId && (
-                  <button
-                    type="button"
-                    onClick={() => onSelect(bypassOptionId, "bypassPermissions")}
-                    className={cn(
-                      "mt-2 flex w-full items-center gap-2 rounded-md border border-border px-2.5 py-2 text-left",
-                      "text-sm text-foreground transition-colors hover:bg-background",
-                    )}
-                  >
-                    <AlertTriangle className="size-3.5 shrink-0 text-error" />
-                    <span className="flex-1">
-                      Yes, and bypass permissions
-                      <span className="block text-xs text-secondary-foreground">
-                        Approve the plan and stop asking for the rest of this session.
+                  <div className="mt-2">
+                    <Button
+                      variant="outline"
+                      size="lg"
+                      onClick={() => onSelect(bypassOptionId, "bypassPermissions")}
+                      className="h-auto min-h-9 w-full justify-start whitespace-normal text-left"
+                    >
+                      <Icon icon={AlertTriangle} size="md" className="text-error" />
+                      <span className="min-w-0 flex-1 py-2">
+                        Yes, and bypass permissions
+                        <span className="block font-normal text-xs text-secondary-foreground">
+                          Approve the plan and stop asking for the rest of this session.
+                        </span>
                       </span>
-                    </span>
-                  </button>
+                    </Button>
+                  </div>
                 )}
               </div>
-              <div className="flex items-center justify-end gap-2 border-t border-border px-4 py-2.5">
-                <button
-                  type="button"
-                  onClick={onCancel}
-                  className="inline-flex items-center gap-1.5 rounded-sm px-2.5 py-1 text-xs text-secondary-foreground hover:bg-background hover:text-foreground transition-colors"
-                >
-                  Cancel <Kbd>esc</Kbd>
-                </button>
+              <div className="border-t border-border px-4 py-2.5">
+                <DialogFooter>
+                  <Button variant="ghost" size="sm" onClick={onCancel}>
+                    Cancel <Kbd>esc</Kbd>
+                  </Button>
+                </DialogFooter>
               </div>
             </aside>
           </div>
-        </Dialog.Popup>
-      </Dialog.Portal>
-    </Dialog.Root>
+        </DialogPrimitive.Popup>
+      </DialogPortal>
+    </Dialog>
   );
 }
