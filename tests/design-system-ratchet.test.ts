@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { TRANSITION_ALL_RULE, formatViolations, runRatchet } from "@tryatlas/design/ratchet";
@@ -48,6 +48,7 @@ import { DERIVED_VAR_REGISTRY, THEME_KEY_REGISTRY } from "@tryatlas/design/theme
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SCAN_ROOTS = ["src/features", "src/components", "src/dev"];
+const TRANSITION_ALL_SCOPE = ["src", "index.html"];
 
 /**
  * Whole files inside the scanned roots that are exempt, each with the reason.
@@ -127,13 +128,17 @@ const EXEMPT_DIRS: Record<string, string> = {
 };
 
 describe("design-system ratchet", () => {
-  it("has no violation in " + SCAN_ROOTS.join(" + "), () => {
+  it(`has no violation in ${SCAN_ROOTS.join(" + ")} (transition-all: ${TRANSITION_ALL_SCOPE.join(" + ")})`, () => {
+    // A scoped path that is gone scans nothing and passes silently.
+    for (const scoped of TRANSITION_ALL_SCOPE) {
+      expect(existsSync(path.join(REPO_ROOT, scoped)), scoped).toBe(true);
+    }
     const violations = runRatchet({
       cwd: REPO_ROOT,
       roots: SCAN_ROOTS,
       exemptFiles: EXEMPT_FILES,
       exemptDirs: EXEMPT_DIRS,
-      rules: [{ ...TRANSITION_ALL_RULE, scope: ["src", "index.html"] }],
+      rules: [{ ...TRANSITION_ALL_RULE, scope: TRANSITION_ALL_SCOPE }],
     });
     expect(violations, formatViolations(violations)).toEqual([]);
   });

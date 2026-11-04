@@ -13,7 +13,6 @@ imports the package's stylesheet first — `styles-core.css`, which is
 engine (`applyTheme`, or `index.html`'s replay of the last one), so the
 generated theme blocks would never match and there is no `:root` theme floor:
 
-
 | file (in the package)    | holds                                                                                                                                         |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | `src/styles/tokens.css`  | the non-colour custom properties — font stacks, control heights, radius derivation, elevation, motion durations and z-index layers            |

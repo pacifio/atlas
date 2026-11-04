@@ -100,7 +100,12 @@ describe("infinite animations are stepped on Linux", () => {
       it(`the package's ${animation.id} (${animation.selector}) has a Linux steps() override`, () => {
         const body = overrides.get(animation.selector);
         expect(body, `no "${LINUX} ${animation.selector}" rule in globals.css`).toBeDefined();
-        expect(body).toMatch(/animation-timing-function:\s*steps\(/);
+        // The count, not just the presence: `steps(12)` on a 3 s turn is
+        // 4 fps. A `var()` step count is read at its fallback.
+        const count = body?.match(
+          /animation-timing-function:\s*steps\((?:var\([^,]+,\s*)?(\d+)/,
+        )?.[1];
+        expect(Number(count), `steps() for ${animation.selector}`).toBe(animation.steps);
       });
     } else {
       it(`the package's ${animation.id} (a JS loop) is capped by ${INFINITE_ANIMATION_FPS_VAR}`, () => {

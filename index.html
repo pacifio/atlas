@@ -51,8 +51,9 @@
          cleared profile or a private window finds nothing: the skeleton falls
          back to the literals below, and theme keys stay unset until the first
          applyTheme (desktop imports the package's `styles-core.css`, which
-         gives them no `:root` floor). So this can only ever improve the
-         flash — never cause one. -->
+         gives them no `:root` floor), so on a first run React's first render
+         is unthemed until then. This script can only ever shorten that
+         window — never cause one. -->
     <script>
       (function () {
         try {
