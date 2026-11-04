@@ -7,10 +7,12 @@
 // anything is committed. `branch` runs only on the default branch, which a
 // pull request merges into. The run walks the steps in order and stops on the
 // first that throws; a retry starts again at the step that failed, so a step
-// that finished (the commit, above all) is never run twice.
+// that finished (the commit, above all) is never run twice. Every step after
+// `check` first confirms HEAD is still on the run's branch, so a checkout that
+// moved mid-run (or before a retry) is refused rather than committed or pushed.
 //
-// The side effects are `ShipDeps`, wired to the git store and the pull-request
-// commands in `ship-run.ts`.
+// The side effects are `ShipDeps`, wired to path-explicit git commands and
+// the pull-request commands in `ship-run.ts`.
 
 export type ShipVariant = "commit_push" | "commit_push_pr";
 
@@ -23,6 +25,10 @@ export interface ShipRequest {
   summary: string;
   description: string | null;
   coAuthors: string[];
+  /** The branch checked out when the run started. Every later step checks
+   *  HEAD is still on it (or on `newBranch` once that exists), so a branch
+   *  switched mid-run, or before a retry, never takes the commit or push. */
+  startBranch: string;
   /** Create and switch to this branch before committing (default branch only). */
   newBranch: string | null;
   /** The pull request to open; ignored without the PR step. */
@@ -146,23 +152,48 @@ async function runStep(
   deps: ShipDeps,
 ): Promise<Partial<ShipState>> {
   const { request } = state;
+  // Where HEAD has to be for this step: the starting branch until the new
+  // one exists, then the new one.
+  const expected =
+    request.newBranch && state.status.branch === "done" ? request.newBranch : request.startBranch;
+  const ensureOn = async (branch: string) => {
+    const head = await deps.currentBranch();
+    if (head !== branch) {
+      throw new Error(
+        `The checkout is on ${head ?? "a detached HEAD"} now, not ${branch}. Switch back to ${branch} to continue.`,
+      );
+    }
+  };
   switch (step) {
-    case "check":
+    case "check": {
+      const base = request.pr.base?.trim();
+      if (!request.newBranch && base && base === request.startBranch) {
+        throw new Error(
+          `${base} is the branch the pull request would merge into. Open it from a new branch.`,
+        );
+      }
       await deps.checkGh();
       return {};
-    case "branch":
-      if (request.newBranch) await deps.createBranch(request.newBranch);
+    }
+    case "branch": {
+      if (!request.newBranch) return {};
+      // Already on it: a retry after the branch was made but the step failed.
+      if ((await deps.currentBranch()) === request.newBranch) return {};
+      await ensureOn(request.startBranch);
+      await deps.createBranch(request.newBranch);
       return {};
+    }
     case "commit":
+      await ensureOn(expected);
       await deps.commit(request.summary, request.description, request.coAuthors);
       return {};
-    case "push": {
+    case "push":
+      await ensureOn(expected);
       await deps.push();
-      return { branch: (await deps.currentBranch()) ?? state.branch };
-    }
+      return { branch: expected };
     case "pr": {
-      const branch = state.branch ?? (await deps.currentBranch());
-      if (!branch) throw new Error("A pull request cannot be opened from a detached HEAD.");
+      await ensureOn(expected);
+      const branch = expected;
       const open = await deps.findOpenPr(branch);
       if (open) return { pr: { ...open, existing: true }, branch };
       const created = await deps.createPr({

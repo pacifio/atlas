@@ -17,14 +17,19 @@ const request = (over: Partial<ShipRequest> = {}): ShipRequest => ({
   summary: "fix(pdf): keep highlight rects on rotate",
   description: "Rects were computed before the rotation.",
   coAuthors: [],
+  startBranch: "fix/pdf",
   newBranch: null,
   pr: { title: "", base: "main" },
   ...over,
 });
 
 /** Deps that record every call in order; `fail` names a step to reject once. */
-function deps(opts: { fail?: string; failTimes?: number; openPr?: boolean } = {}) {
+function deps(
+  opts: { fail?: string; failTimes?: number; openPr?: boolean; head?: string | null } = {},
+) {
   const calls: string[] = [];
+  // HEAD as the deps see it; creating a branch switches to it.
+  const repo = { head: opts.head === undefined ? "fix/pdf" : opts.head };
   let failures = opts.failTimes ?? 1;
   const step = (name: string) => async () => {
     calls.push(name);
@@ -38,10 +43,11 @@ function deps(opts: { fail?: string; failTimes?: number; openPr?: boolean } = {}
     createBranch: vi.fn(async (name: string) => {
       await step("branch")();
       calls.push(`branch:${name}`);
+      repo.head = name;
     }),
     commit: vi.fn(async () => step("commit")()),
     push: step("push"),
-    currentBranch: async () => "fix/pdf",
+    currentBranch: async () => repo.head,
     findOpenPr: async () => {
       calls.push("find");
       return opts.openPr ? { number: 7, url: "https://github.com/a/b/pull/7" } : null;
@@ -52,7 +58,7 @@ function deps(opts: { fail?: string; failTimes?: number; openPr?: boolean } = {}
     }),
     describe: (error) => (error instanceof Error ? error.message : String(error)),
   };
-  return { d, calls };
+  return { d, calls, repo };
 }
 
 describe("planSteps", () => {
@@ -162,9 +168,58 @@ describe("runShip", () => {
   });
 
   it("creates the new branch before committing", async () => {
-    const { d, calls } = deps();
-    await runShip(initialShipState(request({ newBranch: "atlas/fix-pdf" })), d, () => {});
+    const { d, calls } = deps({ head: "main" });
+    const end = await runShip(
+      initialShipState(request({ startBranch: "main", newBranch: "atlas/fix-pdf" })),
+      d,
+      () => {},
+    );
     expect(calls.slice(0, 4)).toEqual(["check", "branch", "branch:atlas/fix-pdf", "commit"]);
+    expect(end.branch).toBe("atlas/fix-pdf");
+    expect(end.phase).toBe("done");
+  });
+
+  it("a retry of the branch step already on the new branch moves on", async () => {
+    const { d, calls } = deps({ head: "atlas/fix-pdf" });
+    const state = initialShipState(request({ startBranch: "main", newBranch: "atlas/fix-pdf" }));
+    const failed = {
+      ...state,
+      phase: "failed" as const,
+      status: { ...state.status, check: "done" as const, branch: "failed" as const },
+    };
+    const end = await runShip(failed, d, () => {});
+    expect(d.createBranch).not.toHaveBeenCalled();
+    expect(calls[0]).toBe("commit");
+    expect(end.phase).toBe("done");
+  });
+
+  it("refuses a pull request from the branch it would merge into", async () => {
+    const { d, calls } = deps({ head: "main" });
+    const end = await runShip(initialShipState(request({ startBranch: "main" })), d, () => {});
+    expect(calls).toEqual([]);
+    expect(end.error?.step).toBe("check");
+    expect(end.error?.message).toMatch(/Open it from a new branch/);
+  });
+
+  it("does not commit when the checkout moved off the starting branch", async () => {
+    const { d, repo } = deps();
+    repo.head = "other";
+    const end = await runShip(initialShipState(request()), d, () => {});
+    expect(d.commit).not.toHaveBeenCalled();
+    expect(end.error?.step).toBe("commit");
+    expect(end.error?.message).toMatch(/on other now, not fix\/pdf/);
+  });
+
+  it("a retry after a branch switch does not push the other branch", async () => {
+    const { d, calls, repo } = deps({ fail: "push" });
+    const failed = await runShip(initialShipState(request()), d, () => {});
+    repo.head = "other";
+    calls.length = 0;
+    const end = await runShip(failed, d, () => {});
+    expect(calls).toEqual([]);
+    expect(end.error?.step).toBe("push");
+    repo.head = "fix/pdf";
+    expect((await runShip(end, d, () => {})).phase).toBe("done");
   });
 });
 

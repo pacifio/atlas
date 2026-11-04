@@ -555,7 +555,8 @@ export function ChangesView() {
       {/* Live output from a streaming git op (hooks etc.) */}
       <GitOpOutput />
 
-      <CommitComposer stagedCount={staged.length} />
+      {/* Keyed by repository: a message typed for one never commits in another. */}
+      <CommitComposer key={repoPath ?? ""} stagedCount={staged.length} />
 
       <FileTreeConfirmDelete
         open={confirmDelete !== null}

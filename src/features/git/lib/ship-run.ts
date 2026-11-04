@@ -1,20 +1,27 @@
 // Drives the source-control panel's "Commit, push & PR" (`ship-flow.ts`) on
-// the active project's repository: the git verbs go through the git store,
-// which streams their hook and push output to the op strip; the pull request
-// goes through the gh-only `pr_*` commands. The run's state lives in
-// `useShipStore`, keyed by repository, so a retry finds it.
+// one repository, named on every call (`git-ship-api.ts`), so a project
+// switched mid-run never takes a step; the streaming verbs feed the op strip
+// under their op ids. The pull request goes through the gh-only `pr_*`
+// commands. The run's state lives in `useShipStore`, keyed by repository, so
+// a retry finds it.
 
 import type { QueryClient } from "@tanstack/react-query";
 
+import { logEvent } from "@/features/log/lib/log";
 import { gitErrorText } from "@/features/notifications/lib/outcome-notifier";
-import { classifyPrError, isPrError, prErrorMessage } from "@/features/pull-requests/lib/pr-errors";
+import {
+  classifyPrError,
+  isPrError,
+  noteGhOutcome,
+  prErrorMessage,
+} from "@/features/pull-requests/lib/pr-errors";
 import { prCreate, prList, prProvider } from "@/features/pull-requests/lib/pull-requests-api";
 import { invalidatePullRequestQueries } from "@/features/pull-requests/lib/pull-requests-queries";
 import type { PrError } from "@/features/pull-requests/lib/pull-requests-types";
 
-import { useGitStore, type GitSnapshotWire } from "../stores/git-store";
+import { useGitStore } from "../stores/git-store";
 import { useShipStore } from "../stores/ship-store";
-import { invoke } from "@tauri-apps/api/core";
+import { shipCommit, shipCreateBranch, shipPublish, shipPush, shipSnapshot } from "./git-ship-api";
 import {
   initialShipState,
   runShip,
@@ -26,10 +33,6 @@ import {
 
 /** One run per repository at a time. */
 const running = new Set<string>();
-
-function snapshot(repoPath: string): Promise<GitSnapshotWire> {
-  return invoke<GitSnapshotWire>("git_snapshot", { path: repoPath });
-}
 
 /** `gh`'s refusals, worded for opening a pull request rather than reading one. */
 function prErrorText(error: PrError): string {
@@ -52,25 +55,29 @@ export function describeShipError(error: unknown, step: ShipStep): string {
 }
 
 export function shipDeps(repoPath: string): ShipDeps {
-  const git = () => useGitStore.getState().actions;
   return {
     checkGh: async () => {
-      await prProvider(repoPath);
+      // An explicit check: open a gate an earlier refusal left shut, and ask
+      // gh afresh rather than trusting a cached answer from before sign-in.
+      noteGhOutcome(null);
+      await prProvider(repoPath, true);
     },
-    createBranch: (name) => git().createBranch(name),
-    commit: (summary, description, coAuthors) =>
-      git().commit(
-        summary,
-        description ?? undefined,
-        false,
-        coAuthors.length ? coAuthors : undefined,
-      ),
+    createBranch: async (name) => {
+      await shipCreateBranch(repoPath, name);
+      logEvent({ source: "git", kind: "branch-create", summary: name, payload: { name } });
+      refreshIfActive(repoPath);
+    },
+    commit: async (summary, description, coAuthors) => {
+      await shipCommit(repoPath, summary, description, coAuthors);
+      logEvent({ source: "git", kind: "commit", summary: summary.slice(0, 120), payload: {} });
+      refreshIfActive(repoPath);
+    },
     push: async () => {
-      const snap = await snapshot(repoPath);
-      await (snap.upstream ? git().push() : git().publishBranch());
+      const snap = await shipSnapshot(repoPath);
+      await (snap.upstream ? shipPush(repoPath) : shipPublish(repoPath));
     },
     currentBranch: async () => {
-      const snap = await snapshot(repoPath);
+      const snap = await shipSnapshot(repoPath);
       return snap.detached || !snap.branch ? null : snap.branch;
     },
     findOpenPr: async (branch) => {
@@ -92,11 +99,16 @@ async function drive(client: QueryClient, repoPath: string, state: ShipState): P
     if (end.status.push === "done") await invalidatePullRequestQueries(client, repoPath);
   } finally {
     running.delete(repoPath);
-    void useGitStore
-      .getState()
-      .actions.refresh(repoPath)
-      .catch(() => {});
+    refreshIfActive(repoPath);
   }
+}
+
+/** Refresh the git store, but only while `repoPath` is still its repository:
+ *  `refresh(path)` also makes `path` the active one, and a project switched
+ *  to mid-run has to stay put. */
+function refreshIfActive(repoPath: string): void {
+  const store = useGitStore.getState();
+  if (store.repoPath === repoPath) void store.actions.refresh(repoPath).catch(() => {});
 }
 
 /** Start a run from the commit box. */

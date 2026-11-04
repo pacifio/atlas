@@ -149,7 +149,8 @@ export function CommitComposer({ stagedCount }: { stagedCount: number }) {
     () =>
       featureBranchName(
         summary,
-        branchesFull.map((b) => b.name),
+        // `origin/atlas/x` takes `atlas/x` too: the push would land on it.
+        branchesFull.map((b) => (b.isRemote ? b.name.slice(b.name.indexOf("/") + 1) : b.name)),
       ),
     [summary, branchesFull],
   );
@@ -162,6 +163,7 @@ export function CommitComposer({ stagedCount }: { stagedCount: number }) {
     setCoAuthors("");
     setShowCoAuthors(false);
     setPrTitle("");
+    setPrBase(null);
     setNewBranch(null);
   };
 
@@ -183,22 +185,34 @@ export function CommitComposer({ stagedCount }: { stagedCount: number }) {
 
   const branchName = (newBranch ?? suggestedBranch).trim();
 
-  const ship = (variant: "commit_push" | "commit_push_pr") => {
-    if (!repoPath || (variant === "commit_push_pr" ? prBlocked : blocked)) return;
+  /** Start a run from the form; false when the form or repository rules it out. */
+  const ship = (variant: "commit_push" | "commit_push_pr"): boolean => {
+    if (!repoPath || !branch || (variant === "commit_push_pr" ? prBlocked : blocked)) return false;
     const pr = variant === "commit_push_pr";
     // Never on to the default branch without its new branch named.
     if (pr && branchNeeded && !branchName) {
       setDraftOpen(true);
-      return;
+      return true;
     }
     startShip(client, repoPath, {
       variant,
       summary: summary.trim(),
       description: description.trim() || null,
       coAuthors: splitAuthors(coAuthors),
+      startBranch: branch,
       newBranch: pr && branchNeeded ? branchName : null,
       pr: { title: prTitle, base: prBase ?? compare.data?.defaultBranch ?? null },
     });
+    return true;
+  };
+
+  // A run stopped before its commit retries from the form as it is now, so a
+  // message a hook rejected, then edited, is the one committed. Once the
+  // commit is in, the retry resumes the run and never commits again.
+  const retry = () => {
+    if (!repoPath || !run) return;
+    if (run.status.commit !== "done" && ship(run.request.variant)) return;
+    retryShip(client, repoPath);
   };
 
   // The box empties once the run has committed, not when it starts: a run
@@ -245,7 +259,7 @@ export function CommitComposer({ stagedCount }: { stagedCount: number }) {
       {run && repoPath && (
         <ShipProgress
           run={run}
-          onRetry={() => retryShip(client, repoPath)}
+          onRetry={retry}
           onDismiss={() => dismissShip(repoPath)}
           repoPath={repoPath}
         />
