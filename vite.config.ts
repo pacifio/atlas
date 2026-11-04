@@ -198,24 +198,23 @@ export default defineConfig(() => ({
       output: {
         codeSplitting: {
           groups: [
-            // Tiny shared utils, highest priority. `cn()` (clsx +
-            // tailwind-merge) is used all over the eager boot path AND by
-            // react-pdf. Left to a lower priority, clsx gets folded into
-            // `vendor-pdf`, so the entry imports a 200-byte function from a
-            // 425 KB chunk and preloads all of pdfjs before first paint —
-            // silently defeating the lazy `PdfViewer` boundary in
-            // center-panel.tsx. `\0vite/preload-helper` (the `__vitePreload`
-            // runtime) rides along for the same reason: it is needed eagerly,
-            // and wherever it lands the entry must import that chunk. `cn` is
-            // the compiled clsx + tailwind-merge that `@tryatlas/design`'s
-            // primitives merge their classes with: eager, and the same risk.
+            // Tiny shared utils, highest priority. clsx is used on the eager
+            // boot path (class-variance-authority) AND by react-pdf. Left to a
+            // lower priority, clsx gets folded into `vendor-pdf`, so the entry
+            // imports a 200-byte function from a 425 KB chunk and preloads all
+            // of pdfjs before first paint — silently defeating the lazy
+            // `PdfViewer` boundary in center-panel.tsx.
+            // `\0vite/preload-helper` (the `__vitePreload` runtime) rides along
+            // for the same reason: it is needed eagerly, and wherever it lands
+            // the entry must import that chunk. `cn` is the class merger
+            // `@tryatlas/design` and `@/lib/utils` share: eager, and the same
+            // risk.
             {
               name: "vendor-utils",
               priority: 100,
               test: (id) =>
                 !id.endsWith(".css") &&
                 (id.includes("/node_modules/clsx/") ||
-                  id.includes("/node_modules/tailwind-merge/") ||
                   id.includes("/node_modules/cn/") ||
                   id.includes("vite/preload-helper")),
             },
