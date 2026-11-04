@@ -68,7 +68,9 @@ bun run ci:local        # what CI would run for this branch, as CI runs it (clip
   plan includes them. A red job here is a red job in CI; fix it before opening
   the PR. The app's Windows compile check (`app-windows`) is the one job that
   runs only in CI. `--linux` is the full container replica, for when you
-  suspect the Ubuntu userland itself.
+  suspect the Ubuntu userland itself. It plans against the merge base with
+  the branch's upstream, so a branch that tracks its own remote plans almost
+  nothing: pass the PR's base, `bun run ci:local --base origin/<version branch>`.
 
 Rust (`rust-toolchain.toml`), Bun and Node (`mise.toml`) are pinned to what CI
 installs. Bumping Rust brings new clippy lints: fix them in the same change.
@@ -89,6 +91,9 @@ suite fails the moment they disagree. Edit the source and regenerate:
 ```bash
 bun run theme:keys     # @tryatlas/design's keys.toml, themes, Rust tables → crates/atlas-theme; schema, docs
 bun run icons:render   # macOS app icons
+bun run settings:gen   # settings-registry.toml → TS, Rust, docs; then
+                       # ATLAS_BLESS=1 cargo test -p atlas config_default
+                       # for docs/reference/config.default.toml
 ```
 
 The design system (primitives, scales, theme engine, `keys.toml`, built-in themes,
