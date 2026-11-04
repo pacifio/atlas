@@ -184,7 +184,8 @@ function draftInto(tabId: string, text: string): void {
 }
 
 /** A timer, not a frame: frames stop in a hidden window, and the ask would
- *  hang. About two seconds in all, enough for a new panel to mount. */
+ *  hang. About two seconds in all, enough for a panel to mount: a new
+ *  session's, or an open one's that has not been shown since a restore. */
 const RETRY_MS = 16;
 const MOUNT_TRIES = 120;
 
@@ -210,7 +211,7 @@ export async function askAgent(opts: AskAgentOptions): Promise<AskResult> {
   let sent = false;
   if (opts.send) {
     const detail: ChatSendDetail = { tabId, text: text.trim(), mentions };
-    sent = await dispatchUntilHeard("atlas:chat-send", detail, created ? MOUNT_TRIES : 1);
+    sent = await dispatchUntilHeard("atlas:chat-send", detail, MOUNT_TRIES);
   }
   // Not sent — by choice, or no panel took it — so nothing is lost: it waits
   // in the composer.

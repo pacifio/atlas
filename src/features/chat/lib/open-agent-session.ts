@@ -292,8 +292,9 @@ export function openAgentChatInNewTab(
   // Unbound, so this only records the pick; the bind applies it.
   if (agent && opts.model) setAcpModel(id, opts.model);
   if (opts.background) {
-    // `createSession` makes the new session the active one.
-    setActiveSession(activeSession);
+    // `createSession` makes the new session the active one. Hand it back,
+    // unless the new tab is the one in view (its column had no other).
+    if (useLayoutStore.getState().activeTabId !== id) setActiveSession(activeSession);
     return id;
   }
   setActiveTab(id);

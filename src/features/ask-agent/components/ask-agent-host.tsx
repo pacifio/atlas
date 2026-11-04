@@ -99,6 +99,8 @@ function AskAgentBox({
       })),
     [contexts],
   );
+  // Stable, so typing does not hand the popover a new anchor every key.
+  const anchor = useMemo(() => positionAnchor(request.anchor), [request.anchor]);
   const canSubmit = open && !busy && (contexts.length > 0 || prompt.trim().length > 0);
 
   const submit = async (send: boolean) => {
@@ -119,7 +121,7 @@ function AskAgentBox({
   return (
     <PopoverContent
       data-ask-agent-box=""
-      anchor={positionAnchor(request.anchor)}
+      anchor={anchor}
       side="bottom"
       // Under its trigger's start edge; centred when there is none.
       align={request.anchor ? "start" : "center"}
