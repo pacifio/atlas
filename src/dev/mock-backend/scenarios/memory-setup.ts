@@ -4,6 +4,7 @@
 // the populated views; `failNextDownload` ends the next one on the
 // "Model download failed" retry screen instead.
 
+import { emit } from "@tauri-apps/api/event";
 import type { Scenario } from "../types";
 import { setMemoryModel } from "../fixtures/memory";
 
@@ -32,23 +33,33 @@ export const memorySetup: Scenario = {
   },
 };
 
+/** Whether "I made this edit" has been confirmed in this page load. */
+let historyAccepted = false;
+
 /** The memory history was edited outside Atlas: the destination bar's health
- *  line says so and offers "I made this edit". */
+ *  line says so and offers "I made this edit". Confirming it clears the
+ *  warning, as the real command does after its next health pass. */
 export const memoryHistoryEdited: Scenario = {
   name: "memory-history-edited",
   description: "Memory tab whose history was edited outside Atlas (the broken-chain health line).",
+  init: () => {
+    historyAccepted = false;
+  },
   commands: {
-    memory_health_status: () => ({
-      checkedAt: Date.now(),
-      record: {
+    memory_health_status: () => {
+      const broken = historyAccepted ? [] : [{ kind: "chain_broken" as const }];
+      return {
         checkedAt: Date.now(),
-        found: [{ kind: "chain_broken" }],
-        repaired: [],
-        deferred: [{ kind: "chain_broken" }],
-      },
-      corpus: { rebuiltVectors: 0, rebuiltFts: false, recreated: false },
-      restored: null,
-    }),
+        record: { checkedAt: Date.now(), found: broken, repaired: [], deferred: broken },
+        corpus: { rebuiltVectors: 0, rebuiltFts: false, recreated: false },
+        restored: null,
+      };
+    },
+    memory_accept_history: ({ projectPath }) => {
+      historyAccepted = true;
+      void emit("atlas:memory-health", { cwd: String(projectPath) });
+      return true;
+    },
   },
   setup: memorySetup.setup,
 };
