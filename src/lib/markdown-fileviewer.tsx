@@ -10,7 +10,6 @@ import { documentFileRoot } from "@/lib/file-links";
 import { onMarkdownClick } from "@/lib/markdown-links";
 import { cachedPreviewImage, previewImage } from "@/lib/markdown-preview-image";
 import { PREVIEW_SANITIZE_SCHEMA } from "@/lib/markdown-sanitize";
-import "@/styles/hljs.css";
 
 const REMARK_PLUGINS: NonNullable<Options["remarkPlugins"]> = [remarkGfm];
 

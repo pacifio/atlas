@@ -45,16 +45,6 @@
   height: var(--titlebar-height);
 }
 
-/* The team chat composer's corner, and the agent composer's input card
-   while folded: half a one-line height (both are 46px), so a single
-   line is an exact capsule. In px, like the bar's own geometry — the bar is
-   44px + a 1px rim top and bottom, all literal px — because the `rounded-*`
-   scale is in rem and shrinks with the UI zoom, which left the ends short of
-   round. Past one line the corner stays 23px rather than growing into a
-   stadium that would clip the formatting row and attachment chips. */
-@utility rounded-composer {
-  border-radius: 23px;
-}
 /* ── Composer — the shared Tiptap core (`components/composer/`) ────────────
    Structure every composer shares: a ProseMirror field that wraps like a
    textarea, one paragraph per line with no margins, and the placeholder
@@ -945,60 +935,6 @@
     transform: translateY(0);
   }
 }
-/* A tab's label dissolves under its close button on hover.
-
-   The button used to reserve a slot: `pr-7` on closable tabs against `pl-3` on
-   every tab, so a tab that could be closed sat visibly off-centre whether or
-   not the pointer was anywhere near it — 16px of empty space on the right for
-   a control that is invisible most of the time. Padding is symmetric now and
-   the button overlays the label, with this mask taking the label out from
-   under it. Paint only: no layout, so revealing the button still moves
-   nothing.
-
-   The ramp is sized to the button, not chosen by eye: the × is 16px wide at a
-   6px inset, so against the tab's 16px side padding it covers the label's last
-   6px. Clear by then and ramping from 18px means no letter is ever left
-   half-lit under the glyph, which read as a typo rather than as a fade.
-
-   The second selector is `:has(button:focus-visible)` and not `:focus-within`.
-   The tab is `tabIndex={0}`, so clicking one focuses the TAB — which kept
-   `:focus-within` true for as long as it stayed selected, masking the label
-   long after the pointer had gone while the × (shown on hover, or on its own
-   focus-visible) was nowhere to be seen. "Settings" sat there reading
-   "Setting". The mask has to be on exactly when the button it makes room for
-   is, so it matches that button's own conditions rather than the tab's.
-
-   Prefixed as well as not: WKWebView is the target and the two have differed
-   on mask-image before. */
-.atlas-tab:hover .atlas-tab-label,
-.atlas-tab:has(button:focus-visible) .atlas-tab-label {
-  -webkit-mask-image: linear-gradient(
-    to right,
-    #000 calc(100% - 18px),
-    transparent calc(100% - 5px)
-  );
-  mask-image: linear-gradient(to right, #000 calc(100% - 18px), transparent calc(100% - 5px));
-}
-
-/* A scroll list that fades its own rows out at the bottom edge.
- *
- * For surfaces an opaque gradient cannot sit on: the session dropdown is
- * translucent and blurred, so `ScrollFade`'s colour ramp would punch a solid
- * strip through the blur (the rule the search row and the sticky headings
- * already follow). A mask fades the CONTENT instead of painting over it, so
- * there is no colour to get wrong and nothing to flatten the blur.
- *
- * Static, not measured: this is a `mask-image` on the scroller, so the fade
- * follows the viewport's bottom edge and resolves itself — at the end of the
- * list the last row simply scrolls into the clear part of the mask. Nothing
- * to subscribe to, and no state that can disagree with the scroll position.
- *
- * Prefixed as well as not: WKWebView is the target and the two have differed
- * on mask-image before. */
-.atlas-scroll-mask-b {
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent 100%);
-}
 
 .atlas-pill-in {
   animation: atlas-pill-in 200ms ease-out both;
@@ -1055,17 +991,6 @@
   animation: atlas-panel-in-tl 200ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
-/* Stats-rail collapse — the Timeline's summary opening and closing.
-
-   Two curves, on purpose. The wrapper's HEIGHT uses the house decelerating
-   curve, because a height that overshoots would open a gap under a fixed-height
-   panel and then close it. The CONTENT gets the overshoot instead: it settles
-   just past its resting place and eases back, which is what reads as spring
-   rather than as a drawer sliding. Separating them is the whole trick. */
-.atlas-rail {
-  transition: height 340ms cubic-bezier(0.32, 0.72, 0, 1);
-}
-
 /* The Session detail's two-pane split (detail | grounded chat).
  *
  * The detail still gives up the space — the chat's column takes its full width
@@ -1086,11 +1011,6 @@
 }
 .atlas-split-in {
   animation: atlas-split-in 260ms cubic-bezier(0.32, 0.72, 0, 1) both;
-}
-.atlas-rail-body {
-  transition:
-    transform 380ms cubic-bezier(0.22, 1.4, 0.36, 1),
-    opacity 200ms ease-out;
 }
 
 /* Breathing ring — the Timeline's live/attention markers and stat dots. A
@@ -1396,11 +1316,6 @@
   /* The two looping animations in the chrome: the capture dot's halo and the
      Timeline teaser's rail pulse. Both are decorative. */
   /* The dashes stay — only their travel stops. */
-  /* The rail snaps instead of springing. */
-  .atlas-rail,
-  .atlas-rail-body {
-    transition: none;
-  }
   .atlas-live-pulse,
   .atlas-ants,
   .animate-ping,

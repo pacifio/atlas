@@ -3,8 +3,8 @@
  *
  * The editor chrome (slash menu, bubble menu, the callout / toggle / code
  * block node views) is styled in its components with the package's tokens and
- * primitives; code tokens take their colours from the shared
- * `src/styles/hljs.css`. Sizes here are the type scale's variables; every
+ * primitives; code tokens take their colours from the package's
+ * `syntax.css`. Sizes here are the type scale's variables; every
  * colour is a theme token.
  *
  * This file is unlayered, so its rules beat any Tailwind utility. Keep it to

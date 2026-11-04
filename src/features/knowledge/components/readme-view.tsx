@@ -7,7 +7,6 @@ import rehypeSanitize from "rehype-sanitize";
 import { PREVIEW_SANITIZE_SCHEMA } from "@/lib/markdown-sanitize";
 import { rehypeFileChips } from "@/lib/file-chip-hast";
 import { openFileChipUnder, useFileChipHost } from "@/lib/file-chip-host";
-import "@/styles/hljs.css";
 import "../readme.css";
 
 interface Props {

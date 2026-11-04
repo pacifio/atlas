@@ -24,7 +24,6 @@ import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import { ExternalLink, ImageOff, Paperclip } from "lucide-react";
-import "@/styles/hljs.css";
 
 import { MarkdownBlockFrame } from "@/components/markdown-block-frame";
 import { isWebUrl, openPullRequest } from "@/features/git/lib/git-pr-api";

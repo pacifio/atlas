@@ -164,7 +164,7 @@ const COMPONENTS: Components = {
     if (!className) {
       return <Code {...rest}>{children}</Code>;
     }
-    // The `hljs` class token is dropped: hljs.css is unlayered and its `.hljs`
+    // The `hljs` class token is dropped: the package's syntax.css is unlayered and its `.hljs`
     // box rules would beat the package block's layered utilities. The token
     // colours are unscoped `.hljs-*` rules and still apply; `language-*` stays.
     const langClasses = className

@@ -5,12 +5,12 @@
  * highlight.js token classes, so we key the same colors off `.hljs-*` here.
  *
  * Scoped under `.diff-syntax` (specificity 0,2,0) AND intentionally UNLAYERED:
- * chat markdown imports `styles/hljs.css` (unlayered, bare `.hljs-*`).
+ * the package's `syntax.css` is unlayered, with bare `.hljs-*` rules.
  * Unlayered styles always beat @layer'd ones, so we stay unlayered and win
  * those rules on specificity instead. We never add the bare `.hljs` root class
  * to diff spans, so its root bg/color never apply.
  *
- * Since PR 2 both files resolve the SAME theme keys — `hljs.css` names
+ * Since PR 2 both files resolve the SAME theme keys — `syntax.css` names
  * `--syntax-*` directly, this one reaches them through the `--cm-*`
  * aliases — so the two agree by construction. The scope survives because a diff
  * row needs per-line backgrounds the markdown pipeline has no concept of.
