@@ -20,7 +20,10 @@ generated theme blocks would never match and there is no `:root` theme floor:
 | `src/styles/utilities.css` | the Tailwind namespaces (`@theme`), the named utilities (`@utility`), and the global focus and border rules                                 |
 
 `globals.css` keeps only what is desktop's: the 13px root, the titlebar height,
-`font-terminal`, `rounded-composer` and the feature CSS. Primitives are imported
+`font-terminal`, `rounded-composer` and the feature CSS. The other files in
+`src/styles/` are desktop's too: `diff-syntax.css` and `xyflow.css`, which
+`globals.css` imports, and `hljs.css`, which the markdown and code renderers
+import themselves. Primitives are imported
 from the package root (`import { Button } from "@tryatlas/design"`); there is no
 `src/ui/` any more.
 
@@ -328,8 +331,9 @@ Tailwind's `focus-visible:outline-none`). Both are utilities, which is why the
 global rule has to live in `@layer base` — an unlayered rule would outrank every
 utility regardless of specificity.
 
-`--ring` is a real accent: every built-in theme sets it to its `primary`, and the
-pre-theme `:root` in the package's `themes.css` matches. It used to equal `--border-strong`,
+`--ring` is a real accent: every built-in theme sets it to its `primary`, and so
+does the `:root` block in the package's `themes.css` (which desktop does not
+load). It used to equal `--border-strong`,
 which is why a focus ring was indistinguishable from a border.
 
 **Disabled** (decision 31). One visual treatment, everywhere: `opacity-50` plus
@@ -458,7 +462,7 @@ So the rule is drawn where the real constraint is:
 | A theme key derived in CSS                                       | **Never.** `keys.toml` + the TS resolver is the one derivation site (decision 42).             |
 | `color-mix()` tinting a resolved token in a rule or a style prop | Fine. 23 sites do, all of them `var(--token) N%, transparent`.                                 |
 | Tailwind's `/N` opacity modifier                                 | Fine — the build emits an rgba fallback and an `@supports` upgrade.                            |
-| Relative colour syntax (`rgb(from …)`, `oklch(from …)`)          | **Never.** Safari 16.4, no fallback, and the `colour-literal` ratchet rule already catches it. |
+| Relative colour syntax (`rgb(from …)`, `oklch(from …)`)          | **Never.** Safari 16.4, no fallback. The `colour-literal` ratchet rule catches the `rgb(from …)` and `hsl(from …)` forms, not `oklch(from …)`. |
 
 The alternative — replacing the 23 call sites — was rejected: each is a
 presentational tint, so it would mean either ~15 new public theme keys (days
@@ -472,8 +476,13 @@ i.e. 23 new chances for a stale palette. Both are worse than the risk removed.
 Nothing else in the toolchain can see this drift — a new `text-[11.5px]`
 type-checks, lints and renders. The rules and the runner are the package's
 (`runRatchet` from `@tryatlas/design/ratchet`), so desktop, web and docs hold one
-set; desktop passes its own roots and exemptions, and keeps two checks of its
-own: the retired `--atlas-` theme-key names, and `transition-all` (see Motion).
+set; desktop passes its own roots and exemptions. Two checks are scoped wider,
+to all of `src/` and `index.html`: the package's `transition-all` rule (see
+Motion), passed back to `runRatchet` with that scope, and desktop's own ban on
+the retired `--atlas-` spelling of every theme key and derived variable (names
+from the package's registries). Desktop does not turn on the package's
+`banAtlasPrefix`, because app variables that are not theme keys
+(`--atlas-chat-column`, `--atlas-boot-*`) keep the prefix (ADR-0027).
 
 **What it counts**, across `src/features/**`, `src/components/**` and
 `src/dev/**` (the primitives are held to the same rules in the package):

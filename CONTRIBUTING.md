@@ -48,6 +48,8 @@ Share the proposal in the issue before implementing anything that changes UI or 
 
 Atlas has a lot of surfaces — a change that looks right in one panel often reads wrong across the other twelve. A design pass up front is faster than a rewrite after review.
 
+Build UI from the `@tryatlas/design` primitives, scales and theme tokens ([design-system.md](docs/reference/design-system.md)). A change to a primitive, a scale or a theme key belongs in the [`tryatlas/design`](https://github.com/tryatlas/design) package, then a bump of desktop's pinned tag (ADR-0027); the design-system ratchet test fails on hand-written sizes and colours.
+
 ## Quickstart
 
 **macOS and Linux are the supported platforms.** Linux support is what [docs/reference/linux-support.md](docs/reference/linux-support.md) says it is: glibc 2.35 or newer and WebKitGTK 4.1, shipped as deb, rpm, Arch, AppImage and tarball. Windows builds from the same Tauri codebase but is untested — a Windows build is planned, and reports are genuinely welcome in the meantime.

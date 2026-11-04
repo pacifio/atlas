@@ -26,6 +26,14 @@ base token. Removing a key is a soft break: an unknown key still loads,
 with a warning, so a theme written for a newer Atlas keeps working on an older
 one and the other way round.
 
+**There is no legacy theme support.** A theme file declares `schema = 1`. A
+file naming another schema, or one in an older shape (a `[colors]` table of
+`--atlas-*` variables, say), fails to load like any other bad file: Settings →
+Appearance lists it as skipped, with the reason, and every other theme,
+including the default `atlas`, still loads. A `themeLight` or `themeDark` that
+named it falls back to `atlas` for the session. Nothing converts an old file;
+re-import its source or rewrite it as schema 1.
+
 An explicit key is written as a dotted TOML key (or as nested tables). A key
 may not also be a prefix, so use `terminal.ansi.red`, never both `terminal`
 and `terminal.ansi.red`. The schema enumerates the dotted form, which is what
@@ -56,7 +64,7 @@ recharts colour prop, mermaid's `themeVariables`, and a canvas 2D `fillStyle`
 | `themeColor(key)` | the resolved colour for a theme key |
 | `themeDerived(name)` | the resolved colour for a derived variable |
 | `themeBase(token)` | the resolved colour for a base token (`chart-1`, `card`, …) |
-| `themeHex(key)` / `hexOf(value)` | the same as pixi's 24-bit integer |
+| `themeHex(key)` | the same as pixi's 24-bit integer (`hexOf(value)` from `@tryatlas/design/theme` converts a colour string; one it cannot parse gives `0`) |
 | `onThemeApplied(fn)` | imperative repaint hook — a live xterm, a running pixi scene |
 | `useThemeVersion()` | React re-render hook — recharts, mermaid |
 
@@ -80,12 +88,14 @@ something lighter than the terminal background it sits just above. One key
 still uses it, `terminal.ansi.bright_white`, where "paler" is the literal
 intent whatever the background.
 
-Adding a fourth means editing `crates/atlas-theme/keys.toml`'s vocabulary
-comment, the `OPERATIONS` table in `scripts/generate-theme-keys.mjs`, and the
-registry preamble it emits — the transform itself is one line of `color.ts`.
+Adding a fourth is a package change: the operation, its vocabulary comment in
+`keys.toml` and the resolver all live in `@tryatlas/design`. Desktop only
+describes operations, in the `OPERATIONS` table of
+`scripts/generate-theme-keys.mjs`, so after the bump `bun run theme:keys`
+rejects the new one until a row there says how to print it.
 
 <!-- generated:theme-keys -->
-<!-- Generated from crates/atlas-theme/keys.toml by `bun run theme:keys`. Edit that file, not this block. -->
+<!-- Generated from crates/atlas-theme/keys.toml by `bun run theme:keys`. That file is @tryatlas/design's, copied in: change it in the package, never here. -->
 
 ## How a missing base token is derived
 
@@ -349,8 +359,9 @@ set above. It can also set the three fonts (`font-sans`, `font-serif`,
 
 ## Regenerating checked assets
 
-After editing `crates/atlas-theme/keys.toml` — adding, removing, renaming a key,
-or changing what one derives from:
+After bumping `@tryatlas/design` — the package is where a key is added, removed
+or renamed, or what one derives from changes; `crates/atlas-theme/keys.toml` is
+a copy and is never edited by hand:
 
 ```bash
 bun run theme:keys          # rewrites all four generated files

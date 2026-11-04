@@ -60,6 +60,31 @@ src/features/<feature>/
 - **UI primitives** come from the design package, `@tryatlas/design` (ADR-0027).
 - **Shared helpers** live in `src/lib/`. `@/` aliases `src/`.
 
+### The design package and themes
+
+`@tryatlas/design` is installed from a git tag, pinned exactly in `package.json`
+(ADR-0027). It owns the primitives, the scales and named utilities, `keys.toml`
+(every theme key and how it derives), the TypeScript resolver, the built-in
+themes and the ratchet's rules. Change it there and bump the pin. A theme
+reaches the screen like this:
+
+1. Rust (`crates/atlas-theme`) loads the built-in themes and the user's
+   `~/.config/atlas/themes/*.toml`, against the key list and rule tables
+   `bun run theme:keys` copied from the package. A file that is not
+   `schema = 1` is skipped with a warning and the default `atlas` theme still
+   loads; there is no legacy format.
+2. `src/features/theme/apply-theme.ts` resolves the theme with the package's
+   `resolveTheme` and writes every value under `html:root` in
+   `<style id="atlas-resolved-theme">`. A key's variable is its name with `.`
+   and `_` as `-`, unprefixed: `element.hover` is `--element-hover`.
+3. `src/styles/globals.css` imports `styles-core.css`, the package stylesheet
+   without its built-in theme blocks, so the utilities read those variables.
+4. Renderers that need a concrete value (xterm, pixi, recharts, mermaid,
+   canvas) read `src/features/theme/theme-values.ts` and subscribe to theme
+   changes (`theme-subscription-contract.test.ts`).
+
+Reference: `docs/reference/design-system.md` and `docs/reference/theme-keys.md`.
+
 ### State management
 
 - **Stores are Zustand + Immer**, wrapped in `createSelectors` (`src/lib/create-selectors.ts`), which auto-generates `useStore.use.x()` selectors.
@@ -338,10 +363,9 @@ atlas/
 │   ├── App.tsx, main.tsx         entry points
 │   ├── features/                 one folder per feature (~30 slices)
 │   ├── components/                cross-feature widgets
-│   ├── ui/                        primitives (Kbd, etc.)
 │   ├── hooks/                     shared React hooks
 │   ├── lib/                       utilities (cn, createSelectors, constants)
-│   ├── styles/                    Tailwind 4 + design tokens
+│   ├── styles/                    desktop-only CSS over @tryatlas/design's styles-core.css
 │   └── types/                     shared TS types (agent.ts, acp.ts, etc.)
 │
 ├── src-tauri/                    Tauri host (Rust)
