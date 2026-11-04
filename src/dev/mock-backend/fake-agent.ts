@@ -128,6 +128,19 @@ export function sendDelta(delta: AgentDelta): Promise<void> {
   return emit("atlas:agents", delta);
 }
 
+/** Send a delta to the most recent session, built from its ids, for deltas no
+ *  helper here covers (`plan_updated`, `context_usage`, `rate_limits`, …). */
+export async function emitForLatest(
+  make: (ids: ReturnType<typeof at>) => AgentDelta,
+): Promise<void> {
+  const s = latest();
+  if (!s) {
+    console.warn("[mock-backend] emitForLatest: no session bound yet");
+    return;
+  }
+  await sendDelta(make(at(s)));
+}
+
 /** Name a session as the agent would (`title_updated`): a seeded chat opens titled, not "New chat". */
 export function sendTitle(sessionId: string, title: string): Promise<void> {
   const s = latest(sessionId);

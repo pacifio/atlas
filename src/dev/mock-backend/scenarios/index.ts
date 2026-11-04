@@ -43,6 +43,8 @@ import { chatLinkIcons } from "./chat-link-icons";
 import { chatLongPrompt } from "./chat-long-prompt";
 import { chatLongSession } from "./chat-long-session";
 import { chatMarkdown } from "./chat-markdown";
+import { chatSidePanels } from "./chat-side-panels";
+import { chatSlashCommands } from "./chat-slash-commands";
 import { chatTools } from "./chat-tools";
 import { chatTurnChanges, chatTurnChangesLong, chatTurnChangesNative } from "./chat-turn-changes";
 import { captureHealthy } from "./capture-healthy";
@@ -113,6 +115,8 @@ const all: Scenario[] = [
     },
   },
   chatTools,
+  chatSidePanels,
+  chatSlashCommands,
   chatComments,
   chatCommentsSelection,
   chatCommentsOrphan,
