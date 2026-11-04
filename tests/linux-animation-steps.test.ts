@@ -112,7 +112,10 @@ describe("infinite animations are stepped on Linux", () => {
         const fps = new RegExp(`${INFINITE_ANIMATION_FPS_VAR}:\\s*([0-9.]+)\\s*(?:;|$)`);
         const cap = overrides.get("")?.match(fps);
         expect(cap, `no "${INFINITE_ANIMATION_FPS_VAR}" in the bare "${LINUX}" rule`).toBeTruthy();
-        expect(Number(cap![1])).toBeGreaterThan(0);
+        // The package's contract: about 12 fps, never more.
+        const capped = Number(cap![1]);
+        expect(capped).toBeGreaterThan(0);
+        expect(capped).toBeLessThanOrEqual(12);
       });
     }
   }

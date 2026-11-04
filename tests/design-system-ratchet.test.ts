@@ -43,7 +43,8 @@ import { DERIVED_VAR_REGISTRY, THEME_KEY_REGISTRY } from "@tryatlas/design/theme
  * whatever changes next — a width, a padding that follows a count — so each
  * use is a layout animation recalculating the page every frame, and that is
  * as true in `src/styles` and `index.html` as anywhere. The package's rule is
- * passed back with its scope widened to all of `src/` plus `index.html`.
+ * passed back with its scope widened to all of `src/` plus `index.html`, in
+ * a run of its own that the colour exemptions below do not reach.
  */
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -128,16 +129,27 @@ const EXEMPT_DIRS: Record<string, string> = {
 };
 
 describe("design-system ratchet", () => {
-  it(`has no violation in ${SCAN_ROOTS.join(" + ")} (transition-all: ${TRANSITION_ALL_SCOPE.join(" + ")})`, () => {
+  it("has no violation in " + SCAN_ROOTS.join(" + "), () => {
+    const violations = runRatchet({
+      cwd: REPO_ROOT,
+      roots: SCAN_ROOTS,
+      exemptFiles: EXEMPT_FILES,
+      exemptDirs: EXEMPT_DIRS,
+    });
+    expect(violations, formatViolations(violations)).toEqual([]);
+  });
+
+  // Its own run, without the exemptions above: those argue a file's COLOURS,
+  // and must not wave a `transition-all` through. No roots, so only the
+  // scoped rule scans; a per-site `ratchet-allow` is still honoured.
+  it("has no transition-all in " + TRANSITION_ALL_SCOPE.join(" + "), () => {
     // A scoped path that is gone scans nothing and passes silently.
     for (const scoped of TRANSITION_ALL_SCOPE) {
       expect(existsSync(path.join(REPO_ROOT, scoped)), scoped).toBe(true);
     }
     const violations = runRatchet({
       cwd: REPO_ROOT,
-      roots: SCAN_ROOTS,
-      exemptFiles: EXEMPT_FILES,
-      exemptDirs: EXEMPT_DIRS,
+      roots: [],
       rules: [{ ...TRANSITION_ALL_RULE, scope: TRANSITION_ALL_SCOPE }],
     });
     expect(violations, formatViolations(violations)).toEqual([]);
