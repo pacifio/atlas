@@ -8,29 +8,23 @@
 // default view is a cached "Popular" merge of a few seed queries, and detail is
 // fetched lazily on open.
 
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { Boxes, Check, Copy, Download } from "lucide-react";
-import { GithubIcon } from "@/components/github-icon";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
 
 import { copyText } from "@/lib/clipboard";
-import { AtlasLoader } from "@/components/atlas-loader";
 import { packs as packsApi } from "@/features/packs/lib/packs-api";
 import { skills as skillsApi } from "@/features/skills/lib/skills-api";
 import { SKILLS_CHANGED_EVENT } from "@/features/skills/lib/skills-events";
-import { SkillDescriptions, SkillDialog } from "./skill-modal";
 import {
-  SettingsGroup,
-  SettingsNote,
-  SettingsRow,
-  SettingsSection,
-} from "../layout/settings-layout";
-import { SettingsSearch } from "../layout/settings-search";
-import { TrendSparkline } from "@/components/trend-sparkline";
+  detailFromPreview,
+  githubUrlFor,
+  hitMarkdown,
+  mergePopular,
+} from "@/features/skills/lib/skills-view-model";
 import { installTrend } from "@/features/packs/lib/install-trends";
-import type { ComponentKind, Pack, PackSearchHit, Scope } from "@/features/packs/lib/types";
-import { Badge, Button, Icon, Hint } from "@tryatlas/design";
+import type { Pack, PackSearchHit, Scope } from "@/features/packs/lib/types";
+import { SkillDetailDialogView, SkillsMarketplaceView } from "./views/skills-marketplace-view";
 
 const POPULAR_SEEDS = ["agent", "react", "design", "review", "database", "python"];
 const POPULAR_LS_KEY = "atlas:skills:popular:v1";
@@ -93,17 +87,7 @@ function savePopularCache(hits: PackSearchHit[]): void {
   }
 }
 
-const KIND_LABEL: Record<ComponentKind, string> = {
-  skill: "skill",
-  agent: "agent",
-  command: "command",
-  hook: "hook",
-  rule: "rule",
-  script: "script",
-};
-
 const PAGE_SIZE = 20;
-const COMPACT = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
 
 export function SkillsMarketplace({
   scope,
@@ -166,15 +150,9 @@ export function SkillsMarketplace({
     void (async () => {
       const batches = await Promise.allSettled(POPULAR_SEEDS.map((q) => packsApi.search(q)));
       if (cancelled) return;
-      const byId = new Map<string, PackSearchHit>();
-      for (const b of batches) {
-        if (b.status !== "fulfilled") continue;
-        for (const hit of b.value) {
-          const prev = byId.get(hit.id);
-          if (!prev || hit.installs > prev.installs) byId.set(hit.id, hit);
-        }
-      }
-      const merged = [...byId.values()].sort((a, b) => b.installs - a.installs);
+      const merged = mergePopular(
+        batches.flatMap((b) => (b.status === "fulfilled" ? [b.value] : [])),
+      );
       savePopularCache(merged);
       setPopular(merged);
     })();
@@ -218,138 +196,35 @@ export function SkillsMarketplace({
   const more = Math.min(PAGE_SIZE, rows.length - limit);
 
   return (
-    <SettingsSection
-      title="Discover"
-      description="Skills from the skills.sh registry, most installed first."
+    <SkillsMarketplaceView
+      query={query}
+      onQueryChange={setQuery}
+      loading={loading}
+      rows={rows.slice(0, limit).map((hit) => ({
+        hit,
+        installed: isHitInstalled(hit),
+        installing: installingIds.has(hit.id),
+        trend: installTrend(hit.id, hit.installs).points,
+      }))}
+      more={more}
+      onShowMore={() => setLimit((l) => l + PAGE_SIZE)}
+      onSelect={setSelected}
+      onInstall={install}
     >
-      <div className="flex">
-        <SettingsSearch
-          value={query}
-          onValueChange={setQuery}
-          label="Search the skills registry"
-          placeholder="Search the skills registry"
-          trailing={loading && <AtlasLoader size={11} />}
-        />
-      </div>
-      <SettingsGroup>
-        {rows.length === 0 ? (
-          <SettingsNote>
-            {loading
-              ? "Searching…"
-              : query.trim()
-                ? `No skill matches “${query.trim()}”.`
-                : "Search the registry to find skills."}
-          </SettingsNote>
-        ) : (
-          rows.slice(0, limit).map((hit) => (
-            <SettingsRow
-              key={hit.id}
-              title={
-                <button
-                  type="button"
-                  onClick={() => setSelected(hit)}
-                  className="text-left hover:underline"
-                >
-                  {hit.name}
-                </button>
-              }
-              description={<span className="font-mono">{hit.source}</span>}
-              control={
-                <>
-                  {/* Aesthetic, not analytic: the shape reads as momentum and
-                      the number beside it is the exact count. */}
-                  <span className="flex items-center gap-2 text-2xs text-muted-foreground tabular-nums">
-                    <TrendSparkline
-                      points={installTrend(hit.id, hit.installs).points}
-                      width={48}
-                      height={16}
-                      label="Installs over the last 6 months"
-                    />
-                    <Hint label={`${hit.installs.toLocaleString()} installs`}>
-                      <span tabIndex={0} className="w-10 text-right">
-                        {COMPACT.format(hit.installs)}
-                      </span>
-                    </Hint>
-                  </span>
-                  <InstallButton
-                    name={hit.name}
-                    installed={isHitInstalled(hit)}
-                    installing={installingIds.has(hit.id)}
-                    onClick={() => install(hit)}
-                  />
-                </>
-              }
-            />
-          ))
-        )}
-        {more > 0 && (
-          <div className="p-1">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="w-full"
-              onClick={() => setLimit((l) => l + PAGE_SIZE)}
-            >
-              Show {more} more
-            </Button>
-          </div>
-        )}
-      </SettingsGroup>
-
-      <SkillDetailModal
+      <SkillDetail
         hit={selected}
         installed={selected ? isHitInstalled(selected) : false}
         installing={selected ? installingIds.has(selected.id) : false}
         onInstall={() => selected && install(selected)}
         onClose={() => setSelected(null)}
       />
-    </SettingsSection>
-  );
-}
-
-function InstallButton({
-  name,
-  installed,
-  installing,
-  onClick,
-}: {
-  name: string;
-  installed: boolean;
-  installing: boolean;
-  onClick: () => void;
-}) {
-  if (installed) {
-    return (
-      <Button
-        variant="ghost"
-        size="sm"
-        className="w-20"
-        disabled
-        aria-label={`${name} is installed`}
-      >
-        <Icon icon={Check} size="xs" />
-        Installed
-      </Button>
-    );
-  }
-  return (
-    <Button
-      variant="outline"
-      size="sm"
-      className="w-20"
-      disabled={installing}
-      aria-label={`Install ${name}`}
-      onClick={onClick}
-    >
-      {installing ? <AtlasLoader size={11} /> : <Icon icon={Download} size="xs" />}
-      Install
-    </Button>
+    </SkillsMarketplaceView>
   );
 }
 
 /** Lazily fetches the repo preview (description and components) that the
- *  registry search lacks, and offers Install. */
-function SkillDetailModal({
+ *  registry search lacks, for the detail dialog. */
+function SkillDetail({
   hit,
   installed,
   installing,
@@ -362,7 +237,7 @@ function SkillDetailModal({
   onInstall: () => void;
   onClose: () => void;
 }) {
-  // Seed synchronously from cache so a re-opened modal paints instantly.
+  // Seed synchronously from cache so a re-opened dialog paints instantly.
   const [preview, setPreview] = useState<Pack | null>(
     hit ? (previewCache.get(hit.source) ?? null) : null,
   );
@@ -393,90 +268,17 @@ function SkillDetailModal({
     };
   }, [hit]);
 
-  // Packs rarely carry a manifest description, but the skills inside them do,
-  // so the dialog lists those; other kinds (commands, agents, rules) are counts.
-  const skillComponents = useMemo(
-    () => (preview?.components ?? []).filter((c) => c.kind === "skill"),
-    [preview],
-  );
-  const otherCounts = useMemo(() => {
-    const m = new Map<ComponentKind, number>();
-    for (const c of preview?.components ?? [])
-      if (c.kind !== "skill") m.set(c.kind, (m.get(c.kind) ?? 0) + 1);
-    return [...m.entries()];
-  }, [preview]);
-
-  const githubUrl = hit ? `https://github.com/${hit.source}` : "";
-  const copyMarkdown = () => {
-    if (!hit) return;
-    const lines = [`# ${hit.name}`, ""];
-    if (preview?.manifest?.description) lines.push(preview.manifest.description, "");
-    for (const c of skillComponents) {
-      lines.push(`## ${c.name}`);
-      if (c.description) lines.push("", c.description);
-      lines.push("");
-    }
-    lines.push(`Source: ${githubUrl}`);
-    void copyText(lines.join("\n"));
-  };
-
   return (
-    <SkillDialog
-      open={!!hit}
+    <SkillDetailDialogView
+      hit={hit}
+      installed={installed}
+      installing={installing}
+      status={loading ? "loading" : preview ? "ready" : "failed"}
+      detail={detailFromPreview(preview)}
+      onInstall={onInstall}
+      onCopy={() => hit && void copyText(hitMarkdown(hit, preview))}
+      onOpenGithub={() => hit && void openUrl(githubUrlFor(hit.source))}
       onClose={onClose}
-      title={hit?.name ?? ""}
-      subtitle={hit ? `${hit.source} · ${hit.installs.toLocaleString()} installs` : undefined}
-      footer={
-        <>
-          <Button variant="ghost" onClick={copyMarkdown}>
-            <Icon icon={Copy} size="xs" />
-            Copy as Markdown
-          </Button>
-          <Button variant="ghost" onClick={() => void openUrl(githubUrl)}>
-            <GithubIcon size={12} />
-            GitHub
-          </Button>
-          <Button disabled={installed || installing} onClick={onInstall}>
-            {installing ? (
-              <AtlasLoader size={11} />
-            ) : (
-              <Icon icon={installed ? Check : Download} size="xs" />
-            )}
-            {installed ? "Installed" : "Install"}
-          </Button>
-        </>
-      }
-    >
-      {loading ? (
-        <p className="caption">Loading details…</p>
-      ) : preview ? (
-        <>
-          {preview.manifest?.description && (
-            <p className="text-sm text-secondary-foreground">{preview.manifest.description}</p>
-          )}
-          {skillComponents.length > 0 && (
-            <SkillDescriptions
-              skills={skillComponents.map((c) => ({ name: c.name, description: c.description }))}
-            />
-          )}
-          {otherCounts.length > 0 && (
-            <div className="flex flex-wrap gap-1.5">
-              {otherCounts.map(([kind, n]) => (
-                <Badge key={kind} variant="outline">
-                  <Icon icon={Boxes} size="xs" />
-                  {n} {KIND_LABEL[kind]}
-                  {n > 1 ? "s" : ""}
-                </Badge>
-              ))}
-            </div>
-          )}
-          {!preview.manifest?.description &&
-            skillComponents.length === 0 &&
-            otherCounts.length === 0 && <p className="caption">No details published.</p>}
-        </>
-      ) : (
-        <p className="caption">Couldn't load the details. You can still install it.</p>
-      )}
-    </SkillDialog>
+    />
   );
 }
