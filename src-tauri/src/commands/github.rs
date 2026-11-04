@@ -194,6 +194,37 @@ fn derive_display_name(repo_dir: &Path, dir_name: &str) -> String {
     }
 }
 
+/// The message for a search GitHub refused. A rate limit (403/429 with no
+/// requests left, or a `Retry-After`) names the wait in whole minutes,
+/// rounded up; the frontend keys its warning on the leading sentence.
+fn search_failure(
+    status: u16,
+    remaining: Option<&str>,
+    retry_after: Option<&str>,
+    reset: Option<&str>,
+    now_secs: u64,
+) -> String {
+    let limited = (status == 403 || status == 429)
+        && (remaining == Some("0") || retry_after.is_some());
+    if !limited {
+        return format!("GitHub answered {status}");
+    }
+    let wait_secs = retry_after
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .or_else(|| {
+            reset
+                .and_then(|s| s.trim().parse::<u64>().ok())
+                .map(|r| r.saturating_sub(now_secs))
+        });
+    match wait_secs {
+        Some(secs) => {
+            let minutes = secs.div_ceil(60).max(1);
+            format!("GitHub rate limit reached. Try again in {minutes} min.")
+        }
+        None => "GitHub rate limit reached. Try again in a minute.".to_string(),
+    }
+}
+
 #[tauri::command]
 pub async fn search_github(query: String) -> Result<Vec<GithubRepo>, String> {
     let url = format!(
@@ -212,6 +243,28 @@ pub async fn search_github(query: String) -> Result<Vec<GithubRepo>, String> {
         .send()
         .await
         .map_err(|e| format!("GitHub API request failed: {e}"))?;
+
+    // A refused search (unauthenticated search is capped at 10 a minute)
+    // used to parse as "no items" and read as "No repositories found".
+    if !resp.status().is_success() {
+        let header = |name: &str| {
+            resp.headers()
+                .get(name)
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string)
+        };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        return Err(search_failure(
+            resp.status().as_u16(),
+            header("x-ratelimit-remaining").as_deref(),
+            header("retry-after").as_deref(),
+            header("x-ratelimit-reset").as_deref(),
+            now,
+        ));
+    }
 
     let json: serde_json::Value = resp
         .json()
@@ -621,6 +674,29 @@ fn urlencoded(s: &str) -> String {
 #[cfg(test)]
 mod clone_guard_tests {
     use super::*;
+
+    #[test]
+    fn a_rate_limited_search_names_the_wait() {
+        let now = 1_000;
+        assert_eq!(
+            search_failure(403, Some("0"), None, Some("1125"), now),
+            "GitHub rate limit reached. Try again in 3 min."
+        );
+        assert_eq!(
+            search_failure(429, None, Some("30"), None, now),
+            "GitHub rate limit reached. Try again in 1 min."
+        );
+        assert_eq!(
+            search_failure(403, Some("0"), None, None, now),
+            "GitHub rate limit reached. Try again in a minute."
+        );
+    }
+
+    #[test]
+    fn other_refusals_name_the_status() {
+        assert_eq!(search_failure(403, Some("5"), None, None, 0), "GitHub answered 403");
+        assert_eq!(search_failure(500, None, None, None, 0), "GitHub answered 500");
+    }
 
     #[test]
     fn only_github_https_urls_parse() {

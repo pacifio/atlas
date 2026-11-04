@@ -18,6 +18,7 @@ import {
 } from "pixi.js";
 import Matter from "matter-js";
 import { forceLayout } from "@/lib/graph-layout";
+import { canvasResolution } from "@/lib/ui-zoom";
 import type { Viewport } from "@/components/graph-ruler";
 import type { GraphPalette } from "@/components/graph-palette";
 import {
@@ -26,7 +27,6 @@ import {
   LABEL_GAP,
   MAX_SCALE,
   MIN_SCALE,
-  RESOLUTION,
   ZOOM_STEP,
   neighborsOf,
   nodeRadiusForDegree,
@@ -206,15 +206,20 @@ export function buildKnowledgeScene(app: Application, opts: KnowledgeSceneOption
 
   // Matter computes:
   //   position = absolute * (width/clientWidth) * scale + offset
-  // With Pixi resolution=2, (width/clientWidth)=2 → we need scale 0.5
+  // With Pixi resolution r, (width/clientWidth) = r → we need scale 1/r
   // to land in CSS pixels (where the bodies live). To also factor in
   // the Pixi viewport pan/zoom we want
   //   world = (canvas - viewportPos) / viewportScale
-  // → scale = 1 / (RESOLUTION * z),  offset = -viewportPos / z.
-  // Call this after every viewport change so picking stays aligned.
+  // → scale = 1 / (ratio * z),  offset = -viewportPos / z.
+  // The ratio is MEASURED, as Matter measures it: the resolution follows
+  // the interface zoom. Call this after every viewport change so picking
+  // stays aligned.
   const syncMouseToViewport = () => {
     const z = viewport.scale.x;
-    const s = 1 / (RESOLUTION * z);
+    // A hidden canvas measures 0 wide; fall back rather than divide by it.
+    const el = app.canvas as HTMLCanvasElement;
+    const ratio = el.clientWidth > 0 ? el.width / el.clientWidth : canvasResolution();
+    const s = 1 / (ratio * z);
     Matter.Mouse.setScale(mouse, { x: s, y: s });
     Matter.Mouse.setOffset(mouse, {
       x: -viewport.position.x / z,

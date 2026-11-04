@@ -259,8 +259,11 @@ export const SlashMenu = forwardRef<SlashMenuRef, SlashMenuProps>(function Slash
           return true;
         }
         if (event.key === "Enter" || event.key === "Tab") {
+          // With nothing matched, the key is the editor's: Enter starts a
+          // new line, Tab does what it does there.
           const item = items[selectedIndex];
-          if (item) command(item);
+          if (!item) return false;
+          command(item);
           return true;
         }
         return false;

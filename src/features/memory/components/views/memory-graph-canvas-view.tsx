@@ -6,7 +6,8 @@ import { graphPalette } from "@/components/graph-palette";
 import { onThemeApplied, themeBase } from "@/features/theme/theme-values";
 import type { GraphLayout, MemoryGraphData } from "../../lib/memory-graph-types";
 import { buildAdjacency, reachable } from "../../lib/memory-graph-paint";
-import { buildMemoryScene, RESOLUTION, type MemorySceneState } from "../../lib/memory-graph-scene";
+import { buildMemoryScene, type MemorySceneState } from "../../lib/memory-graph-scene";
+import { canvasResolution } from "@/lib/ui-zoom";
 
 /**
  * The memory force graph: sizes itself, owns the pixi `Application` and feeds
@@ -169,7 +170,7 @@ function Scene({
         canvas,
         width,
         height,
-        resolution: RESOLUTION,
+        resolution: canvasResolution(),
         antialias: true,
         backgroundAlpha: 0,
         autoDensity: true,

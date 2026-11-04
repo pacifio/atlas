@@ -18,6 +18,7 @@ import {
 } from "pixi.js";
 import Matter from "matter-js";
 import { forceLayout } from "@/lib/graph-layout";
+import { canvasResolution } from "@/lib/ui-zoom";
 import type { Viewport } from "@/components/graph-ruler";
 import type { GraphPalette } from "@/components/graph-palette";
 import type { GraphLayout, MemoryGraphData } from "./memory-graph-types";
@@ -31,8 +32,6 @@ import {
   type PaintState,
 } from "./memory-graph-paint";
 
-/** Pixi's backing-store resolution; the host passes it to `app.init`. */
-export const RESOLUTION = 2;
 const MIN_SCALE = 0.2;
 const MAX_SCALE = 4;
 const ZOOM_STEP = 0.004;
@@ -217,12 +216,12 @@ export function buildMemoryScene(app: Application, opts: MemorySceneOptions): ()
   // + offset`. Bodies live in CSS px, and the pixi viewport pans/zooms them, so
   // we want `world = (canvas - viewportPos) / viewportScale`, i.e.
   // `scale = 1 / (ratio * z)`, `offset = -viewportPos / z`. The ratio is the
-  // MEASURED backing ratio, not `RESOLUTION`, because Matter measures it too.
+  // MEASURED backing ratio, not the one asked for, because Matter measures it too.
   // Call this after every viewport change so picking stays aligned.
   const syncMouseToViewport = () => {
     const z = viewport.scale.x;
     // A hidden canvas measures 0 wide; fall back rather than divide by it.
-    const ratio = canvas.clientWidth > 0 ? canvas.width / canvas.clientWidth : RESOLUTION;
+    const ratio = canvas.clientWidth > 0 ? canvas.width / canvas.clientWidth : canvasResolution();
     const s = 1 / (ratio * z);
     Matter.Mouse.setScale(mouse, { x: s, y: s });
     Matter.Mouse.setOffset(mouse, { x: -viewport.position.x / z, y: -viewport.position.y / z });

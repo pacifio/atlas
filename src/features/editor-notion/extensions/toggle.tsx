@@ -123,11 +123,30 @@ export const Toggle = Node.create({
 const TITLE = "flex-1 bg-transparent text-left text-md font-medium text-foreground outline-none";
 const BODY = "mt-1 ml-3 border-l border-border-subtle pl-7";
 
-function ToggleView({ node, updateAttributes }: NodeViewProps) {
+function ToggleView({ node, updateAttributes, editor, getPos }: NodeViewProps) {
   const open = Boolean(node.attrs.open);
   const title = (node.attrs.title as string) || "Untitled";
   const [editingTitle, setEditingTitle] = useState(false);
   const [draft, setDraft] = useState(title);
+
+  // Collapsing hides the body; a caret left in it would type into text no
+  // one can see. It moves to the block after the toggle, one made if none.
+  const toggleOpen = () => {
+    if (!open) return updateAttributes({ open: true });
+    const pos = getPos();
+    const from = editor.state.selection.from;
+    updateAttributes({ open: false });
+    if (typeof pos !== "number") return;
+    const end = pos + node.nodeSize;
+    if (!(pos < from && from < end)) return;
+    const after = editor.state.doc.resolve(end).nodeAfter;
+    let chain = editor.chain();
+    if (!after?.isTextblock) chain = chain.insertContentAt(end, { type: "paragraph" });
+    chain
+      .setTextSelection(end + 1)
+      .focus()
+      .run();
+  };
 
   return (
     <NodeViewWrapper className="my-2.5" data-open={open ? "true" : "false"}>
@@ -139,7 +158,7 @@ function ToggleView({ node, updateAttributes }: NodeViewProps) {
           <button
             type="button"
             className={iconButtonVariants({ variant: "ghost", size: "xs" })}
-            onClick={() => updateAttributes({ open: !open })}
+            onClick={toggleOpen}
           >
             <ChevronRight
               className={cn(

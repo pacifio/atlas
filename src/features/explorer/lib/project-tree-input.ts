@@ -219,6 +219,17 @@ export function projectTreeInput({
       return copyText(targets.join("\n"));
     }
     if (e.altKey || e.shiftKey) return;
+    if (key === "a") {
+      // Every visible row: what a range from the top to the bottom would
+      // select. Rows inside collapsed folders aren't shown, so aren't taken.
+      const all = rowsRef.current;
+      if (all.length === 0) return;
+      handled();
+      return setSelection({
+        paths: new Set(all.map((r) => r.path)),
+        anchor: focused ?? all[0].path,
+      });
+    }
     if ((key === "c" || key === "x") && row) {
       handled();
       return setClipboard({

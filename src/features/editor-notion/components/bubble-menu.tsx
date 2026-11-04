@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useEditorState } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
 import type { Editor } from "@tiptap/core";
 import { sendToAgentChat } from "@/features/chat/lib/send-to-agent";
@@ -49,7 +50,28 @@ export function AtlasBubbleMenu({ editor }: AtlasBubbleMenuProps) {
     };
   }, [editor]);
 
-  if (!editor) return null;
+  // Tiptap does not re-render on transactions, so pressed states read in
+  // render would go stale; this re-renders when one of them flips.
+  const active = useEditorState({
+    editor,
+    selector: ({ editor: e }) =>
+      e
+        ? {
+            bold: e.isActive("bold"),
+            italic: e.isActive("italic"),
+            underline: e.isActive("underline"),
+            strike: e.isActive("strike"),
+            code: e.isActive("code"),
+            link: e.isActive("link"),
+            h1: e.isActive("heading", { level: 1 }),
+            h2: e.isActive("heading", { level: 2 }),
+            bulletList: e.isActive("bulletList"),
+            blockquote: e.isActive("blockquote"),
+          }
+        : null,
+  });
+
+  if (!editor || !active) return null;
 
   const tool = (props: {
     title: string;
@@ -132,40 +154,40 @@ export function AtlasBubbleMenu({ editor }: AtlasBubbleMenuProps) {
         ) : (
           <>
             {tool({
-              title: "Bold (⌘B)",
+              title: "Bold",
               icon: Bold,
-              isActive: editor.isActive("bold"),
+              isActive: active.bold,
               onClick: () => editor.chain().focus().toggleBold().run(),
             })}
             {tool({
               title: "Italic (⌘I)",
               icon: Italic,
-              isActive: editor.isActive("italic"),
+              isActive: active.italic,
               onClick: () => editor.chain().focus().toggleItalic().run(),
             })}
             {tool({
               title: "Underline (⌘U)",
               icon: Underline,
-              isActive: editor.isActive("underline"),
+              isActive: active.underline,
               onClick: () => editor.chain().focus().toggleUnderline().run(),
             })}
             {tool({
               title: "Strike",
               icon: Strikethrough,
-              isActive: editor.isActive("strike"),
+              isActive: active.strike,
               onClick: () => editor.chain().focus().toggleStrike().run(),
             })}
             {tool({
               title: "Inline code (`)",
               icon: Code,
-              isActive: editor.isActive("code"),
+              isActive: active.code,
               onClick: () => editor.chain().focus().toggleCode().run(),
             })}
             <Separator orientation="vertical" className="mx-0.5 h-4" />
             {tool({
-              title: "Link (⌘K)",
+              title: "Link",
               icon: LinkIcon,
-              isActive: editor.isActive("link"),
+              isActive: active.link,
               onClick: () => {
                 const existing = editor.getAttributes("link").href as string | undefined;
                 setLinkUrl(existing ?? "");
@@ -175,25 +197,25 @@ export function AtlasBubbleMenu({ editor }: AtlasBubbleMenuProps) {
             {tool({
               title: "H1",
               icon: Heading1,
-              isActive: editor.isActive("heading", { level: 1 }),
+              isActive: active.h1,
               onClick: () => editor.chain().focus().toggleHeading({ level: 1 }).run(),
             })}
             {tool({
               title: "H2",
               icon: Heading2,
-              isActive: editor.isActive("heading", { level: 2 }),
+              isActive: active.h2,
               onClick: () => editor.chain().focus().toggleHeading({ level: 2 }).run(),
             })}
             {tool({
               title: "Bullet list",
               icon: List,
-              isActive: editor.isActive("bulletList"),
+              isActive: active.bulletList,
               onClick: () => editor.chain().focus().toggleBulletList().run(),
             })}
             {tool({
               title: "Quote",
               icon: Quote,
-              isActive: editor.isActive("blockquote"),
+              isActive: active.blockquote,
               onClick: () => editor.chain().focus().toggleBlockquote().run(),
             })}
             <Separator orientation="vertical" className="mx-0.5 h-4" />

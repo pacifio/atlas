@@ -5,8 +5,9 @@ import {
   ReactNodeViewRenderer,
   type NodeViewProps,
 } from "@tiptap/react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CopyGlyph, Hint, buttonVariants } from "@tryatlas/design";
+import { copyText } from "@/lib/clipboard";
 
 /**
  * CodeBlockLowlight wrapped in a React NodeView that adds the header
@@ -29,14 +30,16 @@ function CodeBlockView({ node, updateAttributes }: NodeViewProps) {
   const language = (node.attrs.language as string | null) || "plain";
   const [copied, setCopied] = useState(false);
 
+  const copiedTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(copiedTimer.current), []);
+
+  // Through the native pasteboard: WKWebView's web clipboard can report a
+  // copy it never made. "Copied" only when it landed.
   const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(node.textContent);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1200);
-    } catch {
-      // ignore — clipboard permissions / non-secure contexts
-    }
+    if (!(await copyText(node.textContent))) return;
+    setCopied(true);
+    window.clearTimeout(copiedTimer.current);
+    copiedTimer.current = window.setTimeout(() => setCopied(false), 1200);
   };
 
   return (

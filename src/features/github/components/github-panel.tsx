@@ -5,6 +5,7 @@ import { useAppProfile } from "@/lib/app-profile";
 import { logEvent } from "@/features/log/lib/log";
 import { metaFromSearch, type ClonedRepo, type GithubRepo } from "@/features/github/types";
 import {
+  classifySearchError,
   cloneGithubRepo,
   deleteClonedRepo,
   fetchClonedRepoMeta,
@@ -15,7 +16,7 @@ import {
   switchClonedRepoBranch,
   updateClonedRepo,
 } from "@/features/github/lib/github-api";
-import { GithubPanelView } from "./views/github-panel-view";
+import { GithubPanelView, type SearchError } from "./views/github-panel-view";
 import type { RowBusy } from "./views/cloned-repo-row-view";
 
 /**
@@ -38,7 +39,7 @@ export function GithubPanel() {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<GithubRepo[]>([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<SearchError | null>(null);
   const [cloning, setCloning] = useState<Set<string>>(new Set());
   const [cloned, setCloned] = useState<Set<string>>(new Set());
   const [rowBusy, setRowBusy] = useState<Record<string, RowBusy>>({});
@@ -98,16 +99,35 @@ export function GithubPanel() {
   }, [repos, projectPath]);
 
   // ── Search and clone ──────────────────────────────────────────────────
+  // Every search (and clearing the box) takes a number; an answer whose
+  // number has moved on is dropped, so a slow earlier search can't land over
+  // a later one, or over an emptied box.
+  const searchSeq = useRef(0);
   const handleSearch = async () => {
-    if (!query.trim()) return;
+    const q = query.trim();
+    if (!q) return;
+    const seq = ++searchSeq.current;
     setLoading(true);
     setError(null);
     try {
-      setResults(await searchGithub(query.trim()));
+      const found = await searchGithub(q);
+      if (seq !== searchSeq.current) return;
+      setResults(found);
     } catch (e) {
-      setError(String(e));
+      if (seq !== searchSeq.current) return;
+      setError(classifySearchError(e));
       setResults([]);
     }
+    setLoading(false);
+  };
+
+  const changeQuery = (next: string) => {
+    setQuery(next);
+    if (next.trim()) return;
+    // Cleared: back to the clones, with nothing of the old search left over.
+    searchSeq.current += 1;
+    setResults([]);
+    setError(null);
     setLoading(false);
   };
 
@@ -127,6 +147,7 @@ export function GithubPanel() {
       });
     } catch (e) {
       console.error("Clone failed:", e);
+      toast.error(`Could not clone ${repo.full_name}: ${String(e)}`);
     }
     setCloning((s) => {
       const n = new Set(s);
@@ -197,7 +218,7 @@ export function GithubPanel() {
   return (
     <GithubPanelView
       query={query}
-      onQueryChange={setQuery}
+      onQueryChange={changeQuery}
       onSearch={() => void handleSearch()}
       hasProject={!!projectPath}
       cloneDir={`${atlasDir}/repos/`}

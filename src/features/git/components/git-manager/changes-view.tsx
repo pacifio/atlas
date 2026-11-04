@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   Plus,
@@ -16,6 +16,8 @@ import { cn } from "@/lib/utils";
 import { SectionHeader } from "./section-header";
 import { useGitStore, type GitFileStatus, type StashEntry } from "../../stores/git-store";
 import { handleGitError } from "../../lib/git-errors";
+import { inProgressLabel } from "../../lib/in-progress";
+import { moveOptionFocus } from "@/lib/list-keys";
 import { openGitDiff } from "../../lib/git-diff-api";
 import { hunkWireLines, type DiffHunk } from "../../lib/diff";
 import { GitOpOutput } from "./git-op-output";
@@ -57,6 +59,7 @@ function statusBadge(status: string): { letter: string; cls: string; word: strin
 const FileRow = memo(function FileRow({
   file,
   selected,
+  tabbable,
   onSelect,
   action,
   onAction,
@@ -67,6 +70,8 @@ const FileRow = memo(function FileRow({
 }: {
   file: GitFileStatus;
   selected: boolean;
+  /** The list's one Tab stop: the selected row, else the first. */
+  tabbable: boolean;
   onSelect: (path: string) => void;
   action: "stage" | "unstage";
   onAction: (file: GitFileStatus) => void;
@@ -80,28 +85,43 @@ const FileRow = memo(function FileRow({
   const name = file.path.split("/").pop() ?? file.path;
   const dir = file.path.slice(0, file.path.length - name.length);
   return (
+    // The option is the file itself; its actions sit beside it, not inside
+    // it, because an option's children are presentational to assistive tech.
     <div
       onClick={() => onSelect(file.path)}
       data-selected={selected || undefined}
       className={cn(
-        "group flex h-control-sm cursor-pointer items-center gap-1.5 pr-1 pl-2.5 text-xs transition-colors duration-fast",
+        "group flex h-control-sm cursor-pointer items-center gap-1.5 pr-1 text-xs transition-colors duration-fast",
         selected ? "bg-element-selected" : "hover:bg-element-hover focus-within:bg-element-hover",
       )}
     >
-      <FileIcon path={file.path} size={14} className="shrink-0" />
-      <span className="min-w-0 flex-1 truncate">
-        <span
-          className={cn(
-            "text-secondary-foreground group-hover:text-foreground",
-            selected && "text-foreground",
-          )}
-        >
-          {name}
+      <div
+        role="option"
+        aria-selected={selected}
+        tabIndex={tabbable ? 0 : -1}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onSelect(file.path);
+          }
+        }}
+        className="flex min-w-0 flex-1 items-center gap-1.5 self-stretch pl-2.5 outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+      >
+        <FileIcon path={file.path} size={14} className="shrink-0" />
+        <span className="min-w-0 flex-1 truncate">
+          <span
+            className={cn(
+              "text-secondary-foreground group-hover:text-foreground",
+              selected && "text-foreground",
+            )}
+          >
+            {name}
+          </span>
+          {dir && <span className="ml-1.5 text-muted-foreground">{dir.replace(/\/$/, "")}</span>}
         </span>
-        {dir && <span className="ml-1.5 text-muted-foreground">{dir.replace(/\/$/, "")}</span>}
-      </span>
+      </div>
       <HintGroup>
-        <div className="flex shrink-0 items-center opacity-0 group-hover:opacity-100 focus-within:opacity-100">
+        <div className="flex shrink-0 items-center opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">
           {onAsk && (
             <HintItem label="Ask agent">
               <IconButton
@@ -289,6 +309,26 @@ export function ChangesView() {
   useEffect(() => {
     if (selected && !files.some((f) => f.path === selected)) setSelected(null);
   }, [files, selected]);
+  // A selection belongs to its repository: switching repos drops it, even
+  // when the new one happens to have a file at the same path.
+  useEffect(() => {
+    setSelected(null);
+  }, [repoPath]);
+
+  // Each list is one Tab stop: the selected row, else its first row.
+  const stagedStop = Math.max(
+    0,
+    staged.findIndex((f) => f.path === selected),
+  );
+  const unstagedStop = Math.max(
+    0,
+    unstaged.findIndex((f) => f.path === selected),
+  );
+  const onListKeyDown = useCallback((e: KeyboardEvent<HTMLElement>) => {
+    // Only from an option: arrows on a row's action buttons are theirs.
+    if ((e.target as Element).getAttribute("role") !== "option") return;
+    if (moveOptionFocus(e.currentTarget, e.key, e.target as Element)) e.preventDefault();
+  }, []);
 
   // Load the selected file's diff.
   useEffect(() => {
@@ -447,15 +487,7 @@ export function ChangesView() {
     [stagedState],
   );
 
-  const opKind: "merge" | "rebase" | "cherry-pick" | "revert" | null = !inProgress
-    ? null
-    : inProgress.merge
-      ? "merge"
-      : inProgress.rebase
-        ? "rebase"
-        : inProgress.cherryPick
-          ? "cherry-pick"
-          : "revert";
+  const opKind = inProgressLabel(inProgress);
 
   const hasConflicts = useMemo(() => files.some((f) => f.status === "conflicted"), [files]);
   const selectedStaged = staged.some((f) => f.path === selected);
@@ -519,19 +551,22 @@ export function ChangesView() {
                     Unstage all
                   </Button>
                 </SectionHeader>
-                {staged.map((f) => (
-                  <FileRow
-                    key={`s:${f.path}`}
-                    file={f}
-                    selected={selected === f.path}
-                    onSelect={toggleSelected}
-                    action="unstage"
-                    onAction={unstageOne}
-                    onOpenDiff={repoPath ? openDiff : undefined}
-                    onOpenInEditor={openFile}
-                    onAsk={repoPath ? askAboutFile : undefined}
-                  />
-                ))}
+                <div role="listbox" aria-label="Staged changes" onKeyDown={onListKeyDown}>
+                  {staged.map((f, i) => (
+                    <FileRow
+                      key={`s:${f.path}`}
+                      file={f}
+                      selected={selected === f.path}
+                      tabbable={stagedStop === i}
+                      onSelect={toggleSelected}
+                      action="unstage"
+                      onAction={unstageOne}
+                      onOpenDiff={repoPath ? openDiff : undefined}
+                      onOpenInEditor={openFile}
+                      onAsk={repoPath ? askAboutFile : undefined}
+                    />
+                  ))}
+                </div>
               </div>
             )}
 
@@ -554,20 +589,23 @@ export function ChangesView() {
                     Discard all
                   </Button>
                 </SectionHeader>
-                {unstaged.map((f) => (
-                  <FileRow
-                    key={`u:${f.path}`}
-                    file={f}
-                    selected={selected === f.path}
-                    onSelect={toggleSelected}
-                    action="stage"
-                    onAction={stageOne}
-                    onDiscard={handleRevert}
-                    onOpenDiff={repoPath ? openDiff : undefined}
-                    onOpenInEditor={openFile}
-                    onAsk={repoPath ? askAboutFile : undefined}
-                  />
-                ))}
+                <div role="listbox" aria-label="Unstaged changes" onKeyDown={onListKeyDown}>
+                  {unstaged.map((f, i) => (
+                    <FileRow
+                      key={`u:${f.path}`}
+                      file={f}
+                      selected={selected === f.path}
+                      tabbable={unstagedStop === i}
+                      onSelect={toggleSelected}
+                      action="stage"
+                      onAction={stageOne}
+                      onDiscard={handleRevert}
+                      onOpenDiff={repoPath ? openDiff : undefined}
+                      onOpenInEditor={openFile}
+                      onAsk={repoPath ? askAboutFile : undefined}
+                    />
+                  ))}
+                </div>
               </div>
             )}
 

@@ -13,7 +13,7 @@ export interface UnsupportedViewProps {
 export function UnsupportedView({ filePath, revealLabel, onReveal }: UnsupportedViewProps) {
   const name = filePath.split("/").pop() ?? filePath;
   const dot = name.lastIndexOf(".");
-  const ext = dot > 0 ? name.slice(dot + 1) : "(none)";
+  const ext = dot > 0 ? name.slice(dot + 1) : null;
 
   return (
     <div data-view="unsupported" className="flex h-full w-full flex-col bg-background">
@@ -22,7 +22,11 @@ export function UnsupportedView({ filePath, revealLabel, onReveal }: Unsupported
         className="min-h-0 flex-1"
         icon={FileX2}
         title={name}
-        description={`File type .${ext} not supported for inline preview.`}
+        description={
+          ext
+            ? `File type .${ext} not supported for inline preview.`
+            : "Files without an extension can't be previewed in Atlas."
+        }
         action={
           <Button size="sm" variant="secondary" onClick={onReveal}>
             <Icon icon={FolderOpen} size="sm" />

@@ -21,6 +21,10 @@ interface CommitRowViewProps {
   /** The repository the graph shows — avatars are looked up there. */
   repoPath: string;
   selected: boolean;
+  /** The list's keyboard cursor: ringed while the list has keyboard focus. */
+  focused: boolean;
+  /** Referenced by the list's `aria-activedescendant`. */
+  id: string;
   compact: boolean;
   onSelect: (sha: string) => void;
 }
@@ -74,6 +78,8 @@ export const CommitRowView = memo(function CommitRowView({
   row,
   repoPath,
   selected,
+  focused,
+  id,
   compact,
   onSelect,
 }: CommitRowViewProps) {
@@ -91,6 +97,7 @@ export const CommitRowView = memo(function CommitRowView({
 
   return (
     <div
+      data-sha={row.sha}
       onClick={() => onSelect(row.sha)}
       className={cn(
         "group flex items-center cursor-pointer select-none transition-colors duration-fast",
@@ -98,6 +105,8 @@ export const CommitRowView = memo(function CommitRowView({
         selected
           ? "bg-element-selected text-foreground"
           : "text-secondary-foreground hover:bg-element-hover",
+        focused &&
+          "group-focus-visible/graph:ring-1 group-focus-visible/graph:ring-inset group-focus-visible/graph:ring-ring",
       )}
       style={{ height: ROW_HEIGHT }}
     >
@@ -124,11 +133,21 @@ export const CommitRowView = memo(function CommitRowView({
 
       {/* Row content — flush against the gutter; per-row gutter sizing handles the offset */}
       <div className={cn("flex min-w-0 flex-1 items-center gap-2", compact ? "pr-3" : "pr-4")}>
-        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+        {/* The option is the commit's refs and subject; the Ask button and
+            the metadata sit beside it, since an option's children are
+            presentational to assistive tech. */}
+        <div
+          id={id}
+          role="option"
+          aria-selected={selected}
+          className="flex min-w-0 flex-1 items-center gap-1.5"
+        >
           {visibleRefs.slice(0, 4).map((r) => (
             <RefChip key={`${r.kind}:${r.name}`} refBadge={r} />
           ))}
-          <span className={cn("truncate text-xs", selected && "font-medium")}>{row.message}</span>
+          <span title={row.message} className={cn("truncate text-xs", selected && "font-medium")}>
+            {row.message}
+          </span>
         </div>
         {/* Ask about the commit: explain it, or have the agent revert it in
             its session. Its own click, not the row's select. */}
@@ -143,13 +162,13 @@ export const CommitRowView = memo(function CommitRowView({
             with the name, date and sha on hover — what the old flat log showed. */}
         {compact && (
           <span title={`${row.author} · ${row.date} · ${row.shortSha}`} className="shrink-0">
-            <CommitAvatar email={row.email} repoPath={repoPath} size={14} />
+            <CommitAvatar email={row.email} name={row.author} repoPath={repoPath} size={14} />
           </span>
         )}
         {!compact && (
           <>
             <div className="flex w-[200px] shrink-0 items-center gap-1.5">
-              <CommitAvatar email={row.email} repoPath={repoPath} size={16} />
+              <CommitAvatar email={row.email} name={row.author} repoPath={repoPath} size={16} />
               <span className="truncate text-xs text-secondary-foreground">{row.author}</span>
             </div>
             <span className="w-[68px] shrink-0 font-mono text-xs text-muted-foreground">

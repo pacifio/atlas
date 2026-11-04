@@ -5,6 +5,7 @@ import {
   ReactNodeViewRenderer,
   type NodeViewProps,
 } from "@tiptap/react";
+import { useState } from "react";
 import { Hint, calloutVariants } from "@tryatlas/design";
 import { cn } from "@/lib/utils";
 
@@ -99,6 +100,12 @@ export const Callout = Node.create({
 
 function CalloutView({ node, updateAttributes }: NodeViewProps) {
   const emoji = (node.attrs.emoji as string) || "💡";
+  // Edited in place: the shipped app's webview has no `window.prompt`.
+  const [editing, setEditing] = useState(false);
+  const commit = (value: string) => {
+    setEditing(false);
+    if (value.trim()) updateAttributes({ emoji: value.trim() });
+  };
   return (
     // The package callout's neutral surface, laid out as emoji | body.
     <NodeViewWrapper
@@ -107,19 +114,39 @@ function CalloutView({ node, updateAttributes }: NodeViewProps) {
         "mt-2 mb-3 grid grid-cols-[auto_1fr] gap-3 text-base/relaxed",
       )}
     >
-      <Hint label="Change emoji">
-        <button
-          type="button"
+      {editing ? (
+        <input
           contentEditable={false}
-          className="cursor-pointer select-none text-lg leading-snug"
-          onClick={() => {
-            const next = window.prompt("Emoji", emoji);
-            if (next && next.trim()) updateAttributes({ emoji: next.trim() });
+          aria-label="Emoji"
+          maxLength={8}
+          autoFocus
+          defaultValue={emoji}
+          onFocus={(e) => e.currentTarget.select()}
+          onBlur={(e) => commit(e.currentTarget.value)}
+          onKeyDown={(e) => {
+            if (e.nativeEvent.isComposing) return;
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commit(e.currentTarget.value);
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              setEditing(false);
+            }
           }}
-        >
-          {emoji}
-        </button>
-      </Hint>
+          className="w-8 bg-transparent text-lg leading-snug outline-none"
+        />
+      ) : (
+        <Hint label="Change emoji">
+          <button
+            type="button"
+            contentEditable={false}
+            className="cursor-pointer select-none text-lg leading-snug"
+            onClick={() => setEditing(true)}
+          >
+            {emoji}
+          </button>
+        </Hint>
+      )}
       <NodeViewContent className="atlas-callout-body text-secondary-foreground" />
     </NodeViewWrapper>
   );
