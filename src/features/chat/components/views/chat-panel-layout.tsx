@@ -49,7 +49,7 @@ export function ChatPanelLayout({
       className="relative flex h-full min-h-0 overflow-hidden bg-[var(--background)]"
     >
       {/* `data-chat-drop-zone`: Finder drops land anywhere on the conversation
-          column, not just the composer (see `attachPaths` in message-input). */}
+          column, not just the composer (see `useComposerDropZone`). */}
       <div
         ref={conversationRef}
         data-chat-drop-zone

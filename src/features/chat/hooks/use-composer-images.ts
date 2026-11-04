@@ -1,11 +1,21 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { toast } from "sonner";
 import { useChatStore } from "../stores/chat-store";
 import { agents } from "../lib/agents-api";
 import { aggregateExceedsBudget } from "../lib/image-policy";
-import type { StagedImage } from "../lib/downscale-attachment";
+import type { StagedImage } from "../lib/image-attachment";
+import type { ChatInputHandle } from "../components/chat-input";
 
-export function useComposerImages(tabId: string) {
+export function useComposerImages({
+  tabId,
+  inputRef,
+  mirrorDraft,
+}: {
+  tabId: string;
+  inputRef: RefObject<ChatInputHandle | null>;
+  /** The draft mirror's own doc listener (`useComposerDraft`). */
+  mirrorDraft: () => void;
+}) {
   // ── Image attachments (multimodal input) ─────────────────────────────────
   // Images staged for the next send. Only populated when the bound agent
   // advertised promptCapabilities.image; otherwise picked images degrade to
@@ -71,5 +81,19 @@ export function useComposerImages(tabId: string) {
     if (!stagedOverAggregateBudget) warnedAggregateRef.current = false;
   }, [stagedOverAggregateBudget]);
 
-  return { stagedImages, setStagedImages, stagedRef, imageSupported };
+  // The draft mirror's doc listener, plus pruning: a chip the user deleted
+  // (Backspace, ⌘Z, a cleared draft) takes its staged image with it. Checked
+  // only while an image is staged, so the common keystroke pays nothing.
+  const handleDocChange = useCallback(() => {
+    mirrorDraft();
+    if (!stagedRef.current.some((img) => img.path)) return;
+    const input = inputRef.current;
+    if (!input) return;
+    setStagedImages((prev) => {
+      const next = prev.filter((img) => !img.path || input.hasMention("file", img.path));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [mirrorDraft]);
+
+  return { stagedImages, setStagedImages, imageSupported, handleDocChange };
 }

@@ -1,46 +1,86 @@
-// The composer's two pickers, as the editor sees them: what a pick does, and
-// the keys the editor forwards while one is open.
+// The composer's two pickers, as the editor sees them: whether each is open,
+// the slash catalogue, what a pick does, and the keys the editor forwards
+// while one is open.
 
-import { useCallback, type Dispatch, type RefObject, type SetStateAction } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type RefObject,
+} from "react";
 import type { MentionPickerHandle } from "@/features/mentions/components/mention-picker";
 import type { ChatInputHandle, MentionTrigger, SlashTrigger } from "../components/chat-input";
 import type { SlashCommandPickerHandle, SlashCommand } from "../components/slash-command-picker";
-import { commandRequiresArgs } from "../lib/agent-slash-commands";
+import { buildAgentSlashCommands, commandRequiresArgs } from "../lib/agent-slash-commands";
+import { useChatStore } from "../stores/chat-store";
 import { promptSignIn } from "../lib/agent-signin";
 import { forkSessionToNewTab } from "../lib/fork-session";
 import type { MentionData } from "../lib/mentions";
 import type { AttachSource } from "../lib/session-projects-api";
-import type { ValueStore } from "../lib/value-store";
+import { createValueStore } from "../lib/value-store";
 import type { AgentType } from "@/types/agent";
+import { useComposerAuthReason } from "./use-composer-auth-reason";
 
 export function useComposerPickers({
   tabId,
   agentType,
   disabled,
   inputRef,
-  pickerRef,
-  triggerRef,
-  setTrigger,
-  slashStore,
-  slashPickerRef,
-  lastAuthReasonRef,
-  submitRef,
   attachPicked,
 }: {
   tabId: string;
   agentType: AgentType;
   disabled: boolean;
   inputRef: RefObject<ChatInputHandle | null>;
-  pickerRef: RefObject<MentionPickerHandle | null>;
-  triggerRef: RefObject<MentionTrigger | null>;
-  setTrigger: Dispatch<SetStateAction<MentionTrigger | null>>;
-  slashStore: ValueStore<SlashTrigger | null>;
-  slashPickerRef: RefObject<SlashCommandPickerHandle | null>;
-  lastAuthReasonRef: RefObject<string | null>;
-  submitRef: RefObject<() => void>;
   attachPicked: (mention: MentionData, source?: AttachSource) => void;
 }) {
+  // ── Mention picker orchestration ──────────────────────────────────────
+  const [trigger, setTrigger] = useState<MentionTrigger | null>(null);
+  const pickerRef = useRef<MentionPickerHandle>(null);
+  const triggerRef = useRef<MentionTrigger | null>(null);
+  triggerRef.current = trigger;
+
+  // ── Slash-command picker orchestration ────────────────────────────────
+  // The trigger changes on every keystroke while the picker is open, and this
+  // component is the whole composer — editor shell, toolbar, tray, both
+  // pickers. Held in React state, each keystroke re-rendered all of it. So it
+  // lives in a store only the picker subscribes to (`SlashPickerHost`), and
+  // this component re-renders on the open/close edge alone.
+  const [slashStore] = useState(() => createValueStore<SlashTrigger | null>(null));
   const setSlashTrigger = slashStore.set;
+  const slashOpen = useSyncExternalStore(slashStore.subscribe, () => slashStore.get() !== null);
+  // ACP-reported slash commands for this session. Every agent advertises its
+  // real command list via `available_commands_update` — Codex's arrives with
+  // the binding, Claude's a few seconds after session/new (the SDK discovers
+  // skills/plugins/MCP prompts first), and the native agent's with its
+  // session, published by the seam. Per ADR 0005 there is no fallback
+  // catalogue: the picker shows a loading state (see `slashCommandsLoading`
+  // below) during that gap instead.
+  const availableCommands = useChatStore((s) => s.sessions[tabId]?.availableCommands);
+  const slashCommandsLoading = availableCommands === undefined;
+  const agentSlashCommands = useMemo<SlashCommand[]>(
+    () => buildAgentSlashCommands(agentType, availableCommands),
+    [agentType, availableCommands],
+  );
+  // A picker left open across an agent switch must not inherit the open
+  // state; each agent's catalogue swaps in via `agentSlashCommands` above.
+  useEffect(() => {
+    slashStore.set(null);
+  }, [agentType, slashStore]);
+  const slashPickerRef = useRef<SlashCommandPickerHandle>(null);
+
+  // The agent's own words from the last auth failure (`use-composer-auth-reason.ts`).
+  const lastAuthReasonRef = useComposerAuthReason(tabId);
+
+  // `submit` (`use-composer-submit.ts`) is created after this hook runs, but
+  // `handleSlashSelect` needs to invoke it — routed through a ref (set by
+  // `message-input.tsx` right after `submit` is created) rather than a direct
+  // reference, since a `useCallback` deps array is evaluated eagerly on every
+  // render and would otherwise read `submit` before it exists.
+  const submitRef = useRef<() => void>(() => {});
 
   const handleMentionSelect = useCallback(
     (mention: MentionData) => {
@@ -215,5 +255,19 @@ export function useComposerPickers({
     [],
   );
 
-  return { handleMentionSelect, handleSlashSelect, keyInterceptor };
+  return {
+    trigger,
+    setTrigger,
+    pickerRef,
+    slashStore,
+    setSlashTrigger,
+    slashOpen,
+    slashPickerRef,
+    agentSlashCommands,
+    slashCommandsLoading,
+    submitRef,
+    handleMentionSelect,
+    handleSlashSelect,
+    keyInterceptor,
+  };
 }

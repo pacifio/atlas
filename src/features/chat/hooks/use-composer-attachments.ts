@@ -2,14 +2,15 @@
 // project or repo, a file by path (drop, "+" menu, paste, screenshot), a
 // GitHub clone, a past session, a large paste.
 
-import { useCallback, type Dispatch, type RefObject, type SetStateAction } from "react";
+import { useCallback, useState, type Dispatch, type RefObject, type SetStateAction } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { useChatStore } from "../stores/chat-store";
 import { useSessionProjectsStore } from "../stores/session-projects-store";
 import { attachSessionProject, type AttachSource } from "../lib/session-projects-api";
-import { downscaleAttachment, type StagedImage } from "../lib/downscale-attachment";
+import { downscaleAttachment, type StagedImage } from "../lib/image-attachment";
 import { pastedTextMention } from "../lib/pasted-text";
+import { fileChipDisplayName } from "../lib/composer-submit";
 import type {
   MentionData,
   MentionFile,
@@ -31,15 +32,18 @@ export function useComposerAttachments({
   projectPath,
   imageSupported,
   setStagedImages,
-  setGithubSyncing,
 }: {
   tabId: string;
   inputRef: RefObject<ChatInputHandle | null>;
   projectPath: string | null;
   imageSupported: boolean;
   setStagedImages: Dispatch<SetStateAction<StagedImage[]>>;
-  setGithubSyncing: Dispatch<SetStateAction<string | null>>;
 }) {
+  // Non-null (the repo's full_name) while a GitHub repo is cloning into
+  // `.atlas/repos`. The composer is locked for the duration so the user can't
+  // send a prompt that references a half-synced repo.
+  const [githubSyncing, setGithubSyncing] = useState<string | null>(null);
+
   // Picking a project or repo attaches it to the session, read-only, so its
   // chip can offer the access toggle before the send. A session that has not
   // bound yet attaches it at the send instead (`attach-mentioned-projects.ts`).
@@ -67,16 +71,11 @@ export function useComposerAttachments({
   // them; an image the agent can take also stages its bytes.
   const insertFileChips = useCallback(
     (paths: string[], sizes?: ReadonlyMap<string, number>) => {
-      const root = projectPath && !projectPath.endsWith("/") ? `${projectPath}/` : projectPath;
       for (const abs of paths) {
-        // Relative-to-project display name when the file lives inside the
-        // project; otherwise just the basename (dropped files can be anywhere).
-        const displayName =
-          root && abs.startsWith(root) ? abs.slice(root.length) : abs.split("/").pop() || abs;
         const mention: MentionFile = {
           kind: "file",
           id: abs,
-          displayName,
+          displayName: fileChipDisplayName(abs, projectPath),
           absPath: abs,
         };
         inputRef.current?.insertMention(mention, { sizeBytes: sizes?.get(abs) });
@@ -301,6 +300,7 @@ export function useComposerAttachments({
   }, []);
 
   return {
+    githubSyncing,
     attachPicked,
     attachPaths,
     pickFilesOrPhotos,
