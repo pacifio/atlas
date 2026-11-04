@@ -11,7 +11,8 @@
  * project's trace, with "All" it is the Organisation's.
  */
 
-import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { Segmented } from "@tryatlas/design";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { AccountAvatar } from "@/features/auth/components/account-avatar";
 import { AccountAvatarView } from "@/features/auth/components/views/account-avatar-view";
@@ -32,6 +33,12 @@ import {
   type TraceSession,
   type TraceZoom,
 } from "./checkpoint-trace";
+
+const GROUPINGS: { value: TraceGroupBy; label: string }[] = [
+  { value: "project", label: "Project" },
+  { value: "person", label: "Person" },
+  { value: "none", label: "None" },
+];
 
 export function TraceView({
   boardSessions,
@@ -60,7 +67,7 @@ export function TraceView({
 }) {
   /** `null` follows the last week as of each read; a moved window stays put. */
   const [rangeChoice, setRange] = useState<TraceRange | null>(null);
-  const [zoom, setZoom] = useState<TraceZoom>("day");
+  const [zoom, setZoom] = useState<TraceZoom>("week");
   /** `null` until chosen: one project's trace reads best by person, the
    *  Organisation's by project. */
   const [groupByChoice, setGroupBy] = useState<TraceGroupBy | null>(null);
@@ -83,40 +90,46 @@ export function TraceView({
     [trace.rows],
   );
 
+  // The block memoizes its lanes on the callbacks, so they stay the same
+  // functions across refreshes and read the latest rows through a ref; a new
+  // read re-renders a lane through its session, not through these.
+  const latest = useRef({ rows, boardSessions, onOpen });
+  useLayoutEffect(() => {
+    latest.current = { rows, boardSessions, onOpen };
+  });
+
   /** Where to open a Session: its checkout here if it has one (faster, and
    *  works offline), else the server Workspace. */
-  const targetFor = useCallback(
-    (sessionId: string): OpenSession | null => {
-      const row = rows.get(sessionId);
-      if (!row) return null;
-      const remoteProjectId = row.workspaceId || null;
-      const board = boardSessions.find(
-        (s) => s.id === sessionId && (!remoteProjectId || s.remoteProjectId === remoteProjectId),
-      );
-      return {
-        sessionId,
-        projectPath: row.projectPath ?? board?.projectPath ?? "",
-        remoteProjectId: remoteProjectId ?? board?.remoteProjectId ?? null,
-      };
-    },
-    [rows, boardSessions],
-  );
+  const targetFor = useCallback((sessionId: string): OpenSession | null => {
+    const { rows, boardSessions } = latest.current;
+    const row = rows.get(sessionId);
+    if (!row) return null;
+    const remoteProjectId = row.workspaceId || null;
+    const board = boardSessions.find(
+      (s) => s.id === sessionId && (!remoteProjectId || s.remoteProjectId === remoteProjectId),
+    );
+    return {
+      sessionId,
+      projectPath: row.projectPath ?? board?.projectPath ?? "",
+      remoteProjectId: remoteProjectId ?? board?.remoteProjectId ?? null,
+    };
+  }, []);
 
   const onOpenSession = useCallback(
     (id: string) => {
       const target = targetFor(id);
-      if (target) onOpen(target);
+      if (target) latest.current.onOpen(target);
     },
-    [targetFor, onOpen],
+    [targetFor],
   );
   // Opened at the Checkpoint rather than the top: the reader scrolls to the
   // commit, the same landing a commit's "Produced by" card gets.
   const onOpenCheckpoint = useCallback(
     (cp: TraceCheckpoint) => {
       const target = targetFor(cp.sessionId);
-      if (target) onOpen(cp.sha ? { ...target, commitSha: cp.sha } : target);
+      if (target) latest.current.onOpen(cp.sha ? { ...target, commitSha: cp.sha } : target);
     },
-    [targetFor, onOpen],
+    [targetFor],
   );
 
   const renderAvatar = useCallback(
@@ -130,13 +143,14 @@ export function TraceView({
     [directory],
   );
 
-  const renderAgentMark = useCallback(
-    (s: TraceSession) => {
-      const id = rows.get(s.id)?.agent;
-      return id ? <AgentGlyph agent={id} size={12} /> : null;
-    },
-    [rows],
-  );
+  const renderAgentMark = useCallback((s: TraceSession) => {
+    const id = latest.current.rows.get(s.id)?.agent;
+    return id ? <AgentGlyph agent={id} size={12} /> : null;
+  }, []);
+
+  // A failed read with nothing to show is the block's error state; a failed
+  // refresh over a chart still on screen is a strip above it.
+  const blocking = trace.error && trace.sessions.length === 0;
 
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
@@ -145,7 +159,7 @@ export function TraceView({
           <div className="flex shrink-0 items-center gap-2">{filters}</div>
         </DestinationActions>
       )}
-      {trace.error && (
+      {trace.error && !blocking && (
         <p className="shrink-0 bg-error-muted px-4 py-1.5 text-xs text-error">
           Couldn't read the trace: {trace.error}
         </p>
@@ -157,13 +171,21 @@ export function TraceView({
         zoom={zoom}
         onZoomChange={setZoom}
         groupBy={groupBy}
-        onGroupByChange={setGroupBy}
+        toolbar={
+          <Segmented
+            value={groupBy}
+            onValueChange={setGroupBy}
+            options={GROUPINGS}
+            size="sm"
+            aria-label="Group by"
+          />
+        }
         onOpenSession={onOpenSession}
         onOpenCheckpoint={onOpenCheckpoint}
         renderAvatar={renderAvatar}
         renderAgentMark={renderAgentMark}
         loading={trace.loading}
-        empty="No sessions in this range."
+        error={blocking ? trace.error : undefined}
       />
       {trace.notes.length > 0 && (
         // Say what is being left out, as the list does — a Workspace the
