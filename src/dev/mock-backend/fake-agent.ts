@@ -460,6 +460,38 @@ export function finishTurn(sessionId?: string, stopReason = "end_turn"): Promise
   });
 }
 
+/** The user stopped the turn: `turn_finished` with `stop_reason: "cancelled"`.
+ *  The store sweeps the turn's live calls to failed. */
+export function cancelTurn(sessionId?: string): Promise<void> {
+  failLiveCalls(sessionId);
+  return finishTurn(sessionId, "cancelled");
+}
+
+/** The held snapshot's running and pending calls, failed as the store fails
+ *  them on a cancel or a failure, so a re-read agrees with the live turn. */
+function failLiveCalls(sessionId?: string): void {
+  for (const m of latest(sessionId)?.messages ?? []) {
+    m.tool_calls = m.tool_calls.map((call) =>
+      call.status === "running" || call.status === "pending" ? { ...call, status: "failed" } : call,
+    );
+  }
+}
+
+/** The turn failed (`turn_failed`), in the projector's order: the error
+ *  status, then the failure. The store fails the live calls and adds an
+ *  `Error: <error>` message. */
+export async function failTurn(
+  error: string,
+  errorKind: "auth" | "transient" | "fatal" | "process_dead" | "unknown",
+  sessionId?: string,
+): Promise<void> {
+  const s = latest(sessionId);
+  if (!s) return;
+  failLiveCalls(sessionId);
+  await setStatus("error", sessionId);
+  await sendDelta({ kind: "turn_failed", ...at(s), error, turn_seq: 0, error_kind: errorKind });
+}
+
 // ── The computer sleeping mid-turn ───────────────────────────────────────
 //
 // Rust's `sleep_watch.rs` notices the machine slept under a running turn and
@@ -517,15 +549,7 @@ export async function sleepMidTurnFailed(): Promise<void> {
   await streamText("Reading the test suite to see which fixtures depend on the old");
   await sendDelta({ kind: "slept_mid_turn", ...at(s), turn_seq: 0, slept_secs: 3400 });
   await new Promise((r) => setTimeout(r, AFTER_WAKE_MS));
-  // The projector's order: the error status, then the failure itself.
-  await setStatus("error");
-  await sendDelta({
-    kind: "turn_failed",
-    ...at(s),
-    error: "error decoding response body",
-    turn_seq: 0,
-    error_kind: "transient",
-  });
+  await failTurn("error decoding response body", "transient");
 }
 
 // ── Permission requests ──────────────────────────────────────────────────

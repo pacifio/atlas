@@ -39,6 +39,7 @@ import { chatMarkdown } from "./chat-markdown";
 import { chatSidePanels } from "./chat-side-panels";
 import { chatSlashCommands } from "./chat-slash-commands";
 import { chatTools } from "./chat-tools";
+import { chatToolsEdge } from "./chat-tools-edge";
 import { chatTurnChanges, chatTurnChangesLong, chatTurnChangesNative } from "./chat-turn-changes";
 import { askAgent } from "./ask-agent";
 import { askFiles } from "./ask-files";
@@ -114,6 +115,7 @@ const all: Scenario[] = [
     },
   },
   chatTools,
+  chatToolsEdge,
   chatSidePanels,
   chatSlashCommands,
   agentSignin,
