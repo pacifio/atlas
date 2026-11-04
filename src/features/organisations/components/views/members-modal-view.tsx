@@ -434,16 +434,19 @@ function MemberMenu({
           </>
         )}
         {/* Leave on your own row, Remove on anyone else's — each disabled with
-            the server's reason when it would refuse. See `memberRowAccess`. */}
-        <DropdownMenuItem
-          variant="destructive"
-          disabled={!access.actionAllowed}
-          onClick={access.actionAllowed ? (self ? onLeave : onRemove) : undefined}
-          title={access.blockedReason ?? undefined}
-        >
-          {self ? <LogOut /> : <Trash2 />}
-          {self ? "Leave organization…" : "Remove from organization"}
-        </DropdownMenuItem>
+            the server's reason when it would refuse. See `memberRowAccess`.
+            The reason sits on a wrapper: a disabled item takes no pointer
+            events, so a `title` on the item itself would never show. */}
+        <div title={access.blockedReason ?? undefined}>
+          <DropdownMenuItem
+            variant="destructive"
+            disabled={!access.actionAllowed}
+            onClick={access.actionAllowed ? (self ? onLeave : onRemove) : undefined}
+          >
+            {self ? <LogOut /> : <Trash2 />}
+            {self ? "Leave organization…" : "Remove from organization"}
+          </DropdownMenuItem>
+        </div>
       </DropdownMenuContent>
     </DropdownMenu>
   );
