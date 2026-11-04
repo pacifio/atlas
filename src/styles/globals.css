@@ -6,7 +6,7 @@
 @import "tailwindcss" source("../");
 /* The design system (`@tryatlas/design`, ADR-0027): Geist and Geist Mono, the
    non-colour scales, the Tailwind bridge, the named utilities and xyflow's
-   chrome (`canvas.css`: edges, handles, resize controls). The `-core`
+   chrome (`canvas.css`). The `-core`
    sheet leaves out the package's built-in themes as resolved CSS blocks,
    which desktop never selects: it applies themes through its own engine. In
    their place it carries the Atlas theme alone at `:root` (dark unless the OS

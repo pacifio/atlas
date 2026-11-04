@@ -51,13 +51,13 @@ export interface SlashItem {
 // and a keyboard-invoked surface appears at once.
 const MENU_POPUP =
   "overflow-y-auto overflow-x-hidden rounded-lg p-0.5 bg-popover border border-border text-foreground shadow-md";
-// copy of @tryatlas/design DropdownMenuLabel: not exported as of 0.1.9.
+// copy of @tryatlas/design DropdownMenuLabel's classes: not exported as of 0.1.9.
 const MENU_LABEL = "eyebrow px-2 py-1 text-muted-foreground";
 // copy of @tryatlas/design dropdown-menu ITEM: not exported as of 0.1.9.
 // `data-active` stands in for `focus:` — the row is highlighted, never focused.
 const MENU_ITEM =
   "relative flex items-center gap-2 rounded px-2 py-1 text-xs cursor-pointer select-none outline-none text-secondary-foreground data-active:bg-element-hover data-active:text-foreground";
-// copy of @tryatlas/design DropdownMenuShortcut: not exported as of 0.1.9.
+// copy of @tryatlas/design DropdownMenuShortcut's classes: not exported as of 0.1.9.
 const MENU_SHORTCUT = "ml-auto pl-3 text-3xs text-disabled";
 
 export interface SlashMenuRef {
