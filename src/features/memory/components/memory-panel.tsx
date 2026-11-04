@@ -1,3 +1,4 @@
+import { Hint } from "@/ui/tooltip";
 import { useTipOnMount } from "@/features/tips/lib/use-tip-on-mount";
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -102,8 +103,13 @@ function MemoryHealthLine({ projectPath }: { projectPath: string | null }) {
   return (
     // It shares the destination bar with the title and the nav, so the
     // line gives way (truncates) before anything else does.
-    <span className="caption flex min-w-0 items-center gap-1.5" title={line}>
-      <span className="truncate">{line}</span>
+    <span className="caption flex min-w-0 items-center gap-1.5">
+      {/* Focusable, so the full line is reachable by keyboard once it truncates. */}
+      <Hint label={line}>
+        <span tabIndex={0} className="truncate rounded-sm">
+          {line}
+        </span>
+      </Hint>
       {chainBroken(status) && (
         <>
           <button
