@@ -271,6 +271,8 @@ export function secondaryLabel(m: MentionData): string {
       return "cited passage";
     case "review_comment":
       return `review comment · ${m.rangeLabel}`;
+    case "agent_context":
+      return "context";
     case "comment":
       return [
         m.parentId ? "reply" : "comment",
@@ -357,5 +359,7 @@ export function mentionTitle(m: MentionData): string {
       return m.text.slice(0, 200);
     case "review_comment":
       return m.text.slice(0, 200);
+    case "agent_context":
+      return m.displayName;
   }
 }

@@ -2,9 +2,25 @@ import { useRef, useState } from "react";
 import { Dialog } from "@base-ui/react/dialog";
 import { AlertTriangle } from "lucide-react";
 import { useGitStore } from "../../stores/git-store";
-import { gitErrorTitle } from "../../lib/git-errors";
+import { gitErrorTitle, type GitErrorPayload } from "../../lib/git-errors";
 import { copyText } from "@/lib/clipboard";
 import { CopyGlyph, Button } from "@tryatlas/design";
+import { FixWithAgentButton } from "@/features/ask-agent/components/ask-agent-button";
+import type { ErrorContext } from "@/features/ask-agent/lib/agent-context";
+
+/** The failure as the agent gets it: where ("git push"), what the dialog
+ *  says, git's own output, the command and the repository. */
+function gitErrorContext(payload: GitErrorPayload, repoPath: string | null): ErrorContext {
+  const verb = payload.command.split(/\s+/).slice(0, 2).join(" ");
+  return {
+    kind: "error",
+    source: verb.startsWith("git") ? verb : "git",
+    message: [gitErrorTitle(payload), payload.message, ...(payload.files ?? [])].join("\n"),
+    ...(payload.rawStderr ? { log: payload.rawStderr } : {}),
+    ...(payload.command ? { command: payload.command } : {}),
+    ...(repoPath ? { cwd: repoPath } : {}),
+  };
+}
 
 /**
  * Friendly dialog for actionable git failures (auth, rejected pushes, hook
@@ -19,6 +35,7 @@ import { CopyGlyph, Button } from "@tryatlas/design";
 export function GitErrorDialog({ onForcePush }: { onForcePush?: () => void }) {
   const payload = useGitStore.use.errorDialog();
   const actions = useGitStore.use.actions();
+  const repoPath = useGitStore.use.repoPath();
   // Feedback for the copy button — without it a clipboard failure and a
   // success were indistinguishable (both looked like "nothing happened").
   const [copied, setCopied] = useState(false);
@@ -70,12 +87,19 @@ export function GitErrorDialog({ onForcePush }: { onForcePush?: () => void }) {
               <div className="border-t border-border-subtle px-3 py-2.5 flex items-center justify-between gap-2">
                 <div className="min-w-0 flex items-center gap-2 pl-1">
                   {payload.command && (
-                    <span className="truncate font-mono text-2xs text-muted-foreground">
+                    <span
+                      title={payload.command}
+                      className="truncate font-mono text-2xs text-muted-foreground"
+                    >
                       {payload.command}
                     </span>
                   )}
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
+                  <FixWithAgentButton
+                    error={gitErrorContext(payload, repoPath)}
+                    dismiss={actions.dismissErrorDialog}
+                  />
                   {payload.rawStderr && (
                     <Button
                       variant="ghost"

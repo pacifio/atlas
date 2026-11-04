@@ -2,6 +2,7 @@ import { startTransition, useState, useEffect, useMemo, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { AppLayout } from "@/features/layout/components/app-layout";
 import { CommandPalette } from "@/features/command-palette/components/command-palette";
+import { AskAgentHost } from "@/features/ask-agent/components/ask-agent-host";
 import { useCommandPaletteStore } from "@/features/command-palette/stores/command-palette-store";
 import { NewTabPalette } from "@/components/new-tab-palette";
 import { LayoutSwitcher } from "@/features/layout/components/layout-switcher";
@@ -1493,6 +1494,7 @@ export function App() {
         <AppLayout />
       </div>
       <CommandPalette />
+      <AskAgentHost />
       <NewTabPalette open={newTabPaletteOpen} onOpenChange={setNewTabPaletteOpen} />
       <LayoutSwitcher open={layoutSwitcherOpen} onOpenChange={setLayoutSwitcherOpen} />
       <SearchOverlay open={searchOpen} onOpenChange={setSearchOpen} />

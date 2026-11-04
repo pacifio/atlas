@@ -146,6 +146,11 @@ interface LayoutActions {
     setTimelineSidebarWidth: (width: number) => void;
     setSourceControlSection: (section: SourceControlSection) => void;
     addTab: (tab: Tab, groupId?: string) => void;
+    /** Open a session tab in the main column without showing it: focus, the
+     *  column's active tab and any destination stay as they are. It mounts
+     *  hidden, as every session tab does (`PERSISTENT_TYPES`), so it can be
+     *  sent to (`askAgent`). A column with no tab yet shows it. */
+    addBackgroundTab: (tab: Tab) => void;
     closeTab: (id: string) => void;
     /** Move a tab to `toIndex` among its own column's tabs (a drag in the
      *  strip). It never leaves its column, and every other column's tabs keep
@@ -734,6 +739,17 @@ export const useLayoutStore = createSelectors(
               revealGroup(s, targetGroup);
               pushTabHistory(s, targetId);
               syncActiveMirror(s);
+            }),
+          addBackgroundTab: (tab) =>
+            set((s) => {
+              if (tab.type !== "chat" || s.tabs.some((t) => t.id === tab.id)) return;
+              const grp = s.groupOrder[0];
+              s.tabs.push({ ...tab, groupId: grp });
+              const active = s.activeByGroup[grp];
+              if (!active || !s.tabs.some((t) => t.id === active)) {
+                s.activeByGroup[grp] = tab.id;
+                syncActiveMirror(s);
+              }
             }),
           closeTab: (id) =>
             set((s) => {

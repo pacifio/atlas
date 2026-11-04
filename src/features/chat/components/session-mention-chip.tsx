@@ -41,6 +41,8 @@ import {
   type ComposerChipViewProps,
 } from "@/components/composer/composer-chip";
 import { formatBytes } from "@/lib/format-bytes";
+import { contextTitle } from "@/features/ask-agent/lib/agent-context";
+import { CONTEXT_ICON } from "@/features/ask-agent/lib/context-icons";
 import { SESSION_MENTION } from "../lib/composer-short-forms";
 import { toShortForm, type MentionData } from "../lib/mentions";
 import { markPicked } from "../lib/picked-mentions";
@@ -223,6 +225,10 @@ function ChipIcon({ mention }: { mention: MentionData }) {
       return <Quote size={size} />;
     case "review_comment":
       return <MessageSquareCode size={size} />;
+    case "agent_context": {
+      const Glyph = CONTEXT_ICON[mention.context.kind];
+      return <Glyph size={size} />;
+    }
   }
 }
 
@@ -266,6 +272,8 @@ function chipTitle(m: MentionData): string {
       const lines = m.diff.split("\n").slice(0, 12).join("\n");
       return `${m.text}\n\n${m.filePath} ${m.rangeLabel}\n${lines}`;
     }
+    case "agent_context":
+      return contextTitle(m.context);
   }
 }
 

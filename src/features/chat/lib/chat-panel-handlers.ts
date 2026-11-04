@@ -30,6 +30,7 @@ import { composePrompt, type MentionData } from "./mentions";
 import { trustedMentionPaths } from "./picked-mentions";
 import { withCitesInline } from "./cited-text";
 import { withReviewCommentsInline } from "./review-comments";
+import { withContextsInline } from "@/features/ask-agent/lib/agent-context";
 
 type ChatActions = ReturnType<typeof useChatStore.getState>["actions"];
 
@@ -367,7 +368,10 @@ export function createChatPanelHandlers({
       console.warn("composePrompt failed, sending raw text:", err);
       // A cite's passage is only in the context block `compose_prompt`
       // writes, so without one it is written out after the prose.
-      wirePrompt = withReviewCommentsInline(withCitesInline(actualContent, mentions), mentions);
+      wirePrompt = withContextsInline(
+        withReviewCommentsInline(withCitesInline(actualContent, mentions), mentions),
+        mentions,
+      );
       // A paste is never only in the prose (just its `@paste:` token), so it
       // must survive a failed compose too.
       pastedTexts = mentions.flatMap((m) =>

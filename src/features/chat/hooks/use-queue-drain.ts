@@ -15,6 +15,15 @@ export type ChatSendHandler = (
   opts?: { recorded?: boolean; clientMessageId?: string },
 ) => Promise<void> | void;
 
+/** `atlas:chat-send`: send `text` as this tab's next message. `mentions` are
+ *  the chips its short forms stand for (`askAgent`'s context chips); without
+ *  them the text goes as typed. */
+export interface ChatSendDetail {
+  text?: string;
+  tabId?: string;
+  mentions?: MentionData[];
+}
+
 interface QueueDrainArgs {
   tabId: string;
   session: ChatSession | undefined;
@@ -161,10 +170,13 @@ export function useChatPanelEvents(
   // the prior behaviour.
   useEffect(() => {
     const handler = (e: Event) => {
-      const detail = (e as CustomEvent<{ text?: string; tabId?: string }>).detail;
+      const detail = (e as CustomEvent<ChatSendDetail>).detail;
       if (detail?.tabId != null && detail.tabId !== tabId) return;
       if (detail?.text && handleSendRef.current) {
-        handleSendRef.current(detail.text, []);
+        handleSendRef.current(detail.text, detail.mentions ?? []);
+        // Heard: a sender that dispatches it cancelable (`askAgent`, into a
+        // session tab that may not have mounted yet) knows it landed.
+        e.preventDefault();
       }
     };
     window.addEventListener("atlas:chat-send", handler);
