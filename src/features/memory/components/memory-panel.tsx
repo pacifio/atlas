@@ -106,7 +106,7 @@ function MemoryHealthLine({ projectPath }: { projectPath: string | null }) {
     <span className="caption flex min-w-0 items-center gap-1.5">
       {/* Focusable, so the full line is reachable by keyboard once it truncates. */}
       <Hint label={line}>
-        <span tabIndex={0} className="truncate rounded-sm">
+        <span tabIndex={0} role="note" className="truncate rounded-sm">
           {line}
         </span>
       </Hint>
