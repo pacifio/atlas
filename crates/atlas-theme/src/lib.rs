@@ -556,13 +556,19 @@ pub fn load_user_themes_from(dir: &Path) -> Result<(Vec<Theme>, Vec<ThemeWarning
 }
 
 pub fn all_themes() -> Result<ThemeCatalog, ThemeError> {
+    all_themes_from(user_theme_dir().as_deref())
+}
+
+/// [`all_themes`] over a given user-theme directory, so a test can assemble
+/// the real catalog without touching `~/.config`.
+fn all_themes_from(user_dir: Option<&Path>) -> Result<ThemeCatalog, ThemeError> {
     let mut by_id = built_in_themes()?
         .into_iter()
         .map(|theme| (theme.id.clone(), (theme, true)))
         .collect::<BTreeMap<_, _>>();
     let mut warnings = Vec::new();
-    if let Some(dir) = user_theme_dir() {
-        let (themes, failures) = load_user_themes_from(&dir)?;
+    if let Some(dir) = user_dir {
+        let (themes, failures) = load_user_themes_from(dir)?;
         for theme in themes {
             by_id.insert(theme.id.clone(), (theme, false));
         }
@@ -1291,8 +1297,9 @@ mod tests {
 
     /// Atlas reads one theme schema and translates nothing older. A theme in
     /// an old shape, or one naming another schema, fails to load like any other
-    /// bad file: it is reported by name and never enters the catalog, so its id
-    /// does not resolve and the default takes over —
+    /// bad file: it is reported by name and never enters the assembled
+    /// catalog, which still holds the default. An id that does not resolve
+    /// falls back to that default in
     /// `unknown_config_theme_falls_back_in_memory_and_is_never_rewritten` in
     /// `atlas_config.rs`, and `apply` in the theme store.
     #[test]
@@ -1309,9 +1316,16 @@ mod tests {
         )
         .unwrap();
 
-        let (themes, warnings) = load_user_themes_from(dir.path()).unwrap();
+        let catalog = all_themes_from(Some(dir.path())).unwrap();
+        let ids = catalog
+            .themes
+            .iter()
+            .map(|(theme, _)| theme.id.as_str())
+            .collect::<Vec<_>>();
 
-        assert!(themes.is_empty(), "{themes:?}");
+        assert!(!ids.contains(&"old") && !ids.contains(&"next"), "{ids:?}");
+        assert!(ids.contains(&DEFAULT_THEME_ID), "{ids:?}");
+        let warnings = catalog.warnings;
         let keys = warnings.iter().map(|w| w.key.as_str()).collect::<Vec<_>>();
         assert_eq!(keys, ["next.toml", "old.toml"]);
         assert!(
@@ -1319,10 +1333,6 @@ mod tests {
             "{warnings:?}"
         );
         assert!(warnings[1].message.contains("old.toml"), "{warnings:?}");
-        assert!(built_in_themes()
-            .unwrap()
-            .iter()
-            .any(|theme| theme.id == DEFAULT_THEME_ID));
     }
 
     // ── config_root (must track `config_root` in `atlas_config.rs`; #64 follow-up) ──
