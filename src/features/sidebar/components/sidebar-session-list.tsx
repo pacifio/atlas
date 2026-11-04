@@ -69,7 +69,8 @@ import { dropVerbFor, pinnedOffsets, usePinnedDrag } from "../hooks/use-pinned-d
 import { useSessionSearch } from "../hooks/use-session-search";
 import { useSessionShelves } from "../hooks/use-session-shelves";
 import { useSidebarStore } from "../stores/sidebar-store";
-import { CARD_ROW_HEIGHT, SessionRow, type SessionRowHandlers } from "./session-row";
+import { SessionRow, type SessionRowHandlers } from "./session-row";
+import { CARD_ROW_HEIGHT } from "./views/session-row-controls";
 import { SessionSearchResultRow } from "./session-search-result-row";
 import { SessionRowMenu, type SessionMenuActions } from "./session-row-menu";
 import { SidebarSectionLabel } from "./sidebar-section-header";

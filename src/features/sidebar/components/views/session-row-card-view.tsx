@@ -21,7 +21,6 @@ import {
 } from "../session-row-parts";
 import { SessionPullRequestBadge } from "../session-pull-request";
 import { SessionHoverCardPopup } from "../session-hover-card";
-import type { SessionDropVerb } from "../session-row";
 import {
   RowTitle,
   SnoozeMenuButton,
@@ -29,6 +28,7 @@ import {
   TopStatusIcon,
   rowSurfaceClassName,
   stopThen,
+  type SessionDropVerb,
   type SessionRowViewProps,
 } from "./session-row-controls";
 

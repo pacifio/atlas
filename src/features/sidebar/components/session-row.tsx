@@ -27,18 +27,13 @@ import {
   type SessionRowStatus,
 } from "../lib/session-row-status";
 import { requestCustomSnooze } from "./custom-snooze-dialog";
-import { TOP_STATUS, type SessionRowViewProps } from "./views/session-row-controls";
+import {
+  TOP_STATUS,
+  type SessionDropVerb,
+  type SessionRowViewProps,
+} from "./views/session-row-controls";
 import { SessionRowCardView } from "./views/session-row-card-view";
 import { SessionRowSlimView } from "./views/session-row-slim-view";
-
-/** Slot heights the list virtualizes on. A card renders 63px (three lines at
- *  Atlas's type scale) with 2px above and below; a slim or search row is 36px.
- *  The pinned drag maths shares the card slot, so the two stay in step. */
-export const CARD_ROW_HEIGHT = 67;
-export const SLIM_ROW_HEIGHT = 36;
-
-/** What a drop would do to the row being dragged. */
-export type SessionDropVerb = "pin" | "unpin";
 
 /** Everything a row can ask the list to do. One object, stable for the
  *  list's lifetime, so it never breaks a row's memo. */

@@ -7,7 +7,7 @@ import { useRef, useState, type PointerEvent as ReactPointerEvent, type RefObjec
 import type { SidebarSession } from "../lib/sidebar-sessions";
 import { reorderPinned, unpinSession, type SidebarListSnapshot } from "../lib/sidebar-actions";
 import { useSidebarStore } from "../stores/sidebar-store";
-import { CARD_ROW_HEIGHT, type SessionDropVerb } from "../components/session-row";
+import { CARD_ROW_HEIGHT, type SessionDropVerb } from "../components/views/session-row-controls";
 
 /** How far a press must travel before it is a drag rather than a click. */
 const DRAG_THRESHOLD_PX = 4;

@@ -19,6 +19,15 @@ import {
   DropdownMenuShortcut,
 } from "@tryatlas/design";
 
+/** Slot heights the list virtualizes on. A card renders 63px (three lines at
+ *  Atlas's type scale) with 2px above and below; a slim or search row is 36px.
+ *  The pinned drag maths shares the card slot, so the two stay in step. */
+export const CARD_ROW_HEIGHT = 67;
+export const SLIM_ROW_HEIGHT = 36;
+
+/** What a drop would do to the row being dragged. */
+export type SessionDropVerb = "pin" | "unpin";
+
 export const TOP_STATUS: Record<SessionTopStatus, { label: string; className: string }> = {
   input: { label: "Needs input", className: "text-warning" },
   working: { label: "Working", className: "text-info" },
