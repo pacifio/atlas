@@ -13,8 +13,6 @@ export interface ChatNoticeAction {
   icon?: LucideIcon;
   title?: string;
   disabled?: boolean;
-  /** In flight: the button is disabled and a spinner stands before the label. */
-  busy?: boolean;
 }
 
 const GLYPH_TONE: Record<ChatNoticeTone, string> = {
@@ -54,7 +52,7 @@ export function ChatNoticeView({
   busy,
   children,
   action,
-  extraActions,
+  progress,
   onDismiss,
   dismissLabel = "Hide",
   title,
@@ -68,7 +66,9 @@ export function ChatNoticeView({
   busy?: boolean;
   children: ReactNode;
   action?: ChatNoticeAction;
-  extraActions?: ChatNoticeAction[];
+  /** Work in flight, where the action would sit: a spinner and a label, not a
+   *  control (the agent update's phase). */
+  progress?: string;
   onDismiss?: () => void;
   dismissLabel?: string;
   title?: string;
@@ -81,24 +81,27 @@ export function ChatNoticeView({
   ) : icon ? (
     <Icon icon={icon} size="sm" className={cn("shrink-0", GLYPH_TONE[tone])} />
   ) : null;
-  const actions = [action, ...(extraActions ?? [])].filter((a): a is ChatNoticeAction => !!a);
-
   const trailing =
-    actions.length > 0 || onDismiss ? (
+    action || progress || onDismiss ? (
       <span className="flex shrink-0 items-center gap-0.5">
-        {actions.map((a) => (
+        {progress && (
+          <span className="flex h-6 shrink-0 items-center gap-1.5 px-2.5 text-xs font-medium text-muted-foreground">
+            <Spinner size="xs" label="" />
+            {progress}
+          </span>
+        )}
+        {action && (
           <Button
-            key={a.label}
             variant={tucked ? "ghost" : "default"}
             size={tucked ? "xs" : "sm"}
-            title={a.title}
-            disabled={a.disabled || a.busy}
-            onClick={a.onClick}
+            title={action.title}
+            disabled={action.disabled}
+            onClick={action.onClick}
           >
-            {a.busy ? <Spinner size="xs" label="" /> : a.icon && <Icon icon={a.icon} size="xs" />}
-            {a.label}
+            {action.icon && <Icon icon={action.icon} size="xs" />}
+            {action.label}
           </Button>
-        ))}
+        )}
         {onDismiss && (
           <Hint label={dismissLabel} side="top">
             <IconButton

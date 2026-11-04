@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 //
 // The one notice view behind the composer's status bars. What matters: the
-// tone reaches the glyph, an in-flight action cannot be pressed twice, the
+// tone reaches the glyph, work in flight is not a control, the
 // container's test id and tooltip land on the root, and only the notices that
 // ask to be status regions are.
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -22,15 +22,15 @@ describe("ChatNoticeView", () => {
     expect(container.querySelector("svg")?.getAttribute("class")).toContain("text-warning");
   });
 
-  it("busy shows a spinner, and a busy action is disabled", () => {
-    const onClick = vi.fn();
+  it("busy shows a spinner for the glyph, and progress is a label, not a control", () => {
     const { container } = render(
-      <ChatNoticeView placement="above" busy action={{ label: "Update", onClick, busy: true }}>
+      <ChatNoticeView placement="above" busy progress="Installing…">
         msg
       </ChatNoticeView>,
     );
     expect(container.querySelectorAll('[data-slot="spinner"]').length).toBe(2);
-    expect(screen.getByRole("button", { name: "Update" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByText("Installing…")).toBeTruthy();
+    expect(screen.queryByRole("button")).toBeNull();
   });
 
   it("puts the test id and title on the root, and is a status region only when live", () => {
@@ -51,22 +51,22 @@ describe("ChatNoticeView", () => {
     expect(screen.getByTestId("n").getAttribute("role")).toBe("status");
   });
 
-  it("fires the action, then the extra actions, in order", async () => {
-    const calls: string[] = [];
+  it("fires its action, and a disabled action does not", async () => {
+    const onClick = vi.fn();
     render(
-      <ChatNoticeView
-        placement="tucked"
-        action={{ label: "One", onClick: () => calls.push("one") }}
-        extraActions={[{ label: "Two", onClick: () => calls.push("two") }]}
-      >
+      <ChatNoticeView placement="tucked" action={{ label: "Send anyway", onClick }}>
         msg
       </ChatNoticeView>,
     );
-    const names = screen.getAllByRole("button").map((b) => b.textContent);
-    expect(names).toEqual(["One", "Two"]);
-    await userEvent.click(screen.getByRole("button", { name: "One" }));
-    await userEvent.click(screen.getByRole("button", { name: "Two" }));
-    expect(calls).toEqual(["one", "two"]);
+    await userEvent.click(screen.getByRole("button", { name: "Send anyway" }));
+    expect(onClick).toHaveBeenCalledOnce();
+    cleanup();
+    render(
+      <ChatNoticeView placement="above" action={{ label: "Restarting…", onClick, disabled: true }}>
+        msg
+      </ChatNoticeView>,
+    );
+    expect(screen.getByRole("button", { name: "Restarting…" }).hasAttribute("disabled")).toBe(true);
   });
 
   it("offers a dismiss button only with onDismiss", async () => {

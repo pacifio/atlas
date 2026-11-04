@@ -30,9 +30,10 @@ export function AgentUpdateBar({ tabId }: { tabId: string }) {
     <ChatNoticeView
       placement="above"
       data-testid="agent-update-bar"
+      progress={phase ? updatePhaseLabel(phase.phase, phase.version) : undefined}
       action={
         phase
-          ? { label: updatePhaseLabel(phase.phase, phase.version), onClick: () => {}, busy: true }
+          ? undefined
           : {
               label: "Update",
               icon: ArrowUpCircle,

@@ -37,11 +37,15 @@ export function RetryPill({ tabId }: { tabId: string }) {
 
   return (
     <ChatNoticeView placement="above" busy data-testid="retry-pill" title={retry.lastError}>
-      <span className="font-medium text-foreground">
-        Retrying {retry.attempt}/{retry.maxAttempts}
-        {secs > 0 ? ` in ${secs}s` : "…"}
-      </span>{" "}
-      <span className="text-muted-foreground">{cause}</span>
+      {/* One line: the cause truncates rather than wrapping the card taller
+          while the countdown ticks. */}
+      <span className="flex min-w-0 items-center gap-2">
+        <span className="shrink-0 font-medium text-foreground">
+          Retrying {retry.attempt}/{retry.maxAttempts}
+          {secs > 0 ? ` in ${secs}s` : "…"}
+        </span>
+        <span className="truncate text-muted-foreground">{cause}</span>
+      </span>
     </ChatNoticeView>
   );
 }

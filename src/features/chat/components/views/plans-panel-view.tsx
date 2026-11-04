@@ -13,14 +13,12 @@ import { type PlanRecord, formatPlanTimestamp, planTimeAgo } from "../../lib/pla
 export function PlansPanelView({
   plans,
   fileRoot,
-  defaultExpandedIds,
 }: {
   plans: PlanRecord[];
   /** Resolves file links inside a plan's markdown. */
   fileRoot: string | null;
-  defaultExpandedIds?: string[];
 }) {
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(defaultExpandedIds));
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const setOpen = (id: string, open: boolean) =>
     setExpanded((prev) => {
       const next = new Set(prev);
