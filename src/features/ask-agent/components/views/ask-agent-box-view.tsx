@@ -140,6 +140,9 @@ export function AskAgentBoxView({
             size="sm"
             variant="ghost"
             aria-label="Session"
+            // A long session title truncates inside the trigger instead of
+            // running under Draft and Send.
+            className="max-w-full"
             value={target}
             onValueChange={onTargetChange}
             options={targets}

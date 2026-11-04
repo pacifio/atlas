@@ -54,6 +54,7 @@ import { gitConflict } from "./git-conflict";
 import { inboxLong } from "./inbox-long";
 import { knowledge } from "./knowledge";
 import {
+  memoryAskAgent,
   memoryEmpty,
   memoryError,
   memoryHistoryEdited,
@@ -148,6 +149,7 @@ const all: Scenario[] = [
   memorySetup,
   memoryHistoryEdited,
   memoryPopulated,
+  memoryAskAgent,
   memoryEmpty,
   memoryError,
   memoryLoading,

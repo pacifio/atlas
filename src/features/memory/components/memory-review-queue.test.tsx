@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import { MemoryReviewQueue } from "./memory-review-queue";
 import { EMPTY_REVIEW, useSharedMemoryStore } from "../stores/shared-memory-store";
 import type { ReviewQueue } from "../lib/shared-memory-api";
+import { useAskAgentStore } from "@/features/ask-agent/stores/ask-agent-store";
 
 function entry(id: number, content: string, over: Record<string, unknown> = {}) {
   return {
@@ -105,6 +106,20 @@ function front() {
 }
 
 describe("the review queue", () => {
+  it("hands the front item to the agent to rewrite, deciding nothing", async () => {
+    const user = userEvent.setup();
+    render(<MemoryReviewQueue />);
+    await user.click(within(front()).getByRole("button", { name: /Ask agent…/ }));
+    const request = useAskAgentStore.getState().request;
+    expect(request?.prompt).toMatch(/disagree/);
+    expect(request?.context.map((c) => c.kind === "memory_entry" && c.text)).toEqual([
+      "main needs Java 21",
+      "main needs Java 17",
+    ]);
+    expect(invoke).not.toHaveBeenCalledWith("memory_resolve_conflict", expect.anything());
+    expect(within(front()).getByText("main needs Java 21")).toBeTruthy();
+  });
+
   it("leads with the contradiction and keeps both when told they both hold", async () => {
     const user = userEvent.setup();
     render(<MemoryReviewQueue />);

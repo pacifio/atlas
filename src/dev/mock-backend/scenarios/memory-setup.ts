@@ -6,7 +6,7 @@
 
 import { emit } from "@tauri-apps/api/event";
 import type { Scenario } from "../types";
-import { setMemoryModel } from "../fixtures/memory";
+import { S4, setMemoryModel } from "../fixtures/memory";
 
 export const memorySetup: Scenario = {
   name: "memory-setup",
@@ -74,6 +74,30 @@ export const memoryPopulated: Scenario = {
   name: "memory",
   description: "Memory tab, populated: memories, activity and a review queue.",
   setup: memorySetup.setup,
+};
+
+/** The populated Memory tab, with the session that wrote the newest activity
+ *  open in a background tab. Shows every way Memory asks the agent: the
+ *  prompt line, a memory's "Ask agent…", the rows' hover ask, Review's
+ *  "Ask agent…", and Activity's "Why did you learn this?" (aimed at that open
+ *  session for its own lines, at a new session for the others). Errors and
+ *  their "Fix with agent" are `memory-error`. */
+export const memoryAskAgent: Scenario = {
+  name: "memory-ask-agent",
+  description: "Memory tab with every ask-agent entry point, and the newest session open.",
+  setup: async () => {
+    await memorySetup.setup?.();
+    const { openAgentChatInNewTab } = await import("@/features/chat/lib/open-agent-session");
+    const { useChatStore } = await import("@/features/chat/stores/chat-store");
+    const tabId = openAgentChatInNewTab(undefined, { background: true });
+    // As the session that wrote the newest activity, so its lines ask it.
+    useChatStore.setState((s) => {
+      const session = s.sessions[tabId];
+      if (!session) return;
+      session.acpSessionId = S4;
+      session.title = "Why does the admin table refetch on focus?";
+    });
+  },
 };
 
 /** A project nothing has been remembered in yet: every tab's empty state. */

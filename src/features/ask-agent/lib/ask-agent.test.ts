@@ -6,7 +6,7 @@ import { useChatStore } from "@/features/chat/stores/chat-store";
 import { resetMentionRegistryForTests } from "@/features/chat/lib/mention-registry";
 import type { ChatSendDetail } from "@/features/chat/hooks/use-queue-drain";
 import type { ChatInsertDetail } from "@/features/chat/lib/response-selection";
-import { askAgent, composeAsk, resolveAskTarget } from "./ask-agent";
+import { askAgent, composeAsk, openSessions, resolveAskTarget, UNTITLED_TARGET } from "./ask-agent";
 import { agentContextMention, type AgentContext } from "./agent-context";
 import { askKeyAction, type AskKey } from "./ask-box-keys";
 import { contextAt, useAskAgentContext } from "./focused-context";
@@ -129,6 +129,13 @@ describe("askAgent", () => {
   });
   afterEach(() => {
     for (const [name, l] of listeners.splice(0)) window.removeEventListener(name, l);
+  });
+
+  it("calls a session with no title yet untitled, not new", () => {
+    const titleOf = () => openSessions().find((s) => s.tabId === "chat-a")?.title;
+    expect(titleOf()).toBe(UNTITLED_TARGET);
+    useChatStore.getState().actions.setSessionTitle("chat-a", "Fix the retries");
+    expect(titleOf()).toBe("Fix the retries");
   });
 
   it("sends through the session's own send path, chips and all", async () => {

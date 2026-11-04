@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { FixWithAgentButton } from "@/features/ask-agent/components/ask-agent-button";
 import { toast } from "sonner";
 import {
   Loader2,
@@ -186,9 +187,16 @@ export function MemoryPolicyView() {
         icon={<AlertTriangle size={18} className="text-error" />}
         title="Couldn't load policies"
         action={
-          <Button variant="outline" onClick={() => void init(projectPath)}>
-            <RotateCw size={12} /> Retry
-          </Button>
+          <>
+            <Button variant="outline" onClick={() => void init(projectPath)}>
+              <RotateCw size={12} /> Retry
+            </Button>
+            {error && (
+              <FixWithAgentButton
+                error={{ kind: "error", source: "Memory: preferences", message: error }}
+              />
+            )}
+          </>
         }
       >
         {error && <p className="font-mono text-2xs break-words">{error}</p>}

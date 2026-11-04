@@ -1,5 +1,6 @@
 // One memory in the Memories pane, props-only: its words, the fix-or-forget
-// actions right under them, where it came from (the session that wrote it,
+// actions right under them (asking the agent first: most fixes are asked
+// for, not typed), where it came from (the session that wrote it,
 // on the history rail, with a way back to that session) and how agents use
 // it. Editing is in place: a draft, ⌘↵ to save, Esc to put it back.
 
@@ -44,6 +45,7 @@ import {
 } from "../../lib/shared-memory-format";
 import { AgentName, EntryAuthor, KindGlyph, StateBadge } from "./memory-entry-parts";
 import { RailNode, RailRow } from "./memory-rail";
+import { AskField } from "./memory-chrome";
 
 /** Provenance dates arrive as `YYYY-MM-DD`; show them like the rest of the
  *  pane ("Sep 18"), and pass anything else through untouched. */
@@ -79,6 +81,8 @@ export interface MemoryEntryDetailViewProps {
   onMarkOutdated: () => void;
   onMarkWrong: () => void;
   onRestore: () => void;
+  /** Open the ask box about this memory, grown from `anchor`. */
+  onAskAgent: (anchor: HTMLElement) => void;
   /** Open the session a provenance names, on the Timeline. */
   onOpenSession: (p: Provenance) => void;
   onClose: () => void;
@@ -146,6 +150,17 @@ export function MemoryEntryDetailView(p: MemoryEntryDetailViewProps) {
             </p>
           )}
 
+          {/* Asking is the primary fix: "this is outdated, we moved to
+              Postgres" goes to a session, and the agent rewrites the memory.
+              The verdicts stay one click; editing by hand is in ⋯. */}
+          {!p.editing && (
+            <AskField
+              label="Ask agent…"
+              hint="“this is outdated, we moved to Postgres”"
+              onOpen={p.onAskAgent}
+            />
+          )}
+
           <div className="flex flex-wrap items-center gap-1.5">
             {p.editing ? (
               <>
@@ -165,15 +180,37 @@ export function MemoryEntryDetailView(p: MemoryEntryDetailViewProps) {
             ) : (
               <>
                 {archived ? (
-                  <Button size="sm" variant="outline" disabled={p.busy} onClick={p.onRestore}>
+                  <Button size="sm" variant="ghost" disabled={p.busy} onClick={p.onRestore}>
                     <ArchiveRestore aria-hidden className="size-3.5" />
                     Restore
                   </Button>
                 ) : (
-                  <Button size="sm" variant="outline" onClick={p.onEdit}>
-                    <Pencil aria-hidden className="size-3.5" />
-                    Edit
-                  </Button>
+                  // Short labels so the verdicts and Forget fit one row of the
+                  // pane; the full phrase is their name and their hover.
+                  <>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={p.busy}
+                      aria-label="Mark as outdated"
+                      title="Mark as outdated"
+                      onClick={p.onMarkOutdated}
+                    >
+                      <Timer aria-hidden className="size-3.5" />
+                      Outdated
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={p.busy}
+                      aria-label="Mark as wrong"
+                      title="Mark as wrong"
+                      onClick={p.onMarkWrong}
+                    >
+                      <ThumbsDown aria-hidden className="size-3.5" />
+                      Wrong
+                    </Button>
+                  </>
                 )}
                 <Button size="sm" variant="ghost-destructive" onClick={p.onAskForget}>
                   <Trash2 aria-hidden className="size-3.5" />
@@ -186,13 +223,9 @@ export function MemoryEntryDetailView(p: MemoryEntryDetailViewProps) {
                   <DropdownMenuContent align="start" side="bottom" className="w-64">
                     {!archived && (
                       <>
-                        <DropdownMenuItem disabled={p.busy} onClick={p.onMarkOutdated}>
-                          <Timer />
-                          Mark as outdated
-                        </DropdownMenuItem>
-                        <DropdownMenuItem disabled={p.busy} onClick={p.onMarkWrong}>
-                          <ThumbsDown />
-                          Mark as wrong
+                        <DropdownMenuItem onClick={p.onEdit}>
+                          <Pencil />
+                          Edit by hand
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
                       </>

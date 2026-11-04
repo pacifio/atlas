@@ -12,7 +12,15 @@
 // the package turns it off under reduced motion.
 
 import { useEffect, useRef, type ReactNode } from "react";
-import { CheckCircle2, GitBranch, GitMerge, Inbox, Sparkles, type LucideIcon } from "lucide-react";
+import {
+  CheckCircle2,
+  GitBranch,
+  GitMerge,
+  Inbox,
+  MessageSquarePlus,
+  Sparkles,
+  type LucideIcon,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button, EmptyState, Skeleton } from "@tryatlas/design";
 import { kindNoun } from "../../lib/memory-entries";
@@ -20,6 +28,12 @@ import { REVIEW_EYEBROW, dreamLabel, type ReviewItem } from "../../lib/memory-re
 import { confidenceLabel, type MemoryEntry } from "../../lib/shared-memory-format";
 import { EntryAuthor, KindGlyph } from "./memory-entry-parts";
 import { Notice } from "./memory-chrome";
+import type { AgentContext } from "@/features/ask-agent/lib/agent-context";
+import {
+  ASK_ROW,
+  AskAgentButton,
+  FixWithAgentButton,
+} from "@/features/ask-agent/components/ask-agent-button";
 
 /** Every choice a review item offers. */
 export type ReviewChoice =
@@ -45,6 +59,11 @@ export interface MemoryReviewQueueViewProps {
   onChoose: (item: ReviewItem, choice: ReviewChoice) => void;
   onLater: (item: ReviewItem) => void;
   onBringForward: (item: ReviewItem) => void;
+  /** What "Ask agent" hands the agent for an item: its memories, and a
+   *  prompt asking for a rewrite before the user decides. */
+  askFor: (item: ReviewItem) => { context: AgentContext[]; prompt: string };
+  /** Open the ask box for the item in front, grown from `anchor`. */
+  onAsk: (item: ReviewItem, anchor: HTMLElement) => void;
 }
 
 const TYPE_ICON: Record<ReviewItem["type"], LucideIcon> = {
@@ -72,9 +91,18 @@ export function MemoryReviewQueueView(p: MemoryReviewQueueViewProps) {
       <Notice
         title="Couldn't read the review queue"
         action={
-          <Button size="sm" variant="outline" onClick={p.onRetry}>
-            Try again
-          </Button>
+          <>
+            <Button size="sm" variant="outline" onClick={p.onRetry}>
+              Try again
+            </Button>
+            <FixWithAgentButton
+              error={{
+                kind: "error",
+                source: "Memory: reading the review queue",
+                message: p.error,
+              }}
+            />
+          </>
         }
       >
         <span className="font-mono text-2xs break-words">{p.error}</span>
@@ -108,6 +136,17 @@ export function MemoryReviewQueueView(p: MemoryReviewQueueViewProps) {
           <FrontBody item={front} />
           <div className="mt-4 flex flex-wrap items-center gap-1.5">
             <Choices item={front} pending={p.pending} onChoose={(c) => p.onChoose(front, c)} />
+            {/* Not a verdict: the agent rewrites the memory, and the card
+                stays until the user decides. */}
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={p.pending}
+              onClick={(ev) => p.onAsk(front, ev.currentTarget)}
+            >
+              <MessageSquarePlus aria-hidden className="size-3.5" />
+              Ask agent…
+            </Button>
             <span className="ml-auto" />
             {rest.length > 0 && (
               <Button
@@ -130,24 +169,32 @@ export function MemoryReviewQueueView(p: MemoryReviewQueueViewProps) {
               <span aria-hidden className="h-px flex-1 bg-border-subtle" />
             </h3>
             <ul className="space-y-px">
-              {rest.map((item) => (
-                <li key={item.key}>
-                  <button
-                    type="button"
-                    disabled={p.pending}
-                    onClick={() => p.onBringForward(item)}
-                    className="flex w-full cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-left transition-colors duration-fast ease-out-strong hover:bg-element-hover disabled:cursor-default"
-                  >
-                    <TypeGlyph type={item.type} />
-                    <span className="min-w-0 flex-1 truncate text-xs text-secondary-foreground">
-                      {summary(item)}
-                    </span>
-                    <span className="shrink-0 text-2xs text-disabled">
-                      {REVIEW_EYEBROW[item.type]}
-                    </span>
-                  </button>
-                </li>
-              ))}
+              {rest.map((item) => {
+                const ask = p.askFor(item);
+                return (
+                  <li key={item.key} className={cn(ASK_ROW, "flex items-center gap-1")}>
+                    <button
+                      type="button"
+                      disabled={p.pending}
+                      onClick={() => p.onBringForward(item)}
+                      className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-left transition-colors duration-fast ease-out-strong hover:bg-element-hover disabled:cursor-default"
+                    >
+                      <TypeGlyph type={item.type} />
+                      <span className="min-w-0 flex-1 truncate text-xs text-secondary-foreground">
+                        {summary(item)}
+                      </span>
+                      <span className="shrink-0 text-2xs text-disabled">
+                        {REVIEW_EYEBROW[item.type]}
+                      </span>
+                    </button>
+                    <AskAgentButton
+                      context={ask.context}
+                      prompt={ask.prompt}
+                      className="shrink-0"
+                    />
+                  </li>
+                );
+              })}
             </ul>
           </section>
         )}

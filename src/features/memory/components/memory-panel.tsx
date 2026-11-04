@@ -12,7 +12,9 @@ import { MemoryEntries } from "./memory-entries";
 import { MemoryReviewQueue } from "./memory-review-queue";
 import { MemorySharingControls } from "./memory-sharing-controls";
 import { ImportClaudeMemoryModal, ImportRepoModal } from "./shared-memory-modals";
-import { Notice } from "./views/memory-chrome";
+import { Notice, PromptLine } from "./views/memory-chrome";
+import { memoryDigest, MEMORY_INSTRUCTION_PROMPT } from "../lib/memory-ask";
+import { openAskAgent } from "@/features/ask-agent/lib/ask-agent";
 import { DestinationActions } from "@/features/layout/components/destination-actions";
 import { useAppStore } from "@/features/app/stores/app-store";
 import { useMemoryStore } from "../stores/memory-store";
@@ -45,7 +47,9 @@ import {
 //
 // The destination bar (ADR-0024) carries the nav, the health line, the
 // sharing controls and the ⋯ menu (refresh, import, export, clear), so every
-// tab shares them. The panel loads the record once per project, so the
+// tab shares them. Under it, the prompt line: most changes to memory are
+// asked of an agent, not typed, so telling it is the first thing on every
+// tab. The panel loads the record once per project, so the
 // Review count is right before Review is opened.
 //
 // Removed earlier and not coming back: the on-device RAG chat and the
@@ -124,6 +128,21 @@ export function MemoryPanel() {
           </div>
         </div>
       </DestinationActions>
+
+      {projectPath && (
+        <PromptLine
+          onOpen={(anchor) => {
+            // The record as loaded, read at the click: the most used first,
+            // capped. The agent's memory tools reach the rest.
+            const digest = memoryDigest(useSharedMemoryStore.getState().entries, projectPath);
+            openAskAgent({
+              context: digest ? [digest] : [],
+              prompt: MEMORY_INSTRUCTION_PROMPT,
+              anchor,
+            });
+          }}
+        />
+      )}
 
       {projectPath && (
         <>

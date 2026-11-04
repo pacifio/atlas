@@ -20,6 +20,8 @@ export function openAskAgent(request: {
   suggestions?: readonly string[];
   anchor?: AskAnchor;
   target?: AskTarget;
+  /** The field's hint when it opens empty ("Ask the agent…" otherwise). */
+  placeholder?: string;
   /** Once it is sent or drafted, not on cancel; `kept` is which of
    *  `context` (by index) went with it. */
   onAsked?: (result: AskResult, kept: readonly number[]) => void;
@@ -30,6 +32,7 @@ export function openAskAgent(request: {
     suggestions: request.suggestions,
     anchor: request.anchor ?? null,
     target: request.target,
+    placeholder: request.placeholder,
     onAsked: request.onAsked,
   });
 }

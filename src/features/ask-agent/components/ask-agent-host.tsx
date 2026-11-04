@@ -157,6 +157,7 @@ function AskAgentBox({
             el?.setSelectionRange(el.value.length, el.value.length);
           });
         }}
+        placeholder={request.placeholder}
         targets={targets}
         target={target}
         onTargetChange={setTarget}

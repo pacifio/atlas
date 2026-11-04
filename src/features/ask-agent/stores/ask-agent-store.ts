@@ -26,6 +26,8 @@ export interface AskRequest {
    *  review's comments) lets it go here. `kept` is which of `context` (by
    *  index) went with it: the user may have taken chips out. */
   onAsked?: (result: AskResult, kept: readonly number[]) => void;
+  /** The field's hint, for a surface that knows what people ask there. */
+  placeholder?: string;
 }
 
 interface AskAgentStoreState {

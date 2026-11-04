@@ -118,8 +118,14 @@ export function resolveAskTarget(
   throw new Error(`No open session ${target}`);
 }
 
+/** What the picker and the confirmation call a session. One with no title
+ *  yet is "Untitled session": its stored "New session" read, beside "Start a
+ *  new session", as if picking it would open one. */
+export const UNTITLED_TARGET = "Untitled session";
+
 function sessionTitle(tabId: string): string {
-  return useChatStore.getState().sessions[tabId]?.title || UNTITLED_SESSION;
+  const title = useChatStore.getState().sessions[tabId]?.title;
+  return !title || title === UNTITLED_SESSION ? UNTITLED_TARGET : title;
 }
 
 /** The open sessions, most recently viewed first. */
