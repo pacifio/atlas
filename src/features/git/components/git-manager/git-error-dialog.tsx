@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { CopyGlyph } from "@/ui/animated-icon";
 import { Dialog } from "@base-ui/react/dialog";
 import { AlertTriangle } from "lucide-react";
+import { Button } from "@/ui/button";
 import { useGitStore } from "../../stores/git-store";
 import { gitErrorTitle } from "../../lib/git-errors";
 import { copyText } from "@/lib/clipboard";
@@ -37,15 +38,12 @@ export function GitErrorDialog({ onForcePush }: { onForcePush?: () => void }) {
     <Dialog.Root open={payload !== null} onOpenChange={(o) => !o && actions.dismissErrorDialog()}>
       <Dialog.Portal>
         <Dialog.Backdrop className="fixed inset-0 scrim z-overlay" />
-        <Dialog.Popup className="fixed left-1/2 top-[24%] -translate-x-1/2 z-modal w-[440px] rounded-xl overflow-hidden bg-[var(--card)] border border-border shadow-md flex flex-col">
+        <Dialog.Popup className="fixed left-1/2 top-[24%] -translate-x-1/2 z-modal w-[440px] rounded-xl overflow-hidden bg-card border border-border shadow-lg flex flex-col outline-none">
           {payload && (
             <>
-              <div className="px-4 pt-3.5 pb-3 border-b border-border">
-                <Dialog.Title className="text-base font-semibold text-foreground flex items-center gap-1.5">
-                  <AlertTriangle
-                    size={13}
-                    className="text-[var(--atlas-status-error-foreground)] shrink-0"
-                  />
+              <div className="px-4 pt-4 pb-3 border-b border-border-subtle">
+                <Dialog.Title className="heading flex items-center gap-2">
+                  <AlertTriangle size={14} className="text-error shrink-0" />
                   {gitErrorTitle(payload)}
                 </Dialog.Title>
                 <Dialog.Description className="text-xs text-secondary-foreground mt-1.5">
@@ -63,53 +61,45 @@ export function GitErrorDialog({ onForcePush }: { onForcePush?: () => void }) {
               </div>
 
               {payload.rawStderr && (
-                <div className="max-h-[180px] overflow-y-auto hide-scrollbar bg-[var(--background)] px-3 py-2">
-                  <pre className="font-mono text-2xs leading-[15px] text-secondary-foreground whitespace-pre-wrap break-all">
+                <div className="max-h-[180px] overflow-y-auto hide-scrollbar bg-background px-4 py-2.5">
+                  <pre className="font-mono text-2xs text-secondary-foreground whitespace-pre-wrap break-all">
                     {payload.rawStderr}
                   </pre>
                 </div>
               )}
 
-              <div className="border-t border-border px-3 py-2.5 flex items-center justify-between gap-2">
-                <div className="min-w-0 flex items-center gap-2">
+              <div className="border-t border-border-subtle px-3 py-2.5 flex items-center justify-between gap-2">
+                <div className="min-w-0 flex items-center gap-2 pl-1">
                   {payload.command && (
                     <span className="truncate font-mono text-2xs text-muted-foreground">
                       {payload.command}
                     </span>
                   )}
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex items-center gap-1.5 shrink-0">
                   {payload.rawStderr && (
-                    <button
+                    <Button
+                      variant="ghost"
                       onClick={() => onCopy(payload.rawStderr)}
-                      className="flex items-center gap-1 px-2 h-7 rounded text-xs text-secondary-foreground hover:bg-element-hover transition-colors"
                       title="Copy git output"
                     >
                       <CopyGlyph copied={copied} size="sm" />
                       {copied ? "Copied" : "Copy output"}
-                    </button>
+                    </Button>
                   )}
                   {canForcePush && (
-                    <button
-                      onClick={() => actions.dismissErrorDialog()}
-                      className="px-3 h-7 rounded text-xs text-secondary-foreground hover:bg-element-hover transition-colors"
-                    >
+                    <Button variant="ghost" onClick={() => actions.dismissErrorDialog()}>
                       Cancel
-                    </button>
+                    </Button>
                   )}
-                  <button
+                  <Button
                     onClick={() => {
                       actions.dismissErrorDialog();
                       if (canForcePush) onForcePush();
                     }}
-                    // `text-primary-foreground`, never the literal white utility: `--primary`
-                    // IS white in this theme, so a white label on it renders an
-                    // empty button. Every other filled accent button in the app
-                    // pairs the fill with the inverse token for this reason.
-                    className="px-3 h-7 rounded text-xs font-medium text-primary-foreground bg-primary hover:opacity-90 transition-colors"
                   >
                     {canForcePush ? "Force push" : "Dismiss"}
-                  </button>
+                  </Button>
                 </div>
               </div>
             </>

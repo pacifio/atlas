@@ -7,6 +7,7 @@ import { Dialog } from "@base-ui/react/dialog";
 import { RefreshCw, GitBranch, Maximize2, Minimize2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { HintGroup, HintItem } from "@/ui/hint-group";
+import { IconButton, iconButtonVariants } from "@/ui/icon-button";
 import { useAppStore } from "@/features/app/stores/app-store";
 import { useGitStore } from "@/features/git/stores/git-store";
 import { CommitRowView } from "./commit-node";
@@ -126,7 +127,7 @@ export function GitGraphPanel() {
         <Dialog.Backdrop className="fixed inset-0 z-overlay scrim" />
         <Dialog.Popup
           aria-describedby={undefined}
-          className="fixed top-8.5 left-4 right-4 bottom-6 z-modal rounded-xl border border-[var(--border)] bg-[var(--sidebar)] overflow-hidden flex flex-col shadow-md focus:outline-none"
+          className="fixed top-8.5 left-4 right-4 bottom-6 z-modal rounded-xl border border-border bg-card overflow-hidden flex flex-col shadow-lg focus:outline-none"
         >
           <Dialog.Title className="sr-only">Git Graph</Dialog.Title>
           {inner}
@@ -202,12 +203,12 @@ function GraphView({
   const showMore = useMemo(() => rows.length >= limit, [rows.length, limit]);
 
   return (
-    <div className="h-full flex flex-col bg-sidebar">
+    <div className="h-full flex flex-col bg-card">
       {/* Header */}
-      <div className="flex items-center justify-between px-3 h-control-lg shrink-0 border-b border-border-subtle">
+      <div className="flex items-center justify-between pl-3 pr-1.5 h-control-lg shrink-0 border-b border-border-subtle">
         <div className="flex items-center gap-1.5">
           {rows.length > 0 && (
-            <span className="text-2xs font-semibold text-muted-foreground uppercase tracking-wide">
+            <span className="eyebrow tabular-nums">
               {commitCountLabel(rows.length, totalCommits)}
             </span>
           )}
@@ -215,22 +216,22 @@ function GraphView({
         <HintGroup>
           <div className="flex items-center gap-0.5">
             <HintItem label={fullscreen ? "Exit fullscreen" : "Fullscreen"}>
-              <button
+              <IconButton
+                size="sm"
+                icon={fullscreen ? Minimize2 : Maximize2}
+                label={fullscreen ? "Exit fullscreen" : "Fullscreen"}
                 onClick={onToggleFullscreen}
-                className="p-1 rounded hover:bg-element-hover text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-              >
-                {fullscreen ? <Minimize2 size={11} /> : <Maximize2 size={11} />}
-              </button>
+              />
             </HintItem>
+            {/* `IconButton`'s own square on a plain button: the glyph spins
+                while refreshing, which the primitive's fixed glyph can't. */}
             <HintItem label="Refresh">
               <button
+                type="button"
                 onClick={onRefresh}
-                className={cn(
-                  "p-1 rounded hover:bg-element-hover text-muted-foreground hover:text-foreground transition-colors cursor-pointer",
-                  refreshing && "animate-spin",
-                )}
+                className={iconButtonVariants({ size: "sm" })}
               >
-                <RefreshCw size={11} />
+                <RefreshCw size={12} className={cn(refreshing && "animate-spin")} />
               </button>
             </HintItem>
           </div>
@@ -280,13 +281,12 @@ function GraphView({
               aria-hidden
               className="pointer-events-none absolute left-0 right-0 bottom-0 h-16 z-panel"
               style={{
-                background: "linear-gradient(to bottom, transparent, var(--sidebar))",
+                background: "linear-gradient(to bottom, transparent, var(--card))",
               }}
             />
             <button
               onClick={onShowMore}
-              className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 px-3 h-7 rounded-full border border-[var(--border)] bg-[var(--card)] text-xs text-[var(--secondary-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--card)] shadow-md transition-colors cursor-pointer"
-              style={{ backdropFilter: "blur(4px)" }}
+              className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 px-3 h-control-md rounded-full border border-border bg-card text-xs font-medium text-secondary-foreground hover:text-foreground hover:bg-element-hover shadow-sm transition-colors duration-fast cursor-pointer"
               title={`Show ${DEFAULT_LIMIT} more commits`}
             >
               Show {DEFAULT_LIMIT} more

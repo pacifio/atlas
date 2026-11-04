@@ -50,6 +50,10 @@ const buttonVariants = cva(
         secondary: "bg-card text-foreground hover:bg-element-hover",
         ghost:
           "bg-transparent text-secondary-foreground hover:bg-element-hover hover:text-foreground",
+        // A quiet action that throws work away (discard, drop): ghost at rest,
+        // the error tone only under the pointer.
+        "ghost-destructive":
+          "bg-transparent text-secondary-foreground hover:bg-error-muted hover:text-error",
         // An action that answers a problem: conflicts to resolve, runs waiting
         // for approval. The border and text carry the tone; hover tints it.
         "destructive-outline": "border-error bg-transparent text-error hover:bg-error-muted",

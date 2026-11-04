@@ -13,7 +13,11 @@ import {
   Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Button } from "@/ui/button";
+import { IconButton } from "@/ui/icon-button";
+import { Input } from "@/ui/input";
 import { HintGroup, HintItem } from "@/ui/hint-group";
+import { SectionHeader } from "./section-header";
 import { useGitStore, retainGitDiff, type GitFileStatus } from "../../stores/git-store";
 import { handleGitError } from "../../lib/git-errors";
 import { openGitDiff } from "../../lib/git-diff-api";
@@ -41,17 +45,16 @@ function FieldToggle({
   onToggle: () => void;
 }) {
   return (
-    <button
+    <Button
+      variant="ghost"
+      size="xs"
       onClick={onToggle}
-      className="flex items-center gap-1 text-2xs text-muted-foreground hover:text-secondary-foreground"
       title={open ? `Hide ${label.toLowerCase()}` : `Show ${label.toLowerCase()}`}
     >
       {open ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
       {label}
-      {!open && hasContent && (
-        <span className="inline-block w-1 h-1 rounded-full bg-[var(--primary)]" />
-      )}
-    </button>
+      {!open && hasContent && <span className="inline-block size-1 rounded-full bg-primary" />}
+    </Button>
   );
 }
 
@@ -67,10 +70,9 @@ function statusBadge(status: string): { letter: string; cls: string } {
   if (s.includes("delet")) return { letter: "D", cls: "text-error" };
   if (s.includes("add") || s.includes("new") || s.includes("untrack"))
     return { letter: "A", cls: "text-success" };
-  if (s.includes("renam"))
-    return { letter: "R", cls: "text-[var(--atlas-status-info-foreground)]" };
+  if (s.includes("renam")) return { letter: "R", cls: "text-info" };
   if (s.includes("conflict") || s.includes("unmerg")) return { letter: "!", cls: "text-error" };
-  return { letter: "M", cls: "text-[var(--atlas-status-warning-foreground)]" };
+  return { letter: "M", cls: "text-warning" };
 }
 
 /** One changed file. Memoised, with callbacks that take the file rather than
@@ -103,7 +105,7 @@ const FileRow = memo(function FileRow({
     <div
       onClick={() => onSelect(file.path)}
       className={cn(
-        "group flex items-center gap-1.5 h-control-sm px-2 cursor-pointer text-xs",
+        "group flex items-center gap-1.5 h-control-sm pl-2 pr-1 cursor-pointer text-xs transition-colors duration-fast",
         selected ? "bg-element-selected" : "hover:bg-element-hover",
       )}
     >
@@ -118,53 +120,54 @@ const FileRow = memo(function FileRow({
         <div className="flex items-center opacity-0 group-hover:opacity-100 focus-within:opacity-100 shrink-0">
           {onOpenDiff && (
             <HintItem label="Open in diff view">
-              <button
+              <IconButton
+                size="xs"
+                icon={GitCompare}
+                label="Open in diff view"
                 onClick={(e) => {
                   e.stopPropagation();
                   onOpenDiff(file);
                 }}
-                className="p-0.5 rounded text-muted-foreground hover:text-foreground"
-              >
-                <GitCompare size={11} />
-              </button>
+              />
             </HintItem>
           )}
           {onOpenInEditor && (
             <HintItem label="Open in code editor">
-              <button
+              <IconButton
+                size="xs"
+                icon={FileCode2}
+                label="Open in code editor"
                 onClick={(e) => {
                   e.stopPropagation();
                   onOpenInEditor(file.path);
                 }}
-                className="p-0.5 rounded text-muted-foreground hover:text-foreground"
-              >
-                <FileCode2 size={11} />
-              </button>
+              />
             </HintItem>
           )}
           {onDiscard && (
             <HintItem label="Discard changes">
-              <button
+              <IconButton
+                size="xs"
+                variant="ghost-destructive"
+                icon={Undo2}
+                label="Discard changes"
                 onClick={(e) => {
                   e.stopPropagation();
                   onDiscard(file);
                 }}
-                className="p-0.5 rounded text-muted-foreground hover:text-[var(--atlas-status-error-foreground)]"
-              >
-                <Undo2 size={11} />
-              </button>
+              />
             </HintItem>
           )}
           <HintItem label={action === "stage" ? "Stage" : "Unstage"}>
-            <button
+            <IconButton
+              size="xs"
+              icon={action === "stage" ? Plus : Minus}
+              label={action === "stage" ? "Stage" : "Unstage"}
               onClick={(e) => {
                 e.stopPropagation();
                 onAction(file);
               }}
-              className="p-0.5 rounded text-muted-foreground hover:text-foreground"
-            >
-              {action === "stage" ? <Plus size={12} /> : <Minus size={12} />}
-            </button>
+            />
           </HintItem>
         </div>
       </HintGroup>
@@ -376,28 +379,26 @@ export function ChangesView() {
   return (
     <div className="h-full flex flex-col min-w-0">
       {inProgressLabel && (
-        <div className="shrink-0 flex items-center gap-2 px-3 py-2 border-b border-[var(--atlas-status-warning-foreground)]/30 bg-[var(--atlas-status-warning-foreground)]/10 text-xs">
-          <AlertTriangle
-            size={12}
-            className="text-[var(--atlas-status-warning-foreground)] shrink-0"
-          />
+        <div className="shrink-0 flex items-center gap-2 pl-3 pr-1.5 h-control-lg border-b border-border-subtle bg-warning-muted text-xs">
+          <AlertTriangle size={12} className="text-warning shrink-0" />
           <span className="flex-1 text-secondary-foreground">
-            Resolving <span className="font-medium text-foreground">{inProgressLabel}</span>
+            Resolving <span className="font-semibold text-foreground">{inProgressLabel}</span>
           </span>
-          <button
+          <Button
+            size="sm"
             onClick={() => run(() => actions.opControl(opKind, "continue"))}
             disabled={hasConflicts}
             title={hasConflicts ? "Resolve all conflicts first" : undefined}
-            className="px-2 h-6 rounded text-2xs font-medium bg-[var(--primary)] text-[var(--background)] hover:bg-[var(--atlas-primary-hover)] disabled:opacity-40 disabled:cursor-not-allowed"
           >
             Continue
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => run(() => actions.opControl(opKind, "abort"))}
-            className="px-2 h-6 rounded text-2xs text-secondary-foreground hover:bg-element-hover hover:text-foreground"
           >
             Abort
-          </button>
+          </Button>
         </div>
       )}
 
@@ -405,21 +406,19 @@ export function ChangesView() {
       {inProgressLabel && <ConflictsView onOpenFile={openFile} />}
 
       {/* File lists — bounded so the diff region below gets room. */}
-      <div className="shrink-0 max-h-[45%] overflow-y-auto hide-scrollbar border-b border-border">
+      <div className="shrink-0 max-h-[45%] overflow-y-auto hide-scrollbar border-b border-border-subtle">
         {/* Staged */}
         {staged.length > 0 && (
           <div>
-            <div className="flex items-center justify-between px-2 h-control-sm sticky top-0 bg-[var(--sidebar)] border-b border-border-subtle">
-              <span className="text-2xs font-semibold text-muted-foreground uppercase tracking-wider">
-                Staged ({staged.length})
-              </span>
-              <button
+            <SectionHeader title={`Staged (${staged.length})`}>
+              <Button
+                variant="ghost"
+                size="xs"
                 onClick={() => run(() => actions.unstageFiles(staged.map((f) => f.path)))}
-                className="text-2xs text-muted-foreground hover:text-foreground"
               >
                 Unstage all
-              </button>
-            </div>
+              </Button>
+            </SectionHeader>
             {staged.map((f) => (
               <FileRow
                 key={f.path}
@@ -437,29 +436,27 @@ export function ChangesView() {
 
         {/* Unstaged */}
         <div>
-          <div className="flex items-center justify-between px-2 h-control-sm sticky top-0 bg-[var(--sidebar)] border-b border-border-subtle">
-            <span className="text-2xs font-semibold text-muted-foreground uppercase tracking-wider">
-              Changes ({unstaged.length})
-            </span>
+          <SectionHeader title={`Changes (${unstaged.length})`}>
             {unstaged.length > 0 && (
-              <div className="flex items-center gap-1.5">
-                <button
+              <>
+                <Button
+                  variant="ghost"
+                  size="xs"
                   onClick={() => run(() => actions.stageFiles(unstaged.map((f) => f.path)))}
-                  className="text-2xs text-muted-foreground hover:text-foreground"
                 >
                   Stage all
-                </button>
-                <span className="w-px h-3 bg-border" />
-                <button
+                </Button>
+                <Button
+                  variant="ghost-destructive"
+                  size="xs"
                   onClick={() => setConfirmRevertAll(true)}
-                  className="text-2xs text-muted-foreground hover:text-[var(--atlas-status-error-foreground)]"
                   title="Discard all unstaged changes"
                 >
                   Revert all
-                </button>
-              </div>
+                </Button>
+              </>
             )}
-          </div>
+          </SectionHeader>
           {unstaged.map((f) => (
             <FileRow
               key={f.path}
@@ -499,12 +496,11 @@ export function ChangesView() {
       <GitOpOutput />
 
       {/* Commit form */}
-      <div className="shrink-0 border-t border-border p-2 space-y-1.5">
-        <input
+      <div className="shrink-0 border-t border-border-subtle p-2 space-y-1.5">
+        <Input
           value={summary}
           onChange={(e) => setSummary(e.target.value)}
           placeholder={amend ? "Amend message (empty = keep original)" : "Summary (required)"}
-          className="w-full h-7 rounded-md border border-border bg-panel-input px-2 text-xs text-foreground outline-none focus:border-border-strong"
           onKeyDown={(e) => {
             if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) doCommit();
           }}
@@ -512,7 +508,7 @@ export function ChangesView() {
         {/* Optional-field toggles — always visible, so an opened field can be
             collapsed again. Hidden text is kept (and still committed); the dot
             marks a collapsed field that has content. */}
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-1">
           <FieldToggle
             open={showDesc}
             hasContent={description.trim().length > 0}
@@ -532,25 +528,27 @@ export function ChangesView() {
             onChange={(e) => setDescription(e.target.value)}
             placeholder="Description (optional)"
             rows={3}
-            className="w-full rounded-md border border-border bg-panel-input px-2 py-1.5 text-xs text-foreground outline-none focus:border-border-strong resize-none"
+            // No textarea primitive: these are `Input`'s own classes, so the
+            // two fields read as one family.
+            className="block w-full rounded border border-border bg-panel-input px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground transition-colors duration-fast ease-out-strong focus:border-border-strong resize-none"
           />
         )}
         {showCoAuthors && (
-          <input
+          <Input
             value={coAuthors}
             onChange={(e) => setCoAuthors(e.target.value)}
             placeholder="Co-authors: Name <email>, Name <email>"
-            className="w-full h-7 rounded-md border border-border bg-panel-input px-2 text-xs font-mono text-foreground outline-none focus:border-border-strong"
+            className="font-mono"
             title="Added as Co-authored-by trailers"
           />
         )}
         <div className="flex items-center gap-2">
-          <label className="flex items-center gap-1.5 text-2xs text-muted-foreground cursor-pointer select-none">
+          <label className="flex items-center gap-1.5 caption cursor-pointer select-none">
             <input
               type="checkbox"
               checked={amend}
               onChange={(e) => setAmend(e.target.checked)}
-              className="accent-[var(--primary)]"
+              className="accent-primary"
             />
             Amend last commit
           </label>
@@ -564,7 +562,7 @@ export function ChangesView() {
           <button
             onClick={doCommit}
             disabled={!canCommit}
-            className="ml-auto inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--card)] px-3 py-1.5 text-xs font-medium leading-none text-[var(--foreground)] transition-colors hover:bg-[var(--atlas-element-hover)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-[var(--card)]"
+            className="ml-auto inline-flex h-control-md cursor-pointer items-center gap-1.5 rounded-full border border-border bg-card px-3 text-xs font-medium text-foreground transition-colors duration-fast ease-out-strong hover:bg-element-hover disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-card"
           >
             {committing ? (
               <Loader2 size={11} className="animate-spin" />

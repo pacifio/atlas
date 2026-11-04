@@ -2,6 +2,10 @@ import { useMemo, useState } from "react";
 import { Popover } from "@base-ui/react/popover";
 import { GitBranch, Check, Plus, Search, Trash2, GitMerge } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Badge } from "@/ui/badge";
+import { Button } from "@/ui/button";
+import { IconButton } from "@/ui/icon-button";
+import { Input } from "@/ui/input";
 import { HintGroup, HintItem } from "@/ui/hint-group";
 import { useGitStore } from "../../stores/git-store";
 import { handleGitError } from "../../lib/git-errors";
@@ -43,20 +47,17 @@ export function BranchSwitcher() {
     >
       <Popover.Trigger
         render={
-          <button
-            className="flex items-center gap-1.5 h-6 px-2 rounded text-xs font-medium text-secondary-foreground hover:text-foreground hover:bg-element-hover transition-colors cursor-pointer min-w-0"
-            title="Switch branch"
-          >
-            <GitBranch size={12} className="shrink-0" />
+          <Button variant="ghost" size="sm" className="min-w-0 shrink" title="Switch branch">
+            <GitBranch size={12} />
             <span className="truncate max-w-[120px]">{branch || "—"}</span>
-          </button>
+          </Button>
         }
       />
       <Popover.Portal>
         <Popover.Positioner className="z-popover" side="bottom" align="start" sideOffset={4}>
-          <Popover.Popup className="w-[260px] rounded-lg border border-border bg-[var(--card)] shadow-md flex flex-col">
-            <div className="flex items-center gap-1.5 px-2 h-[30px] border-b border-border shrink-0">
-              <Search size={11} className="text-muted-foreground shrink-0" />
+          <Popover.Popup className="w-[260px] overflow-hidden rounded-lg border border-border bg-card shadow-md inset-highlight flex flex-col">
+            <div className="flex items-center gap-1.5 px-2.5 h-control-lg border-b border-border-subtle shrink-0">
+              <Search size={12} className="text-muted-foreground shrink-0" />
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
@@ -66,12 +67,12 @@ export function BranchSwitcher() {
               />
             </div>
 
-            <div className="max-h-[280px] overflow-y-auto hide-scrollbar py-1">
+            <div className="max-h-[280px] overflow-y-auto hide-scrollbar p-1">
               {filtered.map((b) => (
                 <div
                   key={b.name}
                   className={cn(
-                    "group flex items-center gap-2 px-2 h-[28px] text-xs cursor-pointer",
+                    "group flex items-center gap-2 pl-1.5 pr-1 h-control-md rounded-md text-xs cursor-pointer transition-colors duration-fast",
                     b.isCurrent
                       ? "text-foreground"
                       : "text-secondary-foreground hover:bg-element-hover hover:text-foreground",
@@ -92,12 +93,12 @@ export function BranchSwitcher() {
                   />
                   <span className="truncate flex-1 font-mono">{b.name}</span>
                   {b.isRemote && (
-                    <span className="shrink-0 text-3xs font-mono uppercase tracking-wide text-muted-foreground border border-border rounded px-1">
+                    <Badge variant="outline" size="sm">
                       remote
-                    </span>
+                    </Badge>
                   )}
                   {(b.ahead > 0 || b.behind > 0) && (
-                    <span className="shrink-0 text-3xs font-mono text-muted-foreground">
+                    <span className="shrink-0 font-mono text-2xs tabular-nums text-muted-foreground">
                       {b.ahead > 0 && `↑${b.ahead}`} {b.behind > 0 && `↓${b.behind}`}
                     </span>
                   )}
@@ -105,26 +106,27 @@ export function BranchSwitcher() {
                     <HintGroup>
                       <div className="flex items-center opacity-0 group-hover:opacity-100 focus-within:opacity-100">
                         <HintItem label={`Merge ${b.name} into ${branch}`}>
-                          <button
+                          <IconButton
+                            size="xs"
+                            icon={GitMerge}
+                            label={`Merge ${b.name} into ${branch}`}
                             onClick={(e) => {
                               e.stopPropagation();
                               void run(() => actions.mergeBranch(b.name));
                             }}
-                            className="p-0.5 rounded text-muted-foreground hover:text-foreground"
-                          >
-                            <GitMerge size={11} />
-                          </button>
+                          />
                         </HintItem>
                         <HintItem label={`Delete ${b.name}`}>
-                          <button
+                          <IconButton
+                            size="xs"
+                            variant="ghost-destructive"
+                            icon={Trash2}
+                            label={`Delete ${b.name}`}
                             onClick={(e) => {
                               e.stopPropagation();
                               void run(() => actions.deleteBranch(b.name));
                             }}
-                            className="p-0.5 rounded text-muted-foreground hover:text-[var(--atlas-status-error-foreground)]"
-                          >
-                            <Trash2 size={11} />
-                          </button>
+                          />
                         </HintItem>
                       </div>
                     </HintGroup>
@@ -138,14 +140,14 @@ export function BranchSwitcher() {
               )}
             </div>
 
-            <div className="border-t border-border p-1.5 shrink-0">
+            <div className="border-t border-border-subtle p-1 shrink-0">
               {creating ? (
-                <input
+                <Input
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
                   autoFocus
                   placeholder="new-branch-name"
-                  className="w-full h-7 rounded border border-border bg-panel-input px-2 text-xs font-mono text-foreground outline-none focus:border-border-strong"
+                  className="font-mono"
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && newName.trim()) {
                       void run(() => actions.createBranch(newName.trim()));
@@ -157,13 +159,14 @@ export function BranchSwitcher() {
                   }}
                 />
               ) : (
-                <button
+                <Button
+                  variant="ghost"
                   onClick={() => setCreating(true)}
-                  className="w-full flex items-center gap-1.5 h-7 px-2 rounded text-xs text-secondary-foreground hover:bg-element-hover hover:text-foreground transition-colors"
+                  className="w-full justify-start"
                 >
                   <Plus size={12} />
                   New branch from {branch}
-                </button>
+                </Button>
               )}
             </div>
           </Popover.Popup>

@@ -47,6 +47,10 @@ const iconButtonVariants = cva(
         outline: "border-border bg-transparent text-foreground hover:bg-element-hover",
         secondary: "bg-card text-foreground hover:bg-element-hover",
         ghost: "bg-transparent text-muted-foreground hover:bg-element-hover hover:text-foreground",
+        // The row affordance that throws work away (discard, delete): ghost at
+        // rest, the error tone only under the pointer.
+        "ghost-destructive":
+          "bg-transparent text-muted-foreground hover:bg-error-muted hover:text-error",
         // `hairline` is the rail footer's pair (help, interface scale): a
         // quiet glyph inside a subtle ring, so the controls read as present
         // but sit back from the card. Both open a popup, and stay lit while

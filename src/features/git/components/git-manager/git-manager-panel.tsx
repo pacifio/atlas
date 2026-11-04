@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { RefreshCw, ArrowDown, ArrowUp, UploadCloud, Loader2, GitMerge } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Button } from "@/ui/button";
+import { IconButton } from "@/ui/icon-button";
 import { HintGroup, HintItem } from "@/ui/hint-group";
 import { useGitStore } from "../../stores/git-store";
 import { handleGitError } from "../../lib/git-errors";
@@ -86,28 +87,29 @@ export function GitManagerPanel() {
   const current = branchesFull.find((b) => b.isCurrent);
   const hasUpstream = !!current?.upstream;
   const changedCount = files.length;
+  const mergeLabel = `Merge a branch into ${current?.name ?? "the current branch"}`;
 
   return (
     <div className="h-full flex flex-col relative">
       {/* Weighted progress for streaming network ops (fetch/pull/push/clone). */}
       {progress && (
         <div
-          className="absolute top-0 left-0 h-[2px] bg-primary transition-[width] duration-200 z-10"
+          className="absolute top-0 left-0 h-0.5 bg-primary transition-[width] duration-base z-panel"
           style={{ width: `${Math.min(100, progress.percent)}%` }}
           title={progress.title}
         />
       )}
       {/* Toolbar: branch + sync */}
       <HintGroup>
-        <div className="shrink-0 flex items-center gap-1 px-1.5 h-[29px] border-b border-border">
+        <div className="shrink-0 flex items-center gap-1 px-1.5 h-control-lg border-b border-border-subtle">
           <BranchSwitcher />
-          <HintItem label={`Merge a branch into ${current?.name ?? "the current branch"}`}>
-            <button
+          <HintItem label={mergeLabel}>
+            <IconButton
+              size="sm"
+              icon={GitMerge}
+              label={mergeLabel}
               onClick={() => setMergeOpen(true)}
-              className="flex items-center justify-center w-6 h-6 rounded text-secondary-foreground hover:text-foreground hover:bg-element-hover transition-colors cursor-pointer shrink-0"
-            >
-              <GitMerge size={12} />
-            </button>
+            />
           </HintItem>
           <div className="ml-auto flex items-center gap-0.5">
             <FetchButton
@@ -146,7 +148,7 @@ export function GitManagerPanel() {
       </HintGroup>
 
       {/* View tabs */}
-      <div className="shrink-0 flex items-center gap-0.5 px-1.5 h-[29px] border-b border-border">
+      <div className="shrink-0 flex items-center gap-0.5 px-1.5 h-control-lg border-b border-border-subtle">
         <ViewTab active={view === "changes"} onClick={() => setView("changes")}>
           Changes{changedCount > 0 ? ` (${changedCount})` : ""}
         </ViewTab>
@@ -216,23 +218,24 @@ function ToolbarBtn({
   label?: string;
 }) {
   const button = (
-    <button
+    <Button
+      variant="ghost"
+      size="sm"
       onClick={onClick}
       disabled={busy}
       // A labelled button explains itself; its title only adds the detail.
       title={label ? title : undefined}
-      className="flex items-center gap-1 h-6 px-1.5 rounded text-2xs font-medium text-muted-foreground hover:text-foreground hover:bg-element-hover transition-colors disabled:opacity-50"
     >
       {busy ? <Loader2 size={12} className="animate-spin" /> : icon}
       {label && <span>{label}</span>}
-      {badge !== undefined && (
-        <span className="font-mono text-3xs text-secondary-foreground">{badge}</span>
-      )}
-    </button>
+      {badge !== undefined && <span className="font-mono tabular-nums">{badge}</span>}
+    </Button>
   );
   return label ? button : <HintItem label={title}>{button}</HintItem>;
 }
 
+/** A view switch: the selected one carries the pressed ring, the rest sit
+ *  back as ghosts — the same pair as the section row above it. */
 function ViewTab({
   active,
   onClick,
@@ -243,16 +246,8 @@ function ViewTab({
   children: React.ReactNode;
 }) {
   return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "px-2 h-6 rounded text-xs font-medium transition-colors",
-        active
-          ? "text-foreground bg-element-selected"
-          : "text-muted-foreground hover:text-secondary-foreground hover:bg-element-hover",
-      )}
-    >
+    <Button variant="ghost" size="sm" aria-pressed={active} onClick={onClick}>
       {children}
-    </button>
+    </Button>
   );
 }
