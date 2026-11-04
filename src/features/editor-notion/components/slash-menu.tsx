@@ -22,6 +22,8 @@ import {
   Table as TableIcon,
   AtSign,
   ChevronRight,
+  ListCollapse,
+  Lightbulb,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { Editor, Range } from "@tiptap/core";
@@ -38,6 +40,25 @@ export interface SlashItem {
    *  it with the new block. */
   command: (props: { editor: Editor; range: Range }) => void;
 }
+
+// The menu chrome is the package dropdown menu's (`DropdownMenuContent`,
+// `DropdownMenuLabel`, `DropdownMenuItem`, `DropdownMenuShortcut`). Those are
+// Base UI components that take focus and need a React tree with their
+// providers; this menu renders into the slash popup's own root and must never
+// steal focus from the editor, so it borrows their class strings instead.
+// copy of @tryatlas/design dropdown-menu POPUP: not exported as of 0.1.4.
+// Minus `animate-scale-in`: the menu opens on a keystroke, many times a day,
+// and a keyboard-invoked surface appears at once.
+const MENU_POPUP =
+  "overflow-y-auto overflow-x-hidden rounded-lg p-0.5 bg-popover border border-border text-foreground shadow-md";
+// copy of @tryatlas/design DropdownMenuLabel: not exported as of 0.1.4.
+const MENU_LABEL = "eyebrow px-2 py-1 text-muted-foreground";
+// copy of @tryatlas/design dropdown-menu ITEM: not exported as of 0.1.4.
+// `data-active` stands in for `focus:` — the row is highlighted, never focused.
+const MENU_ITEM =
+  "relative flex items-center gap-2 rounded px-2 py-1 text-xs cursor-pointer select-none outline-none text-secondary-foreground data-active:bg-element-hover data-active:text-foreground";
+// copy of @tryatlas/design DropdownMenuShortcut: not exported as of 0.1.4.
+const MENU_SHORTCUT = "ml-auto pl-3 text-3xs text-disabled";
 
 export interface SlashMenuRef {
   /** Forwarded from the suggestion plugin onKeyDown — returns true if
@@ -126,7 +147,7 @@ export const SLASH_ITEMS: SlashItem[] = [
     group: "Rich",
     title: "Toggle",
     hint: "Collapsible section",
-    icon: Quote,
+    icon: ListCollapse,
     command: ({ editor, range }) => editor.chain().focus().deleteRange(range).setToggle().run(),
   },
   {
@@ -144,7 +165,7 @@ export const SLASH_ITEMS: SlashItem[] = [
     group: "Rich",
     title: "Callout",
     hint: "Highlighted block",
-    icon: Quote,
+    icon: Lightbulb,
     command: ({ editor, range }) => editor.chain().focus().deleteRange(range).setCallout().run(),
   },
   {
@@ -259,16 +280,8 @@ export const SlashMenu = forwardRef<SlashMenuRef, SlashMenuProps>(function Slash
 
   if (items.length === 0) {
     return (
-      <div
-        className="atlas-slash-menu"
-        style={{
-          width: 280,
-          padding: "10px 12px",
-          color: "var(--muted-foreground)",
-          fontSize: "var(--text-sm)",
-        }}
-      >
-        No matches
+      <div className={cn(MENU_POPUP, "w-[280px]")}>
+        <div className="px-2 py-1.5 text-xs text-muted-foreground">No matches</div>
       </div>
     );
   }
@@ -286,11 +299,14 @@ export const SlashMenu = forwardRef<SlashMenuRef, SlashMenuProps>(function Slash
   }
 
   let flat = -1;
+  // 280 x 360 px are the box `positionPopup` (slash-suggestion.tsx) clamps to
+  // the viewport. Pixels on purpose: the spacing scale is rem-based and the
+  // app's root is 13px, so `w-70` would come out at 228px.
   return (
-    <div className="atlas-slash-menu" ref={listRef}>
+    <div className={cn(MENU_POPUP, "max-h-[360px] w-[280px]")} ref={listRef}>
       {groups.map((g) => (
-        <div key={g.label} className="atlas-slash-group">
-          <div className="atlas-slash-eyebrow">{g.label}</div>
+        <div key={g.label} className="py-0.5">
+          <div className={MENU_LABEL}>{g.label}</div>
           {g.items.map((item) => {
             flat += 1;
             const idx = flat;
@@ -299,25 +315,27 @@ export const SlashMenu = forwardRef<SlashMenuRef, SlashMenuProps>(function Slash
             return (
               <button
                 key={item.id}
+                type="button"
                 data-idx={idx}
+                data-active={active || undefined}
                 onMouseEnter={() => setSelectedIndex(idx)}
                 onMouseDown={(e) => {
                   e.preventDefault();
                   command(item);
                 }}
-                className={cn("atlas-slash-item", active && "is-active")}
+                className={cn(MENU_ITEM, "w-full text-left")}
               >
-                <span className="atlas-slash-iconwrap">
-                  <Icon size={14} strokeWidth={1.6} />
+                <span className="flex size-control-sm shrink-0 items-center justify-center rounded-md border border-border-subtle bg-card">
+                  <Icon className="size-3.5" strokeWidth={1.6} />
                 </span>
-                <span className="atlas-slash-body">
-                  <span className="atlas-slash-title">{item.title}</span>
-                  <span className="atlas-slash-hint">{item.hint}</span>
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <span className="text-xs text-foreground">{item.title}</span>
+                  <span className="text-2xs text-muted-foreground">{item.hint}</span>
                 </span>
                 {item.kbd ? (
-                  <span className="atlas-slash-kbd mono">{item.kbd}</span>
+                  <span className={cn(MENU_SHORTCUT, "font-mono")}>{item.kbd}</span>
                 ) : (
-                  <ChevronRight size={11} className="atlas-slash-chev" strokeWidth={1.6} />
+                  <ChevronRight className="size-3 text-muted-foreground" strokeWidth={1.6} />
                 )}
               </button>
             );

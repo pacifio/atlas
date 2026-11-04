@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { BubbleMenu } from "@tiptap/react/menus";
 import type { Editor } from "@tiptap/core";
-import { cn } from "@/lib/utils";
 import { sendToAgentChat } from "@/features/chat/lib/send-to-agent";
 import {
   Bold,
@@ -15,8 +14,11 @@ import {
   List,
   Quote,
   MessageSquarePlus,
+  X,
 } from "lucide-react";
-import { HintGroup, HintItem, Hint } from "@tryatlas/design";
+import { HintGroup, HintItem, Hint, Input, Separator, iconButtonVariants } from "@tryatlas/design";
+
+const TOOL = iconButtonVariants({ variant: "ghost", size: "md" });
 
 interface AtlasBubbleMenuProps {
   editor: Editor | null;
@@ -64,9 +66,10 @@ export function AtlasBubbleMenu({ editor }: AtlasBubbleMenuProps) {
             e.preventDefault();
             props.onClick();
           }}
-          className={cn("atlas-bubble-btn", props.isActive && "is-active")}
+          aria-pressed={props.isActive}
+          className={TOOL}
         >
-          <Icon size={13} strokeWidth={1.7} />
+          <Icon className="size-3.5" strokeWidth={1.7} />
         </button>
       </HintItem>
     );
@@ -76,10 +79,19 @@ export function AtlasBubbleMenu({ editor }: AtlasBubbleMenuProps) {
     // The menu sits above the selection, so its tooltips open upward too and
     // never cover the selected text.
     <HintGroup side="top">
-      <BubbleMenu editor={editor} options={{ placement: "top" }} className="atlas-bubble-wrap">
+      <BubbleMenu
+        editor={editor}
+        options={{ placement: "top" }}
+        // The package menu surface (`DropdownMenuContent`'s tokens) without its
+        // scroll and entrance animation: a selection toolbar tracks the
+        // selection and should not pop on every drag.
+        className="z-popover flex items-center gap-px rounded-lg border border-border bg-popover p-0.5 text-foreground shadow-md"
+      >
         {linkOpen ? (
-          <div className="atlas-bubble-link">
-            <input
+          <div className="flex items-center gap-1 px-0.5">
+            <Input
+              size="sm"
+              className="w-[220px]"
               value={linkUrl}
               placeholder="https://…"
               autoFocus
@@ -111,9 +123,9 @@ export function AtlasBubbleMenu({ editor }: AtlasBubbleMenuProps) {
                   setLinkOpen(false);
                   setLinkUrl("");
                 }}
-                className="atlas-bubble-btn"
+                className={iconButtonVariants({ variant: "ghost", size: "xs" })}
               >
-                ×
+                <X className="size-3" />
               </button>
             </Hint>
           </div>
@@ -149,7 +161,7 @@ export function AtlasBubbleMenu({ editor }: AtlasBubbleMenuProps) {
               isActive: editor.isActive("code"),
               onClick: () => editor.chain().focus().toggleCode().run(),
             })}
-            <span className="atlas-bubble-sep" />
+            <Separator orientation="vertical" className="mx-0.5 h-4" />
             {tool({
               title: "Link (⌘K)",
               icon: LinkIcon,
@@ -184,7 +196,7 @@ export function AtlasBubbleMenu({ editor }: AtlasBubbleMenuProps) {
               isActive: editor.isActive("blockquote"),
               onClick: () => editor.chain().focus().toggleBlockquote().run(),
             })}
-            <span className="atlas-bubble-sep" />
+            <Separator orientation="vertical" className="mx-0.5 h-4" />
             {tool({
               title: "Send selection to chat",
               icon: MessageSquarePlus,
