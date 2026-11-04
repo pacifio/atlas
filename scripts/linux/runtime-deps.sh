@@ -27,6 +27,25 @@ DEB_DEPENDS=(
   libglib2.0-0
   bubblewrap
 )
+# Libraries the binary links that the deb does not name, because each is a
+# hard dependency of a package in DEB_DEPENDS and apt installs it with that
+# package. package-linux.sh runs dpkg-shlibdeps over the binary and fails on
+# a linked library in neither list: that is a library apt would not install,
+# and the app would fail at launch on a machine without it. A new one goes
+# in DEB_DEPENDS if Atlas calls it, here if it only comes with something
+# already named. Names are the pre-time64 ones; the check strips a `t64`
+# suffix, since those packages Provide the old name.
+# shellcheck disable=SC2034
+DEB_LINKED_VIA_DEPENDS=(
+  libc6
+  libgcc-s1
+  libstdc++6
+  libcairo2
+  libdbus-1-3
+  libgdk-pixbuf-2.0-0
+  libjavascriptcoregtk-4.1-0
+  libsoup-3.0-0
+)
 # shellcheck disable=SC2034
 RPM_REQUIRES=(
   webkit2gtk4.1

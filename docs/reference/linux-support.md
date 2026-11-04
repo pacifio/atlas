@@ -8,6 +8,15 @@ built, checked, signed and announced.
 - **Where packages land:** `target/release-linux/`, next to the binary, never under
   `dist/` (the frontend bundle, which the next build syncs and watches).
   `cargo clean` removes them with the rest of the build output.
+- **The deb's dependency check:** `package-linux.sh` runs `dpkg-shlibdeps` over the binary
+  and fails if it links a library that neither `DEB_DEPENDS` nor `DEB_LINKED_VIA_DEPENDS`
+  in `scripts/linux/runtime-deps.sh` names. The tool's own line is never copied into the
+  package: it names the build host's packages (`libglib2.0-0t64` on a time64 host, which
+  Ubuntu 22.04 and Debian 12 lack). It also prints the binary's glibc and libstdc++ floors
+  and warns when they exceed the release's (2.35 and 12): a deb built on a newer distro
+  is refused by older ones on `libc6`, as Debian 13 (glibc 2.41) does to a binary built on
+  Ubuntu 26.04 (glibc 2.43). Only building on the floor fixes that, which the release
+  workflow does. `docs/research/deb-dependencies-cargo-deb.md` has the reasoning.
 - **A local deb with cargo-deb:** `bun run package:linux:deb` (`scripts/linux/cargo-deb.sh`,
   `--build` to build first, `--install` to apt-install the result) writes
   `target/debian/tryatlas_<version>_<arch>.deb` from `[package.metadata.deb]` in

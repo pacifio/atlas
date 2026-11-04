@@ -22,6 +22,10 @@ import { fileURLToPath } from "node:url";
  *  - that list naming the sandbox and WebKitGTK 4.1 for every family;
  *  - no dead deb/rpm config in tauri.linux.conf.json (Tauri builds neither,
  *    and the copy there drifted unnoticed while package-linux.sh shipped);
+ *  - the dpkg-shlibdeps check in package-linux.sh: every library the binary
+ *    links is in DEB_DEPENDS or DEB_LINKED_VIA_DEPENDS, and the tool's own
+ *    line, which names the build host's packages, never reaches the control
+ *    file (docs/research/deb-dependencies-cargo-deb.md);
  *  - bzip2 compiled in on Linux, for the soname reason in its manifest;
  *  - the bundled bubblewrap pinned to one version and one checksum;
  *  - the cargo-deb table in src-tauri/Cargo.toml (scripts/linux/cargo-deb.sh,
@@ -191,5 +195,37 @@ describe("the cargo-deb table (the local deb) matches the release deb", () => {
     }
     expect(dests).toContain("usr/share/licenses/tryatlas/LICENSE");
     expect(dests).toContain("usr/share/licenses/tryatlas/");
+  });
+});
+
+describe("the deb's linked-library check", () => {
+  const packager = read("scripts/package-linux.sh");
+  const linkedVia = bashArray(DEPS, "DEB_LINKED_VIA_DEPENDS");
+
+  it("runs dpkg-shlibdeps over the binary and reads both lists", () => {
+    expect(packager).toMatch(/dpkg-shlibdeps -O/);
+    expect(packager).toContain('"${DEB_DEPENDS[@]}" "${DEB_LINKED_VIA_DEPENDS[@]}"');
+  });
+
+  it("names the two libraries whose floors the toolchain sets, so they are never 'unnamed'", () => {
+    // libc6 carries the glibc floor the script writes itself; libstdc++6 the
+    // GCC one it warns about. Both are linked by every build.
+    expect(linkedVia).toContain("libc6");
+    expect(linkedVia).toContain("libstdc++6");
+    expect(linkedVia).not.toContain("bubblewrap");
+    for (const name of linkedVia) expect(FAMILIES.deb).not.toContain(name);
+  });
+
+  it("never writes the tool's host-specific line into the control file", () => {
+    // Built on a time64 host that line says libglib2.0-0t64, which Ubuntu
+    // 22.04 and Debian 12 do not have. Depends is the hand list plus libc6.
+    const dependsLine = packager.match(/^DEB_DEPENDS_LINE=.*$/m)?.[0];
+    expect(dependsLine).toBeDefined();
+    expect(dependsLine).not.toContain("SHLIBS");
+    expect(dependsLine).toContain('"${DEB_DEPENDS[@]}"');
+  });
+
+  it("strips the time64 suffix before matching, so a t64 host passes", () => {
+    expect(packager).toContain('base="${pkg%t64}"');
   });
 });

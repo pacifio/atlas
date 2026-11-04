@@ -96,6 +96,80 @@ if [ -z "$GLIBC_NEEDED" ]; then
   exit 1
 fi
 
+# --- the linked libraries, checked against the Depends list -------------------
+# dpkg-shlibdeps reads the binary's DT_NEEDED sonames and maps each to the
+# package that owns it on THIS machine, at this machine's versions. That is why
+# its line is not copied into the control file: built on a time64 distro it
+# writes libglib2.0-0t64, which Ubuntu 22.04 and Debian 12 do not have. It is a
+# check instead. A linked library that neither DEB_DEPENDS nor
+# DEB_LINKED_VIA_DEPENDS names is one apt would not install, so the app would
+# start on the builder and fail at launch elsewhere, with nothing failing here.
+# docs/research/deb-dependencies-cargo-deb.md has the reasoning.
+command -v dpkg-shlibdeps >/dev/null 2>&1 || {
+  echo "Error: dpkg-shlibdeps not found (apt install dpkg-dev)" >&2
+  exit 1
+}
+ATLAS_BIN_ABS="$(cd "$(dirname "$ATLAS_BIN")" && pwd)/$(basename "$ATLAS_BIN")"
+SHLIBDEPS_DIR="$(mktemp -d)"
+mkdir -p "${SHLIBDEPS_DIR}/debian"
+: > "${SHLIBDEPS_DIR}/debian/control" # the tool insists on one; it stays empty
+if ! SHLIBS_LINE="$(cd "${SHLIBDEPS_DIR}" && dpkg-shlibdeps -O "${ATLAS_BIN_ABS}" 2>/dev/null)"; then
+  echo "Error: dpkg-shlibdeps failed on ${ATLAS_BIN}:" >&2
+  (cd "${SHLIBDEPS_DIR}" && dpkg-shlibdeps -O "${ATLAS_BIN_ABS}") >&2 || true
+  rm -rf "${SHLIBDEPS_DIR}"
+  exit 1
+fi
+rm -rf "${SHLIBDEPS_DIR}"
+SHLIBS_LINE="${SHLIBS_LINE#shlibs:Depends=}"
+LIBSTDCXX_NEEDED=""
+UNNAMED=()
+IFS=',' read -r -a SHLIBS_ITEMS <<<"${SHLIBS_LINE}"
+for item in "${SHLIBS_ITEMS[@]}"; do
+  item="${item#"${item%%[![:space:]]*}"}" # trim the leading space
+  pkg="${item%% *}"                        # the name, before " (>= version)"
+  ver="$(sed -n 's/.*(>= \([^)]*\)).*/\1/p' <<<"$item")"
+  base="${pkg%t64}" # Debian 13 / Ubuntu 24.04 time64 rename; Provides the old name
+  known=0
+  for n in "${DEB_DEPENDS[@]}" "${DEB_LINKED_VIA_DEPENDS[@]}"; do
+    if [ "$n" = "$base" ]; then
+      known=1
+      break
+    fi
+  done
+  [ "$known" = 1 ] || UNNAMED+=("$item")
+  [ "$base" = "libstdc++6" ] && LIBSTDCXX_NEEDED="$ver"
+done
+if [ "${#UNNAMED[@]}" -gt 0 ]; then
+  echo "Error: the binary links libraries the deb does not name: ${UNNAMED[*]}" >&2
+  echo "  Add each to DEB_DEPENDS in scripts/linux/runtime-deps.sh if Atlas needs it, or to" >&2
+  echo "  DEB_LINKED_VIA_DEPENDS there if it only comes with a package already named." >&2
+  exit 1
+fi
+echo "dpkg-shlibdeps: every library the binary links is named by the deb or comes with one that is"
+
+# The floors this machine's toolchain gave the binary, against what the
+# release supports (docs/reference/linux-support.md). Built on a newer distro
+# the binary imports newer symbols, and apt on an older one refuses the deb:
+# Debian 13 (glibc 2.41) answers "Depends: libc6 (>= 2.43) but 2.41 is to be
+# installed". Nothing in the package can lower that; the deb is honest about
+# a binary that would otherwise fail at launch. Only building on the floor
+# changes it, which release-linux.yml does on Ubuntu 22.04. A warning, not a
+# failure: a local build for this machine is a fine thing to make. Verify
+# fails it in CI. libstdc++6 12 is Ubuntu 22.04's and Debian 12's.
+GLIBC_SUPPORTED="${GLIBC_FLOOR:-2.35}"
+LIBSTDCXX_SUPPORTED="${LIBSTDCXX_FLOOR:-12}"
+newest() { printf '%s\n' "$1" "$2" | sort -V | tail -n 1; }
+echo "floors: glibc ${GLIBC_NEEDED} (release supports ${GLIBC_SUPPORTED}), libstdc++6 ${LIBSTDCXX_NEEDED:-none} (release supports ${LIBSTDCXX_SUPPORTED})"
+if [ "$(newest "$GLIBC_NEEDED" "$GLIBC_SUPPORTED")" != "$GLIBC_SUPPORTED" ]; then
+  echo "Warning: this binary needs glibc ${GLIBC_NEEDED}, above the release floor ${GLIBC_SUPPORTED}." >&2
+  echo "  The deb installs only on distros with glibc >= ${GLIBC_NEEDED}; older ones refuse it on libc6." >&2
+  echo "  For a deb that installs everywhere supported, build on the floor (release-linux.yml: Ubuntu 22.04)." >&2
+fi
+if [ -n "$LIBSTDCXX_NEEDED" ] && [ "$(newest "$LIBSTDCXX_NEEDED" "$LIBSTDCXX_SUPPORTED")" != "$LIBSTDCXX_SUPPORTED" ]; then
+  echo "Warning: this binary needs libstdc++6 >= ${LIBSTDCXX_NEEDED} (a GCC ${LIBSTDCXX_NEEDED} symbol), above the release floor ${LIBSTDCXX_SUPPORTED}." >&2
+  echo "  Older distros refuse the deb or fail at launch with 'CXXABI/GLIBCXX version not found'." >&2
+fi
+
 # Under target/, with the binary, not under dist/. `dist/` is the frontend
 # bundle: `scripts/build-frontend.mjs` syncs it to Vite's output before every
 # build, deleting whatever else is there, and `tauri-build` watches all of it,
