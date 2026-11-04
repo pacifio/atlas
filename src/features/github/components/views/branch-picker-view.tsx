@@ -26,7 +26,9 @@ export function BranchPickerView({
   // Through a ref: a container re-render hands a fresh closure, which must
   // not cancel and re-ask an in-flight load.
   const loadRef = useRef(loadBranches);
-  loadRef.current = loadBranches;
+  useEffect(() => {
+    loadRef.current = loadBranches;
+  }, [loadBranches]);
 
   useEffect(() => {
     if (!open || branches) return;
@@ -54,6 +56,13 @@ export function BranchPickerView({
   }, [branches, filter, branch]);
 
   const filterRef = useRef<HTMLInputElement>(null);
+
+  /** Close, and switch only when the branch is not the checked-out one. */
+  const pick = (b: string) => {
+    setOpen(false);
+    setFilter("");
+    if (b !== branch) onSwitch(b);
+  };
 
   return (
     <Popover
@@ -94,7 +103,8 @@ export function BranchPickerView({
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && shown[0]) onSwitch(shown[0]);
+              // Enter picks the first row, exactly as clicking it would.
+              if (e.key === "Enter" && shown[0]) pick(shown[0]);
             }}
             placeholder="Filter branches"
             className="min-w-0 flex-1 bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground"
@@ -123,10 +133,7 @@ export function BranchPickerView({
                   type="button"
                   role="option"
                   aria-selected={current}
-                  onClick={() => {
-                    setOpen(false);
-                    if (!current) onSwitch(b);
-                  }}
+                  onClick={() => pick(b)}
                   className={cn(
                     "flex h-control-md w-full cursor-pointer items-center gap-2 rounded-md pr-1.5 pl-2 text-left text-xs outline-none transition-colors duration-fast",
                     current

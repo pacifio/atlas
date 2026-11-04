@@ -95,8 +95,9 @@ function GraphBody({
       scrollPositionCache.set(repoPath, el.scrollTop);
     };
     el.addEventListener("scroll", onScroll, { passive: true });
+    // No write on cleanup: by then the scroller can be detached, reading 0,
+    // and would overwrite the position the other mount should restore.
     return () => {
-      scrollPositionCache.set(repoPath, el.scrollTop);
       el.removeEventListener("scroll", onScroll);
     };
   }, [repoPath]);
@@ -144,7 +145,8 @@ function GraphBody({
       <div className="relative min-h-0 flex-1">
         <div ref={parentRef} className="absolute inset-0 overflow-auto hide-scrollbar">
           {loading && (
-            <div aria-busy className="py-1.5">
+            <div role="status" aria-busy className="py-1.5">
+              <span className="sr-only">Loading…</span>
               {Array.from({ length: 12 }, (_, i) => (
                 <Skeleton key={i} className="mx-3 my-1.5 h-4" />
               ))}

@@ -80,6 +80,12 @@ export function GitGraphPanel() {
   );
 
   const notARepo = !path || !isRepo;
+  const totalCommits = graphQuery.data?.totalCommits ?? rows.length;
+  // Offered only while the page is full (so not mid-load) AND commits remain,
+  // naming how many the next page actually holds.
+  const remaining = totalCommits - rows.length;
+  const showMoreCount =
+    rows.length >= limit && remaining > 0 ? Math.min(DEFAULT_LIMIT, remaining) : null;
   const view = (
     <GitGraphView
       state={
@@ -87,11 +93,11 @@ export function GitGraphPanel() {
       }
       repoPath={path}
       rows={rows}
-      totalCommits={graphQuery.data?.totalCommits ?? rows.length}
+      totalCommits={totalCommits}
       compact={!fullscreen}
       selectedSha={selectedSha}
       onSelect={onSelect}
-      showMoreCount={rows.length >= limit ? DEFAULT_LIMIT : null}
+      showMoreCount={showMoreCount}
       onShowMore={() => setLimit((l) => l + DEFAULT_LIMIT)}
       refreshing={sigQuery.isFetching || graphQuery.isFetching}
       onRefresh={() => sigQuery.refetch()}
