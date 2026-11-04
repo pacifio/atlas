@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Dialog } from "@base-ui/react/dialog";
-import { DialogOverlay } from "@/ui/dialog";
 import { Search, User } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Kbd, KbdGroup } from "@/ui/kbd";
 import type { ChatMessage } from "@/types/agent";
 import { formatTime } from "@/lib/format-time";
+import { DialogOverlay, Kbd, KbdGroup } from "@tryatlas/design";
 
 interface ChatSearchPaletteProps {
   open: boolean;

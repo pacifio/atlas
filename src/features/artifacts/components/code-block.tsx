@@ -28,7 +28,7 @@ import { getLanguage } from "@/features/git/lib/diff";
 import { highlightDiffLine } from "@/features/git/lib/diff-highlight";
 import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
+import { Hint } from "@tryatlas/design";
 
 /**
  * Lines past which the block renders plain.
@@ -238,7 +238,7 @@ export function CopyButton({ text, className }: { text: string; className?: stri
         type="button"
         onClick={() => void copyText(text).then((ok) => setDone(ok))}
         className={cn(
-          "flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-disabled opacity-0 transition-all duration-150 hover:bg-element-hover hover:text-[var(--foreground)] focus-visible:opacity-100",
+          "flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-disabled opacity-0 transition-[color,background-color,opacity] duration-150 hover:bg-element-hover hover:text-[var(--foreground)] focus-visible:opacity-100",
           className ?? "group-hover/head:opacity-100",
         )}
       >

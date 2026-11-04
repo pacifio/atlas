@@ -491,7 +491,7 @@ function Badges({ unread, mentions }: { unread: number; mentions: number }) {
  * The keycap, on the same tokens as the `Kbd` primitive.
  *
  * It used to be the hint-overlay keycap verbatim: a hand-mixed dark gradient,
- * a white hairline and a three-layer inset shadow. `src/ui/kbd.tsx` has since
+ * a white hairline and a three-layer inset shadow. `@tryatlas/design`'s `Kbd` has since
  * moved that look onto `border-border` + `bg-card` + the elevation
  * scale, so copying the old recipe no longer matched the thing it was copying.
  * It also could not survive a light theme: the cap was hardcoded dark while

@@ -23,9 +23,9 @@ import {
 } from "@/features/pull-requests/lib/session-pull-request-links";
 import { STATE_PRESENTATION } from "@/features/pull-requests/components/pull-request-presentation";
 import { timeAgo } from "@/lib/time-ago";
-import { Icon } from "@/ui/icon";
 import { SessionSubtitle } from "../components/session-subtitle";
 import type { CommandPaletteActionItem } from "./command-palette-logic";
+import { Icon } from "@tryatlas/design";
 
 /** Every listed session in the organisation's projects, most recently
  *  active first: pinned and active, then snoozed, then settled. */

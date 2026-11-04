@@ -13,8 +13,6 @@
 
 import { CircleDashed } from "lucide-react";
 
-import { Button } from "@/ui/button";
-
 import type { OrgAgentTarget } from "../lib/org-agent-links";
 import {
   turnEnded,
@@ -44,6 +42,7 @@ import {
   WorkingLabel,
   WorkingLine,
 } from "./views/org-agent-turn-parts";
+import { Button } from "@tryatlas/design";
 
 export { EFFORT_LABEL, Notice, PromptBubble } from "./views/org-agent-turn-parts";
 

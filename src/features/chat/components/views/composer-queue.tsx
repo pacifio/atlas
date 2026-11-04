@@ -1,7 +1,7 @@
 // Queued messages above the composer's input. Props-only.
 
 import { Pencil, X } from "lucide-react";
-import { Hint } from "@/ui/tooltip";
+import { Hint } from "@tryatlas/design";
 
 export function ComposerQueue({
   queue,

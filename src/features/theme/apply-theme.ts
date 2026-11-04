@@ -1,5 +1,10 @@
-import type { Theme, ThemeMode } from "./lib/theme-api";
-import { resolveTheme, type ResolvedTheme, type ThemeOverride } from "./resolve-theme";
+import {
+  type Theme,
+  type ThemeMode,
+  resolveTheme,
+  type ResolvedTheme,
+  type ThemeOverride,
+} from "@tryatlas/design/theme";
 
 const STYLE_ID = "atlas-resolved-theme";
 /**
@@ -8,7 +13,7 @@ const STYLE_ID = "atlas-resolved-theme";
  *
  * `html:root` rather than `:root` for the specificity. The boot script creates
  * this `<style>` inside `<head>` before any stylesheet exists, so on a cold
- * start it sits BEFORE `tokens.css`; at plain `:root` the compiled-in Atlas-dark
+ * start it sits BEFORE `@tryatlas/design`'s stylesheet; at plain `:root` the compiled-in Atlas-dark
  * fallbacks there would win on source order and undo the replay. One extra type
  * selector makes the resolved theme win wherever the element sits.
  */
@@ -29,7 +34,7 @@ const THEME_SELECTOR = "html:root";
 const INVERT_SELECTOR = "[data-theme-invert]";
 /**
  * Where `index.html` looks for the last theme at launch. Read by an inline
- * script before any module — and before `tokens.css` — so the first frame
+ * script before any module — and before `@tryatlas/design`'s stylesheet — so the first frame
  * paints in the theme the user chose instead of flashing black.
  */
 const LAUNCH_CACHE_KEY = "atlas:launch-theme";
@@ -91,7 +96,7 @@ export function invertedThemeCss(cssVars: Record<string, string>): string {
 
 /**
  * Cache it for the next cold start. Failure is silent and harmless —
- * `index.html` falls back to `tokens.css` and the literals it has always had
+ * `index.html` falls back to the package's Atlas-dark `:root` and the literals it has always had
  * (a blocked or full store, or a private window, all land there).
  */
 function cacheLaunchTheme(cache: ReturnType<typeof launchCache>): void {

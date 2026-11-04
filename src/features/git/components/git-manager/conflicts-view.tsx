@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { FileCode2, Check } from "lucide-react";
-import { Button } from "@/ui/button";
-import { IconButton } from "@/ui/icon-button";
-import { HintGroup, HintItem } from "@/ui/hint-group";
 import { SectionHeader } from "./section-header";
 import { useGitStore } from "../../stores/git-store";
 import { handleGitError } from "../../lib/git-errors";
+import { Button, IconButton, HintGroup, HintItem } from "@tryatlas/design";
 
 export interface ConflictFile {
   path: string;

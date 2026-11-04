@@ -17,7 +17,6 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
 import { copyText } from "@/lib/clipboard";
 import { useProjectStore } from "@/features/projects/stores/project-store";
 import { useAuthStore } from "@/features/auth/stores/auth-store";
@@ -27,6 +26,7 @@ import { switchOrg, deleteOrgAndData } from "../lib/org-switch";
 import { CreateOrgDialog } from "./create-org-dialog";
 import { MembersModal } from "./members-modal";
 import { isSyncedOrg, type Organisation } from "../types";
+import { Hint } from "@tryatlas/design";
 
 /** Two-letter avatar seed from an org name. */
 function initials(name: string): string {

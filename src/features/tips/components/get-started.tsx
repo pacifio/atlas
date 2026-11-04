@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { CheckCircle2, ChevronDown, ChevronUp, Circle, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { IconButton } from "@/ui/icon-button";
 import { useAppStore } from "@/features/app/stores/app-store";
 import { useProjectStore } from "@/features/projects/stores/project-store";
 import { useCommandPaletteStore } from "@/features/command-palette/stores/command-palette-store";
@@ -10,6 +9,7 @@ import { requestModelPicker } from "@/features/chat/lib/model-picker-events";
 import { openCapture } from "@/features/capture/lib/open-capture";
 import { useProjectFacts } from "@/features/capture/lib/project-facts";
 import { useTipsStore } from "../stores/tips-store";
+import { IconButton } from "@tryatlas/design";
 
 /**
  * Get started (CONTEXT.md): three steps from an empty install to the first

@@ -14,10 +14,10 @@ import {
   GitCompare,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { HintGroup, HintItem } from "@/ui/hint-group";
 import { parseDiff, buildRows, type DiffFile, type DiffHunk } from "../lib/diff";
 import { useCollapsedFiles } from "../lib/use-collapsed-files";
 import { highlightDiffLine } from "../lib/diff-highlight";
+import { HintGroup, HintItem } from "@tryatlas/design";
 
 type SortMode = "default" | "most-changes";
 

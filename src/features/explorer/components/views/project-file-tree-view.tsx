@@ -3,9 +3,6 @@ import type { Virtualizer } from "@tanstack/react-virtual";
 import { ChevronsDownUp, ChevronsUpDown, RefreshCw } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { IconButton } from "@/ui/icon-button";
-import { Hint } from "@/ui/tooltip";
-import { ContextMenu, ContextMenuContent, ContextMenuTrigger } from "@/ui/context-menu";
 import { PanelSkeleton } from "@/components/panel-skeleton";
 import type { WorkingTreeChanges } from "@/features/git/lib/use-working-tree-changes";
 
@@ -15,6 +12,13 @@ import { INDENT_PER_LEVEL, ROW_HEIGHT } from "../../lib/tree-constants";
 import { ROOT_DROP } from "../../hooks/use-file-tree-drag-drop";
 import { ProjectTreeRow, RenameInput } from "../project-tree-row";
 import { FileTreeConfirmDelete } from "../file-tree-confirm-delete";
+import {
+  IconButton,
+  Hint,
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuTrigger,
+} from "@tryatlas/design";
 
 /**
  * What `ProjectFileTree` draws, from props alone: the header band, the

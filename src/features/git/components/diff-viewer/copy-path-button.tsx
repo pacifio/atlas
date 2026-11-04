@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
 import { Check, Copy } from "lucide-react";
 import { copyText } from "@/lib/clipboard";
-import { IconButton } from "@/ui/icon-button";
-import { Hint } from "@/ui/tooltip";
+import { IconButton, Hint } from "@tryatlas/design";
 
 /** Copy a file's repository-relative path, from its diff header. */
 export function CopyPathButton({ path }: { path: string }) {

@@ -17,14 +17,12 @@
 
 import { useCallback, useMemo, useRef, useEffect, useState } from "react";
 import { ArrowLeft, ChevronRight, TerminalSquare } from "lucide-react";
-import { CopyGlyph } from "@/ui/animated-icon";
 import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 import { useSubagent } from "../hooks/use-subagents";
 import { elapsedMs } from "../lib/subagents";
 import { CachedMarkdown } from "@/lib/markdown-cache";
 import { settledFigure, SUBAGENT_STATE } from "./transcript-rows";
-import { HintGroup, HintItem } from "@/ui/hint-group";
 import { usePaneTopInset } from "@/features/layout/lib/pane-top-inset";
 import type { ChatMessage, ToolCallDisplay } from "@/types/agent";
 import {
@@ -33,6 +31,7 @@ import {
   DETAIL_MAX_WIDTH,
   type PanelTarget,
 } from "../stores/detail-panel-store";
+import { CopyGlyph, HintGroup, HintItem } from "@tryatlas/design";
 
 /** "Copied" for a moment after a copy lands, then back. `count` goes up once
  *  per copy: it is the `HintItem` `reshowKey`, so a repeat copy re-confirms. */

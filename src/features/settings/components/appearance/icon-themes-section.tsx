@@ -16,10 +16,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Download, Loader2, Plus, Search, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { Button } from "@/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/ui/dialog";
-import { Icon } from "@/ui/icon";
-import { Hint } from "@/ui/tooltip";
 import { useIconThemeStore } from "@/features/icon-theme/stores/icon-theme-store";
 import { IconThemePreview } from "@/features/icon-theme/components/icon-theme-preview";
 import { appearanceForMode } from "@/features/theme/apply-theme";
@@ -32,6 +28,16 @@ import {
 import type { OpenVsxExtension } from "@/lib/open-vsx";
 import { useSettingsStore } from "../../stores/settings-store";
 import { SettingsSection } from "../layout/settings-layout";
+import {
+  Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  Icon,
+  Hint,
+} from "@tryatlas/design";
 
 export function IconThemesSection() {
   const settings = useSettingsStore.use.settings();

@@ -7,7 +7,7 @@ import {
 } from "@tiptap/react";
 import { useState } from "react";
 import { ChevronRight } from "lucide-react";
-import { Hint } from "@/ui/tooltip";
+import { Hint } from "@tryatlas/design";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {

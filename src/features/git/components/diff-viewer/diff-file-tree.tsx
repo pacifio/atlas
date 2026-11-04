@@ -9,12 +9,11 @@ import {
 } from "lucide-react";
 import type { SessionRoot } from "@/features/chat/lib/session-roots";
 import { cn } from "@/lib/utils";
-import { IconButton } from "@/ui/icon-button";
-import { Hint } from "@/ui/tooltip";
 import { FileIcon } from "@/features/icon-theme/components/file-icon";
 import { INDENT_PER_LEVEL, ROW_HEIGHT } from "@/features/explorer/lib/tree-constants";
 import type { DiffFileStat, DiffFileStatus } from "../../lib/git-review-api";
 import { ROOT_SEPARATOR } from "@/features/chat/lib/session-roots";
+import { IconButton, Hint } from "@tryatlas/design";
 
 /**
  * The changed files beside the diff, as a tree with each file's status and

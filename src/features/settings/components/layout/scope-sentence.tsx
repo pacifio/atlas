@@ -9,12 +9,12 @@
  */
 
 import { useMemo, type ReactNode } from "react";
-import { Select, type SelectOption } from "@/ui/select";
 import { useProjectStore } from "@/features/projects/stores/project-store";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
 import { useSettingsNav } from "../../stores/settings-nav-store";
 import { useProjectSettingsStore } from "../../stores/project-settings-store";
 import { useLoadProjectSettings } from "../../lib/use-scoped-setting";
+import { Select, type SelectOption } from "@tryatlas/design";
 
 const ALL = "__all__";
 

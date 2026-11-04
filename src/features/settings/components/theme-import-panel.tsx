@@ -1,16 +1,8 @@
 import { useCallback, useMemo, useRef, useState } from "react";
-import { CopyGlyph } from "@/ui/animated-icon";
 import { AlertTriangle, Check, FileJson, Link2, Loader2, Search, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
-import { Badge } from "@/ui/badge";
-import { Button } from "@/ui/button";
-import { DialogTitle } from "@/ui/dialog";
-import { IconButton } from "@/ui/icon-button";
-import { Icon } from "@/ui/icon";
-import { Input } from "@/ui/input";
-import { ScrollArea } from "@/ui/scroll-area";
 import {
   FIDELITY_LABEL,
   commitThemeImport,
@@ -27,6 +19,16 @@ import {
 } from "@/features/theme/lib/theme-import-api";
 import type { OpenVsxExtension } from "@/lib/open-vsx";
 import type { ThemeSummary } from "@/features/theme/lib/theme-api";
+import {
+  CopyGlyph,
+  Badge,
+  Button,
+  DialogTitle,
+  IconButton,
+  Icon,
+  Input,
+  ScrollArea,
+} from "@tryatlas/design";
 
 /**
  * Import a foreign theme, and export an Atlas one. Shown in a dialog over the

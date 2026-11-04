@@ -28,7 +28,7 @@ import {
 } from "@/features/settings/lib/model-catalog";
 import { loadNativeModelPref } from "../lib/native-model-pref";
 import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
+import { Hint } from "@tryatlas/design";
 
 // Curated model-list cache — `modelchat.models(provider)` hits the provider API,
 // so cache the curated list per provider for the app session and dedupe
@@ -248,7 +248,7 @@ export function ProviderModelPills({
                       <button
                         onClick={() => setViewProvider(p.id)}
                         className={cn(
-                          "flex h-7 w-7 items-center justify-center rounded-md transition-all",
+                          "flex h-7 w-7 items-center justify-center rounded-md transition-[background-color,opacity]",
                           p.id === viewProvider
                             ? "bg-[var(--element-selected,var(--element-hover))]"
                             : keyed

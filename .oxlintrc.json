@@ -4,7 +4,9 @@
   "jsPlugins": ["@shadcn/lint"],
   "settings": {
     "shadcn": {
-      "ui": "@/ui"
+      "ui": "@tryatlas/design",
+      "themeImports": ["^@tryatlas/design/"],
+      "ignoreImports": ["^react-resizable-panels$"]
     }
   },
   "categories": {
@@ -144,12 +146,6 @@
       "files": ["**/*.test.ts", "**/*.test.tsx", "**/__fixtures__/**", "tests/**"],
       "rules": {
         "typescript/no-explicit-any": "off"
-      }
-    },
-    {
-      "files": ["src/ui/**"],
-      "rules": {
-        "shadcn/no-restyle": "off"
       }
     },
     {

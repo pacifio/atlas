@@ -19,9 +19,6 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Kbd } from "@/ui/kbd";
-import { HintGroup, HintItem } from "@/ui/hint-group";
-import { Hint } from "@/ui/tooltip";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
@@ -39,6 +36,7 @@ import { authorLabel } from "../lib/message-author";
 import { toPlainText } from "../lib/to-plain-text";
 import { CHAT_BODY_MAX_BYTES, CHAT_MESSAGE_ATTACHMENT_MAX } from "../types";
 import type { CommsMessage, OrgMemberProfile } from "../types";
+import { Kbd, HintGroup, HintItem, Hint } from "@tryatlas/design";
 
 // Start the editor chunk downloading as soon as this module evaluates, but
 // keep it a DYNAMIC import: a static one would put Tiptap and ProseMirror in

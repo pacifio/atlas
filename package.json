@@ -46,6 +46,7 @@
   },
   "dependencies": {
     "@base-ui/react": "1.8.0",
+    "@tryatlas/design": "github:tryatlas/design#v0.1.3",
     "@codemirror/commands": "^6.11.1",
     "@codemirror/lang-cpp": "^6.0.3",
     "@codemirror/lang-css": "^6.3.1",
@@ -102,7 +103,6 @@
     "@xyflow/react": "^12.12.0",
     "border-beam": "1.4.1",
     "class-variance-authority": "^0.7.1",
-    "clsx": "^2.1.1",
     "highlight.js": "^11.12.0",
     "html-to-image": "^1.11.13",
     "immer": "^11.2.9",
@@ -130,7 +130,6 @@
     "remark-rehype": "^11.1.2",
     "shiki": "4.5.0",
     "sonner": "^2.0.8",
-    "tailwind-merge": "^3.7.0",
     "thinking-orbs": "^0.3.2",
     "tiptap-markdown": "^0.9.0",
     "unified": "^11.0.5",

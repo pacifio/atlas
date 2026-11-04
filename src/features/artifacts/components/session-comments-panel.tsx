@@ -31,15 +31,6 @@ import { AccountAvatar } from "@/features/auth/components/account-avatar";
 import type { OrgDirectory } from "@/features/organisations/lib/use-org-directory";
 import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/time-ago";
-import { Hint } from "@/ui/tooltip";
-import { IconButton } from "@/ui/icon-button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/ui/dropdown-menu";
 
 import {
   buildThreads,
@@ -55,6 +46,15 @@ import { avatarUser } from "./comment-thread";
 import { splitSelectionComment } from "../lib/selection-comment";
 import type { RowComments } from "./session-detail";
 import { JUMP_EVENT, type JumpDetail } from "./session-chat-message";
+import {
+  Hint,
+  IconButton,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@tryatlas/design";
 
 /** Navigate the transcript to a thread's anchor. */
 function jumpToAnchor(entryId: string): void {

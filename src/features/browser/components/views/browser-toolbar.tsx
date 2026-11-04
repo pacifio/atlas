@@ -1,5 +1,4 @@
 import { cn } from "@/lib/utils";
-import { HintGroup, HintItem } from "@/ui/hint-group";
 import {
   Globe,
   ExternalLink,
@@ -14,6 +13,7 @@ import {
   Zap,
 } from "lucide-react";
 import type { BrowserMode } from "../../lib/browser-types";
+import { HintGroup, HintItem } from "@tryatlas/design";
 
 /** The Browser tab's address bar: history, the omnibox, the Reader toggle and
  *  the page actions. */

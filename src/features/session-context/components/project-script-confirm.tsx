@@ -13,18 +13,17 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
-import { Button } from "@/ui/button";
+import { approveAndRunProjectScript, projectScriptsKey } from "../lib/project-scripts";
+import { useSessionDetailsStore, type ScriptConfirmRequest } from "../stores/session-details-store";
 import {
+  Button,
   Dialog,
   DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/ui/dialog";
-
-import { approveAndRunProjectScript, projectScriptsKey } from "../lib/project-scripts";
-import { useSessionDetailsStore, type ScriptConfirmRequest } from "../stores/session-details-store";
+} from "@tryatlas/design";
 
 export function ProjectScriptConfirmHost() {
   const request = useSessionDetailsStore.use.scriptConfirm();

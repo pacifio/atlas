@@ -16,16 +16,6 @@ import { create } from "zustand";
 
 import { timeAgo } from "@/lib/time-ago";
 import { cn } from "@/lib/utils";
-import { Button } from "@/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/ui/dialog";
-import { Input } from "@/ui/input";
 
 import { resolveLinkInput } from "../lib/link-pull-request-input";
 import { findCheckoutFor } from "../lib/open-linked-pull-request";
@@ -36,6 +26,16 @@ import type { PrListEntry } from "../lib/pull-requests-types";
 import { linkKey } from "../lib/session-pull-request-links";
 import { linkSessionPullRequest } from "../lib/session-pull-requests-api";
 import { resolveStatePresentation } from "./pull-request-presentation";
+import {
+  Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  Input,
+} from "@tryatlas/design";
 
 export interface LinkPullRequestRequest {
   threadId: string;

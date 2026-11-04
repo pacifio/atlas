@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
-import { withAlpha } from "@/features/theme/color";
 import { themeBase, themeColor, useThemeVersion } from "@/features/theme/theme-values";
+import { withAlpha } from "@tryatlas/design/theme";
 
 /**
  * Canvas/figma-style ruler overlay for the graph views. Draws a top + left

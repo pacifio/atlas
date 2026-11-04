@@ -1,8 +1,8 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { Download, Pause, Play, Volume2, VolumeX } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { HintGroup, HintItem } from "@/ui/hint-group";
 import { ArcProgress } from "./arc-progress";
+import { HintGroup, HintItem } from "@tryatlas/design";
 
 /**
  * A compact audio block: play/pause, a seekable waveform, mute, download.

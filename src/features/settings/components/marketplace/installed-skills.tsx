@@ -17,8 +17,6 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
 
 import { copyText } from "@/lib/clipboard";
-import { Button } from "@/ui/button";
-import { Icon } from "@/ui/icon";
 import { AtlasLoader } from "@/components/atlas-loader";
 import { openFile } from "@/lib/open-file";
 import { skills as skillsApi } from "@/features/skills/lib/skills-api";
@@ -40,6 +38,7 @@ import {
   SettingsRow,
   SettingsSection,
 } from "../layout/settings-layout";
+import { Button, Icon } from "@tryatlas/design";
 
 /** Apply the per-tool optimistic overrides (toolId → on) on top of a projected
  *  set, so a pack toggle reflects instantly before the disk reconcile lands. */

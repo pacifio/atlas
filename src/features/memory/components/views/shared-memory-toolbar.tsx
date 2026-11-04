@@ -1,9 +1,9 @@
 import { RefreshCw, Trash2, Download, FolderInput } from "lucide-react";
 import { agentMetaForSource } from "../../lib/memory-agent";
-import { HintGroup } from "@/ui/hint-group";
 import { KIND_LABEL, entryAgent } from "../../lib/shared-memory-format";
 import { FilterMenu, IconButton, SegBtn } from "./shared-memory-primitives";
 import { SearchField, Toolbar, Track } from "./memory-chrome";
+import { HintGroup } from "@tryatlas/design";
 
 export type SharedMemoryTab = "events" | "plans" | "memories" | "review";
 

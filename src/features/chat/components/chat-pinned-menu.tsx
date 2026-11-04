@@ -21,10 +21,8 @@ import { Popover } from "@base-ui/react/popover";
 import { Pin, PinOff, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/time-ago";
-import { Button } from "@/ui/button";
-import { HintItem } from "@/ui/hint-group";
-import { Hint } from "@/ui/tooltip";
 import { pinsFor, useChatPinsStore, type ChatPin } from "../stores/chat-pins-store";
+import { Button, HintItem, Hint } from "@tryatlas/design";
 
 export function ChatPinnedMenu({
   pinScopeKey,

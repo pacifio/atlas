@@ -7,11 +7,6 @@ import { Plus, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/time-ago";
 import { formatDateTime } from "@/lib/format-time";
-import { Button } from "@/ui/button";
-import { Icon } from "@/ui/icon";
-import { IconButton } from "@/ui/icon-button";
-import { Hint } from "@/ui/tooltip";
-import { Switch } from "@/ui/switch";
 import { AgentMark } from "@/components/agent-mark";
 import { useAgentRegistryStore } from "@/features/agents/stores/agent-registry-store";
 import { SettingsPage, SettingsSection } from "../layout/settings-layout";
@@ -31,6 +26,7 @@ import { AgentEditor, versionOf } from "./agent-editor";
 import { AddAgentDialog } from "./add-agent-dialog";
 import { AllAgentsSection } from "./agent-settings-sections";
 import { ProviderKeysSection } from "./provider-keys";
+import { Button, Icon, IconButton, Hint, Switch } from "@tryatlas/design";
 
 export function AgentsPage() {
   useRevalidatedListing();

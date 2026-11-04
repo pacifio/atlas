@@ -3,10 +3,10 @@ import { CircleUser, Loader2 } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
 import { useAuthStore } from "../stores/auth-store";
 import { AccountAvatar } from "./account-avatar";
 import { AccountMenu } from "./account-menu";
+import { Hint } from "@tryatlas/design";
 
 /**
  * The account control at the right of the title bar.
@@ -68,7 +68,7 @@ export function AccountButton({
       onClick={connecting ? toggleDialog : undefined}
       aria-label={title}
       className={cn(
-        "relative flex items-center justify-center transition-all duration-150",
+        "relative flex items-center justify-center transition-colors duration-150",
         // The same square as every other control in the bar (`IconButton`'s
         // `sm`), docked or not — the bar reads as one toolbar only if nothing
         // in it is a different size.

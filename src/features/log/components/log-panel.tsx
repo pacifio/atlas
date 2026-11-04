@@ -29,14 +29,13 @@ import {
 import { Menu as DropdownMenu } from "@base-ui/react/menu";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { HintGroup, HintItem } from "@/ui/hint-group";
-import { Hint } from "@/ui/tooltip";
 import { copyText } from "@/lib/clipboard";
 import { timeAgo } from "@/lib/time-ago";
 import { useLogStore, type LogEntry, type LogSource } from "../stores/log-store";
 import { useAppStore } from "@/features/app/stores/app-store";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
 import { formatDateTime } from "@/lib/format-time";
+import { HintGroup, HintItem, Hint } from "@tryatlas/design";
 
 const SOURCES: LogSource[] = [
   "atlas",

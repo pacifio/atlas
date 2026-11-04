@@ -17,16 +17,6 @@ import {
 import { openPullRequest } from "@/features/git/lib/git-pr-api";
 import { timeAgo } from "@/lib/time-ago";
 import { cn } from "@/lib/utils";
-import { Button } from "@/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuLabel,
-  DropdownMenuTrigger,
-} from "@/ui/dropdown-menu";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/ui/tooltip";
 
 import { classifyPrError } from "../lib/pr-errors";
 import {
@@ -79,6 +69,18 @@ import { ActivityUnavailableState, ConversationGhost } from "./pull-request-stat
 import { PullRequestCommentActions } from "./pull-request-comment-actions";
 import { CheckLogButton } from "./pull-request-check-log";
 import { VerdictRing } from "./pull-request-triggers";
+import {
+  Button,
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@tryatlas/design";
 
 export const COMMENT_PAGE = 10;
 const CLAMP_PX = 240;

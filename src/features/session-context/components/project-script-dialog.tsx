@@ -7,18 +7,6 @@
 import { useId, useState } from "react";
 import { toast } from "sonner";
 
-import { Button } from "@/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/ui/dialog";
-import { Input } from "@/ui/input";
-import { Select } from "@/ui/select";
-
 import {
   nextProjectScriptId,
   useProjectScripts,
@@ -27,6 +15,17 @@ import {
 import type { ProjectScript, ProjectScriptIcon } from "../lib/session-context-api";
 import { useSessionDetailsStore, type ScriptEditorRequest } from "../stores/session-details-store";
 import { PROJECT_SCRIPT_ICONS, ProjectScriptGlyph } from "./project-script-icons";
+import {
+  Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  Input,
+  Select,
+} from "@tryatlas/design";
 
 const ICON_OPTIONS = PROJECT_SCRIPT_ICONS.map((entry) => ({
   value: entry.value,

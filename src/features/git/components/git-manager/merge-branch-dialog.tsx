@@ -3,10 +3,9 @@ import { Dialog } from "@base-ui/react/dialog";
 import { toast } from "sonner";
 import { Check, Search, Loader2, GitMerge, AlertTriangle, Ban } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Badge } from "@/ui/badge";
-import { Button } from "@/ui/button";
 import { useGitStore, type MergePreview } from "../../stores/git-store";
 import { handleGitError } from "../../lib/git-errors";
+import { Badge, Button } from "@tryatlas/design";
 
 /**
  * GitHub-Desktop-style "Choose a branch to merge into <current>" dialog.

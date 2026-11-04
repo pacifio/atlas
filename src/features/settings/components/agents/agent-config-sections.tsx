@@ -12,14 +12,6 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { openFileAs } from "@/lib/open-file";
 import { tildePath } from "@/lib/paths";
-import { Button } from "@/ui/button";
-import { Icon } from "@/ui/icon";
-import { IconButton } from "@/ui/icon-button";
-import { Input } from "@/ui/input";
-import { SecretInput } from "@/ui/secret-input";
-import { Select } from "@/ui/select";
-import { Switch } from "@/ui/switch";
-import { Hint } from "@/ui/tooltip";
 import {
   claimedVariables,
   configFilePath,
@@ -40,6 +32,16 @@ import {
   parseArgs,
   type AgentItem,
 } from "./agent-install";
+import {
+  Button,
+  Icon,
+  IconButton,
+  Input,
+  SecretInput,
+  Select,
+  Switch,
+  Hint,
+} from "@tryatlas/design";
 
 /** A text field that saves on Enter or when it loses focus, not per keystroke:
  *  each save rewrites the installed-agents map. Escape reverts, and so does

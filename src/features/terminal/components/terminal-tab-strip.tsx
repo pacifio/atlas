@@ -9,11 +9,10 @@ import {
 import { CircleDashed, Maximize2, Plus, Rows2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { tildePath } from "@/lib/paths";
-import { HintGroup, HintItem } from "@/ui/hint-group";
-import { IconButton } from "@/ui/icon-button";
 import { fadeMask } from "@/features/layout/components/pane-tab-strip";
 import { useTerminalStore, type PaneNode } from "../stores/terminal-store";
 import { terminalSessions, type TerminalSession } from "../lib/terminal-session";
+import { HintGroup, HintItem, IconButton } from "@tryatlas/design";
 
 /**
  * A pane's terminals as a strip of tabs across its top: solid, rounded tabs

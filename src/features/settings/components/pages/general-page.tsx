@@ -1,6 +1,5 @@
 import { isMac, isWindows } from "@/lib/platform";
 import { useAppProfile } from "@/lib/app-profile";
-import { Button } from "@/ui/button";
 import { useFeedbackStore } from "@/features/feedback/stores/feedback-store";
 import { replayAllTips } from "@/features/tips/lib/replay-tips";
 import {
@@ -19,6 +18,7 @@ const TIME_FORMATS = [
 ] as const;
 
 import { ConfigErrorBanner } from "./config-file";
+import { Button } from "@tryatlas/design";
 
 export function GeneralPage() {
   // `.atlas` in the released app, `.atlas-dev` in a dev-profile build, which

@@ -2,7 +2,7 @@ import { Check, CircleAlert, CircleCheck, Copy, Info, TriangleAlert, X } from "l
 import { useEffect, useState, type ReactNode } from "react";
 import type { ToasterProps } from "sonner";
 import { copyText } from "@/lib/clipboard";
-import { Icon } from "@/ui/icon";
+import { Icon } from "@tryatlas/design";
 
 /**
  * The glyphs every typed toast wears, and the copy button that rides with them.

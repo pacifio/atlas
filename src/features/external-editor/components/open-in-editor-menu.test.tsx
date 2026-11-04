@@ -13,8 +13,6 @@ vi.mock("@tauri-apps/api/event", () => ({
   emit: vi.fn(async () => {}),
 }));
 
-import { ContextMenu, ContextMenuContent, ContextMenuTrigger } from "@/ui/context-menu";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "@/ui/dropdown-menu";
 import { useSettingsStore } from "@/features/settings/stores/settings-store";
 import { useExternalEditorStore } from "../stores/external-editor-store";
 import {
@@ -22,6 +20,14 @@ import {
   OpenInEditorContextItems,
   OpenInEditorDropdownItems,
 } from "./open-in-editor-menu";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuTrigger,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@tryatlas/design";
 
 const EDITORS = [
   { id: "cursor", label: "Cursor" },

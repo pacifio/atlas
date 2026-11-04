@@ -2,7 +2,6 @@ import { useTipOnMount } from "@/features/tips/lib/use-tip-on-mount";
 import { useEffect, useMemo } from "react";
 import { Hash, Loader2, Lock, MessageCircle, MessagesSquare, Plus, Users, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
 import { CommsConversation } from "./comms-conversation";
 import { MediaLightbox } from "./media-lightbox";
 import { primeCommsMarkdown } from "./message-body";
@@ -17,6 +16,7 @@ import { useMembersStore } from "@/features/organisations/stores/members-store";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { byRecency, conversationTitle, memberName } from "../lib/derive";
 import type { ChatConversation, OrgMemberProfile } from "../types";
+import { Hint } from "@tryatlas/design";
 
 /**
  * Team chat, a surface tab and a destination (⌘⇧C, ADR-0024).

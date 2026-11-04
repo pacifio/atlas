@@ -1,7 +1,6 @@
 import { startTransition, useState, useEffect, useMemo, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { AppLayout } from "@/features/layout/components/app-layout";
-import { TooltipProvider } from "@/ui/tooltip";
 import { CommandPalette } from "@/features/command-palette/components/command-palette";
 import { useCommandPaletteStore } from "@/features/command-palette/stores/command-palette-store";
 import { NewTabPalette } from "@/components/new-tab-palette";
@@ -163,6 +162,7 @@ import { toggleTeamChat } from "@/features/layout/lib/team-chat";
 import { toggleDestination } from "@/features/layout/lib/destinations";
 import { toggleAgentPanel } from "@/features/layout/lib/org-agent";
 import { startOrgAgentBridge } from "@/features/org-agent/lib/org-agent-bridge";
+import { TooltipProvider } from "@tryatlas/design";
 
 // Developer console toggle for session holds (Universal RC groundwork).
 if (isDev) installDevSessionHold();

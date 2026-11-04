@@ -14,7 +14,7 @@ import { useRef, type ComponentProps, type MouseEventHandler, type ReactNode } f
 import { ChevronDown, type LucideIcon } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "@/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "@tryatlas/design";
 
 const ROW =
   "flex w-full min-w-0 items-center gap-2.5 rounded-md px-2 text-left text-sm font-medium text-secondary-foreground outline-none transition-colors duration-fast ease-out-strong";

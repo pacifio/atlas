@@ -1,8 +1,6 @@
-import { RailGlyph } from "@/ui/animated-icon";
 import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
-import { HintGroup, HintItem } from "@/ui/hint-group";
 import { Copy, ExternalLink, GitBranch, PanelRight } from "lucide-react";
+import { RailGlyph, Hint, HintGroup, HintItem } from "@tryatlas/design";
 
 export function RepoTopbar({
   name,

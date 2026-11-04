@@ -2,14 +2,13 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import { ChevronLeft } from "lucide-react";
 import { PaneHeader } from "@/components/titlebar";
 import { PanelSkeleton } from "@/components/panel-skeleton";
-import { Hint } from "@/ui/tooltip";
-import { Icon } from "@/ui/icon";
 import { cn } from "@/lib/utils";
 import { isDestination, type DestinationType } from "@/lib/constants";
 import { useLayoutStore, type Tab } from "../stores/layout-store";
 import { DESTINATIONS } from "../lib/destinations";
 import { DestinationActionsSlot } from "./destination-actions";
 import { eventOrigin } from "@/lib/deep-active-element";
+import { Hint, Icon } from "@tryatlas/design";
 
 const KnowledgePanel = lazy(() =>
   import("@/features/knowledge/components/knowledge-panel").then((m) => ({

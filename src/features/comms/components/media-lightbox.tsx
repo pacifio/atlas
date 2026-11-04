@@ -3,11 +3,10 @@ import { Dialog } from "@base-ui/react/dialog";
 import { ChevronLeft, ChevronRight, Download, Loader2, X } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { cn } from "@/lib/utils";
-import { HintGroup, HintItem } from "@/ui/hint-group";
-import { Hint } from "@/ui/tooltip";
 import { ImageZoomView } from "@/features/media/components/image-zoom-view";
 import { attachmentPath, cachedAttachmentPath } from "../lib/attachment-cache";
 import { useLightboxStore, type LightboxItem } from "../stores/lightbox-store";
+import { HintGroup, HintItem, Hint } from "@tryatlas/design";
 
 /**
  * Full-size view of chat media, as a gallery.

@@ -1,14 +1,5 @@
 import { useEffect, useRef, useState, useMemo, memo } from "react";
 import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
-import { HintGroup, HintItem } from "@/ui/hint-group";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuShortcut,
-  DropdownMenuTrigger,
-} from "@/ui/dropdown-menu";
-import { IconButton } from "@/ui/icon-button";
 import { PaneHeader } from "@/components/titlebar";
 import { BreadcrumbSeparator } from "@/components/breadcrumb-button";
 import { SessionSwitcher } from "@/features/sidebar/components/session-switcher";
@@ -23,6 +14,16 @@ import { useLayoutStore, type Tab, type ProjectView } from "../stores/layout-sto
 import { PaneTabStrip } from "./pane-tab-strip";
 import { GROUP_OF } from "./tab-panels";
 import { TabContentContainer } from "./tab-content-container";
+import {
+  HintGroup,
+  HintItem,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuShortcut,
+  DropdownMenuTrigger,
+  IconButton,
+} from "@tryatlas/design";
 
 /**
  * One split column. The two roles are deliberately unalike, so it reads at a

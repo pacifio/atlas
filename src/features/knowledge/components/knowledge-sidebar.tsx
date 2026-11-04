@@ -2,8 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Menu as DropdownMenu } from "@base-ui/react/menu";
 import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
-import { HintGroup, HintItem } from "@/ui/hint-group";
 import { logEvent } from "@/features/log/lib/log";
 import {
   FolderPlus,
@@ -20,6 +18,7 @@ import {
   Folder,
 } from "lucide-react";
 import { KnowledgeTree, type KnowledgeTreeHandle } from "./knowledge-tree";
+import { Hint, HintGroup, HintItem } from "@tryatlas/design";
 
 interface KnowledgeSidebarProps {
   projectPath: string;
@@ -279,7 +278,7 @@ export function KnowledgeSidebar({
               <Hint label="Clear recently opened">
                 <button
                   onClick={onClearRecents}
-                  className="flex h-4 w-4 items-center justify-center rounded text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:text-error transition-all cursor-pointer"
+                  className="flex h-4 w-4 items-center justify-center rounded text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:text-error transition-[color,opacity] cursor-pointer"
                 >
                   <Trash2 size={11} />
                 </button>

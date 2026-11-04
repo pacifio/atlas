@@ -3,10 +3,10 @@ import { Popover } from "@base-ui/react/popover";
 import { Check, Hash, Loader2, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
 import { comms } from "../lib/comms-api";
 import { CHANNEL_NAME_MAX } from "../types";
 import { useCommsStore } from "../stores/comms-store";
+import { Hint } from "@tryatlas/design";
 
 /**
  * The web app's inline "new-channel" input, as a dropdown off the section

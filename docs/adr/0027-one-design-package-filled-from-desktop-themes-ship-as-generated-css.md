@@ -118,3 +118,14 @@ until the team picks them up again.
   not theme keys (`--atlas-chat-column`, `--atlas-boot-*` and the like) keep the prefix.
 - `bun-singletons.test.ts` gains `@base-ui/react`, `motion` and `@tryatlas/design`.
 - The `?scenario=design-system` gallery shrinks once its primitives come from the package.
+  It now shows only the active theme as desktop resolved it and desktop's own utilities,
+  and links to Storybook for the rest.
+- Desktop copies the golden fixture (`base-derivation.json`) with the rule tables, so
+  Rust's interpreter test stays hermetic too. `bun run theme:pierre` writes into a
+  checkout of the package, because the files it edits are the package's.
+- Desktop imports `styles.css` whole, so it ships `themes.css` (every built-in theme,
+  about a third of the entry stylesheet) although it resolves themes at runtime and only
+  uses the `:root` floor. An entry without the theme blocks would let it drop them.
+- Desktop runs `runRatchet` without `banAtlasPrefix`: that rule bans every `--atlas-`
+  name, including the app variables that keep the prefix. Desktop bans only the retired
+  theme-key spellings, and `transition-all`, in its own suite.

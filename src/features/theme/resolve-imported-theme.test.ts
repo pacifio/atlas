@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 import importedThemes from "@/dev/mock-backend/fixtures/imported-themes.json";
-import { parseColor } from "./color";
-import { resolveTheme } from "./resolve-theme";
-import { THEME_KEY_REGISTRY } from "./theme-key-registry";
-import type { Theme } from "./lib/theme-api";
+import { parseColor, resolveTheme, THEME_KEY_REGISTRY, type Theme } from "@tryatlas/design/theme";
 
 /**
  * The end of the import path.

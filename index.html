@@ -38,7 +38,7 @@
          Reproduce without a build: serve `dist/` behind a CSP whose style-src
          carries any nonce alongside 'unsafe-inline'. -->
     <!-- The last theme, replayed BEFORE first paint.
-         `tokens.css` has not loaded here and neither has any module, so the
+         The design package's stylesheet has not loaded here and neither has any module, so the
          only thing fast enough is localStorage, written by `applyTheme` on
          every switch (`src/features/theme/apply-theme.ts`). Two things come
          back from it: the seven `--atlas-boot-*` colours the skeleton below
@@ -49,7 +49,7 @@
          must stay byte-identical to `resolvedThemeCss()` there;
          `apply-theme.test.ts` runs this script to check. A first run, a
          cleared profile or a private window finds nothing and every rule
-         falls back to `tokens.css` and the literals below, so this can only
+         falls back to the package's Atlas-dark `:root` and the literals below, so this can only
          ever improve the flash — never cause one. -->
     <script>
       (function () {

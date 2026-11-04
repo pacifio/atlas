@@ -10,8 +10,8 @@ import {
   Redo2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
 import type { CanvasTool } from "../stores/canvas-store";
+import { Hint } from "@tryatlas/design";
 
 interface ToolDef {
   tool: CanvasTool;

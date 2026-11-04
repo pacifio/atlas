@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
 import { IconPicker } from "@/features/knowledge/components/icon-picker";
 import { useCanvasStore, type PageTreeEntry } from "../stores/canvas-store";
+import { Hint } from "@tryatlas/design";
 
 /** Default page emoji, mirrored in the canvas header pill. */
 export const DEFAULT_PAGE_ICON = "📜";

@@ -3,8 +3,17 @@ import { LogIn, LogOut, Moon, Settings, Shield, Type } from "lucide-react";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { toast } from "sonner";
 
-import { KbdCombo } from "@/ui/kbd";
+import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
+import { openSettingsSection } from "@/features/settings/lib/open-settings";
+import { useSettingsStore } from "@/features/settings/stores/settings-store";
+import type { AppSettings } from "@/features/settings/lib/app-settings";
+import { SCALE_PRESETS } from "@/features/settings/lib/ui-scale";
+import { UiScalePanel } from "@/features/settings/components/ui-scale-control";
+import { type AccountUser, type SignedIn, type SignedOut } from "../lib/auth-api";
+import { useAuthStore } from "../stores/auth-store";
+import { AccountAvatar } from "./account-avatar";
 import {
+  KbdCombo,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
@@ -17,16 +26,7 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
-} from "@/ui/dropdown-menu";
-import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
-import { openSettingsSection } from "@/features/settings/lib/open-settings";
-import { useSettingsStore } from "@/features/settings/stores/settings-store";
-import type { AppSettings } from "@/features/settings/lib/app-settings";
-import { SCALE_PRESETS } from "@/features/settings/lib/ui-scale";
-import { UiScalePanel } from "@/features/settings/components/ui-scale-control";
-import { type AccountUser, type SignedIn, type SignedOut } from "../lib/auth-api";
-import { useAuthStore } from "../stores/auth-store";
-import { AccountAvatar } from "./account-avatar";
+} from "@tryatlas/design";
 
 const THEME_MODES: Array<{ value: AppSettings["themeMode"]; label: string }> = [
   { value: "system", label: "System" },

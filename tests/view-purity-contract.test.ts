@@ -21,7 +21,7 @@ import { fileURLToPath } from "node:url";
  * - no call to a `use…Store` hook, `.getState()` or `invoke(`.
  *
  * The check is on direct imports, not the whole import graph. A view may render
- * shared helpers (markdown, icons, `src/ui`) that do their own wiring. A view
+ * shared helpers (markdown, icons, `@tryatlas/design`) that do their own wiring. A view
  * that needs data should get it as a prop or a callback from its container.
  *
  * The only exit is a `view-purity-allow: <reason>` comment in the file, with a
@@ -97,7 +97,7 @@ describe("view purity contract", () => {
     expect(
       violationsIn(`// useChatStore is read by the container\nexport function V() {}`),
     ).toEqual([]);
-    expect(violationsIn(`import { Button } from "@/ui/button";`)).toEqual([]);
+    expect(violationsIn(`import { Button } from "@tryatlas/design";`)).toEqual([]);
     expect(violationsIn(`const v = useSyncExternalStore(sub, get);`)).toEqual([]);
   });
 

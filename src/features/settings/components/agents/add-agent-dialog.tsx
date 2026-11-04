@@ -5,10 +5,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Download } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Button } from "@/ui/button";
-import { Icon } from "@/ui/icon";
-import { Hint } from "@/ui/tooltip";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/ui/dialog";
 import { AtlasLoader } from "@/components/atlas-loader";
 import { AgentMonogram, ExternalAgentIcon } from "@/components/agent-icons";
 import { TrendSparkline } from "@/components/trend-sparkline";
@@ -25,6 +21,16 @@ import {
   useAgentListing,
   useInstalls,
 } from "./agent-install";
+import {
+  Button,
+  Icon,
+  Hint,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@tryatlas/design";
 
 const PAGE_SIZE = 20;
 

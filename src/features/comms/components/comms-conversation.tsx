@@ -31,7 +31,6 @@ import { toast } from "sonner";
 import { CommsAvatar } from "./comms-avatar";
 import { CommsComposer } from "./comms-composer";
 import { MessageGroup } from "./message-group";
-import { Hint, Tooltip, TooltipContent, TooltipTrigger } from "@/ui/tooltip";
 import { PinnedMenu } from "./pinned-menu";
 import { CallMenu } from "./call-menu";
 import { DraftsTab } from "./drafts-tab";
@@ -48,6 +47,7 @@ import {
   isNewDay,
 } from "../lib/derive";
 import type { ChatConversation, OrgMemberProfile } from "../types";
+import { Hint, Tooltip, TooltipContent, TooltipTrigger } from "@tryatlas/design";
 
 /**
  * Writing this to `scrollTop` and letting the browser clamp is the one way to

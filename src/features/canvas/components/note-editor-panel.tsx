@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { X, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { HintGroup, HintItem } from "@/ui/hint-group";
 import { useCanvasStore } from "../stores/canvas-store";
 import {
   TiptapEditor,
@@ -9,6 +8,7 @@ import {
 } from "@/features/editor-notion/components/tiptap-editor";
 import { IconPicker } from "@/features/knowledge/components/icon-picker";
 import { ensureKnowledgeMentionCache } from "@/features/chat/lib/mentions";
+import { HintGroup, HintItem } from "@tryatlas/design";
 
 interface NoteEditorPanelProps {
   noteId: string;

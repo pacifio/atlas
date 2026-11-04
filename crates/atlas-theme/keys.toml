@@ -1,17 +1,23 @@
 # The theme-key registry — the one hand-edited source for every Atlas theme key,
 # and for how every shadcn base token a theme leaves out is derived (ADR-0022).
 #
-# GENERATED FROM THIS FILE (never edit those by hand; run `bun run theme:keys`):
+# This file lives in @tryatlas/design (ADR-0027); desktop copies it into
+# crates/atlas-theme/ verbatim. Edit it there, never in a copy.
 #
-#   src/features/theme/theme-key-registry.ts   the TS registry the resolver reads
-#   crates/atlas-theme/theme-keys.txt          the key list + descriptions Rust reads
-#   crates/atlas-theme/base-rules.txt          the `[[base]]` rules, which Rust's
-#                                              interpreter runs for import and export
-#   crates/atlas-theme/schema/theme-v1.json    the `keys` property, so `#:schema`
-#                                              gives authors completion and flags a typo
-#   docs/reference/theme-keys.md               the generated part of the reference
+# GENERATED FROM THIS FILE in the package (never edit those by hand; run
+# `bun run theme`):
 #
-# `bun run theme:keys:check` (and `bun run test`) fail when any of them is stale.
+#   src/theme/theme-key-registry.ts   the TS registry the resolver reads
+#   theme-rules/theme-keys.txt        the key list + descriptions Rust reads
+#   theme-rules/base-rules.txt        the `[[base]]` rules, which Rust's
+#                                     interpreter runs for import and export
+#   src/styles/themes.css             every built-in theme, resolved
+#
+# Desktop generates the rest from its copy: the JSON Schema's `keys` property
+# (so `#:schema` gives authors completion) and the table in
+# docs/reference/theme-keys.md.
+#
+# `bun run theme:check` (and `bun run test`) fail when any of them is stale.
 #
 # ── An entry ──────────────────────────────────────────────────────────────────
 #
@@ -62,7 +68,7 @@
 #
 # ── `[[derived]]`: a colour Atlas writes but no theme may set ─────────────────
 #
-# Some theme variables the app reads are not judgement calls. A status
+# Some `--atlas-…` variables the app reads are not judgement calls. A status
 # BADGE fill is its status FOREGROUND at 12% — an author who wants a different
 # green wants a different green, not two greens that must be kept in step. So
 # those live here instead of as keys: Atlas resolves them to exactly the value
@@ -1093,7 +1099,6 @@ description = "Unchanged diff context."
 base = "background"
 dark = "#0a0a0a"
 light = "#faf4ed"
-
 
 
 # ── Agents and indicators ─────────────────────────────────────────────────────

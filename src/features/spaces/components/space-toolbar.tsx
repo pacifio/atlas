@@ -17,9 +17,8 @@ import {
 } from "lucide-react";
 import { createContext, useContext, useState } from "react";
 import { cn } from "@/lib/utils";
-import { HintGroup, HintItem } from "@/ui/hint-group";
-import { Hint } from "@/ui/tooltip";
 import type { SpaceDock } from "../lib/dock";
+import { HintGroup, HintItem, Hint } from "@tryatlas/design";
 
 /** The realtime canvas's tool set — the CONTRACT's shapes (no "rounded";
  *  triangle instead), plus group. Same visual recipe as the local canvas's

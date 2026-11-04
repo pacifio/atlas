@@ -9,10 +9,10 @@
 
 import { cn } from "@/lib/utils";
 import { previewTheme, type ThemePreview } from "@/features/theme/preview-theme";
-import type { ThemeMode } from "@/features/theme/lib/theme-api";
 import { useThemeStore } from "@/features/theme/stores/theme-store";
 import { useSettingsStore } from "../../stores/settings-store";
 import { SettingsSection } from "../layout/settings-layout";
+import type { ThemeMode } from "@tryatlas/design/theme";
 
 const MODES = [
   { mode: "system", label: "System" },

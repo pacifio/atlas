@@ -5,10 +5,10 @@
 import type { MutableRefObject } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
-import { Kbd } from "@/ui/kbd";
 import type { MentionData, MentionKind, PastSessionRef } from "@/features/chat/lib/mentions";
 import { emptyStateCopy, type Row } from "../../lib/mention-picker-rows";
 import { VirtualizedRows } from "./mention-picker-list";
+import { Kbd } from "@tryatlas/design";
 
 export function MentionPickerPopover({
   anchor,

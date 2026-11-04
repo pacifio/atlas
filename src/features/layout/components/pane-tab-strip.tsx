@@ -10,10 +10,9 @@ import {
 import { restrictToFirstScrollableAncestor, restrictToHorizontalAxis } from "@dnd-kit/modifiers";
 import { SortableContext, horizontalListSortingStrategy } from "@dnd-kit/sortable";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { HintItem } from "@/ui/hint-group";
-import { IconButton } from "@/ui/icon-button";
 import type { Tab } from "../stores/layout-store";
 import { SortablePaneTab } from "./pane-tab";
+import { HintItem, IconButton } from "@tryatlas/design";
 
 /** How far the pointer must travel before a press on a tab becomes a drag.
  *  Below it the press is a click, so selecting, middle-click and the

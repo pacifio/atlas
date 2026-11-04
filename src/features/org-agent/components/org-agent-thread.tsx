@@ -33,9 +33,6 @@ import { useAuthStore } from "@/features/auth/stores/auth-store";
 import { useComposerFold } from "@/features/chat/hooks/use-composer-fold";
 import { useSettingsStore } from "@/features/settings/stores/settings-store";
 import { cn } from "@/lib/utils";
-import { Button } from "@/ui/button";
-import { HintGroup, HintItem } from "@/ui/hint-group";
-import { Hint } from "@/ui/tooltip";
 
 import { handleIndex, type OrgAgentTarget } from "../lib/org-agent-links";
 import { durationWords, foldAsk, lastOf } from "../lib/org-agent-log";
@@ -50,6 +47,7 @@ import {
 } from "../stores/org-agent-store";
 import { OrgAgentInput, type OrgAgentInputHandle } from "./org-agent-input";
 import { Notice, PendingTurn, TurnView } from "./org-agent-turn";
+import { Button, HintGroup, HintItem, Hint } from "@tryatlas/design";
 
 /** The starters: the web's three, and the one a team lead asks first. */
 const STARTERS: { text: string; Icon: LucideIcon }[] = [
@@ -283,7 +281,7 @@ function Welcome({ onPick }: { onPick: (question: string) => void }) {
               type="button"
               disabled={!ready}
               onClick={() => onPick(text)}
-              className="group flex cursor-pointer items-center gap-3 rounded-xl border border-border bg-card p-2.5 text-left transition-all duration-150 hover:border-border-strong hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+              className="group flex cursor-pointer items-center gap-3 rounded-xl border border-border bg-card p-2.5 text-left transition-[color,background-color,border-color,opacity] duration-150 hover:border-border-strong hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
             >
               <span className="grid size-7 shrink-0 place-items-center rounded-lg border border-border-subtle bg-card text-muted-foreground transition-colors group-hover:text-foreground">
                 <Icon size={13} />
@@ -293,7 +291,7 @@ function Welcome({ onPick }: { onPick: (question: string) => void }) {
               </span>
               <ArrowRight
                 size={12}
-                className="shrink-0 -translate-x-1 text-muted-foreground opacity-0 transition-all group-hover:translate-x-0 group-hover:opacity-100"
+                className="shrink-0 -translate-x-1 text-muted-foreground opacity-0 transition-[translate,opacity] group-hover:translate-x-0 group-hover:opacity-100"
               />
             </button>
           ))}

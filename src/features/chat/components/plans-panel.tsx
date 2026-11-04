@@ -2,12 +2,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ClipboardList, ChevronRight, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
 import { Markdown } from "@/lib/markdown";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { usePaneTopInset } from "@/features/layout/lib/pane-top-inset";
 import { useAppStore } from "@/features/app/stores/app-store";
 import { type PlanRecord, formatPlanTimestamp, planTimeAgo } from "../lib/plans";
+import { Hint } from "@tryatlas/design";
 
 interface PlansPanelProps {
   onClose: () => void;

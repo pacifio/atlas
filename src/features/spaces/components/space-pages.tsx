@@ -2,14 +2,20 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronRight, FilePlus2, FolderPlus, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/time-ago";
-import { Hint, Tooltip, TooltipContent, TooltipTrigger } from "@/ui/tooltip";
-import { HintGroup, HintItem } from "@/ui/hint-group";
 import { CommsAvatar } from "@/features/comms/components/comms-avatar";
 import { useCommsStore } from "@/features/comms/stores/comms-store";
 import { SPACE_PAGE_NAME_MAX } from "../lib/space-wire";
 import type { SpacePage } from "../lib/spaces-api";
 import type { SpaceSession } from "../lib/use-space-session";
 import { useSpacesStore } from "../stores/spaces-store";
+import {
+  Hint,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+  HintGroup,
+  HintItem,
+} from "@tryatlas/design";
 
 /**
  * The pages sidebar — the local Spaces panel's chrome (quiet header,

@@ -1,12 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import { fmtCost, fmtNum, fmtPct, fmtTokens } from "@/features/monitor/lib/usage-format";
 import { copyText } from "@/lib/clipboard";
-import { hexOf, themeBase } from "@/features/theme/theme-values";
+import { themeBase } from "@/features/theme/theme-values";
 import type { GroupBy } from "../types";
 import { fmtRange } from "./date-range";
 import { agentDisplay, modelDisplay, projectLabel, rankBy, tokensOf } from "./derive";
 import type { UsageView } from "./use-usage-view";
 import { formatDateTime } from "@/lib/format-time";
+import { hexOf } from "@tryatlas/design/theme";
 
 /**
  * Exports for the Usage tab: the rendered dashboard as PDF/JPEG, and the

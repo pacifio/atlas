@@ -1,10 +1,9 @@
 import { useEffect } from "react";
-import { Button } from "@/ui/button";
-import { HintGroup, HintItem } from "@/ui/hint-group";
 import { useGitStore } from "../../stores/git-store";
 import { handleGitError } from "../../lib/git-errors";
 import { openCommit } from "../../lib/open-commit";
 import { CommitAvatar } from "../commit-avatar";
+import { Button, HintGroup, HintItem } from "@tryatlas/design";
 
 export function HistoryView() {
   const repoPath = useGitStore.use.repoPath();

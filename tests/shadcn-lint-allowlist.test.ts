@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -23,7 +24,8 @@ import { fileURLToPath } from "node:url";
  * waved through. That is what this suite closes. Every allowlisted name must
  * be one of:
  *
- *   - defined as a selector in a stylesheet under `src/` (or an `@utility`);
+ *   - defined as a selector in a stylesheet under `src/` or in
+ *     `@tryatlas/design`'s, which `globals.css` imports (or as an `@utility`);
  *   - a JS hook, matched by `closest()`/`querySelector()` rather than styled,
  *     and still referenced that way in `src/`;
  *   - a class a library itself styles or reads (listed below, with why).
@@ -35,6 +37,12 @@ import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SRC = path.join(REPO_ROOT, "src");
+/** The design package's stylesheets, which `globals.css` imports. */
+const PACKAGE_STYLES = path.join(
+  path.dirname(createRequire(import.meta.url).resolve("@tryatlas/design/package.json")),
+  "src",
+  "styles",
+);
 
 /** Classes matched from script, never styled. Each must still be queried. */
 const JS_HOOKS = ["atlas-cmd-suggest", "atlas-mention-picker", "atlas-slash-picker"];
@@ -67,7 +75,7 @@ function readAllowlist(): string[] {
 
 function definedClasses(): Set<string> {
   const defined = new Set<string>();
-  for (const file of walk(SRC, [".css"])) {
+  for (const file of [...walk(SRC, [".css"]), ...walk(PACKAGE_STYLES, [".css"])]) {
     const css = readFileSync(file, "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
     for (const m of css.matchAll(/\.(-?[_a-zA-Z][\w-]*)/g)) defined.add(m[1]);
     for (const m of css.matchAll(/@utility\s+([\w-]+)/g)) defined.add(m[1]);
@@ -96,7 +104,7 @@ describe("shadcn-lint allowlist", () => {
     );
     expect(
       unexplained,
-      "allowlisted but defined in no stylesheet under src/ — remove it from .oxlintrc.json",
+      "allowlisted but defined in no stylesheet under src/ or the package — remove it from .oxlintrc.json",
     ).toEqual([]);
   });
 

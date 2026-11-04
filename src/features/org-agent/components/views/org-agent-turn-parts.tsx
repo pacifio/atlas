@@ -23,8 +23,6 @@ import {
 
 import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
-import { Button } from "@/ui/button";
-import { HintGroup, HintItem } from "@/ui/hint-group";
 
 import type { OrgAgentTarget } from "../../lib/org-agent-links";
 import { mentionTarget } from "../../lib/org-agent-links";
@@ -40,6 +38,7 @@ import {
 import { segmentsOf } from "../../lib/org-agent-mentions";
 import type { AskStatus, LimitWhich, Mention, PlanStep } from "../../lib/org-agent-types";
 import { CardList } from "../org-agent-cards";
+import { Button, HintGroup, HintItem } from "@tryatlas/design";
 
 /** A clock that ticks while something is counting down. */
 export function useNow(active: boolean, ms = 1_000): number {

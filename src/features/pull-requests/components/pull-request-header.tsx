@@ -11,11 +11,6 @@ import { openPullRequest } from "@/features/git/lib/git-pr-api";
 import { copyText } from "@/lib/clipboard";
 import { timeAgo } from "@/lib/time-ago";
 import { cn } from "@/lib/utils";
-import { Button } from "@/ui/button";
-import { IconButton } from "@/ui/icon-button";
-import { Input } from "@/ui/input";
-import { Popover, PopoverContent, PopoverTrigger } from "@/ui/popover";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/ui/tooltip";
 
 import { classifyPrError } from "../lib/pr-errors";
 import { canEditPullRequest, checkoutCommand } from "../lib/pull-request-logic";
@@ -30,6 +25,17 @@ import {
   type StatePresentation,
 } from "./pull-request-presentation";
 import { CopyButton, NumberLinkButton, StaleBaseButton } from "./pull-request-triggers";
+import {
+  Button,
+  IconButton,
+  Input,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@tryatlas/design";
 
 // ── crumbs ──────────────────────────────────────────────────────────────
 

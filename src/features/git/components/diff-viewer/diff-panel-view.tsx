@@ -24,19 +24,6 @@ import {
   Settings2,
   WrapText,
 } from "lucide-react";
-import { IconButton } from "@/ui/icon-button";
-import { Segmented } from "@/ui/segmented";
-import { Hint } from "@/ui/tooltip";
-import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/ui/dropdown-menu";
-import { ContextMenu, ContextMenuTrigger } from "@/ui/context-menu";
 import { useScopedHotkeys } from "@/features/keybindings/lib/use-scoped-hotkeys";
 import { useSettingsStore } from "@/features/settings/stores/settings-store";
 import { useWordWrap } from "@/features/settings/lib/use-word-wrap";
@@ -59,6 +46,20 @@ import { DiffFindBar, type DiffFindHandle } from "./diff-find-bar";
 import { DiffPanelSkeleton } from "./diff-panel-skeleton";
 import { FileViewedContext, FileViewedToggle, type FileViewedState } from "./file-viewed-toggle";
 import { StyledCodeView, type StyledCodeViewOptions } from "./styled-code-view";
+import {
+  IconButton,
+  Segmented,
+  Hint,
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+  ContextMenu,
+  ContextMenuTrigger,
+} from "@tryatlas/design";
 
 /**
  * The diff panel's view: a header of how to show the diff, and every file of

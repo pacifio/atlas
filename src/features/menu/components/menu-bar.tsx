@@ -1,5 +1,9 @@
 import { Menu } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { isActionId } from "@/features/keybindings/lib/actions";
+import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
+import { inWindowMenus, type RunnableItem } from "../lib/menu-model";
+import { runMenuItem } from "../lib/run-menu-item";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -10,12 +14,8 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
-} from "@/ui/dropdown-menu";
-import { HintItem } from "@/ui/hint-group";
-import { isActionId } from "@/features/keybindings/lib/actions";
-import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
-import { inWindowMenus, type RunnableItem } from "../lib/menu-model";
-import { runMenuItem } from "../lib/run-menu-item";
+  HintItem,
+} from "@tryatlas/design";
 
 const MENUS = inWindowMenus();
 

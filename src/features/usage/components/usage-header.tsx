@@ -1,11 +1,11 @@
 import { Popover } from "@base-ui/react/popover";
 import { Copy, Download, FileText, FileType2, Image as ImageIcon, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { HintItem } from "@/ui/hint-group";
 import { DockButton, DOCK_TRIGGER, HeaderDock } from "@/features/artifacts/components/header-dock";
 import type { DateRange } from "../types";
 import { DateRangeControl } from "./date-range-control";
 import { DestinationActions } from "@/features/layout/components/destination-actions";
+import { HintItem } from "@tryatlas/design";
 
 export type ExportKind = "pdf" | "jpeg" | "markdown" | "copy-markdown";
 

@@ -2,7 +2,7 @@
 
 import { ArrowUp, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
+import { Hint } from "@tryatlas/design";
 
 export function ComposerSendButton({
   mode,

@@ -1,18 +1,18 @@
 import { useState } from "react";
 import { AtlasIcon } from "@/components/atlas-icon";
-import { Button } from "@/ui/button";
 import { StepDots } from "@/components/step-dots";
+import { KeymapStep, type KeymapAnswer } from "@/features/keybindings/components/keymap-step";
+import { useKeybindingsStore } from "@/features/keybindings/stores/keybindings-store";
+import { reportFirstRunComplete } from "@/features/tips/lib/tips-api";
 import {
+  Button,
   Dialog,
   DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/ui/dialog";
-import { KeymapStep, type KeymapAnswer } from "@/features/keybindings/components/keymap-step";
-import { useKeybindingsStore } from "@/features/keybindings/stores/keybindings-store";
-import { reportFirstRunComplete } from "@/features/tips/lib/tips-api";
+} from "@tryatlas/design";
 
 /**
  * First run (CONTEXT.md): what Atlas is, then which editor's shortcuts to

@@ -6,7 +6,7 @@ import { useProjectStore } from "@/features/projects/stores/project-store";
 import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
 import { FolderOpen, Clock, X, Folder } from "lucide-react";
 import { AtlasIcon } from "@/components/atlas-icon";
-import { Hint } from "@/ui/tooltip";
+import { Hint } from "@tryatlas/design";
 
 export function WelcomeScreen() {
   const paletteHint = useActionShortcut("nav.commandPalette")?.label ?? "⌘K";

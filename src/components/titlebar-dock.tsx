@@ -20,14 +20,15 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-import { slideGeometry, type SlideGeometry } from "@/ui/slide-geometry";
 import {
+  slideGeometry,
+  type SlideGeometry,
   isTooltipWarm,
   markTooltipClosed,
   markTooltipOpen,
   slideTransition,
   TOOLTIP_OPEN_DELAY,
-} from "@/ui/tooltip-timing";
+} from "@tryatlas/design";
 
 export interface DockItem {
   /** Stable identity, and the tooltip's text. */

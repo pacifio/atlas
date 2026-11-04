@@ -4,11 +4,11 @@
 
 import { useEffect } from "react";
 import { toast } from "sonner";
-import { Button } from "@/ui/button";
 import { useSettingsStore } from "../../stores/settings-store";
 import { useModelPricingStore } from "../../stores/model-pricing-store";
 import { SettingSwitch } from "../layout/setting-controls";
 import { SettingsGroup, SettingsRow, SettingsSection } from "../layout/settings-layout";
+import { Button } from "@tryatlas/design";
 
 /** In Atlas Agent's editor: what it may do beyond chatting. */
 export function AtlasAgentPermissions() {

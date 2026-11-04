@@ -8,11 +8,13 @@ theme key always resolves in this order: explicit `keys` value, palette
 source, base-token source, then the Atlas default for the active appearance.
 
 Every key, its description, its sources and its transform are declared once, in
-**`crates/atlas-theme/keys.toml`**. The TS registry the resolver reads, the key
-list Rust reads, the `keys` property of the JSON Schema, and the key table below
-are all generated from it by `bun run theme:keys`, and `bun run test` fails if
-any of them is stale. Editing a key means editing that file; `resolve-theme.ts`
-is the only place the derivation order itself lives.
+**`keys.toml`**, which belongs to `@tryatlas/design` (ADR-0027). The package
+generates the TS registry the resolver reads and the key list and rule table
+Rust reads; `bun run theme:keys` copies those, `keys.toml` and the built-in
+themes into `crates/atlas-theme/`, and generates the `keys` property of the JSON
+Schema and the key table below from the copy. `bun run test` fails if any of
+them is stale. Editing a key means editing the package's `keys.toml`; its
+`resolve-theme.ts` is the only place the derivation order itself lives.
 
 **A key exists only where an author needs that surface to differ from the base
 tokens.** Everything else Atlas derives and does not ask about: a status badge's

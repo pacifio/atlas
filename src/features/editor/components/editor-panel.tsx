@@ -11,7 +11,6 @@ import { gitDiffLineStatus } from "@/features/git/lib/git-diff-api";
 import { gitBlameFile } from "@/features/git/lib/git-blame-api";
 import { MarkdownFile } from "@/lib/markdown-fileviewer";
 import { openFileAs } from "@/lib/open-file";
-import { Button } from "@/ui/button";
 import { useProjectSetting } from "@/features/settings/lib/use-scoped-setting";
 import { useWordWrap } from "@/features/settings/lib/use-word-wrap";
 import { OpenInEditorButton } from "@/features/external-editor/components/open-in-editor-button";
@@ -52,6 +51,7 @@ import {
   FileTreeToggle,
 } from "./file-surface-chrome";
 import { FILE_DOCK_RESERVE } from "@/features/explorer/lib/file-tabs";
+import { Button } from "@tryatlas/design";
 
 /**
  * A file tab: the file's text in the code editor (`codemirror-file-view.tsx`),

@@ -5,7 +5,7 @@
 // `bun run typecheck` flags a fake that no longer matches what Rust returns.
 
 import type { UpdaterSnapshot } from "@/features/updater/lib/updater-api";
-import type { SavedTheme, Theme, ThemeCatalogSummary } from "@/features/theme/lib/theme-api";
+import type { SavedTheme, ThemeCatalogSummary } from "@/features/theme/lib/theme-api";
 import { themeIdSlug } from "@/features/theme/lib/theme-import-api";
 import type { MockHandlers } from "../types";
 import { DEFAULT_APP_PROFILE, type AppProfile } from "@/lib/app-profile";
@@ -36,6 +36,7 @@ import { spacesHandlers } from "../fixtures/spaces";
 import { terminalHandlers } from "../fixtures/terminal";
 import { importedUserThemes, themeImportHandlers } from "../fixtures/theme-import";
 import { appState } from "../project";
+import type { Theme } from "@tryatlas/design/theme";
 
 const nothing = () => null;
 

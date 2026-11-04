@@ -16,7 +16,8 @@
  * Labels are kept as CSS colour strings (pixi's `TextStyle.fill` wants one)
  * while the shapes are integers, which is why each has both forms.
  */
-import { themeBase, themeColor, hexOf } from "@/features/theme/theme-values";
+import { themeBase, themeColor } from "@/features/theme/theme-values";
+import { hexOf } from "@tryatlas/design/theme";
 
 export interface GraphPalette {
   /** Focused node, its neighbours, and the highlighted label. */

@@ -36,14 +36,6 @@ import {
   Undo2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuShortcut,
-} from "@/ui/dropdown-menu";
 import { snoozePresets } from "@/features/chat/lib/session-snooze";
 import type { SidebarSession } from "../lib/sidebar-sessions";
 import { useSessionListScroll } from "../lib/session-list-scroll";
@@ -70,6 +62,14 @@ import {
 import { SessionPullRequestBadge } from "./session-pull-request";
 import { SessionHoverCardPopup } from "./session-hover-card";
 import { requestCustomSnooze } from "./custom-snooze-dialog";
+import {
+  Hint,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuShortcut,
+} from "@tryatlas/design";
 
 /** Slot heights the list virtualizes on. A card renders 63px (three lines at
  *  Atlas's type scale) with 2px above and below; a slim or search row is 36px.

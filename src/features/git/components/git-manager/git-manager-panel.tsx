@@ -1,8 +1,5 @@
 import { useEffect, useState } from "react";
 import { RefreshCw, ArrowDown, ArrowUp, UploadCloud, Loader2, GitMerge } from "lucide-react";
-import { Button } from "@/ui/button";
-import { IconButton } from "@/ui/icon-button";
-import { HintGroup, HintItem } from "@/ui/hint-group";
 import { useGitStore } from "../../stores/git-store";
 import { handleGitError } from "../../lib/git-errors";
 import { fetchHint } from "../../lib/auto-fetch";
@@ -14,6 +11,7 @@ import { PullChoiceDialog } from "./pull-choice-dialog";
 import { ChangesView } from "./changes-view";
 import { HistoryView } from "./history-view";
 import { StashesView } from "./stashes-view";
+import { Button, IconButton, HintGroup, HintItem } from "@tryatlas/design";
 
 type View = "changes" | "history" | "stashes";
 

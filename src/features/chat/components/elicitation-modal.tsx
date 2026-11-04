@@ -18,7 +18,6 @@
 
 import { useMemo, useState } from "react";
 import { Dialog } from "@base-ui/react/dialog";
-import { DialogOverlay } from "@/ui/dialog";
 import { HelpCircle, ExternalLink } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
@@ -29,6 +28,7 @@ import {
   parseElicitationSchema,
   type ElicitationField,
 } from "../lib/elicitation-schema";
+import { DialogOverlay } from "@tryatlas/design";
 
 // The schema projection moved to `../lib/elicitation-schema` once the question
 // card needed it too. Re-exported so this file stays the one import site for

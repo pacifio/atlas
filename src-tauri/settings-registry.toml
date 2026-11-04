@@ -303,7 +303,7 @@ validation = "exactly one of these values; a missing requested variant falls bac
 key = "themeOverrides"
 type = "table"
 ts_type = "ThemeOverride"
-ts_import = "@/features/theme/resolve-theme"
+ts_import = "@tryatlas/design/theme"
 ts_default = "{}"
 status = "file-only"
 page = "appearance"
@@ -1009,14 +1009,14 @@ status = "live"
 page = "appearance"
 section = "Typography"
 title = "Interface font"
-summary = "The font for everything outside code and the terminal. Empty follows the theme, else the system font."
+summary = "The font for everything outside code and the terminal. Empty follows the theme, else Geist."
 doc = """
 The font for Atlas's interface and chats, as a CSS font-family list such as
 "Inter, sans-serif". Empty uses the theme's font-sans if it sets one, else
-the system font. A font that isn't installed
+Geist, which Atlas bundles. A font that isn't installed
 falls through to the next one in the list.
 """
-validation = "a CSS font-family list, at most 200 characters, with no `{`, `}`, `;`, `<` or `>`; empty uses the system font"
+validation = "a CSS font-family list, at most 200 characters, with no `{`, `}`, `;`, `<` or `>`; empty uses the theme's font, else Geist"
 
 [[setting]]
 key = "codeFontFamily"
@@ -1026,11 +1026,11 @@ status = "live"
 page = "appearance"
 section = "Typography"
 title = "Code font"
-summary = "The font for the editor, diffs and code in chats. Empty follows the theme, else the default."
+summary = "The font for the editor, diffs and code in chats. Empty follows the theme, else Geist Mono."
 doc = """
 The font for the editor, diffs and code in chats, as a CSS font-family list
 such as "JetBrains Mono, monospace". Empty uses the theme's font-mono if it
-sets one, else the platform's monospace font. The terminal uses it too unless terminalFontFamily is set.
+sets one, else Geist Mono, which Atlas bundles. The terminal uses it too unless terminalFontFamily is set.
 """
 validation = "a CSS font-family list, at most 200 characters, with no `{`, `}`, `;`, `<` or `>`; empty uses the default"
 

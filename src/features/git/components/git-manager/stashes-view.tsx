@@ -1,8 +1,8 @@
 import { useEffect } from "react";
 import { Archive } from "lucide-react";
-import { Button } from "@/ui/button";
 import { useGitStore } from "../../stores/git-store";
 import { handleGitError } from "../../lib/git-errors";
+import { Button } from "@tryatlas/design";
 
 export function StashesView() {
   const repoPath = useGitStore.use.repoPath();

@@ -24,10 +24,10 @@
  * module-level constants this replaced could not.
  */
 import { useMemo } from "react";
-import { mix, withAlpha } from "@/features/theme/color";
 import { modelVendorColor, type ModelVendor } from "@/features/agents/lib/agent-brand";
 import { NATIVE_AGENT_ID } from "@/types/agent";
 import { themeBase, themeColor, useThemeVersion } from "@/features/theme/theme-values";
+import { mix, withAlpha } from "@tryatlas/design/theme";
 
 /** The five series tokens, in the order a theme author sees them. */
 const SERIES_TOKENS = ["chart-1", "chart-2", "chart-3", "chart-4", "chart-5"] as const;

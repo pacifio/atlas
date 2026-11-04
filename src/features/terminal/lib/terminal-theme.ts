@@ -17,8 +17,8 @@
  * than the next one.
  */
 import type { ITheme } from "@xterm/xterm";
-import { withAlpha } from "@/features/theme/color";
-import { alphaOf, themeColor, themeDerived } from "@/features/theme/theme-values";
+import { themeColor, themeDerived } from "@/features/theme/theme-values";
+import { withAlpha, alphaOf } from "@tryatlas/design/theme";
 
 /** Build an xterm `ITheme` from the active theme's `terminal.*` keys. */
 export function terminalTheme(): ITheme {

@@ -5,7 +5,6 @@
 import type { ReactNode, Ref } from "react";
 import { Check, ChevronDown, Loader2, Plus, RotateCw } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
 import { AgentMark } from "@/components/agent-mark";
 import {
   CLAUDE_PERMISSION_MODE_LABEL,
@@ -22,6 +21,7 @@ import {
 import { ModelPicker, type PickerAgent } from "../model-picker";
 import { FeaturedAgentOffers } from "../featured-agent-offers";
 import { composerPillLabelClass } from "../composer-dropup";
+import { Hint } from "@tryatlas/design";
 
 type AcpMode = { id: string; name: string; description?: string | null };
 type PickerModel = PickerAgent["models"][number];

@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Button } from "@/ui/button";
 import { formatTime } from "@/lib/format-time";
 import { cn } from "@/lib/utils";
 import { securityFindingLine } from "../lib/security-api";
@@ -7,6 +6,7 @@ import { ROTATE, secretLabel, whereLabel } from "../lib/security-levels";
 import { selectCheckpoints, useSecurityStore } from "../stores/security-store";
 import type { SecurityFinding } from "../types";
 import { SecurityLevelBadge } from "./session-security-badge";
+import { Button } from "@tryatlas/design";
 
 /** Through `formatTime`: a cached formatter, and the user's 12h/24h setting. */
 function clock(iso: string): string {

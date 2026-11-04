@@ -20,11 +20,10 @@ import { revealAgentPage } from "@/features/layout/lib/org-agent";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useStripEdges } from "@/features/terminal/components/terminal-tab-strip";
 import { cn } from "@/lib/utils";
-import { HintGroup, HintItem } from "@/ui/hint-group";
-import { IconButton } from "@/ui/icon-button";
 
 import { askBusy, askTitle, askWaiting, useOrgAgentStore } from "../stores/org-agent-store";
 import { OrgAgentThread } from "./org-agent-thread";
+import { HintGroup, HintItem, IconButton } from "@tryatlas/design";
 
 export function OrgAgentSidePanel() {
   useTipOnMount("ask-atlas");

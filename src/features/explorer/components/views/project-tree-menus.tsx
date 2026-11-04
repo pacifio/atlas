@@ -1,10 +1,14 @@
-import { ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut } from "@/ui/context-menu";
-import { KbdCombo } from "@/ui/kbd";
 import { OpenInEditorContextItems } from "@/features/external-editor/components/open-in-editor-menu";
 import type { WorkingTreeChanges } from "@/features/git/lib/use-working-tree-changes";
 
 import { absoluteOf } from "../../lib/project-file-ops";
 import type { TreeRowData } from "../../lib/project-tree-model";
+import {
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuShortcut,
+  KbdCombo,
+} from "@tryatlas/design";
 
 /**
  * The project file tree's context menus: a row's, and the empty space

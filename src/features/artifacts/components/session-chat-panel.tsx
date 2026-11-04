@@ -38,7 +38,6 @@ import { CHAT_PROVIDERS } from "@/features/settings/lib/providers";
 import { useByokStore } from "@/features/settings/stores/byok-store";
 import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/time-ago";
-import { Hint } from "@/ui/tooltip";
 
 import { useSessionChatStore, UNTITLED } from "../stores/session-chat-store";
 import type { SessionDetail as Detail, TimelineEntry } from "../types";
@@ -46,6 +45,7 @@ import { CheckpointScopePicker, defaultScope } from "./checkpoint-scope-picker";
 import { SessionChatMessage } from "./session-chat-message";
 import { AgentGlyph } from "./agent-glyph";
 import { useSettingsStore } from "@/features/settings/stores/settings-store";
+import { Hint } from "@tryatlas/design";
 
 /**
  * The questions worth putting in front of someone who has never used this.
@@ -350,7 +350,7 @@ function ThreadPicker({
                       <button
                         type="button"
                         onClick={() => onDelete(meta.id)}
-                        className="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-disabled opacity-0 transition-all hover:text-error group-hover:opacity-100 focus-visible:opacity-100"
+                        className="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-disabled opacity-0 transition-[color,opacity] hover:text-error group-hover:opacity-100 focus-visible:opacity-100"
                       >
                         <Trash2 size={11} />
                       </button>
@@ -459,7 +459,7 @@ function Starters({ disabled, onPick }: { disabled: boolean; onPick: (question: 
               onClick={() => onPick(text)}
               style={{ animationDelay: `${120 + i * 50}ms` }}
               className={cn(
-                "group atlas-fade-in flex flex-col gap-2 rounded-xl border border-[var(--border)] bg-[var(--card)] p-2.5 text-left transition-all duration-150",
+                "group atlas-fade-in flex flex-col gap-2 rounded-xl border border-[var(--border)] bg-[var(--card)] p-2.5 text-left transition-[translate,background-color,border-color,box-shadow,opacity] duration-150",
                 disabled
                   ? "cursor-default opacity-50"
                   : "cursor-pointer hover:-translate-y-0.5 hover:border-border-strong hover:bg-[var(--card)] hover:shadow-md",
@@ -471,7 +471,7 @@ function Starters({ disabled, onPick }: { disabled: boolean; onPick: (question: 
                 </span>
                 <ArrowRight
                   size={12}
-                  className="-translate-x-1 text-disabled opacity-0 transition-all group-hover:translate-x-0 group-hover:text-[var(--secondary-foreground)] group-hover:opacity-100"
+                  className="-translate-x-1 text-disabled opacity-0 transition-[translate,color,opacity] group-hover:translate-x-0 group-hover:text-[var(--secondary-foreground)] group-hover:opacity-100"
                 />
               </div>
               <span className="text-sm font-medium leading-snug text-[var(--secondary-foreground)] transition-colors group-hover:text-[var(--foreground)]">

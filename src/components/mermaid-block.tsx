@@ -8,7 +8,7 @@ import { getActiveTheme } from "@/features/theme/apply-theme";
 import { themeBase, themeColor, useThemeVersion } from "@/features/theme/theme-values";
 import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
-import { HintGroup, HintItem } from "@/ui/hint-group";
+import { HintGroup, HintItem } from "@tryatlas/design";
 
 // Mermaid is heavy (~500KB) — load it on first diagram render only.
 //

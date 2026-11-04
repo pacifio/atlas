@@ -43,8 +43,6 @@ import {
 import { toast } from "sonner";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
-import { DialogOverlay } from "@/ui/dialog";
 import {
   agents,
   ensureAgent,
@@ -73,6 +71,7 @@ import {
   shellLine,
   type CommandTerminal,
 } from "@/features/terminal/lib/open-command-terminal";
+import { Hint, DialogOverlay } from "@tryatlas/design";
 
 /** Lifted verbatim from `agent-login-dialog.tsx` — one machine for all agents. */
 type Phase =

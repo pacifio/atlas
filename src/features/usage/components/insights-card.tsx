@@ -71,7 +71,9 @@ export function InsightsCard({ insights }: { insights: Insight[] }) {
                 aria-label={`Insight ${k + 1}`}
                 onClick={() => go(k)}
                 className={cn(
-                  "h-[3px] rounded-full transition-all duration-200",
+                  // Width, not scaleX: a 3px capsule squashed sideways loses
+                  // its round ends, and three tiny buttons reflowing is cheap.
+                  "h-[3px] rounded-full transition-[width,background-color] duration-200",
                   k === i
                     ? "w-5 bg-success"
                     : "w-3 bg-element-active hover:bg-[var(--muted-foreground)]",

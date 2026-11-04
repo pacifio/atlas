@@ -67,6 +67,15 @@ export default defineConfig(() => ({
       // worker is imported separately via `?url`. Two copies would mismatch
       // the worker against the main-thread API version and fail to render.
       "pdfjs-dist",
+      // The design package and the two peers its primitives share with the
+      // app. A second `@base-ui/react` splits the floating-UI contexts (a
+      // menu inside a dialog no longer sees its parent), and a second
+      // `motion` splits `LayoutGroup`/`MotionConfig`. While the package is
+      // `bun link`ed it resolves peers from its own node_modules, which is
+      // exactly the duplicate this prevents (the package's README).
+      "@tryatlas/design",
+      "@base-ui/react",
+      "motion",
     ],
   },
   clearScreen: false,
@@ -189,22 +198,24 @@ export default defineConfig(() => ({
       output: {
         codeSplitting: {
           groups: [
-            // Tiny shared utils, highest priority. `cn()` (clsx +
-            // tailwind-merge) is used all over the eager boot path AND by
-            // react-pdf. Left to a lower priority, clsx gets folded into
-            // `vendor-pdf`, so the entry imports a 200-byte function from a
-            // 425 KB chunk and preloads all of pdfjs before first paint —
-            // silently defeating the lazy `PdfViewer` boundary in
-            // center-panel.tsx. `\0vite/preload-helper` (the `__vitePreload`
-            // runtime) rides along for the same reason: it is needed eagerly,
-            // and wherever it lands the entry must import that chunk.
+            // Tiny shared utils, highest priority. clsx is used on the eager
+            // boot path (class-variance-authority) AND by react-pdf. Left to a
+            // lower priority, clsx gets folded into `vendor-pdf`, so the entry
+            // imports a 200-byte function from a 425 KB chunk and preloads all
+            // of pdfjs before first paint — silently defeating the lazy
+            // `PdfViewer` boundary in center-panel.tsx.
+            // `\0vite/preload-helper` (the `__vitePreload` runtime) rides along
+            // for the same reason: it is needed eagerly, and wherever it lands
+            // the entry must import that chunk. `cn` is the class merger
+            // `@tryatlas/design` and `@/lib/utils` share: eager, and the same
+            // risk.
             {
               name: "vendor-utils",
               priority: 100,
               test: (id) =>
                 !id.endsWith(".css") &&
                 (id.includes("/node_modules/clsx/") ||
-                  id.includes("/node_modules/tailwind-merge/") ||
+                  id.includes("/node_modules/cn/") ||
                   id.includes("vite/preload-helper")),
             },
             // Exact package roots only — NOT a `/react/` substring (which

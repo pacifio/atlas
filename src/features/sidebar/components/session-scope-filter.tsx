@@ -12,8 +12,6 @@ import { ArrowDownUp, Boxes, Check, Search } from "lucide-react";
 
 import { useActiveOrgProjects } from "@/features/projects/lib/org-scope";
 import { cn } from "@/lib/utils";
-import { Icon } from "@/ui/icon";
-import { Hint } from "@/ui/tooltip";
 
 import { resolveScopeProjectId, type SidebarProject } from "../lib/sidebar-sessions";
 import { useSidebarStore } from "../stores/sidebar-store";
@@ -28,6 +26,7 @@ import {
 } from "../lib/menu-surface";
 import { filterPickerProjects, SEARCH_THRESHOLD } from "./project-picker";
 import { ProjectBadge } from "./session-row-parts";
+import { Icon, Hint } from "@tryatlas/design";
 
 export function SessionScopeFilter() {
   const orgProjects = useActiveOrgProjects();

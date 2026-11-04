@@ -14,8 +14,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Check, CircleHelp } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { HintGroup, HintItem } from "@/ui/hint-group";
 import type { QuestionSpec } from "../lib/questions";
+import { HintGroup, HintItem } from "@tryatlas/design";
 
 /** One question's answer, as the card reports it. */
 export interface Answer {
@@ -336,8 +336,11 @@ export function ApprovalCard({
                   key={i}
                   aria-hidden
                   className={cn(
-                    "rounded-full bg-[var(--foreground)] transition-all duration-200",
-                    i === step ? "size-2 opacity-100" : "size-1.5",
+                    // One box for every dot, so the row never reflows; the
+                    // current step is full size and the rest scale down to the
+                    // 1.5 step (6px of 8), on the compositor.
+                    "size-2 rounded-full bg-[var(--foreground)] transition-[scale,opacity] duration-200",
+                    i === step ? "opacity-100" : "scale-75",
                     i < step ? "opacity-70" : i > step ? "opacity-30" : "",
                   )}
                 />

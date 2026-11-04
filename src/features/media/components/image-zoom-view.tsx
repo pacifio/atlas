@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ZoomIn, ZoomOut, Maximize } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { HintGroup, HintItem } from "@/ui/hint-group";
+import { HintGroup, HintItem } from "@tryatlas/design";
 
 interface ImageZoomViewProps {
   src: string;

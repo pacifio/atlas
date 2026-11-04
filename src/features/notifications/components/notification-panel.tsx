@@ -1,7 +1,6 @@
 import { useLayoutEffect, useMemo, useState } from "react";
 import { Bell, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
 import { timeAgo } from "@/lib/time-ago";
 import { jumpToSession } from "@/features/chat/lib/tab-project";
 import { jumpToTerminal } from "@/features/terminal/lib/jump-to-terminal";
@@ -15,6 +14,7 @@ import {
   visibleItems,
   type AppNotification,
 } from "../stores/notifications-store";
+import { Hint } from "@tryatlas/design";
 
 /** Drawer width when no surfaces pane is on screen. */
 const FALLBACK_WIDTH = 360;

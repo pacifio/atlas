@@ -52,11 +52,16 @@ reviews:
     - "!src-tauri/gen/**"
     - "!src-tauri/icons/**"
     - "!crates/atlas-icon-theme/vendor/**"
-    # scripts/generate-theme-keys.mjs writes these; its drift check compares
-    # them byte for byte. docs/reference/theme-keys.md is only partly
-    # generated, so it stays reviewed.
-    - "!src/features/theme/theme-key-registry.ts"
+    # scripts/generate-theme-keys.mjs copies these from @tryatlas/design,
+    # where they are reviewed, or generates them; its drift check and
+    # tests/design-package-copies.test.ts compare them byte for byte.
+    # docs/reference/theme-keys.md is only partly generated, so it stays
+    # reviewed.
+    - "!crates/atlas-theme/keys.toml"
+    - "!crates/atlas-theme/themes/**"
     - "!crates/atlas-theme/theme-keys.txt"
+    - "!crates/atlas-theme/base-rules.txt"
+    - "!crates/atlas-theme/tests/fixtures/base-derivation.json"
     - "!crates/atlas-theme/schema/theme-v1.json"
     # The engine's protocol and hook schemas, regenerated and compared by
     # their own tests (vendor/atlas-engine/ATLAS-CHANGES.md).

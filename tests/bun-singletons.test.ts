@@ -68,6 +68,9 @@ const EXPECTED_DEDUPE = [
   "@lezer/highlight",
   "@lezer/lr",
   "pdfjs-dist",
+  "@tryatlas/design",
+  "@base-ui/react",
+  "motion",
 ];
 
 /**

@@ -31,7 +31,7 @@ import {
   pullRequestBadge,
 } from "@/features/pull-requests/lib/session-pull-request-links";
 import { cn } from "@/lib/utils";
-import { Popover, PopoverContent, PopoverTrigger } from "@/ui/popover";
+import { Popover, PopoverContent, PopoverTrigger } from "@tryatlas/design";
 
 /** What the sidebar knows of the session the pull requests belong to. */
 export interface BadgeSession {
