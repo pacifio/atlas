@@ -7,7 +7,8 @@ import {
 } from "@tiptap/react";
 import { useState } from "react";
 import { ChevronRight } from "lucide-react";
-import { Hint } from "@tryatlas/design";
+import { Hint, iconButtonVariants } from "@tryatlas/design";
+import { cn } from "@/lib/utils";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -97,6 +98,9 @@ export const Toggle = Node.create({
   },
 });
 
+const TITLE = "flex-1 bg-transparent text-left text-md font-medium text-foreground outline-none";
+const BODY = "mt-1 ml-3 border-l border-border-subtle pl-7";
+
 function ToggleView({ node, updateAttributes }: NodeViewProps) {
   const open = Boolean(node.attrs.open);
   const title = (node.attrs.title as string) || "Untitled";
@@ -104,27 +108,29 @@ function ToggleView({ node, updateAttributes }: NodeViewProps) {
   const [draft, setDraft] = useState(title);
 
   return (
-    <NodeViewWrapper className="atlas-toggle" data-open={open ? "true" : "false"}>
-      <div className="atlas-toggle-header" contentEditable={false}>
+    <NodeViewWrapper className="my-2.5" data-open={open ? "true" : "false"}>
+      <div
+        className="flex items-center gap-2 rounded-md px-1.5 py-1 text-md text-foreground hover:bg-element-hover"
+        contentEditable={false}
+      >
         <Hint label={open ? "Collapse" : "Expand"}>
           <button
             type="button"
-            className="atlas-toggle-chev"
+            className={iconButtonVariants({ variant: "ghost", size: "xs" })}
             onClick={() => updateAttributes({ open: !open })}
           >
             <ChevronRight
-              size={12}
+              className={cn(
+                "size-3 transition-transform duration-fast ease-out-strong motion-reduce:transition-none",
+                open && "rotate-90",
+              )}
               strokeWidth={1.7}
-              style={{
-                transform: open ? "rotate(90deg)" : "rotate(0deg)",
-                transition: "transform 120ms",
-              }}
             />
           </button>
         </Hint>
         {editingTitle ? (
           <input
-            className="atlas-toggle-title-input"
+            className={TITLE}
             value={draft}
             autoFocus
             onChange={(e) => setDraft(e.target.value)}
@@ -145,7 +151,7 @@ function ToggleView({ node, updateAttributes }: NodeViewProps) {
         ) : (
           <button
             type="button"
-            className="atlas-toggle-title"
+            className={cn(TITLE, "cursor-text")}
             onClick={() => {
               setDraft(title);
               setEditingTitle(true);
@@ -157,11 +163,11 @@ function ToggleView({ node, updateAttributes }: NodeViewProps) {
         )}
       </div>
       {open ? (
-        <NodeViewContent className="atlas-toggle-body" />
+        <NodeViewContent className={BODY} />
       ) : (
         // Keep ProseMirror happy by mounting a hidden NodeViewContent so
         // the children stay in the doc; visibility is just CSS-toggled.
-        <NodeViewContent className="atlas-toggle-body" style={{ display: "none" }} />
+        <NodeViewContent className={cn(BODY, "hidden")} />
       )}
     </NodeViewWrapper>
   );
