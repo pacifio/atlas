@@ -31,3 +31,24 @@ export const memorySetup: Scenario = {
     failNextDownload: () => setMemoryModel({ downloadFails: true }),
   },
 };
+
+/** The memory history was edited outside Atlas: the destination bar's health
+ *  line says so and offers "I made this edit". */
+export const memoryHistoryEdited: Scenario = {
+  name: "memory-history-edited",
+  description: "Memory tab whose history was edited outside Atlas (the broken-chain health line).",
+  commands: {
+    memory_health_status: () => ({
+      checkedAt: Date.now(),
+      record: {
+        checkedAt: Date.now(),
+        found: [{ kind: "chain_broken" }],
+        repaired: [],
+        deferred: [{ kind: "chain_broken" }],
+      },
+      corpus: { rebuiltVectors: 0, rebuiltFts: false, recreated: false },
+      restored: null,
+    }),
+  },
+  setup: memorySetup.setup,
+};

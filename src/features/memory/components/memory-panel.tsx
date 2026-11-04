@@ -62,7 +62,7 @@ export function MemoryPanel() {
             </TrackSegment>
           </Track>
 
-          <div className="ml-auto flex min-w-0 items-center gap-2">
+          <div className="flex flex-1 items-center justify-end gap-2">
             <MemoryHealthLine projectPath={projectPath} />
             <MemorySharingControls projectPath={projectPath} />
           </div>
@@ -102,20 +102,27 @@ function MemoryHealthLine({ projectPath }: { projectPath: string | null }) {
   };
   return (
     // It shares the destination bar with the title and the nav, so the
-    // line gives way (truncates) before anything else does.
-    <span className="caption flex min-w-0 items-center gap-1.5">
-      {/* Focusable, so the full line is reachable by keyboard once it truncates. */}
-      <Hint label={line}>
-        <span tabIndex={0} role="note" className="truncate rounded-sm">
-          {line}
-        </span>
-      </Hint>
+    // line gives way (truncates) before anything else does. Only the text
+    // gives way: its cell has no intrinsic width (`w-0 flex-1`) and takes
+    // whatever the bar has left, so this wrapper's minimum is the (unwrapped)
+    // button, which then can't overlap the sharing controls.
+    <span className="caption flex flex-1 items-center justify-end gap-1.5">
+      <span className="flex w-0 flex-1 justify-end">
+        {/* Focusable, so the full line is reachable by keyboard once it
+            truncates; kept out of window dragging so pressing it can't move
+            the window. */}
+        <Hint label={line}>
+          <span tabIndex={0} role="note" data-no-window-drag className="truncate rounded-sm">
+            {line}
+          </span>
+        </Hint>
+      </span>
       {chainBroken(status) && (
         <>
           <button
             type="button"
             onClick={() => setConfirm(true)}
-            className="shrink-0 cursor-pointer underline underline-offset-2 transition-colors duration-fast hover:text-foreground"
+            className="shrink-0 cursor-pointer whitespace-nowrap underline underline-offset-2 transition-colors duration-fast hover:text-foreground"
           >
             I made this edit
           </button>
