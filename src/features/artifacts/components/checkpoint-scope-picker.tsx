@@ -14,15 +14,18 @@
  * clear button. There is nothing to choose, and a dropdown that opens onto one
  * disabled option is worse than plain text — but silently dropping the header
  * left the composer looking like it had lost a row.
+ *
+ * The popup is the package `Popover` holding plain buttons, reached with Tab.
+ * Arrow-key navigation from the search field (a multi-select combobox) would
+ * be a behaviour change, so it waits on that review.
  */
 
 import { useMemo, useState } from "react";
-import { Popover } from "@base-ui/react/popover";
 import { Check, ChevronDown, GitCommitHorizontal, Layers, Search, X } from "lucide-react";
+import { Hint, IconButton, Popover, PopoverContent, PopoverTrigger } from "@tryatlas/design";
 
 import { cn } from "@/lib/utils";
 import type { TimelineEntry } from "../types";
-import { Hint } from "@tryatlas/design";
 
 /**
  * The tucked header itself, same construction as Memory ▸ Chat's codebase strip
@@ -32,14 +35,39 @@ import { Hint } from "@tryatlas/design";
  */
 const STRIP =
   "relative z-0 mx-2 -mb-3.5 flex items-center justify-between gap-3 rounded-t-xl " +
-  "bg-[var(--popover)] px-3.5 pt-1.5 pb-5 text-xs";
+  "bg-popover px-3.5 pt-1.5 pb-5 text-xs";
 
 /** Checkpoints of one Session, newest first. */
-function sessionCheckpoints(entries: TimelineEntry[]): TimelineEntry[] {
+export function sessionCheckpoints(entries: TimelineEntry[]): TimelineEntry[] {
   return entries
     .filter((e) => e.kind === "checkpoint" && !!e.commitSha)
     .slice()
     .reverse();
+}
+
+/**
+ * Whether a Checkpoint matches the search: subject, sha and branch — the three
+ * things someone actually remembers about a commit they are looking for. A
+ * blank query matches everything.
+ */
+export function matchesCheckpoint(entry: TimelineEntry, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  return [entry.commitSubject, entry.commitSha, entry.branch]
+    .filter(Boolean)
+    .some((v) => v!.toLowerCase().includes(q));
+}
+
+/**
+ * The scope after clicking one Checkpoint: in if it was out, out if it was in.
+ * Deselecting the last one means "everything" (`null`), not "nothing" — a chat
+ * grounded on no record at all is never what someone wanted.
+ */
+export function toggleScope(scope: string[] | null, sha: string): string[] | null {
+  const next = new Set(scope ?? []);
+  if (next.has(sha)) next.delete(sha);
+  else next.add(sha);
+  return next.size === 0 ? null : [...next];
 }
 
 /**
@@ -66,18 +94,10 @@ export function CheckpointScopePicker({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const checkpoints = useMemo(() => sessionCheckpoints(entries), [entries]);
-
-  const shown = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return checkpoints;
-    // Subject, sha and branch — the three things someone actually remembers
-    // about a commit they are looking for.
-    return checkpoints.filter((c) =>
-      [c.commitSubject, c.commitSha, c.branch]
-        .filter(Boolean)
-        .some((v) => v!.toLowerCase().includes(q)),
-    );
-  }, [checkpoints, query]);
+  const shown = useMemo(
+    () => checkpoints.filter((c) => matchesCheckpoint(c, query)),
+    [checkpoints, query],
+  );
 
   const selected = new Set(scope ?? []);
   const isFull = !scope || scope.length === 0;
@@ -90,24 +110,15 @@ export function CheckpointScopePicker({
       ? ` · ${firstSelectedSubject(checkpoints, selected)}`
       : " · scoped";
 
-  const toggle = (sha: string) => {
-    const next = new Set(selected);
-    if (next.has(sha)) next.delete(sha);
-    else next.add(sha);
-    // Deselecting the last one means "everything", not "nothing" — a chat
-    // grounded on no record at all is never what someone wanted.
-    onChange(next.size === 0 ? null : [...next]);
-  };
-
   // Nothing to pick: same strip, no affordances.
   if (checkpoints.length === 0) {
     return (
       <div className={STRIP}>
         <span className="flex min-w-0 items-center gap-2 truncate">
-          <Layers size={12} className="shrink-0 text-[var(--muted-foreground)]" />
+          <Layers size={12} className="shrink-0 text-muted-foreground" />
           <span className="truncate">
-            <span className="font-semibold text-[var(--foreground)]">Full timeline</span>
-            <span className="text-[var(--muted-foreground)]"> · no checkpoints</span>
+            <span className="font-semibold text-foreground">Full timeline</span>
+            <span className="text-muted-foreground"> · no checkpoints</span>
           </span>
         </span>
       </div>
@@ -116,122 +127,115 @@ export function CheckpointScopePicker({
 
   return (
     <div className={STRIP}>
-      <Popover.Root open={open} onOpenChange={setOpen}>
-        <Popover.Trigger
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger
           render={
-            <button
-              type="button"
-              title="Choose what this session reads"
-              className="flex min-w-0 items-center gap-2 truncate text-left cursor-pointer outline-none"
-            >
+            <StripButton title="Choose what this session reads">
               {isFull ? (
-                <Layers size={12} className="shrink-0 text-[var(--muted-foreground)]" />
+                <Layers size={12} className="shrink-0 text-muted-foreground" />
               ) : (
-                <GitCommitHorizontal
-                  size={12}
-                  className="shrink-0 text-[var(--muted-foreground)]"
-                />
+                <GitCommitHorizontal size={12} className="shrink-0 text-muted-foreground" />
               )}
               <span className="truncate">
-                <span className="font-semibold text-[var(--foreground)]">{label}</span>
-                {detailText && <span className="text-[var(--muted-foreground)]">{detailText}</span>}
+                <span className="font-semibold text-foreground">{label}</span>
+                {detailText && <span className="text-muted-foreground">{detailText}</span>}
               </span>
               <ChevronDown
                 size={11}
                 className={cn(
-                  "shrink-0 text-[var(--muted-foreground)] transition-transform",
+                  "shrink-0 text-muted-foreground transition-transform duration-fast ease-out-strong",
                   open && "rotate-180",
                 )}
               />
-            </button>
+            </StripButton>
           }
         />
-        <Popover.Portal>
-          <Popover.Positioner className="z-popover" align="start" side="top" sideOffset={8}>
-            <Popover.Popup
-              className={cn(
-                "flex max-h-[380px] w-[340px] flex-col overflow-hidden rounded-xl select-none",
-                // Border, fill, blur and animation on ONE element — splitting them
-                // isolates the layer and flattens the backdrop blur.
-                "border border-border bg-[var(--card)]/95 backdrop-blur-2xl",
-                "inset-highlight shadow-md",
-                "origin-[var(--transform-origin)] data-open:animate-scale-in",
-              )}
-            >
-              {/* Search first, like the agent chat's session picker. A Session can
-                  carry dozens of Checkpoints and the one you want is remembered by
-                  its subject, not its position. */}
-              <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle px-3 py-2">
-                <Search size={12} className="shrink-0 text-[var(--muted-foreground)]" />
-                <input
-                  autoFocus
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search…"
-                  aria-label="Search checkpoints"
-                  className="min-w-0 flex-1 bg-transparent text-xs text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]"
+        <PopoverContent
+          side="top"
+          align="start"
+          sideOffset={8}
+          className="flex max-h-[380px] w-[340px] flex-col p-0"
+        >
+          {/* Search first, like the agent chat's session picker. A Session can
+              carry dozens of Checkpoints and the one you want is remembered by
+              its subject, not its position. */}
+          <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle px-3 py-2">
+            <Search size={12} className="shrink-0 text-muted-foreground" />
+            <input
+              autoFocus
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search…"
+              aria-label="Search checkpoints"
+              className="min-w-0 flex-1 bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground"
+            />
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto hide-scrollbar">
+            {shown.length === 0 ? (
+              <p className="px-3 py-4 text-center text-xs text-muted-foreground">
+                No checkpoint matches.
+              </p>
+            ) : (
+              shown.map((c) => (
+                <Row
+                  key={c.commitSha ?? c.id}
+                  icon={<GitCommitHorizontal size={12} />}
+                  title={c.commitSubject || "(no subject)"}
+                  meta={[c.commitSha?.slice(0, 7), c.branch].filter(Boolean).join(" · ")}
+                  added={c.insertions}
+                  removed={c.deletions}
+                  checked={selected.has(c.commitSha ?? "")}
+                  onClick={() => c.commitSha && onChange(toggleScope(scope, c.commitSha))}
                 />
-              </div>
+              ))
+            )}
+          </div>
 
-              <div className="min-h-0 flex-1 overflow-y-auto hide-scrollbar">
-                {shown.length === 0 ? (
-                  <p className="px-3 py-4 text-center text-xs text-[var(--muted-foreground)]">
-                    No checkpoint matches.
-                  </p>
-                ) : (
-                  shown.map((c) => (
-                    <Row
-                      key={c.commitSha ?? c.id}
-                      icon={<GitCommitHorizontal size={12} />}
-                      title={c.commitSubject || "(no subject)"}
-                      meta={[c.commitSha?.slice(0, 7), c.branch].filter(Boolean).join(" · ")}
-                      added={c.insertions}
-                      removed={c.deletions}
-                      checked={selected.has(c.commitSha ?? "")}
-                      onClick={() => c.commitSha && toggle(c.commitSha)}
-                    />
-                  ))
-                )}
-              </div>
-
-              {/* Full timeline lives at the FOOTER: it is the escape hatch, not
-                  the expected choice. Putting it first made the costly option the
-                  one the eye lands on. */}
-              <button
-                type="button"
-                onClick={() => onChange(null)}
-                className="flex shrink-0 items-center gap-2 border-t border-border-subtle px-3 py-2 text-left transition-colors hover:bg-element-hover cursor-pointer"
-              >
-                <Layers size={12} className="shrink-0 text-[var(--muted-foreground)]" />
-                <span className="min-w-0 flex-1 truncate text-xs text-[var(--foreground)]">
-                  Full timeline
-                </span>
-                <span className="shrink-0 font-mono text-2xs text-[var(--muted-foreground)]">
-                  {checkpoints.length} checkpoints
-                </span>
-                {isFull && <Check size={12} className="shrink-0 text-[var(--foreground)]" />}
-              </button>
-            </Popover.Popup>
-          </Popover.Positioner>
-        </Popover.Portal>
-      </Popover.Root>
+          {/* Full timeline lives at the FOOTER: it is the escape hatch, not
+              the expected choice. Putting it first made the costly option the
+              one the eye lands on. */}
+          <button
+            type="button"
+            onClick={() => onChange(null)}
+            className="flex shrink-0 cursor-pointer items-center gap-2 border-t border-border-subtle px-3 py-2 text-left transition-colors duration-fast hover:bg-element-hover"
+          >
+            <Layers size={12} className="shrink-0 text-muted-foreground" />
+            <span className="min-w-0 flex-1 truncate text-xs text-foreground">Full timeline</span>
+            <span className="shrink-0 font-mono text-2xs text-muted-foreground">
+              {checkpoints.length} checkpoints
+            </span>
+            {isFull && <Check size={12} className="shrink-0 text-foreground" />}
+          </button>
+        </PopoverContent>
+      </Popover>
 
       <Hint label="Read the whole session">
-        <button
-          type="button"
+        <IconButton
+          icon={X}
+          label="Read the whole session"
+          variant="ghost"
+          size="xs"
           onClick={() => onChange(null)}
           disabled={isFull}
-          className={cn(
-            "shrink-0 rounded p-0.5 transition-colors",
-            isFull
-              ? "cursor-default text-[var(--muted-foreground)]/30"
-              : "cursor-pointer text-[var(--muted-foreground)] hover:text-[var(--foreground)]",
-          )}
-        >
-          <X size={12} />
-        </button>
+        />
       </Hint>
     </div>
+  );
+}
+
+/** The strip's text, as the popover's trigger: no chrome of its own, the
+ *  strip is the surface. */
+function StripButton({ className, ...props }: React.ComponentProps<"button">) {
+  return (
+    <button
+      type="button"
+      {...props}
+      className={cn(
+        "flex min-w-0 cursor-pointer items-center gap-2 truncate text-left outline-none",
+        className,
+      )}
+    />
   );
 }
 
@@ -262,20 +266,22 @@ function Row({
     <button
       type="button"
       onClick={onClick}
-      className="flex w-full items-start gap-2 border-b border-border-subtle px-3 py-2 text-left transition-colors last:border-b-0 hover:bg-element-hover cursor-pointer"
+      className="flex w-full cursor-pointer items-start gap-2 border-b border-border-subtle px-3 py-2 text-left transition-colors duration-fast last:border-b-0 hover:bg-element-hover"
     >
-      <span className="mt-px shrink-0 text-[var(--muted-foreground)]">{icon}</span>
+      <span className="mt-px shrink-0 text-muted-foreground">{icon}</span>
       <span className="min-w-0 flex-1">
         {/* Subject on its own line: it is what gets scanned. The sha, branch and
-            diffstat are supporting detail and belong under it. */}
-        <span className="block truncate text-xs text-[var(--foreground)]">{title}</span>
-        <span className="flex items-center gap-1.5 font-mono text-2xs text-[var(--muted-foreground)]">
+            diffstat are supporting detail and belong under it. The diff colours
+            are the theme's diff keys, not success/error, so they follow the
+            colour-blind palette (`diffPalette`) like every other diffstat. */}
+        <span className="block truncate text-xs text-foreground">{title}</span>
+        <span className="flex items-center gap-1.5 font-mono text-2xs text-muted-foreground">
           <span className="min-w-0 truncate">{meta}</span>
           {added > 0 && <span className="text-[var(--diff-added-text)]">+{added}</span>}
-          {removed > 0 && <span className="text-error">−{removed}</span>}
+          {removed > 0 && <span className="text-[var(--diff-removed-text)]">−{removed}</span>}
         </span>
       </span>
-      {checked && <Check size={12} className="mt-px shrink-0 text-[var(--foreground)]" />}
+      {checked && <Check size={12} className="mt-px shrink-0 text-foreground" />}
     </button>
   );
 }
