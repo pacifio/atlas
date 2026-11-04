@@ -10,6 +10,7 @@
  */
 
 import { useState } from "react";
+import { toast } from "sonner";
 
 import type { SessionDetail as Detail } from "../types";
 import { exportSession, type ExportFormat } from "../lib/export";
@@ -21,7 +22,12 @@ export function ExportButton({ detail }: { detail: Detail }) {
   const run = async (format: ExportFormat) => {
     setBusy(format);
     try {
+      // A dismissed save dialog resolves `false`, which is not a failure.
       await exportSession(detail, format);
+    } catch (e) {
+      toast.error("Couldn't export the session", {
+        description: e instanceof Error ? e.message : String(e),
+      });
     } finally {
       setBusy(null);
     }
