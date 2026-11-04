@@ -54,8 +54,9 @@ export function HeaderDock({ children }: { children: React.ReactNode }) {
  * buttons through `render` and hand them the class directly — including the
  * `data-popup-open` styling that keeps a button lit while its menu is up.
  * (Base UI marks an open trigger `data-popup-open`.) The package's
- * `IconButton` can't stand in: it takes a Lucide icon, and the dock's callers
- * pass nodes (a spinning glyph, a rail mark).
+ * `IconButton` can't stand in, not even for `DockButton`: it takes an element
+ * glyph since 0.1.8, but it draws the global keyboard focus ring and has no
+ * variant that drops it, and `outline-none` on it is a restyle.
  *
  * `outline-none` and `cursor-pointer` keep today's focus look and pointer: the
  * dock's `HintGroup` already marks the focused control with its hint.

@@ -93,9 +93,8 @@ export function BranchPickerView({
         // Land in the filter box, not on the first row.
         initialFocus={filterRef}
       >
-        {/* A bare filter row, as in source control's branch switcher: the
-            package `InputGroupInput` keeps the global focus ring inside its
-            group's own focus border, and may not be restyled here. */}
+        {/* A bare filter row, as in source control's branch switcher: no
+            field border, so not an `InputGroup`. */}
         <div className="flex h-control-lg items-center gap-1.5 border-b border-border-subtle px-2.5">
           <Icon icon={Search} size="sm" className="text-muted-foreground" />
           <input

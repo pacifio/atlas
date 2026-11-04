@@ -46,7 +46,7 @@
   },
   "dependencies": {
     "@base-ui/react": "1.8.0",
-    "@tryatlas/design": "github:tryatlas/design#v0.1.6",
+    "@tryatlas/design": "github:tryatlas/design#v0.1.10",
     "@codemirror/commands": "^6.11.1",
     "@codemirror/lang-cpp": "^6.0.3",
     "@codemirror/lang-css": "^6.3.1",
@@ -73,7 +73,6 @@
     "@lobehub/icons": "^5.23.1",
     "@pierre/diffs": "1.5.2",
     "@tanstack/react-query": "^5.105.0",
-    "@tanstack/react-table": "^9.3.1",
     "@tanstack/react-virtual": "^3.14.23",
     "@tauri-apps/api": "^2.12.4",
     "@tauri-apps/plugin-dialog": "^2.8.3",

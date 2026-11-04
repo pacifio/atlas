@@ -102,28 +102,24 @@ export function CreateOrgDialogView({
           {/* Handle — prefix + input, with live availability. */}
           <Field>
             <FieldLabel htmlFor="create-org-handle">Handle</FieldLabel>
-            {/* The group draws its own focus; see the menu filter in
-                `org-menu-panel-view.tsx` for why the inner ring goes. */}
-            <div className="[&_input]:focus-visible:outline-none">
-              <InputGroup>
-                <InputGroupAddon>
-                  <InputGroupText>{HANDLE_PREFIX}</InputGroupText>
-                </InputGroupAddon>
-                <InputGroupInput
-                  id="create-org-handle"
-                  value={handle}
-                  onChange={(e) => onHandleChange(e.target.value)}
-                  placeholder="acme"
-                  aria-invalid={slug.kind === "taken" || undefined}
-                />
-                <InputGroupAddon align="inline-end">
-                  {slug.kind === "checking" && <Spinner size="sm" label="" />}
-                  {slug.kind === "available" && (
-                    <Icon icon={Check} size="sm" className="text-success" />
-                  )}
-                </InputGroupAddon>
-              </InputGroup>
-            </div>
+            <InputGroup>
+              <InputGroupAddon>
+                <InputGroupText>{HANDLE_PREFIX}</InputGroupText>
+              </InputGroupAddon>
+              <InputGroupInput
+                id="create-org-handle"
+                value={handle}
+                onChange={(e) => onHandleChange(e.target.value)}
+                placeholder="acme"
+                aria-invalid={slug.kind === "taken" || undefined}
+              />
+              <InputGroupAddon align="inline-end">
+                {slug.kind === "checking" && <Spinner size="sm" label="" />}
+                {slug.kind === "available" && (
+                  <Icon icon={Check} size="sm" className="text-success" />
+                )}
+              </InputGroupAddon>
+            </InputGroup>
             {/* One line, always present, so the modal never jumps as you type. */}
             {slug.kind === "taken" ? (
               <FieldError className="min-h-4">That handle is already taken.</FieldError>
