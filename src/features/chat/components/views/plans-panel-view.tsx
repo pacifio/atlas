@@ -31,7 +31,7 @@ export function PlansPanelView({
     <div className="flex-1 overflow-y-auto hide-scrollbar">
       {plans.length === 0 ? (
         <div className="px-3 py-3 text-xs text-muted-foreground leading-relaxed">
-          No plans yet. When Claude Code proposes a plan, it’s saved here with the message that
+          No plans yet. When an agent proposes a plan, it’s saved here with the message that
           triggered it.
         </div>
       ) : (
