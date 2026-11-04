@@ -14,6 +14,11 @@ import type { ClonedRepo, GithubRepo } from "../../types";
 import { ClonedRepoRowView, type RowBusy } from "./cloned-repo-row-view";
 import { SearchResultRowView, type CloneState } from "./search-result-row-view";
 
+export interface SearchError {
+  kind: "rate-limited" | "failed";
+  message: string;
+}
+
 export interface GithubPanelViewProps {
   query: string;
   onQueryChange: (query: string) => void;
@@ -26,8 +31,9 @@ export interface GithubPanelViewProps {
   rowBusy: Record<string, RowBusy>;
   /** A search is in flight; the previous results stay listed under it. */
   loading: boolean;
-  /** The last search's failure, shown with a Retry. */
-  error: string | null;
+  /** The last search's failure, shown with a Retry: a rate limit as a
+   *  warning (it names the wait), anything else as an error. */
+  error: SearchError | null;
   results: GithubRepo[];
   /** Per search hit (`full_name`); a missing entry is `"idle"`. */
   cloneStates: Record<string, Exclude<CloneState, null>>;
@@ -119,20 +125,28 @@ export function GithubPanelView({
           {error && (
             <div className="p-3">
               <Callout
-                tone="error"
+                tone={error.kind === "rate-limited" ? "warning" : "error"}
                 action={
                   <Button variant="ghost" size="xs" onClick={onSearch}>
                     Retry
                   </Button>
                 }
               >
-                {error}
+                {error.message}
               </Callout>
             </div>
           )}
 
           {!loading && !error && results.length === 0 && !searching && clones.length === 0 && (
-            <EmptyState icon={GithubIcon} title="Search for repositories" />
+            <EmptyState
+              icon={GithubIcon}
+              title="Search for repositories"
+              description={
+                hasProject
+                  ? `Clones land in ${cloneDir} as reference material.`
+                  : "Open a project to clone repositories into it."
+              }
+            />
           )}
 
           {!loading && !error && results.length === 0 && searching && (

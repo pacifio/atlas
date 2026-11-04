@@ -1,11 +1,12 @@
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useId, useRef } from "react";
 import { Dialog } from "@base-ui/react/dialog";
 import { toast } from "sonner";
 import { Check, Search, Loader2, GitMerge, AlertTriangle, Ban } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useGitStore, type MergePreview } from "../../stores/git-store";
 import { handleGitError } from "../../lib/git-errors";
-import { Badge, Button } from "@tryatlas/design";
+import { inProgressLabel } from "../../lib/in-progress";
+import { Badge, Button, Callout } from "@tryatlas/design";
 
 /**
  * GitHub-Desktop-style "Choose a branch to merge into <current>" dialog.
@@ -22,8 +23,12 @@ export function MergeBranchDialog({
 }) {
   const branch = useGitStore.use.branch();
   const branchesFull = useGitStore.use.branchesFull();
+  const detached = useGitStore.use.detached();
+  const opInProgress = inProgressLabel(useGitStore.use.inProgress());
   const actions = useGitStore.use.actions();
 
+  const listId = useId();
+  const listRef = useRef<HTMLDivElement>(null);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [preview, setPreview] = useState<MergePreview | null>(null);
@@ -118,10 +123,19 @@ export function MergeBranchDialog({
       ? { upstream: selectedInfo.upstream, behind: selectedInfo.behind }
       : null;
 
+  // With HEAD detached there is no branch to merge into, and with an
+  // operation under way git would refuse: say why instead of failing.
+  const blockedReason = detached
+    ? "Check out a branch before merging."
+    : opInProgress
+      ? `Finish the ${opInProgress} in progress first.`
+      : null;
+
   const canMerge =
     !!selected &&
     !merging &&
     !previewing &&
+    !blockedReason &&
     preview != null &&
     preview.kind !== "uptodate" &&
     preview.kind !== "invalid";
@@ -201,6 +215,34 @@ export function MergeBranchDialog({
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                // ↑/↓ walk the list (wrapping); the highlighted row is the pick.
+                if (e.nativeEvent.isComposing || filtered.length === 0) return;
+                if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+                e.preventDefault();
+                const at = filtered.findIndex((b) => b.name === selected);
+                const step = e.key === "ArrowDown" ? 1 : -1;
+                const next =
+                  at < 0
+                    ? step > 0
+                      ? 0
+                      : filtered.length - 1
+                    : (at + step + filtered.length) % filtered.length;
+                const name = filtered[next]!.name;
+                setSelected(name);
+                listRef.current
+                  ?.querySelector(`[data-branch="${CSS.escape(name)}"]`)
+                  ?.scrollIntoView({ block: "nearest" });
+              }}
+              role="combobox"
+              aria-expanded
+              aria-controls={listId}
+              aria-autocomplete="list"
+              aria-activedescendant={
+                selected && filtered.some((b) => b.name === selected)
+                  ? `${listId}-${filtered.findIndex((b) => b.name === selected)}`
+                  : undefined
+              }
               placeholder="Filter branches…"
               autoFocus
               className="flex-1 bg-transparent outline-none text-xs text-foreground placeholder:text-muted-foreground min-w-0"
@@ -208,12 +250,20 @@ export function MergeBranchDialog({
           </div>
 
           {/* Branch list */}
-          <div className="max-h-[260px] overflow-y-auto hide-scrollbar p-1.5">
-            {filtered.map((b) => {
+          <div
+            ref={listRef}
+            id={listId}
+            role="listbox"
+            aria-label="Branches"
+            className="max-h-[260px] overflow-y-auto hide-scrollbar p-1.5"
+          >
+            {filtered.map((b, i) => {
               const isSel = b.name === selected;
               return (
                 <div
                   key={b.name}
+                  id={`${listId}-${i}`}
+                  data-branch={b.name}
                   role="option"
                   aria-selected={isSel}
                   onClick={() => setSelected(b.name)}
@@ -228,7 +278,9 @@ export function MergeBranchDialog({
                     size={12}
                     className={cn("shrink-0", isSel ? "text-primary" : "opacity-0")}
                   />
-                  <span className="truncate flex-1 font-mono">{b.name}</span>
+                  <span className="truncate flex-1 font-mono" title={b.name}>
+                    {b.name}
+                  </span>
                   {b.isRemote && (
                     <Badge variant="outline" size="sm">
                       remote
@@ -276,6 +328,11 @@ export function MergeBranchDialog({
               previewing={previewing}
               preview={preview}
             />
+            {blockedReason && (
+              <Callout tone="warning" icon={false}>
+                {blockedReason}
+              </Callout>
+            )}
             <div className="flex items-center justify-end gap-1.5">
               <Button variant="ghost" onClick={() => onOpenChange(false)}>
                 Cancel

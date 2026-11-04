@@ -4,7 +4,7 @@ import { AlertTriangle } from "lucide-react";
 import { useGitStore } from "../../stores/git-store";
 import { gitErrorContext, gitErrorTitle } from "../../lib/git-errors";
 import { copyText } from "@/lib/clipboard";
-import { CopyGlyph, Button } from "@tryatlas/design";
+import { CopyGlyph, Button, Callout } from "@tryatlas/design";
 import { FixWithAgentButton } from "@/features/ask-agent/components/ask-agent-button";
 
 /**
@@ -61,6 +61,12 @@ export function GitErrorDialog({ onForcePush }: { onForcePush?: () => void }) {
                 )}
               </div>
 
+              {payload.hint && (
+                <div className="px-4 pt-3">
+                  <Callout tone="info">{payload.hint}</Callout>
+                </div>
+              )}
+
               {payload.rawStderr && (
                 <div className="max-h-[180px] overflow-y-auto hide-scrollbar bg-background px-4 py-2.5">
                   <pre className="font-mono text-2xs text-secondary-foreground whitespace-pre-wrap break-all">
@@ -77,6 +83,11 @@ export function GitErrorDialog({ onForcePush }: { onForcePush?: () => void }) {
                       className="truncate font-mono text-2xs text-muted-foreground"
                     >
                       {payload.command}
+                    </span>
+                  )}
+                  {typeof payload.exitCode === "number" && (
+                    <span className="shrink-0 font-mono text-2xs text-muted-foreground tnum">
+                      exit {payload.exitCode}
                     </span>
                   )}
                 </div>

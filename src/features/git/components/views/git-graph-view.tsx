@@ -1,4 +1,12 @@
-import { useEffect, useLayoutEffect, useRef } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { GitBranch, GitCommit, Maximize2, Minimize2, RefreshCw } from "lucide-react";
 import { Button, EmptyState, HintGroup, HintItem, IconButton, Skeleton } from "@tryatlas/design";
@@ -92,6 +100,54 @@ function GraphBody({
     };
   }, [repoPath]);
 
+  // The keyboard cursor: the list is one Tab stop, and arrows move this
+  // index (`aria-activedescendant`) without moving DOM focus off the list,
+  // since the rows it points at may not be mounted yet.
+  const listId = useId();
+  const selectedIndex = selectedSha ? rows.findIndex((r) => r.sha === selectedSha) : -1;
+  const [cursor, setCursor] = useState(() => Math.max(0, selectedIndex));
+  const focusIndex = Math.min(cursor, Math.max(0, rows.length - 1));
+  const rowId = (sha: string) => `${listId}-commit-${sha}`;
+  const focusedSha = rows[focusIndex]?.sha;
+
+  const selectRow = useCallback(
+    (sha: string) => {
+      const i = rows.findIndex((r) => r.sha === sha);
+      if (i >= 0) setCursor(i);
+      onSelect(sha);
+    },
+    [rows, onSelect],
+  );
+
+  const onListKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.target !== e.currentTarget || rows.length === 0) return;
+    if ((e.key === "Enter" || e.key === " ") && focusedSha) {
+      e.preventDefault();
+      onSelect(focusedSha);
+      return;
+    }
+    const page = Math.max(1, Math.floor(e.currentTarget.clientHeight / ROW_HEIGHT) - 1);
+    const last = rows.length - 1;
+    const next =
+      e.key === "ArrowDown"
+        ? Math.min(last, focusIndex + 1)
+        : e.key === "ArrowUp"
+          ? Math.max(0, focusIndex - 1)
+          : e.key === "Home"
+            ? 0
+            : e.key === "End"
+              ? last
+              : e.key === "PageDown"
+                ? Math.min(last, focusIndex + page)
+                : e.key === "PageUp"
+                  ? Math.max(0, focusIndex - page)
+                  : null;
+    if (next === null) return;
+    e.preventDefault();
+    setCursor(next);
+    virtualizer.scrollToIndex(next, { align: "auto" });
+  };
+
   const items = virtualizer.getVirtualItems();
   const loading = state === "loading";
   const fullscreenLabel = fullscreen ? "Exit fullscreen" : "Fullscreen";
@@ -135,7 +191,15 @@ function GraphBody({
       </div>
 
       <div className="relative min-h-0 flex-1">
-        <div ref={parentRef} className="absolute inset-0 overflow-auto hide-scrollbar">
+        <div
+          ref={parentRef}
+          role={rows.length > 0 ? "listbox" : undefined}
+          aria-label={rows.length > 0 ? "Commits" : undefined}
+          aria-activedescendant={rows.length > 0 && focusedSha ? rowId(focusedSha) : undefined}
+          tabIndex={rows.length > 0 ? 0 : undefined}
+          onKeyDown={onListKeyDown}
+          className="group/graph absolute inset-0 overflow-auto outline-none hide-scrollbar"
+        >
           {loading && (
             <div role="status" aria-busy className="py-1.5">
               <span className="sr-only">Loading…</span>
@@ -160,8 +224,10 @@ function GraphBody({
                       row={row}
                       repoPath={repoPath}
                       selected={row.sha === selectedSha}
+                      focused={v.index === focusIndex}
+                      id={rowId(row.sha)}
                       compact={compact}
-                      onSelect={onSelect}
+                      onSelect={selectRow}
                     />
                   </div>
                 );

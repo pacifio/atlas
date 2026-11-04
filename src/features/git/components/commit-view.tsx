@@ -21,6 +21,8 @@ import { useArtifactsStore } from "@/features/artifacts/stores/artifacts-store";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useGitStore, type CommitDetail } from "../stores/git-store";
 import { handleGitError, isGitError } from "../lib/git-errors";
+import { blockedByOperation, inProgressLabel, type InProgressKind } from "../lib/in-progress";
+import { copyText } from "@/lib/clipboard";
 import { highlightDiffLine } from "../lib/diff-highlight";
 import {
   parseDiff,
@@ -228,7 +230,7 @@ export function DiffFilesView({
   }, [jump, rows, virtualizer]);
 
   return (
-    <div className="flex h-full min-w-0 flex-col bg-[var(--background)]">
+    <div className="flex h-full min-w-0 flex-col bg-background">
       {/* Toolbar */}
       <HintGroup>
         <div className="flex h-8 shrink-0 items-center gap-0.5 border-b border-border px-2">
@@ -487,6 +489,22 @@ function Code({ content, language }: { content: string; language: string }) {
  */
 function CommitHeader({ detail, repoPath }: { detail: CommitDetail; repoPath: string }) {
   const [copied, setCopied] = useState(false);
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (copiedTimer.current) clearTimeout(copiedTimer.current);
+    },
+    [],
+  );
+  // "Copied" only when the copy landed: the web clipboard can refuse silently.
+  const copySha = () => {
+    void copyText(detail.hash).then((ok) => {
+      if (!ok) return;
+      setCopied(true);
+      if (copiedTimer.current) clearTimeout(copiedTimer.current);
+      copiedTimer.current = setTimeout(() => setCopied(false), 1200);
+    });
+  };
   const [expanded, setExpanded] = useState(() => localStorage.getItem(HEADER_EXPANDED_KEY) === "1");
   const toggleExpanded = () => {
     setExpanded((e) => {
@@ -497,7 +515,13 @@ function CommitHeader({ detail, repoPath }: { detail: CommitDetail; repoPath: st
   return (
     <div className="shrink-0 border-b border-border px-4 py-3">
       <div className="flex items-start gap-3">
-        <CommitAvatar email={detail.email} repoPath={repoPath} size={36} className="mt-0.5" />
+        <CommitAvatar
+          email={detail.email}
+          name={detail.author}
+          repoPath={repoPath}
+          size={36}
+          className="mt-0.5"
+        />
         <div className="min-w-0 flex-1">
           <div className="text-sm font-medium text-foreground">{detail.author}</div>
           <div className="text-2xs text-muted-foreground">
@@ -529,11 +553,7 @@ function CommitHeader({ detail, repoPath }: { detail: CommitDetail; repoPath: st
             </HintItem>
           </HintGroup>
           <button
-            onClick={() => {
-              void navigator.clipboard.writeText(detail.hash).catch(() => {});
-              setCopied(true);
-              setTimeout(() => setCopied(false), 1200);
-            }}
+            onClick={copySha}
             title={detail.hash}
             className="flex shrink-0 items-center gap-1.5 rounded-full border border-border px-2.5 h-6 text-2xs text-secondary-foreground hover:bg-element-hover hover:text-foreground"
           >
@@ -580,6 +600,9 @@ function CommitActions({ repoPath, sha }: { repoPath: string; sha: string }) {
   const actions = useGitStore.use.actions();
   const [tagging, setTagging] = useState(false);
   const [tagName, setTagName] = useState("");
+  // A merge, rebase, cherry-pick or revert under way: each of these would be
+  // refused by git, so they wait for it instead of surfacing git's error.
+  const busy = inProgressLabel(useGitStore.use.inProgress());
 
   if (activeRepo !== repoPath) return null;
 
@@ -590,26 +613,32 @@ function CommitActions({ repoPath, sha }: { repoPath: string; sha: string }) {
       handleGitError(e);
     }
   };
+  const actionClass =
+    "rounded p-1 text-muted-foreground hover:bg-element-hover hover:text-foreground disabled:pointer-events-none disabled:opacity-50";
 
   return (
     <>
-      <HintItem label="Cherry-pick onto current branch">
+      <HintItem label={busy ? blockedByOperation(busy) : "Cherry-pick onto current branch"}>
         <button
+          disabled={!!busy}
+          aria-label="Cherry-pick onto current branch"
           onClick={() => run(() => actions.cherryPick(sha))}
-          className="rounded p-1 text-muted-foreground hover:bg-element-hover hover:text-foreground"
+          className={actionClass}
         >
           <GitGraph size={12} />
         </button>
       </HintItem>
-      <HintItem label="Revert this commit">
+      <HintItem label={busy ? blockedByOperation(busy) : "Revert this commit"}>
         <button
+          disabled={!!busy}
+          aria-label="Revert this commit"
           onClick={() => run(() => actions.revert(sha))}
-          className="rounded p-1 text-muted-foreground hover:bg-element-hover hover:text-foreground"
+          className={actionClass}
         >
           <Undo2 size={12} />
         </button>
       </HintItem>
-      <ResetMenu onReset={(mode) => run(() => actions.reset(sha, mode))} />
+      <ResetMenu busy={busy} onReset={(mode) => run(() => actions.reset(sha, mode))} />
       <Popover.Root
         open={tagging}
         onOpenChange={(open) => {
@@ -633,7 +662,7 @@ function CommitActions({ repoPath, sha }: { repoPath: string; sha: string }) {
         </HintItem>
         <Popover.Portal>
           <Popover.Positioner className="z-popover" side="bottom" align="end" sideOffset={4}>
-            <Popover.Popup className="w-[220px] rounded-lg border border-border bg-[var(--card)] p-2 shadow-md">
+            <Popover.Popup className="w-[220px] rounded-lg border border-border bg-card p-2 shadow-md">
               <input
                 value={tagName}
                 onChange={(e) => setTagName(e.target.value)}
@@ -656,7 +685,13 @@ function CommitActions({ repoPath, sha }: { repoPath: string; sha: string }) {
   );
 }
 
-function ResetMenu({ onReset }: { onReset: (mode: "soft" | "mixed" | "hard") => void }) {
+function ResetMenu({
+  busy,
+  onReset,
+}: {
+  busy: InProgressKind | null;
+  onReset: (mode: "soft" | "mixed" | "hard") => void;
+}) {
   const [open, setOpen] = useState(false);
   const item = (mode: "soft" | "mixed" | "hard", label: string, desc: string) => (
     <button
@@ -672,12 +707,14 @@ function ResetMenu({ onReset }: { onReset: (mode: "soft" | "mixed" | "hard") => 
   );
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
-      <HintItem label="Reset current branch to this commit">
+      <HintItem label={busy ? blockedByOperation(busy) : "Reset current branch to this commit"}>
         <Popover.Trigger
+          disabled={!!busy}
           render={
             <button
+              aria-label="Reset current branch to this commit"
               className={cn(
-                "p-1 rounded hover:bg-element-hover",
+                "p-1 rounded hover:bg-element-hover disabled:pointer-events-none disabled:opacity-50",
                 open ? "text-foreground" : "text-muted-foreground hover:text-foreground",
               )}
             >
@@ -688,7 +725,7 @@ function ResetMenu({ onReset }: { onReset: (mode: "soft" | "mixed" | "hard") => 
       </HintItem>
       <Popover.Portal>
         <Popover.Positioner className="z-popover" side="bottom" align="end" sideOffset={4}>
-          <Popover.Popup className="w-[200px] rounded-lg border border-border bg-[var(--card)] shadow-md py-1">
+          <Popover.Popup className="w-[200px] rounded-lg border border-border bg-card shadow-md py-1">
             <div className="px-3 py-1 text-3xs uppercase tracking-wider text-muted-foreground">
               Reset to here
             </div>

@@ -29,8 +29,6 @@ export interface GraphLayout {
 
 /** Above this many notes the graph is not drawn. */
 export const NODE_CAP = 1000;
-/** Pixi's backing-store resolution. */
-export const RESOLUTION = 2;
 export const MIN_SCALE = 0.2;
 export const MAX_SCALE = 4;
 export const ZOOM_STEP = 0.004;

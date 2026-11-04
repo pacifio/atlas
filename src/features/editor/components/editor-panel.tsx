@@ -647,6 +647,11 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
 
   return shell(
     <>
+      {buffer.externallyChanged && (
+        <FileSurfaceNotice>
+          This file changed on disk. Reload discards your unsaved edits.
+        </FileSurfaceNotice>
+      )}
       {large && !rendered && (
         <FileSurfaceNotice>
           {`Large file (${formatMegabytes(buffer.originalContent.length)}): shown read-only, without highlighting.`}

@@ -819,13 +819,15 @@ export const integrationsHandlers: TypedHandlers<IntegrationsResponses> = {
   /**
    * Filtered rather than fixed, so the empty state ("zzz") and a narrowing
    * search ("swr") are both one keystroke away. The literal query `offline` is
-   * the failure path — the panel's error line has no other way in.
+   * the failure path — the panel's error line has no other way in — and
+   * `ratelimit` is GitHub refusing the search for a few minutes.
    */
   search_github: async ({ query }): Promise<GithubRepo[]> => {
     const q = String(query ?? "")
       .trim()
       .toLowerCase();
     if (q === "offline") fail("GitHub API request failed: error sending request");
+    if (q === "ratelimit") fail("GitHub rate limit reached. Try again in 3 min.");
     // GitHub search is a round trip; without the wait the spinner never paints.
     await new Promise((resolve) => setTimeout(resolve, 450));
     if (!q) return [];

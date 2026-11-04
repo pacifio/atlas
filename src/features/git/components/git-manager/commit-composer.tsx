@@ -12,6 +12,7 @@ import { openPullRequestTab } from "@/features/pull-requests/lib/open-pull-reque
 import { useGitStore } from "../../stores/git-store";
 import { useShipStore } from "../../stores/ship-store";
 import { handleGitError } from "../../lib/git-errors";
+import { blockedByOperation, inProgressLabel } from "../../lib/in-progress";
 import { openPullRequest } from "../../lib/git-pr-api";
 import { shipErrorContext, stagedFilesContext, WRITE_COMMIT_PROMPT } from "../../lib/ask-git";
 import {
@@ -106,6 +107,7 @@ export function CommitComposer({ stagedCount }: { stagedCount: number }) {
     staleTime: 30_000,
   });
   const detached = useGitStore.use.detached();
+  const opInProgress = inProgressLabel(useGitStore.use.inProgress());
 
   // Busy while OUR streaming commit runs — a slow pre-commit hook used to
   // look like a hung app. A boolean, not the op: the op changes on every
@@ -355,8 +357,12 @@ export function CommitComposer({ stagedCount }: { stagedCount: number }) {
               <Button
                 variant="ghost"
                 size="xs"
-                disabled={busy}
-                title="Undo this commit — its changes return to Staged (blocked once pushed)"
+                disabled={busy || opInProgress !== null}
+                title={
+                  opInProgress
+                    ? blockedByOperation(opInProgress)
+                    : "Undo this commit — its changes return to Staged (blocked once pushed)"
+                }
                 onClick={() => void actions.undoCommit().catch(handleGitError)}
               >
                 Undo

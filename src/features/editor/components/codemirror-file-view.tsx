@@ -28,6 +28,7 @@ import {
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { bracketMatching, foldGutter, indentOnInput } from "@codemirror/language";
 import { highlightSelectionMatches, openSearchPanel, searchKeymap } from "@codemirror/search";
+import { searchCountPanel } from "../lib/search-count";
 import type { DiffLineStatus } from "@/features/git/lib/git-diff-api";
 import type { BlameLine } from "@/features/git/lib/git-blame-api";
 import { useSettingsStore } from "@/features/settings/stores/settings-store";
@@ -198,6 +199,7 @@ export function CodeMirrorFileView({
           indentOnInput(),
           history(),
           highlightSelectionMatches(),
+          searchCountPanel,
           compartments.wrap.of(now.wordWrap ? EditorView.lineWrapping : []),
           compartments.readOnly.of(lockFor(now.readOnly, now.editable)),
           keymap.of([indentWithTab, ...defaultKeymap, ...historyKeymap, ...searchKeymap]),

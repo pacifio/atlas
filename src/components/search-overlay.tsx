@@ -1,4 +1,4 @@
-import { useState, useEffect, useId, useRef } from "react";
+import { useState, useEffect, useId, useRef, type KeyboardEvent } from "react";
 import { openFile } from "@/lib/open-file";
 import { useSessionStore } from "@/features/app/stores/session-store";
 import { useAppStore } from "@/features/app/stores/app-store";
@@ -51,6 +51,8 @@ export function SearchOverlay({
   // Bumped by every search (and by closing): a response from an older one is
   // dropped, so a slow search never overwrites a newer one's results.
   const searchSeq = useRef(0);
+  // The query the shown results answer.
+  const searchedQuery = useRef("");
   const session = useSessionStore.use.session();
   const { addSearchHistory, removeSearchHistory, clearSearchHistory, saveSession } =
     useSessionStore.use.actions();
@@ -75,6 +77,7 @@ export function SearchOverlay({
     const seq = ++searchSeq.current;
     setSearching(true);
     setHasSearched(true);
+    searchedQuery.current = searchQuery.trim();
     try {
       const res = await codeGrep(rootPath, searchQuery.trim(), opts);
       if (seq !== searchSeq.current) return;
@@ -88,7 +91,7 @@ export function SearchOverlay({
       if (seq !== searchSeq.current) return;
       setResults([]);
       setTruncated(false);
-      setError(String(e));
+      setError(`Search failed: ${e instanceof Error ? e.message : String(e)}`);
     }
     setSearching(false);
   };
@@ -102,11 +105,15 @@ export function SearchOverlay({
 
   const openResult = (result: CodeGrepMatch) => {
     const fullPath = rootPath ? `${rootPath}/${result.path}` : result.path;
-    void openFile(fullPath, { reveal: { line: result.line } });
+    // Close first: the dialog hands focus back as it closes, which would
+    // otherwise land on the old control after the file's tab took it.
     onOpenChange(false);
+    void openFile(fullPath, { reveal: { line: result.line } });
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    // An IME's Enter commits the composition; it is not a search.
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
       setSelectedIndex((i) => Math.min(i + 1, results.length - 1));
@@ -115,10 +122,13 @@ export function SearchOverlay({
       setSelectedIndex((i) => Math.max(i - 1, 0));
     } else if (e.key === "Enter") {
       e.preventDefault();
-      if (results.length > 0 && results[selectedIndex]) {
+      // The results answer the query that was searched; once it has been
+      // edited, Enter searches the new one rather than opening an old hit.
+      const edited = query.trim() !== searchedQuery.current;
+      if (!edited && results.length > 0 && results[selectedIndex]) {
         openResult(results[selectedIndex]);
       } else {
-        performSearch(query);
+        void performSearch(query);
       }
     }
   };

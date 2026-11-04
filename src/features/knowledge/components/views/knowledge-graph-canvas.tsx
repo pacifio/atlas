@@ -1,15 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { Application } from "pixi.js";
 import { destroyPixiApp, registerPixiApp } from "@/lib/pixi-app";
+import { canvasResolution } from "@/lib/ui-zoom";
 import { GraphRuler, type Viewport } from "@/components/graph-ruler";
 import { graphPalette } from "@/components/graph-palette";
 import { onThemeApplied, themeBase } from "@/features/theme/theme-values";
-import {
-  RESOLUTION,
-  neighborsOf,
-  type GraphLayout,
-  type ProjectGraph,
-} from "../../lib/knowledge-graph-model";
+import { neighborsOf, type GraphLayout, type ProjectGraph } from "../../lib/knowledge-graph-model";
 import { buildKnowledgeScene, type KnowledgeSceneState } from "../../lib/knowledge-graph-scene";
 
 /**
@@ -104,7 +100,7 @@ export function KnowledgeGraphCanvas({
         canvas,
         width,
         height,
-        resolution: RESOLUTION,
+        resolution: canvasResolution(),
         antialias: true,
         backgroundAlpha: 0,
         autoDensity: true,
