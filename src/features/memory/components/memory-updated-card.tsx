@@ -59,7 +59,7 @@ export function MemoryUpdatedCard({
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="atlas-marker group/memory w-full cursor-pointer text-left text-base text-[var(--muted-foreground)] hover:text-[var(--secondary-foreground)]"
+        className="atlas-marker group/memory w-full cursor-pointer text-left text-base text-muted-foreground hover:text-secondary-foreground"
       >
         <span className="flex w-4 shrink-0 justify-center">
           <Brain size={ICON_PX} strokeWidth={ICON_STROKE} />
@@ -90,11 +90,11 @@ export function MemoryUpdatedCard({
                 // as a list rather than as a stack of boxes, which is what the
                 // bordered card it replaced looked like. `last:border-b-0`
                 // keeps the group from drawing a line into the space below it.
-                className="flex items-start gap-2.5 border-b border-[var(--border)] py-1.5 last:border-b-0"
+                className="flex items-start gap-2.5 border-b border-border py-1.5 last:border-b-0"
               >
                 <span
                   title={kindLabel(w.kind)}
-                  className="flex w-4 shrink-0 justify-center pt-px text-[var(--muted-foreground)]"
+                  className="flex w-4 shrink-0 justify-center pt-px text-muted-foreground"
                 >
                   <Icon size={ICON_PX} strokeWidth={ICON_STROKE} aria-hidden />
                   <span className="sr-only">{kindLabel(w.kind)}</span>
@@ -104,24 +104,24 @@ export function MemoryUpdatedCard({
                   <button
                     type="button"
                     onClick={() => openMemoryEntry(w.id)}
-                    className="min-w-0 flex-1 break-words text-left text-xs text-[var(--foreground)] hover:underline"
+                    className="min-w-0 flex-1 break-words text-left text-xs text-foreground hover:underline"
                   >
                     {w.content}
                   </button>
                 ) : (
-                  <span className="min-w-0 flex-1 break-words text-xs text-[var(--foreground)]">
+                  <span className="min-w-0 flex-1 break-words text-xs text-foreground">
                     {w.content || "(forgotten)"}
                   </span>
                 )}
 
                 {w.live && w.state === "candidate" && (
-                  <span className="shrink-0 pt-0.5 text-3xs uppercase text-[var(--muted-foreground)]">
+                  <span className="shrink-0 pt-0.5 text-3xs uppercase text-muted-foreground">
                     candidate
                   </span>
                 )}
                 {/* Forgotten or archived since, by anyone: nothing left to forget. */}
                 {!w.live && w.op !== "forget" && (
-                  <span className="shrink-0 pt-0.5 text-3xs uppercase text-[var(--muted-foreground)]">
+                  <span className="shrink-0 pt-0.5 text-3xs uppercase text-muted-foreground">
                     removed
                   </span>
                 )}
@@ -132,7 +132,7 @@ export function MemoryUpdatedCard({
                     aria-label="Forget"
                     title="Forget this memory"
                     onClick={() => setForgetting(w)}
-                    className="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-full border border-[var(--border)] text-[var(--muted-foreground)] transition-colors duration-fast hover:border-[var(--destructive)] hover:text-[var(--destructive)]"
+                    className="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-full border border-border text-muted-foreground transition-colors duration-fast hover:border-destructive hover:text-destructive"
                   >
                     <X size={10} strokeWidth={ICON_STROKE} />
                   </button>

@@ -1,86 +1,236 @@
 import { useTipOnMount } from "@/features/tips/lib/use-tip-on-mount";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
+import { Download, FileOutput, FolderInput, MoreHorizontal, RefreshCw, Trash2 } from "lucide-react";
 import { FileTreeConfirmDelete } from "@/features/explorer/components/file-tree-confirm-delete";
 import { chainBroken, healthLine, useMemoryHealth } from "../lib/use-memory-health";
-import { MemoryGraph } from "./memory-graph";
-import { MemoryPolicyView } from "./memory-policy-view";
+import { reviewCount } from "../lib/memory-review-items";
+import { MemoryActivity } from "./memory-activity";
+import { MemoryAgentFiles } from "./memory-agent-files";
+import { MemoryEntries } from "./memory-entries";
+import { MemoryReviewQueue } from "./memory-review-queue";
 import { MemorySharingControls } from "./memory-sharing-controls";
-import { SharedMemoryView } from "./shared-memory-view";
-import { Notice, Track, TrackSegment } from "./views/memory-chrome";
+import { ImportClaudeMemoryModal, ImportRepoModal } from "./shared-memory-modals";
+import { Notice } from "./views/memory-chrome";
 import { DestinationActions } from "@/features/layout/components/destination-actions";
 import { useAppStore } from "@/features/app/stores/app-store";
 import { useMemoryStore } from "../stores/memory-store";
-import { Hint } from "@tryatlas/design";
+import { useSharedMemoryStore } from "../stores/shared-memory-store";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+  Hint,
+  IconButton,
+  Segmented,
+} from "@tryatlas/design";
 
 // ── Panel shell ─────────────────────────────────────────────────────────────
 //
-// Three views over the project's memory: the semantic Graph, the retrieval
-// Policy, and Shared memory. Each loads its own data on mount / project change
-// and owns its own refresh, so the shell is just navigation.
+// Why a person opens Memory, in order of how often: to see what the agents
+// know about this project; to find where something came from ("why does it
+// think that?"); to fix or forget what is wrong; to clear what waits for
+// review; and, rarely, to control what is shared. The tabs follow that:
 //
-// Three things used to live here and were removed:
-//   * **Chat** (2026-08-22) — an on-device RAG chat over the memory index.
-//   * **The coding-agent dropdown** (2026-08-22) — per-agent memory browsers
-//     (Claude Code, Codex, Atlas, and every capture-backed agent). It
-//     enumerated agents from three different sources and drifted out of step
-//     with the ACP registry rework, listing duplicates. Rebuilding it belongs
-//     on the registry, not on the hand-rolled agent list it was built against.
-//   * **Timeline** (2026-09-22) — a branch-aware board of git commits, agent
-//     sessions and the memory each one touched. Never used; it also carried
-//     the module's heaviest backend call (`memory_timeline` walked every ref
-//     and re-collected the corpus on each project visit). Removed whole, down
-//     to the Rust command — the session Timeline in the center panel is a
-//     different, unrelated feature and is untouched.
+//   * **Memories**, the front door: the shared record grouped by kind, with
+//     the chosen memory's provenance and its fix-or-forget beside it.
+//   * **Activity**: how memory changed, session by session, on the history
+//     rail (it replaced the raw Events and Plans tables).
+//   * **Review**: the queue, one decision at a time.
+//   * **Agent files**: the agents' own memory files: Preferences and the Map
+//     (tree and graph). The graph used to be the front door; it is a lens.
+//
+// The destination bar (ADR-0024) carries the nav, the health line, the
+// sharing controls and the ⋯ menu (refresh, import, export, clear), so every
+// tab shares them. The panel loads the record once per project, so the
+// Review count is right before Review is opened.
+//
+// Removed earlier and not coming back: the on-device RAG chat and the
+// per-agent memory browsers (2026-08-22), and the commit/session Timeline
+// board (2026-09-22). The session Timeline in the center panel is a
+// different feature.
 
 export function MemoryPanel() {
   useTipOnMount("memory");
-  const projectPath = useAppStore.use.currentProject()?.path ?? null;
+  const project = useAppStore.use.currentProject();
+  const projectPath = project?.path ?? null;
+  const projectName = project?.name ?? projectPath?.split("/").pop() ?? "this project";
   const sub = useMemoryStore.use.subTab();
   const { setSubTab } = useMemoryStore.use.actions();
+  const review = useSharedMemoryStore.use.review();
+  const { load, refresh, clear } = useSharedMemoryStore.use.actions();
+  const [importing, setImporting] = useState(false);
+  const [importingRepo, setImportingRepo] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [selecting, setSelecting] = useState(false);
+  const waiting = reviewCount(review);
+
+  useEffect(() => {
+    if (projectPath) void load(projectPath);
+  }, [projectPath, load]);
+
+  const clearConfirmed = async () => {
+    setConfirmClear(false);
+    try {
+      await clear();
+    } catch (err) {
+      toast.error(
+        `Couldn't clear shared memory: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  };
 
   return (
     <div className="flex h-full flex-col bg-background">
-      {/* The controls live in the destination bar (ADR-0024), which already
-          says "Memory": the nav just after the title, then the health line
-          and the sharing controls against the bar's trailing end. Tab order
-          follows: back, nav, health, sharing. No glyphs on the nav: three
-          distinct nouns need no icons to tell them apart (the Usage tables'
-          tabs make the same call), and two of them shared one. */}
       <DestinationActions>
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          <Track>
-            <TrackSegment active={sub === "graph"} onClick={() => setSubTab("graph")}>
-              Graph
-            </TrackSegment>
-            <TrackSegment active={sub === "policy"} onClick={() => setSubTab("policy")}>
-              Policy
-            </TrackSegment>
-            <TrackSegment active={sub === "shared"} onClick={() => setSubTab("shared")}>
-              Shared
-            </TrackSegment>
-          </Track>
+          <Segmented
+            aria-label="Memory view"
+            size="sm"
+            value={sub}
+            onValueChange={(next) => {
+              setSubTab(next);
+              if (next !== "memories") setSelecting(false);
+            }}
+            options={[
+              { value: "memories", label: "Memories" },
+              { value: "activity", label: "Activity" },
+              { value: "review", label: "Review", ...(waiting > 0 ? { count: waiting } : {}) },
+              { value: "files", label: "Agent files" },
+            ]}
+          />
 
           <div className="flex flex-1 items-center justify-end gap-2">
             <MemoryHealthLine projectPath={projectPath} />
             <MemorySharingControls projectPath={projectPath} />
+            {projectPath && (
+              <MemoryMenu
+                onRefresh={() => void refresh()}
+                onImportClaude={() => setImporting(true)}
+                onImportRepo={() => setImportingRepo(true)}
+                onExport={() => {
+                  setSubTab("memories");
+                  setSelecting(true);
+                }}
+                onClear={() => setConfirmClear(true)}
+              />
+            )}
           </div>
         </div>
       </DestinationActions>
 
+      {projectPath && (
+        <>
+          <ImportClaudeMemoryModal
+            open={importing}
+            onOpenChange={setImporting}
+            onImported={() => setSubTab("memories")}
+          />
+          <ImportRepoModal
+            projectPath={projectPath}
+            open={importingRepo}
+            onOpenChange={setImportingRepo}
+            onImported={() => {
+              setSubTab("review");
+              void refresh();
+            }}
+          />
+          <FileTreeConfirmDelete
+            open={confirmClear}
+            name="shared memory"
+            isDir={false}
+            title="Clear shared memory?"
+            body="Every agent on this project loses every plan, decision, fact, failure and architecture note recorded here. This can't be undone."
+            confirmLabel="Clear"
+            onConfirm={() => void clearConfirmed()}
+            onOpenChange={setConfirmClear}
+          />
+        </>
+      )}
+
       <div className="min-h-0 flex-1">
-        {sub === "graph" ? (
-          <MemoryGraph />
-        ) : sub === "policy" ? (
-          <MemoryPolicyView />
-        ) : projectPath ? (
-          <SharedMemoryView projectPath={projectPath} />
+        {!projectPath ? (
+          <Notice title="Open a project">
+            Memory is kept per project. Open one to see what agents remember about it.
+          </Notice>
+        ) : sub === "memories" ? (
+          <MemoryEntries
+            projectName={projectName}
+            selecting={selecting}
+            onSelectingChange={setSelecting}
+            onImportClaude={() => setImporting(true)}
+          />
+        ) : sub === "activity" ? (
+          <MemoryActivity />
+        ) : sub === "review" ? (
+          <MemoryReviewQueue />
         ) : (
-          <Notice>Open a project to view shared memory.</Notice>
+          <MemoryAgentFiles />
         )}
       </div>
     </div>
+  );
+}
+
+/** Everything done to the record as a whole, out of the way: refresh (memory
+ *  refreshes itself; this is for a runtime that did not say so), the two
+ *  imports, the AGENTS.md export, and clearing it. */
+function MemoryMenu({
+  onRefresh,
+  onImportClaude,
+  onImportRepo,
+  onExport,
+  onClear,
+}: {
+  onRefresh: () => void;
+  onImportClaude: () => void;
+  onImportRepo: () => void;
+  onExport: () => void;
+  onClear: () => void;
+}) {
+  return (
+    <DropdownMenu>
+      <Hint label="More memory actions">
+        <DropdownMenuTrigger
+          render={
+            <IconButton
+              icon={MoreHorizontal}
+              label="More memory actions"
+              variant="hairline"
+              shape="round"
+              size="sm"
+            />
+          }
+        />
+      </Hint>
+      <DropdownMenuContent align="end" side="bottom" className="w-64">
+        <DropdownMenuItem onClick={onRefresh}>
+          <RefreshCw />
+          Refresh
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={onImportClaude}>
+          <Download />
+          Import Claude's memory…
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={onImportRepo}>
+          <FolderInput />
+          Import a memory repo…
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={onExport}>
+          <FileOutput />
+          Export to AGENTS.md…
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem variant="destructive" onClick={onClear}>
+          <Trash2 />
+          Clear shared memory…
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

@@ -1,19 +1,23 @@
-// Shared Cross-Agent Memory (v2) — UI state for the Memory panel's "Shared"
-// view. Loads the per-project derived state (active plan, decisions, recent
-// changes, facts) and supports an on-demand query + clear. Scoped to one
-// project at a time (the active project), reloaded via `load(projectPath)`.
-// Mirrors `memory-sharing-store.ts`.
+// Shared Cross-Agent Memory (v2): the Memory panel's record. Loads one
+// project's derived state, its event log, every record entry and the review
+// queue, and keeps them current. Scoped to one project at a time (the active
+// project), reloaded via `load(projectPath)`.
 //
 // Live refresh: every write to shared memory emits `atlas:memory-changed`
 // (payload: the scope root and the affected kinds). The store re-pulls the
-// bound project on each one; the manual Refresh button stays. The payload's
-// root is the repository's main worktree, which the frontend cannot derive
-// from the launch directory (a linked worktree lives elsewhere), so every
-// change re-pulls — it is three cheap reads, and they are coalesced.
+// bound project on each one. The payload's root is the repository's main
+// worktree, which the frontend cannot derive from the launch directory (a
+// linked worktree lives elsewhere), so every change re-pulls. It is four
+// cheap reads, and they are coalesced.
 //
-// Memories: every record entry with its provenance (source, agent) and
-// confidence. The user can edit one (written as source `user`, confidence 1)
-// or forget it; both go through the backend, which announces the change.
+// Entries: every record entry with its provenance (source, agent) and
+// confidence. The user can edit one (written as source `user`, confidence 1),
+// give a verdict on it, or forget it; all go through the backend, which
+// announces the change.
+//
+// Review: the queue is pulled with the record, so the Review tab's count is
+// right before the tab is opened. A review action runs, then the record is
+// re-read whether it worked or not.
 //
 // Import: the user can pull the project's Claude auto-memory in. The preview
 // writes nothing; only confirming (with the lines the user kept) writes.
@@ -26,7 +30,9 @@ import {
   type ClaudeImportPreview,
   type MemoryEntry,
   type MemoryEvent,
+  type ReviewQueue,
   type SharedState,
+  type Verdict,
 } from "../lib/shared-memory-api";
 
 const EMPTY_STATE: SharedState = {
@@ -40,6 +46,8 @@ const EMPTY_STATE: SharedState = {
   sessionAgents: {},
   updatedAt: 0,
 };
+
+export const EMPTY_REVIEW: ReviewQueue = { candidates: [], merges: [], conflicts: [], dreams: [] };
 
 /** Emitted by the backend after every write to a shared-memory scope. */
 export const MEMORY_CHANGED_EVENT = "atlas:memory-changed";
@@ -56,6 +64,14 @@ interface SharedMemoryStore {
   /** Every record entry, newest write first, with provenance + confidence. */
   entries: MemoryEntry[];
   loaded: boolean;
+  /** Why the last load failed; `null` once a read succeeds. A failed
+   *  refresh keeps the last good record and leaves this alone. */
+  error: string | null;
+  /** What waits for the user: candidates, duplicates, contradictions and the
+   *  nightly review's proposals. */
+  review: ReviewQueue;
+  /** Why the review queue could not be read, while it could not. */
+  reviewError: string | null;
   queryText: string;
   queryResults: MemoryEvent[];
   actions: {
@@ -69,6 +85,12 @@ interface SharedMemoryStore {
     forgetEntry: (id: number) => Promise<void>;
     /** Forget an entry and erase its history. Throws on failure. */
     purgeEntry: (id: number) => Promise<void>;
+    /** The user's verdict on an entry. Throws on failure. */
+    feedback: (id: number, verdict: Verdict) => Promise<void>;
+    /** Run one review action against the bound project, then re-read the
+     *  record whatever happened. Resolves to what the backend answered
+     *  (`"obsolete"` for a proposal memory moved past); throws on failure. */
+    reviewAction: (run: (projectPath: string) => Promise<unknown>) => Promise<unknown>;
     /** What importing Claude's auto-memory would write. Reads only. */
     previewClaudeImport: () => Promise<ClaudeImportPreview | null>;
     /** Import the previewed lines in `ids`; returns how many were written.
@@ -77,15 +99,36 @@ interface SharedMemoryStore {
   };
 }
 
-/** State, events and entries for one project. Entries degrade to none on
- *  their own, so an older backend without them still shows the rest. */
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** An older backend answers without `dreams`. */
+function withDreams(queue: ReviewQueue | null): ReviewQueue {
+  if (!queue) return EMPTY_REVIEW;
+  return { ...EMPTY_REVIEW, ...queue, dreams: queue.dreams ?? [] };
+}
+
+/** State, events, entries and the review queue for one project. Entries and
+ *  the queue degrade on their own, so an older backend still shows the rest;
+ *  a queue that fails to read keeps the last one and says why. */
 async function pull(projectPath: string) {
-  const [state, events, entries] = await Promise.all([
+  const [state, events, entries, review] = await Promise.all([
     sharedMemory.getState(projectPath),
     sharedMemory.listEvents(projectPath),
     sharedMemory.listEntries(projectPath).catch(() => [] as MemoryEntry[]),
+    sharedMemory.review(projectPath).then(
+      (queue) => ({ queue: withDreams(queue), error: null }),
+      (err: unknown) => ({ queue: null, error: errorText(err) }),
+    ),
   ]);
-  return { state, events, entries: entries ?? [] };
+  return {
+    state: state ?? EMPTY_STATE,
+    events: events ?? [],
+    entries: entries ?? [],
+    ...(review.queue ? { review: review.queue } : {}),
+    reviewError: review.error,
+  };
 }
 
 let refreshing: Promise<void> | null = null;
@@ -110,22 +153,33 @@ export const useSharedMemoryStore = createSelectors(
     events: [],
     entries: [],
     loaded: false,
+    error: null,
+    review: EMPTY_REVIEW,
+    reviewError: null,
     queryText: "",
     queryResults: [],
     actions: {
       load: async (projectPath) => {
-        set({ projectPath, loaded: false });
+        // Another project's record never shows under this one.
+        if (get().projectPath !== projectPath) {
+          set({ state: EMPTY_STATE, events: [], entries: [], review: EMPTY_REVIEW });
+        }
+        set({ projectPath, loaded: false, error: null });
         subscribe(() => void get().actions.refresh());
         try {
-          // Derived view, the raw event log (newest-first) and the entries
-          // in parallel.
           const pulled = await pull(projectPath);
           // Ignore a stale response if the project changed mid-flight.
           if (get().projectPath !== projectPath) return;
-          set({ ...pulled, loaded: true });
-        } catch {
+          set({ ...pulled, loaded: true, error: null });
+        } catch (err) {
           if (get().projectPath !== projectPath) return;
-          set({ state: EMPTY_STATE, events: [], entries: [], loaded: true });
+          set({
+            state: EMPTY_STATE,
+            events: [],
+            entries: [],
+            loaded: true,
+            error: errorText(err),
+          });
         }
       },
       refresh: async () => {
@@ -143,7 +197,7 @@ export const useSharedMemoryStore = createSelectors(
             try {
               const pulled = await pull(projectPath);
               if (get().projectPath !== projectPath) continue;
-              set(pulled);
+              set({ ...pulled, loaded: true, error: null });
             } catch {
               /* keep last good state */
             }
@@ -173,7 +227,14 @@ export const useSharedMemoryStore = createSelectors(
         if (!projectPath) return;
         await sharedMemory.clear(projectPath);
         if (get().projectPath !== projectPath) return;
-        set({ state: EMPTY_STATE, events: [], entries: [], queryResults: [], queryText: "" });
+        set({
+          state: EMPTY_STATE,
+          events: [],
+          entries: [],
+          review: EMPTY_REVIEW,
+          queryResults: [],
+          queryText: "",
+        });
       },
       editEntry: async (id, content) => {
         const { projectPath } = get();
@@ -200,6 +261,23 @@ export const useSharedMemoryStore = createSelectors(
         if (get().projectPath !== projectPath) return;
         set({ entries: get().entries.filter((e) => e.id !== id) });
         await get().actions.refresh();
+      },
+      feedback: async (id, verdict) => {
+        const { projectPath } = get();
+        if (!projectPath) return;
+        const updated = await sharedMemory.feedback(projectPath, id, verdict);
+        if (get().projectPath !== projectPath) return;
+        if (updated) set({ entries: get().entries.map((e) => (e.id === id ? updated : e)) });
+        await get().actions.refresh();
+      },
+      reviewAction: async (run) => {
+        const { projectPath } = get();
+        if (!projectPath) return null;
+        try {
+          return await run(projectPath);
+        } finally {
+          await get().actions.refresh();
+        }
       },
       previewClaudeImport: async () => {
         const { projectPath } = get();
