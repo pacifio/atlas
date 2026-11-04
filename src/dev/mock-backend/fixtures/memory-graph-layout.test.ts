@@ -9,7 +9,7 @@ import { memoryHandlers } from "./memory";
 // `memory_graph_layout_save` is a pure passthrough in Rust
 // (`commands/memory_graph.rs`) — it only ever persists px positions the
 // frontend's live Matter world already had, and that world is walled to
-// [0,width]×[0,height] (`memory-graph-canvas.tsx`'s wall bodies), top-left
+// [0,width]×[0,height] (`memory-graph-scene.ts`'s wall bodies), top-left
 // origin. A real saved layout can therefore never sit near (0,0)-centred
 // negative coordinates; nothing in the live sim would push a node there and
 // leave it. A fixture seed that gets this wrong renders a graph with a

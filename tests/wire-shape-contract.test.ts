@@ -226,7 +226,7 @@ describe("EventKind ↔ shared-memory-api EventKind (#3)", () => {
 
 describe("MemoryEdge ↔ GraphEdge (#4)", () => {
   const rust = read("src-tauri", "src", "commands", "memory_graph.rs");
-  const ts = read("src", "features", "memory", "components", "memory-graph-canvas.tsx");
+  const ts = read("src", "features", "memory", "lib", "memory-graph-types.ts");
 
   it("every GraphEdge field is on the frontend's MemoryEdge", () => {
     const { body } = rustItem(rust, "struct", "GraphEdge");

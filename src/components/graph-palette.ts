@@ -1,7 +1,7 @@
 /**
  * The colours the two pixi force graphs draw with, resolved from the theme.
  *
- * `knowledge-graph.tsx` and `memory-graph-canvas.tsx` are deliberately separate
+ * `knowledge-graph-scene.ts` and `memory-graph-scene.ts` are deliberately separate
  * scene engines (see the note at the top of the memory one) — this is the one
  * thing they do share, because they are the same picture of the same kind of
  * data and a theme author would have to set two identical palettes otherwise.

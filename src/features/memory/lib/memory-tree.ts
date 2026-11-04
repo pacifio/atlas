@@ -7,14 +7,14 @@
 // memory that references them (so an agent's decision/reasoning chains read as
 // nested branches). Pure functions — no DOM, no deps.
 
-import type { MemoryGraphData, MemoryNode } from "../components/memory-graph-canvas";
+import type { MemoryGraphData, MemoryNode } from "./memory-graph-types";
 
 export interface TreeNode {
   /** Stable id. Memory nodes use the memory id; synthetic nodes use `root` /
    *  `cat:<kind>`. */
   id: string;
   label: string;
-  /** Category key driving the branch colour. */
+  /** Category key (`project`, `feedback`, …); `root` for the synthetic root. */
   kind: string;
   depth: number;
   /** Present for real memory nodes; undefined for the root and category nodes. */
@@ -202,7 +202,82 @@ export function layoutTree(root: TreeNode, collapsed: ReadonlySet<string>): Tree
   };
 }
 
-// Monochromatic by design — Atlas is AMOLED-black + grays, so connectors and
-// lead-in lines are a single muted gray; emphasis comes from the click-to-
-// highlight path (handled in the view), not from per-category colour.
-export const LINE_MONO = "var(--muted-foreground)";
+/** A category with more leaves than this starts collapsed. */
+export const COLLAPSE_LEAVES = 18;
+
+/** Leaves under `t` (a leaf counts itself). */
+export function leafCount(t: TreeNode): number {
+  if (t.children.length === 0) return 1;
+  return t.children.reduce((s, c) => s + leafCount(c), 0);
+}
+
+/** Every category that opens collapsed: more than `COLLAPSE_LEAVES` leaves. */
+export function initialCollapsed(root: TreeNode): Set<string> {
+  const out = new Set<string>();
+  for (const cat of root.children) {
+    if (leafCount(cat) > COLLAPSE_LEAVES) out.add(cat.id);
+  }
+  return out;
+}
+
+/** Child id → parent id for every node under `root`. */
+export function parentMap(root: TreeNode): Map<string, string> {
+  const m = new Map<string, string>();
+  const walk = (t: TreeNode) => {
+    for (const c of t.children) {
+      m.set(c.id, t.id);
+      walk(c);
+    }
+  };
+  walk(root);
+  return m;
+}
+
+/** `id` plus every ancestor up to the root: the highlighted decision path. */
+export function ancestorPath(parentOf: ReadonlyMap<string, string>, id: string): Set<string> {
+  const set = new Set<string>([id]);
+  let p = parentOf.get(id);
+  while (p) {
+    set.add(p);
+    p = parentOf.get(p);
+  }
+  return set;
+}
+
+/** Horizontal bezier from a parent card's right edge to a child's left edge. */
+export function elbow(px: number, py: number, cx: number, cy: number): string {
+  const c = Math.max(24, (cx - px) * 0.5);
+  return `M ${px} ${py} C ${px + c} ${py}, ${cx - c} ${cy}, ${cx} ${cy}`;
+}
+
+/** Greedy word-wrap into at most `maxLines` lines of ~`maxChars`, ellipsising
+ *  the last line when the text doesn't fully fit. Pure SVG text has no native
+ *  wrap/clamp, so we do it ourselves. */
+export function wrapLabel(text: string, maxChars: number, maxLines = 2): string[] {
+  const clean = text.replace(/\s+/g, " ").trim();
+  const words = clean.split(" ");
+  const lines: string[] = [];
+  let cur = "";
+  for (const w of words) {
+    const next = cur ? `${cur} ${w}` : w;
+    if (next.length <= maxChars) {
+      cur = next;
+    } else {
+      if (cur) lines.push(cur);
+      cur = w;
+      if (lines.length >= maxLines) break;
+    }
+  }
+  if (lines.length < maxLines && cur) lines.push(cur);
+  // Hard-clamp each line; ellipsise the last if we dropped content.
+  const out = lines
+    .slice(0, maxLines)
+    .map((l) => (l.length > maxChars ? l.slice(0, maxChars - 1) : l));
+  const shown = out.join(" ");
+  if (shown.length < clean.length && out.length) {
+    const i = out.length - 1;
+    out[i] =
+      (out[i].length > maxChars - 1 ? out[i].slice(0, maxChars - 1) : out[i]).trimEnd() + "…";
+  }
+  return out;
+}

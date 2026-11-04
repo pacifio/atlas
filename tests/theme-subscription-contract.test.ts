@@ -218,8 +218,8 @@ describe("theme subscription contract", () => {
         "src/features/terminal/lib/terminal-session.ts",
       ],
       "src/components/graph-palette.ts": [
-        "src/features/knowledge/components/knowledge-graph.tsx",
-        "src/features/memory/components/memory-graph-canvas.tsx",
+        "src/features/knowledge/components/views/knowledge-graph-canvas.tsx",
+        "src/features/memory/components/views/memory-graph-canvas-view.tsx",
       ],
       "src/features/editor/themes/build-cm-theme.ts": [
         "src/features/comms/components/draft-editor.tsx",

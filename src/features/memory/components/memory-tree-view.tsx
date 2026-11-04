@@ -1,13 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { cn } from "@/lib/utils";
 import {
+  ancestorPath,
   buildMemoryTree,
+  elbow,
+  initialCollapsed,
   layoutTree,
-  LINE_MONO,
+  parentMap,
+  wrapLabel,
   CARD_W,
   CARD_H,
   type TreeNode,
 } from "../lib/memory-tree";
-import type { MemoryGraphData } from "./memory-graph-canvas";
+import type { MemoryGraphData } from "../lib/memory-graph-types";
 
 interface Props {
   graph: MemoryGraphData;
@@ -22,53 +27,11 @@ interface Props {
 const MIN_K = 0.4;
 const MAX_K = 2.4;
 const ZOOM_STEP = 0.0015;
-const COLLAPSE_LEAVES = 18;
 
-// Monochrome emphasis: a near-white highlight for the clicked decision path,
-// muted grays for everything else (mirrors the Timeline's highlight-and-dim).
-const HL = "var(--foreground)";
-
-function leafCount(t: TreeNode): number {
-  if (t.children.length === 0) return 1;
-  return t.children.reduce((s, c) => s + leafCount(c), 0);
-}
-
-function elbow(px: number, py: number, cx: number, cy: number): string {
-  const c = Math.max(24, (cx - px) * 0.5);
-  return `M ${px} ${py} C ${px + c} ${py}, ${cx - c} ${cy}, ${cx} ${cy}`;
-}
-
-/** Greedy word-wrap into at most `maxLines` lines of ~`maxChars`, ellipsising
- *  the last line when the text doesn't fully fit. Pure SVG text has no native
- *  wrap/clamp, so we do it ourselves. */
-function wrapLabel(text: string, maxChars: number, maxLines = 2): string[] {
-  const clean = text.replace(/\s+/g, " ").trim();
-  const words = clean.split(" ");
-  const lines: string[] = [];
-  let cur = "";
-  for (const w of words) {
-    const next = cur ? `${cur} ${w}` : w;
-    if (next.length <= maxChars) {
-      cur = next;
-    } else {
-      if (cur) lines.push(cur);
-      cur = w;
-      if (lines.length >= maxLines) break;
-    }
-  }
-  if (lines.length < maxLines && cur) lines.push(cur);
-  // Hard-clamp each line; ellipsise the last if we dropped content.
-  const out = lines
-    .slice(0, maxLines)
-    .map((l) => (l.length > maxChars ? l.slice(0, maxChars - 1) : l));
-  const shown = out.join(" ");
-  if (shown.length < clean.length && out.length) {
-    const i = out.length - 1;
-    out[i] =
-      (out[i].length > maxChars - 1 ? out[i].slice(0, maxChars - 1) : out[i]).trimEnd() + "…";
-  }
-  return out;
-}
+// Monochrome emphasis: `foreground` for the clicked decision path, muted greys
+// for everything else (mirrors the Timeline's highlight-and-dim). Every colour
+// and font is a token utility on the SVG element, so a theme switch repaints
+// through CSS with no subscription.
 
 export function MemoryTreeView({
   graph,
@@ -86,25 +49,11 @@ export function MemoryTreeView({
   const tree = useMemo(() => buildMemoryTree(graph, rootLabel), [graph, rootLabel]);
 
   // parentId for every node — drives the ancestor decision-path highlight.
-  const parentOf = useMemo(() => {
-    const m = new Map<string, string>();
-    const walk = (t: TreeNode) => {
-      for (const c of t.children) {
-        m.set(c.id, t.id);
-        walk(c);
-      }
-    };
-    walk(tree);
-    return m;
-  }, [tree]);
+  const parentOf = useMemo(() => parentMap(tree), [tree]);
 
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   useEffect(() => {
-    const init = new Set<string>();
-    for (const cat of tree.children) {
-      if (leafCount(cat) > COLLAPSE_LEAVES) init.add(cat.id);
-    }
-    setCollapsed(init);
+    setCollapsed(initialCollapsed(tree));
   }, [tree]);
 
   // When a node is selected, reveal its ancestor chain so the path is visible.
@@ -125,16 +74,10 @@ export function MemoryTreeView({
   const layout = useMemo(() => layoutTree(tree, collapsed), [tree, collapsed]);
 
   // Path = selected node + all its ancestors up to the root.
-  const pathIds = useMemo(() => {
-    if (!selectedId) return null;
-    const set = new Set<string>([selectedId]);
-    let p = parentOf.get(selectedId);
-    while (p) {
-      set.add(p);
-      p = parentOf.get(p);
-    }
-    return set;
-  }, [selectedId, parentOf]);
+  const pathIds = useMemo(
+    () => (selectedId ? ancestorPath(parentOf, selectedId) : null),
+    [selectedId, parentOf],
+  );
 
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [transform, setTransform] = useState({ x: 28, y: 24, k: 1 });
@@ -218,6 +161,7 @@ export function MemoryTreeView({
   return (
     <div
       ref={wrapRef}
+      data-view="memory-tree-view"
       className="absolute inset-0 overflow-hidden cursor-grab active:cursor-grabbing"
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
@@ -240,8 +184,10 @@ export function MemoryTreeView({
                 <path
                   key={`${t.id}->${c.id}`}
                   d={elbow(p.x + CARD_W, p.y, cp.x, cp.y)}
-                  fill="none"
-                  stroke={onPath ? HL : LINE_MONO}
+                  className={cn(
+                    "fill-none",
+                    onPath ? "stroke-foreground" : "stroke-muted-foreground",
+                  )}
                   strokeWidth={onPath ? 1.6 : 1.1}
                   strokeOpacity={onPath ? 0.85 : dim ? 0.08 : 0.4}
                 />
@@ -288,23 +234,25 @@ export function MemoryTreeView({
                       toggle(t.id);
                     }}
                   >
-                    <rect x={-6} y={-8} width={16} height={16} fill="transparent" />
+                    <rect x={-6} y={-8} width={16} height={16} className="fill-transparent" />
                     <path
                       d={collapsed.has(t.id) ? "M0 -4 L5 0 L0 4 Z" : "M-4 -1.5 L4 -1.5 L0 3.5 Z"}
-                      fill={lit ? HL : "var(--muted-foreground)"}
+                      className={lit ? "fill-foreground" : "fill-muted-foreground"}
                     />
                   </g>
                 )}
                 {(() => {
-                  const fontSize = isRoot ? 11 : isCat ? 10.5 : 10;
+                  // Wrap maths only: the rendered size is the type-scale class
+                  // on `<text>` (`text-xs` 11px, `text-2xs` 10px). The category
+                  // row's 10.5 keeps its wrap point; its glyphs round up to 11.
+                  const fontPx = isRoot ? 11 : isCat ? 10.5 : 10;
                   const textX = isRoot ? 10 : 20;
-                  const maxChars = Math.floor((CARD_W - textX - 9) / (fontSize * 0.54));
+                  const maxChars = Math.floor((CARD_W - textX - 9) / (fontPx * 0.54));
                   const suffix =
                     collapsed.has(t.id) && t.children.length > 0 ? `  (${t.children.length})` : "";
                   const lines = wrapLabel(t.label + suffix, maxChars, 3);
-                  const lineH = fontSize + 2.5;
+                  const lineH = fontPx + 2.5;
                   const top = CARD_H / 2 - ((lines.length - 1) * lineH) / 2;
-                  const textColor = lit ? "var(--foreground)" : "var(--secondary-foreground)";
                   return (
                     <>
                       <rect
@@ -313,13 +261,12 @@ export function MemoryTreeView({
                         width={CARD_W}
                         height={CARD_H}
                         rx={6}
-                        fill={lit ? "var(--element-selected)" : "var(--card)"}
-                        stroke={
+                        className={
                           lit
-                            ? HL
+                            ? "fill-element-selected stroke-foreground"
                             : isRoot || t.id === hoverId
-                              ? "var(--border-strong)"
-                              : "var(--border)"
+                              ? "fill-card stroke-border-strong"
+                              : "fill-card stroke-border"
                         }
                         strokeWidth={1}
                       />
@@ -328,18 +275,19 @@ export function MemoryTreeView({
                           cx={12}
                           cy={CARD_H / 2}
                           r={2.5}
-                          fill={lit ? HL : LINE_MONO}
+                          className={lit ? "fill-foreground" : "fill-muted-foreground"}
                           fillOpacity={isCat ? 0.9 : 0.7}
                         />
                       )}
                       <text
                         x={textX}
-                        fontFamily="var(--font-sans)"
-                        fontSize={fontSize}
                         // The type scale's two weights: 400 disappears
                         // against the dense monochrome chrome.
-                        fontWeight={isRoot || isCat ? 600 : 500}
-                        fill={textColor}
+                        className={cn(
+                          "font-sans",
+                          isRoot || isCat ? "font-semibold text-xs" : "font-medium text-2xs",
+                          lit ? "fill-foreground" : "fill-secondary-foreground",
+                        )}
                       >
                         {lines.map((ln, i) => (
                           <tspan key={i} x={textX} y={top + i * lineH} dominantBaseline="middle">

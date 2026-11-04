@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { FileTreeConfirmDelete } from "@/features/explorer/components/file-tree-confirm-delete";
 import { chainBroken, healthLine, useMemoryHealth } from "../lib/use-memory-health";
-import { MemoryGraphView } from "./memory-graph-view";
+import { MemoryGraph } from "./memory-graph";
 import { MemoryPolicyView } from "./memory-policy-view";
 import { MemorySharingControls } from "./memory-sharing-controls";
 import { SharedMemoryView } from "./shared-memory-view";
@@ -71,7 +71,7 @@ export function MemoryPanel() {
 
       <div className="min-h-0 flex-1">
         {sub === "graph" ? (
-          <MemoryGraphView />
+          <MemoryGraph />
         ) : sub === "policy" ? (
           <MemoryPolicyView />
         ) : projectPath ? (

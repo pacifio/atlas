@@ -19,8 +19,8 @@ import { fileURLToPath } from "node:url";
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 const SOURCES = [
-  "src/features/knowledge/components/knowledge-graph.tsx",
-  "src/features/memory/components/memory-graph-canvas.tsx",
+  "src/features/knowledge/components/views/knowledge-graph-canvas.tsx",
+  "src/features/memory/components/views/memory-graph-canvas-view.tsx",
 ];
 
 describe("the graph components", () => {

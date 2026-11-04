@@ -546,7 +546,7 @@ function queryGraph(projectPath: string, query: string, topK: number): QueryHit[
  * Rust's `memory_graph_layout_save` is a pure passthrough (`commands/memory_graph.rs`)
  * — it persists whatever px positions the frontend's Matter world already had,
  * which are always canvas-relative (0,0 at the canvas's top-left corner, per
- * `memory-graph-canvas.tsx`'s wall bodies) and therefore always on-screen. A
+ * `memory-graph-scene.ts`'s wall bodies) and therefore always on-screen. A
  * real saved layout can never be centred on (0,0) the way an origin-centred
  * scheme would produce, because nothing in the live simulation would ever push
  * a node to a negative coordinate and leave it there. Band/row offsets here
