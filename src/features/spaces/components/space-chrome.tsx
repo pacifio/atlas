@@ -12,6 +12,8 @@ import type { SpacePage } from "../lib/spaces-api";
 import type { SpaceActor } from "../lib/space-wire";
 import {
   CanvasHeaderPill,
+  PEER_INK,
+  actorHue,
   Hint,
   Tooltip,
   TooltipContent,
@@ -208,12 +210,14 @@ export function SpaceActionPill({
                       aria-pressed={riding}
                       aria-label={`Follow ${nameOf(a)}`}
                       onClick={() => onFollow(riding ? null : a.id)}
+                      // The ring is the peer's identity hue, the one their
+                      // cursor wears; following them swaps it for the primary.
                       className={cn(
                         "inline-flex cursor-pointer rounded-full ring-2 transition-transform hover:z-10 hover:scale-110",
+                        PEER_INK[actorHue(a)].ring,
                         riding &&
                           "z-10 scale-110 ring-2 ring-primary ring-offset-2 ring-offset-card",
                       )}
-                      style={{ ["--tw-ring-color" as string]: a.colour }}
                     >
                       <CommsAvatar member={memberOf(a.id)} size={18} className="rounded-full" />
                     </button>

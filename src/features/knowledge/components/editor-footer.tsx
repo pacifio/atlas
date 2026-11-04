@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { toast } from "sonner";
 import {
   exportKnowledgeNoteHtml,
   exportKnowledgeNoteMd,
@@ -29,7 +30,7 @@ export function EditorFooter({ wordCount, charCount, projectPath, entryId }: Edi
       await fn();
     } catch (err) {
       console.error(`[export:${key}] failed`, err);
-      window.alert(`Export failed:\n\n${String(err)}`);
+      toast.error(`Export failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setBusy(null);
     }

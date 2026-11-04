@@ -44,9 +44,24 @@ describe("KnowledgeInspectorView", () => {
 
   it("lists the backlinks it is given and opens one", () => {
     const props = renderInspector();
-    fireEvent.click(screen.getByRole("button", { name: "Backlinks" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Backlinks" }));
     expect(screen.getByText("Pages linking here · 2")).toBeTruthy();
     fireEvent.click(screen.getByText("Roadmap Q4"));
     expect(props.onJumpToEntry).toHaveBeenCalledWith("roadmap-q4");
+  });
+
+  it("switches Outline and Backlinks as a tablist with one Tab stop", () => {
+    renderInspector();
+    const outline = screen.getByRole("tab", { name: "Outline" });
+    const links = screen.getByRole("tab", { name: "Backlinks" });
+    expect(outline.getAttribute("aria-selected")).toBe("true");
+    expect(outline.tabIndex).toBe(0);
+    expect(links.tabIndex).toBe(-1);
+    fireEvent.keyDown(outline, { key: "ArrowRight" });
+    expect(links.getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(links);
+    expect(screen.getByRole("tabpanel").textContent).toContain("Pages linking here");
+    fireEvent.keyDown(links, { key: "Home" });
+    expect(outline.getAttribute("aria-selected")).toBe("true");
   });
 });

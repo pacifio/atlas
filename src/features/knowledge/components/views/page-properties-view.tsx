@@ -82,7 +82,12 @@ export function PagePropertiesView({
               value={meta.owner ?? ""}
               placeholder="—"
               label="Owner"
-              onChange={(v) => onPatch({ owner: v.trim() || null })}
+              onChange={(v) => {
+                // An unchanged owner is no edit: patching would still stamp
+                // "Last edited".
+                const owner = v.trim() || null;
+                if ((owner ?? "") !== (meta.owner?.trim() ?? "")) onPatch({ owner });
+              }}
             />
           </Row>
           <Row icon={Tag} label="Tags">
@@ -140,11 +145,10 @@ function StatusEditor({
     <Popover
       open={open}
       onOpenChange={(next, details) => {
-        // It stays open until the trigger, Enter, Escape, a preset or clear
-        // closes it — not on a press or focus elsewhere.
-        if (!next && (details.reason === "outside-press" || details.reason === "focus-out")) {
-          return;
-        }
+        // A click elsewhere closes it, dropping the draft; focus leaving
+        // without a click (Tab out) does not.
+        if (!next && details.reason === "focus-out") return;
+        if (!next) setDraft(value ?? "");
         setOpen(next);
       }}
     >

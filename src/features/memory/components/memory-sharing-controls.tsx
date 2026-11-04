@@ -7,7 +7,7 @@
 // and the "sessions outside Atlas" switch (off by default; inert while Shared
 // is off, since nothing is extracted then).
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, type KeyboardEvent } from "react";
 import { Popover } from "@base-ui/react/popover";
 import { Share2, SlidersHorizontal, FileText, Server, Cpu, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -58,6 +58,26 @@ export function MemorySharingControls({ projectPath }: { projectPath: string | n
 
   const setMode = (mode: SummarizerMode) => void setPref({ ...pref, mode });
 
+  // The mode row is a radio group: one Tab stop (the chosen mode, or Raw when
+  // the chosen one is unavailable), and the arrows move between the modes
+  // that can be chosen, choosing as they go. Local is never one yet.
+  const choosable: SummarizerMode[] = providerReady ? ["raw", "provider"] : ["raw"];
+  const modeTabStop: SummarizerMode = choosable.includes(pref.mode) ? pref.mode : "raw";
+  const onModeKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    const at = choosable.indexOf(modeTabStop);
+    let next: number | null = null;
+    if (e.key === "ArrowRight" || e.key === "ArrowDown") next = (at + 1) % choosable.length;
+    else if (e.key === "ArrowLeft" || e.key === "ArrowUp")
+      next = (at - 1 + choosable.length) % choosable.length;
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = choosable.length - 1;
+    if (next === null) return;
+    e.preventDefault();
+    const mode = choosable[next];
+    if (mode !== pref.mode) setMode(mode);
+    e.currentTarget.querySelector<HTMLElement>(`[data-mode="${mode}"]`)?.focus();
+  };
+
   return (
     <div className="flex items-center gap-1">
       {/* Shared toggle — the Usage facet pill's on/off reading: a stronger
@@ -103,23 +123,34 @@ export function MemorySharingControls({ projectPath }: { projectPath: string | n
               <div className="eyebrow mb-2">Recent-session handoff</div>
               <p className="mb-2.5 text-xs leading-snug text-muted-foreground">{HANDOFF_HINT}</p>
 
-              <Track className="inline-flex w-fit">
+              <Track
+                role="radiogroup"
+                aria-label="Handoff summarizer"
+                onKeyDown={onModeKeyDown}
+                className="inline-flex w-fit"
+              >
                 <ModeSeg
+                  mode="raw"
                   active={pref.mode === "raw"}
+                  tabStop={modeTabStop === "raw"}
                   label="Raw"
                   icon={FileText}
                   enabled
                   onClick={() => setMode("raw")}
                 />
                 <ModeSeg
+                  mode="provider"
                   active={pref.mode === "provider"}
+                  tabStop={modeTabStop === "provider"}
                   label="Provider"
                   icon={Server}
                   enabled={providerReady}
                   onClick={() => setMode("provider")}
                 />
                 <ModeSeg
+                  mode="local"
                   active={pref.mode === "local"}
+                  tabStop={false}
                   label="Local"
                   icon={Cpu}
                   enabled={false}
@@ -181,13 +212,17 @@ export function MemorySharingControls({ projectPath }: { projectPath: string | n
 }
 
 function ModeSeg({
+  mode,
   active,
+  tabStop,
   label,
   icon: Icon,
   enabled,
   onClick,
 }: {
+  mode: SummarizerMode;
   active: boolean;
+  tabStop: boolean;
   label: string;
   icon: typeof Cpu;
   enabled: boolean;
@@ -195,6 +230,10 @@ function ModeSeg({
 }) {
   return (
     <TrackSegment
+      role="radio"
+      aria-checked={active}
+      data-mode={mode}
+      tabIndex={tabStop ? 0 : -1}
       active={active}
       disabled={!enabled}
       onClick={() => enabled && onClick()}

@@ -54,6 +54,17 @@ describe("PagePropertiesView", () => {
     expect(onPatch).toHaveBeenCalledWith({ owner: "x" });
   });
 
+  it("owner: committing the same owner patches nothing", () => {
+    const onPatch = renderStrip();
+    fireEvent.click(screen.getByRole("button", { name: "priya" }));
+    const input = screen.getByRole("textbox", { name: "Owner" });
+    fireEvent.change(input, { target: { value: " priya " } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.click(screen.getByRole("button", { name: "priya" }));
+    fireEvent.blur(screen.getByRole("textbox", { name: "Owner" }));
+    expect(onPatch).not.toHaveBeenCalled();
+  });
+
   it("tags: Enter adds, a duplicate is not added, Backspace on empty removes the last", () => {
     const onPatch = renderStrip();
     fireEvent.click(screen.getByRole("button", { name: /add/ }));

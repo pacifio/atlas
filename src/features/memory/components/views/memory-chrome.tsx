@@ -7,7 +7,7 @@
 // selected step. Each piece used to be restated per view, in four slightly
 // different heights and radii.
 
-import { useRef, type ReactNode } from "react";
+import { useRef, type ButtonHTMLAttributes, type HTMLAttributes, type ReactNode } from "react";
 import { MessageSquarePlus, Search, X } from "lucide-react";
 import { Button, KbdKeys } from "@tryatlas/design";
 import { askKeyAction } from "@/features/ask-agent/lib/ask-box-keys";
@@ -24,10 +24,19 @@ export function Toolbar({ children, className }: { children: ReactNode; classNam
   );
 }
 
-/** A round-ended hairline track holding `TrackSegment`s. */
-export function Track({ children, className }: { children: ReactNode; className?: string }) {
+/** A round-ended hairline track holding `TrackSegment`s. Extra attributes
+ *  (a `role`, a label, a key handler) land on the track itself. */
+export function Track({
+  children,
+  className,
+  ...rest
+}: { children: ReactNode; className?: string } & Omit<
+  HTMLAttributes<HTMLDivElement>,
+  "children" | "className"
+>) {
   return (
     <div
+      {...rest}
       className={cn(
         "flex h-control-sm shrink-0 items-center gap-0.5 rounded-full border border-border p-0.5",
         className,
@@ -38,22 +47,28 @@ export function Track({ children, className }: { children: ReactNode; className?
   );
 }
 
-/** One segment of a `Track`. A plain button: callers keep their own semantics. */
+/** One segment of a `Track`. A plain button: callers keep their own semantics,
+ *  passing any extra attributes (`role`, `aria-checked`, `tabIndex`) through. */
 export function TrackSegment({
   active,
   onClick,
   title,
   disabled,
   children,
+  ...rest
 }: {
   active: boolean;
   onClick: () => void;
   title?: string;
   disabled?: boolean;
   children: ReactNode;
-}) {
+} & Omit<
+  ButtonHTMLAttributes<HTMLButtonElement>,
+  "onClick" | "title" | "disabled" | "children" | "className" | "type"
+>) {
   return (
     <button
+      {...rest}
       type="button"
       onClick={onClick}
       title={title}

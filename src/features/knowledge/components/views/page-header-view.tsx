@@ -35,13 +35,15 @@ export function PageHeaderView({
       {/* Cover strip — 180px, hidden when not set. Add-cover button
           appears just above the title when none exists. */}
       {cover ? (
-        <div
+        <button
+          type="button"
           // Key on the resolved cover ref so React fully remounts the
           // element when it flips between gradient ↔ image ↔ absent —
           // belt-and-braces against any background-image cache holding
           // a stale URL after a cover swap or remove.
           key={cover}
-          className="relative mb-3.5 h-[180px] cursor-pointer overflow-hidden rounded-xl border border-border-subtle"
+          aria-label="Change cover"
+          className="relative mb-3.5 block h-[180px] w-full cursor-pointer overflow-hidden rounded-xl border border-border-subtle outline-none focus-visible:ring-2 focus-visible:ring-border-strong"
           style={{ background: coverBackground }}
           onClick={(e) => onOpenCoverPicker(e.currentTarget.getBoundingClientRect())}
           title="Click to change cover"

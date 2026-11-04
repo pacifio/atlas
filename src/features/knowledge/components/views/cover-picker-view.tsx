@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { Upload, X } from "lucide-react";
-import { Button, Icon, Popover, PopoverContent } from "@tryatlas/design";
+import { Button, Icon, Popover, PopoverContent, Spinner } from "@tryatlas/design";
 import { cn } from "@/lib/utils";
 import type { CoverGradient } from "../../lib/cover-gradients";
 
@@ -16,6 +16,7 @@ export function CoverPickerView({
   value,
   anchorRect,
   gradients,
+  uploading = false,
   onPick,
   onUpload,
   onClose,
@@ -23,6 +24,8 @@ export function CoverPickerView({
   value: string | null;
   anchorRect: DOMRect | null;
   gradients: readonly CoverGradient[];
+  /** An upload is running: the button shows it and takes no second press. */
+  uploading?: boolean;
   onPick: (cover: string | null) => void;
   onUpload: () => void;
   onClose: () => void;
@@ -70,9 +73,16 @@ export function CoverPickerView({
           ))}
         </div>
 
-        <Button variant="secondary" size="md" className="w-full" onClick={onUpload}>
-          <Icon icon={Upload} size="sm" />
-          Upload from disk
+        <Button
+          variant="secondary"
+          size="md"
+          className="w-full"
+          disabled={uploading}
+          aria-busy={uploading || undefined}
+          onClick={onUpload}
+        >
+          {uploading ? <Spinner size="xs" label="" /> : <Icon icon={Upload} size="sm" />}
+          {uploading ? "Uploading…" : "Upload from disk"}
         </Button>
 
         {value && (
