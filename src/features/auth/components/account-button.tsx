@@ -1,12 +1,9 @@
-import { CircleUser, Loader2 } from "lucide-react";
+import type { ReactNode } from "react";
 
-import type { ComponentProps, ReactNode } from "react";
-
-import { cn } from "@/lib/utils";
 import { useAuthStore } from "../stores/auth-store";
 import { AccountAvatar } from "./account-avatar";
 import { AccountMenu } from "./account-menu";
-import { Hint } from "@tryatlas/design";
+import { AccountButtonView, type AccountButtonState } from "./views/account-button-view";
 
 /**
  * The account control at the right of the title bar.
@@ -16,8 +13,8 @@ import { Hint } from "@tryatlas/design";
  * empty state rather than having to open a folder first.
  *
  * Signed in, it is the user's face and the trigger for the account menu.
- * Signed out or mid-grant it is a plain button that starts (or reopens)
- * sign-in — the menu has nothing to say in either state.
+ * Signed out it opens the same menu, with Sign in first. Mid-grant it is a
+ * plain button that reopens the connect dialog.
  */
 export function AccountButton({
   compact = false,
@@ -48,7 +45,7 @@ export function AccountButton({
     else void beginSignIn();
   };
 
-  const title = user
+  const label = user
     ? `${user.name} (${user.email})`
     : signedIn
       ? "Atlas account — connected"
@@ -56,40 +53,20 @@ export function AccountButton({
         ? "Waiting for approval in your browser…"
         : "Account and settings";
 
-  // In the dock the pill's sliding label already names this control, so only
-  // the standalone button carries a tooltip of its own.
-  const Control = compact ? "button" : HintedButton;
+  const state: AccountButtonState =
+    starting || connecting ? "busy" : signedIn ? "signed-in" : "signed-out";
 
   const button = (
     // Only the connecting state keeps a click of its own. In the other two the
-    // click is Radix's to handle, and one that also ran would fight the trigger
-    // it is wrapped in.
-    <Control
+    // click is the menu trigger's to handle, and one that also ran would fight
+    // the trigger it is wrapped in.
+    <AccountButtonView
+      state={state}
+      label={label}
+      compact={compact}
+      avatar={user ? <AccountAvatar user={user} size={18} /> : null}
       onClick={connecting ? toggleDialog : undefined}
-      aria-label={title}
-      className={cn(
-        "relative flex items-center justify-center transition-colors duration-150",
-        // The same square as every other control in the bar (`IconButton`'s
-        // `sm`), docked or not — the bar reads as one toolbar only if nothing
-        // in it is a different size.
-        "size-control-sm rounded-md",
-        // A `<button>` still gets the arrow by default, and this one carries no
-        // label or border — the pointer is most of what says it is pressable.
-        // Matches the title bar's project-name button beside it.
-        "cursor-pointer hover:bg-element-hover outline-none focus:outline-none",
-        signedIn || connecting
-          ? "text-secondary-foreground"
-          : "text-disabled hover:text-muted-foreground",
-      )}
-    >
-      {starting || connecting ? (
-        <Loader2 size={14} className="animate-spin" />
-      ) : user ? (
-        <AccountAvatar user={user} size={18} />
-      ) : (
-        <CircleUser size={14} />
-      )}
-    </Control>
+    />
   );
 
   // The menu opens signed out as well as signed in. Settings, Privacy, the
@@ -106,19 +83,5 @@ export function AccountButton({
     <AccountMenu account={snapshot} side={menuSide} extra={menuExtra}>
       {button}
     </AccountMenu>
-  );
-}
-
-/**
- * The button with its tooltip inside. It has to be a component that forwards
- * its props: as the element `DropdownMenu.Trigger`'s `render` clones, the trigger's
- * props and ref land here and must reach the same `<button>` the tooltip
- * trigger merges onto.
- */
-function HintedButton(props: ComponentProps<"button">) {
-  return (
-    <Hint label={props["aria-label"] ?? ""}>
-      <button {...props} />
-    </Hint>
   );
 }
