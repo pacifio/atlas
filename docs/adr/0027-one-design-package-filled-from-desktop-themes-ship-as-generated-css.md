@@ -112,8 +112,9 @@ until the team picks them up again.
 
 - Changing a derivation rule is a package change plus a desktop bump. Use `bun link` while
   iterating on both.
-- The `--atlas-*` → unprefixed rename touches every feature directory. It runs as
-  expand–migrate–contract (spec D19): new names authoritative, old ones aliased, call
-  sites moved by directory, aliases deleted and banned by the ratchet.
+- The `--atlas-*` → unprefixed rename touches every feature directory. It ran in one
+  change rather than as expand–migrate–contract (spec D19): every call site moved, no
+  aliases, and the design-system ratchet bans the old spellings. App variables that are
+  not theme keys (`--atlas-chat-column`, `--atlas-boot-*` and the like) keep the prefix.
 - `bun-singletons.test.ts` gains `@base-ui/react`, `motion` and `@tryatlas/design`.
 - The `?scenario=design-system` gallery shrinks once its primitives come from the package.

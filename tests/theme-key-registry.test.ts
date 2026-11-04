@@ -121,8 +121,11 @@ describe("the generated theme-key registry", () => {
     for (const font of ["font-sans", "font-serif", "font-mono"]) claim(`--${font}`, `base.${font}`);
     // Every variable a Tailwind `@theme` block declares: a key landing on one
     // would be read as that namespace's value (`--text-*` is a font size).
-    const globals = read("src/styles/globals.css");
-    for (const start of [...globals.matchAll(/@theme\b[^{]*\{/g)].map((m) => m.index!)) {
+    // Comments out first: prose mentioning "@theme" is not a block.
+    const globals = read("src/styles/globals.css").replace(/\/\*[\s\S]*?\*\//g, "");
+    const blocks = [...globals.matchAll(/^@theme\b[^{]*\{/gm)].map((m) => m.index!);
+    expect(blocks.length, "globals.css's @theme blocks").toBeGreaterThan(0);
+    for (const start of blocks) {
       let depth = 0;
       let end = globals.indexOf("{", start);
       do {
