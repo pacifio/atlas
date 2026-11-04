@@ -12,7 +12,7 @@
  */
 
 import { Segmented } from "@tryatlas/design";
-import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { AccountAvatar } from "@/features/auth/components/account-avatar";
 import { AccountAvatarView } from "@/features/auth/components/views/account-avatar-view";
@@ -92,11 +92,10 @@ export function TraceView({
 
   // The block memoizes its lanes on the callbacks, so they stay the same
   // functions across refreshes and read the latest rows through a ref; a new
-  // read re-renders a lane through its session, not through these.
+  // read re-renders a lane through its session, not through these. Written
+  // during render, so a lane drawn in this pass reads this pass's rows.
   const latest = useRef({ rows, boardSessions, onOpen });
-  useLayoutEffect(() => {
-    latest.current = { rows, boardSessions, onOpen };
-  });
+  latest.current = { rows, boardSessions, onOpen };
 
   /** Where to open a Session: its checkout here if it has one (faster, and
    *  works offline), else the server Workspace. */
@@ -148,9 +147,9 @@ export function TraceView({
     return id ? <AgentGlyph agent={id} size={12} /> : null;
   }, []);
 
-  // A failed read with nothing to show is the block's error state; a failed
-  // refresh over a chart still on screen is a strip above it.
-  const blocking = trace.error && trace.sessions.length === 0;
+  // A failed read with nothing held is the block's error state; a failed
+  // refresh over a read still held (even one the pills empty) is a strip.
+  const blocking = trace.error && trace.rows.length === 0;
 
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
