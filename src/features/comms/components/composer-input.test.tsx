@@ -88,10 +88,11 @@ describe("ComposerInput", () => {
     await waitFor(() => expect(chips(container)).toHaveLength(1));
     const pill = container.querySelector("[data-mention-pill]");
     // No image on this fixture, so the avatar is the initials fallback —
-    // `CommsAvatar`, as the rendered message draws it, hue derived from the id.
+    // `CommsAvatar`, as the rendered message draws it: muted, never a hue.
     const face = pill?.firstElementChild as HTMLElement;
     expect(face.textContent).toBe("GH");
-    expect(face.querySelector<HTMLElement>("[style*='hsl']")).not.toBe(null);
+    expect(face.querySelector<HTMLElement>("[style*='hsl']")).toBe(null);
+    expect(face.querySelector(".bg-muted")).not.toBe(null);
   });
 
   it("gives a broadcast no face, because there is nobody to show", async () => {

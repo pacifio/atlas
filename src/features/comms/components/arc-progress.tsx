@@ -2,7 +2,8 @@
 // r=6, rotated -90° so progress grows from 12 o'clock, round caps. When the
 // server declared no content-length (`total === 0`) there is nothing honest to
 // draw a fraction of, so the ring spins indeterminate instead (the same
-// `atlas-arc-spin` treatment the plan-tasks pill uses).
+// `atlas-arc-spin` class the plan-tasks pill uses, which also steps the spin
+// on Linux).
 
 export function ArcProgress({ got, total }: { got: number; total: number }) {
   const r = 6;
@@ -10,7 +11,7 @@ export function ArcProgress({ got, total }: { got: number; total: number }) {
   if (total <= 0) {
     return (
       <svg width={14} height={14} viewBox="0 0 16 16" className="shrink-0">
-        <g style={{ transformOrigin: "8px 8px", animation: "atlas-arc-spin 0.9s linear infinite" }}>
+        <g className="atlas-arc-spin">
           <circle
             cx={8}
             cy={8}
@@ -47,7 +48,7 @@ export function ArcProgress({ got, total }: { got: number; total: number }) {
         strokeLinecap="round"
         strokeDasharray={c}
         strokeDashoffset={c * (1 - frac)}
-        style={{ transition: "stroke-dashoffset 200ms ease-out" }}
+        className="transition-[stroke-dashoffset] duration-base ease-out-strong"
       />
     </svg>
   );

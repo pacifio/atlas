@@ -63,7 +63,8 @@ import {
   UZAYER_AVATAR_JPEG_BASE64,
   ZUHAYER_AVATAR_JPEG_BASE64,
 } from "../fixtures/northwind-avatars";
-import type { MockResponses, TypedHandlers } from "../types";
+import { appState, MOCK_ORG_ID } from "../project";
+import type { MockResponses, Scenario, TypedHandlers } from "../types";
 import type {
   ChannelKey,
   ChatMessageContent,
@@ -1087,3 +1088,35 @@ export async function zuhayerDraftEdit(
   }
   return undefined;
 }
+
+// ── Team chat actions for any scenario ────────────────────────────────────
+//
+// The one home for comms console actions (`__atlasMock.actions.<name>()`)
+// that are not part of a Northwind take: sibling comms work adds to this
+// section rather than inventing an equivalent elsewhere.
+
+/** Bring team chat on screen — ⌘⇧C's reveal half: when it is already showing,
+ *  in either form, it stays, rather than being toggled away. */
+export async function openTeamChat(): Promise<void> {
+  const { useLayoutStore } = await import("@/features/layout/stores/layout-store");
+  const { revealTeamChat, teamChatShown } = await import("@/features/layout/lib/team-chat");
+  if (!teamChatShown(useLayoutStore.getState())) revealTeamChat();
+}
+
+/** The default world with its organisation local-only (sync off, no remote
+ *  org): team chat's "not connected" screen. Not named "Acme": the signed-in
+ *  account's server org is, and a same-named local org is adopted by it. */
+export const commsNotConnected: Scenario = {
+  name: "comms-not-connected",
+  description: "Team chat for an organisation that has not turned sync on.",
+  rawCommands: {
+    bootstrap_app_state: () =>
+      appState({
+        organisations: [
+          { id: MOCK_ORG_ID, name: "Acme Labs", slug: "acme-labs", syncEnabled: false },
+        ],
+      }),
+  },
+  setup: openTeamChat,
+  actions: { openTeamChat },
+};

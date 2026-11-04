@@ -47,6 +47,7 @@ import { inboxLong } from "./inbox-long";
 import { knowledge } from "./knowledge";
 import { memoryHistoryEdited, memorySetup } from "./memory-setup";
 import { northwind } from "./northwind";
+import { commsNotConnected, openTeamChat } from "./northwind-comms";
 import { pullRequestScenarios } from "./pull-request";
 import { sessionContext } from "./session-context";
 import { sessionProjects } from "./session-projects";
@@ -76,6 +77,7 @@ const all: Scenario[] = [
     // terminal or git config could produce.
     actions: {
       commsIncomingMessage,
+      openTeamChat,
       ...permissionActions,
       // The computer sleeping under a running turn (`sleep_watch.rs`).
       sleepMidTurn,
@@ -122,6 +124,7 @@ const all: Scenario[] = [
   timelineLong,
   inboxLong,
   freshInstall,
+  commsNotConnected,
   designSystem,
 ];
 
