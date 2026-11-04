@@ -166,6 +166,8 @@ export const TerminalView = memo(function TerminalView({
             }}
             onKeyDown={(e) => {
               if (e.key === "Escape") closeSearch();
+              // A find starts at the newest output, so Enter walks UP into
+              // history (the Previous button); Shift+Enter walks back down.
               else if (e.key === "Enter") step(e.shiftKey ? 1 : -1);
             }}
             placeholder="Find in terminal"

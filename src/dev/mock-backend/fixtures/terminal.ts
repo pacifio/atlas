@@ -68,7 +68,7 @@ const REDRAW = "\r\x1b[2K";
 
 interface Running {
   command: string;
-  /** The block is showing a password prompt; the next line is the secret. */
+  /** The command is showing a password prompt; the next line is the secret. */
   awaitingPassword: boolean;
 }
 
@@ -257,7 +257,7 @@ const HELP = [
 const BUILD_SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 /** A long command: ~2s of output that redraws a spinner in place before it
- *  resolves, so the "running" block and the line emulator both do real work. */
+ *  resolves, so the busy state and xterm's in-place redraw both do real work. */
 async function playBuild(s: FakeSession, run: Running): Promise<void> {
   write(s, `${paint(C.dim, "$ vite build")}\r\n`);
   for (let frame = 0; frame < 18; frame++) {

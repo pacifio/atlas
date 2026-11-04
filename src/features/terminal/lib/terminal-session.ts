@@ -30,7 +30,7 @@
  */
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { Terminal } from "@xterm/xterm";
+import type { IBufferLine, Terminal } from "@xterm/xterm";
 import type { FitAddon } from "@xterm/addon-fit";
 import type { WebglAddon } from "@xterm/addon-webgl";
 import { onThemeApplied } from "@/features/theme/theme-values";
@@ -203,7 +203,7 @@ export class TerminalSession {
       searchRequest: 0,
     };
     startGlobalListeners();
-    void this.createXterm();
+    this.createXterm().catch((e) => console.warn("terminal: xterm failed to load:", e));
     void this.start(opts.cwd);
   }
 
@@ -664,7 +664,12 @@ export class TerminalSession {
     if (restart || this.findIdx < 0) this.findIdx = matches.length - 1;
     else this.findIdx = (this.findIdx + dir + matches.length) % matches.length;
     const m = matches[this.findIdx];
-    term.select(m.col, m.row, q.length);
+    // String offsets are not cell columns once a wide glyph (CJK, emoji) sits
+    // before the match: map both ends through the row's cells.
+    const line = buf.getLine(m.row);
+    const start = line ? cellColumn(line, m.col, term.cols) : m.col;
+    const end = line ? cellColumn(line, m.col + q.length, term.cols) : m.col + q.length;
+    term.select(start, m.row, Math.max(1, end - start));
     term.scrollToLine(Math.max(0, m.row - Math.floor(term.rows / 2)));
     return { index: this.findIdx + 1, total: matches.length };
   }
@@ -673,6 +678,20 @@ export class TerminalSession {
     this.findIdx = -1;
     this.xterm?.clearSelection();
   }
+}
+
+/** The cell column at which offset `offset` of `translateToString` falls:
+ *  that string has one entry per glyph (a wide glyph's spacer cell is
+ *  skipped), while columns count cells. */
+function cellColumn(line: IBufferLine, offset: number, cols: number): number {
+  let seen = 0;
+  for (let x = 0; x < cols; x++) {
+    const cell = line.getCell(x);
+    if (!cell || cell.getWidth() === 0) continue;
+    if (seen >= offset) return x;
+    seen += cell.getChars().length || 1;
+  }
+  return cols;
 }
 
 // ── Registry ───────────────────────────────────────────────────────────────
