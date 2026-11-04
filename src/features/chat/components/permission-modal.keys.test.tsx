@@ -94,6 +94,20 @@ describe("keys on the permission card", () => {
     expect(picked()).toEqual(["allow-once"]);
   });
 
+  /// The window handler steps aside only while the "tell the agent" field
+  /// holds focus, which it knows by the ref the view forwards to its
+  /// textarea. Lose that ref and typing "1" there would approve option 1.
+  it("digits and Enter typed into the instruction field never pick an option", () => {
+    pending("shell", "rm -rf build");
+    const field = screen.getByPlaceholderText(/what to do instead/);
+    field.focus();
+    expect(document.activeElement).toBe(field);
+    fireEvent.keyDown(field, { key: "1" });
+    fireEvent.keyDown(field, { key: "2" });
+    fireEvent.keyDown(field, { key: "Enter" });
+    expect(respondPermission).not.toHaveBeenCalled();
+  });
+
   it("any other card keeps Enter for Allow", () => {
     pending("shell", "rm -rf build");
     fireEvent.keyDown(window, { key: "Enter" });
