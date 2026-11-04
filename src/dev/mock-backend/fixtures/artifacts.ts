@@ -983,6 +983,28 @@ const threads = new Map<string, SessionChatThreadWire[]>([
               },
             ],
           },
+          {
+            id: "msg-3",
+            role: "user",
+            content: "Draw the call path",
+            timestamp: at(0, 10, 8),
+          },
+          {
+            id: "msg-4",
+            role: "assistant",
+            content: [
+              "The board command reaches the reader through two hops:",
+              "",
+              "```mermaid",
+              "flowchart TD",
+              "  A[artifacts_board] --> B[open_reader]",
+              "  B --> C{reader found?}",
+              "  C -->|yes| D[read_sessions]",
+              "  C -->|no| E[early return]",
+              "```",
+            ].join("\n"),
+            timestamp: at(0, 10, 9),
+          },
         ],
       },
       {

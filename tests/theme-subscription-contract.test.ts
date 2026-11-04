@@ -148,7 +148,7 @@ describe("theme subscription contract", () => {
       "src/components/graph-palette.ts", // both pixi graphs
       "src/features/usage/lib/palette.ts", // the Usage tab's series colours
       "src/features/editor/themes/build-cm-theme.ts", // CodeMirror
-      "src/components/mermaid-block.tsx", // mermaid
+      "src/components/views/mermaid-block-view.tsx", // mermaid
     ]) {
       expect(
         readers.map((r) => r.where),
