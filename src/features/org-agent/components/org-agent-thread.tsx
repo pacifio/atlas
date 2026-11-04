@@ -281,7 +281,7 @@ function Welcome({ onPick }: { onPick: (question: string) => void }) {
               type="button"
               disabled={!ready}
               onClick={() => onPick(text)}
-              className="group flex cursor-pointer items-center gap-3 rounded-xl border border-border bg-card p-2.5 text-left transition-colors duration-150 hover:border-border-strong hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+              className="group flex cursor-pointer items-center gap-3 rounded-xl border border-border bg-card p-2.5 text-left transition-[color,background-color,border-color,opacity] duration-150 hover:border-border-strong hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
             >
               <span className="grid size-7 shrink-0 place-items-center rounded-lg border border-border-subtle bg-card text-muted-foreground transition-colors group-hover:text-foreground">
                 <Icon size={13} />

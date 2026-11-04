@@ -7,7 +7,14 @@
 import { memo, useEffect, useRef, useState } from "react";
 import { RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { colorToCss, hsvToHex, parseColor, toHsv, type HsvColor } from "@tryatlas/design/theme";
+import {
+  alphaOf,
+  colorToCss,
+  hsvToHex,
+  parseColor,
+  toHsv,
+  type HsvColor,
+} from "@tryatlas/design/theme";
 import {
   ColorHueSlider,
   ColorSaturationValuePlane,
@@ -26,10 +33,6 @@ function opaqueHex(value: string): string {
   // ratchet-allow: the picker needs some concrete point to start from when a
   // slot's value is unreadable; it is a picker position, never painted UI.
   return color ? colorToCss({ ...color, a: 1 }) : "#000000";
-}
-
-function alphaOf(value: string): number {
-  return parseColor(value)?.a ?? 1;
 }
 
 function withAlphaOf(hex: string, alpha: number): string {
