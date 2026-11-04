@@ -58,12 +58,8 @@ export function MemoryEntries({
   useEffect(() => {
     if (focusEntryId == null) return;
     const target = entries.find((e) => e.id === focusEntryId);
-    if (!target) {
-      // Gone by the time the record arrived: drop the ask, so it can't open
-      // whatever later takes that id.
-      if (loaded) clearFocusEntry();
-      return;
-    }
+    // Not there yet (the record is still being read): wait for it.
+    if (!target) return;
     setQuery("");
     setAgentFilter("");
     setScope(target.state === "archived" ? "archived" : "current");
@@ -74,7 +70,7 @@ export function MemoryEntries({
         ?.querySelector(`[data-entry-id="${target.id}"]`)
         ?.scrollIntoView({ block: "center" }),
     );
-  }, [focusEntryId, entries, loaded, clearFocusEntry]);
+  }, [focusEntryId, entries, clearFocusEntry]);
 
   const q = query.trim().toLowerCase();
   const scoped = useMemo(() => entries.filter((e) => inScope(e, scope)), [entries, scope]);

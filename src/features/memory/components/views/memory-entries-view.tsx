@@ -102,6 +102,18 @@ export function MemoryEntriesView(props: MemoryEntriesViewProps) {
       return false;
     });
   }, [selectedId]);
+  // The panel can change width under an open memory: whether the pane
+  // covers the list follows it (without moving focus).
+  useEffect(() => {
+    const aside = asideRef.current;
+    const box = aside?.parentElement;
+    if (selectedId === null || !aside || !box || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() =>
+      setCovering(getComputedStyle(aside).position === "absolute"),
+    );
+    observer.observe(box);
+    return () => observer.disconnect();
+  }, [selectedId]);
   const filtered = query.trim() !== "" || agentFilter !== "";
   const nothingAtAll = loaded && !error && total.current + total.archived === 0;
 
