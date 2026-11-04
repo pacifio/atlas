@@ -197,7 +197,9 @@ function CommsTab({
 }
 
 /**
- * The body while the panel holds nothing and the socket is not open.
+ * The body while the panel holds nothing and the socket is not open. The
+ * panel renders it only for `unavailable` today (the other states show the
+ * skeleton); the spinner branch is kept for a caller that wants it.
  *
  * `unavailable` is terminal — the supervisor stopped because retrying cannot
  * help — so it gets an explanation and a manual retry instead of a spinner

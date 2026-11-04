@@ -2018,11 +2018,20 @@ html[data-word-wrap="off"] .prose-chat pre {
 
 /* Nobody is looking: the window is hidden, the session sits in a background
    tab (still laid out, where animations keep running), or the row is
-   scrolled away. See `src/lib/visible-animation.ts`. */
-:root[data-atlas-hidden] :is(.atlas-thinking-shimmer, .atlas-marker-running, .atlas-pixel-cell),
-[data-atlas-offstage] :is(.atlas-thinking-shimmer, .atlas-marker-running, .atlas-pixel-cell),
-[data-offscreen] :is(.atlas-thinking-shimmer, .atlas-marker-running, .atlas-pixel-cell),
-:is(.atlas-thinking-shimmer, .atlas-marker-running, .atlas-pixel-cell)[data-offscreen] {
+   scrolled away. See `src/lib/visible-animation.ts`. `animate-pulse` is the
+   package `Skeleton`'s loop, so loading placeholders park too. */
+:root[data-atlas-hidden]
+  :is(.atlas-thinking-shimmer, .atlas-marker-running, .atlas-pixel-cell, .animate-pulse),
+[data-atlas-offstage]
+  :is(.atlas-thinking-shimmer, .atlas-marker-running, .atlas-pixel-cell, .animate-pulse),
+[data-offscreen]
+  :is(.atlas-thinking-shimmer, .atlas-marker-running, .atlas-pixel-cell, .animate-pulse),
+:is(
+  .atlas-thinking-shimmer,
+  .atlas-marker-running,
+  .atlas-pixel-cell,
+  .animate-pulse
+)[data-offscreen] {
   animation-play-state: paused;
 }
 @media (prefers-reduced-motion: reduce) {
