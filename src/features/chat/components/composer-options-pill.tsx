@@ -1,16 +1,14 @@
-import { memo, useEffect, useMemo, useState } from "react";
-import { Check, ChevronDown, Loader2, SlidersHorizontal } from "lucide-react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 
-import { cn } from "@/lib/utils";
 import { useChatStore } from "../stores/chat-store";
 import { parseConfigOptions } from "../lib/acp-config-options";
 import { loadCachedAcpConfigOptions } from "../lib/acp-config-options-cache";
+import { ComposerDropup, useComposerDropup } from "./composer-dropup";
 import {
-  ComposerDropup,
-  composerPillClass,
-  composerPillLabelClass,
-  useComposerDropup,
-} from "./composer-dropup";
+  ComposerOptionsPanelView,
+  ComposerOptionsTriggerView,
+  type ComposerOptionsState,
+} from "./views/composer-options-pill-view";
 
 /**
  * The agent-options pill — the knobs an agent advertises beyond mode and model
@@ -82,125 +80,23 @@ export const ComposerOptionsPill = memo(function ComposerOptionsPill({ tabId }: 
     measureKey: configOptions.length,
   });
 
+  const state: ComposerOptionsState = loading ? "loading" : hasOptions ? "options" : "default";
+  const onPick = useCallback(
+    (optionId: string, value: string | boolean) => {
+      void setAcpConfigOption(tabId, optionId, value);
+      close();
+    },
+    [setAcpConfigOption, tabId, close],
+  );
+
   return (
-    <div ref={ref} className="relative">
+    <div ref={ref} data-slot="composer-options-pill" className="relative">
       {/* Morphing panel — right-anchored dropup, shared with the plan and
           usage pills. */}
       <ComposerDropup open={open} panelHeight={panelHeight} contentRef={contentRef}>
-        <>
-          {hasOptions ? (
-            // Capped: the panel is bottom-anchored and grows upward, so an
-            // uncapped knob list (an agent may advertise a select with dozens of
-            // choices) clips its TOP — the FIRST knob — off-screen.
-            <div className="hide-scrollbar max-h-[300px] overflow-y-auto p-1">
-              {configOptions.map((opt) => (
-                <div key={opt.id}>
-                  {opt.kind === "boolean" ? (
-                    <button
-                      onClick={() => {
-                        void setAcpConfigOption(tabId, opt.id, !opt.value);
-                        close();
-                      }}
-                      className="flex w-full items-start gap-1.5 rounded-md px-2 py-1.5 text-left transition-colors cursor-pointer hover:bg-element-hover"
-                    >
-                      <span className="min-w-0 flex-1">
-                        <span className="flex items-center gap-1.5 text-xs font-medium text-[var(--foreground)]">
-                          {opt.name}
-                          {opt.value && <Check size={11} className="text-[var(--primary)]" />}
-                        </span>
-                        {opt.description && (
-                          <span className="mt-0.5 block text-3xs leading-snug text-[var(--muted-foreground)]">
-                            {opt.description}
-                          </span>
-                        )}
-                      </span>
-                    </button>
-                  ) : (
-                    <>
-                      <div className="px-2 pb-0.5 pt-1.5 text-3xs font-medium uppercase tracking-wider text-[var(--muted-foreground)]">
-                        {opt.name}
-                      </div>
-                      {opt.choices.map((c) => {
-                        const active = c.id === opt.currentValue;
-                        return (
-                          <button
-                            key={c.id}
-                            onClick={() => {
-                              void setAcpConfigOption(tabId, opt.id, c.id);
-                              close();
-                            }}
-                            className={cn(
-                              "flex w-full items-start gap-1.5 rounded-md px-2 py-1.5 text-left transition-colors cursor-pointer",
-                              active ? "bg-element-selected" : "hover:bg-element-hover",
-                            )}
-                          >
-                            <span className="min-w-0 flex-1">
-                              <span className="flex items-center gap-1.5 text-xs font-medium text-[var(--foreground)]">
-                                {c.name}
-                                {active && <Check size={11} className="text-[var(--primary)]" />}
-                              </span>
-                              {c.description && (
-                                <span className="mt-0.5 block text-3xs leading-snug text-[var(--muted-foreground)]">
-                                  {c.description}
-                                </span>
-                              )}
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </>
-                  )}
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="px-3 py-2.5">
-              <div className="text-xs font-medium text-[var(--foreground)]">Default</div>
-              <p className="mt-0.5 text-2xs leading-snug text-[var(--muted-foreground)]">
-                Agent loaded with default configuration.
-              </p>
-            </div>
-          )}
-        </>
+        <ComposerOptionsPanelView options={configOptions} onPick={onPick} />
       </ComposerDropup>
-
-      <button
-        onClick={toggle}
-        disabled={loading}
-        aria-busy={loading}
-        className={composerPillClass(open, { disabled: loading })}
-        title={
-          loading
-            ? "Loading the options this agent offers…"
-            : hasOptions
-              ? "Agent options — knobs this agent advertises"
-              : "Agent loaded with default configuration"
-        }
-      >
-        {/* Updates in place: agent switches are keyboard-driven (⌥/), so the
-            content swaps without animation. */}
-        <span className="flex items-center">
-          {loading ? (
-            <Loader2 size={11} className="shrink-0 animate-spin text-[var(--muted-foreground)]" />
-          ) : (
-            <SlidersHorizontal size={11} className="shrink-0 text-[var(--muted-foreground)]" />
-          )}
-          {/* While loading the label is "Options", not "Default": "Default" is a
-              settled answer, and pairing it with a spinner would state a verdict
-              we do not have yet. Thanks to the cache this only happens once per
-              agent, ever. */}
-          <span className={composerPillLabelClass("early")}>
-            {hasOptions || loading ? "Options" : "Default"}
-          </span>
-          {/* Kept in the layout while loading, just invisible: letting it pop in
-              would change the pill's width at the same moment as the label and
-              nudge the plan pill sideways. */}
-          <ChevronDown
-            size={10}
-            className={cn("ml-0.5 shrink-0 text-[var(--muted-foreground)]", loading && "opacity-0")}
-          />
-        </span>
-      </button>
+      <ComposerOptionsTriggerView state={state} open={open} onToggle={toggle} />
     </div>
   );
 });
