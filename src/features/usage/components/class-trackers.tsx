@@ -38,7 +38,7 @@ export function ClassTrackers({ totals }: { totals: Metrics }) {
             <div key={c.key} className="min-w-0 px-3 py-2.5">
               <div className="flex items-baseline justify-between gap-2">
                 <span className={CAPTION}>{c.label}</span>
-                <span className="text-3xs tabular-nums text-[var(--muted-foreground)]">
+                <span className="text-3xs tabular-nums text-muted-foreground">
                   {all > 0 ? fmtPct(c.value / all) : "—"}
                 </span>
               </div>
@@ -52,9 +52,11 @@ export function ClassTrackers({ totals }: { totals: Metrics }) {
                 {Array.from({ length: TICKS }, (_, i) => (
                   <span
                     key={i}
-                    className="h-full w-[2px] flex-1 rounded-sm transition-opacity duration-300"
+                    className={cn(
+                      "h-full w-[2px] flex-1 rounded-sm transition-opacity duration-300",
+                      largest ? "bg-foreground" : "bg-secondary-foreground",
+                    )}
                     style={{
-                      background: largest ? "var(--foreground)" : "var(--secondary-foreground)",
                       opacity: i < lit ? 1 : 0.16,
                       transitionDelay: `${i * 6}ms`,
                     }}
