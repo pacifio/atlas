@@ -11,6 +11,10 @@ import {
   GRAPH_LEFT_PAD,
 } from "../../lib/git-graph";
 import { CommitAvatar } from "../commit-avatar";
+import { AskAgentButton, ASK_ROW } from "@/features/ask-agent/components/ask-agent-button";
+import { COMMIT_ASKS, commitContext } from "../../lib/ask-git";
+
+const ROW_ASKS = [COMMIT_ASKS.explain, COMMIT_ASKS.revert];
 
 interface CommitRowViewProps {
   row: CommitRow;
@@ -90,6 +94,7 @@ export const CommitRowView = memo(function CommitRowView({
       onClick={() => onSelect(row.sha)}
       className={cn(
         "group flex items-center cursor-pointer select-none transition-colors duration-fast",
+        ASK_ROW,
         selected
           ? "bg-element-selected text-foreground"
           : "text-secondary-foreground hover:bg-element-hover",
@@ -125,6 +130,15 @@ export const CommitRowView = memo(function CommitRowView({
           ))}
           <span className={cn("truncate text-xs", selected && "font-medium")}>{row.message}</span>
         </div>
+        {/* Ask about the commit: explain it, or have the agent revert it in
+            its session. Its own click, not the row's select. */}
+        <span className="shrink-0" onClick={(e) => e.stopPropagation()}>
+          <AskAgentButton
+            context={[commitContext(row.sha, row.message)]}
+            suggestions={ROW_ASKS}
+            label="Ask agent about this commit"
+          />
+        </span>
         {/* Compact (the History section) keeps one column: the author's face,
             with the name, date and sha on hover — what the old flat log showed. */}
         {compact && (

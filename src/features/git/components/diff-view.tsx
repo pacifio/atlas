@@ -18,6 +18,8 @@ import { parseDiff, buildRows, type DiffFile, type DiffHunk } from "../lib/diff"
 import { useCollapsedFiles } from "../lib/use-collapsed-files";
 import { highlightDiffLine } from "../lib/diff-highlight";
 import { HintGroup, HintItem } from "@tryatlas/design";
+import { AskAgentButton, ASK_ROW } from "@/features/ask-agent/components/ask-agent-button";
+import type { AgentContext } from "@/features/ask-agent/lib/agent-context";
 
 type SortMode = "default" | "most-changes";
 
@@ -41,6 +43,8 @@ export function DiffView({
   className,
   hunkActions,
   onHunkAction,
+  askHunk,
+  askSuggestions,
 }: {
   diff: string;
   onOpenFile?: (path: string) => void;
@@ -54,6 +58,10 @@ export function DiffView({
   hunkActions?: HunkAction[];
   /** Invoked with the DISPLAYED hunk (+ selected line indices, if any). */
   onHunkAction?: (action: HunkAction, file: string, hunk: DiffHunk, selected?: number[]) => void;
+  /** A hunk as the agent gets it; with it, every hunk header offers "Ask". */
+  askHunk?: (file: string, hunk: DiffHunk) => AgentContext;
+  /** The quick prompts that "Ask" offers. */
+  askSuggestions?: readonly string[];
 }) {
   const [query, setQuery] = useState("");
   const [sortMode, setSortMode] = useState<SortMode>("default");
@@ -302,11 +310,21 @@ export function DiffView({
                     data-index={vr.index}
                     ref={virtualizer.measureElement}
                     style={{ ...base, backgroundColor: "var(--diff-context-background)" }}
-                    className="group/hunk flex items-center gap-2 px-2 h-[22px] border-x border-border text-2xs font-mono text-muted-foreground"
+                    className={cn(
+                      "group/hunk flex items-center gap-2 px-2 h-[22px] border-x border-border text-2xs font-mono text-muted-foreground",
+                      askHunk && ASK_ROW,
+                    )}
                   >
                     <span className="truncate flex-1 text-info/70 select-text">
                       {row.hunk.header}
                     </span>
+                    {askHunk && (
+                      <AskAgentButton
+                        context={[askHunk(row.file.path, row.hunk)]}
+                        suggestions={askSuggestions}
+                        label="Ask agent about this hunk"
+                      />
+                    )}
                     {selectable && hunkActions && (
                       <span className="flex items-center gap-1 opacity-0 group-hover/hunk:opacity-100 shrink-0">
                         {hunkActions.includes("stage") && (

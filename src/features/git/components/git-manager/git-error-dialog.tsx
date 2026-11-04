@@ -2,25 +2,10 @@ import { useRef, useState } from "react";
 import { Dialog } from "@base-ui/react/dialog";
 import { AlertTriangle } from "lucide-react";
 import { useGitStore } from "../../stores/git-store";
-import { gitErrorTitle, type GitErrorPayload } from "../../lib/git-errors";
+import { gitErrorContext, gitErrorTitle } from "../../lib/git-errors";
 import { copyText } from "@/lib/clipboard";
 import { CopyGlyph, Button } from "@tryatlas/design";
 import { FixWithAgentButton } from "@/features/ask-agent/components/ask-agent-button";
-import type { ErrorContext } from "@/features/ask-agent/lib/agent-context";
-
-/** The failure as the agent gets it: where ("git push"), what the dialog
- *  says, git's own output, the command and the repository. */
-function gitErrorContext(payload: GitErrorPayload, repoPath: string | null): ErrorContext {
-  const verb = payload.command.split(/\s+/).slice(0, 2).join(" ");
-  return {
-    kind: "error",
-    source: verb.startsWith("git") ? verb : "git",
-    message: [gitErrorTitle(payload), payload.message, ...(payload.files ?? [])].join("\n"),
-    ...(payload.rawStderr ? { log: payload.rawStderr } : {}),
-    ...(payload.command ? { command: payload.command } : {}),
-    ...(repoPath ? { cwd: repoPath } : {}),
-  };
-}
 
 /**
  * Friendly dialog for actionable git failures (auth, rejected pushes, hook

@@ -31,7 +31,10 @@
  * ```
  *
  * For an error, `<FixWithAgentButton error={{ kind: "error", source, message, log }} />`
- * opens the box pre-filled with "Fix this:". Without the box,
+ * opens the box pre-filled with "Fix this:"; for an error shown as a toast,
+ * `toast.error(msg, { action: fixWithAgentAction(error) })`. A surface with
+ * common asks passes `suggestions` ("Explain this change"), which the box
+ * offers as one-click fills. Without the box,
  * `await askAgent({ context, prompt, send: true })` sends from code and
  * `confirmAsk(result)` shows the pill. `openAskAgent({ context, anchor })`
  * opens the box against any element or rect.
@@ -63,7 +66,12 @@ import type { ChatSendDetail } from "@/features/chat/hooks/use-queue-drain";
 import type { ChatInsertDetail } from "@/features/chat/lib/response-selection";
 
 import { useAskAgentStore, type AskAnchor } from "../stores/ask-agent-store";
-import { agentContextMention, capContext, type AgentContext } from "./agent-context";
+import {
+  agentContextMention,
+  capContext,
+  type AgentContext,
+  type ErrorContext,
+} from "./agent-context";
 
 export type { AgentContext } from "./agent-context";
 
@@ -227,19 +235,39 @@ export function openAskedSession(tabId: string): void {
 }
 
 /** Open the ask box, pre-filled, against `anchor` (an element, a rect, or
- *  nothing for the top of the window). */
+ *  nothing for the top of the window). `suggestions` are quick prompts the
+ *  box offers above the field; picking one fills the prompt, never sends. */
 export function openAskAgent(request: {
   context?: readonly AgentContext[];
   prompt?: string;
+  suggestions?: readonly string[];
   anchor?: AskAnchor;
   target?: AskTarget;
 }): void {
   useAskAgentStore.getState().actions.open({
     context: (request.context ?? []).map(capContext),
     prompt: request.prompt,
+    suggestions: request.suggestions,
     anchor: request.anchor ?? null,
     target: request.target,
   });
+}
+
+/** "Fix with agent" as a toast's action, for an error that surfaces as a
+ *  toast rather than in a view (`FixWithAgentButton` there). The toast closes
+ *  on the click, so the box grows from where the button was. */
+export function fixWithAgentAction(error: ErrorContext): {
+  label: string;
+  onClick: (event: { currentTarget: EventTarget | null }) => void;
+} {
+  return {
+    label: "Fix with agent",
+    onClick: (event) => {
+      const el = event.currentTarget;
+      const anchor = el instanceof Element ? el.getBoundingClientRect() : null;
+      openAskAgent({ context: [error], prompt: "Fix this: ", anchor });
+    },
+  };
 }
 
 /** The confirmation: "Sent to ‹session› · Open". */

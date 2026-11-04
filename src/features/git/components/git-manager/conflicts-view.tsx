@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { FileCode2, Check } from "lucide-react";
+import { FileCode2, Check, Sparkles } from "lucide-react";
 import { SectionHeader } from "./section-header";
 import { useGitStore } from "../../stores/git-store";
 import { handleGitError } from "../../lib/git-errors";
-import { Button, IconButton, HintGroup, HintItem } from "@tryatlas/design";
+import { Button, Icon, IconButton, HintGroup, HintItem } from "@tryatlas/design";
+import { openAskAgent } from "@/features/ask-agent/lib/ask-agent";
+import { conflictsContext, resolveConflictsPrompt, type InProgressOp } from "../../lib/ask-git";
 
 export interface ConflictFile {
   path: string;
@@ -22,9 +24,17 @@ export interface ConflictState {
  * per-file "N conflicts" counts (from `git diff --check`, so an editor-side
  * fix shows up as 0 without re-marking), ours/theirs one-click resolution
  * (side-aware — a deleted side resolves via `git rm`), open-in-editor, and
- * mark-resolved. GitHub Desktop's conflict dialog, inlined.
+ * mark-resolved. GitHub Desktop's conflict dialog, inlined. "Resolve with
+ * agent" hands every conflicted file to a session, which resolves and stages
+ * them; continuing or aborting stays the user's click.
  */
-export function ConflictsView({ onOpenFile }: { onOpenFile: (path: string) => void }) {
+export function ConflictsView({
+  op,
+  onOpenFile,
+}: {
+  op: InProgressOp;
+  onOpenFile: (path: string) => void;
+}) {
   const repoPath = useGitStore.use.repoPath();
   const files = useGitStore.use.files();
   const actions = useGitStore.use.actions();
@@ -60,6 +70,20 @@ export function ConflictsView({ onOpenFile }: { onOpenFile: (path: string) => vo
     <div className="shrink-0 border-b border-border-subtle">
       <SectionHeader title={`Conflicts (${state.files.length})`}>
         <span className="caption pr-1">resolve each file, then Continue</span>
+        <Button
+          variant="ghost"
+          size="xs"
+          onClick={(e) =>
+            openAskAgent({
+              context: [conflictsContext(state.files, op)],
+              prompt: resolveConflictsPrompt(op, state.message),
+              anchor: e.currentTarget,
+            })
+          }
+        >
+          <Icon icon={Sparkles} size="xs" />
+          Resolve with agent
+        </Button>
       </SectionHeader>
       {state.files.map((f) => {
         const resolvedLabel =

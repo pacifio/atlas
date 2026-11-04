@@ -24,11 +24,14 @@ export const ASK_ROW = "group/ask";
 export function AskAgentButton({
   context,
   prompt,
+  suggestions,
   label = "Ask agent",
   className,
 }: {
   context: readonly AgentContext[];
   prompt?: string;
+  /** Quick prompts the box offers ("Explain this change"). */
+  suggestions?: readonly string[];
   label?: string;
   className?: string;
 }) {
@@ -47,7 +50,7 @@ export function AskAgentButton({
         title={label}
         size="xs"
         variant="ghost"
-        onClick={(e) => openAskAgent({ context, prompt, anchor: e.currentTarget })}
+        onClick={(e) => openAskAgent({ context, prompt, suggestions, anchor: e.currentTarget })}
       />
     </span>
   );

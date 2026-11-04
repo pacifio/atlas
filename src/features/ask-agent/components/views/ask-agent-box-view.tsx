@@ -30,6 +30,9 @@ export interface AskAgentBoxViewProps {
   prompt: string;
   onPromptChange: (prompt: string) => void;
   placeholder?: string;
+  /** Quick prompts; picking one fills the prompt. */
+  suggestions?: readonly string[];
+  onSuggestion?: (prompt: string) => void;
   targets: readonly AskTargetOption[];
   target: string;
   onTargetChange: (target: string) => void;
@@ -51,6 +54,8 @@ export function AskAgentBoxView({
   prompt,
   onPromptChange,
   placeholder = "Ask the agent…",
+  suggestions,
+  onSuggestion,
   targets,
   target,
   onTargetChange,
@@ -84,6 +89,21 @@ export function AskAgentBoxView({
             </li>
           ))}
         </ul>
+      )}
+      {suggestions && suggestions.length > 0 && (
+        <div role="group" aria-label="Suggested asks" className="flex flex-wrap gap-1">
+          {suggestions.map((s) => (
+            <Button
+              key={s}
+              size="xs"
+              variant="outline"
+              aria-pressed={prompt.trim() === s}
+              onClick={() => onSuggestion?.(s)}
+            >
+              {s}
+            </Button>
+          ))}
+        </div>
       )}
       <Textarea
         ref={inputRef}

@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 import { useAskAgentStore } from "../stores/ask-agent-store";
+import { fixWithAgentAction } from "../lib/ask-agent";
 import type { ErrorContext } from "../lib/agent-context";
 import { AskAgentButton, FixWithAgentButton } from "./ask-agent-button";
 import { AskAgentBoxView, type AskAgentBoxViewProps } from "./views/ask-agent-box-view";
@@ -62,6 +63,19 @@ describe("the ask box's keys", () => {
     expect(props.onSend).not.toHaveBeenCalled();
   });
 
+  it("offers quick prompts as fills, marking the one in the field", () => {
+    const onSuggestion = vi.fn();
+    renderBox({
+      prompt: "Explain this change",
+      suggestions: ["Explain this change", "Undo just this part"],
+      onSuggestion,
+    });
+    const explain = screen.getByRole("button", { name: "Explain this change" });
+    expect(explain.getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "Undo just this part" }));
+    expect(onSuggestion).toHaveBeenCalledWith("Undo just this part");
+  });
+
   it("takes a chip back out", () => {
     const { props } = renderBox();
     fireEvent.click(screen.getByRole("button", { name: "Remove git push error" }));
@@ -80,6 +94,20 @@ describe("the ways into the box", () => {
       context: [error],
       anchor: button,
     });
+  });
+
+  it("Ask carries the row's quick prompts", () => {
+    render(<AskAgentButton context={[error]} suggestions={["Explain this"]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Ask agent" }));
+    expect(useAskAgentStore.getState().request?.suggestions).toEqual(["Explain this"]);
+  });
+
+  it("a toast's Fix with agent opens the box from where its button was", () => {
+    const button = document.createElement("button");
+    fixWithAgentAction(error).onClick({ currentTarget: button });
+    const request = useAskAgentStore.getState().request;
+    expect(request).toMatchObject({ context: [error], prompt: "Fix this: " });
+    expect(request?.anchor).not.toBeInstanceOf(Element);
   });
 
   it("Fix with agent pre-fills the prompt, and closes a modal first", () => {

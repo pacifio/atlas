@@ -9,6 +9,7 @@ import {
   FileCode2,
   ChevronRight,
   CircleCheck,
+  MessageSquarePlus,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -27,6 +28,8 @@ import { DiffView } from "../diff-view";
 import { classifyFile } from "@/lib/file-types";
 import { FileTreeConfirmDelete } from "@/features/explorer/components/file-tree-confirm-delete";
 import { Button, EmptyState, IconButton, HintGroup, HintItem } from "@tryatlas/design";
+import { openAskAgent } from "@/features/ask-agent/lib/ask-agent";
+import { CHANGE_ASKS, fileDiffContext, hunkContext } from "../../lib/ask-git";
 
 /** An added/untracked file has no HEAD version, so "revert" = delete it (a plain
  *  `git restore` errors). Mirrors the loose detection in `statusBadge`. */
@@ -60,6 +63,7 @@ const FileRow = memo(function FileRow({
   onDiscard,
   onOpenDiff,
   onOpenInEditor,
+  onAsk,
 }: {
   file: GitFileStatus;
   selected: boolean;
@@ -69,6 +73,8 @@ const FileRow = memo(function FileRow({
   onDiscard?: (file: GitFileStatus) => void;
   onOpenDiff?: (file: GitFileStatus) => void;
   onOpenInEditor?: (path: string) => void;
+  /** "Ask agent" about this file's change, from `anchor`. */
+  onAsk?: (file: GitFileStatus, anchor: HTMLElement) => void;
 }) {
   const badge = statusBadge(file.status);
   const name = file.path.split("/").pop() ?? file.path;
@@ -96,6 +102,19 @@ const FileRow = memo(function FileRow({
       </span>
       <HintGroup>
         <div className="flex shrink-0 items-center opacity-0 group-hover:opacity-100 focus-within:opacity-100">
+          {onAsk && (
+            <HintItem label="Ask agent">
+              <IconButton
+                size="xs"
+                icon={MessageSquarePlus}
+                label="Ask agent"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onAsk(file, e.currentTarget);
+                }}
+              />
+            </HintItem>
+          )}
           {onOpenDiff && (
             <HintItem label="Open in review diff">
               <IconButton
@@ -393,6 +412,35 @@ export function ChangesView() {
     [repoPath],
   );
 
+  // A file is "staged" to the agent only when all of its change is: the
+  // diff here is the working tree's against HEAD, staged and not alike.
+  const whollyStaged = useCallback(
+    (path: string) => staged.some((f) => f.path === path) && !unstaged.some((f) => f.path === path),
+    [staged, unstaged],
+  );
+  // The file's whole diff as the chip, read when asked: the list holds no
+  // diffs, and a big change set would be thousands of reads.
+  const askAboutFile = useCallback(
+    (f: GitFileStatus, anchor: HTMLElement) => {
+      if (!repoPath) return;
+      void invoke<string>("git_diff_file", { path: repoPath, file: f.path })
+        .catch(() => "")
+        .then((diff) => {
+          const ctx = fileDiffContext(f.path, diff, whollyStaged(f.path));
+          openAskAgent({
+            context: ctx ? [ctx] : [{ kind: "quote", text: f.path, source: "Changed file" }],
+            suggestions: CHANGE_ASKS,
+            anchor: anchor.isConnected ? anchor : anchor.getBoundingClientRect(),
+          });
+        });
+    },
+    [repoPath, whollyStaged],
+  );
+  const askHunk = useCallback(
+    (file: string, hunk: DiffHunk) => hunkContext(file, hunk, whollyStaged(file)),
+    [whollyStaged],
+  );
+
   const opKind: "merge" | "rebase" | "cherry-pick" | "revert" | null = !inProgress
     ? null
     : inProgress.merge
@@ -433,7 +481,7 @@ export function ChangesView() {
       )}
 
       {/* Conflicted files (in-progress merge/rebase/cherry-pick only). */}
-      {opKind && <ConflictsView onOpenFile={openConflict} />}
+      {opKind && <ConflictsView op={opKind} onOpenFile={openConflict} />}
 
       {/* The file list takes the height; a selected file's diff shares it. */}
       <div
@@ -475,6 +523,7 @@ export function ChangesView() {
                     onAction={unstageOne}
                     onOpenDiff={repoPath ? openDiff : undefined}
                     onOpenInEditor={openFile}
+                    onAsk={repoPath ? askAboutFile : undefined}
                   />
                 ))}
               </div>
@@ -510,6 +559,7 @@ export function ChangesView() {
                     onDiscard={handleRevert}
                     onOpenDiff={repoPath ? openDiff : undefined}
                     onOpenInEditor={openFile}
+                    onAsk={repoPath ? askAboutFile : undefined}
                   />
                 ))}
               </div>
@@ -556,6 +606,8 @@ export function ChangesView() {
             className="flex-1"
             hunkActions={["stage", "discard"]}
             onHunkAction={onHunkAction}
+            askHunk={askHunk}
+            askSuggestions={CHANGE_ASKS}
           />
         </div>
       )}

@@ -130,6 +130,18 @@ describe("runShip", () => {
     });
   });
 
+  it("keeps the failed step's command and output, for Fix with agent", async () => {
+    const { d } = deps({ fail: "push" });
+    d.detail = (_error, step) => ({ command: `run ${step}`, output: "hook said no" });
+    const end = await runShip(initialShipState(request()), d, () => {});
+    expect(end.error).toEqual({
+      step: "push",
+      message: "push broke",
+      command: "run push",
+      output: "hook said no",
+    });
+  });
+
   it("a gh failure stops the run before anything is committed", async () => {
     const { d, calls } = deps({ fail: "check" });
     const end = await runShip(initialShipState(request()), d, () => {});

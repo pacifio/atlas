@@ -2,6 +2,8 @@ import { Dialog } from "@base-ui/react/dialog";
 import { GitBranch } from "lucide-react";
 import { useGitStore, type PullStrategy } from "../../stores/git-store";
 import { Button } from "@tryatlas/design";
+import { FixWithAgentButton } from "@/features/ask-agent/components/ask-agent-button";
+import { gitErrorContext } from "../../lib/git-errors";
 
 const OPTIONS: { strategy: Exclude<PullStrategy, "default">; label: string; detail: string }[] = [
   {
@@ -31,6 +33,7 @@ export function PullChoiceDialog({ onChoose }: { onChoose: (strategy: PullStrate
   const ahead = useGitStore.use.ahead();
   const behind = useGitStore.use.behind();
   const actions = useGitStore.use.actions();
+  const repoPath = useGitStore.use.repoPath();
 
   const choose = (strategy: PullStrategy) => {
     actions.dismissPullChoice();
@@ -80,7 +83,15 @@ export function PullChoiceDialog({ onChoose }: { onChoose: (strategy: PullStrate
                 </details>
               )}
 
-              <div className="border-t border-border-subtle px-3 py-2.5 flex justify-end">
+              <div className="border-t border-border-subtle px-3 py-2.5 flex justify-end gap-1.5">
+                {/* A pull that failed on the divergence: the agent can
+                    reconcile it, in its session, rather than either flag. */}
+                {choice.kind === "failed" && (
+                  <FixWithAgentButton
+                    error={gitErrorContext(choice.error, repoPath)}
+                    dismiss={actions.dismissPullChoice}
+                  />
+                )}
                 <Button variant="ghost" onClick={() => actions.dismissPullChoice()}>
                   Cancel
                 </Button>
