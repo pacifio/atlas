@@ -155,8 +155,9 @@ export function ThemesSection() {
 
       <Dialog open={importing} onOpenChange={setImporting}>
         <DialogContent
+          size="lg"
           showCloseButton={false}
-          className="h-[min(40rem,calc(100vh-4rem))] max-w-[min(44rem,calc(100vw-2rem))] gap-0 overflow-hidden p-0"
+          className="h-[min(40rem,calc(100vh-4rem))] gap-0 overflow-hidden p-0"
         >
           <ThemeImportPanel
             themes={themes}

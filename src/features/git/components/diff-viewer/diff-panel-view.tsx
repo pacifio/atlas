@@ -31,7 +31,6 @@ import { cn } from "@/lib/utils";
 import type { DiffFileStat } from "../../lib/git-review-api";
 import { buildFileDiffContentVersion, fnv1a32 } from "../../lib/diff-rendering";
 import { useDiffJump } from "../../lib/diff-jump";
-import { formatCompactCount } from "../../lib/format-compact-count";
 import type { ReviewFile } from "../../lib/use-review-files";
 import {
   isFolded,
@@ -59,6 +58,7 @@ import {
   DropdownMenuTrigger,
   ContextMenu,
   ContextMenuTrigger,
+  formatDiffCount,
 } from "@tryatlas/design";
 
 /**
@@ -178,10 +178,10 @@ export const DiffStat = memo(function DiffStat({
       className={cn("inline-flex items-center gap-1 font-mono text-2xs tabular-nums", className)}
     >
       <span aria-hidden className="text-[var(--diff-added-text)]">
-        +{formatCompactCount(additions)}
+        +{formatDiffCount(additions)}
       </span>
       <span aria-hidden className="text-[var(--diff-removed-text)]">
-        −{formatCompactCount(deletions)}
+        −{formatDiffCount(deletions)}
       </span>
     </span>
   );
@@ -204,10 +204,10 @@ export const HeaderStat = memo(function HeaderStat({
       className="inline-grid grid-cols-[4ch_4ch] gap-2 text-right font-mono text-xs tabular-nums"
     >
       <span aria-hidden className="text-[var(--diff-added-text)]">
-        +{formatCompactCount(additions)}
+        +{formatDiffCount(additions)}
       </span>
       <span aria-hidden className="text-[var(--diff-removed-text)]">
-        −{formatCompactCount(deletions)}
+        −{formatDiffCount(deletions)}
       </span>
     </span>
   );

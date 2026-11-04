@@ -8,6 +8,12 @@
 // Checkpoints carry two faces; one belongs to someone who has since left the
 // Organisation, so the chart has to draw a person the roster cannot name.
 //
+// Your own Sessions arrive twice, as `artifacts_trace` sends them: the
+// server's row, and the row read from this disk, which alone carries the
+// commit subjects. So your Checkpoints are titled on the chart and a
+// teammate's show their short sha. Two teammates have photos; everyone else
+// is an initial.
+//
 // Everything is generated from a fixed seed relative to "now", so the week is
 // always the week you open it in and the picture is the same every reload.
 
@@ -21,7 +27,14 @@ import type {
   TracePage,
   TraceSessionRow,
 } from "@/features/artifacts/types";
+import type { OrgMember } from "@/features/auth/lib/auth-api";
 import { streamDetail } from "../fixtures/artifacts";
+import { seedAsset } from "../fixtures/files";
+import { integrationsHandlers } from "../fixtures/integrations";
+import {
+  UZAYER_AVATAR_JPEG_BASE64,
+  ZUHAYER_AVATAR_JPEG_BASE64,
+} from "../fixtures/northwind-avatars";
 import { ALL_PROJECTS } from "../project";
 import type { Scenario } from "../types";
 
@@ -66,16 +79,24 @@ const TITLES = [
 ];
 
 const SUBJECTS = [
-  "fix: guard against an empty batch",
-  "refactor: pull the parser into its own module",
-  "test: cover the retry path",
-  "feat: add the backoff schedule",
-  "chore: bump the lockfile",
-  "fix: off-by-one in the page cursor",
-  "docs: explain the handshake states",
-  "feat: stream rows as they arrive",
-  "fix: keep the cursor across reloads",
-  "refactor: name the magic numbers",
+  "Store invoice totals as integer cents",
+  "Guard the batch writer against an empty batch",
+  "Retry webhook delivery with jittered backoff",
+  "Move the PDF renderer into its own worker",
+  "Cover the retry path in the billing tests",
+  "Drop the v1 config reader behind the flag",
+  "Wait for the Safari checkout button to settle",
+  "Stream export rows as they arrive",
+  "Rate-limit the public share endpoint",
+  "Fix an off-by-one in the page cursor",
+  "Explain the sync handshake states",
+  "Add a down migration for the sessions table",
+  "Keep the search cursor across reloads",
+  "Name the retry timeouts",
+  "Cache roster photos in the app data dir",
+  "Move the settings sheet onto the new Switch",
+  "Rebuild the search index on schema change",
+  "Bump the lockfile for the PDF fix",
 ];
 
 /** Deterministic, so a screenshot is the same every reload. */
@@ -239,6 +260,7 @@ function trace({ projects, filter, from, to, cursor }: Record<string, unknown>):
   const lo = Date.parse(String(from));
   const hi = Date.parse(String(to));
   const rows: TraceSessionRow[] = [];
+  const local: TraceSessionRow[] = [];
   for (const p of plan(now)) {
     const board = boardRow(p, now);
     if (!inScope(board, projects, filter)) continue;
@@ -277,6 +299,26 @@ function trace({ projects, filter, from, to, cursor }: Record<string, unknown>):
       checkpoints: checkpoints.slice(-TRACE_CHECKPOINTS_MAX),
       checkpointsTruncated: checkpoints.length > TRACE_CHECKPOINTS_MAX,
     });
+    // This machine's half, on the first page only: your own Sessions read from
+    // disk, every Checkpoint with the subject git reads here. A remote-only
+    // scope has no checkout to read.
+    const remoteScope = !!filter && "remote" in (filter as ProjectFilter);
+    if (p.owner === null && !cursor && !remoteScope) {
+      local.push({
+        ...rows[rows.length - 1],
+        number: null,
+        authorId: null,
+        participants: [],
+        projectPath: p.project.path,
+        checkpoints: checkpoints.map((cp) => ({
+          ...cp,
+          id: `local_${cp.commitSha}`,
+          authorId: null,
+          commitSubject: p.checkpoints.find((c) => c.sha === cp.commitSha)?.subject ?? null,
+        })),
+        checkpointsTruncated: false,
+      });
+    }
   }
   rows.sort((a, b) => Date.parse(b.lastActivityAt) - Date.parse(a.lastActivityAt));
   const offset = cursor ? Number(cursor) : 0;
@@ -284,7 +326,7 @@ function trace({ projects, filter, from, to, cursor }: Record<string, unknown>):
   return {
     from: String(from),
     to: String(to),
-    sessions: rows.slice(offset, next),
+    sessions: [...rows.slice(offset, next), ...local],
     workspaces: ALL_PROJECTS.map((project, i) => ({
       id: REMOTE_ID[project.path],
       slug: project.name,
@@ -365,10 +407,28 @@ function detail(sessionId: string): SessionDetail | null {
   };
 }
 
+/** Where Rust's avatar cache would hold the two teammates' photos. */
+const PHOTO: Record<string, string> = {
+  usr_sam: "/Users/dev/Library/Application Support/dev.atlas.ide/avatar-sam.jpg",
+  usr_tobi: "/Users/dev/Library/Application Support/dev.atlas.ide/avatar-tobi.jpg",
+};
+seedAsset(PHOTO.usr_sam, "image/jpeg", ZUHAYER_AVATAR_JPEG_BASE64);
+seedAsset(PHOTO.usr_tobi, "image/jpeg", UZAYER_AVATAR_JPEG_BASE64);
+
+/** The base roster, with photos for the two teammates above. */
+async function members(args: Record<string, unknown>): Promise<OrgMember[]> {
+  const roster = await integrationsHandlers.auth_list_members(args);
+  return roster.map((m) => {
+    const photo = m.userId ? PHOTO[m.userId] : undefined;
+    return photo ? { ...m, avatarPath: photo } : m;
+  });
+}
+
 export const timelineTrace: Scenario = {
   name: "timeline-trace",
   description: `Timeline Trace: a week of ${SESSION_COUNT} Sessions, 6 people, 3 projects, live ones and Checkpoint bursts.`,
   commands: {
+    auth_list_members: members,
     artifacts_board: board,
     artifacts_trace: trace,
     artifacts_session: ({ sessionId }) => detail(String(sessionId)),

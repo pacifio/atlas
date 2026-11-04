@@ -1,5 +1,5 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
-import { Badge } from "@tryatlas/design";
+import { Badge, SegmentMeter } from "@tryatlas/design";
 import { cn } from "@/lib/utils";
 import { Bar, useCountUp, useMounted } from "@/components/usage-primitives";
 import { fmtCost, fmtTokens } from "@/features/monitor/lib/usage-format";
@@ -9,7 +9,6 @@ import type {
   RateLimitWindow,
   SessionUsageView,
 } from "../../lib/session-usage";
-import { TickMeter } from "../usage-meter";
 
 /**
  * The Usage popup's content — the analytics-card reading of one session.
@@ -95,7 +94,12 @@ function Headline({ view }: { view: SessionUsageView }) {
           </span>
           <StatusBadge status={h.status} />
         </div>
-        <TickMeter value={h.pct} className="mt-2.5" />
+        <SegmentMeter
+          variant="gauge"
+          value={h.pct / 100}
+          label="Context window"
+          className="mt-2.5"
+        />
         <div className="mt-1 flex justify-between text-3xs font-medium tracking-wider text-muted-foreground uppercase">
           <span>0</span>
           <span>{fmtTokens(h.size)}</span>

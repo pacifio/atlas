@@ -1,6 +1,5 @@
 import { useRef, type FormEvent } from "react";
 import {
-  ChevronDown,
   CloudUpload,
   GitCommitHorizontal,
   GitPullRequestArrow,
@@ -9,12 +8,9 @@ import {
 } from "lucide-react";
 import {
   Button,
-  DropdownMenu,
-  DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuShortcut,
-  DropdownMenuTrigger,
   Input,
   Label,
   Popover,
@@ -22,7 +18,7 @@ import {
   PopoverDescription,
   PopoverHeader,
   PopoverTitle,
-  Spinner,
+  SplitButton,
 } from "@tryatlas/design";
 
 export type ShipChoice = "commit" | "commit_push" | "commit_push_pr";
@@ -87,7 +83,6 @@ export function ShipButtonView({
   prDisabledReason,
 }: ShipButtonViewProps) {
   const groupRef = useRef<HTMLDivElement>(null);
-  const PrimaryIcon = ICON[primary.choice];
   const submit = (e: FormEvent) => {
     e.preventDefault();
     if (prDisabledReason || busy) return;
@@ -96,52 +91,43 @@ export function ShipButtonView({
   };
 
   return (
-    <div
-      ref={groupRef}
-      role="group"
-      aria-label="Commit actions"
-      className="flex items-center gap-0.5"
-    >
-      <Button
-        size="sm"
+    <>
+      <SplitButton
+        ref={groupRef}
+        label="Commit actions"
+        icon={ICON[primary.choice]}
         onClick={() => onRun(primary.choice)}
-        disabled={busy || primary.disabledReason !== null}
-        title={primary.disabledReason ?? undefined}
+        disabledReason={primary.disabledReason}
+        busy={busy}
+        busyLabel={busyLabel}
+        menuLabel="More commit actions"
+        menu={
+          <>
+            {items.map((item) => {
+              const Icon = ICON[item.choice];
+              return (
+                <DropdownMenuItem
+                  key={item.choice}
+                  disabled={item.disabledReason !== null}
+                  title={item.disabledReason ?? undefined}
+                  onClick={() => onRun(item.choice)}
+                >
+                  <Icon />
+                  {item.label}
+                  {item.shortcut && <DropdownMenuShortcut>{item.shortcut}</DropdownMenuShortcut>}
+                </DropdownMenuItem>
+              );
+            })}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => onDraftOpenChange(true)}>
+              <Pencil />
+              Edit pull request…
+            </DropdownMenuItem>
+          </>
+        }
       >
-        {busy ? <Spinner size="sm" label="" /> : <PrimaryIcon size={12} />}
-        {busy ? busyLabel : primary.label}
-      </Button>
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          render={
-            <Button size="sm" variant="outline" aria-label="More commit actions" disabled={busy}>
-              <ChevronDown size={12} />
-            </Button>
-          }
-        />
-        <DropdownMenuContent anchor={groupRef} align="end" className="min-w-56">
-          {items.map((item) => {
-            const Icon = ICON[item.choice];
-            return (
-              <DropdownMenuItem
-                key={item.choice}
-                disabled={item.disabledReason !== null}
-                title={item.disabledReason ?? undefined}
-                onClick={() => onRun(item.choice)}
-              >
-                <Icon />
-                {item.label}
-                {item.shortcut && <DropdownMenuShortcut>{item.shortcut}</DropdownMenuShortcut>}
-              </DropdownMenuItem>
-            );
-          })}
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={() => onDraftOpenChange(true)}>
-            <Pencil />
-            Edit pull request…
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+        {primary.label}
+      </SplitButton>
 
       <Popover open={draftOpen} onOpenChange={onDraftOpenChange}>
         <PopoverContent anchor={groupRef} align="end" side="top" className="w-80">
@@ -209,6 +195,6 @@ export function ShipButtonView({
           </form>
         </PopoverContent>
       </Popover>
-    </div>
+    </>
   );
 }

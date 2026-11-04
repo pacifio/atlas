@@ -96,7 +96,7 @@ describe("CommsComposerView", () => {
     const props = mount({ intent: { kind: "reply", author: "Ada Lovelace", preview: "hi" } });
     expect(screen.getByText("Replying to")).toBeTruthy();
     expect(screen.getByText("Ada Lovelace · hi")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel reply" }));
     expect(props.onCancelIntent).toHaveBeenCalledOnce();
   });
 });

@@ -30,7 +30,6 @@ import {
   buildChangedFilesTree,
   changedFilesByRoot,
   folderPaths,
-  formatDiffCount,
   splitForMiddleTruncate,
   sumStats,
   visibleRows,
@@ -52,6 +51,7 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuTrigger,
+  formatDiffCount,
 } from "@tryatlas/design";
 
 /** Rows drawn before "Show all": a card is a summary, not the file list. */
