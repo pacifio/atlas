@@ -32,9 +32,15 @@ export function CommentAnchorProvider({ children }: { children: ReactNode }) {
 export function useCommentAnchorState<T>(key: string | null, initial: T): [T, (next: T) => void] {
   const store = useContext(CommentAnchorContext);
   const remembered = store !== null && key !== null;
-  const [value, setValue] = useState<T>(() =>
-    remembered && store.has(key) ? (store.get(key) as T) : initial,
-  );
+  const read = (): T => (remembered && store.has(key) ? (store.get(key) as T) : initial);
+  const [held, setHeld] = useState(() => ({ key, value: read() }));
+  // The same instance handed another anchor reads that anchor's value, rather
+  // than carrying the last one's draft over and saving it under the new key.
+  let value = held.value;
+  if (held.key !== key) {
+    value = read();
+    setHeld({ key, value });
+  }
   const set = useCallback(
     (next: T) => {
       if (remembered) {
@@ -43,7 +49,7 @@ export function useCommentAnchorState<T>(key: string | null, initial: T): [T, (n
         if (next === initial) store.delete(key);
         else store.set(key, next);
       }
-      setValue(next);
+      setHeld({ key, value: next });
     },
     [remembered, store, key, initial],
   );

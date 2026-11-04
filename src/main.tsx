@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { App } from "./App";
 import { AgentMetaProvider } from "./features/agents/components/agent-meta-provider";
+import { CommentAnchorProvider } from "./features/artifacts/lib/comment-anchor-context";
 import { CrashPreviewTrigger } from "./features/telemetry/crash-screen";
 import { TelemetryErrorBoundary } from "./features/telemetry/error-boundary";
 import { installGlobalErrorHandlers } from "./features/telemetry/error-handlers";
@@ -33,8 +34,12 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <TelemetryErrorBoundary>
       <QueryClientProvider client={queryClient}>
         <AgentMetaProvider>
-          <CrashPreviewTrigger />
-          <App />
+          {/* Comment threads' open state and drafts, kept above every row that
+              can unmount under the reader (session detail and session rows). */}
+          <CommentAnchorProvider>
+            <CrashPreviewTrigger />
+            <App />
+          </CommentAnchorProvider>
         </AgentMetaProvider>
       </QueryClientProvider>
     </TelemetryErrorBoundary>

@@ -23,7 +23,6 @@ import { TimelineBoard } from "./timeline-board";
 import { TraceView } from "./trace-view";
 import { DetailSkeleton } from "./timeline-skeleton";
 import { NotEnabled, NotFound } from "./views/timeline-empty-states";
-import { CommentAnchorProvider } from "../lib/comment-anchor-context";
 
 /** The chat half of the split. Wide enough for a code block in an answer. */
 const CHAT_WIDTH = 420;
@@ -281,168 +280,165 @@ export function ArtifactsPanel() {
   );
 
   return (
-    // Comment threads' open state and drafts outlive the rows they hang off.
-    <CommentAnchorProvider>
-      <div className="flex h-full min-h-0 flex-col bg-[var(--background)]">
-        {error && <p className="shrink-0 bg-error-muted px-4 py-1.5 text-xs text-error">{error}</p>}
+    <div className="flex h-full min-h-0 flex-col bg-[var(--background)]">
+      {error && <p className="shrink-0 bg-error-muted px-4 py-1.5 text-xs text-error">{error}</p>}
 
-        {/* Flat, edge to edge. This was a rounded card inset 4px on a lighter
+      {/* Flat, edge to edge. This was a rounded card inset 4px on a lighter
           frame — a panel inside the column's own. The column border is the
           edge; the board and the reader are separated by the dock's own rule.
           A rule along the top, under the window's bar, so the view starts
           where the bar ends — the team chat's (`comms-panel.tsx`). */}
-        <div className="relative flex min-h-0 flex-1 flex-col">
-          <div className="relative flex min-h-0 flex-1 overflow-hidden border-t border-border bg-background">
-            {/* `flex`, not just `flex-1`: the board is a column that sizes
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <div className="relative flex min-h-0 flex-1 overflow-hidden border-t border-border bg-background">
+          {/* `flex`, not just `flex-1`: the board is a column that sizes
               itself with `flex-1 min-h-0` so its list scrolls inside a bounded
               height. In a non-flex parent that chain never resolves, the
               column grows to its content, and the list cannot scroll. */}
-            <main ref={mainRef} className="flex min-w-0 flex-1 bg-[var(--background)]">
-              {/* The board, always. It is the index you read *from*, and
+          <main ref={mainRef} className="flex min-w-0 flex-1 bg-[var(--background)]">
+            {/* The board, always. It is the index you read *from*, and
                 replacing it to show one Session lost your place on every open.
                 Hidden only when the reader is widened on purpose. */}
-              {sessions.length === 0 && loaded && !cloudPending ? (
-                !boardHidden && <NotEnabled />
-              ) : (
-                <div
-                  inert={boardHidden}
-                  aria-hidden={boardHidden || undefined}
-                  className={cn(
-                    "flex min-h-0 min-w-0 flex-1",
-                    boardHidden && "invisible absolute inset-y-0 left-0",
-                  )}
-                  style={boardHidden ? { width: mainWidth - narrowDockWidth } : undefined}
-                >
-                  {view === "trace" ? (
-                    <TraceView
-                      boardSessions={sessions}
-                      directory={directory}
-                      projectPaths={projectPaths}
-                      projectsKey={projectsKey}
-                      projectFilter={projectFilter}
-                      agent={selection.agent}
-                      people={people}
-                      onOpen={openSession}
-                      filters={boardHidden ? null : filterMenu}
-                    />
-                  ) : (
-                    <TimelineBoard
-                      sessions={visible}
-                      directory={directory}
-                      openKey={open ? openKeyOf(open) : null}
-                      loading={!loaded || cloudPending}
-                      narrowed={narrowed}
-                      query={query}
-                      onQuery={setQuery}
-                      onOpen={onOpenRow}
-                      // The filters are portalled into the titlebar, so a hidden
-                      // board must not leave them there.
-                      filters={boardHidden ? null : filterMenu}
-                      note={
-                        capped && (
-                          // Say what is being left out. A board that silently
-                          // stops at the newest few hundred reads as "this is
-                          // everything".
-                          <p className="text-center text-2xs text-muted-foreground">
-                            Showing the newest {BOARD_LIMIT} sessions — filter by project for a full
-                            history.
-                          </p>
-                        )
-                      }
-                    />
-                  )}
-                </div>
-              )}
+            {sessions.length === 0 && loaded && !cloudPending ? (
+              !boardHidden && <NotEnabled />
+            ) : (
+              <div
+                inert={boardHidden}
+                aria-hidden={boardHidden || undefined}
+                className={cn(
+                  "flex min-h-0 min-w-0 flex-1",
+                  boardHidden && "invisible absolute inset-y-0 left-0",
+                )}
+                style={boardHidden ? { width: mainWidth - narrowDockWidth } : undefined}
+              >
+                {view === "trace" ? (
+                  <TraceView
+                    boardSessions={sessions}
+                    directory={directory}
+                    projectPaths={projectPaths}
+                    projectsKey={projectsKey}
+                    projectFilter={projectFilter}
+                    agent={selection.agent}
+                    people={people}
+                    onOpen={openSession}
+                    filters={boardHidden ? null : filterMenu}
+                  />
+                ) : (
+                  <TimelineBoard
+                    sessions={visible}
+                    directory={directory}
+                    openKey={open ? openKeyOf(open) : null}
+                    loading={!loaded || cloudPending}
+                    narrowed={narrowed}
+                    query={query}
+                    onQuery={setQuery}
+                    onOpen={onOpenRow}
+                    // The filters are portalled into the titlebar, so a hidden
+                    // board must not leave them there.
+                    filters={boardHidden ? null : filterMenu}
+                    note={
+                      capped && (
+                        // Say what is being left out. A board that silently
+                        // stops at the newest few hundred reads as "this is
+                        // everything".
+                        <p className="text-center text-2xs text-muted-foreground">
+                          Showing the newest {BOARD_LIMIT} sessions — filter by project for a full
+                          history.
+                        </p>
+                      )
+                    }
+                  />
+                )}
+              </div>
+            )}
 
-              {open && (
-                // The dock. A share of the tab rather than a dragged width:
-                // two sizes are the whole vocabulary the web's reader has, and
-                // a drag handle here would be a third way to do the same
-                // thing.
-                //
-                // It appears at its width rather than animating to it. A
-                // reader you are opening to READ should be there when you
-                // look at it; a spring on 620px of panel put a third of a
-                // second between the click and the first readable line.
-                <aside
-                  style={{ width: dockWidth }}
-                  className="flex min-h-0 shrink-0 flex-col overflow-hidden border-l border-[var(--border)] bg-[var(--background)]"
-                >
-                  {/* Fixed inner width, so the reader does not re-wrap on
+            {open && (
+              // The dock. A share of the tab rather than a dragged width:
+              // two sizes are the whole vocabulary the web's reader has, and
+              // a drag handle here would be a third way to do the same
+              // thing.
+              //
+              // It appears at its width rather than animating to it. A
+              // reader you are opening to READ should be there when you
+              // look at it; a spring on 620px of panel put a third of a
+              // second between the click and the first readable line.
+              <aside
+                style={{ width: dockWidth }}
+                className="flex min-h-0 shrink-0 flex-col overflow-hidden border-l border-[var(--border)] bg-[var(--background)]"
+              >
+                {/* Fixed inner width, so the reader does not re-wrap on
                       every frame of the open — a panel that reflows while it
                       animates reads as a glitch rather than a transition. */}
-                  <div style={{ width: dockWidth }} className="flex h-full min-h-0 flex-col">
-                    <SessionReaderHeader
-                      detail={detail}
-                      sessionId={open.sessionId}
-                      remoteProjectId={open.remoteProjectId ?? null}
-                      wide={dockWide}
-                      onToggleWide={toggleTimelineSidebar}
-                      onClose={() => openSession(null)}
-                    />
-                    {/* `@container`: the reader's measure and its stat grid size
+                <div style={{ width: dockWidth }} className="flex h-full min-h-0 flex-col">
+                  <SessionReaderHeader
+                    detail={detail}
+                    sessionId={open.sessionId}
+                    remoteProjectId={open.remoteProjectId ?? null}
+                    wide={dockWide}
+                    onToggleWide={toggleTimelineSidebar}
+                    onClose={() => openSession(null)}
+                  />
+                  {/* `@container`: the reader's measure and its stat grid size
                     themselves against the dock, not the window, so the same
                     component reads correctly at 600px and at full width. */}
-                    <div className="@container flex min-h-0 flex-1">
-                      {detail === undefined ? (
-                        <DetailSkeleton />
-                      ) : detail === null ? (
-                        <NotFound reason={detailError} onBack={() => openSession(null)} />
-                      ) : (
-                        <div className="flex h-full min-h-0 flex-1">
-                          <div className="min-w-0 flex-1">
-                            <SessionDetail
-                              detail={detail}
-                              projectPath={open.projectPath}
-                              comments={comments}
-                              entriesPending={entriesPending}
-                              entriesStreaming={entriesStreaming}
-                              // Only when there is no local copy. A synced Session
-                              // of your own is on both sides, and the local blob
-                              // read is faster and works offline.
-                              remote={
-                                !open.projectPath && open.remoteProjectId
-                                  ? { projectId: open.remoteProjectId, sessionId: open.sessionId }
-                                  : null
-                              }
-                              remoteProjectId={open.remoteProjectId ?? null}
-                              focusCommitSha={open.commitSha}
-                              focusAnchor={open.anchor}
-                              // Grounded chat about this Session. Its button is
-                              // in the reader's footer with the other actions on
-                              // the record; the panel it opens is this pane's.
-                              chatOpen={chatOpen}
-                              onToggleChat={() => setChatOpen((v) => !v)}
-                            />
-                          </div>
-                          {chatOpen && (
-                            // At its full width from the first frame, so the
-                            // record beside it reflows once; only the content
-                            // slides in (`.atlas-split-in`, transform + opacity).
-                            <aside
-                              className="shrink-0 overflow-hidden border-l border-[var(--border)]"
-                              style={{ width: CHAT_WIDTH }}
-                            >
-                              <div style={{ width: CHAT_WIDTH }} className="atlas-split-in h-full">
-                                <SessionChatPanel
-                                  detail={detail}
-                                  projectPath={open.projectPath}
-                                  remoteProjectId={open.remoteProjectId ?? null}
-                                  onClose={() => setChatOpen(false)}
-                                />
-                              </div>
-                            </aside>
-                          )}
+                  <div className="@container flex min-h-0 flex-1">
+                    {detail === undefined ? (
+                      <DetailSkeleton />
+                    ) : detail === null ? (
+                      <NotFound reason={detailError} onBack={() => openSession(null)} />
+                    ) : (
+                      <div className="flex h-full min-h-0 flex-1">
+                        <div className="min-w-0 flex-1">
+                          <SessionDetail
+                            detail={detail}
+                            projectPath={open.projectPath}
+                            comments={comments}
+                            entriesPending={entriesPending}
+                            entriesStreaming={entriesStreaming}
+                            // Only when there is no local copy. A synced Session
+                            // of your own is on both sides, and the local blob
+                            // read is faster and works offline.
+                            remote={
+                              !open.projectPath && open.remoteProjectId
+                                ? { projectId: open.remoteProjectId, sessionId: open.sessionId }
+                                : null
+                            }
+                            remoteProjectId={open.remoteProjectId ?? null}
+                            focusCommitSha={open.commitSha}
+                            focusAnchor={open.anchor}
+                            // Grounded chat about this Session. Its button is
+                            // in the reader's footer with the other actions on
+                            // the record; the panel it opens is this pane's.
+                            chatOpen={chatOpen}
+                            onToggleChat={() => setChatOpen((v) => !v)}
+                          />
                         </div>
-                      )}
-                    </div>
+                        {chatOpen && (
+                          // At its full width from the first frame, so the
+                          // record beside it reflows once; only the content
+                          // slides in (`.atlas-split-in`, transform + opacity).
+                          <aside
+                            className="shrink-0 overflow-hidden border-l border-[var(--border)]"
+                            style={{ width: CHAT_WIDTH }}
+                          >
+                            <div style={{ width: CHAT_WIDTH }} className="atlas-split-in h-full">
+                              <SessionChatPanel
+                                detail={detail}
+                                projectPath={open.projectPath}
+                                remoteProjectId={open.remoteProjectId ?? null}
+                                onClose={() => setChatOpen(false)}
+                              />
+                            </div>
+                          </aside>
+                        )}
+                      </div>
+                    )}
                   </div>
-                </aside>
-              )}
-            </main>
-          </div>
+                </div>
+              </aside>
+            )}
+          </main>
         </div>
       </div>
-    </CommentAnchorProvider>
+    </div>
   );
 }

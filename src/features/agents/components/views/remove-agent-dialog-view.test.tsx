@@ -51,7 +51,8 @@ describe("RemoveAgentDialogView", () => {
     const { onKeep, onRemove } = renderDialog();
     expect(document.querySelector('[data-slot="alert-dialog-backdrop-close"]')).toBeNull();
     const backdrop = document.querySelector('[data-slot="alert-dialog-overlay"]');
-    if (backdrop) fireEvent.click(backdrop);
+    expect(backdrop).not.toBeNull();
+    fireEvent.click(backdrop!);
     expect(onKeep).not.toHaveBeenCalled();
     expect(onRemove).not.toHaveBeenCalled();
     expect(screen.getByTestId("remove-agent-dialog")).toBeTruthy();

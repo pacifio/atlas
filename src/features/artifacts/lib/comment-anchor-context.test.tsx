@@ -29,6 +29,20 @@ describe("useCommentAnchorState", () => {
     expect((screen.getByLabelText("draft") as HTMLTextAreaElement).value).toBe("half a thought");
   });
 
+  it("an instance handed another anchor reads that anchor, not the last one's draft", () => {
+    const at = (anchor: string) => (
+      <CommentAnchorProvider>
+        <Draft anchor={anchor} />
+      </CommentAnchorProvider>
+    );
+    const view = render(at("message:m1"));
+    fireEvent.change(screen.getByLabelText("draft"), { target: { value: "for m1" } });
+    view.rerender(at("message:m2"));
+    expect((screen.getByLabelText("draft") as HTMLTextAreaElement).value).toBe("");
+    view.rerender(at("message:m1"));
+    expect((screen.getByLabelText("draft") as HTMLTextAreaElement).value).toBe("for m1");
+  });
+
   it("is plain local state without a provider", () => {
     const view = render(<Rows shown wrap={false} />);
     fireEvent.change(screen.getByLabelText("draft"), { target: { value: "half a thought" } });

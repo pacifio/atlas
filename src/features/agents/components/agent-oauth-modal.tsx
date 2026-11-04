@@ -342,8 +342,10 @@ function AgentOAuthModal({
   };
 
   const dismiss = () => {
-    // A dismissal cancels the flow: whatever is still running finds its
-    // attempt stale, and the success frame's close timer cannot fire.
+    // A dismissal abandons the flow in the UI: whatever is still running finds
+    // its attempt stale, and the success frame's close timer cannot fire. A
+    // headless run is not stopped (there is no command to stop one); if it
+    // lands later it only closes the sign-in notification.
     attemptRef.current += 1;
     if (closeTimerRef.current !== null) {
       window.clearTimeout(closeTimerRef.current);

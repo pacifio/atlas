@@ -141,6 +141,15 @@ function PermissionModalImpl({ tabId, onSendMessage }: PermissionModalProps) {
         e.stopPropagation();
       };
       if (e.key === "Enter") {
+        // The plan review opens with Cancel focused: Enter on a focused
+        // button in it is that button's, never a silent approve.
+        const focused = document.activeElement;
+        if (
+          extractPlanMarkdown(current.toolCall) &&
+          focused instanceof HTMLButtonElement &&
+          focused.closest('[role="dialog"], [role="alertdialog"]')
+        )
+          return;
         if (primaryId) {
           consume();
           send({ kind: "selected", option_id: primaryId });
