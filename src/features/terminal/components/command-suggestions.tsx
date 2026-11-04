@@ -89,7 +89,7 @@ export function CommandSuggestions({
       className={cn(
         "atlas-cmd-suggest",
         "rounded-md overflow-hidden flex flex-col",
-        "bg-[var(--popover)] border border-[var(--border)]",
+        "bg-popover border border-border",
         "shadow-md z-popover",
       )}
       onMouseDown={(e) => e.preventDefault()}
@@ -111,15 +111,15 @@ export function CommandSuggestions({
               className={cn(
                 "w-full text-left px-2.5 h-control-sm flex items-center gap-2 text-sm font-mono",
                 isActive
-                  ? "bg-element-selected text-[var(--foreground)]"
-                  : "text-[var(--secondary-foreground)] hover:bg-element-hover",
+                  ? "bg-element-selected text-foreground"
+                  : "text-secondary-foreground hover:bg-element-hover",
               )}
             >
               <Icon
                 size={11}
                 className={cn(
                   "shrink-0",
-                  s.kind === "dir" ? "text-[var(--primary)]" : "text-[var(--muted-foreground)]",
+                  s.kind === "dir" ? "text-primary" : "text-muted-foreground",
                 )}
               />
               <span className="truncate">
@@ -130,7 +130,7 @@ export function CommandSuggestions({
           );
         })}
       </div>
-      <div className="border-t border-[var(--border)] px-2.5 h-control-sm flex items-center justify-end gap-2 text-3xs uppercase tracking-wider text-[var(--muted-foreground)] shrink-0">
+      <div className="border-t border-border px-2.5 h-control-sm flex items-center justify-end gap-2 text-3xs uppercase tracking-wider text-muted-foreground shrink-0">
         <span>⇥ ↑↓ cycle · ↵ run · ⎋</span>
       </div>
     </div>,

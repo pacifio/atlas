@@ -8,7 +8,6 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import {
   Loader2,
   CheckCircle2,
@@ -31,6 +30,7 @@ import { useAppStore } from "@/features/app/stores/app-store";
 import { linkifySegments, normalizeUrl } from "../lib/linkify-paths";
 import type { ResolvedLine } from "../lib/line-emulator";
 import { perfBegin } from "../lib/term-perf";
+import { resolvePath } from "../lib/terminal-api";
 import { formatDuration } from "../lib/format-duration";
 import type { TerminalBlock } from "../lib/block-parser";
 import { terminalSessions } from "../lib/terminal-session";
@@ -38,8 +38,6 @@ import { CommandInput, type CommandInputHandle } from "./command-input";
 import { TerminalStopControl } from "./terminal-stop-control";
 import { useTerminalStore } from "../stores/terminal-store";
 import { HintGroup, HintItem } from "@tryatlas/design";
-
-export type { RawGitStatus } from "../lib/term-git";
 
 /** Non-overlapping occurrences of `q` in `lower` (both already lower-cased). */
 function countMatches(lower: string, q: string): number {
@@ -316,7 +314,7 @@ export const BlockTerminal = memo(function BlockTerminal({
       data-block-terminal
       // `@container` so the input-row badges respond to the PANE's width, not
       // the window's — split panes make viewport media queries meaningless.
-      className="@container relative flex h-full w-full flex-col bg-[var(--background)]"
+      className="@container relative flex h-full w-full flex-col bg-background"
       onClick={onFocus}
     >
       {/* Interactive surface — overlays the block list while an alt-screen app runs. */}
@@ -333,8 +331,8 @@ export const BlockTerminal = memo(function BlockTerminal({
 
       {/* Search bar over the block history */}
       {search.open && !altScreen && (
-        <div className="absolute right-2 top-2 z-20 flex items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--popover)] px-2 py-1 shadow-md">
-          <Search size={12} className="shrink-0 text-[var(--muted-foreground)]" />
+        <div className="absolute right-2 top-2 z-20 flex items-center gap-1 rounded-md border border-border bg-popover px-2 py-1 shadow-md">
+          <Search size={12} className="shrink-0 text-muted-foreground" />
           <input
             ref={searchInputRef}
             value={search.query}
@@ -344,9 +342,9 @@ export const BlockTerminal = memo(function BlockTerminal({
               else if (e.key === "Enter") navMatch(e.shiftKey ? -1 : 1);
             }}
             placeholder="Search output…"
-            className="w-44 bg-transparent text-sm text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]"
+            className="w-44 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
           />
-          <span className="w-10 shrink-0 text-right text-2xs tabular-nums text-[var(--muted-foreground)]">
+          <span className="w-10 shrink-0 text-right text-2xs tabular-nums text-muted-foreground">
             {matchCount}
           </span>
           <HintGroup>
@@ -354,7 +352,7 @@ export const BlockTerminal = memo(function BlockTerminal({
               <button
                 type="button"
                 onClick={() => navMatch(-1)}
-                className="rounded p-0.5 text-[var(--muted-foreground)] hover:bg-element-hover hover:text-[var(--foreground)]"
+                className="rounded p-0.5 text-muted-foreground hover:bg-element-hover hover:text-foreground"
               >
                 <ChevronUp size={13} />
               </button>
@@ -363,7 +361,7 @@ export const BlockTerminal = memo(function BlockTerminal({
               <button
                 type="button"
                 onClick={() => navMatch(1)}
-                className="rounded p-0.5 text-[var(--muted-foreground)] hover:bg-element-hover hover:text-[var(--foreground)]"
+                className="rounded p-0.5 text-muted-foreground hover:bg-element-hover hover:text-foreground"
               >
                 <ChevronDown size={13} />
               </button>
@@ -372,7 +370,7 @@ export const BlockTerminal = memo(function BlockTerminal({
               <button
                 type="button"
                 onClick={closeSearch}
-                className="rounded p-0.5 text-[var(--muted-foreground)] hover:bg-element-hover hover:text-[var(--foreground)]"
+                className="rounded p-0.5 text-muted-foreground hover:bg-element-hover hover:text-foreground"
               >
                 <X size={13} />
               </button>
@@ -406,18 +404,18 @@ export const BlockTerminal = memo(function BlockTerminal({
       {/* Atlas-owned footer stays visible below both block and alternate-screen
           modes. Keeping process controls outside the PTY viewport prevents them
           from obscuring application content. */}
-      <div className="relative z-20 flex min-h-[29px] items-center gap-2 border-t border-[var(--border)] bg-[var(--background)] px-3 py-[5px]">
+      <div className="relative z-20 flex min-h-[29px] items-center gap-2 border-t border-border bg-background px-3 py-[5px]">
         {busy || altScreen ? (
-          <Loader2 size={13} className="shrink-0 animate-spin text-[var(--primary)]" />
+          <Loader2 size={13} className="shrink-0 animate-spin text-primary" />
         ) : (
-          <ChevronRight size={13} className="shrink-0 text-[var(--primary)]" />
+          <ChevronRight size={13} className="shrink-0 text-primary" />
         )}
         {exited ? (
-          <span className="min-w-0 flex-1 truncate text-xs text-[var(--muted-foreground)]">
+          <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
             Shell exited — close this terminal or open a new one
           </span>
         ) : altScreen ? (
-          <span className="min-w-0 flex-1 truncate text-xs text-[var(--muted-foreground)]">
+          <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
             Interactive process
           </span>
         ) : (
@@ -452,8 +450,8 @@ function BlockPasswordInput({ onSubmit }: { onSubmit: (pw: string) => void }) {
     inputRef.current?.focus();
   }, []);
   return (
-    <div className="flex items-center gap-2 border-t border-border-subtle bg-[var(--background)] px-3 py-2">
-      <Lock size={12} className="shrink-0 text-[var(--primary)]" />
+    <div className="flex items-center gap-2 border-t border-border-subtle bg-background px-3 py-2">
+      <Lock size={12} className="shrink-0 text-primary" />
       <input
         ref={inputRef}
         type="password"
@@ -470,7 +468,7 @@ function BlockPasswordInput({ onSubmit }: { onSubmit: (pw: string) => void }) {
         autoComplete="off"
         spellCheck={false}
         placeholder="Enter password, then press Enter…"
-        className="flex-1 bg-transparent font-terminal text-sm text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]"
+        className="flex-1 bg-transparent font-terminal text-sm text-foreground outline-none placeholder:text-muted-foreground"
       />
     </div>
   );
@@ -560,7 +558,7 @@ const BlockCard = memo(function BlockCard({
 
   return (
     <div
-      className="group mb-2 overflow-hidden rounded-md border border-[var(--border)] bg-[var(--card)]"
+      className="group mb-2 overflow-hidden rounded-md border border-border bg-card"
       // A finished block skips layout and paint while off screen — without a
       // virtualizer and without promoting a layer (Safari 18+; older WebKit
       // ignores it). Never on the live card: its height changes every flush
@@ -574,7 +572,7 @@ const BlockCard = memo(function BlockCard({
       {hasHeader && (
         <div className="flex items-center gap-2 border-b border-border-subtle px-2.5 h-control-md text-sm">
           {block.running ? (
-            <Loader2 size={12} className="shrink-0 animate-spin text-[var(--primary)]" />
+            <Loader2 size={12} className="shrink-0 animate-spin text-primary" />
           ) : block.exitCode && block.exitCode !== 0 ? (
             <XCircle size={12} className="shrink-0 text-error" />
           ) : (
@@ -583,7 +581,7 @@ const BlockCard = memo(function BlockCard({
           <button
             type="button"
             onClick={() => setCollapsed((c) => !c)}
-            className="truncate text-left font-mono text-[var(--foreground)] hover:opacity-80"
+            className="truncate text-left font-mono text-foreground hover:opacity-80"
             title={collapsed ? "Expand" : "Collapse"}
           >
             {renderHL(block.command, query)}
@@ -598,7 +596,7 @@ const BlockCard = memo(function BlockCard({
             </span>
           )}
 
-          <div className="ml-auto flex items-center gap-2 text-2xs text-[var(--muted-foreground)]">
+          <div className="ml-auto flex items-center gap-2 text-2xs text-muted-foreground">
             {/* Hover actions */}
             <HintGroup>
               <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
@@ -646,13 +644,13 @@ const BlockCard = memo(function BlockCard({
             e.stopPropagation();
             setExpanded(true);
           }}
-          className="w-full px-3 py-1.5 text-left text-2xs italic text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+          className="w-full px-3 py-1.5 text-left text-2xs italic text-muted-foreground hover:text-foreground"
         >
           {lines.length} lines hidden to keep the terminal fast — show
         </button>
       )}
       {!collapsed && !budgeted && (hidden > 0 || block.truncated) && (
-        <div className="px-3 pt-2 text-2xs italic text-[var(--muted-foreground)]">
+        <div className="px-3 pt-2 text-2xs italic text-muted-foreground">
           earlier output hidden — showing the latest {visible.length} lines (Copy gets more)
         </div>
       )}
@@ -680,7 +678,7 @@ function BlockAction({
       <button
         type="button"
         onClick={onClick}
-        className="flex h-5 w-5 items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-element-hover hover:text-[var(--foreground)]"
+        className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-element-hover hover:text-foreground"
       >
         <Icon size={11} className={cn("transition-transform", rotated && "-rotate-90")} />
       </button>
@@ -705,7 +703,7 @@ const LineList = memo(function LineList({
     (raw: string) => {
       // Resolve to an absolute path, then open in Atlas if it's a kind we can
       // render, else reveal it in Finder.
-      void invoke<string | null>("resolve_path", { base: cwd, raw })
+      void resolvePath(cwd, raw)
         .then((abs) => {
           if (abs) void openFileOrReveal(abs);
         })
@@ -727,7 +725,7 @@ const LineList = memo(function LineList({
     // used to be a `<pre>` and got selection for free; the line emulator
     // rework made it a `<div>` and selection silently died with the tag.
     // `atlas-terminal-output`: `terminalFontSize` less a pixel (globals.css).
-    <div className="atlas-terminal-output select-text whitespace-pre-wrap break-words px-3 py-2 font-terminal leading-[1.4] text-[var(--secondary-foreground)]">
+    <div className="atlas-terminal-output select-text whitespace-pre-wrap break-words px-3 py-2 font-terminal leading-[1.4] text-secondary-foreground">
       {lines.map((line) => (
         <OutputLine
           key={line.id}
@@ -768,7 +766,7 @@ const OutputLine = memo(function OutputLine({
             key={i}
             style={r.style}
             title="⌘-click to open in browser"
-            className="cursor-pointer hover:text-[var(--primary)] hover:underline"
+            className="cursor-pointer hover:text-primary hover:underline"
             onClick={(e) => {
               if (e.metaKey || e.ctrlKey) onOpenLink(r.target ?? r.text);
             }}
@@ -780,7 +778,7 @@ const OutputLine = memo(function OutputLine({
             key={i}
             style={r.style}
             title="⌘-click to open"
-            className="cursor-pointer hover:text-[var(--primary)] hover:underline"
+            className="cursor-pointer hover:text-primary hover:underline"
             onClick={(e) => {
               if (e.metaKey || e.ctrlKey) onOpenPath(r.target ?? r.text);
             }}

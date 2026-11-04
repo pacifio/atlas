@@ -8,9 +8,9 @@ import {
   useState,
   type KeyboardEvent,
 } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { CommandSuggestions, type Suggestion } from "./command-suggestions";
 import { parseToken, applyCompletion, type TokenInfo } from "../lib/command-completion";
+import { listCommands, pathComplete } from "../lib/terminal-api";
 
 export interface CommandInputHandle {
   focus: () => void;
@@ -116,11 +116,6 @@ function rawKeyBytes(
   return e.altKey ? [0x1b, ...bytes] : bytes;
 }
 
-export interface RawPathCompletion {
-  name: string;
-  is_dir: boolean;
-}
-
 /** An active Tab-completion cycle: the original token + the match set being
  *  cycled through. `replacedEnd` tracks where the currently-inserted match ends
  *  so the next Tab replaces it (not the original token). */
@@ -210,7 +205,7 @@ export const CommandInput = forwardRef<CommandInputHandle, CommandInputProps>(fu
   const ensureCmdList = useCallback(async () => {
     if (cmdListRef.current) return;
     try {
-      cmdListRef.current = await invoke<string[]>("terminal_list_commands");
+      cmdListRef.current = await listCommands();
     } catch {
       cmdListRef.current = [];
     }
@@ -247,10 +242,7 @@ export const CommandInput = forwardRef<CommandInputHandle, CommandInputProps>(fu
       }
       if (info.token.length < 1) return [];
       try {
-        const res = await invoke<RawPathCompletion[]>("terminal_path_complete", {
-          cwd: cwdRef.current ?? "~",
-          token: info.token,
-        });
+        const res = await pathComplete(cwdRef.current ?? "~", info.token);
         return res.map((e) => ({
           name: e.name,
           kind: e.is_dir ? "dir" : "file",
@@ -546,7 +538,7 @@ export const CommandInput = forwardRef<CommandInputHandle, CommandInputProps>(fu
         // `min-w-0` lets the textarea actually shrink inside the flex row on
         // narrow panes; the nowrap placeholder clips instead of wrapping onto
         // multiple lines (textarea placeholders wrap by default).
-        className="min-w-0 flex-1 resize-none overflow-hidden border-none bg-transparent p-0 font-terminal text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)] placeholder:[white-space:nowrap]"
+        className="min-w-0 flex-1 resize-none overflow-hidden border-none bg-transparent p-0 font-terminal text-foreground outline-none placeholder:text-muted-foreground placeholder:[white-space:nowrap]"
         style={{
           // `terminalFontSize`; the 18/13 line height scales with it.
           fontSize: "var(--atlas-terminal-font-size, 13px)",

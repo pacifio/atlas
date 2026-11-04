@@ -49,7 +49,7 @@ import type {
 } from "@/features/git/stores/git-store";
 import type { ConflictState } from "@/features/git/components/git-manager/conflicts-view";
 import type { CommitSession } from "@/features/git/components/commit-view";
-import type { RawGitStatus } from "@/features/terminal/components/block-terminal";
+import type { RawGitStatus } from "@/features/terminal/lib/terminal-api";
 import type { GitSummary } from "@/features/projects/stores/project-git-store";
 import type { MockArgs, MockResponses, TypedHandlers } from "../types";
 import {
