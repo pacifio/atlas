@@ -3,6 +3,7 @@
 // by a live turn with a command still streaming output.
 
 import type { Scenario } from "../types";
+import { permissionActions } from "./permission-actions";
 import { ended, lines, text, thinking, tool, tools, user, t } from "../fixtures/chat";
 import {
   appendToolOutput,
@@ -10,10 +11,6 @@ import {
   finishTurn,
   playTranscript,
   requestPermission,
-  requestPermissionLongArgs,
-  requestPermissionPlan,
-  requestPermissionQuestion,
-  requestPermissionQuestionMulti,
   setSeedTranscript,
   setStatus,
   showRetry,
@@ -227,12 +224,9 @@ export const chatTools: Scenario = {
   actions: {
     /** Complete the running command: `__atlasMock.actions.finishLive()`. */
     finishLive: () => finishLive(),
-    // Every `permission-modal.tsx` variant, on demand.
-    requestPermission,
-    requestPermissionLongArgs,
-    requestPermissionPlan,
-    requestPermissionQuestion,
-    requestPermissionQuestionMulti,
+    // Every prompt a session raises, on demand (`permissionActions` in
+    // `index.ts` lists them).
+    ...permissionActions,
     // The composer notices: a retry countdown, and the agent exiting.
     showRetry,
     disconnectAgent,

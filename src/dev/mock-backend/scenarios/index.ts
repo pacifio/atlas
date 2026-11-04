@@ -18,15 +18,8 @@ import {
   gitPullPrefersRebase,
   gitRewritePushedCommits,
 } from "../fixtures/git";
-import {
-  requestPermission,
-  requestPermissionLongArgs,
-  requestPermissionPlan,
-  requestPermissionQuestion,
-  requestPermissionQuestionMulti,
-  sleepMidTurn,
-  sleepMidTurnFailed,
-} from "../fake-agent";
+import { sleepMidTurn, sleepMidTurnFailed } from "../fake-agent";
+import { agentSignin } from "./agent-signin";
 import {
   chatComments,
   chatCommentsSelection,
@@ -71,19 +64,10 @@ import { sessionProjects } from "./session-projects";
 import { sidebar } from "./sidebar";
 import { timelineEmpty } from "./timeline-empty";
 import { timelineLong } from "./timeline-long";
-
-/** Every variant `permission-modal.tsx` renders, callable from any chat
- *  scenario once a session is bound: a plain command, a long/multi-line one,
- *  the ExitPlanMode review, and Claude's AskUserQuestion bridge (single- and
- *  multi-question). See `fake-agent.ts` for how each raises a real
- *  `permission_request` delta. */
-const permissionActions = {
-  requestPermission,
-  requestPermissionLongArgs,
-  requestPermissionPlan,
-  requestPermissionQuestion,
-  requestPermissionQuestionMulti,
-};
+// Every blocking prompt a session raises (permission cards, plan review,
+// elicitations, the AI grant strip) lives in `permission-actions.ts`, shared
+// with `chat-tools`.
+import { permissionActions } from "./permission-actions";
 
 const all: Scenario[] = [
   {
@@ -118,6 +102,7 @@ const all: Scenario[] = [
   chatTools,
   chatSidePanels,
   chatSlashCommands,
+  agentSignin,
   chatComments,
   chatCommentsSelection,
   chatCommentsOrphan,

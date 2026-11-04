@@ -27,7 +27,7 @@ import {
   elicitationQuestionForm,
   parseElicitationSchema,
 } from "../lib/elicitation-schema";
-import { ApprovalCard } from "./approval-card";
+import { ApprovalCardView } from "./views/approval-card-view";
 import { ComposerDrawer } from "./composer-drawer";
 import { ElicitationModal, type PendingElicitation } from "./elicitation-modal";
 
@@ -93,7 +93,7 @@ export function SessionElicitation({
 
   return (
     <ComposerDrawer>
-      <ApprovalCard
+      <ApprovalCardView
         key={pending.requestId}
         questions={form.questions}
         onSubmit={(answers) => respond("accept", elicitationAnswerContent(form, answers))}

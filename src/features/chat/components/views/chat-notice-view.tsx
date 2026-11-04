@@ -13,6 +13,9 @@ export interface ChatNoticeAction {
   icon?: LucideIcon;
   title?: string;
   disabled?: boolean;
+  /** Its work is in flight: a spinner in place of the icon, and off until
+   *  it settles. */
+  busy?: boolean;
 }
 
 const GLYPH_TONE: Record<ChatNoticeTone, string> = {
@@ -52,6 +55,7 @@ export function ChatNoticeView({
   busy,
   children,
   action,
+  extraActions,
   progress,
   onDismiss,
   dismissLabel = "Hide",
@@ -66,6 +70,9 @@ export function ChatNoticeView({
   busy?: boolean;
   children: ReactNode;
   action?: ChatNoticeAction;
+  /** Further actions after `action`, drawn the same way (the AI grant
+   *  strip's Refresh then Purchase). */
+  extraActions?: ChatNoticeAction[];
   /** Work in flight, where the action would sit: a spinner and a label, not a
    *  control (the agent update's phase). */
   progress?: string;
@@ -82,7 +89,7 @@ export function ChatNoticeView({
     <Icon icon={icon} size="sm" className={cn("shrink-0", GLYPH_TONE[tone])} />
   ) : null;
   const trailing =
-    action || progress || onDismiss ? (
+    action || extraActions?.length || progress || onDismiss ? (
       <span className="flex shrink-0 items-center gap-0.5">
         {progress && (
           <span className="flex h-6 shrink-0 items-center gap-1.5 px-2.5 text-xs font-medium text-muted-foreground">
@@ -90,17 +97,25 @@ export function ChatNoticeView({
             {progress}
           </span>
         )}
-        {action && (
-          <Button
-            variant={tucked ? "ghost" : "default"}
-            size={tucked ? "xs" : "sm"}
-            title={action.title}
-            disabled={action.disabled}
-            onClick={action.onClick}
-          >
-            {action.icon && <Icon icon={action.icon} size="xs" />}
-            {action.label}
-          </Button>
+        {[action, ...(extraActions ?? [])].map(
+          (a, i) =>
+            a && (
+              <Button
+                key={`${i}-${a.label}`}
+                variant={tucked ? "ghost" : "default"}
+                size={tucked ? "xs" : "sm"}
+                title={a.title}
+                disabled={a.disabled || a.busy}
+                onClick={a.onClick}
+              >
+                {a.busy ? (
+                  <Spinner size="xs" label="" />
+                ) : (
+                  a.icon && <Icon icon={a.icon} size="xs" />
+                )}
+                {a.label}
+              </Button>
+            ),
         )}
         {onDismiss && (
           <Hint label={dismissLabel} side="top">

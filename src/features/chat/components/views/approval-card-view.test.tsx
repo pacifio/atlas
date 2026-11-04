@@ -8,8 +8,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 
-import type { QuestionSpec } from "../lib/questions";
-import { ApprovalCard } from "./approval-card";
+import type { QuestionSpec } from "../../lib/questions";
+import { ApprovalCardView } from "./approval-card-view";
 
 const QUESTIONS: QuestionSpec[] = [
   {
@@ -36,7 +36,7 @@ afterEach(() => {
 describe("question card keys", () => {
   it("walks the options with ↑/↓ and presses one with Enter", () => {
     const onSubmit = vi.fn();
-    render(<ApprovalCard questions={QUESTIONS} onSubmit={onSubmit} />);
+    render(<ApprovalCardView questions={QUESTIONS} onSubmit={onSubmit} />);
     key("ArrowDown");
     expect(document.activeElement?.textContent).toContain("Every session");
     key("ArrowDown");
@@ -55,7 +55,7 @@ describe("question card keys", () => {
   it("moves between questions with ←/→, → only once answered", () => {
     vi.useFakeTimers();
     const onSubmit = vi.fn();
-    render(<ApprovalCard questions={QUESTIONS} onSubmit={onSubmit} />);
+    render(<ApprovalCardView questions={QUESTIONS} onSubmit={onSubmit} />);
     key("ArrowRight");
     expect(screen.getByText("Where should comments exist?")).toBeTruthy();
     key("1");
@@ -74,7 +74,7 @@ describe("question card keys", () => {
 
   it("leaves the text field's caret alone until it is at an edge", () => {
     const onSubmit = vi.fn();
-    render(<ApprovalCard questions={QUESTIONS} onSubmit={onSubmit} />);
+    render(<ApprovalCardView questions={QUESTIONS} onSubmit={onSubmit} />);
     const field = screen.getByPlaceholderText("Answer in your own words…") as HTMLInputElement;
     fireEvent.change(field, { target: { value: "ab" } });
     field.focus();
@@ -88,7 +88,7 @@ describe("question card keys", () => {
 
   it("submits on the last question with Enter and ignores chords", () => {
     const onSubmit = vi.fn();
-    render(<ApprovalCard questions={[QUESTIONS[1]]} onSubmit={onSubmit} />);
+    render(<ApprovalCardView questions={[QUESTIONS[1]]} onSubmit={onSubmit} />);
     fireEvent.keyDown(window, { key: "1", metaKey: true });
     expect(onSubmit).not.toHaveBeenCalled();
     key("3");

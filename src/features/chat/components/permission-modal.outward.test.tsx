@@ -8,7 +8,7 @@ import {
   OutwardActionBody,
   OutwardActionHeading,
   OutwardPreparingHeading,
-} from "./permission-modal";
+} from "./views/permission-card-view";
 import { outwardApprovalOf, outwardPreparingOf } from "@/features/org-actions/lib/outward-approval";
 
 afterEach(cleanup);

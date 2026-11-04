@@ -2,20 +2,26 @@
 //
 // One question per step — radio options (or checkboxes for multiSelect), a
 // free-text "answer in your own words" field, progress dots, back/next. The
-// shape follows beui's ApprovalCard, rebuilt on Atlas tokens and with NO
-// motion library: the only animation is CSS transitions, per the house rules.
+// shape follows beui's ApprovalCard, rebuilt on the design package and with
+// NO motion library: the only animation is CSS transitions, per the house
+// rules.
 //
-// The card is PURE: it collects answers and hands them back. Mapping an answer
-// onto a wire — resolving an ACP permission option, composing a user message,
-// or filling an elicitation's form fields — belongs to the caller, because the
-// three contracts genuinely differ and baking one of them in here is what made
-// this renderable for permissions only.
+// The card is a VIEW: it collects answers and hands them back. Mapping an
+// answer onto a wire — resolving an ACP permission option, composing a user
+// message, or filling an elicitation's form fields — belongs to the container
+// (`permission-modal.tsx`, `session-elicitation.tsx`), because the three
+// contracts genuinely differ and baking one of them in here is what made this
+// renderable for permissions only.
+//
+// The options stay buttons with a drawn indicator rather than a radio group:
+// a radio group's arrow-key roving focus would fight the card's own
+// window-level digit and Enter handling below.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Check, CircleHelp } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { QuestionSpec } from "../lib/questions";
-import { HintGroup, HintItem } from "@tryatlas/design";
+import type { QuestionSpec } from "../../lib/questions";
+import { Button, HintGroup, HintItem, Icon, IconButton, Input } from "@tryatlas/design";
 
 /** One question's answer, as the card reports it. */
 export interface Answer {
@@ -29,7 +35,7 @@ function isAnswered(a: Answer): boolean {
   return a.selected.length > 0 || a.custom.trim().length > 0;
 }
 
-export function ApprovalCard({
+export function ApprovalCardView({
   questions,
   queueNote,
   onSubmit,
@@ -187,19 +193,20 @@ export function ApprovalCard({
       // description still sit on one line each, which is what the narrower
       // version cost.
       //
-      // `--popover`, not `--card`: this sits directly on the composer, whose
-      // field is `--background`, and `--card` is only one step from it in
-      // either appearance — close enough that the two read as one surface with
-      // a line through it. `--popover` is the lifted tone the rest of the
-      // chrome uses when something sits above something else, and it is the
-      // step that makes the card legible against the composer in both.
+      // `bg-popover`, not `bg-card`: this sits directly on the composer, whose
+      // field is `background`, and `card` is only one step from it in either
+      // appearance — close enough that the two read as one surface with a
+      // line through it. `popover` is the lifted tone the rest of the chrome
+      // uses when something sits above something else, and it is the step
+      // that makes the card legible against the composer in both.
       //
       // The menu elevation (`shadow-md`), which every theme defines for its
       // own appearance. The hand-written black shadow it replaces was tuned
       // for one dark theme and painted a grey smear under the card on light
       // ones, and a heavier one than any menu on dark.
       data-approval-card
-      className="mx-auto w-full max-w-[650px] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--popover)] shadow-md"
+      data-testid="approval-card"
+      className="mx-auto w-full max-w-[650px] overflow-hidden rounded-xl border border-border bg-popover shadow-md"
     >
       <div
         // `pb-6` rather than matching `pt-3.5`: the card is deliberately
@@ -211,7 +218,7 @@ export function ApprovalCard({
       >
         {/* Header: icon, question, step counter. */}
         <div className="flex items-start gap-2.5">
-          <CircleHelp className="mt-0.5 size-4 shrink-0 text-[var(--muted-foreground)]" />
+          <Icon icon={CircleHelp} size="lg" className="mt-0.5 shrink-0 text-muted-foreground" />
           <div className="min-w-0 flex-1">
             {/* `q.header` is deliberately not rendered. It is the question's
                 category ("Layout", "Features") and the question text below
@@ -219,15 +226,13 @@ export function ApprovalCard({
                 shorter restatement sitting above it. It still travels on the
                 spec — `composeAnswers` names each answer by it when there is
                 more than one question, which is where it earns its keep. */}
-            <div className="text-md font-medium leading-snug text-[var(--foreground)]">
+            <div className="text-md font-medium leading-snug text-foreground">
               {q.question || "The agent has a question"}
             </div>
-            {queueNote && (
-              <div className="mt-0.5 text-xs text-[var(--muted-foreground)]">{queueNote}</div>
-            )}
+            {queueNote && <div className="mt-0.5 text-xs text-muted-foreground">{queueNote}</div>}
           </div>
           {questions.length > 1 && (
-            <span className="shrink-0 font-mono text-xs tabular-nums text-[var(--muted-foreground)]">
+            <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
               {step + 1}/{questions.length}
             </span>
           )}
@@ -256,28 +261,26 @@ export function ApprovalCard({
                 )}
               >
                 {/* Radio circle / check square, drawn by hand so the tone
-                    matches the thread instead of a form control. */}
+                    matches the session instead of a form control. */}
                 <span
                   aria-hidden
                   className={cn(
                     "mt-[3px] grid size-[15px] shrink-0 place-items-center border transition-colors",
                     q.multiSelect ? "rounded-sm" : "rounded-full",
-                    on ? "border-[var(--primary)] bg-[var(--primary)]" : "border-border-strong",
+                    on ? "border-primary bg-primary" : "border-border-strong",
                   )}
                 >
                   {on &&
                     (q.multiSelect ? (
-                      <Check size={10} strokeWidth={3} className="text-[var(--background)]" />
+                      <Icon icon={Check} size="xs" strokeWidth={3} className="text-background" />
                     ) : (
-                      <span className="size-[5px] rounded-full bg-[var(--background)]" />
+                      <span className="size-[5px] rounded-full bg-background" />
                     ))}
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="block text-base leading-snug text-[var(--foreground)]">
-                    {o.label}
-                  </span>
+                  <span className="block text-base leading-snug text-foreground">{o.label}</span>
                   {o.description && (
-                    <span className="mt-0.5 block text-xs leading-snug text-[var(--secondary-foreground)]">
+                    <span className="mt-0.5 block text-xs leading-snug text-secondary-foreground">
                       {o.description}
                     </span>
                   )}
@@ -288,43 +291,34 @@ export function ApprovalCard({
           })}
 
           {/* Free text — always offered; typing clears a single-select pick. */}
-          <input
-            ref={inputRef}
-            value={answer.custom}
-            onChange={(e) =>
-              setAnswer({
-                selected: q.multiSelect ? answer.selected : [],
-                custom: e.target.value,
-              })
-            }
-            placeholder={q.options.length > 0 ? "Answer in your own words…" : "Type your answer…"}
-            // A field, drawn as one: the hairline border is what says "type
-            // here". The translucent tint it replaces read as a darker band
-            // laid across the card rather than as an input.
-            className={cn(
-              "h-10 w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 text-base text-[var(--foreground)] outline-none transition-colors placeholder:text-[var(--muted-foreground)] focus:border-border-strong",
-              q.options.length > 0 && "mt-1.5",
-            )}
-          />
+          <div className={cn(q.options.length > 0 && "mt-1.5")}>
+            <Input
+              ref={inputRef}
+              size="lg"
+              value={answer.custom}
+              onChange={(e) =>
+                setAnswer({
+                  selected: q.multiSelect ? answer.selected : [],
+                  custom: e.target.value,
+                })
+              }
+              placeholder={q.options.length > 0 ? "Answer in your own words…" : "Type your answer…"}
+            />
+          </div>
         </div>
 
         {/* Footer: back, dots, next/submit. */}
         <HintGroup side="top">
           <div className="mt-5 flex items-center gap-3">
             <HintItem label="Previous question">
-              <button
-                type="button"
+              <IconButton
+                icon={ArrowLeft}
+                label="Previous question"
+                size="md"
+                shape="round"
                 disabled={step === 0}
                 onClick={goBack}
-                className={cn(
-                  "grid size-8 place-items-center rounded-full transition-colors",
-                  step === 0
-                    ? "cursor-default text-disabled"
-                    : "cursor-pointer text-[var(--muted-foreground)] hover:bg-element-hover hover:text-[var(--foreground)]",
-                )}
-              >
-                <ArrowLeft size={15} />
-              </button>
+              />
             </HintItem>
 
             <span
@@ -339,7 +333,7 @@ export function ApprovalCard({
                     // One box for every dot, so the row never reflows; the
                     // current step is full size and the rest scale down to the
                     // 1.5 step (6px of 8), on the compositor.
-                    "size-2 rounded-full bg-[var(--foreground)] transition-[scale,opacity] duration-200",
+                    "size-2 rounded-full bg-foreground transition-[scale,opacity] duration-200",
                     i === step ? "opacity-100" : "scale-75",
                     i < step ? "opacity-70" : i > step ? "opacity-30" : "",
                   )}
@@ -348,36 +342,33 @@ export function ApprovalCard({
             </span>
 
             {onSkip && (
-              <button
-                type="button"
-                onClick={() => {
-                  clearAdvance();
-                  onSkip();
-                }}
-                className="ml-auto cursor-pointer rounded-full px-2.5 py-1.5 text-sm text-[var(--muted-foreground)] transition-colors hover:bg-element-hover hover:text-[var(--foreground)]"
-              >
-                {skipLabel}
-              </button>
+              <div className="ml-auto">
+                <Button
+                  variant="ghost"
+                  size="lg"
+                  onClick={() => {
+                    clearAdvance();
+                    onSkip();
+                  }}
+                >
+                  {skipLabel}
+                </Button>
+              </div>
             )}
 
             <HintItem
               label={last ? "Submit answers" : "Next question"}
               className={onSkip ? undefined : "ml-auto"}
             >
-              <button
-                type="button"
+              <Button
+                variant="default"
+                size="lg"
                 disabled={!isAnswered(answer)}
                 onClick={() => goNext()}
-                className={cn(
-                  "flex h-9 items-center gap-1.5 rounded-full px-3 text-sm font-medium transition-colors",
-                  isAnswered(answer)
-                    ? "cursor-pointer bg-[var(--primary)] text-[var(--primary-foreground)] hover:bg-primary-hover"
-                    : "cursor-default bg-element-hover text-disabled",
-                )}
               >
                 {last && questions.length > 1 && <span>Submit</span>}
-                <ArrowRight size={15} />
-              </button>
+                <Icon icon={ArrowRight} size="lg" />
+              </Button>
             </HintItem>
           </div>
         </HintGroup>
