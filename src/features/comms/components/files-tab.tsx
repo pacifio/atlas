@@ -4,7 +4,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { timeAgo } from "@/lib/time-ago";
 import { AudioPlayer } from "./audio-player";
 import { CommsAvatar } from "./comms-avatar";
-import { saveAttachment } from "./message-group";
+import { saveAttachment } from "../lib/attachment-actions";
 import { formatBytes } from "../lib/derive";
 import { attachmentPath, cachedAttachmentPath } from "../lib/attachment-cache";
 import { useCommsStore } from "../stores/comms-store";
