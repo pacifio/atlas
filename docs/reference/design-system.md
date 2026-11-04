@@ -23,10 +23,10 @@ the active theme over it at `html:root`:
 | `src/styles/utilities.css`     | the Tailwind namespaces (`@theme`), the named utilities (`@utility`), and the global focus and border rules                                                     |
 
 `globals.css` keeps only what is desktop's: the 13px root, the titlebar height,
-`font-terminal`, `rounded-composer` and the feature CSS. The other files in
-`src/styles/` are desktop's too: `diff-syntax.css`, which `globals.css`
-imports, and `hljs.css`, which the markdown and code renderers
-import themselves. Primitives are imported
+`font-terminal`, `rounded-composer` and the feature CSS. The other file in
+`src/styles/` is desktop's too: `markdown.css`, which `globals.css` imports.
+The diff views' token colours are the package's `.diff-syntax` scope in
+`syntax.css`. Primitives are imported
 from the package root (`import { Button } from "@tryatlas/design"`); there is no
 `src/ui/` any more.
 

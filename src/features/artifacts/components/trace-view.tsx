@@ -27,6 +27,7 @@ import {
   CheckpointTrace,
   type TraceCheckpoint,
   type TraceGroupBy,
+  type TraceLabels,
   type TraceSession,
   type TraceZoom,
 } from "./checkpoint-trace";
@@ -36,6 +37,17 @@ const GROUPINGS: { value: TraceGroupBy; label: string }[] = [
   { value: "person", label: "Person" },
   { value: "none", label: "None" },
 ];
+
+/** Names here are already first names (`traceAuthor`), and "A member" must
+ *  not be cut to "A". A handoff reads the name whole; a cluster's summary is
+ *  handed first names, so the one two-word name is put back together. */
+const LABELS: Partial<TraceLabels> = {
+  handoffShort: (from) => `from ${from.name}`,
+  clusterSummary: (n, names) => {
+    const whole = names.map((name) => (name === "A" ? "A member" : name));
+    return `${n} checkpoints${whole.length ? ` · ${whole.join(", ")}` : ""}`;
+  },
+};
 
 export function TraceView({
   boardSessions,
@@ -168,6 +180,7 @@ export function TraceView({
         onOpenSession={onOpenSession}
         onOpenCheckpoint={onOpenCheckpoint}
         renderAgentMark={renderAgentMark}
+        labels={LABELS}
         loading={trace.loading}
         error={blocking ? trace.error : undefined}
       />

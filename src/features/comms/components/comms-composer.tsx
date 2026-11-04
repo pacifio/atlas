@@ -272,10 +272,13 @@ export function CommsComposer({
             !editing && intentTarget
               ? authorLabel(intentTarget, (id) => memberMap.get(id)?.name ?? "Unknown")
               : null,
-          preview: intentTarget?.deleted
-            ? "deleted message"
-            : intentTarget
-              ? toPlainText(intentTarget.body, memberMap)
+          // A deleted message has no text: the strip says so itself
+          // (`replyEmptyLabel`), rather than reading "Name · ". A caption-less
+          // attachment has none either, and is not deleted.
+          preview:
+            intentTarget && !intentTarget.deleted
+              ? toPlainText(intentTarget.body, memberMap) ||
+                (intentTarget.attachments.length > 0 ? "Attachment" : "")
               : null,
         }
       : null;

@@ -29,7 +29,7 @@ import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import type { PluggableList } from "unified";
 import { Image as ImageIcon } from "lucide-react";
-import { Code } from "@tryatlas/design";
+import { Code, CodeFence } from "@tryatlas/design";
 import { useAppStore } from "@/features/app/stores/app-store";
 import { rehypeFileChips } from "@/lib/file-chip-hast";
 import { openFileChipUnder, useFileChipHost } from "@/lib/file-chip-host";
@@ -164,36 +164,20 @@ const COMPONENTS: Components = {
     if (!className) {
       return <Code {...rest}>{children}</Code>;
     }
-    // The `hljs` class token is dropped: the package's syntax.css is unlayered and its `.hljs`
-    // box rules would beat the package block's layered utilities. The token
-    // colours are unscoped `.hljs-*` rules and still apply; `language-*` stays.
-    const langClasses = className
-      .split(/\s+/)
-      .filter((c) => c !== "hljs")
-      .join(" ");
+    // A fence's `<code>`, bare: `CodeFence` (the `pre` below) owns the box and
+    // cancels the highlighter's own `.hljs` padding and background.
     return (
-      <Code variant="block" className={langClasses} {...rest}>
+      <code className={className} {...rest}>
         {children}
-      </Code>
+      </code>
     );
   },
 
   pre(props) {
-    const lang = fenceLanguage(props.node);
     return (
-      <pre
-        // The block scrolls sideways with its scrollbar hidden (the
-        // `hide-scrollbar` convention), set from here because the package
-        // Code owns its own classes.
-        className="my-1.5 font-mono [&>code]:[scrollbar-width:none] [&>code::-webkit-scrollbar]:hidden"
-      >
-        {lang && (
-          <span className="mb-0.5 block text-3xs uppercase tracking-wide text-muted-foreground">
-            {lang}
-          </span>
-        )}
+      <CodeFence language={fenceLanguage(props.node)} className="my-1.5">
         {props.children}
-      </pre>
+      </CodeFence>
     );
   },
 

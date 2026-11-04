@@ -76,8 +76,12 @@ export function SpaceHeaderPill({
         .map((p) => ({ id: p.id, name: p.name || "Untitled", icon: p.icon ?? undefined }))}
       activePageId={activePageId}
       onOpenPage={onOpenPage}
+      emptyPagesLabel="No pages yet."
       status={status}
       statusLabel={STATUS_LABEL[status]}
+      // Red, not the package's amber: offline here is a refused connection,
+      // not edits held for a reconnect (that is `syncing`).
+      offlineTone="error"
       pagesOpen={pagesOpen}
       onTogglePages={onTogglePages}
       zoom={zoom}

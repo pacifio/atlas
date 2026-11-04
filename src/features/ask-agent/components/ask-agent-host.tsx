@@ -6,7 +6,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Popover, PopoverContent } from "@tryatlas/design";
 
-import { isMac } from "@/lib/platform";
 import { contextLabel, contextTitle, type AgentContext } from "../lib/agent-context";
 import {
   activeSession,
@@ -23,8 +22,9 @@ import { AskAgentBoxView, type AskTargetOption } from "./views/ask-agent-box-vie
 /** How many open sessions the picker lists besides "New session". */
 const RECENT_SESSIONS = 6;
 
-const SEND_KEYS = isMac ? ["⌘", "↵"] : ["Ctrl", "↵"];
-const DRAFT_KEYS = isMac ? ["⌘", "⇧", "↵"] : ["Ctrl", "⇧", "↵"];
+// Mac glyphs: `KbdKeys` reads ⌘ as Ctrl and ⇧ as Shift off a Mac.
+const SEND_KEYS = ["⌘", "↵"];
+const DRAFT_KEYS = ["⌘", "⇧", "↵"];
 
 /** What Base UI positions against: the element, the rect, or a point near
  *  the top of the window. */

@@ -15,7 +15,6 @@
    replays the last one from localStorage). Everything below is desktop's own. */
 @import "@tryatlas/design/styles-core.css";
 @import "./markdown.css";
-@import "./diff-syntax.css";
 
 :root {
   /* The one bar: every column's header (file tree, each split column, the

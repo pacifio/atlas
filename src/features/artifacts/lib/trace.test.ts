@@ -189,7 +189,10 @@ describe("buildTrace", () => {
         checkpoints: [checkpoint({ sessionId: "s1", commitSha: "a", authorId: null })],
       }),
     ]);
-    expect(s.participants).toEqual([{ id: "usr_me", name: "You", avatarUrl: null }]);
+    // "You" would make "YO": the face reads the account's own initials.
+    expect(s.participants).toEqual([
+      { id: "usr_me", name: "You", avatarUrl: null, initials: "DH" },
+    ]);
     expect(s.checkpoints[0].author.id).toBe("usr_me");
     expect(s.projectId).toBe("/p/app");
     expect(s.projectName).toBe("app");
@@ -204,7 +207,10 @@ describe("buildTrace", () => {
         checkpoints: [checkpoint({ sessionId: "s1", commitSha: "a", authorId: "usr_gone" })],
       }),
     ]);
-    expect(s.participants).toEqual([{ id: "usr_gone", name: "A member", avatarUrl: null }]);
+    // Not "AM", which reads as someone's initials.
+    expect(s.participants).toEqual([
+      { id: "usr_gone", name: "A member", avatarUrl: null, initials: "?" },
+    ]);
     expect(s.checkpoints[0].author.name).toBe("A member");
   });
 

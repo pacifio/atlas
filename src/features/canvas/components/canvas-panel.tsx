@@ -512,6 +512,7 @@ function CanvasSurface({
         <CanvasActionPill
           exportFormats={CANVAS_EXPORT_FORMATS}
           onExport={onExport}
+          exportLabel="Export"
           exporting={exporting !== null}
         />
         <CanvasToolbar

@@ -83,11 +83,9 @@ export function MediaLightboxView({
         data-media-lightbox=""
       >
         <div className="flex h-[34px] shrink-0 items-center gap-2 border-b border-border px-3">
-          {/* The title keeps the package's heading type; the wrapper owns the
-              truncation, around an inline title so the ellipsis applies. */}
-          <div className="min-w-0 flex-1 truncate">
-            <DialogTitle render={<span />}>{item?.filename ?? ""}</DialogTitle>
-          </div>
+          {/* A filename names the image rather than heading a task: one
+              truncated line that fills the row beside its controls. */}
+          <DialogTitle variant="quiet">{item?.filename ?? ""}</DialogTitle>
           {count > 1 && (
             <span className="shrink-0 text-xs tabular-nums text-disabled">
               {index + 1} / {count}
