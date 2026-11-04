@@ -17,7 +17,7 @@ import {
   type EntryScope,
 } from "../lib/memory-entries";
 import { reviewCount } from "../lib/memory-review-items";
-import { entryContext } from "../lib/memory-ask";
+import { entryContext, MEMORY_ASK_KEYS } from "../lib/memory-ask";
 import { entryAgent, exportable } from "../lib/shared-memory-format";
 import { ExportAgentsModal } from "./shared-memory-modals";
 import { MemoryEntryDetail } from "./memory-entry-detail";
@@ -29,12 +29,15 @@ export function MemoryEntries({
   selecting,
   onSelectingChange,
   onImportClaude,
+  onAsk,
 }: {
   projectName: string;
   /** Export mode, started from the panel's menu. */
   selecting: boolean;
   onSelectingChange: (on: boolean) => void;
   onImportClaude: () => void;
+  /** The search field's ⌘↵: the typed words, as a memory instruction. */
+  onAsk: (text: string, anchor: HTMLElement) => void;
 }) {
   const entries = useSharedMemoryStore.use.entries();
   const loaded = useSharedMemoryStore.use.loaded();
@@ -128,6 +131,8 @@ export function MemoryEntries({
       }}
       query={query}
       onQueryChange={setQuery}
+      onAsk={onAsk}
+      askKeys={MEMORY_ASK_KEYS}
       agentFilter={agentFilter}
       agentOptions={agentOptions}
       formatAgent={(a) => agentMetaForSource(a).label}

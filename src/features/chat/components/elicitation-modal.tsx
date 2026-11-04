@@ -40,6 +40,16 @@ export interface PendingElicitation {
   url?: string | null;
 }
 
+/**
+ * The React key for one request's prompt. A prompt holds its answers and busy
+ * state, so a request that directly replaces another must remount it, or the
+ * new one opens with the old one's values. Request ids are per connection,
+ * so the agent is part of the key.
+ */
+export function elicitationKey(pending: Pick<PendingElicitation, "agentId" | "requestId">) {
+  return `${pending.agentId}:${pending.requestId}`;
+}
+
 export function ElicitationModal({
   pending,
   onClose,

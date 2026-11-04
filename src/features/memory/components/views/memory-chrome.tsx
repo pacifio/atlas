@@ -7,8 +7,10 @@
 // selected step. Each piece used to be restated per view, in four slightly
 // different heights and radii.
 
-import type { ReactNode } from "react";
-import { MessageSquarePlus, Search } from "lucide-react";
+import { useRef, type ReactNode } from "react";
+import { MessageSquarePlus, Search, X } from "lucide-react";
+import { Button, KbdKeys } from "@tryatlas/design";
+import { askKeyAction } from "@/features/ask-agent/lib/ask-box-keys";
 import { cn } from "@/lib/utils";
 
 /** A view's toolbar: one hairline-ruled strip above its body. */
@@ -214,8 +216,88 @@ export function AskField({
   );
 }
 
-/** The panel's prompt line, above every tab: where the user tells the agent
- *  what to remember or forget. */
+/**
+ * A tab's one field: typing filters the list, and ⌘↵ (or the button) hands
+ * the words to the agent as a memory instruction, through the ask box.
+ * Telling the agent is the main way memory changes, so its button stays on
+ * the field rather than behind the keys.
+ */
+export function SearchAskField({
+  value,
+  onChange,
+  placeholder,
+  label,
+  askKeys,
+  onAsk,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+  /** The field's accessible name ("Search memories"). */
+  label: string;
+  /** Keycaps for the ask (["⌘", "↵"], ["Ctrl", "↵"]). */
+  askKeys: readonly string[];
+  /** `anchor`: the field, which the ask box opens against. */
+  onAsk: (text: string, anchor: HTMLElement) => void;
+}) {
+  const fieldRef = useRef<HTMLDivElement>(null);
+  const ask = (fallback: HTMLElement) => onAsk(value.trim(), fieldRef.current ?? fallback);
+  return (
+    // The buttons sit outside the <label>, which would otherwise name them.
+    <div
+      ref={fieldRef}
+      className="flex h-control-md min-w-40 flex-1 items-center gap-1 rounded border border-border bg-panel-input pe-0.5 focus-within:border-border-strong"
+    >
+      <label className="flex h-full min-w-0 flex-1 cursor-text items-center gap-1.5 ps-2">
+        <Search aria-hidden className="size-3 shrink-0 text-muted-foreground" />
+        <input
+          type="search"
+          value={value}
+          onChange={(e) => onChange(e.currentTarget.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape" && value) {
+              e.preventDefault();
+              onChange("");
+              return;
+            }
+            const action = askKeyAction({
+              key: e.key,
+              metaKey: e.metaKey,
+              ctrlKey: e.ctrlKey,
+              shiftKey: e.shiftKey,
+              altKey: e.altKey,
+              isComposing: e.nativeEvent.isComposing || e.keyCode === 229,
+            });
+            if (action !== "send") return;
+            e.preventDefault();
+            ask(e.currentTarget);
+          }}
+          placeholder={placeholder}
+          aria-label={label}
+          className="min-w-0 flex-1 bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground [&::-webkit-search-cancel-button]:hidden"
+        />
+      </label>
+      {value ? (
+        <button
+          type="button"
+          aria-label="Clear search"
+          onClick={() => onChange("")}
+          className="inline-flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
+        >
+          <X aria-hidden className="size-3" />
+        </button>
+      ) : null}
+      <Button size="xs" variant="ghost" onClick={(e) => ask(e.currentTarget)}>
+        <MessageSquarePlus aria-hidden className="size-3" />
+        Ask agent
+        <KbdKeys keys={askKeys} />
+      </Button>
+    </div>
+  );
+}
+
+/** The panel's prompt line, above the tabs that have no list to search:
+ *  where the user tells the agent what to remember or forget. */
 export function PromptLine({ onOpen }: { onOpen: (anchor: HTMLElement) => void }) {
   return (
     <div className="shrink-0 border-b border-border px-2 py-1.5">

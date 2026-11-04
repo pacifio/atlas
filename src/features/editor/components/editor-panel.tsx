@@ -284,14 +284,13 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
         summary: path.split("/").pop() ?? path,
         payload: { path, bytes: content.length },
       });
-      // A save mutates the working tree: refresh git status and the diff now
+      // A save mutates the working tree: refresh git status now
       // instead of waiting for the watcher. Lazy, to keep the editor
       // decoupled from the git store.
       void import("@/features/git/stores/git-store").then(({ useGitStore }) => {
         const git = useGitStore.getState();
         if (git.repoPath) {
           void git.actions.refreshStatusNow(git.repoPath);
-          void git.actions.loadDiff();
         }
       });
       refreshDiffGutter();

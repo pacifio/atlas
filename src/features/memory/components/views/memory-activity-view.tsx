@@ -10,7 +10,7 @@
 // under reduced motion).
 
 import { useState } from "react";
-import { Brain, ChevronDown, ExternalLink, History, Search, X } from "lucide-react";
+import { Brain, ChevronDown, ExternalLink, History, Search } from "lucide-react";
 import { AgentGlyph } from "@/components/brand-marks";
 import { timeAgo } from "@/lib/time-ago";
 import { cn } from "@/lib/utils";
@@ -26,7 +26,7 @@ import { pluginIdForSource } from "../../lib/memory-agent";
 import { AgentName } from "./memory-entry-parts";
 import { RailNode, RailRow } from "./memory-rail";
 import { FilterMenu } from "./shared-memory-primitives";
-import { Notice } from "./memory-chrome";
+import { Notice, SearchAskField } from "./memory-chrome";
 import type { AgentContext } from "@/features/ask-agent/lib/agent-context";
 import {
   ASK_ROW,
@@ -54,6 +54,9 @@ export interface MemoryActivityViewProps {
   days: ActivityDay[];
   query: string;
   onQueryChange: (q: string) => void;
+  /** The search field's ⌘↵: the typed words, as a memory instruction. */
+  onAsk: (text: string, anchor: HTMLElement) => void;
+  askKeys: readonly string[];
   agentFilter: string;
   agentOptions: string[];
   formatAgent: (agent: string) => string;
@@ -80,33 +83,14 @@ export function MemoryActivityView(p: MemoryActivityViewProps) {
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-border px-2 py-1.5">
-        <label className="flex h-control-md min-w-40 flex-1 cursor-text items-center gap-1.5 rounded border border-border bg-panel-input px-2 focus-within:border-border-strong">
-          <Search aria-hidden className="size-3 shrink-0 text-muted-foreground" />
-          <input
-            type="search"
-            value={p.query}
-            onChange={(e) => p.onQueryChange(e.currentTarget.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Escape" && p.query) {
-                e.preventDefault();
-                p.onQueryChange("");
-              }
-            }}
-            placeholder="Search what changed…"
-            aria-label="Search activity"
-            className="min-w-0 flex-1 bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground [&::-webkit-search-cancel-button]:hidden"
-          />
-          {p.query ? (
-            <button
-              type="button"
-              aria-label="Clear search"
-              onClick={() => p.onQueryChange("")}
-              className="inline-flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
-            >
-              <X aria-hidden className="size-3" />
-            </button>
-          ) : null}
-        </label>
+        <SearchAskField
+          value={p.query}
+          onChange={p.onQueryChange}
+          placeholder="Search what changed…"
+          label="Search activity"
+          askKeys={p.askKeys}
+          onAsk={p.onAsk}
+        />
         {p.agentOptions.length > 1 && (
           <FilterMenu
             label="Agent"

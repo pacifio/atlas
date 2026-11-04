@@ -678,7 +678,7 @@ function blame(file: string): BlameLine[] {
 // write only has to move that state: the next refresh then shows it. What
 // triggers the refresh is the same thing that triggers it for real — Rust's
 // `emit_synthetic_change` fires `atlas:git-changed` after every mutation and
-// the store re-runs `git_snapshot` / `git_log` / `git_diff_all` on it. Long
+// the store re-runs `git_snapshot` / `git_log` on it. Long
 // operations additionally stream `atlas:git:op` (started → output → progress
 // → done), which is what drives the commit busy state, the progress bar and
 // the live output strip.
@@ -1156,7 +1156,6 @@ export interface GitResponses {
   git_graph_build: BuiltGraph;
   git_diff_line_status: DiffLineStatus;
   git_diff_file: string;
-  git_diff_all: string;
   git_diff_preview: DiffPreview;
   git_diff_file_contents: DiffFileContents;
   git_diff_file_patch: DiffFilePatch;
@@ -1427,10 +1426,6 @@ export const gitHandlers: TypedHandlers<GitResponses> = {
     if (!change || change.binary) return "";
     return unifiedDiff(change.before(), change.after(), change.path);
   },
-  git_diff_all: (): string =>
-    CHANGES.filter((change) => !change.binary)
-      .map((change) => unifiedDiff(change.before(), change.after(), change.path))
-      .join(""),
   // The review diff. The branch has no commits of its own on top of
   // `origin/main`, so the range holds the same change set.
   // Only the fake repository has changes. Another folder (a project attached

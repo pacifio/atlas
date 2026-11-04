@@ -152,7 +152,9 @@ function AskAgentBox({
         return el;
       }}
       // Reduced motion: globals.css swaps `animate-scale-in` for a fade.
-      className="w-96 max-w-[calc(100vw-2rem)]"
+      // Wide enough that a session title in the picker, which shares its row
+      // with Draft and Send, keeps most of its words.
+      className="w-md max-w-[calc(100vw-2rem)]"
     >
       <AskAgentBoxView
         chips={chips}

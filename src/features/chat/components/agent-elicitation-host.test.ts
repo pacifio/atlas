@@ -21,6 +21,12 @@ describe("the request-elicitation queue", () => {
     expect(queue.map((q) => q.requestId)).toEqual(["r1", "r2"]);
   });
 
+  it("keeps two agents' questions that share a request id", () => {
+    // Request ids are per connection: both agents can send a `r1`.
+    const queue = enqueue(enqueue([], one), { ...one, agentId: "b" });
+    expect(queue.map((q) => q.agentId)).toEqual(["a", "b"]);
+  });
+
   it("never queues the same question twice", () => {
     // The backend refuses to announce one twice, but a remount must not
     // double it either.

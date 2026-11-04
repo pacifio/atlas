@@ -294,17 +294,43 @@ describe("the Memories list", () => {
   });
 });
 
-describe("the prompt line", () => {
-  it("opens the ask box as a memory instruction, with the project's memory", async () => {
+describe("the search field's ask", () => {
+  beforeEach(() => useAskAgentStore.setState({ request: null }));
+
+  it("⌘↵ hands the typed words to the ask box as a memory instruction", async () => {
     const user = userEvent.setup();
     render(<MemoryPanel />);
     await screen.findByRole("button", { name: "Prefers small PRs" });
-    await user.click(screen.getByRole("button", { name: /Tell the agent what to remember/ }));
+    const field = screen.getByRole("searchbox", { name: "Search memories" });
+    await user.type(field, "we moved to Postgres");
+    expect(useAskAgentStore.getState().request).toBeNull();
+    await user.keyboard("{Meta>}{Enter}{/Meta}");
     const request = useAskAgentStore.getState().request;
-    expect(request?.prompt).toBe("Update this project's shared memory: ");
+    expect(request?.prompt).toBe("Update this project's shared memory: we moved to Postgres");
     expect(request?.context).toHaveLength(1);
     const digest = request?.context[0];
     expect(digest?.kind === "quote" && digest.text).toContain("Prefers small PRs");
+  });
+
+  it("its Ask agent button opens the box too, and the line is gone", async () => {
+    const user = userEvent.setup();
+    render(<MemoryPanel />);
+    await screen.findByRole("button", { name: "Prefers small PRs" });
+    expect(screen.queryByRole("button", { name: /Tell the agent what to remember/ })).toBeNull();
+    const field = screen.getByRole("searchbox", { name: "Search memories" });
+    const toolbar = field.closest("label")!.parentElement!;
+    await user.click(within(toolbar).getByRole("button", { name: /^Ask agent/ }));
+    expect(useAskAgentStore.getState().request?.prompt).toBe(
+      "Update this project's shared memory: ",
+    );
+  });
+
+  it("a tab with no list to search keeps the prompt line", async () => {
+    act(() => useMemoryStore.setState({ subTab: "review" }));
+    render(<MemoryPanel />);
+    expect(
+      await screen.findByRole("button", { name: /Tell the agent what to remember/ }),
+    ).toBeTruthy();
   });
 });
 

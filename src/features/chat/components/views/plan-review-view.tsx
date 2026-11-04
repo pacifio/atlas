@@ -4,8 +4,8 @@
 // Props only. `plan` is a slot — the container renders the markdown into it,
 // because the markdown renderer reaches the opener plugin. The container also
 // owns the window keydown handler (digits, Enter, Esc) and the answer path;
-// Esc reaches both that handler and the dialog's own `onOpenChange`, as it
-// always has.
+// the handler stops Esc before it reaches the dialog's own `onOpenChange`,
+// so one Esc sends one cancel.
 //
 // Composed from the package's dialog parts rather than `DialogContent`: the
 // review is wider than any content size and anchored near the top, and it

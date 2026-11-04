@@ -158,10 +158,9 @@ const SHARED_DIR_CACHE_ENTRIES: &[&str] = &[
 ];
 
 /// Every file and directory `scope` removes for `profile`. Kept in step with
-/// `scripts/clean-atlas-config.sh`, with one deliberate difference: the
-/// script's default profile also removes the `atlas` WebKit/Caches entries,
-/// which belong to an unbundled build; here each process removes only the
-/// names it uses itself.
+/// `scripts/clean-atlas-config.sh`: each removes only the names its profile
+/// uses, so the `atlas` WebKit/Caches entries of an unbundled build go with
+/// Atlas Dev's data and never with the installed Atlas's.
 pub(crate) fn targets(scope: ResetScope, profile: Profile, roots: &Roots) -> Vec<PathBuf> {
     let id = profile.identifier();
     let names = library_names(profile, roots);

@@ -90,6 +90,18 @@ export function MemoryPanel() {
     }
   };
 
+  /** Opens the ask box as a memory instruction, `text` after the prompt. */
+  const askMemory = (text: string, anchor: HTMLElement) => {
+    // The record as loaded, read at the ask: the most used first, capped.
+    // The agent's memory tools reach the rest.
+    const digest = memoryDigest(useSharedMemoryStore.getState().entries, projectPath);
+    openAskAgent({
+      context: digest ? [digest] : [],
+      prompt: `${MEMORY_INSTRUCTION_PROMPT}${text}`,
+      anchor,
+    });
+  };
+
   return (
     <div className="flex h-full flex-col bg-background">
       <DestinationActions>
@@ -129,19 +141,10 @@ export function MemoryPanel() {
         </div>
       </DestinationActions>
 
-      {projectPath && (
-        <PromptLine
-          onOpen={(anchor) => {
-            // The record as loaded, read at the click: the most used first,
-            // capped. The agent's memory tools reach the rest.
-            const digest = memoryDigest(useSharedMemoryStore.getState().entries, projectPath);
-            openAskAgent({
-              context: digest ? [digest] : [],
-              prompt: MEMORY_INSTRUCTION_PROMPT,
-              anchor,
-            });
-          }}
-        />
+      {/* Memories and Activity carry the instruction in their search field;
+          the other tabs have no list to search, so they keep the line. */}
+      {projectPath && (sub === "review" || sub === "files") && (
+        <PromptLine onOpen={(anchor) => askMemory("", anchor)} />
       )}
 
       {projectPath && (
@@ -187,9 +190,10 @@ export function MemoryPanel() {
             selecting={selecting}
             onSelectingChange={setSelecting}
             onImportClaude={() => setImporting(true)}
+            onAsk={askMemory}
           />
         ) : sub === "activity" ? (
-          <MemoryActivity />
+          <MemoryActivity onAsk={askMemory} />
         ) : sub === "review" ? (
           <MemoryReviewQueue />
         ) : (
