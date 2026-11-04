@@ -18,6 +18,7 @@ import {
 import { SettingSwitch } from "../layout/setting-controls";
 
 import { ConfigFileSection } from "./config-file";
+import { confirmAppDataReset } from "@/features/app/lib/app-data-reset";
 import { Button } from "@tryatlas/design";
 
 export function SourceControlPage() {
@@ -67,7 +68,7 @@ export function PrivacyPage() {
   return (
     <SettingsPage
       title="Privacy"
-      description="Usage data, Atlas's own logs, and the settings file itself."
+      description="Usage data, Atlas's own logs, the settings file, and local data."
     >
       <SettingsSection
         title="Usage data"
@@ -98,7 +99,41 @@ export function PrivacyPage() {
         </SettingsGroup>
       </SettingsSection>
       <ConfigFileSection />
+      <LocalDataSection />
     </SettingsPage>
+  );
+}
+
+/** Privacy › Local data: the in-app `bun run clean:app`. */
+function LocalDataSection() {
+  return (
+    <SettingsSection
+      title="Local data"
+      description="Each asks first, then applies on a restart. Your projects, your agent CLIs' own sign-ins and agent variables in the system keychain are never touched."
+    >
+      <SettingsGroup>
+        <SettingsRow
+          anchor="clear-cache"
+          title="Clear cache"
+          description="Delete cached images, icons and web content. Sessions, settings and sign-ins stay."
+          control={
+            <Button variant="outline" size="sm" onClick={() => void confirmAppDataReset("cache")}>
+              Clear cache
+            </Button>
+          }
+        />
+        <SettingsRow
+          anchor="reset-atlas"
+          title="Reset Atlas"
+          description="Delete every session, setting and sign-in on this computer and start again from first-run setup."
+          control={
+            <Button variant="destructive" size="sm" onClick={() => void confirmAppDataReset("all")}>
+              Reset
+            </Button>
+          }
+        />
+      </SettingsGroup>
+    </SettingsSection>
   );
 }
 
