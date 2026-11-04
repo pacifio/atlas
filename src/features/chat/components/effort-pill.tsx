@@ -1,6 +1,7 @@
 import { Brain } from "lucide-react";
+import { Icon } from "@tryatlas/design";
 import { useChatStore } from "../stores/chat-store";
-import { composerPillLabelClass } from "./composer-dropup";
+import { composerPillClass, composerPillLabelClass } from "../lib/composer-pill-class";
 
 const EFFORT_CYCLE = ["", "low", "medium", "high", "max"] as const;
 
@@ -19,14 +20,12 @@ export function EffortPill({ tabId }: { tabId: string }) {
   const active = effort !== "";
   return (
     <button
+      type="button"
       onClick={cycle}
-      className="flex items-center px-2 h-6.5 rounded-full border border-[var(--border)] bg-[var(--card)] text-2xs leading-none font-medium text-[var(--secondary-foreground)] hover:bg-element-hover hover:text-[var(--foreground)] transition-colors cursor-pointer"
+      className={composerPillClass(false)}
       title="Reasoning effort (thinking budget) — Anthropic models"
     >
-      <Brain
-        size={11}
-        className={active ? "text-[var(--primary)]" : "text-[var(--muted-foreground)]"}
-      />
+      <Icon icon={Brain} size="sm" className={active ? "text-primary" : "text-muted-foreground"} />
       <span className={composerPillLabelClass("early")}>
         {active ? `Think: ${effort}` : "Think"}
       </span>

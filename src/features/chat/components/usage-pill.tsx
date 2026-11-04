@@ -40,8 +40,8 @@ export const UsagePill = memo(function UsagePill({ tabId }: { tabId: string }) {
       : pill.tint === "warn"
         ? "text-warning"
         : pill.state === "compacting"
-          ? "text-[var(--primary)]"
-          : "text-[var(--muted-foreground)]";
+          ? "text-primary"
+          : "text-muted-foreground";
 
   return (
     <div ref={ref} className="relative">
@@ -77,7 +77,7 @@ export const UsagePill = memo(function UsagePill({ tabId }: { tabId: string }) {
           >
             {pill.label}
           </span>
-          <ChevronDown size={10} className="ml-0.5 shrink-0 text-[var(--muted-foreground)]" />
+          <ChevronDown size={10} className="ml-0.5 shrink-0 text-muted-foreground" />
         </span>
       </button>
     </div>

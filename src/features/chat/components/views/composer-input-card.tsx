@@ -45,13 +45,13 @@ export function ComposerInputCard({
           // No bottom margin: the tray hangs straight off its edge.
           // `shadow-sm`: the `md` rung cast onto the tray under it and read
           // as the tray being disabled.
-          "relative z-10 mx-1 mt-1 min-h-[44px] border border-[var(--border)] bg-[var(--background)] shadow-sm",
+          "relative z-10 mx-1 mt-1 min-h-[44px] border border-border bg-background shadow-sm",
           collapsed ? "rounded-composer" : "rounded-xl",
           "transition-[border-radius,border-color,box-shadow] duration-base ease-out-strong motion-reduce:transition-none",
           // Focus treatment at HALF strength: the full border-focus +
           // /20 accent ring read far too loud on the nested surface.
           "focus-within:border-[color-mix(in_srgb,var(--border-strong)_50%,var(--border))]",
-          "focus-within:ring-1 focus-within:ring-[var(--primary)]/10",
+          "focus-within:ring-1 focus-within:ring-primary/10",
           // The disabled dim, scoped to the field the lock actually
           // applies to (see the shell above). No red tint — the send
           // button is already disabled and submit()/Cmd+Enter are gated

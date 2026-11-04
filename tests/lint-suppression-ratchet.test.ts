@@ -50,7 +50,7 @@ const BASELINE: Record<string, number> = {
   "jsx-a11y/no-autofocus": 6,
   "jsx-a11y/no-static-element-interactions": 1,
   "no-control-regex": 6,
-  "react-hooks/exhaustive-deps": 40,
+  "react-hooks/exhaustive-deps": 39,
   "typescript/no-explicit-any": 5,
 };
 
