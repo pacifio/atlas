@@ -101,8 +101,8 @@ export function GitManagerPanel() {
       )}
       {/* One header row: the view switch, then the branch and its sync, in
           that tab order. Too narrow for both, the branch group wraps onto a
-          second line (still right-aligned) instead of clipping. The group grows from
-          a zero basis, so the branch name truncates before the group wraps. */}
+          second line (still right-aligned) instead of clipping, and there the
+          branch name truncates before anything else gives. */}
       <HintGroup>
         <div className="shrink-0 flex flex-wrap items-center gap-x-1 gap-y-0.5 px-1.5 py-1 border-b border-border-subtle">
           <div className="flex items-center gap-0.5">
@@ -116,7 +116,7 @@ export function GitManagerPanel() {
               Stashes
             </ViewTab>
           </div>
-          <div className="flex max-w-full flex-1 items-center justify-end gap-0.5">
+          <div className="ml-auto flex min-w-0 max-w-full items-center gap-0.5">
             <BranchSwitcher />
             <HintItem label={mergeLabel}>
               <IconButton
