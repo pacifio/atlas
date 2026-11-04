@@ -8,7 +8,7 @@
  * scope is shared by every page that has one, and starts on All projects.
  */
 
-import { useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, type ReactNode } from "react";
 import { useProjectStore } from "@/features/projects/stores/project-store";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
 import { useSettingsNav } from "../../stores/settings-nav-store";
@@ -44,6 +44,13 @@ export function ScopeSentence({
     ],
     [projects, orgId],
   );
+
+  // The picked project removed, or the organisation switched away from it:
+  // back to All projects rather than editing a project the picker can't show.
+  // Not while the project list is still empty (not loaded yet).
+  useEffect(() => {
+    if (scope && projects.length > 0 && !options.some((o) => o.value === scope)) setScope(null);
+  }, [scope, projects.length, options, setScope]);
 
   const overrides = info ? Object.keys(info.values).length : 0;
   return (

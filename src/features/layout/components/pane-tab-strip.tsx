@@ -11,7 +11,7 @@ import { restrictToFirstScrollableAncestor, restrictToHorizontalAxis } from "@dn
 import { SortableContext, horizontalListSortingStrategy } from "@dnd-kit/sortable";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { Tab } from "../stores/layout-store";
-import { SortablePaneTab } from "./pane-tab";
+import { SortablePaneTab, useTabListFocus } from "./pane-tab";
 import { HintItem, IconButton } from "@tryatlas/design";
 
 /** How far the pointer must travel before a press on a tab becomes a drag.
@@ -200,12 +200,19 @@ export function PaneTabStrip({
   };
 
   const mask = fadeMask(scroll);
+  // The strip's one Tab stop: the tab focus is on, else the active tab, else
+  // the first.
+  const { focusedId, listProps } = useTabListFocus();
+  const has = (id: string | null) => id !== null && tabs.some((t) => t.id === id);
+  const stopId = has(focusedId) ? focusedId : has(activeId) ? activeId : (tabs[0]?.id ?? null);
 
   return (
     <>
       <div
         ref={viewportRef}
         role="tablist"
+        aria-label="Tabs"
+        {...listProps}
         data-pane-tab-strip
         className="flex min-w-0 shrink items-center overflow-x-auto hide-scrollbar"
         style={mask ? { maskImage: mask, WebkitMaskImage: mask } : undefined}
@@ -227,6 +234,7 @@ export function PaneTabStrip({
                   focused={focused}
                   running={runningTabIds.has(tab.id)}
                   onSelect={onSelect}
+                  tabStop={tab.id === stopId}
                   menu
                 />
               ))}

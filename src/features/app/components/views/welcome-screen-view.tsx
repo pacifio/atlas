@@ -53,30 +53,34 @@ export function WelcomeScreenView({
             </div>
             <div className="space-y-1">
               {recents.map((project) => (
+                // The row is a wrapper holding two siblings, the open button and
+                // Remove, so no control sits inside another.
                 <div
                   key={project.path}
-                  className="group flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-element-hover transition-colors cursor-pointer"
-                  onClick={() => onOpenRecent(project.path)}
+                  className="group flex items-center gap-1 pr-2 rounded-lg hover:bg-element-hover focus-within:bg-element-hover transition-colors"
                 >
-                  <Folder size={14} className="text-primary shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium text-foreground truncate">
-                      {project.name}
+                  <button
+                    type="button"
+                    onClick={() => onOpenRecent(project.path)}
+                    className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-lg py-2 pl-3 text-left outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  >
+                    <Folder size={14} className="text-primary shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-foreground truncate">
+                        {project.name}
+                      </div>
+                      <div className="text-2xs text-muted-foreground truncate font-mono">
+                        {project.path}
+                      </div>
                     </div>
-                    <div className="text-2xs text-muted-foreground truncate font-mono">
-                      {project.path}
-                    </div>
-                  </div>
+                  </button>
                   <span className="inline-flex opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
                     <Hint label="Remove from recents">
                       <IconButton
                         size="xs"
                         icon={X}
                         label="Remove from recents"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onRemoveRecent(project.path);
-                        }}
+                        onClick={() => onRemoveRecent(project.path)}
                       />
                     </Hint>
                   </span>

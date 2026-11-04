@@ -179,3 +179,50 @@ describe("overflow", () => {
     expect(queryByLabelText("Scroll tabs right")).toBeNull();
   });
 });
+
+describe("roving focus", () => {
+  it("makes the active tab the strip's one Tab stop", () => {
+    const { container } = strip({ activeId: "c" });
+    const stops = TABS.filter((t) => tabEl(container, t.id).tabIndex === 0).map((t) => t.id);
+    expect(stops).toEqual(["c"]);
+  });
+
+  it("falls back to the first tab when none is active", () => {
+    const { container } = strip({ activeId: null });
+    expect(tabEl(container, "a").tabIndex).toBe(0);
+  });
+
+  it("moves focus with the arrows, Home and End, wrapping, without selecting", () => {
+    const { container, onSelect } = strip({ activeId: "a" });
+    const a = tabEl(container, "a");
+    a.focus();
+    fireEvent.keyDown(a, { key: "ArrowLeft" });
+    expect(document.activeElement).toBe(tabEl(container, "f"));
+    fireEvent.keyDown(document.activeElement!, { key: "Home" });
+    expect(document.activeElement).toBe(a);
+    fireEvent.keyDown(a, { key: "ArrowRight" });
+    expect(document.activeElement).toBe(tabEl(container, "b"));
+    fireEvent.keyDown(document.activeElement!, { key: "End" });
+    expect(document.activeElement).toBe(tabEl(container, "f"));
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("moves the Tab stop with focus, and back to the active tab once focus leaves", () => {
+    const { container } = strip({ activeId: "a" });
+    const a = tabEl(container, "a");
+    act(() => a.focus());
+    act(() => {
+      fireEvent.keyDown(a, { key: "ArrowRight" });
+    });
+    expect(tabEl(container, "b").tabIndex).toBe(0);
+    expect(a.tabIndex).toBe(-1);
+    act(() => tabEl(container, "b").blur());
+    expect(a.tabIndex).toBe(0);
+    expect(tabEl(container, "b").tabIndex).toBe(-1);
+  });
+
+  it("names each close button after its tab and keeps it out of the Tab order", () => {
+    const { getByLabelText } = strip();
+    expect(getByLabelText("Close b").tabIndex).toBe(-1);
+  });
+});

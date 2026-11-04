@@ -231,10 +231,14 @@ export function InstalledSkills({
     [effectiveProject, refresh],
   );
 
+  // The listed `SKILL.md` path first: `skills_path` resolves only the
+  // canonical store, so it fails for a skill found in an agent's folder.
   const openSkill = useCallback(
     async (name: string) => {
       try {
-        void openFile(await skillsApi.path(scope, name, effectiveProject));
+        const metas = await skillsApi.list(scope, effectiveProject).catch(() => []);
+        const known = metas.find((m) => m.name === name)?.path;
+        void openFile(known ?? (await skillsApi.path(scope, name, effectiveProject)));
       } catch (e) {
         toast.error(String(e));
       }

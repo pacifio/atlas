@@ -263,6 +263,8 @@ export function NotificationsButton(props: DockButtonProps) {
       {...props}
       icon={Bell}
       label="Notifications"
+      // Where the drawer returns focus when it is dismissed.
+      data-notifications-bell=""
       dot={unread}
       onClick={() => toggle(activeOrgId)}
     />

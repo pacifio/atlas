@@ -21,6 +21,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Check, CircleHelp } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { QuestionSpec } from "../../lib/questions";
+import { isRecordingShortcut } from "@/features/keybindings/lib/recording";
 import { Button, HintGroup, HintItem, Icon, IconButton, Input } from "@tryatlas/design";
 
 /** One question's answer, as the card reports it. */
@@ -125,6 +126,8 @@ export function ApprovalCardView({
   const optionsRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // A chord being recorded in Settings → Keybindings is not an answer.
+      if (isRecordingShortcut()) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       const active = document.activeElement;
       const inText = active === inputRef.current;

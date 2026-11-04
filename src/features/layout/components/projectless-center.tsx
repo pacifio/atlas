@@ -5,7 +5,7 @@ import { WelcomeScreen } from "@/features/app/components/welcome-screen";
 import { PROJECTLESS_TYPES } from "@/lib/constants";
 import { columnChrome } from "../lib/shell-edges";
 import { useLayoutStore, type Tab } from "../stores/layout-store";
-import { PaneTab } from "./pane-tab";
+import { PaneTab, useTabListFocus } from "./pane-tab";
 import { TabContent } from "./tab-panels";
 import { PanelLoading } from "./views/panel-loading";
 
@@ -33,6 +33,12 @@ export function ProjectlessCenter() {
   const allowed = tabs.filter((t) => PROJECTLESS_TYPES.has(t.type));
   const storeActive = activeByGroup[focusedGroupId] ?? null;
   const active = atHome ? null : (allowed.find((t) => t.id === storeActive) ?? null);
+  // The strip's one Tab stop: the tab focus is on, else the active one.
+  const { focusedId, listProps } = useTabListFocus();
+  const stopId =
+    focusedId !== null && (focusedId === HOME_TAB.id || allowed.some((t) => t.id === focusedId))
+      ? focusedId
+      : (active?.id ?? HOME_TAB.id);
 
   return (
     <div className="flex h-full w-full flex-col bg-background">
@@ -46,6 +52,8 @@ export function ProjectlessCenter() {
         {allowed.length > 0 && (
           <div
             role="tablist"
+            aria-label="Tabs"
+            {...listProps}
             className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto hide-scrollbar"
           >
             {/* Home is a pseudo-tab, not a store tab: it cannot close and it
@@ -54,6 +62,7 @@ export function ProjectlessCenter() {
               tab={HOME_TAB}
               icon={House}
               active={active === null}
+              tabStop={stopId === HOME_TAB.id}
               focused
               running={false}
               onSelect={() => setAtHome(true)}
@@ -63,6 +72,7 @@ export function ProjectlessCenter() {
                 key={tab.id}
                 tab={tab}
                 active={tab.id === active?.id}
+                tabStop={stopId === tab.id}
                 focused
                 running={false}
                 onSelect={() => {
