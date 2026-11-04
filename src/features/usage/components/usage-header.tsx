@@ -116,7 +116,7 @@ function ExportRow({ className, ...props }: React.ComponentProps<"button">) {
       type="button"
       {...props}
       className={cn(
-        "flex h-control-md w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-xs text-secondary-foreground outline-none transition-colors hover:bg-element-hover hover:text-foreground",
+        "flex h-control-md w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-xs text-secondary-foreground transition-colors hover:bg-element-hover hover:text-foreground",
         className,
       )}
     />

@@ -91,7 +91,7 @@ function CustomRangeButton({
       type="button"
       {...props}
       className={cn(
-        "flex h-control-md shrink-0 cursor-pointer items-center rounded-full border border-border px-2 text-2xs font-medium whitespace-nowrap tabular-nums outline-none transition-colors",
+        "flex h-control-md shrink-0 cursor-pointer items-center rounded-full border border-border px-2 text-2xs font-medium whitespace-nowrap tabular-nums transition-colors",
         lit ? "bg-element-selected text-foreground" : "text-muted-foreground hover:text-foreground",
         className,
       )}

@@ -219,7 +219,7 @@ function FacetButton({
       type="button"
       {...props}
       className={cn(
-        "flex h-control-md items-center rounded-full border px-2 text-2xs font-medium leading-none transition-colors outline-none disabled:cursor-not-allowed disabled:opacity-50",
+        "flex h-control-md items-center rounded-full border px-2 text-2xs font-medium leading-none transition-colors disabled:cursor-not-allowed disabled:opacity-50",
         on
           ? "border-border-strong bg-element-selected text-foreground"
           : "border-border bg-card text-secondary-foreground hover:bg-element-hover hover:text-foreground",
