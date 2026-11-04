@@ -56,6 +56,14 @@ describe("resolveAgentMeta", () => {
     expect(m.label).toBe("Claude Code");
   });
 
+  it("treats the registry's codex-acp as Codex, as claude-acp is Claude Code", () => {
+    const m = resolveAgentMeta("codex-acp", EMPTY_AGENT_REGISTRY);
+    expect(m.agentType).toBe("codex");
+    expect(m.firstPartyIcon).toBe("codex");
+    expect(m.label).toBe("Codex");
+    expect(m.external).toBe(false);
+  });
+
   it("does not lend the Claude mark to a third-party claude-* agent", () => {
     const m = resolveAgentMeta("claude-foo", EMPTY_AGENT_REGISTRY);
     expect(m.firstPartyIcon).toBeNull();

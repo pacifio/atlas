@@ -94,7 +94,9 @@ export async function iconSourceFor(
       createElement(Icon, { ...size, style: { color: agentBrandColor(agentType) ?? mono } }),
     );
 
-  // Same order as AgentGlyph.
+  // An id ladder that predates agent identity: `AgentGlyph` now resolves
+  // through `firstPartyIcon`, so the two can disagree on a third-party
+  // `claude-*` id (this draws the Claude Code mark, `AgentGlyph` does not).
   if (agentType.includes("claude")) return firstParty(AgentIcons.Claude);
   if (agentType.includes("codex")) return firstParty(AgentIcons.Codex);
   if (agentType.includes("opencode")) return firstParty(AgentIcons.OpenCode);
@@ -127,9 +129,15 @@ async function renderMark(element: ReturnType<typeof createElement>): Promise<Ic
  * other mark.
  */
 export function inlineTokenFills(svg: string): string {
+  // Matched on the token inside any `class` attribute, not the exact markup,
+  // so another class or a reordered attribute in the package does not slip
+  // through to a solid-black banner. The test pins the result.
   return svg
-    .replaceAll('class="fill-foreground/25"', 'fill="currentColor" fill-opacity="0.25"')
-    .replaceAll('class="fill-foreground"', 'fill="currentColor"');
+    .replace(
+      /class="[^"]*\bfill-foreground\/25(?![\w/-])[^"]*"/g,
+      'fill="currentColor" fill-opacity="0.25"',
+    )
+    .replace(/class="[^"]*\bfill-foreground(?![\w/-])[^"]*"/g, 'fill="currentColor"');
 }
 
 /** `<agent>-<scheme>-<hash>`: file-name safe (the Rust side re-validates). */

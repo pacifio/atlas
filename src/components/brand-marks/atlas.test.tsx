@@ -16,6 +16,14 @@ describe("AtlasIcon", () => {
     expect(frame.querySelector("div > svg")).not.toBeNull();
   });
 
+  it("switches from the bare mark to the badge at 32px", () => {
+    const below = render(<AtlasIcon size={31} />).container.firstElementChild;
+    expect(below?.firstElementChild?.tagName.toLowerCase()).toBe("svg");
+    cleanup();
+    const at = render(<AtlasIcon size={32} />).container.firstElementChild;
+    expect(at?.firstElementChild?.tagName).toBe("DIV");
+  });
+
   it("draws the bare mark at a small size", () => {
     const { container } = render(<AtlasIcon size={12} alt="Agent" />);
     const frame = container.firstElementChild as HTMLElement;
