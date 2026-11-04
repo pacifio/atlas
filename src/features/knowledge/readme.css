@@ -1,0 +1,66 @@
+/* A repo README (`readme-view.tsx`, `data-view="readme"`) at document scale, on top of the package's `.prose-session`
+   typography (which is sized for session turns). Only what differs at doc
+   scale lives here: the body size, the heading ladder and its rules, and the
+   GitHub HTML a README leans on (`<details>`, `align="center"`). Fences,
+   quotes, links and rules come from `.prose-session` unchanged. */
+
+.prose-session[data-view="readme"] {
+  font-size: var(--text-md);
+  line-height: 1.7;
+}
+.prose-session[data-view="readme"] p {
+  line-height: 1.7;
+}
+.prose-session[data-view="readme"] h1 {
+  font-size: var(--text-2xl);
+  line-height: 1.25;
+  font-weight: 600;
+  margin-top: 1.6em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--border);
+}
+.prose-session[data-view="readme"] h2 {
+  font-size: var(--text-xl);
+  line-height: 1.3;
+  font-weight: 600;
+  margin-top: 1.4em;
+  padding-bottom: 0.25em;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.prose-session[data-view="readme"] h3 {
+  font-size: var(--text-lg);
+  line-height: 1.35;
+  margin-top: 1.3em;
+}
+.prose-session[data-view="readme"] h4 {
+  font-size: var(--text-md);
+  line-height: 1.4;
+  margin-top: 1.2em;
+}
+.prose-session[data-view="readme"] > :first-child {
+  margin-top: 0;
+}
+/* A wide table scrolls inside its own box rather than pushing the column. */
+.prose-session[data-view="readme"] table {
+  display: block;
+  overflow-x: auto;
+}
+.prose-session[data-view="readme"] details {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+  padding: 0.5em 0.75em;
+}
+.prose-session[data-view="readme"] summary {
+  cursor: pointer;
+  font-weight: 500;
+}
+.prose-session[data-view="readme"] [align="center"] {
+  text-align: center;
+}
+.prose-session[data-view="readme"] img {
+  display: inline-block;
+  max-width: 100%;
+  height: auto;
+  vertical-align: middle;
+}

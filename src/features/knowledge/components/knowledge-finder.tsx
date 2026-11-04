@@ -1,13 +1,13 @@
 //! Cmd+F finder for the Knowledge Base — a simple TITLE-only search across all
 //! entries (lowercased query + lowercased title, plain substring match — no
 //! content scan, which produced noisy/inaccurate hits). A floating bar pinned
-//! to the top of the editor column; Esc / click-away closes, ↑/↓ + Enter
-//! navigate, click opens a result.
+//! to the top of the editor column; Esc or the close button closes it (there
+//! is no click-away), ↑/↓ + Enter navigate, click opens a result.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Hint } from "@tryatlas/design";
+import { Hint, Icon, IconButton } from "@tryatlas/design";
 
 interface FinderEntry {
   id: string;
@@ -82,10 +82,13 @@ export function KnowledgeFinder({
   };
 
   return (
-    <div className="absolute left-1/2 top-3 z-popover w-[460px] max-w-[90%] -translate-x-1/2">
-      <div className="overflow-hidden rounded-lg border border-border bg-card shadow-md">
-        <div className="flex items-center gap-2 px-3 h-9 border-b border-border-subtle">
-          <Search size={13} className="shrink-0 text-muted-foreground" />
+    <div
+      data-view="knowledge-finder"
+      className="absolute top-3 left-1/2 z-popover w-[460px] max-w-[90%] -translate-x-1/2"
+    >
+      <div className="overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-md">
+        <div className="flex h-[36px] items-center gap-2 border-b border-border-subtle px-3">
+          <Icon icon={Search} size="md" className="shrink-0 text-muted-foreground" />
           <input
             ref={inputRef}
             value={q}
@@ -96,22 +99,17 @@ export function KnowledgeFinder({
             className="min-w-0 flex-1 bg-transparent text-base text-foreground outline-none placeholder:text-muted-foreground"
           />
           {q && (
-            <span className="shrink-0 text-2xs tabular-nums text-muted-foreground">
+            <span className="tnum shrink-0 text-2xs text-muted-foreground">
               {results.length}
               {results.length >= MAX_RESULTS ? "+" : ""}
             </span>
           )}
           <Hint label="Close" shortcut="Esc">
-            <button
-              onClick={onClose}
-              className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-element-hover cursor-pointer"
-            >
-              <X size={12} />
-            </button>
+            <IconButton icon={X} label="Close finder" size="xs" onClick={onClose} />
           </Hint>
         </div>
         {q.trim() && (
-          <div className="max-h-[340px] overflow-y-auto hide-scrollbar py-1">
+          <div className="hide-scrollbar max-h-[340px] overflow-y-auto p-1">
             {results.length === 0 ? (
               <div className="px-3 py-3 text-sm text-muted-foreground">No matches</div>
             ) : (
@@ -121,8 +119,8 @@ export function KnowledgeFinder({
                   onMouseEnter={() => setActive(i)}
                   onClick={() => choose(i)}
                   className={cn(
-                    "flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors",
-                    i === active ? "bg-element-hover" : "hover:bg-element-hover/60",
+                    "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left",
+                    i === active ? "bg-element-hover" : "hover:bg-element-hover",
                   )}
                 >
                   <span className="shrink-0 text-base leading-none">{r.icon}</span>

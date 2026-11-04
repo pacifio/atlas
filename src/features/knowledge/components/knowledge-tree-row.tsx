@@ -1,5 +1,6 @@
 import type { CSSProperties, ReactNode } from "react";
 import { ChevronRight, File as FileIcon, Folder, FolderOpen, type LucideIcon } from "lucide-react";
+import { Icon } from "@tryatlas/design";
 import { cn } from "@/lib/utils";
 import { INDENT_PER_LEVEL, ROW_HEIGHT } from "@/features/explorer/lib/tree-constants";
 
@@ -64,7 +65,7 @@ export function KnowledgeTreeRow({
         "transition-colors group select-none cursor-pointer",
         "focus:outline-none focus-visible:ring-1 focus-visible:ring-border-strong",
         isActive
-          ? "bg-[var(--card)] text-foreground"
+          ? "bg-card text-foreground"
           : "text-secondary-foreground hover:bg-element-hover hover:text-foreground",
       )}
       style={{
@@ -76,33 +77,30 @@ export function KnowledgeTreeRow({
       }}
     >
       {isDir ? (
-        <ChevronRight
-          size={12}
+        <Icon
+          icon={ChevronRight}
+          size="sm"
           className={cn(
-            "shrink-0 text-muted-foreground transition-transform",
+            "shrink-0 text-muted-foreground transition-transform duration-fast",
             isExpanded && "rotate-90",
           )}
-          strokeWidth={2}
         />
       ) : (
         <span className="w-3 shrink-0" aria-hidden />
       )}
 
       {leafIconNode && !isDir ? (
-        <span
-          className="shrink-0 inline-flex items-center justify-center text-sm"
-          style={{ width: 13, height: 13, lineHeight: 1 }}
-        >
+        <span className="inline-flex size-[13px] shrink-0 items-center justify-center text-sm leading-none">
           {leafIconNode}
         </span>
       ) : isDir ? (
         isExpanded ? (
-          <FolderOpen size={13} className="shrink-0 text-muted-foreground" strokeWidth={1.5} />
+          <Icon icon={FolderOpen} size="md" className="shrink-0 text-muted-foreground" />
         ) : (
-          <Folder size={13} className="shrink-0 text-muted-foreground" strokeWidth={1.5} />
+          <Icon icon={Folder} size="md" className="shrink-0 text-muted-foreground" />
         )
       ) : (
-        <LeafIcon size={13} className="shrink-0 text-muted-foreground" strokeWidth={1.5} />
+        <Icon icon={LeafIcon} size="md" className="shrink-0 text-muted-foreground" />
       )}
 
       <span

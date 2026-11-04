@@ -28,7 +28,7 @@ import { KnowledgeSidebar } from "./knowledge-sidebar";
 import { KnowledgeFinder } from "./knowledge-finder";
 import { EditorTopbar } from "./editor-topbar";
 import { EditorFooter } from "./editor-footer";
-import { KnowledgeInspector } from "./knowledge-inspector";
+import { KnowledgeInspectorView } from "./views/knowledge-inspector-view";
 import { PageProperties } from "./page-properties";
 import { PageHeaderWithIcon } from "./page-header-with-icon";
 import { RepoEmpty, RepoTopbar } from "./views/repo-views";
@@ -37,6 +37,7 @@ import { listClonedRepos, readRepoReadme, saveKnowledgeNote } from "../lib/knowl
 import type { KnowledgeClonedRepo } from "../lib/knowledge-api";
 import { useKnowledgeResize } from "../lib/use-knowledge-resize";
 import { useKnowledgeImports } from "../lib/use-knowledge-imports";
+import { copyText } from "@/lib/clipboard";
 import { useEditorCounts } from "../lib/use-editor-counts";
 
 const RECENTS_MAX = 5;
@@ -382,11 +383,7 @@ export function KnowledgePanel({ tabId }: { tabId?: string }) {
   }
 
   return (
-    <div
-      ref={rootRef}
-      className="relative h-full flex"
-      style={{ background: "var(--panel-background)" }}
-    >
+    <div ref={rootRef} className="relative flex h-full bg-panel">
       {finderOpen && (
         <KnowledgeFinder
           entries={sidebarEntries}
@@ -440,14 +437,16 @@ export function KnowledgePanel({ tabId }: { tabId?: string }) {
       )}
 
       {/* Main */}
-      <main className="flex-1 flex flex-col min-w-0" style={{ background: "var(--background)" }}>
+      <main className="flex min-w-0 flex-1 flex-col bg-background">
         {activeRepoName ? (
           <>
             <RepoTopbar
               name={
                 clonedRepos.find((r) => r.name === activeRepoName)?.display_name ?? activeRepoName
               }
-              path={clonedRepos.find((r) => r.name === activeRepoName)?.path ?? ""}
+              onCopyPath={() =>
+                void copyText(clonedRepos.find((r) => r.name === activeRepoName)?.path ?? "")
+              }
               onToggleSidebar={toggleKnowledgeSidebar}
               sidebarHidden={!showSidebar}
               onToggleInspector={toggleKnowledgeInspector}
@@ -469,7 +468,9 @@ export function KnowledgePanel({ tabId }: { tabId?: string }) {
               </div>
             ) : (
               <RepoEmpty
-                path={clonedRepos.find((r) => r.name === activeRepoName)?.path ?? ""}
+                onCopyPath={() =>
+                  void copyText(clonedRepos.find((r) => r.name === activeRepoName)?.path ?? "")
+                }
                 onOpen={() => {
                   // Open this repo as a project in the current window (Atlas is
                   // single-window now — was: spawn a new native window).
@@ -499,10 +500,7 @@ export function KnowledgePanel({ tabId }: { tabId?: string }) {
                 like Notion. The Tiptap surface inside drops its horizontal
                 padding (see tiptap.css) and inherits the column gutter from
                 this parent. */}
-            <div
-              className="flex-1 min-h-0 overflow-y-auto"
-              style={{ background: "var(--background)" }}
-            >
+            <div className="min-h-0 flex-1 overflow-y-auto bg-background">
               <div
                 style={{
                   maxWidth: 780,
@@ -563,7 +561,7 @@ export function KnowledgePanel({ tabId }: { tabId?: string }) {
             className="shrink-0 cursor-col-resize hover:bg-border-strong/60 transition-colors z-panel"
             style={{ width: 4, marginLeft: -2, marginRight: -2 }}
           />
-          <KnowledgeInspector
+          <KnowledgeInspectorView
             outline={outline.map((h) => ({ id: h.id, label: h.label, level: h.level }))}
             activeHeadingId={activeHeadingId}
             onJumpToHeading={(id) => {
@@ -573,7 +571,7 @@ export function KnowledgePanel({ tabId }: { tabId?: string }) {
               jumpToHeading(editorInstance, heading.pos);
             }}
             pageStats={pageStats}
-            entryId={activeEntryId}
+            backlinks={backlinksFooter}
             onJumpToEntry={(id) => void handleSelectEntry(id)}
             width={inspectorWidth}
           />

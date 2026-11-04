@@ -3,7 +3,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { Trash2, FileText } from "lucide-react";
 import { KnowledgeTreeRow } from "./knowledge-tree-row";
 import { ROW_HEIGHT } from "@/features/explorer/lib/tree-constants";
-import { Hint } from "@tryatlas/design";
+import { EmptyState, Hint, Icon } from "@tryatlas/design";
 
 /** Imperative handle exposed to the sidebar so its header buttons can
  *  drive collapse-all / expand-all without lifting `expanded` state. */
@@ -156,9 +156,7 @@ export const KnowledgeTree = forwardRef<KnowledgeTreeHandle, KnowledgeTreeProps>
       });
 
     if (entries.length === 0) {
-      return (
-        <div className="px-3 py-4 text-xs text-muted-foreground text-center">No notes yet</div>
-      );
+      return <EmptyState icon={FileText} title="No notes yet" />;
     }
 
     return (
@@ -181,9 +179,7 @@ export const KnowledgeTree = forwardRef<KnowledgeTreeHandle, KnowledgeTreeProps>
                 leafIcon={FileText}
                 leafIconNode={
                   node.entry?.icon ? (
-                    <span className="text-sm" style={{ lineHeight: 1 }}>
-                      {node.entry.icon}
-                    </span>
+                    <span className="text-sm leading-none">{node.entry.icon}</span>
                   ) : undefined
                 }
                 onClick={() => {
@@ -202,7 +198,7 @@ export const KnowledgeTree = forwardRef<KnowledgeTreeHandle, KnowledgeTreeProps>
                         }}
                         className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 p-0.5 rounded hover:text-error text-muted-foreground transition-opacity"
                       >
-                        <Trash2 size={11} />
+                        <Icon icon={Trash2} size="sm" />
                       </button>
                     </Hint>
                   ) : null

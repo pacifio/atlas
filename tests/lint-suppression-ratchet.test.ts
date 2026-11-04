@@ -45,7 +45,7 @@ const SCAN_ROOT = "src";
 
 /** Rule → how many suppressions of it `src/` may carry. Only ever lowered. */
 const BASELINE: Record<string, number> = {
-  "jsx-a11y/alt-text": 2,
+  "jsx-a11y/alt-text": 1,
   "jsx-a11y/media-has-caption": 1,
   "jsx-a11y/no-autofocus": 6,
   "jsx-a11y/no-static-element-interactions": 1,

@@ -31,6 +31,7 @@ import type {
   PageMetaPatch,
   RustPageMeta,
 } from "@/features/knowledge/stores/knowledge-meta-store";
+import type { KnowledgeServerExport } from "@/features/knowledge/lib/knowledge-api";
 import type { KnowledgeEntry } from "@/features/knowledge/stores/knowledge-store";
 import type { TypedHandlers, Unread } from "../types";
 import { MOCK_PROJECT } from "../project";
@@ -663,9 +664,8 @@ export interface KnowledgeResponses {
   save_knowledge_note: Unread;
   delete_knowledge_note: Unread;
   create_knowledge_dir: Unread;
-  // These two are inline `invoke<{…}>` type arguments inside components
-  // (`knowledge-panel.tsx`, `editor-footer.tsx`) with no named type to import,
-  // so they are restated — and, unlike the rest, do NOT catch drift.
+  // An inline `invoke<{…}>` type argument in `knowledge-api.ts` with no named
+  // type to import, so it is restated — and, unlike the rest, does NOT catch drift.
   import_into_knowledge: { notes_imported: number; files_copied: number };
   knowledge_meta_load: MetaFile;
   knowledge_meta_patch: Unread;
@@ -681,7 +681,7 @@ export interface KnowledgeResponses {
   // `open()` from `@tauri-apps/plugin-dialog`, which calls this command.
   "plugin:dialog|open": Awaited<ReturnType<typeof openDialog>>;
   mention_search: MentionData[];
-  knowledge_export_server: { binaryPath: string; noteCount: number };
+  knowledge_export_server: KnowledgeServerExport;
 }
 
 export const knowledgeHandlers: TypedHandlers<KnowledgeResponses> = {

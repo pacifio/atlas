@@ -86,7 +86,7 @@ const EXEMPT_FILES: Record<string, string> = {
     "Shape 2. The editors' logo marks (VS Code's blues, VSCodium's gradient) " +
     'beside "Open in <editor>". Same argument as `agent-icons.tsx`: ' +
     "a recoloured logo is the wrong logo.",
-  "src/features/knowledge/components/cover-picker.tsx":
+  "src/features/knowledge/lib/cover-gradients.ts":
     "Shape 2. The page-cover palette the user picks from. These are document " +
     "content, like a highlighter colour — the chrome around the picker is themed.",
   "src/features/spaces/lib/space-wire.ts":

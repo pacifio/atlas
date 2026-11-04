@@ -1,5 +1,17 @@
-import { ChevronRight, Folder, PanelRight } from "lucide-react";
-import { RailGlyph, Hint } from "@tryatlas/design";
+import { Fragment } from "react";
+import { Folder, PanelRight } from "lucide-react";
+import {
+  Badge,
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+  Hint,
+  Icon,
+  IconButton,
+  RailGlyph,
+} from "@tryatlas/design";
 
 interface EditorTopbarProps {
   /** Folder/segment trail (empty for root-level pages). */
@@ -36,65 +48,64 @@ export function EditorTopbar({
 }: EditorTopbarProps) {
   return (
     <div
-      className="flex items-center shrink-0 border-b border-border-subtle"
-      style={{
-        height: 36,
-        gap: 8,
-        padding: "0 14px",
-        background: "var(--panel-background)",
-      }}
+      data-view="editor-topbar"
+      className="flex h-[36px] shrink-0 items-center gap-2 border-b border-border-subtle bg-panel px-3.5"
     >
       {onToggleSidebar && (
         <Hint label={sidebarHidden ? "Show sidebar" : "Hide sidebar"}>
           <button
+            type="button"
             onClick={onToggleSidebar}
-            className="p-1 rounded text-muted-foreground hover:bg-element-hover hover:text-secondary-foreground transition-colors"
-            style={{ width: 22, height: 22, marginLeft: -6 }}
+            className="-ml-1.5 inline-flex size-control-sm items-center justify-center rounded-md text-muted-foreground transition-colors duration-fast hover:bg-element-hover hover:text-secondary-foreground"
           >
             <RailGlyph open={!sidebarHidden} size="sm" />
           </button>
         </Hint>
       )}
-      {/* Breadcrumbs */}
-      <div
-        className="flex items-center min-w-0 text-sm"
-        style={{ gap: 6, color: "var(--muted-foreground)" }}
-      >
-        {breadcrumbs.map((segment, i) => (
-          <span key={i} className="flex items-center" style={{ gap: 6 }}>
-            <Folder size={11} className="text-muted-foreground shrink-0" strokeWidth={1.5} />
-            <span className="truncate">{segment}</span>
-            <ChevronRight size={10} className="text-muted-foreground shrink-0" />
-          </span>
-        ))}
-        <span className="flex items-center text-foreground truncate" style={{ gap: 5 }}>
-          <span className="leading-none">{icon ?? "📄"}</span>
-          <span className="truncate">{title}</span>
-        </span>
-      </div>
+      <Breadcrumb className="min-w-0">
+        <BreadcrumbList className="flex-nowrap overflow-hidden">
+          {breadcrumbs.map((segment, i) => (
+            <Fragment key={i}>
+              <BreadcrumbItem className="min-w-0 shrink">
+                <Icon icon={Folder} size="sm" className="shrink-0" />
+                <span className="truncate">{segment}</span>
+              </BreadcrumbItem>
+              <BreadcrumbSeparator />
+            </Fragment>
+          ))}
+          <BreadcrumbItem className="min-w-0">
+            <BreadcrumbPage className="min-w-0">
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span className="leading-none">{icon ?? "📄"}</span>
+                <span className="truncate">{title}</span>
+              </span>
+            </BreadcrumbPage>
+          </BreadcrumbItem>
+        </BreadcrumbList>
+      </Breadcrumb>
 
-      <span className="pill pill-bare text-2xs" style={{ height: 18, padding: "0 6px" }}>
+      <Badge variant="outline" size="md">
         {kind}
-      </span>
+      </Badge>
 
       <span className="flex-1" />
 
       {isDirty && (
         <span
-          className="dot"
-          style={{ background: "var(--foreground)", width: 6, height: 6 }}
+          role="img"
+          aria-label="Unsaved changes"
           title="Unsaved changes"
+          className="size-1.5 shrink-0 rounded-full bg-foreground"
         />
       )}
       {onToggleInspector && (
         <Hint label="Toggle inspector">
-          <button
+          <IconButton
+            icon={PanelRight}
+            label="Toggle inspector"
+            size="sm"
             onClick={onToggleInspector}
-            className="p-1 rounded text-muted-foreground hover:bg-element-hover hover:text-secondary-foreground transition-colors"
-            style={{ width: 22, height: 22 }}
-          >
-            <PanelRight size={12} />
-          </button>
+          />
         </Hint>
       )}
     </div>
