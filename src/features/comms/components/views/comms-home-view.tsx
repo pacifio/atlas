@@ -1,6 +1,13 @@
-import { useMemo, useState, type ReactNode } from "react";
-import { ChevronRight, Hash, Lock, MessagesSquare, Search, Users } from "lucide-react";
-import { Skeleton, Spinner } from "@tryatlas/design";
+import { useMemo, useRef, useState, type ReactNode } from "react";
+import { ChevronRight, Hash, MessagesSquare, Search } from "lucide-react";
+import {
+  CommsConversationRow,
+  ScrollFade,
+  Skeleton,
+  Spinner,
+  useScrollEdges,
+  type CommsConversationRowView,
+} from "@tryatlas/design";
 import { cn } from "@/lib/utils";
 import { CommsAvatar } from "../comms-avatar";
 import { conversationTitle } from "../../lib/derive";
@@ -36,6 +43,9 @@ export interface CommsHomeViewProps {
   /** The Direct messages heading's control (the new-message menu). */
   dmAction: ReactNode;
 }
+
+/** The list's edge fades: a ramp from the surface card it sits on. */
+const FADE = "from-background via-background/80";
 
 /**
  * The home view of a chat tab: every channel, every direct conversation, and
@@ -74,9 +84,24 @@ export function CommsHomeView({
     [conversations, discoverable, members, me, query],
   );
   const searching = query.trim() !== "";
+
+  const listRef = useRef<HTMLDivElement>(null);
+  const edges = useScrollEdges(listRef, [
+    channels.length,
+    groupDms.length,
+    oneToOnes.length,
+    contacts.length,
+    showDiscover,
+    rosterPending,
+  ]);
+
   // ⌘-click (Ctrl elsewhere) opens a conversation in a tab of its own, the
-  // way a browser link does; a plain click navigates this one.
-  const open = (convId: string, e: React.MouseEvent) => onOpen(convId, e.metaKey || e.ctrlKey);
+  // way a browser link does; a plain click navigates this one. The package
+  // row hands `onSelect` only the id, so the click's modifiers are read on
+  // the way down (capture runs before the row's own handler) and consumed
+  // by `open`.
+  const newTabClick = useRef(false);
+  const open = (convId: string) => onOpen(convId, newTabClick.current);
 
   return (
     <div
@@ -97,119 +122,130 @@ export function CommsHomeView({
         </label>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto hide-scrollbar pb-3">
-        <SectionLabel label="Channels" icon={Hash} action={channelAction} />
-        {channels.map((c) => (
-          <ChannelRow
-            key={c.id}
-            conv={c}
-            read={reads.get(c.id)}
-            active={c.id === activeConvId}
-            onOpen={(e) => open(c.id, e)}
-          />
-        ))}
-        {channels.length === 0 && (
-          <EmptyHint text={searching ? "No matching channels." : "No channels yet."} />
-        )}
-
-        <SectionLabel label="Direct messages" icon={MessagesSquare} action={dmAction} />
-        {rosterPending &&
-          [0, 1, 2].map((i) => (
-            <div key={`sk${i}`} className="flex items-center gap-2 py-[5px] pl-3.5 pr-2.5">
-              {/* Mirrors DirectRow exactly — same icon slot, same avatar size,
-                  one line — so the roster landing does not shift the list. */}
-              <RowIcon>
-                <span className="size-[22px] shrink-0 overflow-hidden rounded-full">
-                  <Skeleton className="size-full" />
-                </span>
-              </RowIcon>
-              <Skeleton className="h-[9px]" style={{ width: 88 + ((i * 37) % 60) }} />
-            </div>
-          ))}
-        {!rosterPending &&
-          groupDms.map((c) => (
-            <DirectRow
+      {/* The fades sit on this wrapper, not the scroller, so they stay put
+          while the rows scroll under them. */}
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <ScrollFade at="top" visible={edges.top} className={cn(FADE, "h-6")} />
+        <ScrollFade at="bottom" visible={edges.bottom} className={cn(FADE, "h-6")} />
+        <div
+          ref={listRef}
+          onClickCapture={(e) => {
+            newTabClick.current = e.metaKey || e.ctrlKey;
+          }}
+          className="min-h-0 flex-1 overflow-y-auto hide-scrollbar pb-3"
+        >
+          <SectionLabel label="Channels" icon={Hash} action={channelAction} />
+          {channels.map((c) => (
+            <CommsConversationRow
               key={c.id}
-              conv={c}
-              read={reads.get(c.id)}
-              members={members}
-              online={online}
-              me={me}
-              active={c.id === activeConvId}
-              onOpen={(e) => open(c.id, e)}
+              conversation={rowView(c, reads.get(c.id), c.name ?? "")}
+              selected={c.id === activeConvId}
+              onSelect={open}
             />
           ))}
-        {!rosterPending && groupDms.length > 0 && (oneToOnes.length > 0 || contacts.length > 0) && (
-          <RowDivider />
-        )}
-        {!rosterPending &&
-          oneToOnes.map((c) => (
-            <DirectRow
-              key={c.id}
-              conv={c}
-              read={reads.get(c.id)}
-              members={members}
-              online={online}
-              me={me}
-              active={c.id === activeConvId}
-              onOpen={(e) => open(c.id, e)}
-            />
-          ))}
-        {!rosterPending &&
-          contacts.map((m) => (
-            <ContactRow
-              key={m.id}
-              member={m}
-              online={online.includes(m.id)}
-              starting={startingDmId === m.id}
-              onStart={() => onStartDm(m.id)}
-            />
-          ))}
-        {!rosterPending &&
-          groupDms.length === 0 &&
-          oneToOnes.length === 0 &&
-          contacts.length === 0 && (
-            <EmptyHint text={searching ? "Nobody matches." : "Nobody else is here yet."} />
+          {channels.length === 0 && (
+            <EmptyHint text={searching ? "No matching channels." : "No channels yet."} />
           )}
 
-        {discover.length > 0 && (
-          <>
-            <button
-              type="button"
-              onClick={() => setShowDiscover((v) => !v)}
-              aria-expanded={showDiscover}
-              className="mt-2 flex w-full cursor-pointer items-center gap-1.5 px-3 pb-1.5 pt-3.5 text-2xs font-semibold uppercase tracking-[0.06em] text-secondary-foreground transition-colors duration-fast hover:text-foreground"
-            >
-              <ChevronRight
-                size={10}
-                className={cn("transition-transform duration-fast", showDiscover && "rotate-90")}
+          <SectionLabel label="Direct messages" icon={MessagesSquare} action={dmAction} />
+          {rosterPending &&
+            [0, 1, 2].map((i) => (
+              <div key={`sk${i}`} className="flex items-center gap-2 py-[5px] pl-3.5 pr-2.5">
+                {/* Mirrors DirectRow exactly — same icon slot, same avatar size,
+                    one line — so the roster landing does not shift the list. */}
+                <RowIcon>
+                  <span className="size-[22px] shrink-0 overflow-hidden rounded-full">
+                    <Skeleton className="size-full" />
+                  </span>
+                </RowIcon>
+                <Skeleton className="h-[9px]" style={{ width: 88 + ((i * 37) % 60) }} />
+              </div>
+            ))}
+          {!rosterPending &&
+            groupDms.map((c) => (
+              <DirectRow
+                key={c.id}
+                conv={c}
+                read={reads.get(c.id)}
+                members={members}
+                online={online}
+                me={me}
+                active={c.id === activeConvId}
+                onOpen={open}
               />
-              Discover
-              <span className="ml-auto tabular-nums normal-case">{discover.length}</span>
-            </button>
-            {showDiscover &&
-              discover.map((c) => (
-                <div
-                  key={c.id}
-                  className="group/disc flex items-center gap-2 py-[5px] pl-3.5 pr-2.5 text-muted-foreground"
-                >
-                  <RowIcon>
-                    <Hash size={13} className="opacity-60" />
-                  </RowIcon>
-                  <span className="min-w-0 flex-1 truncate text-sm">{c.name}</span>
-                  {/* Only public channels are self-serve joinable; a private one
-                      answers 404, so no button is offered for it at all. */}
-                  <button
-                    type="button"
-                    onClick={() => onJoin(c.id)}
-                    className="shrink-0 cursor-pointer rounded px-1.5 py-px text-xs font-medium text-secondary-foreground opacity-0 transition-opacity duration-fast hover:bg-element-hover hover:text-foreground group-hover/disc:opacity-100"
+            ))}
+          {!rosterPending &&
+            groupDms.length > 0 &&
+            (oneToOnes.length > 0 || contacts.length > 0) && <RowDivider />}
+          {!rosterPending &&
+            oneToOnes.map((c) => (
+              <DirectRow
+                key={c.id}
+                conv={c}
+                read={reads.get(c.id)}
+                members={members}
+                online={online}
+                me={me}
+                active={c.id === activeConvId}
+                onOpen={open}
+              />
+            ))}
+          {!rosterPending &&
+            contacts.map((m) => (
+              <ContactRow
+                key={m.id}
+                member={m}
+                online={online.includes(m.id)}
+                starting={startingDmId === m.id}
+                onStart={() => onStartDm(m.id)}
+              />
+            ))}
+          {!rosterPending &&
+            groupDms.length === 0 &&
+            oneToOnes.length === 0 &&
+            contacts.length === 0 && (
+              <EmptyHint text={searching ? "Nobody matches." : "Nobody else is here yet."} />
+            )}
+
+          {discover.length > 0 && (
+            <>
+              <button
+                type="button"
+                onClick={() => setShowDiscover((v) => !v)}
+                aria-expanded={showDiscover}
+                className="mt-2 flex w-full cursor-pointer items-center gap-1.5 px-3 pb-1.5 pt-3.5 text-2xs font-semibold uppercase tracking-[0.06em] text-secondary-foreground transition-colors duration-fast hover:text-foreground"
+              >
+                <ChevronRight
+                  size={10}
+                  className={cn("transition-transform duration-fast", showDiscover && "rotate-90")}
+                />
+                Discover
+                <span className="ml-auto tabular-nums normal-case">{discover.length}</span>
+              </button>
+              {showDiscover &&
+                discover.map((c) => (
+                  <div
+                    key={c.id}
+                    className="group/disc flex items-center gap-2 py-[5px] pl-3.5 pr-2.5 text-muted-foreground"
                   >
-                    Join
-                  </button>
-                </div>
-              ))}
-          </>
-        )}
+                    <RowIcon>
+                      <Hash size={13} className="opacity-60" />
+                    </RowIcon>
+                    <span className="min-w-0 flex-1 truncate text-sm">{c.name}</span>
+                    {/* Only public channels are self-serve joinable; a private one
+                        answers 404, so no button is offered for it at all. */}
+                    <button
+                      type="button"
+                      onClick={() => onJoin(c.id)}
+                      className="shrink-0 cursor-pointer rounded px-1.5 py-px text-xs font-medium text-secondary-foreground opacity-0 transition-opacity duration-fast hover:bg-element-hover hover:text-foreground group-hover/disc:opacity-100"
+                    >
+                      Join
+                    </button>
+                  </div>
+                ))}
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -244,10 +280,9 @@ function SectionLabel({
 }
 
 /**
- * Every row leads with an icon in a fixed-width slot — a channel's `#`, a
- * person's avatar, a group's glyph — so labels start at the same x whatever the
- * row is. Without it the `#` (13px) and an avatar (26px) put their text in two
- * different columns, which is what made the sections look unrelated.
+ * The fixed-width icon slot the package row leads with (`w-7`), restated for
+ * the rows that are not conversations (roster placeholders, Discover), so
+ * their labels start at the same x as every conversation's.
  */
 function RowIcon({ children }: { children: ReactNode }) {
   return <span className="flex w-7 shrink-0 items-center justify-center">{children}</span>;
@@ -267,51 +302,24 @@ function EmptyHint({ text }: { text: string }) {
   return <div className="py-1 pl-[50px] pr-2.5 text-xs text-muted-foreground">{text}</div>;
 }
 
-function ChannelRow({
-  conv,
-  read,
-  active = false,
-  onOpen,
-}: {
-  conv: ChatConversation;
-  read: ChatReadState | undefined;
-  active?: boolean;
-  onOpen: (e: React.MouseEvent) => void;
-}) {
-  const unread = Number(read?.unread ?? 0);
-  const mentions = Number(read?.mentions ?? 0);
-  return (
-    <button
-      type="button"
-      onClick={onOpen}
-      aria-current={active || undefined}
-      className={cn(
-        "flex w-full cursor-pointer items-center gap-2 py-[5px] pl-3.5 pr-2.5 text-left transition-colors duration-fast",
-        active ? "bg-element-active" : "hover:bg-element-hover",
-      )}
-    >
-      <RowIcon>
-        {conv.visibility === "private" ? (
-          <Lock size={12} className="text-disabled" />
-        ) : (
-          <Hash size={13} className="text-disabled" />
-        )}
-      </RowIcon>
-      <span
-        className={cn(
-          "min-w-0 flex-1 truncate text-sm",
-          unread > 0
-            ? "font-medium text-foreground"
-            : active
-              ? "text-foreground"
-              : "text-secondary-foreground",
-        )}
-      >
-        {conv.name}
-      </span>
-      <Badges unread={unread} mentions={mentions} />
-    </button>
-  );
+/**
+ * Desktop's conversation in the package row's shape. Unread and mentions are
+ * server-held and passed through; the row draws the keycap badge (a mention
+ * outranks a plain count, 9+ against 99+).
+ */
+function rowView(
+  conv: ChatConversation,
+  read: ChatReadState | undefined,
+  title: string,
+): CommsConversationRowView {
+  return {
+    id: conv.id,
+    kind: conv.kind === "group_dm" ? "group" : conv.kind,
+    title,
+    private: conv.visibility === "private",
+    unread: Number(read?.unread ?? 0),
+    mentions: Number(read?.mentions ?? 0),
+  };
 }
 
 /**
@@ -330,6 +338,10 @@ function ChannelRow({
  *
  * A group's member count stays, as a trailing figure rather than a subtitle —
  * it is the one thing about a group row that a name does not already tell you.
+ *
+ * A 1:1's face is `CommsAvatar` in the row's icon slot, not the row's own
+ * `PersonAvatar`: that one swaps a broken photo for initials, a behaviour
+ * change still awaiting review (ATL-718).
  */
 function DirectRow({
   conv,
@@ -346,61 +358,38 @@ function DirectRow({
   members: Map<string, OrgMemberProfile>;
   online: string[];
   me: string;
-  onOpen: (e: React.MouseEvent) => void;
+  onOpen: (convId: string) => void;
 }) {
-  const unread = Number(read?.unread ?? 0);
-  const mentions = Number(read?.mentions ?? 0);
   const isGroup = conv.kind === "group_dm";
   const others = (conv.member_ids ?? []).filter((id) => id !== me);
   const counterpart = !isGroup ? (members.get(others[0] ?? "") ?? null) : null;
-  const title = conversationTitle(conv, members, me);
 
   return (
-    <button
-      type="button"
-      onClick={onOpen}
-      aria-current={active || undefined}
-      className={cn(
-        "flex w-full cursor-pointer items-center gap-2 py-[5px] pl-3.5 pr-2.5 text-left transition-colors duration-fast",
-        active ? "bg-element-active" : "hover:bg-element-hover",
-      )}
-    >
-      <RowIcon>
-        {isGroup ? (
-          <span className="flex size-[22px] items-center justify-center rounded-full bg-card text-muted-foreground">
-            <Users size={12} />
-          </span>
-        ) : (
+    <CommsConversationRow
+      conversation={rowView(conv, read, conversationTitle(conv, members, me))}
+      selected={active}
+      onSelect={onOpen}
+      icon={
+        isGroup ? undefined : (
           <CommsAvatar
             member={counterpart}
             size={22}
             online={counterpart ? online.includes(counterpart.id) : false}
           />
-        )}
-      </RowIcon>
-      <span
-        className={cn(
-          "min-w-0 flex-1 truncate text-sm",
-          unread > 0
-            ? "font-medium text-foreground"
-            : active
-              ? "text-foreground"
-              : "text-secondary-foreground",
-        )}
-      >
-        {title}
-      </span>
-      {isGroup && (
-        <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-          {others.length + 1}
-        </span>
-      )}
-      <Badges unread={unread} mentions={mentions} />
-    </button>
+        )
+      }
+      trailing={
+        isGroup ? (
+          <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+            {others.length + 1}
+          </span>
+        ) : undefined
+      }
+    />
   );
 }
 
-/** A colleague with no DM yet. Same shape as a DirectRow on purpose. */
+/** A colleague with no DM yet: the same row as a DM's, keyed by member id. */
 function ContactRow({
   member,
   online,
@@ -413,55 +402,12 @@ function ContactRow({
   onStart: () => void;
 }) {
   return (
-    <button
-      type="button"
+    <CommsConversationRow
+      conversation={{ id: member.id, kind: "dm", title: member.name, unread: 0, mentions: 0 }}
+      onSelect={onStart}
       disabled={starting}
-      onClick={onStart}
-      className="flex w-full cursor-pointer items-center gap-2 py-[5px] pl-3.5 pr-2.5 text-left transition-colors duration-fast hover:bg-element-hover disabled:opacity-60"
-    >
-      <RowIcon>
-        <CommsAvatar member={member} size={22} online={online} />
-      </RowIcon>
-      <span className="min-w-0 flex-1 truncate text-sm text-secondary-foreground">
-        {member.name}
-      </span>
-      {starting && <Spinner size="sm" label="" />}
-    </button>
-  );
-}
-
-/**
- * Unread and mentions badge separately — a count and "someone named you" are
- * different signals. Both are server-held; nothing here counts locally. A row
- * with mentions shows only the mention count.
- *
- * Both render as the hint-overlay keycap (⌘⌥Space): a monochrome, macOS-style
- * pill. A saturated fill turned out to fight the row — an avatar, a name and a
- * coloured pill is three things competing, and the count is the least
- * important of them until you are looking for it. Colour is reserved for the
- * presence and tab dots, which have no text to carry.
- */
-function Badges({ unread, mentions }: { unread: number; mentions: number }) {
-  if (mentions > 0) return <KeycapBadge label={mentions > 9 ? "9+" : String(mentions)} />;
-  if (unread > 0) return <KeycapBadge label={unread > 99 ? "99+" : String(unread)} />;
-  return null;
-}
-
-/**
- * The keycap, on the same tokens as the `Kbd` primitive: `border-border`,
- * `bg-card` and the elevation scale, with the ink on `--foreground`, so the
- * pair stays legible on a light theme as on a dark one.
- *
- * `backdrop-filter` is deliberately NOT carried over from the hint badges:
- * those float above arbitrary app content and need to sample it, whereas these
- * sit on an opaque panel row where a blur has nothing to gather — it would add
- * a compositing layer per badge inside a `mix-blend-mode` panel that has
- * already proven touchy about exactly that.
- */
-function KeycapBadge({ label }: { label: string }) {
-  return (
-    <span className="inline-flex min-w-[18px] shrink-0 items-center justify-center rounded-full border border-border bg-card px-1.5 font-sans text-2xs font-semibold leading-[16px] tabular-nums tracking-wide text-foreground shadow-sm">
-      {label}
-    </span>
+      icon={<CommsAvatar member={member} size={22} online={online} />}
+      trailing={starting ? <Spinner size="sm" label="" /> : undefined}
+    />
   );
 }
