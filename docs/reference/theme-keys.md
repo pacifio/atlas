@@ -324,11 +324,13 @@ unknown-key warning.
 
 ## Scales that are not theme keys
 
-Radius, shadow, z-index and motion are not theme keys: those scales live in
-the Tailwind namespaces, and [`design-system.md`](./design-system.md) is their
-reference. A theme does set `radius`, the three fonts, `tracking-normal` and the
-seven `shadow-*` ramps — they are base tokens, listed with the rest of the
-shadcn set above.
+The radius, elevation, z-index and motion scales are not theme keys. Radius
+and elevation use Tailwind's namespaces; z-index and the durations are
+Atlas's own custom scales. [`design-system.md`](./design-system.md) is the
+reference for all four. A theme does set `radius`, `tracking-normal` and the
+seven `shadow-*` ramps, which are base tokens listed with the rest of the shadcn
+set above. It can also set the three fonts (`font-sans`, `font-serif`,
+`font-mono`): these are optional base tokens with no row in that table.
 
 ## Regenerating checked assets
 
