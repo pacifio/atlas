@@ -61,7 +61,7 @@ afterEach(() => {
 describe("Why did you learn this?", () => {
   it("asks the open session that wrote the line", async () => {
     const user = userEvent.setup();
-    render(<MemoryActivity />);
+    render(<MemoryActivity onAsk={() => {}} />);
     await user.click(screen.getByRole("button", { name: /Why did you learn this: decided Use/ }));
     const request = useAskAgentStore.getState().request;
     expect(request?.target).toBe("chat-a");
@@ -70,7 +70,7 @@ describe("Why did you learn this?", () => {
 
   it("asks a new session, with the provenance, when the writer is not open", async () => {
     const user = userEvent.setup();
-    render(<MemoryActivity />);
+    render(<MemoryActivity onAsk={() => {}} />);
     await user.click(screen.getByRole("button", { name: /Why did you learn this: decided Keep/ }));
     const request = useAskAgentStore.getState().request;
     expect(request?.target).toBe("new");

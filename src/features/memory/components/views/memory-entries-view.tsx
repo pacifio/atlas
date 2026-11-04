@@ -9,14 +9,14 @@
 // then it covers the list with a way back.
 
 import { useEffect, useRef, useState, type ReactNode, type Ref } from "react";
-import { ArrowDown, ArrowUp, Brain, Search, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Brain, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button, EmptyState, Segmented, Skeleton } from "@tryatlas/design";
 import type { EntryGroup, EntryScope } from "../../lib/memory-entries";
 import { exportable, type MemoryEntry } from "../../lib/shared-memory-format";
 import { EntryMeta, KindGlyph } from "./memory-entry-parts";
 import { FilterMenu } from "./shared-memory-primitives";
-import { Notice } from "./memory-chrome";
+import { Notice, SearchAskField } from "./memory-chrome";
 import type { AgentContext } from "@/features/ask-agent/lib/agent-context";
 import {
   ASK_ROW,
@@ -36,6 +36,9 @@ export interface MemoryEntriesViewProps {
   onScopeChange: (scope: EntryScope) => void;
   query: string;
   onQueryChange: (q: string) => void;
+  /** The search field's ⌘↵: the typed words, as a memory instruction. */
+  onAsk: (text: string, anchor: HTMLElement) => void;
+  askKeys: readonly string[];
   agentFilter: string;
   agentOptions: string[];
   formatAgent: (agent: string) => string;
@@ -70,6 +73,8 @@ export function MemoryEntriesView(props: MemoryEntriesViewProps) {
     onScopeChange,
     query,
     onQueryChange,
+    onAsk,
+    askKeys,
     agentFilter,
     agentOptions,
     formatAgent,
@@ -143,33 +148,14 @@ export function MemoryEntriesView(props: MemoryEntriesViewProps) {
     <div className="@container/memories flex h-full min-h-0 flex-col bg-background">
       {dialogs}
       <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-border px-2 py-1.5">
-        <label className="flex h-control-md min-w-40 flex-1 cursor-text items-center gap-1.5 rounded border border-border bg-panel-input px-2 focus-within:border-border-strong">
-          <Search aria-hidden className="size-3 shrink-0 text-muted-foreground" />
-          <input
-            type="search"
-            value={query}
-            onChange={(e) => onQueryChange(e.currentTarget.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Escape" && query) {
-                e.preventDefault();
-                onQueryChange("");
-              }
-            }}
-            placeholder="Search what agents remember…"
-            aria-label="Search memories"
-            className="min-w-0 flex-1 bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground [&::-webkit-search-cancel-button]:hidden"
-          />
-          {query ? (
-            <button
-              type="button"
-              aria-label="Clear search"
-              onClick={() => onQueryChange("")}
-              className="inline-flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
-            >
-              <X aria-hidden className="size-3" />
-            </button>
-          ) : null}
-        </label>
+        <SearchAskField
+          value={query}
+          onChange={onQueryChange}
+          placeholder="Search what agents remember…"
+          label="Search memories"
+          askKeys={askKeys}
+          onAsk={onAsk}
+        />
         <Segmented
           aria-label="Which memories"
           size="sm"

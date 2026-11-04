@@ -11,7 +11,7 @@ import { useMemoryStore } from "../stores/memory-store";
 import { agentMetaForSource } from "../lib/memory-agent";
 import { buildActivity } from "../lib/memory-activity";
 import { openMemorySession } from "../lib/open-memory-session";
-import { activityAsk } from "../lib/memory-ask";
+import { activityAsk, MEMORY_ASK_KEYS } from "../lib/memory-ask";
 import { useChatStore } from "@/features/chat/stores/chat-store";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { MemoryActivityView, type WhyAsk } from "./views/memory-activity-view";
@@ -39,7 +39,12 @@ function useOpenSessionTabs(): Map<string, string> {
   }, [pairs, open]);
 }
 
-export function MemoryActivity() {
+export function MemoryActivity({
+  onAsk,
+}: {
+  /** The search field's ⌘↵: the typed words, as a memory instruction. */
+  onAsk: (text: string, anchor: HTMLElement) => void;
+}) {
   const events = useSharedMemoryStore.use.events();
   const entries = useSharedMemoryStore.use.entries();
   const loaded = useSharedMemoryStore.use.loaded();
@@ -81,6 +86,8 @@ export function MemoryActivity() {
       days={days}
       query={query}
       onQueryChange={setQuery}
+      onAsk={onAsk}
+      askKeys={MEMORY_ASK_KEYS}
       agentFilter={agentFilter}
       agentOptions={agentOptions}
       formatAgent={(a) => agentMetaForSource(a).label}
