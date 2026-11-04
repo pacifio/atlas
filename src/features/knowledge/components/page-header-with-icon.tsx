@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { useKnowledgeMetaStore, usePageMeta } from "../stores/knowledge-meta-store";
 import { IconPicker } from "./icon-picker";
-import { CoverPicker, gradientCss } from "./cover-picker";
+import { CoverPicker } from "./cover-picker";
+import { gradientCss, isGradientCover as isGradientRef } from "../lib/cover-gradients";
 import { coverCacheKey, getCachedCoverUrl, putCachedCoverUrl } from "../lib/cover-url-cache";
 import { knowledgeCoverDataUrl } from "../lib/knowledge-api";
 import { PageHeaderView } from "./views/page-header-view";
@@ -48,8 +49,8 @@ export function PageHeaderWithIcon({
     }
   };
 
-  const isGradientCover = cover?.startsWith("gradient:");
-  const gradient = isGradientCover ? gradientCss(cover!) : null;
+  const isGradientCover = isGradientRef(cover);
+  const gradient = cover && isGradientCover ? gradientCss(cover) : null;
 
   // Covers are stored under the hidden `.atlas/` directory, which Tauri's
   // asset protocol refuses to serve (the webview 403s the asset:// request).

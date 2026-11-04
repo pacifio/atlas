@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { useEffect, useMemo, useState } from "react";
+import { Input, Popover, PopoverContent } from "@tryatlas/design";
+import { cn } from "@/lib/utils";
 
 interface IconPickerProps {
   value: string | null;
@@ -109,151 +110,98 @@ const GROUPS: Array<{ label: string; emojis: string[] }> = [
   },
 ];
 
+/**
+ * The page-icon picker: a popover anchored to the rect the caller measured
+ * (the icon tile it was opened from). Base UI owns Escape, the outside press
+ * and collision flipping; every pick and the Clear button close it.
+ */
 export function IconPicker({ value, anchorRect, onPick, onClose }: IconPickerProps) {
   const [draft, setDraft] = useState(value ?? "");
-  const popRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => setDraft(value ?? ""), [value]);
 
-  useEffect(() => {
-    const onDown = (e: MouseEvent) => {
-      if (!popRef.current) return;
-      if (!popRef.current.contains(e.target as Node)) onClose();
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        onClose();
-      }
-    };
-    window.addEventListener("mousedown", onDown);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("mousedown", onDown);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [onClose]);
+  // A snapshot of the tile's rect: the popover doesn't follow the note when it
+  // scrolls, as before.
+  const anchor = useMemo(
+    () => (anchorRect ? { getBoundingClientRect: () => anchorRect } : null),
+    [anchorRect],
+  );
 
-  if (!anchorRect) return null;
-  const PICKER_W = 320;
-  // Anchor immediately under the icon tile. Clamp to viewport so the
-  // popup doesn't leak off-screen when the tile sits near the edge.
-  const left = Math.min(Math.max(8, anchorRect.left), window.innerWidth - PICKER_W - 8);
-  const top = Math.min(anchorRect.bottom + 6, window.innerHeight - 320);
+  if (!anchor) return null;
 
-  // Portal into document.body so an ancestor with `transform` /
-  // `overflow: hidden` / scrolling can't pull the fixed-position popup
-  // out of place (the editor body sits inside a scroller).
-  return createPortal(
-    <div
-      ref={popRef}
-      style={{ position: "fixed", left, top, width: PICKER_W, maxHeight: 360, padding: 8 }}
-      className="overflow-y-auto bg-popover border border-border-strong rounded-lg shadow-lg z-popover"
+  return (
+    <Popover
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
     >
-      {GROUPS.map((g) => (
-        <div key={g.label} style={{ marginBottom: 6 }}>
-          <div className="eyebrow" style={{ padding: "4px 4px 2px" }}>
-            {g.label}
-          </div>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(8, 1fr)",
-              gap: 2,
-            }}
-          >
-            {g.emojis.map((e) => (
-              <button
-                key={e}
-                type="button"
-                onClick={() => {
-                  onPick(e);
-                  onClose();
-                }}
-                title={e}
-                className="text-xl"
-                style={{
-                  width: 30,
-                  height: 30,
-                  borderRadius: 5,
-                  background: value === e ? "var(--element-active)" : "transparent",
-                  border: 0,
-                  lineHeight: 1,
-                  cursor: "pointer",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-                onMouseEnter={(ev) => {
-                  if (value !== e) ev.currentTarget.style.background = "var(--element-hover)";
-                }}
-                onMouseLeave={(ev) => {
-                  if (value !== e) ev.currentTarget.style.background = "transparent";
-                }}
-              >
-                {e}
-              </button>
-            ))}
-          </div>
-        </div>
-      ))}
-
-      <div
-        style={{
-          marginTop: 6,
-          paddingTop: 8,
-          borderTop: "1px solid var(--border-subtle)",
-          display: "flex",
-          gap: 6,
-          alignItems: "center",
-        }}
+      <PopoverContent
+        anchor={anchor}
+        side="bottom"
+        align="start"
+        sideOffset={6}
+        data-view="icon-picker"
+        className="w-[320px] max-h-[360px] overflow-y-auto p-2"
       >
-        <input
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              onPick(draft.trim() || null);
-              onClose();
-            } else if (e.key === "Escape") {
-              onClose();
-            }
-          }}
-          placeholder="Custom emoji or text…"
-          className="text-sm"
-          style={{
-            flex: 1,
-            height: 26,
-            padding: "0 8px",
-            background: "var(--panel-input-background)",
-            border: "1px solid var(--border)",
-            borderRadius: 5,
-            color: "var(--foreground)",
-            outline: "none",
-          }}
-        />
-        {value && (
-          <button
-            type="button"
-            onClick={() => {
-              onPick(null);
-              onClose();
+        {GROUPS.map((g) => (
+          <div key={g.label} className="mb-1.5">
+            <div className="eyebrow px-1 pt-1 pb-0.5">{g.label}</div>
+            <div className="grid grid-cols-8 gap-0.5">
+              {g.emojis.map((e) => (
+                <button
+                  key={e}
+                  type="button"
+                  onClick={() => {
+                    onPick(e);
+                    onClose();
+                  }}
+                  title={e}
+                  aria-label={e}
+                  aria-pressed={value === e}
+                  className={cn(
+                    "inline-flex h-[30px] items-center justify-center rounded-md text-xl leading-none",
+                    "transition-colors duration-fast",
+                    value === e ? "bg-element-active" : "hover:bg-element-hover",
+                  )}
+                >
+                  {e}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+
+        <div className="mt-1.5 flex items-center gap-1.5 border-t border-border-subtle pt-2">
+          <Input
+            size="sm"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                onPick(draft.trim() || null);
+                onClose();
+              }
             }}
-            className="text-xs"
-            style={{
-              color: "var(--muted-foreground)",
-              background: "transparent",
-              border: 0,
-              cursor: "pointer",
-              padding: "0 6px",
-            }}
-            title="Remove icon"
-          >
-            clear
-          </button>
-        )}
-      </div>
-    </div>,
-    document.body,
+            placeholder="Custom emoji or text…"
+            aria-label="Custom icon"
+            className="flex-1"
+          />
+          {value && (
+            <button
+              type="button"
+              onClick={() => {
+                onPick(null);
+                onClose();
+              }}
+              className="px-1.5 text-xs text-muted-foreground hover:text-foreground"
+              title="Remove icon"
+            >
+              clear
+            </button>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }

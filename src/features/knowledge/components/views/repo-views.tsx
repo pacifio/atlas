@@ -1,61 +1,63 @@
-import { cn } from "@/lib/utils";
-import { Copy, ExternalLink, GitBranch, PanelRight } from "lucide-react";
-import { RailGlyph, Hint, HintGroup, HintItem } from "@tryatlas/design";
+import { Copy, ExternalLink, FileText, GitBranch, PanelRight } from "lucide-react";
+import {
+  Badge,
+  Button,
+  EmptyState,
+  Hint,
+  HintGroup,
+  HintItem,
+  Icon,
+  IconButton,
+  RailGlyph,
+} from "@tryatlas/design";
 
 export function RepoTopbar({
   name,
-  path,
+  onCopyPath,
   onToggleSidebar,
   sidebarHidden,
   onToggleInspector,
 }: {
   name: string;
-  path: string;
+  onCopyPath: () => void;
   onToggleSidebar?: () => void;
   sidebarHidden?: boolean;
   onToggleInspector: () => void;
 }) {
   return (
     <div
-      className="flex items-center shrink-0 border-b border-border-subtle"
-      style={{ height: 36, gap: 8, padding: "0 14px", background: "var(--panel-background)" }}
+      data-view="repo-topbar"
+      className="flex h-[36px] shrink-0 items-center gap-2 border-b border-border-subtle bg-panel px-3.5"
     >
       {onToggleSidebar && (
         <Hint label={sidebarHidden ? "Show sidebar" : "Hide sidebar"}>
           <button
+            type="button"
             onClick={onToggleSidebar}
-            className="p-1 rounded text-muted-foreground hover:bg-element-hover hover:text-secondary-foreground transition-colors"
-            style={{ width: 22, height: 22, marginLeft: -6 }}
+            className="-ml-1.5 inline-flex size-control-sm items-center justify-center rounded-md text-muted-foreground transition-colors duration-fast hover:bg-element-hover hover:text-secondary-foreground"
           >
             <RailGlyph open={!sidebarHidden} size="sm" />
           </button>
         </Hint>
       )}
-      <GitBranch size={12} className="text-muted-foreground shrink-0" />
-      <span className="font-mono text-secondary-foreground truncate flex-1 min-w-0 text-sm">
+      <Icon icon={GitBranch} size="sm" className="shrink-0 text-muted-foreground" />
+      <span className="min-w-0 flex-1 truncate font-mono text-sm text-secondary-foreground">
         {name}
       </span>
-      <span className="pill pill-bare text-2xs" style={{ height: 18, padding: "0 6px" }}>
+      <Badge variant="outline" size="md">
         REPO
-      </span>
+      </Badge>
       <HintGroup>
         <HintItem label="Copy path">
-          <button
-            onClick={() => navigator.clipboard.writeText(path)}
-            className="p-1 rounded text-muted-foreground hover:bg-element-hover hover:text-secondary-foreground transition-colors cursor-pointer"
-            style={{ width: 22, height: 22 }}
-          >
-            <Copy size={11} />
-          </button>
+          <IconButton icon={Copy} label="Copy path" size="sm" onClick={onCopyPath} />
         </HintItem>
         <HintItem label="Toggle inspector">
-          <button
+          <IconButton
+            icon={PanelRight}
+            label="Toggle inspector"
+            size="sm"
             onClick={onToggleInspector}
-            className="p-1 rounded text-muted-foreground hover:bg-element-hover hover:text-secondary-foreground transition-colors"
-            style={{ width: 22, height: 22 }}
-          >
-            <PanelRight size={12} />
-          </button>
+          />
         </HintItem>
       </HintGroup>
     </div>
@@ -64,30 +66,22 @@ export function RepoTopbar({
 
 /** `onOpen` opens this repo as a project in the current window (Atlas is
  *  single-window now — was: spawn a new native window). */
-export function RepoEmpty({ path, onOpen }: { path: string; onOpen: () => void }) {
+export function RepoEmpty({ onOpen, onCopyPath }: { onOpen: () => void; onCopyPath: () => void }) {
   return (
-    <div className="h-full flex flex-col items-center justify-center gap-3 text-muted-foreground">
-      <p className="text-sm">No README.md found</p>
-      <div className="flex items-center gap-2">
-        <button
-          onClick={onOpen}
-          className={cn(
-            "flex items-center gap-1 px-2 py-1 rounded border border-border",
-            "text-2xs text-secondary-foreground hover:bg-element-hover cursor-pointer",
-          )}
-        >
-          <ExternalLink size={10} /> Open as project
-        </button>
-        <button
-          onClick={() => navigator.clipboard.writeText(path)}
-          className={cn(
-            "flex items-center gap-1 px-2 py-1 rounded border border-border",
-            "text-2xs text-secondary-foreground hover:bg-element-hover cursor-pointer",
-          )}
-        >
-          <Copy size={10} /> Copy path
-        </button>
-      </div>
-    </div>
+    <EmptyState
+      icon={FileText}
+      title="No README.md found"
+      className="h-full"
+      action={
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={onOpen}>
+            <Icon icon={ExternalLink} size="xs" /> Open as project
+          </Button>
+          <Button variant="outline" size="sm" onClick={onCopyPath}>
+            <Icon icon={Copy} size="xs" /> Copy path
+          </Button>
+        </div>
+      }
+    />
   );
 }

@@ -31,7 +31,7 @@ export function PageHeaderView({
   pickers: ReactNode;
 }) {
   return (
-    <div style={{ marginBottom: 14 }}>
+    <div data-view="page-header" className="mb-3.5">
       {/* Cover strip — 180px, hidden when not set. Add-cover button
           appears just above the title when none exists. */}
       {cover ? (
@@ -41,77 +41,40 @@ export function PageHeaderView({
           // belt-and-braces against any background-image cache holding
           // a stale URL after a cover swap or remove.
           key={cover}
-          style={{
-            height: 180,
-            borderRadius: 10,
-            border: "1px solid var(--border-subtle)",
-            margin: "0 0 14px",
-            background: coverBackground,
-            position: "relative",
-            cursor: "pointer",
-          }}
+          className="relative mb-3.5 h-[180px] cursor-pointer overflow-hidden rounded-xl border border-border-subtle"
+          style={{ background: coverBackground }}
           onClick={(e) => onOpenCoverPicker(e.currentTarget.getBoundingClientRect())}
           title="Click to change cover"
         />
       ) : null}
 
-      <div
-        className="text-sm"
-        style={{
-          display: "flex",
-          gap: 12,
-          color: "var(--muted-foreground)",
-          opacity: 0.85,
-          marginBottom: 4,
-        }}
-      >
-        {!cover && (
+      {!cover && (
+        <div className="mb-1 flex gap-3">
           <button
             type="button"
             onClick={(e) => onOpenCoverPicker(e.currentTarget.getBoundingClientRect())}
-            className="text-sm"
-            style={{
-              background: "transparent",
-              border: 0,
-              padding: 0,
-              color: "var(--muted-foreground)",
-              cursor: "pointer",
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 5,
-            }}
+            className="inline-flex items-center gap-1 text-sm text-muted-foreground transition-colors duration-fast hover:text-secondary-foreground"
           >
             Add cover
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
-      <div className="flex items-start" style={{ gap: 14, marginTop: 10 }}>
+      <div className="mt-2.5 flex items-start gap-3.5">
         <Hint label="Change icon">
           <button
+            type="button"
             onClick={(e) => onOpenIconPicker(e.currentTarget.getBoundingClientRect())}
-            className="text-2xl"
-            style={{
-              width: 44,
-              height: 44,
-              borderRadius: 9,
-              background: "var(--card)",
-              border: "1px solid var(--border-subtle)",
-              lineHeight: 1,
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              flex: "none",
-              cursor: "pointer",
-            }}
+            className="inline-flex size-[44px] shrink-0 items-center justify-center rounded-lg border border-border-subtle bg-card text-2xl leading-none transition-colors duration-fast hover:bg-element-hover"
           >
             {icon}
           </button>
         </Hint>
-        <div className="flex-1 min-w-0">
+        <div className="min-w-0 flex-1">
           <input
             value={titleDraft}
             placeholder="Untitled"
+            aria-label="Page title"
             onChange={(e) => onTitleDraftChange(e.target.value)}
             onBlur={onTitleCommit}
             onKeyDown={(e) => {
@@ -124,21 +87,7 @@ export function PageHeaderView({
                 (e.currentTarget as HTMLInputElement).blur();
               }
             }}
-            className="text-2xl"
-            style={{
-              display: "block",
-              width: "100%",
-              lineHeight: 1.15,
-              margin: "2px 0 0",
-              letterSpacing: "-0.03em",
-              color: "var(--foreground)",
-              fontWeight: 600,
-              fontFamily: "var(--font-sans)",
-              background: "transparent",
-              border: 0,
-              padding: 0,
-              outline: "none",
-            }}
+            className="mt-0.5 block w-full border-0 bg-transparent p-0 font-sans text-2xl leading-tight font-semibold tracking-tight text-foreground outline-none placeholder:text-muted-foreground"
           />
         </div>
       </div>
