@@ -1,47 +1,35 @@
 // A PTY that never existed.
 //
 // The terminal is the one heavy subsystem that renders honestly in a browser:
-// the block UI is plain DOM over a byte stream, so a scripted stream is
-// indistinguishable from a shell as far as everything downstream is concerned.
-// That stream has to go where the real one goes — `terminal_create` is handed a
-// Tauri `Channel` as `onOutput`, and `mockIPC` passes the live object through
-// unserialized, so the fake writes into that same channel rather than inventing
-// an event. Nothing in `terminal-session.ts` or `block-parser.ts` is bypassed:
-// the credit window, the rAF drain and the OSC-133 block segmentation all run.
-//
-// Which means the script must speak the shell-integration protocol the parser
-// expects (see the header of `block-parser.ts`):
-//   OSC 133;A        prompt drawn  — also DROPS the preamble block
-//   OSC 6973;C;<cmd> command text  — this is what the block header shows
+// it is xterm over a byte stream, so a scripted stream is indistinguishable
+// from a shell as far as everything downstream is concerned. That stream has
+// to go where the real one goes — `terminal_create` is handed a Tauri
+// `Channel` as `onOutput`, and `mockIPC` passes the live object through
+// unserialized, so the fake writes into that same channel rather than
+// inventing an event. Nothing in `terminal-session.ts` is bypassed: xterm
+// parses it, the credit window runs, and the shell-integration tracker reads
+// the same markers our zsh rc emits (see `shell-integration.ts`):
+//   OSC 133;A        prompt drawn
+//   OSC 6973;C;<cmd> command text — the tab strip's "Running …"
 //   OSC 133;C        output begins
-//   OSC 133;D;<code> finished, with the exit code
-//   OSC 7;file://…   working directory, for the input-area cwd/git badge
-// The banner is therefore emitted as a command-less block rather than before
-// the first prompt marker: `133;A` deletes the preamble, so a banner written
-// there would vanish the moment the first prompt arrived.
+//   OSC 133;D;<code> finished, with the exit code — terminal notifications
+//   OSC 7;file://…   working directory — the tab strip's directory
 //
-// Line breaks are `\r\n`, never `\n`. The emulator moves the cursor DOWN on LF
-// and back to column 0 only on CR, exactly like a real tty — a bare `\n` gives
-// a descending staircase.
+// It behaves like a tty: typed bytes are echoed (except a password), Enter
+// is CR, Backspace erases, Ctrl-C interrupts. Line breaks are `\r\n`, never
+// `\n` — xterm moves DOWN on LF and back to column 0 only on CR.
 //
 // The states worth having on screen, and where each one comes from:
 //   running / streaming   `bun run build` (a `\r`-redrawn spinner, ~2s)
 //   failed                `bun run test` (non-zero exit, red stderr)
 //   cancelled             Ctrl-C into a running command → exit 130
-//   killed                the stop control → `terminal_kill_foreground` → 137
-//   awaiting a secret     `sudo …` → the inline masked field
+//   awaiting a secret     `sudo …` → an unechoed password prompt
 //   not found             anything unscripted → exit 127
 
 import type { Channel } from "@tauri-apps/api/core";
-import type { RawPathCompletion } from "@/features/terminal/lib/terminal-api";
 import type { TypedHandlers, Unread } from "../types";
 import { MOCK_PROJECT } from "../project";
 import { fileText, listDir, mockFilePaths } from "./files";
-
-// The composer's cwd badge also calls `git_status_fresh`, which is the git
-// domain's command and is faked in `fixtures/git.ts` — not here, so the two
-// fixtures cannot shadow each other. Unanswered it resolves `null`, the badge's
-// `.catch` clears itself, and the terminal is otherwise unaffected.
 
 // ── the wire ──────────────────────────────────────────────────────────────
 
@@ -80,7 +68,7 @@ const REDRAW = "\r\x1b[2K";
 
 interface Running {
   command: string;
-  /** The block is showing a password prompt; the next line is the secret. */
+  /** The command is showing a password prompt; the next line is the secret. */
   awaitingPassword: boolean;
 }
 
@@ -98,6 +86,8 @@ interface FakeSession {
   running: Running | null;
   /** Typed bytes not yet terminated by a newline. */
   line: string;
+  /** Inside an escape sequence a key sent (arrows, Home…): swallowed. */
+  escape: boolean;
 }
 
 const sessions = new Map<string, FakeSession>();
@@ -109,15 +99,17 @@ function write(s: FakeSession, text: string): void {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function setCwd(s: FakeSession, cwd: string): void {
-  s.cwd = cwd;
-  write(s, osc(`7;file://mock${cwd}`));
+/** `~/…` for the prompt, as zsh's `%~` prints it. */
+function tilde(path: string): string {
+  return path === "/Users/dev" || path.startsWith("/Users/dev/")
+    ? "~" + path.slice("/Users/dev".length)
+    : path;
 }
 
-/** Draw the next prompt. The bytes between A and C are discarded by the
- *  parser (the block header carries the command), so this is state, not text. */
+/** Draw the next prompt: the markers zsh's precmd emits, then the prompt. */
 function prompt(s: FakeSession): void {
-  write(s, osc("133;A"));
+  write(s, osc("133;A") + osc(`7;file://mock${s.cwd}`));
+  write(s, `${paint(C.cyan, tilde(s.cwd))} ${paint(C.magenta, "❯")} `);
 }
 
 function finish(s: FakeSession, code: number): void {
@@ -252,20 +244,20 @@ const HELP = [
   `  ${paint(C.cyan, "git status")}      a coloured working tree (matches the git panel)`,
   `  ${paint(C.cyan, "ls [-la] [dir]")}  the seeded file tree`,
   `  ${paint(C.cyan, "cat <file>")}      a seeded file's real text`,
-  `  ${paint(C.cyan, "cd <dir>")}        moves the OSC-7 cwd badge`,
+  `  ${paint(C.cyan, "cd <dir>")}        moves the prompt (and the tab's directory)`,
   `  ${paint(C.cyan, "bun run build")}   streams for ~2s, then succeeds`,
   `  ${paint(C.cyan, "bun run test")}    fails with red stderr and exit 1`,
-  `  ${paint(C.cyan, "sudo <cmd>")}      asks for a password (the inline masked field)`,
+  `  ${paint(C.cyan, "sudo <cmd>")}      asks for a password (a terminal notification when away)`,
   `  ${paint(C.cyan, "pwd / whoami / echo / date")}`,
   "",
-  `${paint(C.dim, "Ctrl-C cancels a running command; the stop control kills it.")}`,
+  `${paint(C.dim, "Ctrl-C cancels a running command.")}`,
   "",
 ].join("\r\n");
 
 const BUILD_SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 /** A long command: ~2s of output that redraws a spinner in place before it
- *  resolves, so the "running" block and the line emulator both do real work. */
+ *  resolves, so the busy state and xterm's in-place redraw both do real work. */
 async function playBuild(s: FakeSession, run: Running): Promise<void> {
   write(s, `${paint(C.dim, "$ vite build")}\r\n`);
   for (let frame = 0; frame < 18; frame++) {
@@ -335,13 +327,8 @@ async function playTest(s: FakeSession, run: Running): Promise<void> {
   finish(s, 1);
 }
 
-/**
- * Run one submitted line. Everything before the `133;C` marker is prompt-mode
- * noise the parser discards; the echo is written anyway because a real tty
- * echoes, and a fixture that quietly skips it teaches the wrong shape.
- */
+/** Run one submitted line (already echoed, keystroke by keystroke). */
 function run(s: FakeSession, command: string): void {
-  write(s, `${command}\r\n`);
   write(s, osc(`6973;C;${command}`));
   write(s, osc("133;C"));
   const running: Running = { command, awaitingPassword: false };
@@ -351,8 +338,8 @@ function run(s: FakeSession, command: string): void {
   const [head, ...rest] = argv;
 
   if (head === "sudo") {
-    // Leaves the block running with no trailing newline — that is exactly what
-    // `looksLikePasswordPrompt` matches, and it raises the inline masked field.
+    // Leaves the command running at a prompt with no trailing newline — what
+    // `looksLikePasswordPrompt` matches. The answer is not echoed.
     running.awaitingPassword = true;
     write(s, "[sudo] password for dev: ");
     return;
@@ -401,7 +388,7 @@ function run(s: FakeSession, command: string): void {
         finish(s, 1);
         return;
       }
-      setCwd(s, target);
+      s.cwd = target;
       finish(s, 0);
       return;
     }
@@ -430,147 +417,67 @@ function run(s: FakeSession, command: string): void {
       finish(s, 1);
       return;
     default:
-      // The state every unscripted command lands in, rather than a silent
-      // block that never finishes.
+      // The state every unscripted command lands in, rather than a command
+      // that never finishes.
       write(s, paint(C.red, `zsh: command not found: ${head}`) + "\r\n");
       finish(s, 127);
   }
 }
 
-/** A line typed while something is running: the password answer, or stdin
- *  nobody is reading. */
-function feedRunning(s: FakeSession, running: Running, line: string): void {
-  if (!running.awaitingPassword) {
-    write(s, `${line}\r\n`);
-    return;
-  }
+/** A line submitted while something is running: the password answer, or
+ *  stdin nobody is reading (already echoed). */
+function feedRunning(s: FakeSession, running: Running): void {
+  if (!running.awaitingPassword) return;
   running.awaitingPassword = false;
-  write(s, "\r\n");
   write(s, paint(C.red, "Sorry, try again.") + "\r\n");
   write(s, paint(C.dim, "sudo: 1 incorrect password attempt") + "\r\n");
   finish(s, 1);
 }
 
-/** Split typed bytes into submitted lines. Both CR and LF terminate a line:
- *  the frontend sends LF on POSIX and CR on Windows (`ENTER`). */
+/** Keystrokes, as xterm sends them: echo, line editing, Enter, Ctrl-C. */
 function feed(s: FakeSession, text: string): void {
   for (const ch of text) {
-    if (ch === "\x03") {
-      if (s.running) {
-        write(s, paint(C.grey, "^C") + "\r\n");
-        finish(s, 130);
-      } else {
-        prompt(s);
-      }
-      s.line = "";
+    if (s.escape) {
+      // CSI / SS3 end on a letter or `~`.
+      if (/[A-Za-z~]/.test(ch) && ch !== "[" && ch !== "O") s.escape = false;
       continue;
     }
-    if (ch === "\n" || ch === "\r") {
+    if (ch === "\x1b") {
+      s.escape = true;
+      continue;
+    }
+    const silent = s.running?.awaitingPassword ?? false;
+    if (ch === "\x03") {
+      write(s, paint(C.grey, "^C") + "\r\n");
+      s.line = "";
+      if (s.running) finish(s, 130);
+      else prompt(s);
+      continue;
+    }
+    if (ch === "\r" || ch === "\n") {
       const line = s.line;
       s.line = "";
+      write(s, "\r\n");
       const running = s.running;
-      if (running) feedRunning(s, running, line);
+      if (running) feedRunning(s, running);
       else if (line.trim() === "") prompt(s);
       else run(s, line);
       continue;
     }
+    if (ch === "\x7f" || ch === "\b") {
+      if (s.line) {
+        s.line = s.line.slice(0, -1);
+        if (!silent) write(s, "\b \b");
+      }
+      continue;
+    }
+    if (ch < " ") continue; // Tab and other controls: not scripted.
     s.line += ch;
+    if (!silent) write(s, ch);
   }
 }
 
 // ── handlers ──────────────────────────────────────────────────────────────
-
-/** A plausible `$PATH` ∪ builtins list — sorted and deduped, as Rust returns
- *  it. Short enough to read, long enough that the suggestion list scrolls. */
-const COMMANDS = [
-  ...new Set([
-    "awk",
-    "bash",
-    "bun",
-    "bunx",
-    "cargo",
-    "cat",
-    "cd",
-    "chmod",
-    "clear",
-    "cp",
-    "curl",
-    "date",
-    "diff",
-    "dirs",
-    "du",
-    "echo",
-    "env",
-    "eval",
-    "exec",
-    "exit",
-    "export",
-    "fd",
-    "fg",
-    "find",
-    "git",
-    "grep",
-    "head",
-    "help",
-    "history",
-    "jobs",
-    "jq",
-    "kill",
-    "less",
-    "let",
-    "ln",
-    "local",
-    "ls",
-    "lsof",
-    "make",
-    "mkdir",
-    "mv",
-    "node",
-    "npm",
-    "npx",
-    "open",
-    "pnpm",
-    "popd",
-    "ps",
-    "pushd",
-    "pwd",
-    "read",
-    "return",
-    "rg",
-    "rm",
-    "rmdir",
-    "rsync",
-    "rustc",
-    "rustup",
-    "sed",
-    "set",
-    "sort",
-    "source",
-    "ssh",
-    "stat",
-    "sudo",
-    "tail",
-    "tar",
-    "tee",
-    "time",
-    "touch",
-    "tr",
-    "trap",
-    "tsc",
-    "type",
-    "umask",
-    "unalias",
-    "uniq",
-    "unset",
-    "vim",
-    "wait",
-    "wc",
-    "which",
-    "whoami",
-    "xargs",
-    "zsh",
-  ]),
-].sort();
 
 /**
  * What the frontend reads from each command below — the type argument of its
@@ -583,12 +490,7 @@ export interface TerminalResponses {
   terminal_resize: Unread;
   terminal_ack: Unread;
   terminal_close: Unread;
-  terminal_kill_foreground: boolean;
-  terminal_zsh_dir: string | null;
-  terminal_list_commands: string[];
-  terminal_path_complete: RawPathCompletion[];
   terminal_resolve_path: string | null;
-  resolve_path: string | null;
 }
 
 export const terminalHandlers: TypedHandlers<TerminalResponses> = {
@@ -602,16 +504,11 @@ export const terminalHandlers: TypedHandlers<TerminalResponses> = {
       channel: onOutput,
       running: null,
       line: "",
+      escape: false,
     };
     sessions.set(id, session);
-    // After the invoke resolves, so the session has its pty id and drains.
+    // After the invoke resolves, so the session has its pty id.
     setTimeout(() => {
-      // `133;A` first: it marks integration live and drops the preamble block,
-      // so the banner has to arrive as a block of its own (no command → the
-      // card renders headerless, which is what a shell banner should look like).
-      prompt(session);
-      setCwd(session, session.cwd);
-      write(session, osc("133;C"));
       write(
         session,
         [
@@ -621,9 +518,8 @@ export const terminalHandlers: TypedHandlers<TerminalResponses> = {
             paint(C.cyan, "help") +
             paint(C.grey, " for what this shell knows."),
           "",
-        ].join("\r\n"),
+        ].join("\r\n") + "\r\n",
       );
-      write(session, osc("133;D;0"));
       prompt(session);
     }, 30);
     return id;
@@ -657,41 +553,8 @@ export const terminalHandlers: TypedHandlers<TerminalResponses> = {
     return null;
   },
 
-  /** SIGKILL to the foreground job. `false` when there is nothing to kill —
-   *  which is what greys the stop control out. */
-  terminal_kill_foreground: ({ id }): boolean => {
-    const session = sessions.get(String(id));
-    if (!session?.running) return false;
-    write(session, paint(C.red, "[1]    killed     " + session.running.command) + "\r\n");
-    finish(session, 137);
-    return true;
-  },
-
-  // Non-null so the `sudo -s` relaunch path is exercisable rather than skipped.
-  terminal_zsh_dir: (): string => "/Users/dev/.local/share/atlas/zsh-integration",
-
-  terminal_list_commands: (): string[] => COMMANDS,
-
-  terminal_path_complete: ({ cwd, token }): RawPathCompletion[] => {
-    const raw = String(token ?? "");
-    const at = raw.lastIndexOf("/");
-    const dirPart = at === -1 ? "" : raw.slice(0, at + 1);
-    const prefix = (at === -1 ? raw : raw.slice(at + 1)).toLowerCase();
-    const dir = resolveAgainst(String(cwd ?? MOCK_PROJECT.path), dirPart || ".");
-    return listDir(dir)
-      .filter((entry) => {
-        // Hidden entries only when the prefix asks for them, as Rust does.
-        if (entry.name.startsWith(".") && !prefix.startsWith(".")) return false;
-        return entry.name.toLowerCase().startsWith(prefix);
-      })
-      .slice(0, 50)
-      .map((entry) => ({ name: entry.name, is_dir: entry.is_dir }));
-  },
-
-  // Both resolvers answer `null` for a token that is not a path — that is the
-  // common case (the link regex matches plenty of prose), not an error.
+  // `null` for a token that is not a path — the common case (the link regex
+  // matches plenty of prose), not an error.
   terminal_resolve_path: ({ id, raw }): string | null =>
     resolvePath(sessions.get(String(id))?.cwd ?? MOCK_PROJECT.path, String(raw ?? "")),
-  resolve_path: ({ base, raw }): string | null =>
-    resolvePath(String(base ?? MOCK_PROJECT.path), String(raw ?? "")),
 };

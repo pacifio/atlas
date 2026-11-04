@@ -6,7 +6,7 @@ import {
   type NotificationEnv,
 } from "@/features/notifications/lib/decide";
 import { DEFAULT_SETTINGS, type AppSettings } from "@/features/settings/lib/app-settings";
-import type { TerminalEvent } from "./block-parser";
+import type { TerminalEvent } from "./shell-integration";
 
 const ctx: TerminalCtx = {
   terminalId: "pty-1",

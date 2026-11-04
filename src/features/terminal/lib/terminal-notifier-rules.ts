@@ -14,7 +14,7 @@ import {
 } from "@/features/notifications/lib/decide";
 import { prefsFromSettings } from "@/features/notifications/lib/prefs";
 import type { AppSettings } from "@/features/settings/lib/app-settings";
-import type { TerminalEvent } from "./block-parser";
+import type { TerminalEvent } from "./shell-integration";
 import { formatDuration } from "./format-duration";
 
 export type TerminalCtx = Omit<Extract<NotificationTarget, { type: "terminal" }>, "type">;

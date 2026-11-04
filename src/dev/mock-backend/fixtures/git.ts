@@ -51,7 +51,6 @@ import type {
   ConflictState,
 } from "@/features/git/components/git-manager/conflicts-view";
 import type { CommitSession } from "@/features/git/components/commit-view";
-import type { RawGitStatus } from "@/features/terminal/lib/terminal-api";
 import type { GitSummary } from "@/features/projects/stores/project-git-store";
 import type { BranchCompare } from "@/features/session-context/lib/session-git-api";
 import type { TypedHandlers, Unread } from "../types";
@@ -1138,7 +1137,6 @@ export interface GitResponses {
   git_workspace_summary: GitSummary;
   git_branch_compare: BranchCompare;
   git_snapshot: GitSnapshotWire;
-  git_status_fresh: RawGitStatus;
   git_inprogress: InProgress;
   git_branches_full: BranchInfo[];
   git_list_branches: GitBranch[];
@@ -1305,18 +1303,6 @@ export const gitHandlers: TypedHandlers<GitResponses> = {
       inProgress: anyInProgress() ? { ...inProgress } : null,
     };
   },
-  // The terminal's cwd badge, not the git panel — same state, older wire shape.
-  git_status_fresh: (): RawGitStatus => ({
-    is_repo: true,
-    branch: currentBranch().name,
-    files: statusRows().map((row) => ({
-      path: row.path,
-      status: row.status,
-      staged: row.staged,
-    })),
-    ahead: currentBranch().ahead,
-    behind: currentBranch().behind,
-  }),
   git_inprogress: (): InProgress => ({ ...inProgress }),
   git_branches_full: (): BranchInfo[] => copy(BRANCHES),
   git_list_branches: (): GitBranch[] =>

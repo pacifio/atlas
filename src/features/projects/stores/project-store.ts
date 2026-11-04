@@ -153,7 +153,7 @@ let pendingSwitchTarget: string | null = null;
 /**
  * Tear a project OUT of the hot set: free its heavy RAM (chat history,
  * terminal trees), drop its panel snapshot, unmount its CenterPanel subtree
- * (→ BlockTerminal closes its PTYs), and stop its resident Rust watchers.
+ * (its terminals leave the store → their PTYs close), and stop its resident Rust watchers.
  * Does NOT flush — a background project's editor-state was already persisted
  * at its last switch-away (and the layout mirror is the ACTIVE project's, so
  * flushing here would be wrong). Synchronous on the JS side; Rust teardown is

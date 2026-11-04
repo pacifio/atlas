@@ -45,7 +45,7 @@ const PACKAGE_STYLES = path.join(
 );
 
 /** Classes matched from script, never styled. Each must still be queried. */
-const JS_HOOKS = ["atlas-cmd-suggest", "atlas-mention-picker", "atlas-slash-picker"];
+const JS_HOOKS = ["atlas-mention-picker", "atlas-slash-picker"];
 
 /** Classes a dependency styles or reads; no Atlas stylesheet defines them. */
 const LIBRARY_CLASSES: Record<string, string> = {
@@ -88,7 +88,7 @@ describe("shadcn-lint allowlist", () => {
 
   it("parses a plausible allowlist and stylesheet set", () => {
     // Floors: a parse that stops matching fails here rather than passing vacuously.
-    expect(allow.length).toBeGreaterThan(40);
+    expect(allow.length).toBeGreaterThan(30);
     expect(defined.size).toBeGreaterThan(200);
   });
 

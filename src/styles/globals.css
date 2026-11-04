@@ -36,7 +36,7 @@
 
 @theme inline {
   /* `font-terminal`: the terminal's own font while `terminalFontFamily` is
-     set, else the code font — the block terminal and xterm both read it. */
+     set, else the code font. xterm reads the same chain (`appliedTerminalFont`). */
   --font-terminal: var(--atlas-terminal-font, var(--font-mono));
 }
 
@@ -659,15 +659,6 @@
 
   ::selection {
     background: var(--selection-background);
-    color: var(--foreground);
-  }
-
-  /* The terminal renders command output/input on AMOLED black where the 6%
-     app-wide selection is nearly invisible. Scope a clearly-visible selection
-     to the block terminal (React blocks + command input), matching the xterm
-     surface's translucent-blue selection. */
-  [data-block-terminal] ::selection {
-    background: rgba(97, 175, 239, 0.35);
     color: var(--foreground);
   }
 
@@ -1336,12 +1327,6 @@
   }
 }
 
-/* Active match in the terminal search (brighter than the other matches). */
-.term-match-active {
-  background: var(--status-warning-foreground) !important;
-  color: #000 !important;
-}
-
 /* Atlas bars loader — four bars that shuffle (evokes the Atlas logo). Color
    inherits `currentColor`; size via `height` (the component scales the bar
    offset `--g` to match). Used in place of the circular spinner. */
@@ -1856,12 +1841,6 @@ html:root[data-ui-font] {
 }
 html:root[data-code-font] {
   --font-mono: var(--atlas-code-font), monospace;
-}
-
-/* `terminalFontSize` sets the command line; a command's output runs a pixel
-   under it, as it always has (12px against 13). */
-.atlas-terminal-output {
-  font-size: calc(var(--atlas-terminal-font-size, 13px) - 1px);
 }
 
 /* `chatWidth`: the transcript and composer column (`CONTENT_COLUMN`). */

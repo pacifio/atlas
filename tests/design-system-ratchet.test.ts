@@ -97,10 +97,6 @@ const EXEMPT_FILES: Record<string, string> = {
     "paper (decision 3), so the swatch, the saved value and the ink are one hex.",
   "src/features/pdf/lib/pdf-annotations.test.ts":
     "Shape 2. Pins the persisted ink ids above, which must never change.",
-  "src/features/terminal/lib/line-emulator.ts":
-    "Not a colour: it BUILDS `rgb(r,g,b)` strings out of the numeric " +
-    "parameters of an ANSI escape sequence. The rule matches the format, not a " +
-    "choice anyone made.",
   "src/dev/mock-backend/badge.ts":
     "Shape 2, of a kind: the unmocked-command counter, injected into the DOM " +
     "by the dev mock backend. It has to stay legible over whatever theme is " +
