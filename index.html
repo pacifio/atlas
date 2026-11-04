@@ -48,9 +48,11 @@
          already has every theme key in the right theme. The block's text
          must stay byte-identical to `resolvedThemeCss()` there;
          `apply-theme.test.ts` runs this script to check. A first run, a
-         cleared profile or a private window finds nothing and every rule
-         falls back to the package's Atlas-dark `:root` and the literals below, so this can only
-         ever improve the flash — never cause one. -->
+         cleared profile or a private window finds nothing: the skeleton falls
+         back to the literals below, and theme keys stay unset until the first
+         applyTheme (desktop imports the package's `styles-core.css`, which
+         gives them no `:root` floor). So this can only ever improve the
+         flash — never cause one. -->
     <script>
       (function () {
         try {

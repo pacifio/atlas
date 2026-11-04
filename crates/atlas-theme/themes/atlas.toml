@@ -60,7 +60,7 @@ green = "#9ecf8a"
 cyan = "#7fd1e8"
 blue = "#6796e6"
 purple = "#c9a2f5"
-pink = "#e59a72"
+pink = "#f0a0c8"
 
 [dark.keys]
 "border.subtle" = "#141414"
