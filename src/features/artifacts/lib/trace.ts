@@ -6,6 +6,8 @@
  * running, who a missing author is — are tested without a renderer.
  */
 
+import { initialsOf } from "@tryatlas/design";
+
 import { avatarSrc } from "@/features/auth/components/account-avatar";
 import type { TraceAuthor, TraceCheckpoint, TraceSession } from "../components/checkpoint-trace";
 import type { TraceCheckpointRow, TraceSessionRow } from "../types";
@@ -24,7 +26,19 @@ export function traceAuthor(authorId: string | null, directory: AuthorDirectory)
   const id = who.isSelf ? (directory.currentUserId ?? "self") : (authorId ?? "unknown");
   // The photo when the roster has one; without it the block draws the
   // person's initials in their own hue.
-  return { id, name: who.label, avatarUrl: avatarSrc(who.avatar?.avatarPath ?? null) };
+  const author: TraceAuthor = {
+    id,
+    name: who.label,
+    avatarUrl: avatarSrc(who.avatar?.avatarPath ?? null),
+  };
+  // The two stand-in labels make poor initials ("YO", "AM"): your own face
+  // reads your real initials, and someone the roster cannot name reads "?".
+  if (who.isSelf) {
+    author.initials = who.avatar ? initialsOf(who.avatar.name, who.avatar.email) : "ME";
+  } else if (!who.avatar) {
+    author.initials = "?";
+  }
+  return author;
 }
 
 /**

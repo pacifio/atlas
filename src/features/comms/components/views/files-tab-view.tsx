@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
-import { Folder, Play, RefreshCw } from "lucide-react";
+import { FileText, Folder, Image as ImageIcon, Music, Play, RefreshCw } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { EmptyState, Hint, Icon, IconButton, SectionHeader } from "@tryatlas/design";
 import { CommsAvatar } from "../comms-avatar";
 import type { OrgMemberProfile } from "../../types";
@@ -27,8 +28,8 @@ export function FilesTabView({
   loadingOlder,
   onLoadOlder,
 }: FilesTabViewProps) {
-  const head = (label: string) => (
-    <Section label={label} loadingOlder={loadingOlder} onLoadOlder={onLoadOlder} />
+  const head = (label: string, icon: LucideIcon) => (
+    <Section label={label} icon={icon} loadingOlder={loadingOlder} onLoadOlder={onLoadOlder} />
   );
   return (
     <div
@@ -41,21 +42,21 @@ export function FilesTabView({
 
       {media.length > 0 && (
         <>
-          {head("Media")}
+          {head("Media", ImageIcon)}
           <div className="grid grid-cols-3 gap-1">{media}</div>
         </>
       )}
 
       {audio.length > 0 && (
         <>
-          {head("Audio")}
+          {head("Audio", Music)}
           <div className="flex flex-col gap-1">{audio}</div>
         </>
       )}
 
       {files.length > 0 && (
         <>
-          {head("Files")}
+          {head("Files", FileText)}
           <div className="flex flex-col gap-1">{files}</div>
         </>
       )}
@@ -65,19 +66,20 @@ export function FilesTabView({
 
 function Section({
   label,
+  icon,
   loadingOlder,
   onLoadOlder,
 }: {
   label: string;
+  icon: LucideIcon;
   loadingOlder: boolean;
   onLoadOlder: () => void;
 }) {
   return (
     <div className="px-1 pt-2">
       <SectionHeader
-        // A string: the header's `title` is typed as the div attribute's too.
-        // Its eyebrow carries no glyph, so the section icons are gone.
         title={label}
+        icon={icon}
         action={
           <Hint label="Load older messages">
             <IconButton

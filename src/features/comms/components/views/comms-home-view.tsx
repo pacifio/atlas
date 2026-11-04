@@ -96,12 +96,9 @@ export function CommsHomeView({
   ]);
 
   // ⌘-click (Ctrl elsewhere) opens a conversation in a tab of its own, the
-  // way a browser link does; a plain click navigates this one. The package
-  // row hands `onSelect` only the id, so the click's modifiers are read on
-  // the way down (capture runs before the row's own handler) and consumed
-  // by `open`.
-  const newTabClick = useRef(false);
-  const open = (convId: string) => onOpen(convId, newTabClick.current);
+  // way a browser link does; a plain click navigates this one. The row reads
+  // the modifier and hands it over as `newTab`.
+  const open = (convId: string, { newTab }: { newTab: boolean }) => onOpen(convId, newTab);
 
   return (
     <div
@@ -127,13 +124,7 @@ export function CommsHomeView({
       <div className="relative flex min-h-0 flex-1 flex-col">
         <ScrollFade at="top" visible={edges.top} className={cn(FADE, "h-6")} />
         <ScrollFade at="bottom" visible={edges.bottom} className={cn(FADE, "h-6")} />
-        <div
-          ref={listRef}
-          onClickCapture={(e) => {
-            newTabClick.current = e.metaKey || e.ctrlKey;
-          }}
-          className="min-h-0 flex-1 overflow-y-auto hide-scrollbar pb-3"
-        >
+        <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto hide-scrollbar pb-3">
           <SectionLabel label="Channels" icon={Hash} action={channelAction} />
           {channels.map((c) => (
             <CommsConversationRow
@@ -358,7 +349,7 @@ function DirectRow({
   members: Map<string, OrgMemberProfile>;
   online: string[];
   me: string;
-  onOpen: (convId: string) => void;
+  onOpen: (convId: string, select: { newTab: boolean }) => void;
 }) {
   const isGroup = conv.kind === "group_dm";
   const others = (conv.member_ids ?? []).filter((id) => id !== me);

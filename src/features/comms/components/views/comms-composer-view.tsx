@@ -121,6 +121,7 @@ export function CommsComposerView({
             ? { authorName: intent.author ?? "Unknown", preview: intent.preview ?? "" }
             : null
         }
+        replyEmptyLabel="Message deleted"
         onCancelReply={onCancelIntent}
         editing={intent?.kind === "edit"}
         editPreview={intent?.kind === "edit" ? intent.preview : null}

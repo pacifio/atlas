@@ -43,10 +43,13 @@ function show() {
   return { onOpen, onStartDm };
 }
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
-// The package row reports only the id; the view reads the click's modifiers
-// itself, so ⌘-click must still reach `onOpen` as a new-tab open.
+// The package row reports a new-tab click per platform (⌘ on a Mac, Ctrl
+// elsewhere); the view must pass it through to `onOpen`.
 describe("CommsHomeView", () => {
   it("a plain click opens in place", () => {
     const { onOpen } = show();
@@ -54,14 +57,22 @@ describe("CommsHomeView", () => {
     expect(onOpen).toHaveBeenCalledWith("c1", false);
   });
 
-  it("⌘-click and Ctrl-click open in a new tab", () => {
+  it("⌘-click opens in a new tab on a Mac; Ctrl-click does not", () => {
+    vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
     const { onOpen } = show();
     fireEvent.click(screen.getByRole("button", { name: "general" }), { metaKey: true });
     fireEvent.click(screen.getByRole("button", { name: "general" }), { ctrlKey: true });
     expect(onOpen.mock.calls).toEqual([
       ["c1", true],
-      ["c1", true],
+      ["c1", false],
     ]);
+  });
+
+  it("Ctrl-click opens in a new tab off a Mac", () => {
+    vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
+    const { onOpen } = show();
+    fireEvent.click(screen.getByRole("button", { name: "general" }), { ctrlKey: true });
+    expect(onOpen).toHaveBeenLastCalledWith("c1", true);
   });
 
   it("a modifier does not stick to the next plain click", () => {

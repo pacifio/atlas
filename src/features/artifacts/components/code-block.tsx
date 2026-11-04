@@ -4,9 +4,10 @@
  * Built on `highlightDiffLine` + the `.diff-syntax` scope rather than on
  * `highlight.js` directly, and that is the whole design:
  *
- * * **It follows the Atlas theme.** `diff-syntax.css` keys every token off the
- *   resolved theme's `--cm-*` variables, so a payload here matches the diff
- *   view, the editor, and whatever theme is selected.
+ * * **It follows the Atlas theme.** The package's `.diff-syntax` scope (in
+ *   `syntax.css`) keys every token off the resolved theme's `syntax.*` keys,
+ *   so a payload here matches the diff view, the editor, and whatever theme
+ *   is selected.
  * * **It never applies the bare `.hljs` class.** The package's `syntax.css` is
  *   loaded globally and its root rule carries a background *and*
  *   `padding: 1em` — which, applied per line, boxes every row and blows the

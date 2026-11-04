@@ -16,15 +16,14 @@ import type { ActivityGroup, ActivityLine } from "./memory-activity";
 import type { ReviewItem } from "./memory-review-items";
 import { dreamLabel } from "./memory-review-items";
 import type { MemoryEntry } from "./shared-memory-api";
-import { isMac } from "@/lib/platform";
 
 /** The panel's prompt line opens the box with this, so whatever the user
  *  types reads as an instruction about memory. */
 export const MEMORY_INSTRUCTION_PROMPT = "Update this project's shared memory: ";
 
 /** The keys a tab's search field hands its words to the agent with: the ask
- *  box's own send keys. */
-export const MEMORY_ASK_KEYS: readonly string[] = isMac ? ["⌘", "↵"] : ["Ctrl", "↵"];
+ *  box's own send keys. Mac glyphs: `KbdKeys` reads ⌘ as Ctrl off a Mac. */
+export const MEMORY_ASK_KEYS: readonly string[] = ["⌘", "↵"];
 
 /** What a memory's "Ask agent…" suggests asking, beside it and in the box. */
 export const ENTRY_ASK_EXAMPLE = "This is outdated, we moved to Postgres";
