@@ -74,7 +74,7 @@ export function TerminalStopControl({
           "flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors",
           force
             ? "text-error hover:bg-error/10"
-            : "text-[var(--muted-foreground)] hover:bg-element-hover hover:text-[var(--foreground)]",
+            : "text-muted-foreground hover:bg-element-hover hover:text-foreground",
           pending ? "cursor-wait" : "cursor-pointer",
           className,
         )}

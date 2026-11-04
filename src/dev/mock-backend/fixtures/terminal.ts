@@ -33,7 +33,7 @@
 //   not found             anything unscripted → exit 127
 
 import type { Channel } from "@tauri-apps/api/core";
-import type { RawPathCompletion } from "@/features/terminal/components/command-input";
+import type { RawPathCompletion } from "@/features/terminal/lib/terminal-api";
 import type { TypedHandlers, Unread } from "../types";
 import { MOCK_PROJECT } from "../project";
 import { fileText, listDir, mockFilePaths } from "./files";

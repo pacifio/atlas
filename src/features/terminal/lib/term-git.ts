@@ -7,7 +7,7 @@
 // that overlap share one invoke; nothing is cached past it, because a command
 // that just finished may have changed the answer.
 
-import { invoke } from "@tauri-apps/api/core";
+import { gitStatusFresh } from "./terminal-api";
 
 /** Compact git status for a terminal's directory. */
 export interface TermGit {
@@ -17,21 +17,13 @@ export interface TermGit {
   dirty: boolean;
 }
 
-export interface RawGitStatus {
-  is_repo: boolean;
-  branch: string;
-  ahead: number;
-  behind: number;
-  files: unknown[];
-}
-
 const inFlight = new Map<string, Promise<TermGit | null>>();
 
 /** `null` outside a repository, and when git itself fails. */
 export function fetchTermGit(cwd: string): Promise<TermGit | null> {
   const pending = inFlight.get(cwd);
   if (pending) return pending;
-  const p = invoke<RawGitStatus>("git_status_fresh", { path: cwd })
+  const p = gitStatusFresh(cwd)
     .then((s) =>
       s.is_repo
         ? { branch: s.branch, ahead: s.ahead, behind: s.behind, dirty: s.files.length > 0 }
