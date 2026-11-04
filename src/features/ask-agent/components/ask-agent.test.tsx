@@ -11,6 +11,7 @@ import { useAskAgentStore } from "../stores/ask-agent-store";
 import { fixWithAgentAction } from "../lib/ask-agent";
 import type { ErrorContext } from "../lib/agent-context";
 import { AskAgentButton, FixWithAgentButton } from "./ask-agent-button";
+import { pickerTargets } from "./ask-agent-host";
 import { AskAgentBoxView, type AskAgentBoxViewProps } from "./views/ask-agent-box-view";
 
 afterEach(() => {
@@ -119,5 +120,25 @@ describe("the ways into the box", () => {
     expect(request).toMatchObject({ context: [error], prompt: "Fix this: " });
     // The button is going away with the modal: the box grows from its rect.
     expect(request?.anchor).not.toBeInstanceOf(Element);
+  });
+});
+
+describe("the session picker", () => {
+  const open = Array.from({ length: 8 }, (_, i) => ({ tabId: `chat-${i}`, title: `S${i}` }));
+
+  it("opens on the session in view, listing the recent ones and a new one", () => {
+    const { targets, initial } = pickerTargets(open, "chat-1", undefined);
+    expect(initial).toBe("chat-1");
+    expect(targets.map((t) => t.value)).toEqual([...open.slice(0, 6).map((s) => s.tabId), "new"]);
+  });
+
+  it("opens on a named session even when it is not a recent one", () => {
+    const { targets, initial } = pickerTargets(open, "chat-1", "chat-7");
+    expect(initial).toBe("chat-7");
+    expect(targets[0].value).toBe("chat-7");
+  });
+
+  it("falls back to the session in view when the named one is not open", () => {
+    expect(pickerTargets(open, "chat-1", "chat-gone").initial).toBe("chat-1");
   });
 });

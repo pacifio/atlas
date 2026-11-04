@@ -795,7 +795,8 @@ type EventSeed = [
 const S1 = "0193f0aa-1111-7000-9000-aaaaaaaaaaaa";
 const S2 = "0193f0bb-2222-7000-9000-bbbbbbbbbbbb";
 const S3 = "0193f0cc-3333-7000-9000-cccccccccccc";
-const S4 = "0193f0dd-4444-7000-9000-dddddddddddd";
+/** The newest session in the activity log (`memory-ask-agent` opens it). */
+export const S4 = "0193f0dd-4444-7000-9000-dddddddddddd";
 
 /**
  * Four sessions over five days, two agents plus one installed from the ACP

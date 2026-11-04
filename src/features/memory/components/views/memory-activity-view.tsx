@@ -27,6 +27,18 @@ import { AgentName } from "./memory-entry-parts";
 import { RailNode, RailRow } from "./memory-rail";
 import { FilterMenu } from "./shared-memory-primitives";
 import { Notice } from "./memory-chrome";
+import type { AgentContext } from "@/features/ask-agent/lib/agent-context";
+import {
+  ASK_ROW,
+  AskAgentButton,
+  FixWithAgentButton,
+} from "@/features/ask-agent/components/ask-agent-button";
+
+/** A line's "Why did you learn this?": what it hands the agent, and where. */
+export type WhyAsk = (
+  line: ActivityLine,
+  group: ActivityGroup,
+) => { context: AgentContext[]; prompt: string; target: string };
 
 /** A session with more lines than this folds the rest behind a count. */
 const FOLD_OVER = 5;
@@ -48,6 +60,7 @@ export interface MemoryActivityViewProps {
   onAgentFilterChange: (agent: string) => void;
   onOpenEntry: (id: number) => void;
   onOpenSession: (group: ActivityGroup) => void;
+  whyAsk: WhyAsk;
 }
 
 export function MemoryActivityView(p: MemoryActivityViewProps) {
@@ -112,9 +125,14 @@ export function MemoryActivityView(p: MemoryActivityViewProps) {
           <Notice
             title="Couldn't read this project's memory"
             action={
-              <Button size="sm" variant="outline" onClick={p.onRetry}>
-                Try again
-              </Button>
+              <>
+                <Button size="sm" variant="outline" onClick={p.onRetry}>
+                  Try again
+                </Button>
+                <FixWithAgentButton
+                  error={{ kind: "error", source: "Memory: reading the record", message: p.error }}
+                />
+              </>
             }
           >
             <span className="font-mono text-2xs break-words">{p.error}</span>
@@ -166,6 +184,7 @@ export function MemoryActivityView(p: MemoryActivityViewProps) {
                       style={enters ? { animationDelay: `${delay}ms` } : undefined}
                       onOpenEntry={p.onOpenEntry}
                       onOpenSession={() => p.onOpenSession(group)}
+                      whyAsk={p.whyAsk}
                     />
                   );
                 })}
@@ -186,6 +205,7 @@ function SessionGroup({
   style,
   onOpenEntry,
   onOpenSession,
+  whyAsk,
 }: {
   group: ActivityGroup;
   first: boolean;
@@ -194,6 +214,7 @@ function SessionGroup({
   style?: React.CSSProperties;
   onOpenEntry: (id: number) => void;
   onOpenSession: () => void;
+  whyAsk: WhyAsk;
 }) {
   const foldable = group.lines.length > FOLD_OVER;
   const [open, setOpen] = useState(!foldable);
@@ -238,7 +259,7 @@ function SessionGroup({
       </div>
       <ul className="mt-0.5 space-y-px">
         {shown.map((line) => (
-          <Line key={line.seq} line={line} onOpenEntry={onOpenEntry} />
+          <Line key={line.seq} line={line} onOpenEntry={onOpenEntry} ask={whyAsk(line, group)} />
         ))}
       </ul>
       {foldable && (
@@ -256,7 +277,23 @@ function SessionGroup({
   );
 }
 
-function Line({ line, onOpenEntry }: { line: ActivityLine; onOpenEntry: (id: number) => void }) {
+/** A line, short enough for a button's name. */
+function whatLabel(line: ActivityLine): string {
+  const flat = `${line.verb} ${line.path ?? line.text}`.replace(/\s+/g, " ").trim();
+  return flat.length > 48 ? `${flat.slice(0, 47).trimEnd()}…` : flat;
+}
+
+/** One thing the agent did. On hover it offers "Why did you learn this?",
+ *  asked of the session that wrote it. */
+function Line({
+  line,
+  onOpenEntry,
+  ask,
+}: {
+  line: ActivityLine;
+  onOpenEntry: (id: number) => void;
+  ask: ReturnType<WhyAsk>;
+}) {
   const Icon = KIND_ICON[line.kind] ?? Brain;
   const body = (
     <>
@@ -272,19 +309,27 @@ function Line({ line, onOpenEntry }: { line: ActivityLine; onOpenEntry: (id: num
     </>
   );
   return (
-    <li>
+    <li className={cn(ASK_ROW, "flex items-start gap-1")}>
       {line.entryId !== null ? (
         <button
           type="button"
           onClick={() => onOpenEntry(line.entryId!)}
           title="Open this memory"
-          className="flex w-full cursor-pointer items-start gap-2 rounded px-1.5 py-1 text-left transition-colors duration-fast ease-out-strong hover:bg-element-hover"
+          className="flex min-w-0 flex-1 cursor-pointer items-start gap-2 rounded px-1.5 py-1 text-left transition-colors duration-fast ease-out-strong hover:bg-element-hover"
         >
           {body}
         </button>
       ) : (
-        <div className="flex items-start gap-2 px-1.5 py-1">{body}</div>
+        <div className="flex min-w-0 flex-1 items-start gap-2 px-1.5 py-1">{body}</div>
       )}
+      <AskAgentButton
+        // Named for its line, so a list of them is not one name repeated.
+        label={`Why did you learn this: ${whatLabel(line)}`}
+        context={ask.context}
+        prompt={ask.prompt}
+        target={ask.target}
+        className="mt-0.5 shrink-0"
+      />
     </li>
   );
 }

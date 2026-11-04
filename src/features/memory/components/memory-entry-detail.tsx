@@ -1,5 +1,5 @@
 // Container for one memory in the Memories pane: its provenance (read from
-// the session recorder), the in-place edit, verdicts, restore, forget and
+// the session recorder), the ask to an agent, the in-place edit, verdicts, restore, forget and
 // erase. The markup is `./views/memory-entry-detail-view.tsx`.
 
 import { useEffect, useState } from "react";
@@ -8,6 +8,8 @@ import { useSharedMemoryStore } from "../stores/shared-memory-store";
 import { sharedMemory, type MemoryEntry, type Provenance } from "../lib/shared-memory-api";
 import { provenanceSession } from "../lib/memory-entries";
 import { openMemorySession } from "../lib/open-memory-session";
+import { ENTRY_ASK_EXAMPLE, entryContext } from "../lib/memory-ask";
+import { openAskAgent } from "@/features/ask-agent/lib/ask-agent";
 import { MemoryEntryDetailView } from "./views/memory-entry-detail-view";
 
 function errorText(err: unknown): string {
@@ -144,6 +146,13 @@ export function MemoryEntryDetail({
           "Memory restored",
           "Couldn't restore",
         )
+      }
+      onAskAgent={(anchor) =>
+        openAskAgent({
+          context: [entryContext(e, projectPath)],
+          anchor,
+          placeholder: `${ENTRY_ASK_EXAMPLE}…`,
+        })
       }
       onOpenSession={(p) => {
         const session = provenanceSession(p);

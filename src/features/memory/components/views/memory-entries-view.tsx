@@ -17,6 +17,12 @@ import { exportable, type MemoryEntry } from "../../lib/shared-memory-format";
 import { EntryMeta, KindGlyph } from "./memory-entry-parts";
 import { FilterMenu } from "./shared-memory-primitives";
 import { Notice } from "./memory-chrome";
+import type { AgentContext } from "@/features/ask-agent/lib/agent-context";
+import {
+  ASK_ROW,
+  AskAgentButton,
+  FixWithAgentButton,
+} from "@/features/ask-agent/components/ask-agent-button";
 
 export interface MemoryEntriesViewProps {
   loaded: boolean;
@@ -44,6 +50,8 @@ export interface MemoryEntriesViewProps {
   onExport: () => void;
   onCancelSelecting: () => void;
   onImportClaude: () => void;
+  /** What a row's hover "Ask agent" hands the agent. */
+  askContext: (entry: MemoryEntry) => AgentContext[];
   /** The chosen entry's detail, or the overview. */
   pane: ReactNode;
   /** Slots for dialogs the container owns. */
@@ -224,9 +232,14 @@ export function MemoryEntriesView(props: MemoryEntriesViewProps) {
             <Notice
               title="Couldn't read this project's memory"
               action={
-                <Button size="sm" variant="outline" onClick={onRetry}>
-                  Try again
-                </Button>
+                <>
+                  <Button size="sm" variant="outline" onClick={onRetry}>
+                    Try again
+                  </Button>
+                  <FixWithAgentButton
+                    error={{ kind: "error", source: "Memory: reading the record", message: error }}
+                  />
+                </>
               }
             >
               <span className="font-mono text-2xs break-words">{error}</span>
@@ -295,6 +308,7 @@ export function MemoryEntriesView(props: MemoryEntriesViewProps) {
                         selecting={selecting}
                         picked={props.picked.has(e.id)}
                         onPick={() => props.onPick(e.id)}
+                        askContext={props.askContext}
                       />
                     ))}
                   </div>
@@ -346,8 +360,8 @@ function GroupHeader({ id, label, count }: { id: string; label: string; count: n
 }
 
 /** One memory: its kind, its words (two lines at most) and who wrote it. A
- *  stretched button under the content opens it; the export checkbox takes the
- *  pointer back. */
+ *  stretched button under the content opens it; the export checkbox and the
+ *  hover "Ask agent" take the pointer back. */
 function EntryRow({
   entry: e,
   selected,
@@ -355,6 +369,7 @@ function EntryRow({
   selecting,
   picked,
   onPick,
+  askContext,
 }: {
   entry: MemoryEntry;
   selected: boolean;
@@ -362,6 +377,7 @@ function EntryRow({
   selecting: boolean;
   picked: boolean;
   onPick: () => void;
+  askContext: (entry: MemoryEntry) => AgentContext[];
 }) {
   const canPick = selecting && exportable(e);
   return (
@@ -369,7 +385,8 @@ function EntryRow({
       role="listitem"
       data-entry-id={e.id}
       className={cn(
-        "group/entry relative flex min-w-0 items-start gap-2.5 rounded px-2 py-2",
+        ASK_ROW,
+        "relative flex min-w-0 items-start gap-2.5 rounded px-2 py-2",
         "transition-colors duration-fast ease-out-strong",
         selected
           ? "bg-element-selected"
@@ -411,6 +428,7 @@ function EntryRow({
         </span>
         <EntryMeta entry={e} className="mt-1" />
       </span>
+      {!selecting && <AskAgentButton context={askContext(e)} className="relative shrink-0" />}
     </div>
   );
 }

@@ -24,6 +24,7 @@ import { MemoryPanel } from "./memory-panel";
 import { useSharedMemoryStore, EMPTY_REVIEW } from "../stores/shared-memory-store";
 import { useMemoryStore } from "../stores/memory-store";
 import { useAppStore } from "@/features/app/stores/app-store";
+import { useAskAgentStore } from "@/features/ask-agent/stores/ask-agent-store";
 
 function entry(id: number, content: string, over: Record<string, unknown> = {}) {
   return {
@@ -241,6 +242,25 @@ describe("the Memories list", () => {
     expect(screen.queryByRole("complementary")).toBeNull();
   });
 
+  it("hands an unreadable record to the agent to fix", async () => {
+    const base = invoke.getMockImplementation()!;
+    invoke.mockImplementation(async (cmd: string, args: Record<string, unknown>) => {
+      if (cmd === "memory_list_entries") throw new Error("database is locked");
+      return base(cmd, args);
+    });
+    const user = userEvent.setup();
+    render(<MemoryPanel />);
+    await user.click(await screen.findByRole("button", { name: /Fix with agent/ }));
+    const request = useAskAgentStore.getState().request;
+    expect(request?.prompt).toBe("Fix this: ");
+    expect(request?.context).toEqual([
+      expect.objectContaining({
+        kind: "error",
+        message: expect.stringContaining("database is locked"),
+      }),
+    ]);
+  });
+
   it("says Review can't be read when the record is locked, not that nothing waits", async () => {
     const base = invoke.getMockImplementation()!;
     invoke.mockImplementation(async (cmd: string, args: Record<string, unknown>) => {
@@ -274,6 +294,20 @@ describe("the Memories list", () => {
   });
 });
 
+describe("the prompt line", () => {
+  it("opens the ask box as a memory instruction, with the project's memory", async () => {
+    const user = userEvent.setup();
+    render(<MemoryPanel />);
+    await screen.findByRole("button", { name: "Prefers small PRs" });
+    await user.click(screen.getByRole("button", { name: /Tell the agent what to remember/ }));
+    const request = useAskAgentStore.getState().request;
+    expect(request?.prompt).toBe("Update this project's shared memory: ");
+    expect(request?.context).toHaveLength(1);
+    const digest = request?.context[0];
+    expect(digest?.kind === "quote" && digest.text).toContain("Prefers small PRs");
+  });
+});
+
 describe("a chosen memory", () => {
   it("says where it was learned, with the session's commit", async () => {
     const { pane } = await open("Prefers small PRs");
@@ -282,9 +316,27 @@ describe("a chosen memory", () => {
     expect(within(pane).getByRole("button", { name: "Open the session" })).toBeTruthy();
   });
 
+  it("asks the agent about it, with the memory as a chip", async () => {
+    const { user, pane } = await open("Prefers small PRs");
+    await user.click(within(pane).getByRole("button", { name: /Ask agent…/ }));
+    const request = useAskAgentStore.getState().request;
+    expect(request?.context).toEqual([
+      {
+        kind: "memory_entry",
+        id: "2",
+        memoryKind: expect.any(String),
+        text: "Prefers small PRs",
+        project: "repo",
+      },
+    ]);
+    expect(request?.anchor).toBeInstanceOf(HTMLElement);
+  });
+
   it("edits in place", async () => {
     const { user, pane } = await open("Mocking the DB hid a migration bug");
-    await user.click(within(pane).getByRole("button", { name: "Edit" }));
+    // Behind ⋯: asking the agent is the primary fix.
+    await user.click(within(pane).getByRole("button", { name: "More actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Edit by hand" }));
     const field = within(pane).getByRole("textbox", { name: "Memory content" });
     await user.clear(field);
     await user.type(field, "Mocks hid the migration bug");
@@ -302,8 +354,8 @@ describe("a chosen memory", () => {
 
   it("marks a memory as wrong, which archives it", async () => {
     const { user, pane } = await open("Mocking the DB hid a migration bug");
-    await user.click(within(pane).getByRole("button", { name: "More actions" }));
-    await user.click(await screen.findByRole("menuitem", { name: "Mark as wrong" }));
+    // One click: the verdicts stay beside "Ask agent…".
+    await user.click(within(pane).getByRole("button", { name: "Mark as wrong" }));
     expect(invoke).toHaveBeenCalledWith("memory_feedback_entry", {
       projectPath: "/repo",
       id: 1,

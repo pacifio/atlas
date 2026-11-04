@@ -16,7 +16,7 @@ import { Button, IconButton, Icon } from "@tryatlas/design";
 
 import { cn } from "@/lib/utils";
 import type { AgentContext, ErrorContext } from "../lib/agent-context";
-import { openAskAgent } from "../lib/ask-agent";
+import { openAskAgent, type AskTarget } from "../lib/ask-agent";
 
 /** The class a row carries so its `AskAgentButton` shows on hover and focus. */
 export const ASK_ROW = "group/ask";
@@ -26,6 +26,8 @@ export function AskAgentButton({
   prompt,
   suggestions,
   label = "Ask agent",
+  target,
+  placeholder,
   className,
 }: {
   context: readonly AgentContext[];
@@ -33,6 +35,9 @@ export function AskAgentButton({
   /** Quick prompts the box offers ("Explain this change"). */
   suggestions?: readonly string[];
   label?: string;
+  /** Open with this session picked (a tab id, or "new"). */
+  target?: AskTarget;
+  placeholder?: string;
   className?: string;
 }) {
   // The reveal lives on a wrapper: the button's own look is the primitive's.
@@ -50,7 +55,16 @@ export function AskAgentButton({
         title={label}
         size="xs"
         variant="ghost"
-        onClick={(e) => openAskAgent({ context, prompt, suggestions, anchor: e.currentTarget })}
+        onClick={(e) =>
+          openAskAgent({
+            context,
+            prompt,
+            suggestions,
+            anchor: e.currentTarget,
+            target,
+            placeholder,
+          })
+        }
       />
     </span>
   );

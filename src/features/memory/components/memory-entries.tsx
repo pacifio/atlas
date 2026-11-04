@@ -17,6 +17,7 @@ import {
   type EntryScope,
 } from "../lib/memory-entries";
 import { reviewCount } from "../lib/memory-review-items";
+import { entryContext } from "../lib/memory-ask";
 import { entryAgent, exportable } from "../lib/shared-memory-format";
 import { ExportAgentsModal } from "./shared-memory-modals";
 import { MemoryEntryDetail } from "./memory-entry-detail";
@@ -147,6 +148,7 @@ export function MemoryEntries({
       onExport={() => setExporting(true)}
       onCancelSelecting={stopSelecting}
       onImportClaude={onImportClaude}
+      askContext={(e) => [entryContext(e, projectPath)]}
       listRef={listRef}
       dialogs={
         <ExportAgentsModal

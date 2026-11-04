@@ -15,6 +15,7 @@ import {
 import { cn } from "@/lib/utils";
 import { agentBrandColor } from "@/features/agents/lib/agent-brand";
 import type { MemoryGraphData } from "../../lib/memory-graph-types";
+import { FixWithAgentButton } from "@/features/ask-agent/components/ask-agent-button";
 import { Notice, ProgressBar, SearchField, Toolbar, Track, TrackSegment } from "./memory-chrome";
 import { Hint, Button, IconButton } from "@tryatlas/design";
 
@@ -131,10 +132,24 @@ export function MemoryGraphView({
         icon={<AlertTriangle size={18} className="text-error" />}
         title={phase === "download-failed" ? "Model download failed" : "Something went wrong"}
         action={
-          <Button variant="outline" onClick={onRetry}>
-            <RotateCw size={12} />
-            Retry
-          </Button>
+          <>
+            <Button variant="outline" onClick={onRetry}>
+              <RotateCw size={12} />
+              Retry
+            </Button>
+            {error && (
+              <FixWithAgentButton
+                error={{
+                  kind: "error",
+                  source:
+                    phase === "download-failed"
+                      ? "Memory: downloading the embedding model"
+                      : "Memory: the map",
+                  message: error,
+                }}
+              />
+            )}
+          </>
         }
       >
         {error && <p className="font-mono text-2xs break-words">{error}</p>}

@@ -2,13 +2,17 @@
 // (`lib/memory-review-items.ts`) with the user's "Later"s at the back, and
 // each choice sent to the backend. Every choice re-reads the record whether
 // it worked or not; a failure or a proposal that went stale is said in a
-// toast. The markup is `./views/memory-review-queue-view.tsx`.
+// toast. "Ask agent" hands an item to a session to rewrite before the user
+// decides (`lib/memory-ask.ts`). The markup is
+// `./views/memory-review-queue-view.tsx`.
 
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useSharedMemoryStore } from "../stores/shared-memory-store";
 import { sharedMemory } from "../lib/shared-memory-api";
 import { orderQueue, reviewItems, type ReviewItem } from "../lib/memory-review-items";
+import { reviewAsk } from "../lib/memory-ask";
+import { openAskAgent } from "@/features/ask-agent/lib/ask-agent";
 import { MemoryReviewQueueView, type ReviewChoice } from "./views/memory-review-queue-view";
 
 function errorText(err: unknown): string {
@@ -90,6 +94,8 @@ export function MemoryReviewQueue() {
         const ahead = items.slice(0, at).map((i) => i.key);
         setSkipped((s) => [...s.filter((k) => !ahead.includes(k) && k !== item.key), ...ahead]);
       }}
+      askFor={(item) => reviewAsk(item, projectPath)}
+      onAsk={(item, anchor) => openAskAgent({ ...reviewAsk(item, projectPath), anchor })}
     />
   );
 }

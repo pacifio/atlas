@@ -8,7 +8,7 @@
 // different heights and radii.
 
 import type { ReactNode } from "react";
-import { Search } from "lucide-react";
+import { MessageSquarePlus, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /** A view's toolbar: one hairline-ruled strip above its body. */
@@ -177,3 +177,49 @@ export const TABLE_HEAD =
 
 /** A table row's rule. */
 export const TABLE_ROW = "border-b border-border-subtle";
+
+/** A way into the ask box that reads as a field: what to ask, and an example
+ *  of it. It is a button, not an input: the box opens from it, so the words,
+ *  the chosen session and ⌘↵ are the same as everywhere else. */
+export function AskField({
+  label,
+  hint,
+  onOpen,
+  className,
+}: {
+  label: string;
+  hint?: string;
+  onOpen: (anchor: HTMLElement) => void;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={(e) => onOpen(e.currentTarget)}
+      className={cn(
+        "flex h-control-md w-full min-w-0 cursor-text items-center gap-1.5 rounded border border-border bg-panel-input px-2 text-left text-xs text-muted-foreground",
+        "transition-colors duration-fast ease-out-strong hover:border-border-strong hover:text-secondary-foreground",
+        className,
+      )}
+    >
+      <MessageSquarePlus aria-hidden className="size-3 shrink-0" />
+      <span className="shrink-0">{label}</span>
+      {/* An example, not part of the button's name. */}
+      {hint ? (
+        <span aria-hidden className="min-w-0 truncate text-disabled">
+          {hint}
+        </span>
+      ) : null}
+    </button>
+  );
+}
+
+/** The panel's prompt line, above every tab: where the user tells the agent
+ *  what to remember or forget. */
+export function PromptLine({ onOpen }: { onOpen: (anchor: HTMLElement) => void }) {
+  return (
+    <div className="shrink-0 border-b border-border px-2 py-1.5">
+      <AskField label="Tell the agent what to remember or forget…" onOpen={onOpen} />
+    </div>
+  );
+}

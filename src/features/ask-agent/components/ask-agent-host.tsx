@@ -14,6 +14,7 @@ import {
   confirmAsk,
   openSessions,
   type AskTarget,
+  type OpenSession,
 } from "../lib/ask-agent";
 import { trackFocusedContext } from "../lib/focused-context";
 import { useAskAgentStore, type AskAnchor, type AskRequest } from "../stores/ask-agent-store";
@@ -31,6 +32,31 @@ function positionAnchor(anchor: AskAnchor): Element | { getBoundingClientRect: (
   if (anchor instanceof Element) return anchor;
   const rect = anchor ?? new DOMRect(window.innerWidth / 2, window.innerHeight * 0.18, 0, 0);
   return { getBoundingClientRect: () => rect };
+}
+
+/** The picker's options and the one it opens on: the recent open sessions,
+ *  then "Start a new session". A session the ask names is listed even when
+ *  it is not a recent one, so the box opens on it rather than on the session
+ *  in view. Pure. */
+export function pickerTargets(
+  open: readonly OpenSession[],
+  active: string | null,
+  wanted: string | undefined,
+): { targets: AskTargetOption[]; initial: string } {
+  const sessions = open.slice(0, RECENT_SESSIONS);
+  const named = open.find((s) => s.tabId === wanted);
+  if (named && !sessions.includes(named)) sessions.unshift(named);
+  const targets: AskTargetOption[] = sessions.map((s) => ({
+    value: s.tabId,
+    label: s.title,
+    description: s.tabId === active ? "Current session" : "Open session",
+  }));
+  targets.push({ value: "new", label: "Start a new session", description: "In this project" });
+  const initial =
+    wanted && targets.some((o) => o.value === wanted)
+      ? wanted
+      : (active ?? sessions[0]?.tabId ?? "new");
+  return { targets, initial };
 }
 
 export function AskAgentHost() {
@@ -71,22 +97,9 @@ function AskAgentBox({
   const [error, setError] = useState<string | null>(null);
   // Read once: the box lives for one ask, and a subscription to every
   // session would re-render it on every streamed token.
-  const [{ targets, initial }] = useState(() => {
-    const active = activeSession();
-    const sessions = openSessions().slice(0, RECENT_SESSIONS);
-    const options: AskTargetOption[] = sessions.map((s) => ({
-      value: s.tabId,
-      label: s.title,
-      description: s.tabId === active ? "Current session" : "Open session",
-    }));
-    options.push({ value: "new", label: "Start a new session", description: "In this project" });
-    const wanted = request.target;
-    const initial =
-      wanted && options.some((o) => o.value === wanted)
-        ? wanted
-        : (active ?? sessions[0]?.tabId ?? "new");
-    return { targets: options, initial };
-  });
+  const [{ targets, initial }] = useState(() =>
+    pickerTargets(openSessions(), activeSession(), request.target),
+  );
   const [target, setTarget] = useState<AskTarget>(initial);
 
   const chips = useMemo(
@@ -157,6 +170,7 @@ function AskAgentBox({
             el?.setSelectionRange(el.value.length, el.value.length);
           });
         }}
+        placeholder={request.placeholder}
         targets={targets}
         target={target}
         onTargetChange={setTarget}
