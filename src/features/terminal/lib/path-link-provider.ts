@@ -8,8 +8,8 @@ import { splitLinks, normalizeUrl } from "./linkify-paths";
  * ⌘-clickable (VS Code behavior): ⌘-hover underlines, ⌘-click opens. URLs open
  * in the default browser; file paths resolve via Rust (`terminal_resolve_path`:
  * strip `:line:col`, expand `~`, join the shell's live cwd, verify existence)
- * then open in Atlas if supported, else reveal in Finder. Detection is shared
- * with the static-block renderer via `splitLinks`.
+ * then open in Atlas if supported, else reveal in Finder. Link
+ * detection lives in `splitLinks`.
  */
 
 // ⌘/Ctrl-held state, shared across all terminals; drives the hover underline.

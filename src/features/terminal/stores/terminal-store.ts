@@ -38,7 +38,7 @@ interface PendingTerminalFocus {
 interface TerminalState {
   tabs: Record<string, TerminalTabState>;
   /** Per-terminal "a command is running" flag, keyed by the layout terminal id.
-   *  Surfaced as a spinner on the tab strip; the BlockTerminal reports it. */
+   *  Surfaced as a spinner on the tab strip; the session reports it. */
   busy: Record<string, boolean>;
   pendingFocus: PendingTerminalFocus | null;
   /** A command to run in one terminal, once its PTY exists.
@@ -119,7 +119,7 @@ interface TerminalActions {
     /** Take the queued command, if any. Removes it — see `pendingCommands`. */
     takePendingCommand: (terminalId: string) => string | undefined;
     /** Drop several terminal tabs (used when a project is DISCARDED). PTYs
-     *  are already closed by the BlockTerminal unmount; this frees the trees. */
+     *  close with them (`terminalSessions.bindToStore`); this frees the trees. */
     removeTabs: (tabIds: string[]) => void;
   };
 }

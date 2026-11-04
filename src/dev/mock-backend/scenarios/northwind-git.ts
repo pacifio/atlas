@@ -49,7 +49,6 @@ import type {
 } from "@/features/git/stores/git-store";
 import type { ConflictState } from "@/features/git/components/git-manager/conflicts-view";
 import type { CommitSession } from "@/features/git/components/commit-view";
-import type { RawGitStatus } from "@/features/terminal/lib/terminal-api";
 import type { GitSummary } from "@/features/projects/stores/project-git-store";
 import type { MockArgs, MockResponses, TypedHandlers } from "../types";
 import {
@@ -833,20 +832,6 @@ export const northwindGitCommands: Partial<TypedHandlers<MockResponses>> = {
           inProgress: null,
         }
       : gitHandlers.git_snapshot(args),
-  git_status_fresh: (args): RawGitStatus | Promise<RawGitStatus> =>
-    ours(args.path)
-      ? {
-          is_repo: true,
-          branch: "main",
-          files: statusRows().map(({ path, status, staged: isStaged }) => ({
-            path,
-            status,
-            staged: isStaged,
-          })),
-          ahead,
-          behind: 0,
-        }
-      : gitHandlers.git_status_fresh(args),
   git_inprogress: (args) =>
     ours(args.path) ? { ...NO_OP_IN_PROGRESS } : gitHandlers.git_inprogress(args),
   git_branches_full: (args) => (ours(args.path) ? branches() : gitHandlers.git_branches_full(args)),
