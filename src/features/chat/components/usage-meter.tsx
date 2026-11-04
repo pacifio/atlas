@@ -52,7 +52,7 @@ export function TickMeter({
       </div>
       {/* The marker: a hairline at the value, moving with it. */}
       <span
-        className="pointer-events-none absolute -top-0.5 h-4 w-px bg-[var(--foreground)]"
+        className="pointer-events-none absolute -top-0.5 h-4 w-px bg-foreground"
         style={{ left: `${pct}%`, transition: "left 220ms cubic-bezier(0.32,0.72,0,1)" }}
         aria-hidden
       />
