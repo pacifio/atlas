@@ -1,10 +1,12 @@
 // The dialog a skill or pack opens in, from Installed (deliver to tools,
 // update, uninstall) and from Discover (install). One column, like a settings
 // page: what it does, then where it goes, then the actions in the footer.
+// Props only; the containers own the data.
 
 import type { ReactNode } from "react";
 import type { ProjectionStatus, ToolInfo } from "@/features/skills/lib/types";
-import { SettingsGroup, SettingsRow, SettingsSection } from "../layout/settings-layout";
+import type { ModalSkill } from "@/features/skills/lib/skills-view-model";
+import { SettingsGroup, SettingsRow, SettingsSection } from "../../layout/settings-layout";
 import {
   Switch,
   Dialog,
@@ -14,11 +16,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@tryatlas/design";
-
-export interface ModalSkill {
-  name: string;
-  description?: string | null;
-}
 
 export function SkillDialog({
   open,
