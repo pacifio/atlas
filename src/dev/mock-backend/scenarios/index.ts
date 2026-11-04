@@ -80,6 +80,7 @@ import { timelineLong } from "./timeline-long";
 // elicitations, the AI grant strip) lives in `permission-actions.ts`, shared
 // with `chat-tools`.
 import { permissionActions } from "./permission-actions";
+import { timelineTrace } from "./timeline-trace";
 
 const all: Scenario[] = [
   {
@@ -158,6 +159,7 @@ const all: Scenario[] = [
   sidebar,
   timelineEmpty,
   timelineLong,
+  timelineTrace,
   inboxLong,
   freshInstall,
   commsNotConnected,

@@ -2474,6 +2474,11 @@ html.platform-linux [data-slot="globe-ping"] {
 html.platform-linux [data-slot="globe-live-dot"] {
   animation-timing-function: steps(24);
 }
+/* The package's CheckpointTrace: a live session's leading edge, a 2 s
+   `motion-safe:animate-pulse`. */
+html.platform-linux [data-slot="checkpoint-trace-live-edge"] {
+  animation-timing-function: steps(24);
+}
 html.platform-linux .atlas-live-pulse {
   animation-timing-function: steps(24);
 }

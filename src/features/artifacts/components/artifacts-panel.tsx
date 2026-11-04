@@ -1,7 +1,9 @@
 import { useTipOnMount } from "@/features/tips/lib/use-tip-on-mount";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { useLayoutStore } from "@/features/layout/stores/layout-store";
+import { Segmented } from "@tryatlas/design";
+
+import { useLayoutStore, type TimelineView } from "@/features/layout/stores/layout-store";
 import { useOrgDirectory } from "@/features/organisations/lib/use-org-directory";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
 import { useActiveOrgProjects } from "@/features/projects/lib/org-scope";
@@ -18,11 +20,18 @@ import { SessionDetail } from "./session-detail";
 import { BoardFilters } from "./board-filters";
 import { SessionReaderHeader } from "./session-reader";
 import { TimelineBoard } from "./timeline-board";
+import { TraceView } from "./trace-view";
 import { DetailSkeleton } from "./timeline-skeleton";
 import { NotEnabled, NotFound } from "./views/timeline-empty-states";
 
 /** The chat half of the split. Wide enough for a code block in an answer. */
 const CHAT_WIDTH = 420;
+
+/** The destination bar's view toggle. */
+const VIEWS: { value: TimelineView; label: string }[] = [
+  { value: "list", label: "List" },
+  { value: "trace", label: "Trace" },
+];
 
 /** Mirrors `BOARD_LIMIT` in `capture.rs` — how many rows one board read returns. */
 const BOARD_LIMIT = 500;
@@ -86,7 +95,9 @@ export function ArtifactsPanel() {
    *  is still wide next launch — `showSidebar` is the same two-state choice
    *  under its original name. */
   const wideByChoice = !useLayoutStore((s) => s.timelinePanel.showSidebar);
-  const { toggleTimelineSidebar } = useLayoutStore.use.actions();
+  const { toggleTimelineSidebar, setTimelineView } = useLayoutStore.use.actions();
+  /** List or Trace — kept with the panel's layout, so it survives a restart. */
+  const view = useLayoutStore((s) => s.timelinePanel.view);
   /** How wide the dock is, in pixels, so it can be animated.
    *
    *  A measured number rather than a CSS width: `width: auto` has nothing to
@@ -245,18 +256,27 @@ export function ArtifactsPanel() {
   const narrowed = query.trim().length > 0 || activeFacetCount(selection) > 0 || people.length > 0;
 
   const filterMenu = (
-    <BoardFilters
-      // Counts against everything the board holds, never against what the
-      // search has already narrowed.
-      sessions={sessions}
-      directory={directory}
-      projectFilter={projectFilter}
-      onProjectFilter={setProjectFilter}
-      agentFilter={selection.agent}
-      onAgentFilter={(agent) => setSelection((prev) => ({ ...prev, agent }))}
-      peopleFilter={people}
-      onPeopleFilter={setPeople}
-    />
+    <>
+      <Segmented
+        value={view}
+        onValueChange={setTimelineView}
+        options={VIEWS}
+        size="sm"
+        aria-label="View"
+      />
+      <BoardFilters
+        // Counts against everything the board holds, never against what the
+        // search has already narrowed.
+        sessions={sessions}
+        directory={directory}
+        projectFilter={projectFilter}
+        onProjectFilter={setProjectFilter}
+        agentFilter={selection.agent}
+        onAgentFilter={(agent) => setSelection((prev) => ({ ...prev, agent }))}
+        peopleFilter={people}
+        onPeopleFilter={setPeople}
+      />
+    </>
   );
 
   return (
@@ -290,30 +310,44 @@ export function ArtifactsPanel() {
                 )}
                 style={boardHidden ? { width: mainWidth - narrowDockWidth } : undefined}
               >
-                <TimelineBoard
-                  sessions={visible}
-                  directory={directory}
-                  openKey={open ? openKeyOf(open) : null}
-                  loading={!loaded || cloudPending}
-                  narrowed={narrowed}
-                  query={query}
-                  onQuery={setQuery}
-                  onOpen={onOpenRow}
-                  // The filters are portalled into the titlebar, so a hidden
-                  // board must not leave them there.
-                  filters={boardHidden ? null : filterMenu}
-                  note={
-                    capped && (
-                      // Say what is being left out. A board that silently
-                      // stops at the newest few hundred reads as "this is
-                      // everything".
-                      <p className="text-center text-2xs text-muted-foreground">
-                        Showing the newest {BOARD_LIMIT} sessions — filter by project for a full
-                        history.
-                      </p>
-                    )
-                  }
-                />
+                {view === "trace" ? (
+                  <TraceView
+                    boardSessions={sessions}
+                    directory={directory}
+                    projectPaths={projectPaths}
+                    projectsKey={projectsKey}
+                    projectFilter={projectFilter}
+                    agent={selection.agent}
+                    people={people}
+                    onOpen={openSession}
+                    filters={boardHidden ? null : filterMenu}
+                  />
+                ) : (
+                  <TimelineBoard
+                    sessions={visible}
+                    directory={directory}
+                    openKey={open ? openKeyOf(open) : null}
+                    loading={!loaded || cloudPending}
+                    narrowed={narrowed}
+                    query={query}
+                    onQuery={setQuery}
+                    onOpen={onOpenRow}
+                    // The filters are portalled into the titlebar, so a hidden
+                    // board must not leave them there.
+                    filters={boardHidden ? null : filterMenu}
+                    note={
+                      capped && (
+                        // Say what is being left out. A board that silently
+                        // stops at the newest few hundred reads as "this is
+                        // everything".
+                        <p className="text-center text-2xs text-muted-foreground">
+                          Showing the newest {BOARD_LIMIT} sessions — filter by project for a full
+                          history.
+                        </p>
+                      )
+                    }
+                  />
+                )}
               </div>
             )}
 

@@ -12,7 +12,8 @@ use std::sync::Arc;
 
 use crate::error::{Error, Result};
 use crate::model::{
-    ArtifactShare, Comment, EntryPayload, InboxKind, InboxPage, SessionBoardPage, SessionDetailPage,
+    ArtifactShare, Comment, EntryPayload, InboxKind, InboxPage, SessionBoardPage,
+    SessionDetailPage, TracePage,
 };
 use crate::{ingest_base, AnchorKind, TokenSource};
 
@@ -59,6 +60,18 @@ pub const ENTRY_PAGE_MAX: u32 = 500;
 /// The longest keyword the server's search accepts, in characters; a longer
 /// one is refused rather than cut, so it is cut here.
 pub const SEARCH_MAX_CHARS: usize = 256;
+
+/// What one trace read asks for: a window, and optionally one Workspace.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TraceQuery<'a> {
+    /// RFC 3339. The server allows at most 92 days between the two.
+    pub from: &'a str,
+    pub to: &'a str,
+    /// One Workspace — the per-project trace — or every one the person can see.
+    pub workspace_id: Option<&'a str>,
+    /// Where the previous page's `next_cursor` left off.
+    pub cursor: Option<&'a str>,
+}
 
 /// Which page of the board to read, and how narrowly.
 ///
@@ -243,6 +256,23 @@ impl ArtifactsClient {
             req = req.query(&[("cursor", cursor)]);
         }
         self.send(req, "board").await
+    }
+
+    /// One page of the trace: the Sessions active in a window, each with its
+    /// Checkpoints. The caller walks `next_cursor`.
+    pub async fn trace_page(&self, org_id: &str, query: TraceQuery<'_>) -> Result<TracePage> {
+        let mut req = self
+            .http
+            .get(format!("{}/sessions/trace", self.base))
+            .bearer_auth(self.token().await?)
+            .query(&[("org", org_id), ("from", query.from), ("to", query.to)]);
+        if let Some(workspace) = query.workspace_id {
+            req = req.query(&[("workspace", workspace)]);
+        }
+        if let Some(cursor) = query.cursor {
+            req = req.query(&[("cursor", cursor)]);
+        }
+        self.send(req, "trace").await
     }
 
     /// One page of a remote Session's timeline, in the server's order
@@ -830,6 +860,43 @@ mod tests {
         assert!(seen[0]
             .to_ascii_lowercase()
             .contains("authorization: bearer tok"));
+    }
+
+    #[tokio::test]
+    async fn the_trace_is_one_get_with_the_window_and_the_workspace_only_when_narrowed() {
+        const EMPTY: &str =
+            r#"{"from":"a","to":"b","sessions":[],"workspaces":[],"nextCursor":null,"notes":[]}"#;
+        let (base, seen) = loopback(EMPTY).await;
+        let client = ArtifactsClient::at(&base, Arc::new(Tok));
+        let window = TraceQuery {
+            from: "2026-10-28T00:00:00Z",
+            to: "2026-11-04T00:00:00Z",
+            ..TraceQuery::default()
+        };
+
+        client.trace_page("org_1", window).await.unwrap();
+        client
+            .trace_page(
+                "org_1",
+                TraceQuery {
+                    workspace_id: Some("ws_1"),
+                    cursor: Some("c2"),
+                    ..window
+                },
+            )
+            .await
+            .unwrap();
+
+        let seen = seen.lock().unwrap().clone();
+        let lines: Vec<&str> = seen.iter().map(|r| r.lines().next().unwrap()).collect();
+        assert_eq!(
+            lines,
+            vec![
+                "GET /sessions/trace?org=org_1&from=2026-10-28T00%3A00%3A00Z&to=2026-11-04T00%3A00%3A00Z HTTP/1.1",
+                "GET /sessions/trace?org=org_1&from=2026-10-28T00%3A00%3A00Z&to=2026-11-04T00%3A00%3A00Z&workspace=ws_1&cursor=c2 HTTP/1.1",
+            ],
+            "the whole Organisation leaves `workspace` out; one project names it"
+        );
     }
 
     #[tokio::test]

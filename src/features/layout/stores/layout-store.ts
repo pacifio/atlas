@@ -73,6 +73,9 @@ interface LayoutState {
   timelinePanel: {
     showSidebar: boolean;
     sidebarWidth: number;
+    /** The board as a list of Sessions by day, or as a Trace: Sessions on a
+     *  time axis with their Checkpoints. */
+    view: TimelineView;
   };
   tabs: Tab[];
   /** Per-project saved view (tabs + split layout + history). The singular
@@ -125,6 +128,9 @@ interface LayoutState {
 }
 
 export type SurfacesMode = "shown" | "hidden" | "expanded";
+
+/** How the Timeline draws its board. */
+export type TimelineView = "list" | "trace";
 /** Which of its two forms a `surface-or-destination` type is in. */
 export type PlacementForm = "surface" | "destination";
 
@@ -143,6 +149,7 @@ interface LayoutActions {
     setBashPanelWidth: (width: number) => void;
     setPlansPanelWidth: (width: number) => void;
     toggleTimelineSidebar: () => void;
+    setTimelineView: (view: TimelineView) => void;
     setTimelineSidebarWidth: (width: number) => void;
     setSourceControlSection: (section: SourceControlSection) => void;
     addTab: (tab: Tab, groupId?: string) => void;
@@ -225,6 +232,7 @@ const initialState: LayoutState = {
   timelinePanel: {
     showSidebar: true,
     sidebarWidth: 300,
+    view: "list",
   },
   tabs: [
     {
@@ -616,6 +624,10 @@ export const useLayoutStore = createSelectors(
           toggleTimelineSidebar: () =>
             set((s) => {
               s.timelinePanel.showSidebar = !s.timelinePanel.showSidebar;
+            }),
+          setTimelineView: (view) =>
+            set((s) => {
+              s.timelinePanel.view = view;
             }),
           setTimelineSidebarWidth: (width) =>
             set((s) => {
@@ -1294,6 +1306,13 @@ export const useLayoutStore = createSelectors(
             knowledgePanel: { ...current.knowledgePanel, ...p.knowledgePanel },
             bashPanel: { ...current.bashPanel, ...p.bashPanel },
             plansPanel: { ...current.plansPanel, ...p.plansPanel },
+            // Deep, so a save from before `view` existed gains the default —
+            // and a value this build does not know falls back to the list.
+            timelinePanel: {
+              ...current.timelinePanel,
+              ...p.timelinePanel,
+              view: p.timelinePanel?.view === "trace" ? "trace" : "list",
+            },
           };
         },
       },
