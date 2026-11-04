@@ -812,6 +812,7 @@ pub fn run() {
             commands::capture::capture_commit_sessions,
             commands::capture::artifacts_board,
             commands::capture::artifacts_checkpoints,
+            commands::capture::artifacts_trace,
             commands::mention_search::mention_search,
             commands::mention_search::mention_cache_set_knowledge,
             commands::mention_search::mention_cache_clear,

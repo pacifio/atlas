@@ -32,6 +32,7 @@ import type {
   ToolTally,
   BoardPage,
   ProjectFilter,
+  TracePage,
 } from "@/features/artifacts/types";
 import type { Comment, CommentThreads } from "@/features/artifacts/lib/comments-api";
 import type { SessionStreamChunk } from "@/features/artifacts/lib/read-session-detail";
@@ -1116,6 +1117,7 @@ export interface ArtifactsResponses {
   artifacts_cloud_comment_delete: Comment;
   artifacts_cloud_comment_vote: Comment;
   artifacts_checkpoints: BoardCheckpoint[];
+  artifacts_trace: TracePage;
   artifacts_payload: ArtifactPayload;
   session_chat_threads_list: ThreadMeta[];
   session_chat_thread_get: SessionChatThreadWire;
@@ -1552,6 +1554,69 @@ export const artifactsHandlers: TypedHandlers<ArtifactsResponses> = {
   },
   artifacts_checkpoints: ({ projects }): BoardCheckpoint[] =>
     checkpoints(Array.isArray(projects) ? (projects as string[]) : []),
+  // The local half only, as the command answers with no server reachable:
+  // this machine's Sessions active in the window, with git's subjects. The
+  // `timeline-trace` scenario answers with the server's half.
+  artifacts_trace: ({ projects, filter, from, to, cursor }): TracePage => {
+    const scope = (filter ?? null) as ProjectFilter | null;
+    const paths = !scope
+      ? Array.isArray(projects)
+        ? (projects as string[])
+        : []
+      : "local" in scope
+        ? [scope.local]
+        : [];
+    const lo = Date.parse(String(from));
+    const hi = Date.parse(String(to));
+    const sessions = cursor
+      ? []
+      : SEEDS.filter((seed) => paths.includes(seed.project.path))
+          .map((seed) => ({ seed, summary: summaryOf(seed) }))
+          .filter(
+            ({ summary }) =>
+              Date.parse(summary.startedAt) <= hi && Date.parse(summary.lastActivityAt) >= lo,
+          )
+          .map(({ seed, summary }) => ({
+            id: seed.id,
+            number: null,
+            workspaceId: SYNCED_PROJECTS.get(seed.project.path) ?? "",
+            workspaceSlug: null,
+            authorId: null,
+            participants: [],
+            title: summary.title,
+            agent: summary.agent,
+            source: summary.source,
+            startedAt: summary.startedAt,
+            lastActivityAt: summary.lastActivityAt,
+            live: seed.id === LIVE_ID,
+            incomplete: false,
+            checkpointsTruncated: false,
+            projectPath: seed.project.path,
+            checkpoints: (TIMELINES.get(seed.id) ?? [])
+              .filter((e) => e.kind === "checkpoint" && e.commitSha)
+              .map((e) => ({
+                id: e.id,
+                sessionId: seed.id,
+                at: e.at,
+                authorId: null,
+                commitSha: e.commitSha!,
+                branch: e.branch,
+                linkState: e.linkState ?? "linked",
+                insertions: e.insertions,
+                deletions: e.deletions,
+                files: e.files.length,
+                commitSubject: e.commitSubject,
+              })),
+          }));
+    return {
+      from: String(from),
+      to: String(to),
+      sessions,
+      workspaces: [],
+      nextCursor: null,
+      notes: [],
+    };
+  },
   artifacts_payload: ({ blobRef }): ArtifactPayload => {
     const blob = BLOBS.get(String(blobRef));
     // A vacuumed blob store is a real state; Rust surfaces it as a read error.
