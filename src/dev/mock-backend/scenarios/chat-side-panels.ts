@@ -46,7 +46,10 @@ let compacting = false;
 export const chatSidePanels: Scenario = {
   name: "chat-side-panels",
   description: "Live plan pill, usage numbers, quota, and a bash history with a long command.",
-  init: () => setSeedTranscript(seed),
+  init: () => {
+    compacting = false;
+    setSeedTranscript(seed);
+  },
   setup: async () => {
     // The chat tab binds its session shortly after mount (as `chat-tools`).
     await new Promise((r) => setTimeout(r, 1500));

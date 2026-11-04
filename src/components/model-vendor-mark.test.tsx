@@ -24,7 +24,7 @@ describe("modelVendorOf", () => {
 
 describe("ModelVendorMark", () => {
   it.each(["claude-sonnet-4-5", "gpt-5", "cursor-small", "kilo-code"])(
-    "%s draws its vendor's glyph, tinted",
+    "%s draws its vendor's glyph with the vendor hue set",
     (model) => {
       const { container } = render(<ModelVendorMark model={model} />);
       const svg = container.querySelector("svg");

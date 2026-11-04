@@ -96,7 +96,7 @@ function Headline({ view }: { view: SessionUsageView }) {
           <StatusBadge status={h.status} />
         </div>
         <TickMeter value={h.pct} className="mt-2.5" />
-        <div className="eyebrow mt-1 flex justify-between text-3xs">
+        <div className="mt-1 flex justify-between text-3xs font-medium tracking-wider text-muted-foreground uppercase">
           <span>0</span>
           <span>{fmtTokens(h.size)}</span>
         </div>
@@ -328,7 +328,7 @@ export function UsagePopupView({ view }: { view: SessionUsageView }) {
       {empty ? (
         <Section index={0} section="empty">
           <div className="label">Nothing yet</div>
-          <p className="caption mt-0.5 leading-snug">
+          <p className="caption mt-0.5">
             Usage shows up after the first turn — what this agent reports, and what Atlas records.
           </p>
         </Section>

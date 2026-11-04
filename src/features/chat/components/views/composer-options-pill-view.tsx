@@ -95,7 +95,7 @@ function Row({
           {name}
           {active && <Check size={11} className="text-primary" />}
         </span>
-        {description && <span className="caption mt-0.5 block leading-snug">{description}</span>}
+        {description && <span className="caption mt-0.5 block">{description}</span>}
       </span>
     </button>
   );
@@ -113,7 +113,7 @@ export function ComposerOptionsPanelView({
     return (
       <div className="px-3 py-2.5">
         <div className="text-xs font-medium text-foreground">Default</div>
-        <p className="caption mt-0.5 leading-snug">Agent loaded with default configuration.</p>
+        <p className="caption mt-0.5">Agent loaded with default configuration.</p>
       </div>
     );
   }
