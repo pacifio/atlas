@@ -9,6 +9,12 @@
 # `bun run dev:app` runs under (dev.atlas.ide.dev, ~/.config/atlas-dev) — and
 # leaves the installed Atlas's data alone. Without it, this wipes the
 # installed Atlas's data, never Atlas Dev's.
+#
+# Settings › Privacy › Local data ("Reset Atlas", "Clear cache") does the same
+# from inside the app: `targets` in src-tauri/src/commands/app_data_reset.rs
+# names these directories too. Change the two lists together. (One known
+# difference: the app treats ~/Library/{Caches,WebKit}/atlas as an unbundled
+# build's, i.e. Atlas Dev's, where this script removes them as the default's.)
 set -euo pipefail
 
 dev=0

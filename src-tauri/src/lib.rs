@@ -107,6 +107,11 @@ pub fn run() {
         &context.config().identifier,
     ));
 
+    // A "Clear cache" / "Reset Atlas" the previous process scheduled runs here,
+    // before logging opens its file and before the WebView opens its store.
+    // See `commands::app_data_reset`.
+    let data_reset = commands::app_data_reset::apply_pending(atlas_profile::current());
+
     // Pick the rustls crypto provider, once, before anything can open a TLS
     // connection.
     //
@@ -133,6 +138,9 @@ pub fn run() {
     // Install a tracing subscriber that prints `tracing::info!` etc. to
     // stderr. Verbosity is controlled by `RUST_LOG`; see `logging.rs`.
     logging::init();
+    if let Some(applied) = &data_reset {
+        applied.log();
+    }
 
     // Load a `.env` from the current dir (if any) so source / fork builds can
     // point telemetry at their own PostHog OSS project via POSTHOG_KEY /
@@ -1100,6 +1108,7 @@ pub fn run() {
             commands::skills::pack_components_list,
             commands::quit_guard::quit_guard_ready,
             commands::quit_guard::quit_guard_answer,
+            commands::app_data_reset::app_data_reset,
         ])
         .build(context)
         .expect("error while building Atlas")
