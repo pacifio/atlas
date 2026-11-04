@@ -36,7 +36,12 @@ export function CodeActions({ lang, getText }: CodeActionsContext): ReactNode {
   return (
     <>
       {lang && <span className="font-mono text-2xs text-muted-foreground uppercase">{lang}</span>}
-      <IconButton icon={copied ? Check : Copy} label="Copy code" size="xs" onClick={() => void copy()} />
+      <IconButton
+        icon={copied ? Check : Copy}
+        label="Copy code"
+        size="xs"
+        onClick={() => void copy()}
+      />
     </>
   );
 }

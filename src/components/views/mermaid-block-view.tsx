@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type Ref } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronRight, Copy, Download, Maximize2, Minus, Plus, X } from "lucide-react";
 import {
@@ -394,6 +394,14 @@ function DiagramViewer({
  */
 function Fullscreen({ svg, onClose, ...actions }: Actions & { svg: string; onClose: () => void }) {
   const [zoom, setZoom] = useState(1);
+  // Focus moves into the overlay, onto Close, and goes back to whatever opened
+  // it when it closes; left alone it stayed behind the overlay.
+  const closeRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    closeRef.current?.focus();
+    return () => opener?.focus();
+  }, []);
 
   return (
     <div
@@ -409,7 +417,7 @@ function Fullscreen({ svg, onClose, ...actions }: Actions & { svg: string; onClo
           {(actions.onCopy || actions.onExport) && <Divider />}
           <CopyExport {...actions} size="sm" />
           <Divider />
-          <ToolButton label="Close" icon={X} onClick={onClose} size="sm" />
+          <ToolButton label="Close" icon={X} onClick={onClose} size="sm" buttonRef={closeRef} />
         </HintGroup>
       </header>
 
@@ -496,16 +504,19 @@ function ToolButton({
   onClick,
   disabled,
   size = "xs",
+  buttonRef,
 }: {
   label: string;
   icon: typeof Plus;
   onClick: () => void;
   disabled?: boolean;
   size?: "xs" | "sm";
+  buttonRef?: Ref<HTMLButtonElement>;
 }) {
   return (
     <HintItem label={label}>
       <IconButton
+        ref={buttonRef}
         variant="ghost"
         shape="round"
         size={size}

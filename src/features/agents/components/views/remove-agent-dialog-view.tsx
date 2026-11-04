@@ -66,11 +66,7 @@ export function RemoveAgentDialogView({
   const keepRef = useRef<HTMLButtonElement>(null);
   return (
     <AlertDialog open={open} onOpenChange={(o) => !o && onKeep()}>
-      <AlertDialogContent
-        data-testid="remove-agent-dialog"
-        initialFocus={keepRef}
-        blur
-      >
+      <AlertDialogContent data-testid="remove-agent-dialog" initialFocus={keepRef} blur>
         <AlertDialogHeader>
           <AlertDialogTitle>
             <span className="flex items-center gap-2">

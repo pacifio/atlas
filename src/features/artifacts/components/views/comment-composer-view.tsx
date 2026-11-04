@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 import { avatarUser } from "../../lib/avatar-user";
 import { splitSelectionComment } from "../../lib/selection-comment";
 import { COMMENT_BODY_MAX } from "../../lib/session-detail-context";
+import { useCommentAnchorState } from "../../lib/comment-anchor-context";
 import { AVATAR_PX } from "./comment-thread-styles";
 
 /**
@@ -85,6 +86,7 @@ export function Composer({
   onCancel,
   ariaLabel,
   bodyPrefixLength = 0,
+  draftKey = null,
 }: {
   placeholder: string;
   /** The field's accessible name. The placeholder vanishes once there is
@@ -98,9 +100,12 @@ export function Composer({
   /** Escape. Only an edit has something to go back to. */
   onCancel?: () => void;
   bodyPrefixLength?: number;
+  /** Where the unsent text is remembered above the row
+   *  (`CommentAnchorProvider`); an edit is never remembered. */
+  draftKey?: string | null;
 }) {
   const editing = initial !== undefined;
-  const [value, setValue] = useState(initial ?? "");
+  const [value, setValue] = useCommentAnchorState(editing ? null : draftKey, initial ?? "");
   const field = useRef<HTMLTextAreaElement | null>(null);
   // An edit opens with the caret after the text, where a correction starts —
   // not before the first word, where a bare focus leaves it.

@@ -2,7 +2,7 @@
 // composer that starts a new one. Props only; the actions come from the
 // surface that hosts the button.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 import type { OrgDirectory } from "@/features/organisations/lib/use-org-directory";
 
@@ -10,6 +10,7 @@ import { selectionCommentBody } from "../../lib/selection-comment";
 import type { AnchorKind, Comment } from "../../lib/session-detail-context";
 import type { CommentActions } from "../comment-thread";
 import { Composer, SelectionExcerpt } from "./comment-composer-view";
+import { commentAnchorKey, useCommentAnchorState } from "../../lib/comment-anchor-context";
 import { CommentRow } from "./comment-row-view";
 import { BLOCK_PAD_X, BLOCK_PAD_Y, REPLY_INDENT, RULE } from "./comment-thread-styles";
 
@@ -28,8 +29,14 @@ export function Thread({
   directory: OrgDirectory;
   selectedText?: string;
 }) {
-  /** Which root has its reply box open. One at a time — see `Replying`. */
-  const [replyingTo, setReplyingTo] = useState<string | null>(null);
+  // Which root has its reply box open (one at a time — see `Replying`), and
+  // the drafts below, outlive the row (`CommentAnchorProvider`). A passage
+  // comment is transient: its state is local.
+  const anchor = selectedText === undefined ? `${anchorKind}:${anchorId}` : null;
+  const [replyingTo, setReplyingTo] = useCommentAnchorState<string | null>(
+    anchor && commentAnchorKey.replying(anchor),
+    null,
+  );
 
   // Roots in server order, each with its replies. One level deep, so this is a
   // partition rather than a tree walk.
@@ -82,6 +89,7 @@ export function Thread({
               divided={i > 0}
               replying={replyingTo === root.id}
               onToggleReply={() => setReplyingTo(replyingTo === root.id ? null : root.id)}
+              draftKey={anchor && commentAnchorKey.replyDraft(anchor, root.id)}
               onPost={async (body) => {
                 await actions.post(anchorKind, anchorId, body, root.id);
                 setReplyingTo(null);
@@ -109,6 +117,7 @@ export function Thread({
                 : "Start a new thread…"
           }
           directory={directory}
+          draftKey={anchor && commentAnchorKey.rootDraft(anchor)}
           autoFocus={selectedText !== undefined || threads.length === 0}
           bodyPrefixLength={
             selectedText === undefined ? 0 : selectionCommentBody(selectedText, "").length
@@ -142,6 +151,7 @@ function RootThread({
   actions,
   divided,
   replying,
+  draftKey,
   onToggleReply,
   onPost,
 }: {
@@ -152,6 +162,8 @@ function RootThread({
   /** Not the first thread in the popover, so it carries a rule above it. */
   divided: boolean;
   replying: boolean;
+  /** Where the reply's unsent text is remembered; `null` keeps it local. */
+  draftKey: string | null;
   onToggleReply: () => void;
   onPost: (body: string) => Promise<void>;
 }) {
@@ -184,7 +196,13 @@ function RootThread({
             />
           ))}
           {replying && (
-            <Composer placeholder="Reply…" autoFocus directory={directory} onSend={onPost} />
+            <Composer
+              placeholder="Reply…"
+              autoFocus
+              directory={directory}
+              draftKey={draftKey}
+              onSend={onPost}
+            />
           )}
         </div>
       )}

@@ -79,21 +79,12 @@ export const ProseRowView = memo(function ProseRowView({
           re-parses per frame. Each fence wears its language and Copy on
           hover or keyboard focus (`codeActions`' default). */}
       {row.streaming ? (
-        <StreamingMarkdown
-          source={row.text}
-          streaming
-          priority={priority}
-          fileRoot={fileRoot}
-        />
+        <StreamingMarkdown source={row.text} streaming priority={priority} fileRoot={fileRoot} />
       ) : (
         // `data-agent-response` makes the reply citable; `data-comment-anchor`
         // makes it commentable (`response-selection.ts`).
         <div ref={proseRef} data-agent-response={messageId} data-comment-anchor={messageId}>
-          <CachedMarkdown
-            source={row.text}
-            priority={priority}
-            fileRoot={fileRoot}
-          />
+          <CachedMarkdown source={row.text} priority={priority} fileRoot={fileRoot} />
         </div>
       )}
       {!row.streaming && !row.footerBelow && (

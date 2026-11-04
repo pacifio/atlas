@@ -1,6 +1,7 @@
 import { useMemo, type ReactNode } from "react";
 import { useAgentRegistryStore } from "../stores/agent-registry-store";
 import { agentMeta } from "../lib/agent-meta";
+import type { AgentMetaResolver } from "../lib/agent-identity";
 import { AgentMetaContext } from "../lib/agent-meta-context";
 
 /**
@@ -14,9 +15,13 @@ import { AgentMetaContext } from "../lib/agent-meta-context";
  */
 export function AgentMetaProvider({ children }: { children: ReactNode }) {
   const signature = useAgentRegistryStore((s) => s.signature);
-  // `agentMeta` reads the registry through getState(); the signature is what
-  // says it changed, so it is the dependency even though the body never reads it.
-  // oxlint-disable-next-line react-hooks/exhaustive-deps
-  const resolve = useMemo(() => (id: string | null | undefined) => agentMeta(id), [signature]);
+  const resolve = useMemo(() => resolverFor(signature), [signature]);
   return <AgentMetaContext.Provider value={resolve}>{children}</AgentMetaContext.Provider>;
+}
+
+/** A fresh resolver per registry `signature`. `agentMeta` reads the registry
+ *  through getState(), so the signature is only what makes the identity new:
+ *  a context consumer re-renders exactly when the registry changed. */
+function resolverFor(_signature: string): AgentMetaResolver {
+  return (id) => agentMeta(id);
 }

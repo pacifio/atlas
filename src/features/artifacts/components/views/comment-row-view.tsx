@@ -129,7 +129,7 @@ export const CommentRow = memo(function CommentRow({
                 type="button"
                 aria-label="Delete comment"
                 onClick={() => run(() => actions.remove(comment.id))}
-                className="flex shrink-0 cursor-pointer items-center rounded p-0.5 text-[var(--muted-foreground)] opacity-0 transition-colors hover:text-error group-hover/comment:opacity-100"
+                className="flex shrink-0 cursor-pointer items-center rounded p-0.5 text-[var(--muted-foreground)] opacity-0 transition-colors hover:text-error focus-visible:opacity-100 group-hover/comment:opacity-100"
               >
                 <Trash2 size={11} />
               </button>
