@@ -2,8 +2,7 @@ import { CAPTION, Card, EstTag, useCountUp } from "@/components/usage-primitives
 import { fmtCost, fmtNum, fmtPct, fmtTokens } from "@/features/monitor/lib/usage-format";
 import type { Metrics } from "../types";
 import { cacheRatePerDay, deltaPct, tokensOf, type Efficiency } from "../lib/derive";
-import { DeltaChip } from "./delta-chip";
-import { DotMatrix } from "./dot-matrix";
+import { DeltaChip, DotMatrix } from "@tryatlas/design";
 
 /**
  * The headline band: five figures separated by hairlines inside one card, each
@@ -133,7 +132,7 @@ function StatCell({
         {/* One step below the insight headline's text-2xl (the scale's top
             step) — a stat cell is five-per-row, the headline is one figure
             alone, and they should not read as the same weight. */}
-        <span className="truncate text-xl leading-none font-semibold tabular-nums text-[var(--foreground)]">
+        <span className="truncate text-xl leading-none font-semibold tabular-nums text-foreground">
           {fmt(shown)}
         </span>
         <DeltaChip delta={delta} />
