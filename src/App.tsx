@@ -128,7 +128,10 @@ import {
   listenUpdateApplied,
   listenUpdateError,
   listenUpdateChecking,
+  listenUpdateAvailable,
 } from "@/features/updater/lib/updater-api";
+import { announceLinuxRelease } from "@/features/updater/lib/linux-release-notice";
+import { isLinux } from "@/lib/platform";
 import { Toaster, toast } from "sonner";
 import { TOAST_ICONS } from "@/components/toast-icons";
 import { agentMeta } from "@/features/agents/lib/agent-meta";
@@ -308,6 +311,9 @@ export function App() {
       listenUpdateError((e) => a.setError(e.message)),
       listenUpdateChecking((e) => a.setChecking(e.checking)),
     ];
+    // Linux never downloads an update, so it has no ready/restart phase:
+    // announcing the release is all there is (`updater_linux.rs`).
+    if (isLinux) offs.push(listenUpdateAvailable(announceLinuxRelease));
     // Hydrate from the current backend state (e.g. staged before this mount).
     // Show the titlebar badge but don't pop the modal on launch — the live
     // `atlas:update-ready` event opens it; hydration is badge-only.

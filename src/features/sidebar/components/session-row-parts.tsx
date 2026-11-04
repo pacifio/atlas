@@ -257,9 +257,10 @@ export function WorkingRing({ className }: { className?: string }) {
       viewBox="0 0 16 16"
       // A continuous, deliberately slow rotation — the stock `animate-spin` at
       // 1s reads as "loading" rather than "working" — and no slow-spin token
-      // exists. Reduced motion stops it.
+      // exists. Reduced motion stops it. On Linux the spin is stepped (see the
+      // platform block in globals.css); 36 steps keeps this 3 s turn at 12 fps.
       className={cn(
-        "size-3.5 shrink-0 animate-spin [animation-duration:3s] motion-reduce:animate-none",
+        "size-3.5 shrink-0 animate-spin [animation-duration:3s] [--atlas-linux-spin-steps:36] motion-reduce:animate-none",
         className,
       )}
     >

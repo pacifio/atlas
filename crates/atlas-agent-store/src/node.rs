@@ -25,7 +25,12 @@ use tokio::sync::watch;
 use crate::archive::{install_archive, registry_archive_kind_for_url};
 use crate::http::{get_body, HttpClient};
 
-const NODE_VERSION: &str = "v24.11.0";
+/// The managed runtime. Floor: Node 24.14.1 (npm 11.11.0). Older npms do not
+/// record `libc` in the hidden lockfile, so `npm_tree` cannot tell a platform
+/// package npm skipped for the wrong libc from one it failed to download —
+/// on Linux every install then reports the musl twin as a gap and is thrown
+/// away. Keep `tests/fake_node/mod.rs` in step.
+const NODE_VERSION: &str = "v24.22.2";
 const NODE_CA_CERTS_ENV_VAR: &str = "NODE_EXTRA_CA_CERTS";
 
 /// How long one `npm <subcommand>` other than `install` may run before it is
@@ -502,13 +507,17 @@ fn node_platform() -> Result<(&'static str, &'static str)> {
     Ok((os, arch))
 }
 
-/// The platform npm gates `os`/`cpu` on — `process.platform`/`process.arch` of
-/// the managed Node, which is the Atlas build's own arch (an x64 build under
-/// Rosetta gets an x64 Node and resolves x64 packages, consistently).
+/// The platform npm gates `os`/`cpu`/`libc` on — `process.platform`/
+/// `process.arch` of the managed Node, which is the Atlas build's own arch (an
+/// x64 build under Rosetta gets an x64 Node and resolves x64 packages,
+/// consistently). On Linux the libc is always glibc: the managed Node is
+/// nodejs.org's Linux build, which is glibc-only, and npm reads the family
+/// from that Node's own runtime report.
 pub fn npm_platform() -> Option<crate::npm_tree::NpmPlatform> {
     let (os, cpu) = node_platform().ok()?;
     let os = if os == "win" { "win32" } else { os };
-    Some(crate::npm_tree::NpmPlatform { os, cpu })
+    let libc = (os == "linux").then_some("glibc");
+    Some(crate::npm_tree::NpmPlatform { os, cpu, libc })
 }
 
 /// The inherited environment keys npm must not see.
@@ -897,37 +906,37 @@ mod tests {
     /// The real file's shape: two spaces, digest first, many lines, and the
     /// one we want is not the first.
     const SHASUMS_SAMPLE: &str = "\
-0000000000000000000000000000000000000000000000000000000000000001  node-v24.11.0-linux-x64.tar.gz
-0000000000000000000000000000000000000000000000000000000000000002  node-v24.11.0-darwin-arm64.tar.gz
-0000000000000000000000000000000000000000000000000000000000000003  node-v24.11.0-win-x64.zip
+0000000000000000000000000000000000000000000000000000000000000001  node-v24.22.2-linux-x64.tar.gz
+0000000000000000000000000000000000000000000000000000000000000002  node-v24.22.2-darwin-arm64.tar.gz
+0000000000000000000000000000000000000000000000000000000000000003  node-v24.22.2-win-x64.zip
 ";
 
     #[test]
     fn reads_one_digest_out_of_a_shasums_listing() {
         assert_eq!(
-            digest_for(SHASUMS_SAMPLE, "node-v24.11.0-darwin-arm64.tar.gz").as_deref(),
+            digest_for(SHASUMS_SAMPLE, "node-v24.22.2-darwin-arm64.tar.gz").as_deref(),
             Some("0000000000000000000000000000000000000000000000000000000000000002"),
         );
     }
 
     #[test]
     fn a_file_the_listing_does_not_mention_has_no_digest() {
-        assert!(digest_for(SHASUMS_SAMPLE, "node-v24.11.0-linux-arm64.tar.gz").is_none());
+        assert!(digest_for(SHASUMS_SAMPLE, "node-v24.22.2-linux-arm64.tar.gz").is_none());
     }
 
     /// A prefix match would hand back the wrong release's digest, and the
     /// install would then fail for a reason that says nothing useful.
     #[test]
     fn a_similar_file_name_is_not_a_match() {
-        assert!(digest_for(SHASUMS_SAMPLE, "node-v24.11.0-linux-x64.tar").is_none());
-        assert!(digest_for(SHASUMS_SAMPLE, "node-v24.11.0-linux-x64.tar.gz.asc").is_none());
+        assert!(digest_for(SHASUMS_SAMPLE, "node-v24.22.2-linux-x64.tar").is_none());
+        assert!(digest_for(SHASUMS_SAMPLE, "node-v24.22.2-linux-x64.tar.gz.asc").is_none());
     }
 
     #[test]
     fn tolerates_single_space_and_binary_mode_markers() {
-        let listing = "00000000000000000000000000000000000000000000000000000000000000ab *node-v24.11.0-linux-x64.tar.gz\n";
+        let listing = "00000000000000000000000000000000000000000000000000000000000000ab *node-v24.22.2-linux-x64.tar.gz\n";
         assert_eq!(
-            digest_for(listing, "node-v24.11.0-linux-x64.tar.gz").as_deref(),
+            digest_for(listing, "node-v24.22.2-linux-x64.tar.gz").as_deref(),
             Some("00000000000000000000000000000000000000000000000000000000000000ab"),
         );
     }
@@ -936,8 +945,8 @@ mod tests {
     /// signature block at the end of the real file is exactly this shape.
     #[test]
     fn ignores_lines_that_are_not_digests() {
-        let listing = "-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA256\n\nnot-a-digest node-v24.11.0-linux-x64.tar.gz\n";
-        assert!(digest_for(listing, "node-v24.11.0-linux-x64.tar.gz").is_none());
+        let listing = "-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA256\n\nnot-a-digest node-v24.22.2-linux-x64.tar.gz\n";
+        assert!(digest_for(listing, "node-v24.22.2-linux-x64.tar.gz").is_none());
     }
 
     #[test]

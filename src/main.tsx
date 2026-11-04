@@ -6,6 +6,7 @@ import { CrashPreviewTrigger } from "./features/telemetry/crash-screen";
 import { TelemetryErrorBoundary } from "./features/telemetry/error-boundary";
 import { installGlobalErrorHandlers } from "./features/telemetry/error-handlers";
 import { initTelemetry } from "./features/telemetry/posthog-client";
+import { markPlatform } from "./lib/platform";
 import "./styles/globals.css";
 
 // Opt-in crash reporting. Handlers are installed unconditionally (cheap); they
@@ -23,6 +24,8 @@ const queryClient = new QueryClient({
     },
   },
 });
+
+markPlatform();
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

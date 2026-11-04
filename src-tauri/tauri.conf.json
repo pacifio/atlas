@@ -33,7 +33,7 @@
       "assetProtocol": {
         "enable": true,
         "scope": {
-          "allow": ["$HOME/**"],
+          "allow": ["$HOME/**", "$APPCONFIG/**", "$APPCACHE/**"],
           "deny": []
         }
       },

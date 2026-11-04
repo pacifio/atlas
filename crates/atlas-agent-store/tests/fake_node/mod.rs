@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 /// it. Kept in step with `NODE_VERSION` there; a mismatch makes the health
 /// check look for a directory that does not exist, which reads as "not
 /// installed" and triggers a download the fake HTTP client will 404.
-pub const NODE_VERSION: &str = "v24.11.0";
+pub const NODE_VERSION: &str = "v24.22.2";
 
 fn node_platform() -> (&'static str, &'static str) {
     let os = match std::env::consts::OS {

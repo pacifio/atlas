@@ -609,6 +609,10 @@ fn select_native_agent(config_dir: &Path) -> Arc<dyn atlas_agent_servers::AgentS
     } else {
         EngineSettings::gateway(config_dir, cwd)
     };
+    // This binary is the engine's Linux sandbox helper (`main` dispatches
+    // it). macOS sandboxes with `/usr/bin/sandbox-exec` and needs none.
+    #[cfg(target_os = "linux")]
+    let settings = settings.with_app_linux_sandbox_helper();
     // No model in this line: none is named in code (ADR-0007). The
     // connection logs the catalogue it resolved when it connects.
     tracing::info!(

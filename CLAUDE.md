@@ -21,6 +21,7 @@ drift out of date without anything noticing.
 | why a decision is what it is                                    | `docs/adr/`                                                                                                      |
 | tokens, type/radius/elevation/z-index/motion scales, primitives | `docs/reference/design-system.md`                                                                                |
 | theme keys, theme import, icon themes, config, keybindings      | `docs/reference/`                                                                                                |
+| Linux packages, supported distros, release signing              | `docs/reference/linux-support.md`                                                                                |
 | the browser mock backend                                        | `src/dev/mock-backend/README.md`                                                                                 |
 | what a contract suite guards, and why nothing else can          | that suite's docblock in `tests/`                                                                                |
 | what the web app, the org agent (Atlas), ROI or RC do; their wire contracts | `../server/docs/api/` (pull first)                                                                      |
@@ -257,15 +258,24 @@ transcript / memory) in the same change. The contract tests are the authority;
 
 **Linux-only paths cannot be answered from this Mac.** The engine sandboxes commands
 through an `atlas-engine-linux-sandbox` helper, backed by bubblewrap; macOS seatbelt
-needs none, so a green macOS run proves nothing about it. `bun run ci:local
-atlas-native-agent` runs that job in a container; CI's Linux jobs are the authority.
+needs none, so a green macOS run proves nothing about it. On Linux the app binary _is_
+that helper: `run_engine_helper_if_asked` dispatches the arg0 alias that
+`crates/atlas-native-agent/src/linux_sandbox.rs` installs. Lose either half and every
+sandboxed command is refused before it runs, with the turn ending normally. `bun run
+ci:local atlas-native-agent` runs that job in a container; CI's Linux jobs are the
+authority, and `release-linux.yml`'s `Verify` is the authority on the shipped packages.
+Two more cost nothing on a Mac and most of a core on Linux: inotify reports _reads_ as
+events, so every watcher drops `EventKind::Access` first (`src-tauri/src/fs_events.rs`,
+`watcher-access-filter.test.ts`); and WebKitGTK presents a frame per animation tick, so
+infinite animations are stepped under `html.platform-linux`
+(`linux-animation-steps.test.ts`). `docs/reference/linux-support.md` has the numbers.
 
 **CI runs on aarch64 only.** The Linux jobs use `ubuntu-24.04-arm` and the app job uses
 Apple Silicon `macos-latest`. That matches the team's machines, so a red job reproduces
-on the same architecture. No CI job compiles or tests x86-64. Until the Linux and
-Windows releases move to ARM, `release-linux.yml` still builds x86-64, so a green CI run
-says nothing about x86-specific behaviour (seccomp syscall tables, SIMD, `usize`-width
-assumptions in FFI).
+on the same architecture. `ci.yml` compiles and tests no x86-64. `release-linux.yml`
+builds and verifies both x86-64 and aarch64, on tags and as a dry run on pull requests
+that touch a release input, so x86-specific behaviour (seccomp syscall tables, SIMD,
+`usize`-width assumptions in FFI) is checked there and nowhere else.
 
 ## Versioning, branching, commits
 

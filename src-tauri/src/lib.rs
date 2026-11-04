@@ -3,6 +3,7 @@ mod app_icon;
 mod arrow_keys;
 mod auth;
 mod commands;
+mod fs_events;
 mod keep_awake;
 mod logging;
 #[cfg(target_os = "macos")]

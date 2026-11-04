@@ -344,7 +344,11 @@ impl MemoryRegistry {
 
         let watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
             if let Ok(event) = res {
-                if event.paths.iter().any(|p| is_corpus_path(p)) {
+                // The indexer reads the corpus it watches; on Linux a read is
+                // an event (`fs_events`).
+                if crate::fs_events::is_change(event.kind)
+                    && event.paths.iter().any(|p| is_corpus_path(p))
+                {
                     // Non-blocking; a dropped signal just means the debounce already
                     // has a pending tick.
                     let _ = sig_tx.try_send(());

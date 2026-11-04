@@ -200,7 +200,12 @@ pub async fn git_watch_start(
                 Duration::from_millis(200),
                 None,
                 move |result: notify_debouncer_full::DebounceEventResult| match result {
-                    Ok(_events) => {
+                    Ok(events) => {
+                        // A git status reads `.git/index`; on Linux that read
+                        // lands here (`fs_events`), and would announce itself.
+                        if !crate::fs_events::any_change(&events) {
+                            return;
+                        }
                         // Flush the refs cache first — by the time
                         // listeners (mention_search, git-store) see
                         // the event, a fresh compute would be cheap
