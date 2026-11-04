@@ -1,9 +1,6 @@
 // The slash-command picker's panel, from props alone. The container
 // (`../slash-command-picker.tsx`) owns the highlight, the keyboard handle,
 // click-outside and the portal; this draws the rows under the caret.
-//
-// Same surface as the mention picker (`.atlas-mention-picker`): opaque
-// `bg-popover`, never frosted, so it does not re-blend against the caret.
 
 import { useEffect, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -66,8 +63,8 @@ export function SlashCommandPickerView({
       className={cn(
         "atlas-slash-picker",
         "flex flex-col overflow-hidden rounded-lg",
-        "border border-border bg-popover",
-        "inset-highlight shadow-md",
+        "border border-border bg-card",
+        "shadow-md",
         "z-popover",
       )}
       onMouseDown={(e) => e.preventDefault()}
