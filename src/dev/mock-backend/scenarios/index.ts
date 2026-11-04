@@ -66,6 +66,7 @@ import {
 } from "./northwind-comms";
 import { paletteActions } from "./palette-actions";
 import { pullRequestScenarios } from "./pull-request";
+import { sourceControlScenarios } from "./source-control";
 import { sessionContext } from "./session-context";
 import { sessionProjects } from "./session-projects";
 import { sidebar } from "./sidebar";
@@ -147,6 +148,7 @@ const all: Scenario[] = [
   memoryHistoryEdited,
   sessionContext,
   ...pullRequestScenarios,
+  ...sourceControlScenarios,
   sessionProjects,
   sidebar,
   timelineEmpty,
