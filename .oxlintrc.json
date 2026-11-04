@@ -5,7 +5,8 @@
   "settings": {
     "shadcn": {
       "ui": "@tryatlas/design",
-      "themeImports": ["^@tryatlas/design/"]
+      "themeImports": ["^@tryatlas/design/"],
+      "ignoreImports": ["^react-resizable-panels$"]
     }
   },
   "categories": {
