@@ -364,6 +364,14 @@ export function ChangesView() {
     },
     [currentProject],
   );
+  // A conflicted file is opened to resolve its markers by hand: for editing.
+  const openConflict = useCallback(
+    (p: string) => {
+      if (!currentProject) return;
+      void openFileTab(`${currentProject.path}/${p}`, { edit: true });
+    },
+    [currentProject],
+  );
 
   // Row callbacks, stable so the memoised rows skip re-rendering.
   const toggleSelected = useCallback(
@@ -425,7 +433,7 @@ export function ChangesView() {
       )}
 
       {/* Conflicted files (in-progress merge/rebase/cherry-pick only). */}
-      {opKind && <ConflictsView onOpenFile={openFile} />}
+      {opKind && <ConflictsView onOpenFile={openConflict} />}
 
       {/* The file list takes the height; a selected file's diff shares it. */}
       <div

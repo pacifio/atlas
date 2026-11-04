@@ -10,6 +10,7 @@ import {
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { toast } from "sonner";
 import { openInProject } from "../lib/open-in-project";
+import { openAskAgent } from "@/features/ask-agent/lib/ask-agent";
 import { useSettingsStore } from "@/features/settings/stores/settings-store";
 import { useIconThemeStore } from "@/features/icon-theme/stores/icon-theme-store";
 import { useWorkingTreeChanges } from "@/features/git/lib/use-working-tree-changes";
@@ -409,6 +410,14 @@ export function ProjectFileTree({
   });
   const dropTarget = dragState.dragOverPath ?? externalDropPath;
 
+  // ── Ask the agent ───────────────────────────────────────────────────────
+  // A file as itself, by its project-relative path: the agent reads it.
+  const askAgent = (files: readonly TreeRowData[], anchor: Element | null) =>
+    openAskAgent({ context: files.map((f) => ({ kind: "file", path: f.path })), anchor });
+  // From the menu: the box grows from the row it was opened on.
+  const rowElement = (row: TreeRowData) =>
+    scrollRef.current?.querySelector(`[data-rel-path="${CSS.escape(row.path)}"]`) ?? null;
+
   const { onClick, onContextMenu, onKeyDown } = projectTreeInput({
     root,
     ops,
@@ -425,6 +434,7 @@ export function ProjectFileTree({
     clipboard,
     setClipboard,
     onShowDiff,
+    onAskAgent: (row, anchor) => askAgent([row], anchor),
     selectOnly,
     activate,
     isOpen,
@@ -443,6 +453,7 @@ export function ProjectFileTree({
       changes={changes}
       clipboard={clipboard}
       onShowDiff={onShowDiff}
+      askAgent={(files) => askAgent(files, rowElement(row))}
       targetsFor={targetsFor}
       beginNewEntry={beginNewEntry}
       open={open}

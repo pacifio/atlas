@@ -134,7 +134,8 @@ export class ProjectFileOps {
     try {
       await createFile(path);
       await this.touched(parentDir);
-      void openFile(path);
+      // A new, empty file is made to be written in: open it for editing.
+      void openFile(path, { edit: true });
     } catch (e) {
       this.fail(e);
     }

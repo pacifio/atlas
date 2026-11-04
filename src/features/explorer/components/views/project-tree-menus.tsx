@@ -23,6 +23,7 @@ export function ProjectTreeRowMenu({
   changes,
   clipboard,
   onShowDiff,
+  askAgent,
   targetsFor,
   beginNewEntry,
   open,
@@ -43,6 +44,8 @@ export function ProjectTreeRowMenu({
   changes: WorkingTreeChanges;
   clipboard: TreeClipboard | null;
   onShowDiff?: (path: string) => void;
+  /** Ask the agent about these files (the row, or the selection it is in). */
+  askAgent: (rows: TreeRowData[]) => void;
   targetsFor: (row: TreeRowData) => TreeRowData[];
   beginNewEntry: (parent: string, isDir: boolean) => void;
   open: (abs: string) => void;
@@ -66,6 +69,7 @@ export function ProjectTreeRowMenu({
   // shows several names.
   const which = row.chain && targets.length === 1 ? ` ${row.name}` : "";
   const changed = !isDir && changes.files.has(abs);
+  const askFiles = targets.filter((t) => t.kind === "file");
   return (
     <>
       {isDir ? (
@@ -82,6 +86,13 @@ export function ProjectTreeRowMenu({
             <ContextMenuItem onClick={() => onShowDiff(row.path)}>Open Changes</ContextMenuItem>
           )}
         </>
+      )}
+      {askFiles.length > 0 && (
+        <ContextMenuItem onClick={() => askAgent(askFiles)}>
+          {askFiles.length > 1
+            ? `Ask Agent About These Files (${askFiles.length})`
+            : "Ask Agent About This File"}
+        </ContextMenuItem>
       )}
       <ContextMenuSeparator />
       <ContextMenuItem onClick={() => void revealInFinder(abs)}>Reveal in Finder</ContextMenuItem>

@@ -3,6 +3,7 @@
 import {
   Brain,
   CircleAlert,
+  File,
   FileCode,
   FileDiff,
   GitCommitHorizontal,
@@ -13,6 +14,7 @@ import {
 import type { AgentContext } from "./agent-context";
 
 export const CONTEXT_ICON: Record<AgentContext["kind"], LucideIcon> = {
+  file: File,
   file_range: FileCode,
   diff_hunk: FileDiff,
   memory_entry: Brain,

@@ -30,6 +30,8 @@ export interface ProjectTreeInputContext {
   clipboard: TreeClipboard | null;
   setClipboard: Dispatch<SetStateAction<TreeClipboard | null>>;
   onShowDiff?: (path: string) => void;
+  /** A file row's Ask button: ask the agent about it, from `anchor`. */
+  onAskAgent?: (row: TreeRowData, anchor: Element) => void;
   selectOnly: (path: string) => void;
   activate: (row: TreeRowData) => void;
   isOpen: (row: TreeRowData) => boolean;
@@ -61,6 +63,7 @@ export function projectTreeInput({
   clipboard,
   setClipboard,
   onShowDiff,
+  onAskAgent,
   selectOnly,
   activate,
   isOpen,
@@ -83,6 +86,11 @@ export function projectTreeInput({
     if (target.closest("input")) return;
     const row = rowAt(target);
     if (!row) return;
+    const askButton = target.closest("[data-tree-action='ask']");
+    if (askButton) {
+      onAskAgent?.(row, askButton);
+      return;
+    }
     if (target.closest("[data-tree-action='diff']")) {
       onShowDiff?.(row.path);
       return;
