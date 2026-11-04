@@ -34,7 +34,7 @@ import { AgentIcon } from "@/features/org-agent/lib/agent-icon";
 import { cn } from "@/lib/utils";
 import { copyText } from "@/lib/clipboard";
 import { requestCloseTab } from "@/features/chat/lib/close-tab";
-import { AtlasIcon } from "@/components/atlas-icon";
+import { AtlasIcon } from "@/components/brand-marks";
 import { FileIcon, type FallbackIcon } from "@/features/icon-theme/components/file-icon";
 import type { TabType } from "@/lib/constants";
 import { groupOf, useLayoutStore, type Tab } from "../stores/layout-store";

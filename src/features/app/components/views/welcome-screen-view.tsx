@@ -1,6 +1,6 @@
 import { Clock, Folder, FolderOpen, X } from "lucide-react";
 import { Button, Hint, IconButton, Kbd } from "@tryatlas/design";
-import { AtlasIcon } from "@/components/atlas-icon";
+import { AtlasIcon } from "@/components/brand-marks";
 
 export interface WelcomeScreenViewProps {
   recents: ReadonlyArray<{ name: string; path: string }>;

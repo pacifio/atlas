@@ -20,7 +20,7 @@
  */
 import { createElement } from "react";
 import atlasIconUrl from "@/assets/atlas-icon.svg";
-import { AgentIcons } from "@/components/agent-icons";
+import { AgentIcons } from "@/components/brand-marks";
 import { agentBrandColor } from "@/features/agents/lib/agent-brand";
 import { agentMeta } from "@/features/agents/lib/agent-meta";
 import { notifierIconLookup, notifierIconStore } from "@/features/notifications/lib/notifier-api";
@@ -86,7 +86,9 @@ export async function iconSourceFor(
   scheme: IconScheme,
 ): Promise<IconSource | null> {
   const mono = MONO_FOREGROUND[scheme];
-  const size = { width: SIZE, height: SIZE };
+  // `xmlns` because the markup is loaded as a standalone file through an
+  // <img>, where an SVG without its namespace does not render at all.
+  const size = { width: SIZE, height: SIZE, xmlns: "http://www.w3.org/2000/svg" };
   const firstParty = (Icon: (typeof AgentIcons)[keyof typeof AgentIcons]) =>
     renderMark(
       createElement(Icon, { ...size, style: { color: agentBrandColor(agentType) ?? mono } }),
@@ -104,14 +106,30 @@ export async function iconSourceFor(
   if (!dataUrl) return null;
   const svg = svgFromDataUrl(dataUrl);
   if (svg === null) return { kind: "url", url: dataUrl };
-  // As in `ExternalAgentIcon`: `currentColor` inside an <img> is black, so
+  // As in `ExternalAgentMark`: `currentColor` inside an <img> is black, so
   // defer-to-caller icons get the scheme's foreground instead.
   return { kind: "svg", svg: svg.replaceAll("currentColor", mono) };
 }
 
 async function renderMark(element: ReturnType<typeof createElement>): Promise<IconSource> {
   const { renderToStaticMarkup } = await import("react-dom/server");
-  return { kind: "svg", svg: renderToStaticMarkup(element) };
+  return { kind: "svg", svg: inlineTokenFills(renderToStaticMarkup(element)) };
+}
+
+/**
+ * Turn the package's token-filled paths into plain fills.
+ *
+ * `OpenCodeMark` paints its two paths with the Tailwind classes
+ * `fill-foreground/25` and `fill-foreground`, so it follows the theme in the
+ * app. Rasterised as a standalone file there is no stylesheet, and both paths
+ * would come out solid black. Swap each class for `currentColor` (the dim one
+ * at a quarter opacity), so the root's `style="color:…"` inks it like every
+ * other mark.
+ */
+export function inlineTokenFills(svg: string): string {
+  return svg
+    .replaceAll('class="fill-foreground/25"', 'fill="currentColor" fill-opacity="0.25"')
+    .replaceAll('class="fill-foreground"', 'fill="currentColor"');
 }
 
 /** `<agent>-<scheme>-<hash>`: file-name safe (the Rust side re-validates). */

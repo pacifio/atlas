@@ -528,7 +528,8 @@ Which means the exits have to be real ones:
 - **`EXEMPT_FILES`** — a whole file, with the argument written next to the path.
   Two shapes qualify: the file _defines_ the scale (the key registry and the
   colour maths, both in the package now), or the colour is _not Atlas's to choose_ — a third party's brand
-  mark (`agent-brand.ts`, `agent-icons.tsx`), a palette the **user** picks a
+  mark (`agent-brand.ts`; the vendor marks themselves come from
+  `@tryatlas/design`, exempt in the package's own ratchet), a palette the **user** picks a
   value from (spaces sticky notes, knowledge covers, PDF ink), or something that
   has to survive being shown over content Atlas did not draw.
 - **`EXEMPT_DIRS`** — the same bar, for a directory. One shape qualifies: the

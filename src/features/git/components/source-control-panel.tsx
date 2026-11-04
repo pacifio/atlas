@@ -2,7 +2,7 @@ import { lazy, Suspense } from "react";
 import { GitCommit, GitCompare } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PanelSkeleton } from "@/components/panel-skeleton";
-import { GithubIcon } from "@/components/github-icon";
+import { GithubIcon } from "@/components/brand-marks";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { Button } from "@tryatlas/design";
 

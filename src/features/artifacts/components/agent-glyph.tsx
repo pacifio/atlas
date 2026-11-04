@@ -13,8 +13,8 @@
  * mark is what identifies the turn.
  */
 
-import { AgentIcons, AgentMonogram, ExternalAgentIcon } from "@/components/agent-icons";
-import { AtlasIcon } from "@/components/atlas-icon";
+import { AgentMonogram, ExternalAgentMark } from "@tryatlas/design";
+import { AgentIcons, AtlasIcon } from "@/components/brand-marks";
 import { agentBrandColor } from "@/features/agents/lib/agent-brand";
 import { useAgentMeta } from "@/features/agents/lib/agent-meta-context";
 
@@ -38,6 +38,6 @@ export function AgentGlyph({
   if (agent.includes("kilo")) return <AgentIcons.Kilo style={dim} />;
   if (agent.includes("atlas-agent")) return <AtlasIcon size={size} className="rounded-sm" />;
   // Registry-installed external agent: manifest SVG, else a monogram.
-  if (meta.iconDataUrl) return <ExternalAgentIcon dataUrl={meta.iconDataUrl} size={size} />;
+  if (meta.iconDataUrl) return <ExternalAgentMark dataUrl={meta.iconDataUrl} size={size} />;
   return <AgentMonogram label={meta.label} size={size} />;
 }

@@ -3,7 +3,7 @@ import { Download, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { cn } from "@/lib/utils";
-import { AgentMonogram, ExternalAgentIcon } from "@/components/agent-icons";
+import { AgentMonogram, ExternalAgentMark } from "@tryatlas/design";
 import { withDeadline } from "../lib/with-deadline";
 import { acpRegistry } from "@/features/agents/lib/agent-registry-api";
 import { hydrateAgentRegistry } from "@/features/agents/stores/agent-registry-store";
@@ -88,7 +88,7 @@ export function FeaturedAgentOffers({
                   `currentColor` art, so the container decides legibility. */}
               <span className="flex size-4 shrink-0 items-center justify-center rounded border border-[var(--border)] bg-[var(--card,var(--background))] text-[var(--secondary-foreground)]">
                 {offer.iconDataUrl ? (
-                  <ExternalAgentIcon dataUrl={offer.iconDataUrl} size={10} />
+                  <ExternalAgentMark dataUrl={offer.iconDataUrl} size={10} />
                 ) : (
                   <AgentMonogram label={offer.label} size={10} />
                 )}

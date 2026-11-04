@@ -1,7 +1,7 @@
 import { useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 
-import { AtlasIcon } from "@/components/atlas-icon";
+import { AtlasIcon } from "@/components/brand-marks";
 import { extractInjectedContext, type InjectedBlock } from "@/features/chat/lib/atlas-context";
 import { CachedMarkdown } from "@/lib/markdown-cache";
 import { cn } from "@/lib/utils";

@@ -14,7 +14,7 @@ import {
   Spinner,
 } from "@tryatlas/design";
 import { iconButtonVariants } from "@tryatlas/design/variants";
-import { ProviderLogo } from "@/components/provider-logo";
+import { ProviderLogo } from "@/components/brand-marks";
 import { cn } from "@/lib/utils";
 import { composerPillClass } from "../../lib/composer-pill-class";
 

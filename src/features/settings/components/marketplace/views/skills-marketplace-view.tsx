@@ -7,7 +7,7 @@ import { Boxes, Check, Copy, Download } from "lucide-react";
 import { Badge, Button, Hint, Icon } from "@tryatlas/design";
 
 import { AtlasLoader } from "@/components/atlas-loader";
-import { GithubIcon } from "@/components/github-icon";
+import { GithubIcon } from "@/components/brand-marks";
 import { TrendSparkline } from "@/components/trend-sparkline";
 import type { PackSearchHit } from "@/features/packs/lib/types";
 import { MARKET_KIND_LABEL, type SkillDetail } from "@/features/skills/lib/skills-view-model";

@@ -1,5 +1,5 @@
 import { ChevronDown } from "lucide-react";
-import { AgentMark } from "@/components/agent-mark";
+import { AgentMark } from "@/components/brand-marks";
 import { agentMetaForSource, pluginIdForSource } from "../../lib/memory-agent";
 import { cn } from "@/lib/utils";
 import { KIND_LABEL, sourceLabel } from "../../lib/shared-memory-format";

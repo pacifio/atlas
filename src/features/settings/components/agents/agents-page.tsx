@@ -7,7 +7,7 @@ import { Plus, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/time-ago";
 import { formatDateTime } from "@/lib/format-time";
-import { AgentMark } from "@/components/agent-mark";
+import { AgentMark } from "@/components/brand-marks";
 import { useAgentRegistryStore } from "@/features/agents/stores/agent-registry-store";
 import { SettingsPage, SettingsSection } from "../layout/settings-layout";
 import { usePageScope } from "../../lib/use-scoped-setting";

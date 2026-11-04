@@ -4,7 +4,7 @@ import { ArrowUpRight, Lock, MoreHorizontal, X } from "lucide-react";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { copyText } from "@/lib/clipboard";
 import { tildePath } from "@/lib/paths";
-import { ProviderLogo } from "@/components/provider-logo";
+import { ProviderLogo } from "@/components/brand-marks";
 import {
   PROVIDERS,
   PROVIDER_CATEGORIES,

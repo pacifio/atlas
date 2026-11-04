@@ -404,7 +404,7 @@ export default defineConfig(() => ({
         "./src/features/chat/lib/agents-api.ts",
         "./src/components/titlebar.tsx",
         "./src/features/command-palette/components/command-palette.tsx",
-        "./src/components/atlas-icon.tsx",
+        "./src/components/brand-marks/atlas.tsx",
       ],
     },
   },

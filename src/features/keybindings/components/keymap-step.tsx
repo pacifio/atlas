@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { AtlasIcon } from "@/components/atlas-icon";
+import { AtlasIcon } from "@/components/brand-marks";
 import { cn } from "@/lib/utils";
 import { ACTION_BY_ID } from "../lib/actions";
 import { displayKeys, parseCombo } from "../lib/combo";
@@ -56,7 +56,13 @@ export function KeymapStep({ onChosen }: { onChosen?: (answer: KeymapAnswer) => 
         {PRESETS.map((preset) => (
           <Choice
             key={preset.id}
-            icon={<PresetIcon id={preset.id} className="size-4 text-foreground" />}
+            icon={
+              // The ink sits on a wrapper: the package mark takes `currentColor`
+              // and does not accept a colour class of its own.
+              <span className="flex text-foreground">
+                <PresetIcon id={preset.id} className="size-4" />
+              </span>
+            }
             label={preset.label}
             description={preset.description}
             keys={paletteKeys(preset)}

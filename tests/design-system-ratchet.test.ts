@@ -78,13 +78,9 @@ const EXEMPT_FILES: Record<string, string> = {
     "Shape 2. The first-party agents' OWN brand colours — the one kind of " +
     "colour a theme key must not be able to restate (ADR-0002, and the " +
     "2026-09-18 key-set audit that deleted the eighteen `agent.*` keys).",
-  "src/components/agent-icons.tsx":
-    "Shape 2. The vendors' logo marks, drawn as inline SVG. Same argument as " +
-    "`agent-brand.ts`: a recoloured logo is the wrong logo.",
-  "src/components/agent-icons.test.tsx": "Shape 2. Asserts the marks above are drawn as shipped.",
   "src/features/external-editor/components/editor-icons.tsx":
     "Shape 2. The editors' logo marks (VS Code's blues, VSCodium's gradient) " +
-    'beside "Open in <editor>". Same argument as `agent-icons.tsx`: ' +
+    'beside "Open in <editor>". Same argument as `agent-brand.ts`: ' +
     "a recoloured logo is the wrong logo.",
   "src/features/knowledge/lib/cover-gradients.ts":
     "Shape 2. The page-cover palette the user picks from. These are document " +

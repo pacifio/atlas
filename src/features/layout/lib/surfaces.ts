@@ -10,7 +10,7 @@ import {
   Terminal,
 } from "lucide-react";
 import { AgentIcon } from "@/features/org-agent/lib/agent-icon";
-import { AtlasIcon } from "@/components/atlas-icon";
+import { AtlasIcon } from "@/components/brand-marks";
 import type { TabType } from "@/lib/constants";
 import { useLayoutStore } from "../stores/layout-store";
 import {

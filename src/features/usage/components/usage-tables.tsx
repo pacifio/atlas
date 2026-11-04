@@ -10,7 +10,7 @@ import {
   DropdownMenuTrigger,
 } from "@tryatlas/design";
 import { Bar, EstTag, useMounted } from "@/components/usage-primitives";
-import { AgentGlyph } from "@/components/agent-mark";
+import { AgentGlyph } from "@/components/brand-marks";
 import { useAgentMetaResolver } from "@/features/agents/lib/agent-meta-context";
 import { fmtCost, fmtNum, fmtPct, fmtTokens } from "@/features/monitor/lib/usage-format";
 import { cn } from "@/lib/utils";
