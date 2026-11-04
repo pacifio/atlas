@@ -4,7 +4,7 @@
 // None of these surfaces shows anything by sitting still in the default
 // scenario: the drawer is empty and closed, the Log is a tab nobody opened,
 // the feedback panel and the update modal wait for a user or an updater, and
-// the welcome screen needs every tab gone. Each is one call away instead —
+// the welcome screen needs no project open. Each is one call away instead —
 // `__atlasMock.actions.<name>()`.
 
 import { useAppStore } from "@/features/app/stores/app-store";
