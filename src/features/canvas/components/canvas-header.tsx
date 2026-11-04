@@ -29,7 +29,7 @@ export function CanvasHeader({
       <div
         className={cn(
           "absolute left-3 top-3 z-panel flex items-center gap-1.5 pl-1 pr-1 py-1",
-          "rounded-xl border border-border-subtle bg-[var(--card)]/70 backdrop-blur-2xl shadow-md",
+          "rounded-xl border border-border-subtle bg-card/70 backdrop-blur-2xl shadow-md",
         )}
       >
         <HintItem label={pagesOpen ? "Hide pages" : "Show pages"}>

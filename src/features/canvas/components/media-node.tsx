@@ -1,7 +1,7 @@
 import { memo, useEffect, useState } from "react";
 import { type NodeProps } from "@xyflow/react";
-import { invoke } from "@tauri-apps/api/core";
 import { cn } from "@/lib/utils";
+import { canvasMediaDataUrl } from "../lib/canvas-api";
 import { NodeHandles } from "./node-handles";
 
 export interface MediaNodeData extends Record<string, unknown> {
@@ -34,10 +34,7 @@ export const MediaNode = memo(function MediaNode({ data, selected }: NodeProps) 
       return;
     }
     let alive = true;
-    void invoke<string>("canvas_media_data_url", {
-      projectPath: d.projectPath,
-      src: d.src,
-    })
+    void canvasMediaDataUrl(d.projectPath, d.src)
       .then((u) => {
         mediaUrlCache.delete(cacheKey);
         mediaUrlCache.set(cacheKey, u);
@@ -60,8 +57,8 @@ export const MediaNode = memo(function MediaNode({ data, selected }: NodeProps) 
       <NodeHandles selected={selected} />
       <div
         className={cn(
-          "rounded-xl overflow-hidden border shadow-2xl bg-[var(--card)]/40",
-          selected ? "border-[var(--primary)]/60" : "border-border hover:border-border-strong",
+          "rounded-xl overflow-hidden border shadow-2xl bg-card/40",
+          selected ? "border-primary/60" : "border-border hover:border-border-strong",
         )}
       >
         {url ? (

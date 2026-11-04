@@ -25,9 +25,9 @@ export const NoteNode = memo(function NoteNode({ data, selected }: NodeProps) {
       className={cn(
         "group relative rounded-2xl overflow-visible",
         "min-w-[260px] max-w-[360px]",
-        "bg-[var(--card)]/70 backdrop-blur-3xl backdrop-saturate-150",
+        "bg-card/70 backdrop-blur-3xl backdrop-saturate-150",
         "border shadow-lg transition-colors",
-        selected ? "border-[var(--primary)]/60" : "border-border-subtle hover:border-border",
+        selected ? "border-primary/60" : "border-border-subtle hover:border-border",
       )}
     >
       {/* Inner glow */}
@@ -46,10 +46,10 @@ export const NoteNode = memo(function NoteNode({ data, selected }: NodeProps) {
           )}
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-base font-semibold text-[var(--foreground)] truncate">
+          <div className="text-base font-semibold text-foreground truncate">
             {d.title || "Untitled"}
           </div>
-          <div className="text-2xs text-[var(--muted-foreground)]">
+          <div className="text-2xs text-muted-foreground">
             {timeAgo(d.updatedAt, { suffix: true })}
           </div>
         </div>
@@ -58,11 +58,9 @@ export const NoteNode = memo(function NoteNode({ data, selected }: NodeProps) {
       {/* Body preview */}
       <div className="relative px-3 py-2.5 max-h-[180px] overflow-hidden rounded-b-2xl">
         {isEmpty ? (
-          <div className="text-xs text-[var(--muted-foreground)] italic">
-            Empty note — open to edit.
-          </div>
+          <div className="text-xs text-muted-foreground italic">Empty note — open to edit.</div>
         ) : (
-          <div className="text-sm leading-relaxed text-[var(--secondary-foreground)] [&_*]:!my-1 [&_p]:!my-0">
+          <div className="text-sm leading-relaxed text-secondary-foreground [&_*]:!my-1 [&_p]:!my-0">
             <Markdown fileRoot={projectPath}>{d.body}</Markdown>
           </div>
         )}

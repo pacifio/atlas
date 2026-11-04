@@ -87,7 +87,7 @@ export function SpaceToolbar({
         <div
           className={cn(
             "absolute z-panel flex items-center gap-1 p-1",
-            "rounded-xl border border-border-subtle bg-[var(--card)]/70 shadow-md backdrop-blur-2xl",
+            "rounded-xl border border-border-subtle bg-card/70 shadow-md backdrop-blur-2xl",
             horizontal
               ? "bottom-3 left-1/2 -translate-x-1/2 flex-row"
               : "top-1/2 -translate-y-1/2 flex-col",
@@ -211,7 +211,7 @@ function DockMenu({
               className={cn(
                 "flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg transition-colors",
                 open
-                  ? "bg-[var(--primary)]/20 text-[var(--foreground)]"
+                  ? "bg-primary/20 text-foreground"
                   : "text-secondary-foreground hover:bg-element-hover hover:text-foreground",
               )}
             >
@@ -227,7 +227,7 @@ function DockMenu({
           align="end"
           sideOffset={8}
         >
-          <Popover.Popup className="atlas-panel-in-tl inset-highlight shadow-md select-none overflow-hidden rounded-xl border border-border-subtle bg-[var(--card)]/95 backdrop-blur-2xl">
+          <Popover.Popup className="atlas-panel-in-tl inset-highlight shadow-md select-none overflow-hidden rounded-xl border border-border-subtle bg-card/95 backdrop-blur-2xl">
             <div className="flex w-[168px] flex-col py-1">
               <div className="px-3 pb-1 pt-1 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
                 Dock position
@@ -248,7 +248,7 @@ function DockMenu({
                   <d.icon size={12} className="shrink-0 text-muted-foreground" />
                   {d.label}
                   {dock === d.dock && (
-                    <span className="ml-auto h-1.5 w-1.5 rounded-full bg-[var(--primary)]" />
+                    <span className="ml-auto h-1.5 w-1.5 rounded-full bg-primary" />
                   )}
                 </button>
               ))}
@@ -277,7 +277,7 @@ function ToolButton({
         className={cn(
           "flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg transition-colors",
           active
-            ? "bg-[var(--primary)]/20 text-[var(--foreground)]"
+            ? "bg-primary/20 text-foreground"
             : "text-secondary-foreground hover:bg-element-hover hover:text-foreground",
         )}
       >

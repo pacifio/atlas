@@ -16,6 +16,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import { Dialog } from "@base-ui/react/dialog";
 import { StickyNote } from "lucide-react";
+import { EmptyState } from "@tryatlas/design";
 import { useAppStore } from "@/features/app/stores/app-store";
 import { useCanvasStore, type CanvasNode, type ShapeType } from "../stores/canvas-store";
 import { canvasMediaUpload } from "../lib/canvas-api";
@@ -60,7 +61,7 @@ export function CanvasPanel() {
         <Dialog.Backdrop className="fixed inset-0 z-overlay scrim" />
         <Dialog.Popup
           aria-describedby={undefined}
-          className="fixed top-12 left-6 right-6 bottom-6 z-modal rounded-xl border border-[var(--border)] bg-[var(--background)] overflow-hidden flex flex-col shadow-md focus:outline-none"
+          className="fixed top-12 left-6 right-6 bottom-6 z-modal rounded-xl border border-border bg-background overflow-hidden flex flex-col shadow-md focus:outline-none"
         >
           <Dialog.Title className="sr-only">Spaces</Dialog.Title>
           {surface}
@@ -404,11 +405,12 @@ function CanvasSurface({
 
   if (!projectPath) {
     return (
-      <div className="h-full flex flex-col items-center justify-center text-sm text-muted-foreground gap-2 px-6 text-center">
-        <StickyNote size={18} className="opacity-60" />
-        <div>No project open.</div>
-        <div className="text-2xs">Spaces are per-project. Open a folder to start a board.</div>
-      </div>
+      <EmptyState
+        className="h-full"
+        icon={StickyNote}
+        title="No project open."
+        description="Spaces are per-project. Open a folder to start a board."
+      />
     );
   }
 
@@ -473,7 +475,7 @@ function CanvasSurface({
           >
             {preview && (
               <div
-                className="absolute rounded border border-[var(--primary)] bg-[var(--primary)]/10 pointer-events-none"
+                className="absolute rounded border border-primary bg-primary/10 pointer-events-none"
                 style={{
                   left: preview.left,
                   top: preview.top,

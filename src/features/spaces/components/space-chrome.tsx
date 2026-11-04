@@ -96,7 +96,7 @@ export function SpaceHeaderPill({
     <div
       className={cn(
         "absolute left-3 top-3 z-panel flex items-center gap-1.5 py-1 pl-1 pr-1",
-        "rounded-xl border border-border-subtle bg-[var(--card)]/70 shadow-md backdrop-blur-2xl",
+        "rounded-xl border border-border-subtle bg-card/70 shadow-md backdrop-blur-2xl",
       )}
     >
       <Hint label={pagesOpen ? "Hide pages" : "Show pages"}>
@@ -135,7 +135,7 @@ export function SpaceHeaderPill({
         />
         <Popover.Portal>
           <Popover.Positioner className="z-popover" align="start" sideOffset={6}>
-            <Popover.Popup className="atlas-panel-in-tl inset-highlight shadow-md select-none overflow-hidden rounded-xl border border-border-subtle bg-[var(--card)]/95 backdrop-blur-2xl">
+            <Popover.Popup className="atlas-panel-in-tl inset-highlight shadow-md select-none overflow-hidden rounded-xl border border-border-subtle bg-card/95 backdrop-blur-2xl">
               <div className="flex max-h-[320px] w-[220px] flex-col overflow-y-auto py-1">
                 {selectable.map((p) => (
                   <button
@@ -152,7 +152,7 @@ export function SpaceHeaderPill({
                   >
                     <span className="min-w-0 flex-1 truncate">{p.name || "Untitled"}</span>
                     {p.id === activePageId && (
-                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--primary)]" />
+                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
                     )}
                   </button>
                 ))}
@@ -319,7 +319,7 @@ export function SpaceActionPill({
     <div
       className={cn(
         "absolute right-3 top-3 z-panel flex h-8 items-center gap-1 rounded-xl border border-border-subtle px-1.5",
-        "bg-[var(--card)]/70 shadow-md backdrop-blur-2xl",
+        "bg-card/70 shadow-md backdrop-blur-2xl",
       )}
     >
       {/* Presence */}
@@ -362,7 +362,7 @@ export function SpaceActionPill({
                   <CommsAvatar
                     member={me ? memberOf(me) : null}
                     size={18}
-                    className="rounded-full ring-2 ring-[var(--card)]"
+                    className="rounded-full ring-2 ring-card"
                   />
                 </span>
               }
@@ -379,7 +379,7 @@ export function SpaceActionPill({
           <Tooltip>
             <TooltipTrigger
               render={
-                <span className="ml-1.5 flex h-[18px] items-center gap-1 rounded-full bg-[var(--primary)]/15 px-1.5 text-2xs font-medium text-[var(--primary)]">
+                <span className="ml-1.5 flex h-[18px] items-center gap-1 rounded-full bg-primary/15 px-1.5 text-2xs font-medium text-primary">
                   <Eye size={10} />
                   {followers.length}
                 </span>
@@ -424,7 +424,7 @@ export function SpaceActionPill({
         </Hint>
         <Popover.Portal>
           <Popover.Positioner className="z-popover" align="end" sideOffset={6}>
-            <Popover.Popup className="atlas-panel-in-tl inset-highlight shadow-md select-none overflow-hidden rounded-xl border border-border-subtle bg-[var(--card)]/95 backdrop-blur-2xl">
+            <Popover.Popup className="atlas-panel-in-tl inset-highlight shadow-md select-none overflow-hidden rounded-xl border border-border-subtle bg-card/95 backdrop-blur-2xl">
               <div className="flex w-[140px] flex-col py-1">
                 {FORMATS.map((f) => (
                   <button

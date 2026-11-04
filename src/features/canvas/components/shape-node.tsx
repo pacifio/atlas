@@ -76,8 +76,8 @@ export const ShapeNode = memo(function ShapeNode({ id, data, selected }: NodePro
         isVisible={selected}
         minWidth={40}
         minHeight={40}
-        lineClassName="!border-[var(--primary)]/70"
-        handleClassName="!bg-[var(--primary)] !border-border-strong !w-2 !h-2 !rounded-sm"
+        lineClassName="!border-primary/70"
+        handleClassName="!bg-primary !border-border-strong !w-2 !h-2 !rounded-sm"
         onResizeStart={() => beginInteraction()}
         onResize={(_, p) => {
           moveNote(id, p.x, p.y);
@@ -92,7 +92,7 @@ export const ShapeNode = memo(function ShapeNode({ id, data, selected }: NodePro
           ref={ref}
           className={cn(
             "max-w-full whitespace-pre-wrap break-words text-center outline-none",
-            "text-sm leading-snug text-[var(--foreground)] caret-[var(--primary)]",
+            "text-sm leading-snug text-foreground caret-primary",
             // An empty contentEditable has no line box, so the caret can't render;
             // a min line-height gives it one when the shape has no text yet.
             "min-h-[1.25em] min-w-[2px]",
