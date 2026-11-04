@@ -32,7 +32,6 @@ export type TranscriptItem =
   | { kind: "call"; key: string };
 
 export interface TranscriptHandle {
-  scrollToBottom: () => void;
   /** Scroll a rendered message into the centre and flash it. */
   scrollToMessage: (messageId: string) => void;
 }
@@ -105,7 +104,6 @@ export function ConversationTranscriptView<T extends TranscriptItem>({
   useImperativeHandle(
     ref,
     () => ({
-      scrollToBottom,
       scrollToMessage: (messageId) => {
         const el = scroller.current;
         if (!el) return;
@@ -124,7 +122,7 @@ export function ConversationTranscriptView<T extends TranscriptItem>({
         setTimeout(done, 1400);
       },
     }),
-    [scrollToBottom, atEndRef],
+    [atEndRef],
   );
 
   // Unseen-message count for the pill label. Counted only while away from the
@@ -252,7 +250,7 @@ export function ConversationTranscriptView<T extends TranscriptItem>({
                 package button keeps its own press dip. */}
             <span className="atlas-pill-in pointer-events-auto inline-flex">
               <Hint label="Jump to latest">
-                <Button variant="outline" size="sm" onClick={scrollToBottom}>
+                <Button variant="secondary" size="sm" onClick={scrollToBottom}>
                   <Icon icon={ChevronDown} size="sm" />
                   {newCount > 0
                     ? `${newCount} new message${newCount === 1 ? "" : "s"}`

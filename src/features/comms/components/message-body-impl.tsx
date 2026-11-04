@@ -181,7 +181,12 @@ const COMPONENTS: Components = {
   pre(props) {
     const lang = fenceLanguage(props.node);
     return (
-      <pre className="my-1.5 font-mono">
+      <pre
+        // The block scrolls sideways with its scrollbar hidden (the
+        // `hide-scrollbar` convention), set from here because the package
+        // Code owns its own classes.
+        className="my-1.5 font-mono [&>code]:[scrollbar-width:none] [&>code::-webkit-scrollbar]:hidden"
+      >
         {lang && (
           <span className="mb-0.5 block text-3xs uppercase tracking-wide text-muted-foreground">
             {lang}

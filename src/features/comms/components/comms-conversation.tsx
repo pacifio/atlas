@@ -73,9 +73,9 @@ export const CommsConversation = memo(function CommsConversation({
   // Calls belong to the same timeline as messages and are ordered by the same
   // org-wide `seq`, so they interleave rather than sitting in a sidebar. Ended
   // calls stay: the row IS the record that the call happened.
-  const items = useMemo(() => {
+  const groups = useMemo(() => {
     const grouped = groupMessages(messages, me);
-    const out: Item[] = grouped.map((group, i) => {
+    return grouped.map((group, i): Item => {
       const prevGroup = grouped[i - 1];
       const prev = prevGroup?.messages[prevGroup.messages.length - 1];
       const head = group.messages[0];
@@ -88,13 +88,18 @@ export const CommsConversation = memo(function CommsConversation({
         group,
       };
     });
+  }, [messages, me]);
+  // Merged in a second pass, so a call frame (any conversation's) never
+  // re-runs the grouping above.
+  const items = useMemo(() => {
     const callRows = Object.values(calls).filter((c) => c.conv_id === conv.id);
-    if (callRows.length === 0) return out;
+    if (callRows.length === 0) return groups;
+    const out = [...groups];
     for (const call of callRows)
       out.push({ kind: "call", key: `call:${call.id}`, seq: call.seq, call });
     out.sort((a, b) => a.seq - b.seq);
     return out;
-  }, [messages, me, calls, conv.id]);
+  }, [groups, calls, conv.id]);
 
   // Stable identities so MessageGroup's memo actually engages — inline arrows
   // gave every group new props on every render, which made the memo 100% dead
