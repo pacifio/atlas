@@ -46,7 +46,7 @@
   },
   "dependencies": {
     "@base-ui/react": "1.8.0",
-    "@tryatlas/design": "github:tryatlas/design#v0.1.8",
+    "@tryatlas/design": "github:tryatlas/design#v0.1.9",
     "@codemirror/commands": "^6.11.1",
     "@codemirror/lang-cpp": "^6.0.3",
     "@codemirror/lang-css": "^6.3.1",
