@@ -97,9 +97,6 @@ export const CommitRowView = memo(function CommitRowView({
 
   return (
     <div
-      id={id}
-      role="option"
-      aria-selected={selected}
       data-sha={row.sha}
       onClick={() => onSelect(row.sha)}
       className={cn(
@@ -136,7 +133,15 @@ export const CommitRowView = memo(function CommitRowView({
 
       {/* Row content — flush against the gutter; per-row gutter sizing handles the offset */}
       <div className={cn("flex min-w-0 flex-1 items-center gap-2", compact ? "pr-3" : "pr-4")}>
-        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+        {/* The option is the commit's refs and subject; the Ask button and
+            the metadata sit beside it, since an option's children are
+            presentational to assistive tech. */}
+        <div
+          id={id}
+          role="option"
+          aria-selected={selected}
+          className="flex min-w-0 flex-1 items-center gap-1.5"
+        >
           {visibleRefs.slice(0, 4).map((r) => (
             <RefChip key={`${r.kind}:${r.name}`} refBadge={r} />
           ))}

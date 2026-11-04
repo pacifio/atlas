@@ -143,13 +143,11 @@ export function BranchSwitcher() {
               className="max-h-[280px] overflow-y-auto hide-scrollbar p-1"
             >
               {filtered.map((b, i) => (
+                // The option is the branch; its actions sit beside it, not
+                // inside it, because an option's children are presentational.
                 <div
                   key={b.name}
-                  id={optionId(i)}
                   data-index={i}
-                  role="option"
-                  aria-selected={i === activeIndex}
-                  aria-disabled={busy ? true : undefined}
                   className={cn(
                     "group flex items-center gap-2 pl-1.5 pr-1 h-control-md rounded-md text-xs transition-colors duration-fast",
                     busy ? "cursor-default" : "cursor-pointer",
@@ -165,23 +163,31 @@ export function BranchSwitcher() {
                   }}
                   onClick={() => pick(b)}
                 >
-                  <Check
-                    size={12}
-                    className={cn("shrink-0", b.isCurrent ? "text-primary" : "opacity-0")}
-                  />
-                  <span className="truncate flex-1 font-mono" title={b.name}>
-                    {b.name}
-                  </span>
-                  {b.isRemote && (
-                    <Badge variant="outline" size="sm">
-                      remote
-                    </Badge>
-                  )}
-                  {(b.ahead > 0 || b.behind > 0) && (
-                    <span className="shrink-0 font-mono text-2xs tabular-nums text-muted-foreground">
-                      {b.ahead > 0 && `↑${b.ahead}`} {b.behind > 0 && `↓${b.behind}`}
+                  <div
+                    id={optionId(i)}
+                    role="option"
+                    aria-selected={i === activeIndex}
+                    aria-disabled={busy ? true : undefined}
+                    className="flex min-w-0 flex-1 items-center gap-2"
+                  >
+                    <Check
+                      size={12}
+                      className={cn("shrink-0", b.isCurrent ? "text-primary" : "opacity-0")}
+                    />
+                    <span className="truncate flex-1 font-mono" title={b.name}>
+                      {b.name}
                     </span>
-                  )}
+                    {b.isRemote && (
+                      <Badge variant="outline" size="sm">
+                        remote
+                      </Badge>
+                    )}
+                    {(b.ahead > 0 || b.behind > 0) && (
+                      <span className="shrink-0 font-mono text-2xs tabular-nums text-muted-foreground">
+                        {b.ahead > 0 && `↑${b.ahead}`} {b.behind > 0 && `↓${b.behind}`}
+                      </span>
+                    )}
+                  </div>
                   {!b.isCurrent && !b.isRemote && (
                     <HintGroup>
                       <div className="flex items-center opacity-0 group-hover:opacity-100 focus-within:opacity-100">

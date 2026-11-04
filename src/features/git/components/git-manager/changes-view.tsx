@@ -85,36 +85,41 @@ const FileRow = memo(function FileRow({
   const name = file.path.split("/").pop() ?? file.path;
   const dir = file.path.slice(0, file.path.length - name.length);
   return (
+    // The option is the file itself; its actions sit beside it, not inside
+    // it, because an option's children are presentational to assistive tech.
     <div
-      role="option"
-      aria-selected={selected}
-      tabIndex={tabbable ? 0 : -1}
       onClick={() => onSelect(file.path)}
-      onKeyDown={(e) => {
-        if (e.target !== e.currentTarget) return;
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onSelect(file.path);
-        }
-      }}
       data-selected={selected || undefined}
       className={cn(
-        "group flex h-control-sm cursor-pointer items-center gap-1.5 pr-1 pl-2.5 text-xs outline-none transition-colors duration-fast focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
+        "group flex h-control-sm cursor-pointer items-center gap-1.5 pr-1 text-xs transition-colors duration-fast",
         selected ? "bg-element-selected" : "hover:bg-element-hover focus-within:bg-element-hover",
       )}
     >
-      <FileIcon path={file.path} size={14} className="shrink-0" />
-      <span className="min-w-0 flex-1 truncate">
-        <span
-          className={cn(
-            "text-secondary-foreground group-hover:text-foreground",
-            selected && "text-foreground",
-          )}
-        >
-          {name}
+      <div
+        role="option"
+        aria-selected={selected}
+        tabIndex={tabbable ? 0 : -1}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onSelect(file.path);
+          }
+        }}
+        className="flex min-w-0 flex-1 items-center gap-1.5 self-stretch pl-2.5 outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+      >
+        <FileIcon path={file.path} size={14} className="shrink-0" />
+        <span className="min-w-0 flex-1 truncate">
+          <span
+            className={cn(
+              "text-secondary-foreground group-hover:text-foreground",
+              selected && "text-foreground",
+            )}
+          >
+            {name}
+          </span>
+          {dir && <span className="ml-1.5 text-muted-foreground">{dir.replace(/\/$/, "")}</span>}
         </span>
-        {dir && <span className="ml-1.5 text-muted-foreground">{dir.replace(/\/$/, "")}</span>}
-      </span>
+      </div>
       <HintGroup>
         <div className="flex shrink-0 items-center opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">
           {onAsk && (
@@ -320,6 +325,8 @@ export function ChangesView() {
     unstaged.findIndex((f) => f.path === selected),
   );
   const onListKeyDown = useCallback((e: KeyboardEvent<HTMLElement>) => {
+    // Only from an option: arrows on a row's action buttons are theirs.
+    if ((e.target as Element).getAttribute("role") !== "option") return;
     if (moveOptionFocus(e.currentTarget, e.key, e.target as Element)) e.preventDefault();
   }, []);
 
