@@ -400,6 +400,10 @@ description = "Added and removed regions, inline and side-by-side."
 name = "Agents and indicators"
 description = "The agent identity chip."
 
+[[group]]
+name = "Identity hues"
+description = "The eight hues that name a thing — a label, a project dot — never a status."
+
 
 # ── Borders ───────────────────────────────────────────────────────────────────
 
@@ -1129,6 +1133,84 @@ op = "alpha"
 amount = 0.06
 dark = "rgba(255,255,255,0.06)"
 light = "rgba(0,0,0,0.06)"
+
+
+# ── Identity hues ─────────────────────────────────────────────────────────────
+#
+# The `--color-hue-*` utilities (`bg-hue-orange`, `Tag`, `HueDot`) read these.
+# They used to borrow other roles — orange was `syntax.number`, pink was
+# `syntax.escape`, the rest the ANSI slots — and a theme that coloured those
+# roles for code (Atlas's own syntax is Pierre's, where numbers are cyan) turned
+# an "orange" label cyan. A hue now reads the theme's own palette hue of the same
+# name, so it is whatever that theme means by orange, and a theme that wants a
+# different chip colour from its palette sets the key. The defaults, for a
+# theme that writes no palette, are the Atlas theme's palette — except dark
+# yellow, where Atlas's palette has a terminal's pure #ffff00 and a label wants
+# the softer yellow the ANSI default uses.
+
+[[key]]
+name = "hue.red"
+group = "Identity hues"
+description = "The red identity hue: labels, project dots, meters."
+palette = "red"
+dark = "#f44747"
+light = "#c62828"
+
+[[key]]
+name = "hue.orange"
+group = "Identity hues"
+description = "The orange identity hue: labels, project dots, meters."
+palette = "orange"
+dark = "#e0b070"
+light = "#b06000"
+
+[[key]]
+name = "hue.yellow"
+group = "Identity hues"
+description = "The yellow identity hue: labels, project dots, meters."
+palette = "yellow"
+dark = "#e5c07b"
+light = "#8f7a00"
+
+[[key]]
+name = "hue.green"
+group = "Identity hues"
+description = "The green identity hue: labels, project dots, meters."
+palette = "green"
+dark = "#9ecf8a"
+light = "#3f7f2f"
+
+[[key]]
+name = "hue.cyan"
+group = "Identity hues"
+description = "The cyan identity hue: labels, project dots, meters."
+palette = "cyan"
+dark = "#7fd1e8"
+light = "#1f7f99"
+
+[[key]]
+name = "hue.blue"
+group = "Identity hues"
+description = "The blue identity hue: labels, project dots, meters."
+palette = "blue"
+dark = "#6796e6"
+light = "#1f5fb0"
+
+[[key]]
+name = "hue.purple"
+group = "Identity hues"
+description = "The purple identity hue: labels, project dots, meters."
+palette = "purple"
+dark = "#c9a2f5"
+light = "#7b3fb5"
+
+[[key]]
+name = "hue.pink"
+group = "Identity hues"
+description = "The pink identity hue: labels, project dots, meters."
+palette = "pink"
+dark = "#f0a0c8"
+light = "#b03a6a"
 
 
 # ── Derived variables ─────────────────────────────────────────────────────────

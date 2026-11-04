@@ -141,7 +141,7 @@ seeds; a theme that sets only those still sets every token.
 
 ## Full key list and derivation sources
 
-All **73** keys, in the order and grouping of `crates/atlas-theme/keys.toml`.
+All **81** keys, in the order and grouping of `crates/atlas-theme/keys.toml`.
 **Source** is the first thing Atlas tries after an explicit `keys` value:
 `P:x` is `palette.x`, `B:x` is `base.x`, and `D` is the Atlas default for the
 active appearance, shown here as dark / light. **Transform** is applied to
@@ -303,6 +303,21 @@ The agent identity chip.
 |---|---|---|---|---|
 | `agent.chip.foreground` | B:foreground → D | — | `#ffffff` / `#575279` | Agent identity chip text. |
 | `agent.chip.background` | B:foreground → D | alpha 0.06 | `rgba(255,255,255,0.06)` / `rgba(0,0,0,0.06)` | Agent identity chip fill. |
+
+### Identity hues
+
+The eight hues that name a thing — a label, a project dot — never a status.
+
+| Key | Source | Transform | D (dark / light) | What it colours |
+|---|---|---|---|---|
+| `hue.red` | P:red → D | — | `#f44747` / `#c62828` | The red identity hue: labels, project dots, meters. |
+| `hue.orange` | P:orange → D | — | `#e0b070` / `#b06000` | The orange identity hue: labels, project dots, meters. |
+| `hue.yellow` | P:yellow → D | — | `#e5c07b` / `#8f7a00` | The yellow identity hue: labels, project dots, meters. |
+| `hue.green` | P:green → D | — | `#9ecf8a` / `#3f7f2f` | The green identity hue: labels, project dots, meters. |
+| `hue.cyan` | P:cyan → D | — | `#7fd1e8` / `#1f7f99` | The cyan identity hue: labels, project dots, meters. |
+| `hue.blue` | P:blue → D | — | `#6796e6` / `#1f5fb0` | The blue identity hue: labels, project dots, meters. |
+| `hue.purple` | P:purple → D | — | `#c9a2f5` / `#7b3fb5` | The purple identity hue: labels, project dots, meters. |
+| `hue.pink` | P:pink → D | — | `#f0a0c8` / `#b03a6a` | The pink identity hue: labels, project dots, meters. |
 
 ## Derived variables
 

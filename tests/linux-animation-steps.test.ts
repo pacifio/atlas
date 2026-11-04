@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { INFINITE_ANIMATIONS, INFINITE_ANIMATION_FPS_VAR } from "@tryatlas/design/animations";
 
 /**
  * Every infinite animation in `globals.css` has a stepped Linux override.
@@ -15,6 +16,12 @@ import { fileURLToPath } from "node:url";
  * `html.platform-linux`, which caps its frame rate; a new infinite
  * animation added without one reintroduces the cost silently. This suite is
  * the only thing that notices.
+ *
+ * The package's own endless animations are held the same way, from its
+ * `INFINITE_ANIMATIONS` list: each CSS one needs a `steps()` rule for its
+ * selector, and the JS loops (which no stylesheet reaches) need the
+ * `--infinite-animation-fps` cap they read declared under the same class. A
+ * package bump that adds one fails here until desktop caps it.
  *
  * Also pinned: the class the block keys on is set at startup, and the
  * ring whose 3 s turn would drop to 4 fps under the default step count sets
@@ -86,6 +93,31 @@ describe("infinite animations are stepped on Linux", () => {
     it(`Tailwind's ${utility} has a Linux steps() override`, () => {
       expect(overrides.get(utility)).toMatch(/animation-timing-function:\s*steps\(/);
     });
+  }
+
+  for (const animation of INFINITE_ANIMATIONS) {
+    if (animation.driver === "css") {
+      it(`the package's ${animation.id} (${animation.selector}) has a Linux steps() override`, () => {
+        const body = overrides.get(animation.selector);
+        expect(body, `no "${LINUX} ${animation.selector}" rule in globals.css`).toBeDefined();
+        // The count, not just the presence: `steps(12)` on a 3 s turn is
+        // 4 fps. A `var()` step count is read at its fallback.
+        const count = body?.match(
+          /animation-timing-function:\s*steps\((?:var\([^,]+,\s*)?(\d+)/,
+        )?.[1];
+        expect(Number(count), `steps() for ${animation.selector}`).toBe(animation.steps);
+      });
+    } else {
+      it(`the package's ${animation.id} (a JS loop) is capped by ${INFINITE_ANIMATION_FPS_VAR}`, () => {
+        const fps = new RegExp(`${INFINITE_ANIMATION_FPS_VAR}:\\s*([0-9.]+)\\s*(?:;|$)`);
+        const cap = overrides.get("")?.match(fps);
+        expect(cap, `no "${INFINITE_ANIMATION_FPS_VAR}" in the bare "${LINUX}" rule`).toBeTruthy();
+        // The package's contract: about 12 fps, never more.
+        const capped = Number(cap![1]);
+        expect(capped).toBeGreaterThan(0);
+        expect(capped).toBeLessThanOrEqual(12);
+      });
+    }
   }
 
   it("the class the overrides key on is set before the first render", () => {

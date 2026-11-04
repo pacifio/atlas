@@ -5,12 +5,13 @@
    `@source`: its boot skeleton uses only its own inline `atlas-boot-*` rules. */
 @import "tailwindcss" source("../");
 /* The design system (`@tryatlas/design`, ADR-0027): Geist and Geist Mono, the
-   non-colour scales, every built-in theme as resolved CSS, the Tailwind bridge
-   and the named utilities. Its `:root` block is Atlas dark, the floor for a
-   frame no theme has been applied to yet; `applyTheme` writes the active
-   theme over it under `html:root`, which outranks it. Everything below is
-   desktop's own. */
-@import "@tryatlas/design/styles.css";
+   non-colour scales, the Tailwind bridge and the named utilities. The `-core`
+   sheet leaves out the package's built-in themes as resolved CSS blocks,
+   which desktop never selects: it applies themes through its own engine, so
+   NO theme variable has a value until `applyTheme` writes the active theme
+   under `html:root` (or index.html's boot script replays the last one from
+   localStorage). Everything below is desktop's own. */
+@import "@tryatlas/design/styles-core.css";
 @import "./diff-syntax.css";
 @import "./xyflow.css";
 
@@ -2441,12 +2442,29 @@ html:root[data-diff-palette="blue-orange"] {
    easing becomes linear steps on this platform, a trade taken on purpose.
    Scoped to the class `markPlatform()` sets, so every other platform keeps
    its motion. `tests/linux-animation-steps.test.ts` requires a rule
-   here for every infinite animation in this file. */
+   here for every infinite animation in this file and every CSS one in
+   `@tryatlas/design`'s `INFINITE_ANIMATIONS`; the package's JS loops read
+   `--infinite-animation-fps` instead, since no stylesheet reaches them. */
+html.platform-linux {
+  --infinite-animation-fps: 12;
+}
 html.platform-linux .animate-spin {
   /* 1 s spinners; the working ring sets 36 for its 3 s turn. */
   animation-timing-function: steps(var(--atlas-linux-spin-steps, 12));
 }
 html.platform-linux .animate-pulse {
+  animation-timing-function: steps(24);
+}
+/* The package's SessionPipeline: a 3 s turn, like the working ring. */
+html.platform-linux .animate-spin[data-slot="session-pipeline-running"] {
+  animation-timing-function: steps(36);
+}
+/* The package's Globe, whose `motion-safe:` variants `.animate-ping` and
+   `.animate-pulse` rules do not match. */
+html.platform-linux [data-slot="globe-ping"] {
+  animation-timing-function: steps(12);
+}
+html.platform-linux [data-slot="globe-live-dot"] {
   animation-timing-function: steps(24);
 }
 html.platform-linux .atlas-live-pulse {

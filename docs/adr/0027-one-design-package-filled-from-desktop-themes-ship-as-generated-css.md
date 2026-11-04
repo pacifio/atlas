@@ -123,9 +123,11 @@ until the team picks them up again.
 - Desktop copies the golden fixture (`base-derivation.json`) with the rule tables, so
   Rust's interpreter test stays hermetic too. `bun run theme:pierre` writes into a
   checkout of the package, because the files it edits are the package's.
-- Desktop imports `styles.css` whole, so it ships `themes.css` (every built-in theme,
-  about a third of the entry stylesheet) although it resolves themes at runtime and only
-  uses the `:root` floor. An entry without the theme blocks would let it drop them.
+- Desktop imports `styles-core.css` (from v0.1.4), `styles.css` without `themes.css`:
+  it resolves themes at runtime, so the built-in blocks never matched. The price is the
+  `:root` floor — until the first `applyTheme` (or `index.html`'s replay of the last
+  theme), the theme keys are unset.
 - Desktop runs `runRatchet` without `banAtlasPrefix`: that rule bans every `--atlas-`
   name, including the app variables that keep the prefix. Desktop bans only the retired
-  theme-key spellings, and `transition-all`, in its own suite.
+  theme-key spellings in its own suite, and passes the package's `TRANSITION_ALL_RULE`
+  back with its scope widened to `src/` and `index.html`.

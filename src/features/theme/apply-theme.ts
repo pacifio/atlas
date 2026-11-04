@@ -96,8 +96,9 @@ export function invertedThemeCss(cssVars: Record<string, string>): string {
 
 /**
  * Cache it for the next cold start. Failure is silent and harmless —
- * `index.html` falls back to the package's Atlas-dark `:root` and the literals it has always had
- * (a blocked or full store, or a private window, all land there).
+ * `index.html` falls back to the literals it has always had, and the theme
+ * keys wait for the first `applyTheme` (a blocked or full store, or a private
+ * window, all land there).
  */
 function cacheLaunchTheme(cache: ReturnType<typeof launchCache>): void {
   try {

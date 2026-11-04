@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { formatViolations, runRatchet } from "@tryatlas/design/ratchet";
+import { TRANSITION_ALL_RULE, formatViolations, runRatchet } from "@tryatlas/design/ratchet";
 import { DERIVED_VAR_REGISTRY, THEME_KEY_REGISTRY } from "@tryatlas/design/theme";
 
 /**
@@ -38,10 +38,18 @@ import { DERIVED_VAR_REGISTRY, THEME_KEY_REGISTRY } from "@tryatlas/design/theme
  * scale instead" cannot apply to it. `src/dev` keeps a narrow exemption for
  * the fixture files whose CONTENT is colours (theme files, fake source
  * listings) — see `EXEMPT_DIRS`.
+ *
+ * One rule looks wider. `transition-all` (and `transition: all`) animates
+ * whatever changes next — a width, a padding that follows a count — so each
+ * use is a layout animation recalculating the page every frame, and that is
+ * as true in `src/styles` and `index.html` as anywhere. The package's rule is
+ * passed back with its scope widened to all of `src/` plus `index.html`, in
+ * a run of its own that the colour exemptions below do not reach.
  */
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SCAN_ROOTS = ["src/features", "src/components", "src/dev"];
+const TRANSITION_ALL_SCOPE = ["src", "index.html"];
 
 /**
  * Whole files inside the scanned roots that are exempt, each with the reason.
@@ -130,6 +138,22 @@ describe("design-system ratchet", () => {
     });
     expect(violations, formatViolations(violations)).toEqual([]);
   });
+
+  // Its own run, without the exemptions above: those argue a file's COLOURS,
+  // and must not wave a `transition-all` through. No roots, so only the
+  // scoped rule scans; a per-site `ratchet-allow` is still honoured.
+  it("has no transition-all in " + TRANSITION_ALL_SCOPE.join(" + "), () => {
+    // A scoped path that is gone scans nothing and passes silently.
+    for (const scoped of TRANSITION_ALL_SCOPE) {
+      expect(existsSync(path.join(REPO_ROOT, scoped)), scoped).toBe(true);
+    }
+    const violations = runRatchet({
+      cwd: REPO_ROOT,
+      roots: [],
+      rules: [{ ...TRANSITION_ALL_RULE, scope: TRANSITION_ALL_SCOPE }],
+    });
+    expect(violations, formatViolations(violations)).toEqual([]);
+  });
 });
 
 function walk(dir: string): string[] {
@@ -165,38 +189,5 @@ describe("retired `--atlas-` theme-key names", () => {
     );
     expect(names.length).toBeGreaterThan(0);
     expect(hits, "drop the `--atlas-` prefix: a theme key's variable is `--<key>`").toEqual([]);
-  });
-});
-
-/**
- * `transition-all` (and `transition: all`) is banned, with no exit.
- *
- * It animates whatever changes next, not what the author meant: a padding
- * that follows a count, a width, a height. Each of those is a layout
- * animation, recalculating the page every frame, and nothing reports it — the
- * class type-checks, lints and looks fine on a fast machine. A transition
- * names the properties it animates: `transition-colors` for a hover colour,
- * `transition-opacity`, or `transition-[translate,opacity]` when movement goes
- * with it (movement by `translate`/`transform`, which stay on the compositor).
- * Desktop-only for now: `@tryatlas/design/ratchet` takes no extra rules, and
- * the package itself has no `transition-all` either.
- */
-describe("`transition-all`", () => {
-  it("is used nowhere", () => {
-    const banned = /\btransition-all\b|\btransition(?:-property)?\s*:\s*["'`]?all\b/g;
-    const files = [...walk(path.join(REPO_ROOT, "src")), path.join(REPO_ROOT, "index.html")];
-    expect(files.length).toBeGreaterThan(0);
-    const hits = files.flatMap((file) =>
-      readFileSync(file, "utf8")
-        .split("\n")
-        .flatMap((line, i) =>
-          (line.match(banned) ?? []).map(
-            (match) => `${path.relative(REPO_ROOT, file)}:${i + 1}: ${match}`,
-          ),
-        ),
-    );
-    expect(hits, "name the properties: transition-colors, transition-[translate,opacity]…").toEqual(
-      [],
-    );
   });
 });
