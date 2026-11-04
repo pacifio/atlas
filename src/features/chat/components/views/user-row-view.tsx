@@ -123,7 +123,7 @@ export const UserRowView = memo(function UserRowView({
         {row.contextBlocks > 0 && (
           <button
             type="button"
-            className="mt-1 flex items-center gap-1 text-2xs text-[var(--muted-foreground)] hover:text-[var(--secondary-foreground)] cursor-pointer transition-colors"
+            className="mt-1 flex items-center gap-1 text-2xs text-muted-foreground hover:text-secondary-foreground cursor-pointer transition-colors"
             title="Context attached with @-mentions"
           >
             <Paperclip size={10} />
@@ -240,7 +240,7 @@ function ExpandToggle({
     <button
       type="button"
       onClick={() => onToggleExpand(row.id)}
-      className="mt-0.5 h-[18px] text-2xs text-[var(--muted-foreground)] hover:text-[var(--secondary-foreground)] cursor-pointer transition-colors"
+      className="mt-0.5 h-control-2xs text-2xs text-muted-foreground hover:text-secondary-foreground cursor-pointer transition-colors"
     >
       {row.expanded ? "Show less" : "Show more"}
     </button>

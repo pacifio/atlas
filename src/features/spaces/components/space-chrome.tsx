@@ -379,7 +379,7 @@ export function SpaceActionPill({
           <Tooltip>
             <TooltipTrigger
               render={
-                <span className="ml-1.5 flex h-[18px] items-center gap-1 rounded-full bg-primary/15 px-1.5 text-2xs font-medium text-primary">
+                <span className="ml-1.5 flex h-control-2xs items-center gap-1 rounded-full bg-primary/15 px-1.5 text-2xs font-medium text-primary">
                   <Eye size={10} />
                   {followers.length}
                 </span>
