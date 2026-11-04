@@ -272,17 +272,25 @@ export function ProjectPicker({
                   <span className="min-w-0 flex-1 truncate">Import sessions from agents…</span>
                 </DropdownMenu.Item>
                 {current ? (
-                  <DropdownMenuItem
-                    variant="destructive"
-                    onClick={() => onRemoveProject(current)}
-                    className="h-control-md w-full"
-                  >
-                    <X aria-hidden />
-                    <span className="min-w-0 flex-1 truncate">
-                      Remove {current.name} from Atlas
-                    </span>
-                    <span className="shrink-0 text-2xs text-muted-foreground">Keeps files</span>
-                  </DropdownMenuItem>
+                  <>
+                    <DropdownMenu.Separator className="mx-1.5 my-1 h-px shrink-0 bg-border-subtle" />
+                    <DropdownMenuItem
+                      variant="destructive"
+                      onClick={() => onRemoveProject(current)}
+                      className="h-control-md w-full"
+                    >
+                      <X aria-hidden />
+                      {/* Only the name truncates, so "from Atlas" always shows. The
+                          spaces are not laid out in the flex row (gap spaces it); they
+                          keep the accessible name readable. */}
+                      <span className="flex min-w-0 flex-1 gap-1">
+                        <span className="shrink-0">Remove</span>{" "}
+                        <span className="min-w-0 truncate">{current.name}</span>{" "}
+                        <span className="shrink-0">from Atlas</span>
+                      </span>{" "}
+                      <span className="shrink-0 text-2xs text-muted-foreground">Keeps files</span>
+                    </DropdownMenuItem>
+                  </>
                 ) : null}
               </div>
 
