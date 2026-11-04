@@ -257,17 +257,19 @@ export function PullRequestPanel({
   const fixFindingRef = useRef(agent.fixFinding);
   fixFindingRef.current = agent.fixFinding;
   const canFix = agent.fixFinding !== null;
+  const headBranch = detail?.headBranch ?? null;
   const scope = useMemo<PullRequestScope>(
     () => ({
       repoPath,
       number,
       repositoryUrl,
+      headBranch,
       agent: {
         fixFinding: canFix ? (finding) => fixFindingRef.current?.(finding) : null,
         pending: agent.pending,
       },
     }),
-    [repoPath, number, repositoryUrl, canFix, agent.pending],
+    [repoPath, number, repositoryUrl, headBranch, canFix, agent.pending],
   );
 
   if (!detail) {

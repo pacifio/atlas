@@ -97,6 +97,14 @@ describe("each kind, as the agent reads it", () => {
     expect(contextLabel(quote)).toBe("“some selected words”");
     expect(contextLabel({ ...memory, text: "x ".repeat(60) }).length).toBeLessThanOrEqual(40);
   });
+
+  it("says nothing of the index for a hunk that is on neither side of it", () => {
+    const { staged: _staged, ...branchHunk } = hunk;
+    expect(contextLabel(branchHunk)).toBe("src/a.ts · hunk");
+    expect(contextAsText({ id: "h2", context: branchHunk })).toMatch(
+      /^Context \(@ctx:h2\), a diff hunk in `src\/a.ts`:/,
+    );
+  });
 });
 
 describe("caps", () => {

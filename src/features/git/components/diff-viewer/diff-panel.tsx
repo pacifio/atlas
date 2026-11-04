@@ -13,6 +13,7 @@ import { combineReviews, useAttachedRootReviews } from "../../lib/use-root-revie
 import { useSessionRoots } from "@/features/chat/hooks/use-session-roots";
 import { useChatTabOfSession } from "@/features/chat/lib/review-comments";
 import { useDiffReviewComments } from "../../lib/use-diff-review-comments";
+import { SendReviewButton } from "./send-review-button";
 import {
   useSessionEditTurns,
   useTurnEdits,
@@ -428,6 +429,7 @@ function GitDiffPanel({
   );
   const annotations = useDiffReviewComments({
     chatTabId,
+    reviewTabId: tabId,
     section,
     files,
     displayPathOf: copyPathOf,
@@ -438,7 +440,14 @@ function GitDiffPanel({
       tabId={tabId}
       repoPath={repoPath}
       leading={leading}
-      actions={actions}
+      actions={
+        // Shown whenever the tab holds comments: a session that opens beside
+        // the diff later must not strand a review already written.
+        <>
+          <SendReviewButton tabId={tabId} />
+          {actions}
+        </>
+      }
       source={{
         key: collapseScopeKey,
         files,

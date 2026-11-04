@@ -26,6 +26,7 @@ import { usePrReplyMutation, usePrResolveMutation } from "../lib/pull-requests-q
 import type { PrReviewThread, PrThreadComment } from "../lib/pull-requests-types";
 import { readableFailure } from "../lib/use-pull-request-actions";
 import type { PendingReviewComment } from "../stores/pull-request-review-store";
+import { AddressWithAgentButton } from "./pull-request-ask-buttons";
 import { PullRequestCommentActions } from "./pull-request-comment-actions";
 import { usePullRequestScope } from "./pull-request-context";
 import { PullRequestMarkdown, TEXTAREA_CLASS } from "./pull-request-markdown";
@@ -155,7 +156,7 @@ export function ReviewThreadCard({
         />
         <button
           type="button"
-          className="cursor-pointer hover:text-foreground"
+          className="cursor-pointer whitespace-nowrap hover:text-foreground"
           aria-expanded={expanded}
           onClick={() => setExpanded((open) => !open)}
         >
@@ -163,12 +164,15 @@ export function ReviewThreadCard({
           {commentCount === 1 ? "comment" : "comments"}
         </button>
         {thread.isOutdated ? <span>Outdated</span> : null}
-        {/* An open thread can go to an agent, on the pull request's branch. */}
+        {/* An open thread can go to the session of the user's pick, or to a
+            new one on the pull request's branch. */}
+        {agent?.fixFinding && !thread.isResolved ? (
+          <AddressWithAgentButton className="ml-auto" feedback={{ kind: "thread", thread }} />
+        ) : null}
         {agent?.fixFinding && !thread.isResolved ? (
           <Button
             size="xs"
             variant="ghost"
-            className="ml-auto"
             disabled={agent.pending !== null}
             onClick={() => agent.fixFinding?.({ kind: "thread", thread })}
           >

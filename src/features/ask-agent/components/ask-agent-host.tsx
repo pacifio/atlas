@@ -112,6 +112,11 @@ function AskAgentBox({
       const result = await askAgent({ context, prompt, send, target });
       onClose();
       confirmAsk(result);
+      // Each chip's key is its index in the request's context.
+      request.onAsked?.(
+        result,
+        contexts.map((c) => Number(c.key)),
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setBusy(false);

@@ -195,8 +195,16 @@ export function AgentSignInView({
                 <ErrorStep
                   message={phase.message}
                   manualCommand={phase.manualCommand}
+                  fixError={{
+                    kind: "error",
+                    source: `${label} sign-in`,
+                    message: phase.message,
+                    ...(tail.length > 0 ? { log: tail.join("\n") } : {}),
+                    ...(phase.manualCommand ? { command: phase.manualCommand } : {}),
+                  }}
                   onCopyCommand={onCopyCommand}
                   onRetry={onRetry}
+                  onDismiss={onDismiss}
                 />
               )}
               {phase.kind === "env" && (

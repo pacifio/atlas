@@ -6,6 +6,7 @@
 import { create } from "zustand";
 import { createSelectors } from "@/lib/create-selectors";
 import type { AgentContext } from "../lib/agent-context";
+import type { AskResult } from "../lib/ask-agent";
 
 /** What the box grows out of: an element, a rect (an element about to go
  *  away, such as a closing dialog's button), or nothing (centred near the
@@ -20,6 +21,11 @@ export interface AskRequest {
   anchor: AskAnchor;
   /** Opens with this session picked; else the session in view. */
   target?: string;
+  /** Called once the box has handed the ask over (sent or drafted), not
+   *  when it is cancelled: a surface that holds what it asked about (a
+   *  review's comments) lets it go here. `kept` is which of `context` (by
+   *  index) went with it: the user may have taken chips out. */
+  onAsked?: (result: AskResult, kept: readonly number[]) => void;
 }
 
 interface AskAgentStoreState {

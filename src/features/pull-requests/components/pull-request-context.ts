@@ -10,6 +10,8 @@ export interface PullRequestScope {
   repoPath: string;
   number: number;
   repositoryUrl: string | null;
+  /** The head branch, for what "Address with agent" tells the agent. */
+  headBranch?: string | null;
   agent?: Pick<PullRequestAgentActions, "fixFinding" | "pending">;
 }
 

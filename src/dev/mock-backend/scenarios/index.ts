@@ -43,6 +43,7 @@ import { chatTurnChanges, chatTurnChangesLong, chatTurnChangesNative } from "./c
 import { askAgent } from "./ask-agent";
 import { askFiles } from "./ask-files";
 import { askAgentSourceControl } from "./ask-agent-source-control";
+import { askAgentReview, askAgentToasts } from "./ask-agent-errors";
 import { captureHealthy } from "./capture-healthy";
 import { collab } from "./collab";
 import { designSystem } from "./design-system";
@@ -135,6 +136,8 @@ const all: Scenario[] = [
   askAgent,
   askFiles,
   askAgentSourceControl,
+  askAgentReview,
+  askAgentToasts,
   diffLarge,
   diffComments,
   filesLarge,

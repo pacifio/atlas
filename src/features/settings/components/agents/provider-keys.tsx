@@ -251,8 +251,9 @@ function ProviderKeyRow({
   const reveal = async () => {
     try {
       setRevealed((await byok.reveal(envVar)) ?? "");
-    } catch {
-      toast.error("Couldn't read that key.");
+    } catch (e) {
+      // The cause rides along so "Fix with agent" has something to go on.
+      toast.error(`Couldn't read ${envVar}`, { description: errorText(e) });
     }
   };
 
@@ -260,8 +261,8 @@ function ProviderKeyRow({
     try {
       const value = await byok.reveal(envVar);
       if (value && (await copyText(value))) toast(`Copied ${envVar}`);
-    } catch {
-      toast.error("Couldn't read that key.");
+    } catch (e) {
+      toast.error(`Couldn't read ${envVar}`, { description: errorText(e) });
     }
   };
 
