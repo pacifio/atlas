@@ -1289,6 +1289,42 @@ mod tests {
         assert!(warnings.iter().all(|warning| !warning.message.is_empty()));
     }
 
+    /// Atlas reads one theme schema and translates nothing older. A theme in
+    /// an old shape, or one naming another schema, fails to load like any other
+    /// bad file: it is reported by name and never enters the catalog, so its id
+    /// does not resolve and the default takes over —
+    /// `unknown_config_theme_falls_back_in_memory_and_is_never_rewritten` in
+    /// `atlas_config.rs`, and `apply` in the theme store.
+    #[test]
+    fn an_old_or_other_schema_user_theme_is_skipped_and_the_default_still_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("old.toml"),
+            "id = \"old\"\nname = \"Old\"\n[colors]\n\"--atlas-element-hover\" = \"#123456\"\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("next.toml"),
+            minimal_theme("").replace("schema = 1", "schema = 2"),
+        )
+        .unwrap();
+
+        let (themes, warnings) = load_user_themes_from(dir.path()).unwrap();
+
+        assert!(themes.is_empty(), "{themes:?}");
+        let keys = warnings.iter().map(|w| w.key.as_str()).collect::<Vec<_>>();
+        assert_eq!(keys, ["next.toml", "old.toml"]);
+        assert!(
+            warnings[0].message.contains("unsupported schema 2"),
+            "{warnings:?}"
+        );
+        assert!(warnings[1].message.contains("old.toml"), "{warnings:?}");
+        assert!(built_in_themes()
+            .unwrap()
+            .iter()
+            .any(|theme| theme.id == DEFAULT_THEME_ID));
+    }
+
     // ── config_root (must track `config_root` in `atlas_config.rs`; #64 follow-up) ──
 
     /// The bug this whole fix exists for: `dirs::config_dir()` resolves to
