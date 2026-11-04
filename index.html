@@ -81,7 +81,9 @@
             // hand-edited entry must not be able to close the block.
             if (!/^--[A-Za-z0-9-]+$/.test(name) || typeof value !== "string") continue;
             if (/[;{}<\\]/.test(value)) continue;
-            declarations.push(name + ":" + value);
+            // A cache written before theme keys dropped their `--atlas-` prefix
+            // (ADR-0027). The first applyTheme rewrites it with the new names.
+            declarations.push(name.replace(/^--atlas-/, "--") + ":" + value);
           }
           if (!declarations.length) return;
           var style = document.createElement("style");
@@ -99,7 +101,9 @@
          nothing white shows before the stylesheets load. The literals are the
          Atlas-dark values and act as the never-cached fallback; the custom
          properties come from the script above. */
-      html, body, #root {
+      html,
+      body,
+      #root {
         background: var(--atlas-boot-bg, #000);
         margin: 0;
         padding: 0;
@@ -158,10 +162,18 @@
         border-radius: 4px;
         background: var(--atlas-boot-skeleton, rgba(255, 255, 255, 0.04));
       }
-      .atlas-boot-row.atlas-boot-row-tall { height: 24px; }
-      .atlas-boot-row.atlas-boot-row-narrow { width: 55%; }
-      .atlas-boot-row.atlas-boot-row-mid    { width: 75%; }
-      .atlas-boot-row.atlas-boot-row-wide   { width: 90%; }
+      .atlas-boot-row.atlas-boot-row-tall {
+        height: 24px;
+      }
+      .atlas-boot-row.atlas-boot-row-narrow {
+        width: 55%;
+      }
+      .atlas-boot-row.atlas-boot-row-mid {
+        width: 75%;
+      }
+      .atlas-boot-row.atlas-boot-row-wide {
+        width: 90%;
+      }
       .atlas-boot-main {
         flex: 1;
         display: flex;
@@ -219,8 +231,13 @@
         animation: atlas-boot-pulse 1.6s ease-in-out infinite;
       }
       @keyframes atlas-boot-pulse {
-        0%, 100% { opacity: 0.5; }
-        50%      { opacity: 1; }
+        0%,
+        100% {
+          opacity: 0.5;
+        }
+        50% {
+          opacity: 1;
+        }
       }
 
       /* No window border or corner rounding here: macOS clips the window
@@ -247,18 +264,18 @@
               <div class="atlas-boot-msg">
                 <div class="atlas-boot-avatar"></div>
                 <div class="atlas-boot-bubble">
-                  <div style="width:70%"></div>
-                  <div style="width:90%"></div>
-                  <div style="width:55%"></div>
+                  <div style="width: 70%"></div>
+                  <div style="width: 90%"></div>
+                  <div style="width: 55%"></div>
                 </div>
               </div>
               <div class="atlas-boot-msg">
                 <div class="atlas-boot-avatar"></div>
                 <div class="atlas-boot-bubble">
-                  <div style="width:85%"></div>
-                  <div style="width:60%"></div>
-                  <div style="width:75%"></div>
-                  <div style="width:40%"></div>
+                  <div style="width: 85%"></div>
+                  <div style="width: 60%"></div>
+                  <div style="width: 75%"></div>
+                  <div style="width: 40%"></div>
                 </div>
               </div>
             </div>
@@ -272,10 +289,14 @@
       // The skeleton stays visible across React's first commit + the Rust
       // bootstrap IPC so the user never sees an empty white flash between
       // them.
-      window.addEventListener("atlas:app-ready", function () {
-        var skel = document.querySelector(".atlas-boot");
-        if (skel && skel.parentNode) skel.parentNode.removeChild(skel);
-      }, { once: true });
+      window.addEventListener(
+        "atlas:app-ready",
+        function () {
+          var skel = document.querySelector(".atlas-boot");
+          if (skel && skel.parentNode) skel.parentNode.removeChild(skel);
+        },
+        { once: true },
+      );
     </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
