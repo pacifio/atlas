@@ -28,7 +28,7 @@ const HOOK_LINES = [
   "  ✔ oxfmt --write",
   "  ✖ oxlint --fix",
   "src/features/billing/plan-card.tsx",
-  "  42:18  error  Colour literal `#1f6feb`: use a theme token  design-system/no-colour-literal",
+  "  42:18  error  Unused variable `planTier`  no-unused-vars",
   "✖ 1 problem (1 error, 0 warnings)",
   "husky - pre-commit hook exited with code 1 (error)",
 ];

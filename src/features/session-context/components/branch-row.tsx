@@ -18,7 +18,7 @@ import { Copy, GitBranch, GitBranchPlus } from "lucide-react";
 
 import type { BranchInfo } from "@/features/git/stores/git-store";
 import { gitErrorText } from "@/features/notifications/lib/outcome-notifier";
-import { fixWithAgentAction } from "@/features/ask-agent/lib/ask-agent";
+import { fixWithAgentAction } from "@/features/ask-agent/lib/open-ask";
 import { anyGitErrorContext } from "@/features/git/lib/git-errors";
 import { cn } from "@/lib/utils";
 

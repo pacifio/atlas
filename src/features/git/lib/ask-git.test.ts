@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { CONTEXT_BODY_MAX_CHARS, contextLabel } from "@/features/ask-agent/lib/agent-context";
 import {
   conflictsContext,
   fileDiffContext,
@@ -7,6 +8,7 @@ import {
   hunkText,
   resolveConflictsPrompt,
   shipErrorContext,
+  withRestPointer,
 } from "./ask-git";
 import type { DiffHunk } from "./diff";
 import { anyGitErrorContext, gitErrorContext, type GitErrorPayload } from "./git-errors";
@@ -34,7 +36,7 @@ describe("a change as context", () => {
     expect(hunkText(HUNK)).toBe(
       "@@ -1,3 +1,3 @@ export function getUser\n const a = 1;\n-const b = 2;\n+const b = 3;",
     );
-    expect(hunkContext("src/a.ts", HUNK, true)).toEqual({
+    expect(hunkContext("src/a.ts", HUNK, "staged")).toEqual({
       kind: "diff_hunk",
       path: "src/a.ts",
       hunk: hunkText(HUNK),
@@ -45,15 +47,31 @@ describe("a change as context", () => {
   it("takes a file's hunks without its header, and nothing from a diff with none", () => {
     const diff =
       "diff --git a/src/a.ts b/src/a.ts\nindex 1..2 100644\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-a\n+b\n";
-    expect(fileDiffContext("src/a.ts", diff, false)).toEqual({
+    expect(fileDiffContext("src/a.ts", diff, "unstaged")).toEqual({
       kind: "diff_hunk",
       path: "src/a.ts",
       hunk: "@@ -1 +1 @@\n-a\n+b",
       staged: false,
     });
-    expect(fileDiffContext("img.png", "Binary files a/img.png and b/img.png differ\n", false)).toBe(
-      null,
-    );
+    expect(
+      fileDiffContext("img.png", "Binary files a/img.png and b/img.png differ\n", "unstaged"),
+    ).toBe(null);
+  });
+});
+
+describe("what the agent is told about staging and size", () => {
+  it("a partly staged file's hunk is against HEAD, not unstaged", () => {
+    const ctx = hunkContext("src/a.ts", HUNK, "partly");
+    expect(ctx).toMatchObject({ staged: false, againstHead: true });
+    expect(contextLabel(ctx)).toBe("src/a.ts · hunk vs HEAD");
+  });
+
+  it("a diff over the chip's budget says where the rest is, within budget", () => {
+    const body = Array.from({ length: 400 }, (_, i) => `+line ${i} of a long change`).join("\n");
+    const out = withRestPointer(body, "src/big.ts");
+    expect(out.length).toBeLessThanOrEqual(CONTEXT_BODY_MAX_CHARS);
+    expect(out).toMatch(/run `git diff HEAD -- src\/big.ts` for the whole change\)$/);
+    expect(withRestPointer("+short", "a.ts")).toBe("+short");
   });
 });
 

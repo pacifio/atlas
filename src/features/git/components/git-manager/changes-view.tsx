@@ -29,7 +29,7 @@ import { classifyFile } from "@/lib/file-types";
 import { FileTreeConfirmDelete } from "@/features/explorer/components/file-tree-confirm-delete";
 import { Button, EmptyState, IconButton, HintGroup, HintItem } from "@tryatlas/design";
 import { openAskAgent } from "@/features/ask-agent/lib/ask-agent";
-import { CHANGE_ASKS, fileDiffContext, hunkContext } from "../../lib/ask-git";
+import { CHANGE_ASKS, fileDiffContext, hunkContext, type StagedState } from "../../lib/ask-git";
 
 /** An added/untracked file has no HEAD version, so "revert" = delete it (a plain
  *  `git restore` errors). Mirrors the loose detection in `statusBadge`. */
@@ -412,10 +412,14 @@ export function ChangesView() {
     [repoPath],
   );
 
-  // A file is "staged" to the agent only when all of its change is: the
-  // diff here is the working tree's against HEAD, staged and not alike.
-  const whollyStaged = useCallback(
-    (path: string) => staged.some((f) => f.path === path) && !unstaged.some((f) => f.path === path),
+  // The diff here is the working tree's against HEAD, so a file with both
+  // staged and unstaged changes is told to the agent as exactly that.
+  const stagedState = useCallback(
+    (path: string): StagedState => {
+      const s = staged.some((f) => f.path === path);
+      const u = unstaged.some((f) => f.path === path);
+      return s && u ? "partly" : s ? "staged" : "unstaged";
+    },
     [staged, unstaged],
   );
   // The file's whole diff as the chip, read when asked: the list holds no
@@ -423,22 +427,24 @@ export function ChangesView() {
   const askAboutFile = useCallback(
     (f: GitFileStatus, anchor: HTMLElement) => {
       if (!repoPath) return;
+      // Measured now: a refresh during the read can unmount the row.
+      const rect = anchor.getBoundingClientRect();
       void invoke<string>("git_diff_file", { path: repoPath, file: f.path })
         .catch(() => "")
         .then((diff) => {
-          const ctx = fileDiffContext(f.path, diff, whollyStaged(f.path));
+          const ctx = fileDiffContext(f.path, diff, stagedState(f.path));
           openAskAgent({
             context: ctx ? [ctx] : [{ kind: "quote", text: f.path, source: "Changed file" }],
             suggestions: CHANGE_ASKS,
-            anchor: anchor.isConnected ? anchor : anchor.getBoundingClientRect(),
+            anchor: anchor.isConnected ? anchor : rect,
           });
         });
     },
-    [repoPath, whollyStaged],
+    [repoPath, stagedState],
   );
   const askHunk = useCallback(
-    (file: string, hunk: DiffHunk) => hunkContext(file, hunk, whollyStaged(file)),
-    [whollyStaged],
+    (file: string, hunk: DiffHunk) => hunkContext(file, hunk, stagedState(file)),
+    [stagedState],
   );
 
   const opKind: "merge" | "rebase" | "cherry-pick" | "revert" | null = !inProgress

@@ -40,6 +40,9 @@ export interface DiffHunkContext {
   path: string;
   hunk: string;
   staged: boolean;
+  /** The hunk is from the working tree against HEAD, staged and unstaged
+   *  changes together (a partly staged file); `staged` then says nothing. */
+  againstHead?: boolean;
 }
 
 /** A memory entry. `memoryKind` is the memory's own kind ("decision",
@@ -150,7 +153,9 @@ export function contextLabel(ctx: AgentContext): string {
     case "file_range":
       return shortLabel(`${ctx.path}:${rangeOf(ctx.startLine, ctx.endLine)}`);
     case "diff_hunk":
-      return shortLabel(`${ctx.path} · ${ctx.staged ? "staged" : "unstaged"} hunk`);
+      return shortLabel(
+        `${ctx.path} · ${ctx.againstHead ? "hunk vs HEAD" : `${ctx.staged ? "staged" : "unstaged"} hunk`}`,
+      );
     case "memory_entry":
       return shortLabel(`Memory · ${ctx.text}`);
     case "commit":
@@ -171,7 +176,7 @@ export function contextTitle(ctx: AgentContext): string {
     case "file_range":
       return `${ctx.path}, lines ${rangeOf(ctx.startLine, ctx.endLine)}\n${head(ctx.excerpt)}`;
     case "diff_hunk":
-      return `${ctx.path} (${ctx.staged ? "staged" : "unstaged"})\n${head(ctx.hunk)}`;
+      return `${ctx.path} (${ctx.againstHead ? "staged and unstaged, vs HEAD" : ctx.staged ? "staged" : "unstaged"})\n${head(ctx.hunk)}`;
     case "memory_entry":
       return `${ctx.memoryKind} memory${ctx.project ? ` · ${ctx.project}` : ""}\n${head(ctx.text)}`;
     case "commit":
@@ -223,7 +228,9 @@ function sourceLine(ctx: AgentContext): string {
     case "file_range":
       return `\`${ctx.path}\`, lines ${rangeOf(ctx.startLine, ctx.endLine)}`;
     case "diff_hunk":
-      return `a ${ctx.staged ? "staged" : "unstaged"} diff hunk in \`${ctx.path}\``;
+      return ctx.againstHead
+        ? `a diff hunk against HEAD (staged and unstaged changes) in \`${ctx.path}\``
+        : `a ${ctx.staged ? "staged" : "unstaged"} diff hunk in \`${ctx.path}\``;
     case "memory_entry":
       return `${ctx.memoryKind} memory \`${ctx.id}\`${ctx.project ? ` in project ${ctx.project}` : " (global)"}`;
     case "commit":

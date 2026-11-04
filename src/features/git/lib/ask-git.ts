@@ -6,6 +6,7 @@
 // whatever the agent then does, it does in its own session, where the user
 // sees it. Pure, so the shapes are table tests (`ask-git.test.ts`).
 
+import { CONTEXT_BODY_MAX_CHARS } from "@/features/ask-agent/lib/agent-context";
 import type {
   AgentContext,
   CommitContext,
@@ -37,8 +38,30 @@ export function hunkText(hunk: DiffHunk): string {
   return [hunk.header, ...body].join("\n");
 }
 
-export function hunkContext(path: string, hunk: DiffHunk, staged: boolean): DiffHunkContext {
-  return { kind: "diff_hunk", path, hunk: hunkText(hunk), staged };
+/** Where a changed file's diff stands: all staged, all unstaged, or both
+ *  (the panel's diff is then the working tree against HEAD). */
+export type StagedState = "staged" | "unstaged" | "partly";
+
+function stagingFields(state: StagedState): { staged: boolean; againstHead?: true } {
+  return state === "partly" ? { staged: false, againstHead: true } : { staged: state === "staged" };
+}
+
+/** `body`, or its start with a line saying where the rest is, when it is
+ *  over the chip's budget: the agent must not undo or split only what it saw. */
+export function withRestPointer(body: string, path: string): string {
+  if (body.length <= CONTEXT_BODY_MAX_CHARS) return body;
+  const note = `\n… (cut here; run \`git diff HEAD -- ${path}\` for the whole change)`;
+  const cut = body.slice(0, CONTEXT_BODY_MAX_CHARS - note.length);
+  return `${cut.slice(0, Math.max(cut.lastIndexOf("\n"), 0))}${note}`;
+}
+
+export function hunkContext(path: string, hunk: DiffHunk, state: StagedState): DiffHunkContext {
+  return {
+    kind: "diff_hunk",
+    path,
+    hunk: withRestPointer(hunkText(hunk), path),
+    ...stagingFields(state),
+  };
 }
 
 /** A whole file's diff as one chip. `diff` is `git diff` output for the file;
@@ -47,11 +70,12 @@ export function hunkContext(path: string, hunk: DiffHunk, staged: boolean): Diff
 export function fileDiffContext(
   path: string,
   diff: string,
-  staged: boolean,
+  state: StagedState,
 ): DiffHunkContext | null {
   const start = diff.search(/^@@ /m);
   if (start < 0) return null;
-  return { kind: "diff_hunk", path, hunk: diff.slice(start).replace(/\n+$/, ""), staged };
+  const hunk = withRestPointer(diff.slice(start).replace(/\n+$/, ""), path);
+  return { kind: "diff_hunk", path, hunk, ...stagingFields(state) };
 }
 
 export function commitContext(sha: string, subject: string): CommitContext {

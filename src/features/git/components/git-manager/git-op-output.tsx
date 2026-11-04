@@ -19,7 +19,11 @@ import { opOutputText } from "../../lib/ask-git";
 export function GitOpOutput() {
   const activeOp = useGitStore.use.activeOp();
   const repoPath = useGitStore.use.repoPath();
-  const shipFailed = useShipStore((s) => !!repoPath && s.runs[repoPath]?.phase === "failed");
+  // The command "Commit, push & PR" stopped on, while it is stopped.
+  const shipFailedOn = useShipStore((s) => {
+    const run = repoPath ? s.runs[repoPath] : undefined;
+    return run?.phase === "failed" ? (run.error?.command ?? null) : null;
+  });
   const [collapsed, setCollapsed] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -46,7 +50,7 @@ export function GitOpOutput() {
 
   const failed = !activeOp.running && activeOp.error !== null;
   const fix =
-    failed && activeOp.error && !shipFailed
+    failed && activeOp.error && activeOp.error.command !== shipFailedOn
       ? gitErrorContext(activeOp.error, repoPath, opOutputText(activeOp.lines))
       : null;
 

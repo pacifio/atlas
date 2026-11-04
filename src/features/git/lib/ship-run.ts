@@ -74,13 +74,23 @@ export function describeShipDetail(
 ): { command: string; output?: string } {
   if (isGitError(error)) {
     const op = useGitStore.getState().activeOp;
-    const streamed =
-      op && !op.running && op.error?.command === error.command ? opOutputText(op.lines) : "";
+    // The strip's op is this failure's only when it failed the same way: a
+    // step that failed before streaming leaves an older op there.
+    const same =
+      !!op &&
+      !op.running &&
+      op.error?.command === error.command &&
+      op.error.message === error.message &&
+      op.error.rawStderr === error.rawStderr;
+    const streamed = same ? opOutputText(op.lines) : "";
     const output = streamed.trim() ? streamed : error.rawStderr;
     return { command: error.command || STEP_COMMAND[step], ...(output ? { output } : {}) };
   }
   if (isPrError(error)) {
-    return { command: STEP_COMMAND[step], ...(error.message ? { output: error.message } : {}) };
+    // gh's own words, when they say more than the sentence shown.
+    const shown = describeShipError(error, step);
+    const output = error.message && error.message !== shown ? error.message : undefined;
+    return { command: STEP_COMMAND[step], ...(output ? { output } : {}) };
   }
   return { command: STEP_COMMAND[step] };
 }

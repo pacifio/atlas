@@ -1,5 +1,5 @@
 import { toast } from "sonner";
-import { fixWithAgentAction } from "@/features/ask-agent/lib/ask-agent";
+import { fixWithAgentAction } from "@/features/ask-agent/lib/open-ask";
 import type { ErrorContext } from "@/features/ask-agent/lib/agent-context";
 import { useGitStore } from "../stores/git-store";
 
@@ -133,9 +133,9 @@ export function anyGitErrorContext(
  * toast otherwise. Accepts anything a `catch` can produce; legacy string
  * errors fall back to a plain error toast.
  */
-export function handleGitError(e: unknown): void {
-  // Every failure toast carries "Fix with agent"; the dialog has its own.
-  const repoPath = useGitStore.getState().repoPath;
+export function handleGitError(e: unknown, repoPath = useGitStore.getState().repoPath): void {
+  // Every failure toast carries "Fix with agent", in `repoPath` (the active
+  // repository unless the caller acts on another); the dialog has its own.
   if (!isGitError(e)) {
     toast.error(String(e), { action: fixWithAgentAction(anyGitErrorContext(e, repoPath)) });
     return;
