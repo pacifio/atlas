@@ -274,8 +274,6 @@ export function formatDuration(from: number, to: number): string {
   return rem === 0 ? `${h} hr` : `${h} hr ${rem} min`;
 }
 
-/** The typing hint's sentence. There is no "stopped typing" frame — the store
- *  ages entries out on a timer. */
 /**
  * Who else is in a draft, in words, by first name: "Priya is here",
  * "Priya and Tobi", "Priya and 3 others". Empty when nobody is.
@@ -288,6 +286,8 @@ export function presenceLabel(names: readonly string[]): string {
   return `${first(names[0])} and ${names.length - 1} others`;
 }
 
+/** The typing hint's sentence. There is no "stopped typing" frame — the store
+ *  ages entries out on a timer. */
 export function typingLabel(names: string[]): string {
   if (names.length === 1) return `${names[0]} is typing`;
   if (names.length === 2) return `${names[0]} and ${names[1]} are typing`;

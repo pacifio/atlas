@@ -137,6 +137,8 @@ export const CommsConversation = memo(function CommsConversation({
     convId: conv.id,
     hasOlder: true,
   });
+  // Each visit starts hopeful: leaving and coming back pages again.
+  if (olderFor.convId !== conv.id) setOlderFor({ convId: conv.id, hasOlder: true });
   const hasOlder = olderFor.convId === conv.id ? olderFor.hasOlder : true;
   const loadOlder = useCallback(async () => {
     const oldest = () => (useCommsStore.getState().messages[conv.id] ?? [])[0]?.seq;

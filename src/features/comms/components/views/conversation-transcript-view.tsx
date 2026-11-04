@@ -262,9 +262,13 @@ export function ConversationTranscriptView<T extends TranscriptItem>({
     [items, startIndex, containsMessage, convKey, flash],
   );
 
+  // One attempt, on the commit that mounted the widened window: a jump that
+  // still finds nothing must not fire later on some unrelated render.
   useLayoutEffect(() => {
     const id = pendingJump.current;
-    if (id && flash(id)) pendingJump.current = null;
+    if (!id) return;
+    pendingJump.current = null;
+    flash(id);
   });
 
   // Unseen-message count for the pill label. Counted only while away from the

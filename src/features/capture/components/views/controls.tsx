@@ -65,9 +65,13 @@ export function ModeOption({
   reason,
   label,
   onSelect,
+  tabStop = selected,
 }: {
   selected: boolean;
   disabled: boolean;
+  /** Whether this option is the group's Tab stop: the chosen one, unless
+   *  the chosen one has become unavailable. */
+  tabStop?: boolean;
   /** Why it can't be picked — carried on the control itself, not just below it. */
   reason?: string | null;
   label: string;
@@ -80,7 +84,7 @@ export function ModeOption({
       role="radio"
       aria-checked={selected}
       aria-disabled={disabled}
-      tabIndex={selected ? 0 : -1}
+      tabIndex={tabStop ? 0 : -1}
       disabled={disabled}
       title={disabled ? (reason ?? undefined) : undefined}
       onClick={onSelect}

@@ -73,6 +73,9 @@ export function UnboundCreateView({
           <ModeOption
             selected={mode === "local"}
             disabled={false}
+            // Local is always available, so it holds the Tab stop when a
+            // chosen Cloud has become unavailable.
+            tabStop={mode === "local" || !!cloudReason}
             label="Local"
             onSelect={() => onModeChange("local")}
           />
