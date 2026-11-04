@@ -10,7 +10,7 @@
 // each submenu kept its own state and unmounted with the menu: a reopened menu
 // starts with an empty search and reloads its lists.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { openSettingsSection } from "@/features/settings/lib/open-settings";
 import type { GithubRepo, ClonedRepo } from "@/features/github/types";
 import { listClonedRepos, searchGithub } from "@/features/github/lib/github-api";
@@ -66,6 +66,10 @@ export function ComposerAddMenu({
   // Projects: searched per keystroke.
   const [projectQuery, setProjectQuery] = useState("");
   const [projects, setProjects] = useState<MentionProject[] | null>(null);
+  // Bumped on every open: a GitHub search still in flight from an earlier open
+  // lands in a menu that has since been reset, and is dropped (as it was when
+  // the submenu unmounted with the menu).
+  const openGeneration = useRef(0);
 
   // The composer hosts two floating menus (this + menu and the grouped
   // agent/mode/model panel). Opening either announces itself; the other
@@ -81,6 +85,7 @@ export function ComposerAddMenu({
   const onOpenChange = useCallback((o: boolean) => {
     setOpen(o);
     if (o) {
+      openGeneration.current += 1;
       setGithubQuery("");
       setGithubResults(null);
       setGithubLoading(false);
@@ -119,11 +124,13 @@ export function ComposerAddMenu({
   const runGithubSearch = () => {
     const q = githubQuery.trim();
     if (!q) return;
+    const generation = openGeneration.current;
+    const current = () => generation === openGeneration.current;
     setGithubLoading(true);
     searchGithub(q)
-      .then((rows) => setGithubResults(rows))
-      .catch(() => setGithubResults([]))
-      .finally(() => setGithubLoading(false));
+      .then((rows) => current() && setGithubResults(rows))
+      .catch(() => current() && setGithubResults([]))
+      .finally(() => current() && setGithubLoading(false));
   };
 
   const loadSessions = () => {
@@ -162,7 +169,7 @@ export function ComposerAddMenu({
       open={open}
       onOpenChange={onOpenChange}
       disabled={!!disabled}
-      hasProject={projectPath !== null}
+      hasProject={!!projectPath}
       imageSupported={imageSupported}
       onAddFilesOrPhotos={onAddFilesOrPhotos}
       onAttachMedia={onAttachMedia}
