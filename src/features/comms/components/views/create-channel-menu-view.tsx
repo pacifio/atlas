@@ -64,7 +64,7 @@ export function CreateChannelMenuView({
         align="end"
         sideOffset={6}
         initialFocus={inputRef}
-        className="w-64 gap-0 p-0"
+        className="w-[240px] gap-0 p-0"
       >
         <div className="flex h-control-lg items-center gap-1.5 border-b border-border-subtle px-3">
           <Icon icon={Hash} size="sm" className="text-muted-foreground" />

@@ -16,7 +16,7 @@ const roster = [
   member("u_ada", "Ada Lovelace", "ada@engines.org"),
   member("u_grace", "Grace Hopper"),
   member("u_alan", "Alan Turing"),
-  member("u_barb", "Barbara Liskov"),
+  member("u_barb", "Barbara Liskov", "barbara@lab.io"),
 ];
 const members = new Map(roster.map((m) => [m.id, m]));
 
@@ -87,8 +87,8 @@ describe("homeSections", () => {
   });
 
   it("matches a contact on email, and a conversation on its title only", () => {
-    expect(ids(sections("liskov@").contacts)).toEqual([]);
-    expect(ids(sections("u_barb@acme").contacts)).toEqual(["u_barb"]);
+    // Barbara's address shares nothing with her name.
+    expect(ids(sections("lab.io").contacts)).toEqual(["u_barb"]);
     // Ada's address is not her conversation's title.
     expect(ids(sections("engines.org").oneToOnes)).toEqual([]);
   });

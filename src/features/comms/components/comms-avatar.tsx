@@ -91,7 +91,7 @@ export const CommsAvatar = memo(function CommsAvatar({
         <span
           aria-label={online ? "Online" : "Offline"}
           className={cn(
-            "absolute -right-px -bottom-px rounded-full ring-2 ring-background",
+            "absolute -right-px -bottom-px rounded-full border-2 border-background",
             DOT[size],
             online ? "bg-success" : "bg-border-strong",
           )}

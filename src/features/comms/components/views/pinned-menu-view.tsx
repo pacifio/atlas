@@ -87,7 +87,7 @@ export function PinnedMenuView({
         data-view="pinned-menu"
         align="end"
         sideOffset={6}
-        className="flex max-h-[min(420px,60vh)] w-80 flex-col gap-0 p-0"
+        className="flex max-h-[min(420px,60vh)] w-[320px] flex-col gap-0 p-0"
       >
         <div className="flex h-control-lg shrink-0 items-center gap-1.5 border-b border-border-subtle px-3">
           <Icon icon={Search} size="sm" className="text-muted-foreground" />
