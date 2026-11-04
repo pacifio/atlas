@@ -5,9 +5,11 @@ import { fileURLToPath } from "node:url";
 
 /**
  * The Atlas theme's syntax colours are Pierre's (`@pierre/theme`), written
- * into `atlas.toml` by `bun run theme:pierre` through Atlas's own VS Code
- * importer. The dependency is the source; the TOML is derived and committed,
- * because Rust compiles the built-in themes in and cannot read
+ * into `@tryatlas/design`'s `atlas.toml` and `keys.toml` by `bun run
+ * theme:pierre <design checkout>` through Atlas's own VS Code importer, and
+ * copied back here by `bun run theme:keys` once the package is released and
+ * the pin bumped. The dependency is desktop's; the TOML is derived and
+ * committed, because Rust compiles the built-in themes in and cannot read
  * `node_modules`.
  *
  * What fails silently without this: bumping `@pierre/theme` and forgetting
@@ -35,7 +37,10 @@ describe("Atlas theme syntax colours come from @pierre/theme", () => {
         new RegExp(`# BEGIN syntax from @pierre/theme (\\S+) \\(pierre-${variant}\\)`),
       );
       expect(match, `atlas.toml has no generated ${variant} block`).not.toBeNull();
-      expect(match?.[1], "run `bun run theme:pierre` after updating @pierre/theme").toBe(installed);
+      expect(
+        match?.[1],
+        "run `bun run theme:pierre <design checkout>`, release the package and bump its pin",
+      ).toBe(installed);
     });
 
     it(`keys.toml's ${variant} syntax defaults are the ${variant} block`, () => {
