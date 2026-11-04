@@ -20,6 +20,14 @@ import { useAppStore } from "@/features/app/stores/app-store";
 import { useMemoryStore } from "../stores/memory-store";
 import { useSharedMemoryStore } from "../stores/shared-memory-store";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -163,16 +171,28 @@ export function MemoryPanel() {
               void refresh();
             }}
           />
-          <FileTreeConfirmDelete
-            open={confirmClear}
-            name="shared memory"
-            isDir={false}
-            title="Clear shared memory?"
-            body="Every agent on this project loses every plan, decision, fact, failure and architecture note recorded here. This can't be undone."
-            confirmLabel="Clear"
-            onConfirm={() => void clearConfirmed()}
-            onOpenChange={setConfirmClear}
-          />
+          {/* Cancel holds focus when it opens: clearing is the one action
+              here that cannot be undone, so Enter must not be it. */}
+          <AlertDialog open={confirmClear} onOpenChange={setConfirmClear}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Clear shared memory?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Every agent on this project loses every plan, decision, fact, failure and
+                  architecture note recorded here. This can&apos;t be undone.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  variant="destructive-outline"
+                  onClick={() => void clearConfirmed()}
+                >
+                  Clear
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </>
       )}
 

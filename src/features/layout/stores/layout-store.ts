@@ -607,6 +607,11 @@ function removeColumnTab(s: LayoutState, id: string): void {
   syncActiveMirror(s);
 }
 
+/** The Knowledge columns' width clamps, in px. The resize handles read them
+ *  for their ARIA range and their Home/End keys. */
+export const KNOWLEDGE_SIDEBAR_WIDTH = { min: 180, max: 480 } as const;
+export const KNOWLEDGE_INSPECTOR_WIDTH = { min: 220, max: 520 } as const;
+
 export const useLayoutStore = createSelectors(
   create<LayoutState & LayoutActions>()(
     persist(
@@ -635,11 +640,17 @@ export const useLayoutStore = createSelectors(
             }),
           setKnowledgeSidebarWidth: (width) =>
             set((s) => {
-              s.knowledgePanel.sidebarWidth = Math.max(180, Math.min(width, 480));
+              s.knowledgePanel.sidebarWidth = Math.max(
+                KNOWLEDGE_SIDEBAR_WIDTH.min,
+                Math.min(width, KNOWLEDGE_SIDEBAR_WIDTH.max),
+              );
             }),
           setKnowledgeInspectorWidth: (width) =>
             set((s) => {
-              s.knowledgePanel.inspectorWidth = Math.max(220, Math.min(width, 520));
+              s.knowledgePanel.inspectorWidth = Math.max(
+                KNOWLEDGE_INSPECTOR_WIDTH.min,
+                Math.min(width, KNOWLEDGE_INSPECTOR_WIDTH.max),
+              );
             }),
           setBashPanelWidth: (width) =>
             set((s) => {

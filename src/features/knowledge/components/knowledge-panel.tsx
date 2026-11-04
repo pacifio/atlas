@@ -8,7 +8,11 @@ import {
   useReferencesLabel,
 } from "../stores/knowledge-links-store";
 import { useAppStore } from "@/features/app/stores/app-store";
-import { useLayoutStore } from "@/features/layout/stores/layout-store";
+import {
+  KNOWLEDGE_INSPECTOR_WIDTH,
+  KNOWLEDGE_SIDEBAR_WIDTH,
+  useLayoutStore,
+} from "@/features/layout/stores/layout-store";
 import { openFile } from "@/lib/open-file";
 import { useProjectStore } from "@/features/projects/stores/project-store";
 import { registerFlush } from "@/features/projects/lib/flush-registry";
@@ -31,7 +35,8 @@ import { EditorFooter } from "./editor-footer";
 import { KnowledgeInspectorView } from "./views/knowledge-inspector-view";
 import { PageProperties } from "./page-properties";
 import { PageHeaderWithIcon } from "./page-header-with-icon";
-import { RepoEmpty, RepoTopbar } from "./views/repo-views";
+import { ReadmeSkeleton, RepoEmpty, RepoTopbar } from "./views/repo-views";
+import { ResizeSeparator } from "./views/resize-separator";
 import { BacklinksFooter } from "./views/backlinks-footer";
 import { listClonedRepos, readRepoReadme, saveKnowledgeNote } from "../lib/knowledge-api";
 import type { KnowledgeClonedRepo } from "../lib/knowledge-api";
@@ -67,6 +72,10 @@ export function KnowledgePanel({ tabId }: { tabId?: string }) {
   const [finderOpen, setFinderOpen] = useState(false);
   const [activeRepoName, setActiveRepoName] = useState<string | null>(null);
   const [repoReadme, setRepoReadme] = useState<string | null>(null);
+  const [readmeLoading, setReadmeLoading] = useState(false);
+  // Each README read takes a ticket; only the latest one may land, so a slow
+  // read for the repo you left never overwrites the one you are looking at.
+  const readmeTicket = useRef(0);
   const [clonedRepos, setClonedRepos] = useState<KnowledgeClonedRepo[]>([]);
   // KB panel layout is hoisted into layout-store so tab switches don't
   // reset sidebar/inspector visibility or column widths — same model the
@@ -269,12 +278,16 @@ export function KnowledgePanel({ tabId }: { tabId?: string }) {
       // Always flush the outgoing note before swapping — unconditionally, not
       // gated on `isDirty` (which could be a stale `false` and drop the draft).
       // flushAndSave's content check makes the no-change case a cheap no-op.
+      // Leave repo mode before the flush, so a repo picked while it runs is
+      // not undone when it finishes.
+      readmeTicket.current += 1;
+      setActiveRepoName(null);
+      setRepoReadme(null);
+      setReadmeLoading(false);
       if (activeEntryId && id !== activeEntryId) {
         await flushAndSave();
       }
       selectEntry(id);
-      setActiveRepoName(null);
-      setRepoReadme(null);
     },
     [activeEntryId, flushAndSave, selectEntry],
   );
@@ -303,14 +316,21 @@ export function KnowledgePanel({ tabId }: { tabId?: string }) {
   const handleSelectRepo = useCallback(
     async (name: string) => {
       if (!currentProject) return;
+      const ticket = ++readmeTicket.current;
       setActiveRepoName(name);
       selectEntry("");
+      setRepoReadme(null);
+      setReadmeLoading(true);
+      let readme: string | null;
       try {
-        const readme = await readRepoReadme(currentProject.path, name);
-        setRepoReadme(readme);
+        readme = await readRepoReadme(currentProject.path, name);
       } catch {
-        setRepoReadme(null);
+        readme = null;
       }
+      if (ticket !== readmeTicket.current) return;
+      // A README that is only whitespace has nothing to show: it reads as missing.
+      setRepoReadme(readme?.trim() ? readme : null);
+      setReadmeLoading(false);
     },
     [currentProject, selectEntry],
   );
@@ -427,11 +447,14 @@ export function KnowledgePanel({ tabId }: { tabId?: string }) {
             }}
             width={sidebarWidth}
           />
-          {/* 4px col-resize hit area; invisible until hover. */}
-          <div
+          <ResizeSeparator
+            label="Resize sidebar"
+            width={sidebarWidth}
+            min={KNOWLEDGE_SIDEBAR_WIDTH.min}
+            max={KNOWLEDGE_SIDEBAR_WIDTH.max}
+            grows="right"
+            onResize={setKnowledgeSidebarWidth}
             onMouseDown={(e) => startResize(e, "sidebar")}
-            className="shrink-0 cursor-col-resize hover:bg-border-strong/60 transition-colors z-panel"
-            style={{ width: 4, marginLeft: -2, marginRight: -2 }}
           />
         </>
       )}
@@ -449,9 +472,14 @@ export function KnowledgePanel({ tabId }: { tabId?: string }) {
               }
               onToggleSidebar={toggleKnowledgeSidebar}
               sidebarHidden={!showSidebar}
-              onToggleInspector={toggleKnowledgeInspector}
             />
-            {repoReadme ? (
+            {readmeLoading ? (
+              <div className="flex-1 min-h-0 overflow-auto">
+                <div className="max-w-3xl mx-auto px-8 py-8">
+                  <ReadmeSkeleton />
+                </div>
+              </div>
+            ) : repoReadme ? (
               // README is read-only — a full Tiptap instance is wrong here.
               // It mounts the mention extension whose <body>-level popup
               // host leaks into the next note opened. Use the lightweight
@@ -556,10 +584,14 @@ export function KnowledgePanel({ tabId }: { tabId?: string }) {
 
       {showInspector && activeEntry && !activeRepoName && (
         <>
-          <div
+          <ResizeSeparator
+            label="Resize inspector"
+            width={inspectorWidth}
+            min={KNOWLEDGE_INSPECTOR_WIDTH.min}
+            max={KNOWLEDGE_INSPECTOR_WIDTH.max}
+            grows="left"
+            onResize={setKnowledgeInspectorWidth}
             onMouseDown={(e) => startResize(e, "inspector")}
-            className="shrink-0 cursor-col-resize hover:bg-border-strong/60 transition-colors z-panel"
-            style={{ width: 4, marginLeft: -2, marginRight: -2 }}
           />
           <KnowledgeInspectorView
             outline={outline.map((h) => ({ id: h.id, label: h.label, level: h.level }))}

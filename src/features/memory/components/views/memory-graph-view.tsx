@@ -216,13 +216,21 @@ function GraphReady({
   const [playing, setPlaying] = useState(false);
   const rafRef = useRef<number | undefined>(undefined);
 
-  // Esc deselects the active node (unless typing in the search field).
+  // Esc deselects the active node, unless it is typing somewhere (the search
+  // field, a textarea, an editable region): there Esc belongs to the field.
   useEffect(() => {
     if (!selectedId) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       const el = document.activeElement;
-      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA")) return;
+      if (
+        el &&
+        (el.tagName === "INPUT" ||
+          el.tagName === "TEXTAREA" ||
+          (el instanceof HTMLElement && el.isContentEditable))
+      ) {
+        return;
+      }
       onSelect(null);
     };
     window.addEventListener("keydown", onKey);

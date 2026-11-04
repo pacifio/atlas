@@ -143,13 +143,8 @@ function Scene({
     sceneRef.current = { ...sceneRef.current, cutoff: cutoffMs };
   }, [cutoffMs]);
 
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && selectedId !== null) onSelect(null);
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [selectedId, onSelect]);
+  // No Esc listener here: `MemoryGraphView` owns Esc-to-deselect, and skips it
+  // while a field has focus, so Esc in the search box only clears the search.
 
   useEffect(() => {
     const host = hostRef.current;

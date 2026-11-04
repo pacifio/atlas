@@ -21,10 +21,12 @@ import {
   CanvasActionPill,
   CanvasDraftBox,
   CanvasHeaderPill,
+  CanvasStatusChip,
   CanvasToolbar,
   EmptyState,
   LOCAL_CANVAS_TOOL_GROUPS,
 } from "@tryatlas/design";
+import { EDGE_INK } from "../lib/edge-ink";
 import { useAppStore } from "@/features/app/stores/app-store";
 import {
   useCanvasStore,
@@ -202,7 +204,7 @@ function CanvasSurface({
         sourceHandle: e.sourceHandle ?? undefined,
         targetHandle: e.targetHandle ?? undefined,
         type: "smoothstep",
-        style: { stroke: "var(--border-strong)", strokeWidth: 1.5 },
+        // No inline stroke, so a selected edge can turn primary (`EDGE_INK`).
       })),
     [edges],
   );
@@ -447,6 +449,7 @@ function CanvasSurface({
         <ReactFlow
           nodes={allNodes}
           edges={rfEdges}
+          style={EDGE_INK}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
@@ -481,6 +484,11 @@ function CanvasSurface({
             color="var(--border-strong)"
           />
         </ReactFlow>
+
+        {/* An empty page says how to start; the dot grid alone says nothing. */}
+        {loaded && nodes.length === 0 && !armed && (
+          <CanvasStatusChip>Click a tool, then the canvas</CanvasStatusChip>
+        )}
 
         {/* Drag-to-create overlay — only mounted while a create-tool is armed. */}
         {armed && (

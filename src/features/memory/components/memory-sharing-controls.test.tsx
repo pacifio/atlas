@@ -8,10 +8,11 @@ const invoke = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async () => () => {}) }));
 
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemorySharingControls } from "./memory-sharing-controls";
 import { useMemorySharingStore } from "../stores/memory-sharing-store";
+import { useByokStore } from "@/features/settings/stores/byok-store";
 import {
   EXTERNAL_SESSIONS_LABEL,
   EXTERNAL_SESSIONS_NEEDS_SHARING,
@@ -51,8 +52,35 @@ beforeEach(() => {
     fromExternalSessions: false,
     loaded: false,
   });
+  useByokStore.setState({ loaded: false, keys: {} });
 });
 afterEach(cleanup);
+
+describe("the handoff mode row", () => {
+  it("is one Tab stop, and the arrows choose among the modes that can be chosen", async () => {
+    backend({ sharing: true, external: false });
+    useByokStore.setState({
+      loaded: true,
+      keys: { anthropic: { provider: "anthropic" } as never },
+    });
+    await openPopover();
+    const group = screen.getByRole("radiogroup", { name: "Handoff summarizer" });
+    const raw = within(group).getByRole("radio", { name: /Raw/ });
+    const provider = within(group).getByRole("radio", { name: /Provider/ });
+    const local = within(group).getByRole("radio", { name: /Local/ });
+    expect(raw.getAttribute("aria-checked")).toBe("true");
+    expect([raw.tabIndex, provider.tabIndex, local.tabIndex]).toEqual([0, -1, -1]);
+
+    raw.focus();
+    await userEvent.keyboard("{ArrowRight}");
+    expect(useMemorySharingStore.getState().pref.mode).toBe("provider");
+    expect(document.activeElement).toBe(provider);
+    // Local is never chosen: the arrows wrap past it.
+    await userEvent.keyboard("{ArrowRight}");
+    expect(useMemorySharingStore.getState().pref.mode).toBe("raw");
+    expect(document.activeElement).toBe(raw);
+  });
+});
 
 describe("the sessions-outside-Atlas switch", () => {
   it("is off by default and turning it on persists for the project", async () => {

@@ -28,9 +28,14 @@ export function MemoryGraph() {
   }, [projectPath, init]);
 
   const [viewMode, setViewMode] = useState<MemoryGraphViewMode>(() => {
-    const v = typeof localStorage !== "undefined" ? localStorage.getItem(VIEW_KEY) : null;
     // Tree is the default/initial view; only an explicit "graph" pref overrides.
-    return v === "graph" ? "graph" : "tree";
+    // The read is guarded like the write: storage that throws (blocked, or
+    // a webview with it disabled) must not take the Map down with it.
+    try {
+      return localStorage.getItem(VIEW_KEY) === "graph" ? "graph" : "tree";
+    } catch {
+      return "tree";
+    }
   });
   const changeViewMode = (m: MemoryGraphViewMode) => {
     setViewMode(m);

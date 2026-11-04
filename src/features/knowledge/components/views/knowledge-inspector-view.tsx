@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { ChevronRight, Link2, ListTree } from "lucide-react";
 import { EmptyState, Icon } from "@tryatlas/design";
 import { cn } from "@/lib/utils";
@@ -45,6 +45,7 @@ export function KnowledgeInspectorView({
   width?: number;
 }) {
   const [tab, setTab] = useState<"outline" | "links">("outline");
+  const baseId = useId();
 
   return (
     <aside
@@ -53,15 +54,37 @@ export function KnowledgeInspectorView({
       className="flex min-h-0 shrink-0 flex-col border-l border-border-subtle bg-background"
       style={{ width }}
     >
-      <div className="flex h-[36px] shrink-0 items-center gap-1 border-b border-border-subtle px-2.5">
+      {/* A tablist: one Tab stop (the chosen tab); the arrows, Home and End
+          move between the two and switch as they go. */}
+      <div
+        role="tablist"
+        aria-label="Inspector"
+        className="flex h-[36px] shrink-0 items-center gap-1 border-b border-border-subtle px-2.5"
+        onKeyDown={(e) => {
+          const at = TABS.findIndex((t) => t.id === tab);
+          let next: number | null = null;
+          if (e.key === "ArrowRight") next = (at + 1) % TABS.length;
+          else if (e.key === "ArrowLeft") next = (at - 1 + TABS.length) % TABS.length;
+          else if (e.key === "Home") next = 0;
+          else if (e.key === "End") next = TABS.length - 1;
+          if (next === null) return;
+          e.preventDefault();
+          setTab(TABS[next].id);
+          document.getElementById(`${baseId}-tab-${TABS[next].id}`)?.focus();
+        }}
+      >
         {TABS.map(({ id, label }) => {
           const active = tab === id;
           return (
             <button
               key={id}
+              id={`${baseId}-tab-${id}`}
               type="button"
+              role="tab"
+              aria-selected={active}
+              aria-controls={`${baseId}-panel`}
+              tabIndex={active ? 0 : -1}
               onClick={() => setTab(id)}
-              aria-pressed={active}
               className={cn(
                 "h-control-sm rounded-full px-3 text-sm leading-none transition-colors duration-fast",
                 active
@@ -75,7 +98,12 @@ export function KnowledgeInspectorView({
         })}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-3.5 py-3">
+      <div
+        id={`${baseId}-panel`}
+        role="tabpanel"
+        aria-labelledby={`${baseId}-tab-${tab}`}
+        className="min-h-0 flex-1 overflow-y-auto px-3.5 py-3"
+      >
         {tab === "outline" && (
           <>
             <div className="eyebrow mb-2">On this page</div>

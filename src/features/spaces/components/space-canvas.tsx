@@ -29,7 +29,9 @@ import {
   type SpaceAnchor,
   type SpaceShapeType,
 } from "../lib/space-doc";
-import { selectionColours } from "../lib/space-wire";
+import { PEER_INK } from "@tryatlas/design";
+import { selectionHues } from "../lib/space-wire";
+import { EDGE_INK } from "@/features/canvas/lib/edge-ink";
 import { spacesApi } from "../lib/spaces-api";
 import type { SpaceDock } from "../lib/dock";
 import type { SpaceSession } from "../lib/use-space-session";
@@ -110,7 +112,7 @@ function SpaceSurface({
 
   // ---- doc → xyflow -------------------------------------------------------
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
-  const peerOutlines = useMemo(() => selectionColours(actors), [actors]);
+  const peerOutlines = useMemo(() => selectionHues(actors), [actors]);
 
   // Node objects are IDENTITY-CACHED per id: a drag changes one node's row,
   // and the other ~199 must keep their references so their memo'd components
@@ -154,8 +156,10 @@ function SpaceSurface({
         height: n.height,
         selected: selectedSet.has(n.id),
         draggable: editable,
-        style: outline
-          ? { outline: `2px solid ${outline}`, outlineOffset: 2, borderRadius: 6 }
+        // A peer's claim: an outline in their identity hue, the one their
+        // cursor and presence ring wear.
+        className: outline
+          ? `rounded-md outline-2 outline-offset-2 outline-solid ${PEER_INK[outline].outline}`
           : undefined,
         data: {
           title: n.title,
@@ -186,7 +190,8 @@ function SpaceSurface({
       sourceHandle: ANCHOR_TO_HANDLE[e.sourceAnchor],
       targetHandle: ANCHOR_TO_HANDLE[e.targetAnchor],
       type: "smoothstep",
-      style: { stroke: e.color ?? "var(--border-strong)", strokeWidth: 1.5 },
+      // No inline stroke: it would beat xyflow's selected rule. The board
+      // sets the edge ink (`EDGE_INK`): border-strong, primary when selected.
     }));
   }, [revision, session.doc]);
 
@@ -579,6 +584,7 @@ function SpaceSurface({
         <ReactFlow
           nodes={rfNodes}
           edges={rfEdges}
+          style={EDGE_INK}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}

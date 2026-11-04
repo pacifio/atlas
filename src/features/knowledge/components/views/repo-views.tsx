@@ -1,4 +1,4 @@
-import { Copy, ExternalLink, FileText, GitBranch, PanelRight } from "lucide-react";
+import { Copy, ExternalLink, FileText, GitBranch } from "lucide-react";
 import {
   Badge,
   Button,
@@ -9,20 +9,21 @@ import {
   Icon,
   IconButton,
   RailGlyph,
+  Skeleton,
 } from "@tryatlas/design";
 
+/** The repo pane's top bar. No inspector toggle: the inspector only shows
+ *  beside a note, so in repo mode the button did nothing. */
 export function RepoTopbar({
   name,
   onCopyPath,
   onToggleSidebar,
   sidebarHidden,
-  onToggleInspector,
 }: {
   name: string;
   onCopyPath: () => void;
   onToggleSidebar?: () => void;
   sidebarHidden?: boolean;
-  onToggleInspector: () => void;
 }) {
   return (
     <div
@@ -51,26 +52,34 @@ export function RepoTopbar({
         <HintItem label="Copy path">
           <IconButton icon={Copy} label="Copy path" size="sm" onClick={onCopyPath} />
         </HintItem>
-        <HintItem label="Toggle inspector">
-          <IconButton
-            icon={PanelRight}
-            label="Toggle inspector"
-            size="sm"
-            onClick={onToggleInspector}
-          />
-        </HintItem>
       </HintGroup>
     </div>
   );
 }
 
-/** `onOpen` opens this repo as a project in the current window (Atlas is
- *  single-window now — was: spawn a new native window). */
+/** The README while it loads: a title bar and a paragraph of lines, so the
+ *  column keeps its shape and a slow read never shows the last repo's text. */
+export function ReadmeSkeleton() {
+  return (
+    <div role="status" aria-label="Loading README" className="flex flex-col gap-3">
+      <Skeleton className="h-7 w-1/2" />
+      <Skeleton className="h-4 w-full" />
+      <Skeleton className="h-4 w-11/12" />
+      <Skeleton className="h-4 w-4/5" />
+      <Skeleton className="mt-3 h-5 w-1/3" />
+      <Skeleton className="h-4 w-full" />
+      <Skeleton className="h-4 w-3/4" />
+    </div>
+  );
+}
+
+/** A repo with no README, or one that is only whitespace. `onOpen` opens
+ *  this repo as a project in the current window. */
 export function RepoEmpty({ onOpen, onCopyPath }: { onOpen: () => void; onCopyPath: () => void }) {
   return (
     <EmptyState
       icon={FileText}
-      title="No README.md found"
+      title="This repo has no README"
       className="h-full"
       action={
         <div className="flex items-center gap-2">
