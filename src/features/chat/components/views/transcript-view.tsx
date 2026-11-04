@@ -138,7 +138,7 @@ export function TranscriptView({
           // container edge. At fractional UI scales the fade's bottom and the
           // scroller's bottom can round to different device pixels, and during
           // scroll repaints a 1-2px hairline of text flashed through the seam
-          // above the composer. The overshoot is solid bg-surface over the
+          // above the composer. The overshoot is solid `--background` over the
           // inter-panel gap — invisible, and it absorbs the rounding both ways.
           "pointer-events-none absolute -bottom-[2px] left-0 right-0 z-panel h-[44px] transition-opacity duration-200",
           more ? "opacity-100" : "opacity-0",
