@@ -67,14 +67,16 @@ export function ConflictsView({ onOpenFile }: { onOpenFile: (path: string) => vo
         const resolvedLabel =
           f.markerCount > 0 ? "Mark resolved (conflict markers still present!)" : "Mark resolved";
         return (
+          // Keyboard focus on any of the row's actions lights the whole row,
+          // the way the pointer does, so the file they act on stays clear.
           <div
             key={f.path}
-            className="group flex items-center gap-1.5 h-control-md pl-2 pr-1 text-xs transition-colors duration-fast hover:bg-element-hover"
+            className="group flex items-center gap-1.5 h-control-md pl-2 pr-1 text-xs transition-colors duration-fast hover:bg-element-hover focus-within:bg-element-hover"
           >
             <span className="shrink-0 w-3 text-center font-mono text-2xs font-semibold text-error">
               !
             </span>
-            <span className="truncate flex-1 min-w-0 font-mono text-secondary-foreground group-hover:text-foreground">
+            <span className="truncate flex-1 min-w-0 font-mono text-secondary-foreground group-hover:text-foreground group-focus-within:text-foreground">
               {f.path}
             </span>
             {f.markerCount > 0 ? (
@@ -85,7 +87,7 @@ export function ConflictsView({ onOpenFile }: { onOpenFile: (path: string) => vo
               <span className="shrink-0 font-mono text-2xs text-muted-foreground">no markers</span>
             )}
             <HintGroup>
-              <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 shrink-0">
+              <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 shrink-0">
                 <Button
                   variant="outline"
                   size="xs"

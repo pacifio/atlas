@@ -18,9 +18,9 @@ import { StashesView } from "./stashes-view";
 type View = "changes" | "history" | "stashes";
 
 /**
- * Unified Source-Control manager — GitHub-Desktop-style toolbar (branch
- * switcher + fetch/pull/push with ahead/behind) over Changes / History /
- * Stashes views. Lives in the source-control surface and is the single place to run
+ * Unified Source-Control manager — one header row (the Changes / History /
+ * Stashes switch, then the branch switcher and fetch/pull/push with
+ * ahead/behind) over the selected view. Lives in the source-control surface and is the single place to run
  * the project repo's git workflow.
  */
 export function GitManagerPanel() {
@@ -99,19 +99,33 @@ export function GitManagerPanel() {
           title={progress.title}
         />
       )}
-      {/* Toolbar: branch + sync */}
+      {/* One header row: the view switch, then the branch and its sync, in
+          that tab order. Too narrow for both, the branch group wraps onto a
+          second line (still right-aligned) instead of clipping, and the
+          branch name truncates before anything else gives. */}
       <HintGroup>
-        <div className="shrink-0 flex items-center gap-1 px-1.5 h-control-lg border-b border-border-subtle">
-          <BranchSwitcher />
-          <HintItem label={mergeLabel}>
-            <IconButton
-              size="sm"
-              icon={GitMerge}
-              label={mergeLabel}
-              onClick={() => setMergeOpen(true)}
-            />
-          </HintItem>
-          <div className="ml-auto flex items-center gap-0.5">
+        <div className="shrink-0 flex flex-wrap items-center gap-x-1 gap-y-0.5 px-1.5 py-1 border-b border-border-subtle">
+          <div className="flex items-center gap-0.5">
+            <ViewTab active={view === "changes"} onClick={() => setView("changes")}>
+              Changes{changedCount > 0 ? ` (${changedCount})` : ""}
+            </ViewTab>
+            <ViewTab active={view === "history"} onClick={() => setView("history")}>
+              History
+            </ViewTab>
+            <ViewTab active={view === "stashes"} onClick={() => setView("stashes")}>
+              Stashes
+            </ViewTab>
+          </div>
+          <div className="ml-auto flex min-w-0 max-w-full items-center gap-0.5">
+            <BranchSwitcher />
+            <HintItem label={mergeLabel}>
+              <IconButton
+                size="sm"
+                icon={GitMerge}
+                label={mergeLabel}
+                onClick={() => setMergeOpen(true)}
+              />
+            </HintItem>
             <FetchButton
               repoPath={repoPath}
               onClick={() => run("fetch", () => actions.fetch())}
@@ -146,19 +160,6 @@ export function GitManagerPanel() {
           </div>
         </div>
       </HintGroup>
-
-      {/* View tabs */}
-      <div className="shrink-0 flex items-center gap-0.5 px-1.5 h-control-lg border-b border-border-subtle">
-        <ViewTab active={view === "changes"} onClick={() => setView("changes")}>
-          Changes{changedCount > 0 ? ` (${changedCount})` : ""}
-        </ViewTab>
-        <ViewTab active={view === "history"} onClick={() => setView("history")}>
-          History
-        </ViewTab>
-        <ViewTab active={view === "stashes"} onClick={() => setView("stashes")}>
-          Stashes
-        </ViewTab>
-      </div>
 
       <div className="flex-1 min-h-0">
         {view === "changes" && <ChangesView />}
