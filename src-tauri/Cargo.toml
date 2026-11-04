@@ -2,9 +2,6 @@
 name = "atlas"
 version = "0.4.1"
 edition = "2021"
-# The deb's one-line Description (`[package.metadata.deb]` below has no field
-# of its own for it; cargo-deb reads this one).
-description = "Atlas — agent-first ideation and planning tool"
 
 [lib]
 name = "atlas_lib"
@@ -344,42 +341,3 @@ atlas-embed = { path = "../crates/atlas-embed", features = ["metal"] }
 # without this stanza it is dead configuration (#60).
 [lints]
 workspace = true
-
-# The deb that `scripts/linux/cargo-deb.sh` builds (`cargo deb -p atlas
-# --no-build`), for a local install. The release deb is the one
-# `scripts/package-linux.sh` builds with dpkg-deb and release-linux.yml
-# verifies; this table restates its shape so the two install the same files
-# under the same package name. `linux-packaging.test.ts` keeps them in step.
-#
-# `depends`: `$auto` is dpkg-shlibdeps, which reads the binary's sonames and
-# the glibc floor; the rest is scripts/linux/runtime-deps.sh's DEB_DEPENDS,
-# which cargo-deb cannot read, so the suite compares the two lists.
-# `revision = ""` keeps the file name `tryatlas_<version>_<arch>.deb`, the
-# name the release uses, rather than cargo-deb's default `<version>-1`.
-# Asset sources are relative to this manifest; `target/release/` is rewritten
-# by cargo-deb to the real target directory.
-[package.metadata.deb]
-name = "tryatlas"
-maintainer = "Atlas Team <contact@tryatlas.cc>"
-copyright = "Atlas contributors"
-license-file = ["../LICENSE", "0"]
-extended-description = "Atlas is an agent-first IDE and planning tool for software development."
-section = "devel"
-priority = "optional"
-revision = ""
-depends = "$auto, libwebkit2gtk-4.1-0, libgtk-3-0, libayatana-appindicator3-1, libglib2.0-0, bubblewrap"
-suggests = "wl-clipboard, xclip, xsel"
-provides = "atl"
-maintainer-scripts = "../scripts/linux/deb"
-assets = [
-  ["target/release/atlas", "usr/bin/atl", "755"],
-  ["../scripts/linux/deb/tryatlas", "usr/bin/tryatlas", "777"],
-  ["resources/dev.atlas.ide.desktop", "usr/share/applications/", "644"],
-  ["icons/32x32.png", "usr/share/icons/hicolor/32x32/apps/atlas.png", "644"],
-  ["icons/64x64.png", "usr/share/icons/hicolor/64x64/apps/atlas.png", "644"],
-  ["icons/128x128.png", "usr/share/icons/hicolor/128x128/apps/atlas.png", "644"],
-  ["icons/128x128@2x.png", "usr/share/icons/hicolor/256x256/apps/atlas.png", "644"],
-  ["icons/icon.png", "usr/share/icons/hicolor/512x512/apps/atlas.png", "644"],
-  ["../LICENSE", "usr/share/licenses/tryatlas/LICENSE", "644"],
-  ["licenses/*", "usr/share/licenses/tryatlas/", "644"],
-]

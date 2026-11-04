@@ -17,14 +17,6 @@ built, checked, signed and announced.
   is refused by older ones on `libc6`, as Debian 13 (glibc 2.41) does to a binary built on
   Ubuntu 26.04 (glibc 2.43). Only building on the floor fixes that, which the release
   workflow does. `docs/research/deb-dependencies-cargo-deb.md` has the reasoning.
-- **A local deb with cargo-deb:** `bun run package:linux:deb` (`scripts/linux/cargo-deb.sh`,
-  `--build` to build first, `--install` to apt-install the result) writes
-  `target/debian/tryatlas_<version>_<arch>.deb` from `[package.metadata.deb]` in
-  `src-tauri/Cargo.toml`. It installs what the release deb installs, with the shared
-  libraries and glibc floor read from the binary by `dpkg-shlibdeps`, so its `Depends`
-  names the building machine's packages. The release deb stays the one
-  `package-linux.sh` builds and `Verify` checks; `linux-packaging.test.ts` keeps the two
-  in step.
 - **Why it is shaped this way:** [`docs/research/linux-release-plan.md`](../research/linux-release-plan.md).
 
 ## Supported systems

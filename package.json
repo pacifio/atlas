@@ -38,7 +38,6 @@
     "typecheck": "bun run --parallel typecheck:app typecheck:test",
     "typecheck:app": "tsc --noEmit -p tsconfig.json",
     "typecheck:test": "tsc --noEmit -p tsconfig.test.json",
-    "package:linux:deb": "bash scripts/linux/cargo-deb.sh",
     "clean:app": "bash scripts/clean-atlas-config.sh",
     "clean:app:dev": "bash scripts/clean-atlas-config.sh --dev",
     "clean:rust": "find . crates vendor -maxdepth 2 -path ./target -prune -o -type d -name target -prune -exec sh -c 'test -f \"$1/CACHEDIR.TAG\" && du -sh \"$1\" && rm -rf \"$1\"' _ {} \\;",

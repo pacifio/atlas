@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { lstatSync, readFileSync, readlinkSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -28,12 +28,6 @@ import { fileURLToPath } from "node:url";
  *    file (docs/research/deb-dependencies-cargo-deb.md);
  *  - bzip2 compiled in on Linux, for the soname reason in its manifest;
  *  - the bundled bubblewrap pinned to one version and one checksum;
- *  - the cargo-deb table in src-tauri/Cargo.toml (scripts/linux/cargo-deb.sh,
- *    the local deb) installing what the release deb installs: the same
- *    package name, /usr/bin/atl with the tryatlas symlink and never
- *    /usr/bin/atlas, the same dependency list, and the maintainer scripts
- *    from scripts/linux/deb/, which package-linux.sh copies from too. A deb
- *    that drifts installs fine and behaves differently from the release;
  *  - the packages staged under target/, where the packager and the release
  *    workflow name the same directory. Staging under dist/ shipped once: the
  *    frontend sync (scripts/build-frontend.mjs) deletes everything in dist/
@@ -137,64 +131,6 @@ describe("where the Linux packages are staged", () => {
     // Collect fail with `cp: cannot stat` after a full build.
     expect(workflow).toContain(`${outputDir}/`);
     expect(workflow).not.toContain("dist/release-linux");
-  });
-});
-
-describe("the cargo-deb table (the local deb) matches the release deb", () => {
-  const manifest = read("src-tauri/Cargo.toml");
-  const table = manifest.split(/^\[package\.metadata\.deb\]$/m)[1]?.split(/^\[/m)[0];
-  const field = (name: string) => table?.match(new RegExp(`^${name} = "([^"]*)"$`, "m"))?.[1];
-  const assets = [...(table ?? "").matchAll(/^\s*\["([^"]+)", "([^"]+)", "(\d+)"\],$/gm)].map(
-    ([, source, dest, mode]) => ({ source, dest, mode }),
-  );
-  const packager = read("scripts/package-linux.sh");
-
-  it("exists, and is the package the release ships under its own file name", () => {
-    expect(table, "src-tauri/Cargo.toml has no [package.metadata.deb]").toBeDefined();
-    expect(field("name")).toBe("tryatlas");
-    // cargo-deb's default revision would name the file tryatlas_<v>-1_<arch>.deb.
-    expect(field("revision")).toBe("");
-  });
-
-  it("installs /usr/bin/atl and the tryatlas symlink, and never /usr/bin/atlas", () => {
-    const bin = assets.find((a) => a.dest === "usr/bin/atl");
-    expect(bin?.source).toBe("target/release/atlas");
-    expect(bin?.mode).toBe("755");
-    const link = assets.find((a) => a.dest === "usr/bin/tryatlas");
-    expect(link?.source).toBe("../scripts/linux/deb/tryatlas");
-    expect(lstatSync(path.join(REPO_ROOT, "scripts/linux/deb/tryatlas")).isSymbolicLink()).toBe(
-      true,
-    );
-    expect(readlinkSync(path.join(REPO_ROOT, "scripts/linux/deb/tryatlas"))).toBe("atl");
-    expect(assets.some((a) => a.dest === "usr/bin/atlas")).toBe(false);
-  });
-
-  it("depends on $auto plus exactly runtime-deps.sh's DEB_DEPENDS", () => {
-    const depends = field("depends")
-      ?.split(",")
-      .map((d) => d.trim());
-    expect(depends?.[0]).toBe("$auto");
-    expect(depends?.slice(1).sort()).toEqual([...FAMILIES.deb].sort());
-  });
-
-  it("uses the maintainer scripts the release deb uses", () => {
-    expect(field("maintainer-scripts")).toBe("../scripts/linux/deb");
-    for (const script of ["postinst", "postrm"]) {
-      expect(packager).toContain(`scripts/linux/deb/${script}" "\${DEB_STAGING}/DEBIAN/${script}"`);
-      expect(packager).not.toMatch(
-        new RegExp(`cat <<'EOF' > "\\$\\{DEB_STAGING\\}/DEBIAN/${script}"`),
-      );
-    }
-  });
-
-  it("installs the desktop file, every icon size and the licences the release installs", () => {
-    const dests = assets.map((a) => a.dest);
-    expect(dests).toContain("usr/share/applications/");
-    for (const size of ["32x32", "64x64", "128x128", "256x256", "512x512"]) {
-      expect(dests).toContain(`usr/share/icons/hicolor/${size}/apps/atlas.png`);
-    }
-    expect(dests).toContain("usr/share/licenses/tryatlas/LICENSE");
-    expect(dests).toContain("usr/share/licenses/tryatlas/");
   });
 });
 

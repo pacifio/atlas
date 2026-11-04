@@ -359,11 +359,39 @@ Description: Atlas — agent-first ideation and planning tool
  Atlas is an agent-first IDE and planning tool for software development.
 EOF
 
-# The maintainer scripts live in scripts/linux/deb/, shared with the
-# cargo-deb path (scripts/linux/cargo-deb.sh), so the two debs behave the same.
-cp "${ROOT_DIR}/scripts/linux/deb/postinst" "${DEB_STAGING}/DEBIAN/postinst"
-cp "${ROOT_DIR}/scripts/linux/deb/postrm" "${DEB_STAGING}/DEBIAN/postrm"
-chmod 755 "${DEB_STAGING}/DEBIAN/postinst" "${DEB_STAGING}/DEBIAN/postrm"
+cat <<'EOF' > "${DEB_STAGING}/DEBIAN/postinst"
+#!/bin/sh
+set -e
+# `atlas` belongs to the standalone Atlas CLI; drop the alias earlier versions made
+if [ -L /usr/bin/atlas ] && [ "$(readlink /usr/bin/atlas)" = "atl" ]; then
+  rm -f /usr/bin/atlas
+fi
+# Remove legacy desktop launcher aliases if present from earlier versions
+rm -f /usr/share/applications/atlas.desktop /usr/share/applications/atl.desktop /usr/share/applications/tryatlas.desktop
+if command -v update-desktop-database >/dev/null 2>&1; then
+  update-desktop-database -q /usr/share/applications || true
+fi
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+  gtk-update-icon-cache -q -t /usr/share/icons/hicolor || true
+fi
+EOF
+chmod 755 "${DEB_STAGING}/DEBIAN/postinst"
+
+cat <<'EOF' > "${DEB_STAGING}/DEBIAN/postrm"
+#!/bin/sh
+set -e
+if [ -L /usr/bin/atlas ] && [ "$(readlink /usr/bin/atlas)" = "atl" ]; then
+  rm -f /usr/bin/atlas
+fi
+rm -f /usr/share/applications/atlas.desktop /usr/share/applications/atl.desktop /usr/share/applications/tryatlas.desktop
+if command -v update-desktop-database >/dev/null 2>&1; then
+  update-desktop-database -q /usr/share/applications || true
+fi
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+  gtk-update-icon-cache -q -t /usr/share/icons/hicolor || true
+fi
+EOF
+chmod 755 "${DEB_STAGING}/DEBIAN/postrm"
 
 DEB_FILE="${OUTPUT_DIR}/tryatlas_${VERSION}_${DEB_ARCH}.deb"
 if command -v dpkg-deb >/dev/null 2>&1; then
