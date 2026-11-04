@@ -124,9 +124,10 @@ until the team picks them up again.
   Rust's interpreter test stays hermetic too. `bun run theme:pierre` writes into a
   checkout of the package, because the files it edits are the package's.
 - Desktop imports `styles-core.css` (from v0.1.4), `styles.css` without `themes.css`:
-  it resolves themes at runtime, so the built-in blocks never matched. The price is the
-  `:root` floor — until the first `applyTheme` (or `index.html`'s replay of the last
-  theme), the theme keys are unset.
+  it resolves themes at runtime, so the built-in blocks never matched. From v0.1.5 the
+  sheet carries `default-theme.css` in their place, the Atlas theme alone at `:root`
+  (dark unless the OS prefers light), so a first launch is themed before the first
+  `applyTheme` (or `index.html`'s replay of the last theme) writes over it at `html:root`.
 - Desktop runs `runRatchet` without `banAtlasPrefix`: that rule bans every `--atlas-`
   name, including the app variables that keep the prefix. Desktop bans only the retired
   theme-key spellings in its own suite, and passes the package's `TRANSITION_ALL_RULE`

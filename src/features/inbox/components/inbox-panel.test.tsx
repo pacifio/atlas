@@ -24,7 +24,7 @@ vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(async () => () => {}),
   emit: vi.fn(async () => {}),
 }));
-// The days are the Timeline's calendar (`timeline-calendar.tsx`): its sticky
+// The days are the Timeline's calendar (`@tryatlas/design/timeline-calendar`): its sticky
 // date animates with `motion`, and its list is virtualized — which renders
 // nothing in happy-dom, where every element measures zero. As in the board's
 // own tests, the animation is passed through and the window made total.
@@ -59,9 +59,13 @@ vi.mock("@tanstack/react-virtual", () => ({
         key: getItemKey(index),
         start: index * 80,
         size: 80,
+        end: index * 80 + 80,
       })),
     getTotalSize: () => count * 80,
     measureElement: () => {},
+    // The package calendar indexes this for its end space even with
+    // `endSpace` off; a missing array would throw.
+    measurementsCache: [],
   }),
 }));
 

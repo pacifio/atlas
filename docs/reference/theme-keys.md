@@ -312,7 +312,7 @@ The eight hues that name a thing — a label, a project dot — never a status.
 |---|---|---|---|---|
 | `hue.red` | P:red → D | — | `#f44747` / `#c62828` | The red identity hue: labels, project dots, meters. |
 | `hue.orange` | P:orange → D | — | `#e0b070` / `#b06000` | The orange identity hue: labels, project dots, meters. |
-| `hue.yellow` | P:yellow → D | — | `#e5c07b` / `#8f7a00` | The yellow identity hue: labels, project dots, meters. |
+| `hue.yellow` | P:yellow → D | — | `#e0ca66` / `#8f7a00` | The yellow identity hue: labels, project dots, meters. |
 | `hue.green` | P:green → D | — | `#9ecf8a` / `#3f7f2f` | The green identity hue: labels, project dots, meters. |
 | `hue.cyan` | P:cyan → D | — | `#7fd1e8` / `#1f7f99` | The cyan identity hue: labels, project dots, meters. |
 | `hue.blue` | P:blue → D | — | `#6796e6` / `#1f5fb0` | The blue identity hue: labels, project dots, meters. |

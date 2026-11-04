@@ -57,7 +57,7 @@ export const SessionRow = memo(function SessionRow({
       className={cn(
         // Exactly as wide as the hairlines between rows, inside them with a
         // little air above and below (the row's wrapper in
-        // `timeline-calendar.tsx`). It used to overhang the hairlines by 8px a
+        // `@tryatlas/design` TimelineCalendar). It used to overhang the hairlines by 8px a
         // side, so a selected row's rounded corners stuck out past the rules
         // and butted against the one above it.
         "flex w-full cursor-pointer items-start gap-2.5 rounded-lg px-2 py-1.5 text-left",

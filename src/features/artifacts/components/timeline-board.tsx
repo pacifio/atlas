@@ -24,7 +24,7 @@ import { dayHeading, startOfDay } from "../lib/board";
 import type { AuthorDirectory } from "../lib/author-directory";
 import { DayMeta, SessionRow } from "./session-row";
 import { BoardSkeleton } from "./timeline-skeleton";
-import { TimelineCalendar, type CalendarItem } from "./timeline-calendar";
+import { TimelineCalendar, type CalendarItem } from "@tryatlas/design/timeline-calendar";
 
 export function TimelineBoard({
   sessions,
@@ -113,6 +113,13 @@ export function TimelineBoard({
                 items={items}
                 renderRow={renderRow}
                 root={scroller as RefObject<HTMLElement | null>}
+                // Off: the package sizes its end space as if the list ended the
+                // scroller, but this column's `pb-32` (room under the search
+                // bar) and the note follow it, so the last day overshot the
+                // sticky date and scrolled clean off the top, leaving an empty
+                // column under the wrong date. Without it the last day stops
+                // short of the top, as it always has.
+                endSpace={false}
               />
             ) : loading ? (
               // Geometry-matched rows rather than a spinner: the shape of what
