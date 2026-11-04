@@ -1520,10 +1520,15 @@ export function commsDraftPeers(): void {
       });
     }
   };
+  // A second call restarts the minute rather than stacking heartbeats.
+  if (peersTimer !== undefined) clearInterval(peersTimer);
+  if (peersStop !== undefined) clearTimeout(peersStop);
   beat();
-  const timer = setInterval(beat, 4_000);
-  setTimeout(() => clearInterval(timer), 60_000);
+  peersTimer = setInterval(beat, 4_000);
+  peersStop = setTimeout(() => clearInterval(peersTimer), 60_000);
 }
+let peersTimer: ReturnType<typeof setInterval> | undefined;
+let peersStop: ReturnType<typeof setTimeout> | undefined;
 
 export function commsIncomingMessage(): void {
   const body = INCOMING[incomingAt++ % INCOMING.length];
