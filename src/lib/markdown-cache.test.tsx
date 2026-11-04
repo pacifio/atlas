@@ -18,17 +18,18 @@ vi.mock("./markdown.worker?worker", () => ({
   },
 }));
 
+// Copy goes through the WKWebView-safe `copyText`, which says whether it landed.
+const { copyText } = vi.hoisted(() => ({ copyText: vi.fn(async (_text: string) => true) }));
+vi.mock("@/lib/clipboard", () => ({ copyText }));
+
 import { CachedMarkdown, loadMarkdownRenderer } from "./markdown-cache";
 
-const writeText = vi.fn(async (_text: string) => {});
-
 beforeAll(async () => {
-  Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
   await loadMarkdownRenderer();
 });
 afterEach(() => {
   cleanup();
-  writeText.mockClear();
+  copyText.mockClear();
 });
 
 const fence = (lang: string, body: string) => `\`\`\`${lang}\n${body}\n\`\`\``;
@@ -54,7 +55,30 @@ describe("CachedMarkdown", () => {
       fireEvent.click(screen.getByRole("button", { name: "Copy code" }));
     });
     // The code element's text, as before: its trailing newline included.
-    expect(writeText).toHaveBeenCalledWith("const a = 1;\n");
+    expect(copyText).toHaveBeenCalledWith("const a = 1;\n");
+  });
+
+  it("confirms a copy only when the write landed", async () => {
+    const { container } = render(<CachedMarkdown source={fence("ts", "const a = 1;")} />);
+    const button = () => screen.getByRole("button", { name: "Copy code" });
+    const icon = () => button().querySelector("svg")?.getAttribute("class") ?? "";
+    const idle = icon();
+    copyText.mockResolvedValueOnce(false);
+    await act(async () => {
+      fireEvent.click(button());
+    });
+    expect(icon()).toBe(idle);
+    await act(async () => {
+      fireEvent.click(button());
+    });
+    expect(icon()).not.toBe(idle);
+    expect(container.querySelector("[data-code-actions]")).not.toBeNull();
+  });
+
+  it("reveals the fence's corner while its button has keyboard focus", () => {
+    const { container } = render(<CachedMarkdown source={fence("ts", "const a = 1;")} />);
+    const host = container.querySelector("[data-code-actions]")!;
+    expect(host.className).toContain("focus-within:opacity-100");
   });
 
   it("labels no language on a plain-text fence", () => {

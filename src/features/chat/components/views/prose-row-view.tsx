@@ -76,14 +76,12 @@ export const ProseRowView = memo(function ProseRowView({
           `.prose-session`, so the block metrics apply to real block elements
           and a scrolled-back message is a pure cache hit. The streaming tail
           uses the block-splitting renderer, where only the trailing block
-          re-parses per frame. No fence bar in the transcript (`codeActions`):
-          today it never shows here, and showing it is a D24 change awaiting
-          ATL-718. */}
+          re-parses per frame. Each fence wears its language and Copy on
+          hover or keyboard focus (`codeActions`' default). */}
       {row.streaming ? (
         <StreamingMarkdown
           source={row.text}
           streaming
-          codeActions={null}
           priority={priority}
           fileRoot={fileRoot}
         />
@@ -93,7 +91,6 @@ export const ProseRowView = memo(function ProseRowView({
         <div ref={proseRef} data-agent-response={messageId} data-comment-anchor={messageId}>
           <CachedMarkdown
             source={row.text}
-            codeActions={null}
             priority={priority}
             fileRoot={fileRoot}
           />

@@ -112,7 +112,6 @@ export const UserRowView = memo(function UserRowView({
                 scale (22px lines, `row-metrics.ts`). */}
             <CachedMarkdown
               source={row.text}
-              codeActions={null}
               priority={priority}
               fileRoot={fileRoot}
               trustedPaths={row.trustedPaths}
