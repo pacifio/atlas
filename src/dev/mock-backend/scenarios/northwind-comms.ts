@@ -1103,15 +1103,18 @@ export async function openTeamChat(): Promise<void> {
   if (!teamChatShown(useLayoutStore.getState())) revealTeamChat();
 }
 
-/** The default world with sync off and no remote org: team chat's
- *  "not connected" screen. */
+/** The default world with its organisation local-only (sync off, no remote
+ *  org): team chat's "not connected" screen. Not named "Acme": the signed-in
+ *  account's server org is, and a same-named local org is adopted by it. */
 export const commsNotConnected: Scenario = {
   name: "comms-not-connected",
   description: "Team chat for an organisation that has not turned sync on.",
   rawCommands: {
     bootstrap_app_state: () =>
       appState({
-        organisations: [{ id: MOCK_ORG_ID, name: "Acme", slug: "acme", syncEnabled: false }],
+        organisations: [
+          { id: MOCK_ORG_ID, name: "Acme Labs", slug: "acme-labs", syncEnabled: false },
+        ],
       }),
   },
   setup: openTeamChat,
