@@ -458,7 +458,7 @@ function renderDocs({ groups, keys, derived, baseRules }, current) {
 
   const out = [
     DOCS_BEGIN,
-    `<!-- Generated from ${SOURCE_REL} by \`${COMMAND}\`. Edit that file, not this block. -->`,
+    `<!-- Generated from ${SOURCE_REL} by \`${COMMAND}\`. That file is @tryatlas/design's, copied in: change it in the package, never here. -->`,
     "",
     "## How a missing base token is derived",
     "",

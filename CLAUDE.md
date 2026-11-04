@@ -99,7 +99,10 @@ bun run settings:gen   # settings-registry.toml → TS, Rust, docs; then
 The design system (primitives, scales, theme engine, `keys.toml`, built-in themes,
 the ratchet's rules) is `@tryatlas/design`, pinned to a git tag (ADR-0027). Change it
 there and bump the pin; `crates/atlas-theme/` holds committed copies, never edited by
-hand (`design-package-copies.test.ts`).
+hand (`design-package-copies.test.ts`). `globals.css` imports `styles-core.css` (no
+built-in theme CSS: `applyTheme` writes the active theme at runtime). Theme variables
+are unprefixed (`element.hover` → `--element-hover`), and a theme file that isn't
+`schema = 1` is skipped while the default loads: there is no legacy theme support.
 
 Pre-commit (husky): lint-staged → `bun run typecheck` → `bun run test:contracts`.
 Pre-push: the full `bun run test`.
@@ -112,12 +115,15 @@ inside its directory.
 
 Each has a suite in `tests/`. Read that suite's docblock before changing what it guards.
 
-**The design-system ratchet is closed at zero** (`design-system-ratchet.test.ts`).
+**The design-system ratchet is closed at zero** (`design-system-ratchet.test.ts`: the
+package's `runRatchet` and rules, from `@tryatlas/design/ratchet`, on desktop's roots).
 Across `src/features`, `src/components` and `src/dev` it bans: arbitrary
 `text-[…]` / `z-[…]` / `shadow-[…]` / `rounded-[…]`; colour literals (`#hex`, `rgb()`,
 `hsl()`); `*-white` and `*-black` utilities; Tailwind's stock ramps (`bg-amber-500` —
 no theme can restate them); bare `z-` at 50 or above; and inline numeric `zIndex` /
-`fontSize` / `boxShadow`; and `transition-all`. Use the scale and the tokens. The only exits are
+`fontSize` / `boxShadow`. Across all of `src/` and `index.html` it also bans
+`transition-all` and, with no exit at all, the retired `--atlas-` spelling of a theme
+key. Use the scale and the tokens. Otherwise the only exits are
 `EXEMPT_FILES` or an inline `ratchet-allow: <reason>` comment — on the line or anywhere
 in the comment block above it — and the reason must be a real argument of 20+
 characters, which the suite also checks. A violation type-checks, lints and renders
@@ -156,7 +162,8 @@ it the `atlas-native-agent` Clippy job fails on ~500 engine sites.
 
 **Node singletons and the Vite `dedupe` list are load-bearing.** Two copies of
 `@codemirror/*` or `pdfjs-dist` break editor theming and PDF rendering _in production
-only_. `bun install`/`bun update` leave nested duplicates; after a lockfile change do
+only_. `@tryatlas/design`, `@base-ui/react` and `motion` are in the `dedupe` list too
+(a second `@base-ui/react` splits the floating-UI contexts). `bun install`/`bun update` leave nested duplicates; after a lockfile change do
 `rm -rf node_modules && bun install` (a full `rm -rf node_modules bun.lock` to dedupe).
 `bun-singletons.test.ts` is what tells you. `manualChunks` is equally load-bearing —
 each rule encodes a production incident, documented inline.
