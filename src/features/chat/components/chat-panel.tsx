@@ -77,7 +77,7 @@ const BashHistoryPanel = lazy(() =>
 );
 const PlansPanel = lazy(() => import("./plans-panel").then((m) => ({ default: m.PlansPanel })));
 const ChatSearchPalette = lazy(() =>
-  import("./chat-search-palette").then((m) => ({
+  import("./views/chat-search-palette").then((m) => ({
     default: m.ChatSearchPalette,
   })),
 );
