@@ -125,14 +125,17 @@ export function ElicitationDialogView({
                 </FieldLabel>
                 {f.description && <FieldDescription>{f.description}</FieldDescription>}
                 {f.kind === "boolean" ? (
-                  <label className="flex items-center gap-2 self-start text-xs text-secondary-foreground">
+                  // A div, not a <label>: a label around the switch forwards
+                  // its click to the switch's hidden input, toggling it a
+                  // second time — the answer would never change.
+                  <div className="flex items-center gap-2 self-start text-xs text-secondary-foreground">
                     <Switch
                       checked={values[f.name] === true}
                       onCheckedChange={(next) => set(f.name, next)}
                       aria-label={f.title}
                     />
-                    {values[f.name] ? "Yes" : "No"}
-                  </label>
+                    <span aria-hidden>{values[f.name] ? "Yes" : "No"}</span>
+                  </div>
                 ) : f.kind === "enum" ? (
                   <div className="flex flex-wrap gap-1">
                     {f.choices.map((c) => {

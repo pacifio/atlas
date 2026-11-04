@@ -111,6 +111,37 @@ describe("ElicitationDialogView", () => {
     expect(onDecline).not.toHaveBeenCalled();
   });
 
+  it("a yes/no field flips and sends its boolean", () => {
+    const { onAccept } = renderDialog();
+    fireEvent.change(screen.getByLabelText("Branch name"), { target: { value: "b" } });
+    expect(screen.getByText("No")).toBeTruthy();
+    fireEvent.click(screen.getByRole("switch"));
+    expect(screen.getByText("Yes")).toBeTruthy();
+    fireEvent.click(send());
+    expect(onAccept).toHaveBeenCalledWith({ branch: "b", draft: true });
+  });
+
+  it("locks Send and Decline while someone else drives, and says who", () => {
+    const { onAccept, onDecline } = renderDialog({ fields: [], remoteDriver: "Sam Lee" });
+    expect(screen.getByTestId("elicitation-seat-notice").textContent).toContain("Sam Lee");
+    fireEvent.click(send());
+    fireEvent.click(screen.getByText("Decline"));
+    expect(onAccept).not.toHaveBeenCalled();
+    expect(onDecline).not.toHaveBeenCalled();
+  });
+
+  it("url mode: I'm done accepts with no content, Open page opens the url", () => {
+    const { onAccept, onOpenUrl } = renderDialog({
+      mode: "url",
+      fields: [],
+      url: "https://example.invalid/consent",
+    });
+    fireEvent.click(screen.getByText("Open page"));
+    expect(onOpenUrl).toHaveBeenCalledWith("https://example.invalid/consent");
+    fireEvent.click(screen.getByText("I'm done"));
+    expect(onAccept).toHaveBeenCalledWith({});
+  });
+
   it("shows no Open page button in url mode without a url", () => {
     renderDialog({ mode: "url", fields: [] });
     expect(screen.queryByText("Open page")).toBeNull();
