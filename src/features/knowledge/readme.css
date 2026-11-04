@@ -40,11 +40,6 @@
 .prose-session[data-view="readme"] > :first-child {
   margin-top: 0;
 }
-/* A wide table scrolls inside its own box rather than pushing the column. */
-.prose-session[data-view="readme"] table {
-  display: block;
-  overflow-x: auto;
-}
 .prose-session[data-view="readme"] details {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);

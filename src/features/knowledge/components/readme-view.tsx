@@ -64,8 +64,15 @@ export const ReadmeView = memo(function ReadmeView({ source, root }: Props) {
   );
 });
 
-// Typography is `.prose-session` plus `readme.css`; only the link keeps an
-// override, for its target.
+// Typography is `.prose-session` plus `readme.css`. The link keeps an
+// override for its target; a table gets a scroll box so a wide one scrolls
+// inside it rather than pushing the column (the table keeps `display: table`
+// and so its table semantics).
 const README_COMPONENTS: NonNullable<Options["components"]> = {
   a: ({ node: _node, ...p }) => <a {...p} target="_blank" rel="noreferrer" />,
+  table: ({ node: _node, ...p }) => (
+    <div className="overflow-x-auto">
+      <table {...p} />
+    </div>
+  ),
 };
