@@ -9,8 +9,10 @@ import {
   initials,
   isNewDay,
   memberName,
+  peerTone,
   utf8Bytes,
 } from "./derive";
+import { HUES } from "@tryatlas/design";
 import { parseMentions } from "../types";
 import type { ChatConversation, ChatReaction, CommsMessage, OrgMemberProfile } from "../types";
 
@@ -319,5 +321,19 @@ describe("formatBytes", () => {
     expect(formatBytes(1024)).toBe("1 KB");
     expect(formatBytes(1024 * 1024)).toBe("1.0 MB");
     expect(formatBytes(1.5 * 1024 * 1024)).toBe("1.5 MB");
+  });
+});
+
+describe("peerTone", () => {
+  it("gives one person the same identity hue every time", () => {
+    expect(peerTone("usr_priya")).toBe(peerTone("usr_priya"));
+  });
+
+  it("is always one of the identity hues, never the no-identity grey", () => {
+    for (const id of ["usr_priya", "usr_tobi", "usr_mira", "usr_sam", "usr_dev", ""]) {
+      const tone = peerTone(id);
+      expect(HUES).toContain(tone);
+      expect(tone).not.toBe("grey");
+    }
   });
 });

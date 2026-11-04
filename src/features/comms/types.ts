@@ -325,6 +325,18 @@ export function parseMentions(body: string): ParsedMention[] {
   return out.sort((a, b) => a.start - b.start);
 }
 
+/** One file on its way up, as the composer sees it. */
+export interface PendingAttachment {
+  uploadId: string;
+  /** Server file id, once the intent has been created. */
+  fileId: string | null;
+  filename: string;
+  totalBytes: number;
+  sentBytes: number;
+  state: "uploading" | "complete" | "failed";
+  error?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Limits, from the contract. Enforced client-side so the server never has to
 // refuse something the composer allowed.
