@@ -1,9 +1,9 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi } from "vitest";
 import { EditorSelection, EditorState } from "@codemirror/state";
-import { EditorView, runScopeHandlers } from "@codemirror/view";
+import { EditorView, runScopeHandlers, showTooltip } from "@codemirror/view";
 
-import { askAgentGutter, askLinesAt, excerptOf } from "./ask-gutter";
+import { askAgentGutter, askLinesAt, excerptOf, setHover } from "./ask-gutter";
 
 const DOC = "one\ntwo\nthree\nfour\nfive";
 
@@ -45,6 +45,27 @@ describe("askLinesAt", () => {
 describe("excerptOf", () => {
   it("is the lines' whole text, without the last line break", () => {
     expect(excerptOf(stateWith(0).doc, { from: 2, to: 3 })).toBe("two\nthree");
+  });
+});
+
+describe("the selection chip", () => {
+  it("is shown for a selection and kept, not rebuilt, as the pointer moves", () => {
+    const view = new EditorView({
+      state: EditorState.create({ doc: DOC, extensions: [askAgentGutter(() => undefined)] }),
+      parent: document.body,
+    });
+    const chips = () => view.state.facet(showTooltip).filter(Boolean);
+    expect(chips()).toHaveLength(0);
+    view.dispatch({ selection: EditorSelection.single(4, 11) });
+    const [chip] = chips();
+    expect(chip?.pos).toBe(view.state.doc.line(3).from);
+    // The pointer crossing lines.
+    view.dispatch({ effects: setHover.of(view.state.doc.line(5).from) });
+    view.dispatch({ effects: setHover.of(view.state.doc.line(1).from) });
+    expect(chips()[0]).toBe(chip);
+    view.dispatch({ selection: EditorSelection.single(4) });
+    expect(chips()).toHaveLength(0);
+    view.destroy();
   });
 });
 

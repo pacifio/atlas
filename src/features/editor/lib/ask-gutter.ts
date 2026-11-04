@@ -63,8 +63,9 @@ export function excerptOf(doc: Text, lines: AskLines): string {
   return doc.sliceString(doc.line(lines.from).from, doc.line(lines.to).to);
 }
 
-/** The pointer is over this line (its start), or over no line. */
-const setHover = StateEffect.define<number | null>();
+/** The pointer is over this line (its start), or over no line. Exported for
+ *  tests, which have no layout to hover over. */
+export const setHover = StateEffect.define<number | null>();
 /** A button is down in the text: a selection is being dragged out. */
 const setPressing = StateEffect.define<boolean>();
 
@@ -156,16 +157,17 @@ class AskMarker extends GutterMarker {
 }
 const ASK_MARKER = new AskMarker();
 
-/** The gutter's markers, rebuilt only when the hovered line moves. */
-const markersFor = (() => {
-  let last: { ui: AskUi; set: RangeSet<GutterMarker> } | null = null;
-  return (ui: AskUi): RangeSet<GutterMarker> => {
-    if (last?.ui === ui) return last.set;
-    const set = ui.hover === null ? RangeSet.empty : RangeSet.of([ASK_MARKER.range(ui.hover)]);
-    last = { ui, set };
-    return set;
-  };
-})();
+/** The gutter's markers, one set per hover state, so the gutter sees the
+ *  same set until the hovered line moves (and each view its own). */
+const markerSets = new WeakMap<AskUi, RangeSet<GutterMarker>>();
+function markersFor(ui: AskUi): RangeSet<GutterMarker> {
+  let set = markerSets.get(ui);
+  if (!set) {
+    set = ui.hover === null ? RangeSet.empty : RangeSet.of([ASK_MARKER.range(ui.hover)]);
+    markerSets.set(ui, set);
+  }
+  return set;
+}
 
 /** Track the pointer's line over the whole editor (text and gutters, so
  *  moving onto the button keeps it), and whether a drag is under way. */
@@ -204,17 +206,36 @@ const pointerTracker = ViewPlugin.define((view) => {
   };
 });
 
+/** Where the chip sits: at the end the selection was drawn to (above it
+ *  when that is the top), from the start of that line, so it lines up with
+ *  the code, is never pushed off the right edge by a long line, and stays
+ *  still while the head moves along the line. Null: no chip. */
+function chipPlace(state: EditorState): { pos: number; above: boolean } | null {
+  const sel = state.selection.main;
+  if (sel.empty || state.field(askUi).pressing) return null;
+  return { pos: state.doc.lineAt(sel.head).from, above: sel.head === sel.from };
+}
+
 function selectionTooltip(onAsk: () => AskHandler | undefined): Extension {
-  return showTooltip.compute(["selection", askUi], (state): Tooltip | null => {
-    const sel = state.selection.main;
-    if (sel.empty || state.field(askUi).pressing) return null;
-    // At the end the selection was drawn to (above it when that is the top),
-    // from the start of that line: in line with the code, never pushed off
-    // the right edge by a long line, and still while the head moves along it.
-    const above = sel.head === sel.from;
+  // A field, not a compute over the selection and the hover: the tooltip
+  // object (and so its DOM) is replaced only when the chip moves, never as
+  // the pointer crosses lines.
+  const field = StateField.define<Tooltip | null>({
+    create: (state) => chipFor(chipPlace(state)),
+    update(value, tr) {
+      if (!tr.docChanged && !tr.selection && tr.effects.length === 0) return value;
+      const place = chipPlace(tr.state);
+      if (!place) return null;
+      if (value && value.pos === place.pos && value.above === place.above) return value;
+      return chipFor(place);
+    },
+    provide: (f) => showTooltip.from(f),
+  });
+  function chipFor(place: { pos: number; above: boolean } | null): Tooltip | null {
+    if (!place) return null;
     return {
-      pos: state.doc.lineAt(sel.head).from,
-      above,
+      pos: place.pos,
+      above: place.above,
       arrow: false,
       create: (view) => {
         const dom = document.createElement("div");
@@ -237,7 +258,8 @@ function selectionTooltip(onAsk: () => AskHandler | undefined): Extension {
         return { dom, offset: { x: 0, y: 4 } };
       },
     };
-  });
+  }
+  return field;
 }
 
 // Colours are theme variables, so a theme swap repaints them with no
