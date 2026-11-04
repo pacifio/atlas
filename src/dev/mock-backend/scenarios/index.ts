@@ -2,6 +2,15 @@
 // reachable at `localhost:1420/?scenario=<name>`.
 
 import type { Scenario } from "../types";
+import {
+  openFeedback,
+  openLogTab,
+  openNotifications,
+  seedNotifications,
+  showWelcome,
+  updateError,
+  updateReady,
+} from "../fixtures/app-chrome";
 import { commsIncomingMessage } from "../fixtures/comms";
 import {
   gitPullAsks,
@@ -86,6 +95,14 @@ const all: Scenario[] = [
       gitPullPrefersMerge,
       gitPullAsks,
       gitRewritePushedCommits,
+      // The app chrome that only shows when something happens (ATL-935).
+      seedNotifications,
+      openNotifications,
+      openLogTab,
+      openFeedback,
+      updateReady,
+      updateError,
+      showWelcome,
     },
   },
   chatTools,
