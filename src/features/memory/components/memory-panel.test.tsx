@@ -17,25 +17,13 @@ vi.mock("sonner", () => ({
 const pickFolder = vi.fn();
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: (...args: unknown[]) => pickFolder(...args) }));
 
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { MemoryPanel } from "./memory-panel";
 import { useSharedMemoryStore, EMPTY_REVIEW } from "../stores/shared-memory-store";
 import { useMemoryStore } from "../stores/memory-store";
 import { useAppStore } from "@/features/app/stores/app-store";
-
-const EMPTY_STATE = {
-  lastSeq: 0,
-  activePlan: null,
-  decisions: [],
-  recentChanges: [],
-  facts: [],
-  failures: [],
-  architecture: [],
-  sessionAgents: {},
-  updatedAt: 0,
-};
 
 function entry(id: number, content: string, over: Record<string, unknown> = {}) {
   return {
@@ -91,7 +79,6 @@ beforeEach(() => {
   };
   invoke.mockReset();
   invoke.mockImplementation(async (cmd: string, args: Record<string, unknown>) => {
-    if (cmd === "memory_get_state") return EMPTY_STATE;
     if (cmd === "memory_list_events") return [];
     if (cmd === "memory_list_entries") return entries;
     if (cmd === "memory_review") return EMPTY_REVIEW;
@@ -245,13 +232,45 @@ describe("the Memories list", () => {
   it("says when the record can't be read, and offers a retry instead of an empty list", async () => {
     const base = invoke.getMockImplementation()!;
     invoke.mockImplementation(async (cmd: string, args: Record<string, unknown>) => {
-      if (cmd === "memory_get_state") throw new Error("database is locked");
+      if (cmd === "memory_list_entries") throw new Error("database is locked");
       return base(cmd, args);
     });
     render(<MemoryPanel />);
     expect(await screen.findByText("Couldn't read this project's memory")).toBeTruthy();
     expect(screen.queryByText("Nothing remembered here yet")).toBeNull();
     expect(screen.queryByRole("complementary")).toBeNull();
+  });
+
+  it("says Review can't be read when the record is locked, not that nothing waits", async () => {
+    const base = invoke.getMockImplementation()!;
+    invoke.mockImplementation(async (cmd: string, args: Record<string, unknown>) => {
+      if (cmd === "memory_list_entries" || cmd === "memory_review")
+        throw new Error("database is locked");
+      return base(cmd, args);
+    });
+    const user = userEvent.setup();
+    render(<MemoryPanel />);
+    await screen.findByText("Couldn't read this project's memory");
+    await user.click(screen.getByRole("radio", { name: /Review/ }));
+    expect(await screen.findByText("Couldn't read the review queue")).toBeTruthy();
+    expect(screen.queryByText("Nothing to review")).toBeNull();
+  });
+
+  it("drops the open memory and the export picks in another project", async () => {
+    const user = userEvent.setup();
+    render(<MemoryPanel />);
+    await screen.findByRole("button", { name: "Prefers small PRs" });
+    await menu(user, "Export to AGENTS.md…");
+    await user.click(screen.getByRole("checkbox", { name: "Pick Prefers small PRs" }));
+    await user.click(screen.getByRole("button", { name: "Prefers small PRs" }));
+    await screen.findByRole("complementary", { name: "Memory detail" });
+
+    // Another project whose entries reuse the same ids.
+    entries = [entry(2, "Other project's line", { kind: "fact" })];
+    act(() => useAppStore.setState({ currentProject: { path: "/other", name: "other" } as never }));
+    await screen.findByRole("button", { name: "Other project's line" });
+    expect(screen.queryByRole("complementary", { name: "Memory detail" })).toBeNull();
+    expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
   });
 });
 
@@ -320,6 +339,23 @@ describe("a chosen memory", () => {
     await waitFor(() =>
       expect(screen.queryByRole("button", { name: "Prefers small PRs" })).toBeNull(),
     );
+  });
+
+  it("keeps the memory open when forgetting it fails", async () => {
+    const base = invoke.getMockImplementation()!;
+    invoke.mockImplementation(async (cmd: string, args: Record<string, unknown>) => {
+      if (cmd === "memory_forget_entry") throw new Error("database is locked");
+      return base(cmd, args);
+    });
+    const { user, pane } = await open("Prefers small PRs");
+    await user.click(within(pane).getByRole("button", { name: "Forget" }));
+    await screen.findByText("Forget this memory?");
+    const buttons = screen.getAllByRole("button", { name: "Forget" });
+    await user.click(buttons[buttons.length - 1]);
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith("Couldn't forget: database is locked"),
+    );
+    expect(screen.getByRole("complementary", { name: "Memory detail" })).toBeTruthy();
   });
 
   it("erases with its history after confirming", async () => {

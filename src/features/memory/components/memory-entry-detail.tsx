@@ -70,13 +70,20 @@ export function MemoryEntryDetail({
     }
   };
 
-  const run = async (work: () => Promise<unknown>, done: string, failed: string) => {
+  /** Whether the work succeeded; a failure is said in a toast. */
+  const run = async (
+    work: () => Promise<unknown>,
+    done: string,
+    failed: string,
+  ): Promise<boolean> => {
     setBusy(true);
     try {
       await work();
       toast.success(done);
+      return true;
     } catch (err) {
       toast.error(`${failed}: ${errorText(err)}`);
+      return false;
     } finally {
       setBusy(false);
     }
@@ -104,12 +111,15 @@ export function MemoryEntryDetail({
       onAskErase={() => setConfirmErase(true)}
       onForget={() => {
         setConfirmForget(false);
-        void run(() => forgetEntry(e.id), "Memory forgotten", "Couldn't forget").then(onClose);
+        // The pane closes only once the memory is gone.
+        void run(() => forgetEntry(e.id), "Memory forgotten", "Couldn't forget").then(
+          (ok) => ok && onClose(),
+        );
       }}
       onErase={() => {
         setConfirmErase(false);
         void run(() => purgeEntry(e.id), "Memory erased with its history", "Couldn't erase").then(
-          onClose,
+          (ok) => ok && onClose(),
         );
       }}
       onConfirmForgetChange={setConfirmForget}

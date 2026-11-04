@@ -69,6 +69,9 @@ export function MemoryPanel() {
   const waiting = reviewCount(review);
 
   useEffect(() => {
+    // Entry ids are per project: an export pick never follows the user into
+    // another project.
+    setSelecting(false);
     if (projectPath) void load(projectPath);
   }, [projectPath, load]);
 
@@ -158,6 +161,9 @@ export function MemoryPanel() {
           </Notice>
         ) : sub === "memories" ? (
           <MemoryEntries
+            // Starts clean in another project: the chosen memory, the picks
+            // and the filters all name this project's entries.
+            key={projectPath}
             projectName={projectName}
             selecting={selecting}
             onSelectingChange={setSelecting}

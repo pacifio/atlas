@@ -11,6 +11,7 @@
 // by item, so a fast run of choices restarts it rather than queueing it, and
 // the package turns it off under reduced motion.
 
+import { useEffect, useRef, type ReactNode } from "react";
 import { CheckCircle2, GitBranch, GitMerge, Inbox, Sparkles, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button, EmptyState, Skeleton } from "@tryatlas/design";
@@ -56,7 +57,12 @@ const TYPE_ICON: Record<ReviewItem["type"], LucideIcon> = {
 export function MemoryReviewQueueView(p: MemoryReviewQueueViewProps) {
   if (!p.loaded) {
     return (
-      <div aria-busy aria-label="Loading the review queue" className="mx-auto max-w-2xl px-4 pt-8">
+      <div
+        role="status"
+        aria-busy
+        aria-label="Loading the review queue"
+        className="mx-auto max-w-2xl px-4 pt-8"
+      >
         <Skeleton className="h-40 w-full" />
       </div>
     );
@@ -87,18 +93,14 @@ export function MemoryReviewQueueView(p: MemoryReviewQueueViewProps) {
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-2xl px-4 pt-6 pb-16">
-        <div className="mb-3 flex items-baseline gap-2">
+        <div aria-live="polite" className="mb-3 flex items-baseline gap-2">
           <h2 className="text-md font-medium text-foreground tabular-nums">
             {p.items.length} waiting
           </h2>
           <span className="text-xs text-muted-foreground">Nothing changes until you choose.</span>
         </div>
 
-        <article
-          key={front.key}
-          aria-label={REVIEW_EYEBROW[front.type]}
-          className="session-row-in @container rounded-lg border border-border bg-card p-4"
-        >
+        <FrontCard key={front.key} label={REVIEW_EYEBROW[front.type]}>
           <div className="mb-3 flex items-center gap-1.5 text-2xs font-medium text-muted-foreground">
             <TypeGlyph type={front.type} />
             {REVIEW_EYEBROW[front.type]}
@@ -118,7 +120,7 @@ export function MemoryReviewQueueView(p: MemoryReviewQueueViewProps) {
               </Button>
             )}
           </div>
-        </article>
+        </FrontCard>
 
         {rest.length > 0 && (
           <section aria-label="Up next" className="mt-6">
@@ -315,4 +317,26 @@ function Choices({
         </>
       );
   }
+}
+
+/** The item in front. The choice just made unmounted the button that had
+ *  focus; the next card takes it, so a keyboard user carries on from here
+ *  instead of from the top of the page. Focus that is elsewhere (the tab
+ *  bar, the search) is left alone. */
+function FrontCard({ label, children }: { label: string; children: ReactNode }) {
+  const ref = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const active = document.activeElement;
+    if (!active || active === document.body) ref.current?.focus({ preventScroll: true });
+  }, []);
+  return (
+    <article
+      ref={ref}
+      tabIndex={-1}
+      aria-label={label}
+      className="session-row-in @container rounded-lg border border-border bg-card p-4 outline-none"
+    >
+      {children}
+    </article>
+  );
 }

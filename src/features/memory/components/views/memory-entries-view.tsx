@@ -8,7 +8,7 @@
 // Under a narrow panel the pane is not shown until a memory is chosen, and
 // then it covers the list with a way back.
 
-import type { ReactNode, Ref } from "react";
+import { useEffect, useRef, useState, type ReactNode, type Ref } from "react";
 import { ArrowDown, ArrowUp, Brain, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button, EmptyState, Segmented, Skeleton } from "@tryatlas/design";
@@ -77,6 +77,31 @@ export function MemoryEntriesView(props: MemoryEntriesViewProps) {
     dialogs,
   } = props;
   const flat = groups.flatMap((g) => g.entries);
+  const asideRef = useRef<HTMLElement>(null);
+  // Whether the pane covers the list (a narrow panel). Then the list leaves
+  // the tab order while it is covered, focus moves into the pane, and it
+  // comes back to the row when the pane closes.
+  const [covering, setCovering] = useState(false);
+  const lastSelected = useRef<number | null>(null);
+  useEffect(() => {
+    const aside = asideRef.current;
+    if (selectedId !== null) {
+      lastSelected.current = selectedId;
+      const covers = !!aside && getComputedStyle(aside).position === "absolute";
+      setCovering(covers);
+      if (covers) aside.focus({ preventScroll: true });
+      return;
+    }
+    setCovering((was) => {
+      if (was && lastSelected.current !== null) {
+        const id = lastSelected.current;
+        requestAnimationFrame(() =>
+          document.querySelector<HTMLElement>(`[data-entry-id="${id}"] > button`)?.focus(),
+        );
+      }
+      return false;
+    });
+  }, [selectedId]);
   const filtered = query.trim() !== "" || agentFilter !== "";
   const nothingAtAll = loaded && !error && total.current + total.archived === 0;
 
@@ -166,6 +191,7 @@ export function MemoryEntriesView(props: MemoryEntriesViewProps) {
       <div className="relative flex min-h-0 flex-1">
         <div
           ref={props.listRef}
+          inert={covering || undefined}
           className="min-w-0 flex-1 overflow-y-auto"
           onKeyDown={(e) => {
             if (e.target instanceof HTMLInputElement) return;
@@ -239,21 +265,27 @@ export function MemoryEntriesView(props: MemoryEntriesViewProps) {
               }
             />
           ) : (
-            <div role="list" aria-label="Memories" className="mx-1 pb-6">
+            <div className="mx-1 pb-6">
               {groups.map((g) => (
-                <section key={g.kind} aria-label={g.label}>
-                  <GroupHeader label={g.label} count={g.entries.length} />
-                  {g.entries.map((e) => (
-                    <EntryRow
-                      key={e.id}
-                      entry={e}
-                      selected={selectedId === e.id}
-                      onSelect={() => onSelect(selectedId === e.id ? null : e.id)}
-                      selecting={selecting}
-                      picked={props.picked.has(e.id)}
-                      onPick={() => props.onPick(e.id)}
-                    />
-                  ))}
+                <section key={g.kind} aria-labelledby={`memory-group-${g.kind}`}>
+                  <GroupHeader
+                    id={`memory-group-${g.kind}`}
+                    label={g.label}
+                    count={g.entries.length}
+                  />
+                  <div role="list" aria-labelledby={`memory-group-${g.kind}`}>
+                    {g.entries.map((e) => (
+                      <EntryRow
+                        key={e.id}
+                        entry={e}
+                        selected={selectedId === e.id}
+                        onSelect={() => onSelect(selectedId === e.id ? null : e.id)}
+                        selecting={selecting}
+                        picked={props.picked.has(e.id)}
+                        onPick={() => props.onPick(e.id)}
+                      />
+                    ))}
+                  </div>
                 </section>
               ))}
               <p className="flex items-center justify-center gap-1 pt-4 text-2xs text-disabled">
@@ -270,9 +302,11 @@ export function MemoryEntriesView(props: MemoryEntriesViewProps) {
             state. */}
         {loaded && !error && !nothingAtAll && (
           <aside
+            ref={asideRef}
+            tabIndex={-1}
             aria-label={selectedId === null ? "Overview" : "Memory detail"}
             className={cn(
-              "flex min-h-0 flex-col overflow-y-auto border-l border-border-subtle bg-background",
+              "flex min-h-0 flex-col overflow-y-auto border-l outline-none border-border-subtle bg-background",
               // A companion pane beside the list when there is room for both;
               // below that, only a chosen memory shows, over the list.
               "@3xl/memories:relative @3xl/memories:flex @3xl/memories:w-95 @3xl/memories:shrink-0",
@@ -287,10 +321,12 @@ export function MemoryEntriesView(props: MemoryEntriesViewProps) {
   );
 }
 
-function GroupHeader({ label, count }: { label: string; count: number }) {
+function GroupHeader({ id, label, count }: { id: string; label: string; count: number }) {
   return (
     <div className="flex h-8 items-end gap-2 px-2 pb-1 text-2xs font-medium text-muted-foreground">
-      <h3 className="shrink-0">{label}</h3>
+      <h3 id={id} className="shrink-0">
+        {label}
+      </h3>
       <span className="shrink-0 tabular-nums text-disabled">{count}</span>
       <span aria-hidden className="mb-1.5 h-px min-w-2 flex-1 bg-border-subtle" />
     </div>
@@ -369,7 +405,7 @@ function EntryRow({
 
 function ListGhost() {
   return (
-    <div aria-busy aria-label="Loading memories" className="space-y-3 px-3 py-4">
+    <div role="status" aria-busy aria-label="Loading memories" className="space-y-3 px-3 py-4">
       {Array.from({ length: 7 }, (_, i) => (
         <div key={i} className="flex gap-2.5">
           <Skeleton className="size-3.5" />

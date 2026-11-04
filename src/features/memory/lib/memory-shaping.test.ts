@@ -144,6 +144,20 @@ describe("the Activity history", () => {
     expect(lines.map((l) => l.entryId)).toEqual([8, 7]);
   });
 
+  it("says what became of a plan, and links an old plan only to its own words", () => {
+    const days = buildActivity(
+      [
+        event(1, { kind: "plan_set", key: "plan", payload: { text: "Old plan", status: "done" } }),
+        event(2, { kind: "plan_set", key: "plan", payload: { text: "New plan" } }),
+      ],
+      [entry(9, { kind: "plan", key: "plan", content: "New plan" })],
+      now,
+    );
+    const [fresh, old] = days[0].groups[0].lines;
+    expect([fresh.verb, fresh.entryId]).toEqual(["set the plan", 9]);
+    expect([old.verb, old.entryId]).toEqual(["finished the plan", null]);
+  });
+
   it("filters by words and by agent", () => {
     const events = [
       event(1, { payload: { text: "pagination breaks" } }),

@@ -10,8 +10,9 @@ import { str } from "./shared-memory-format";
 
 export interface ActivityLine {
   seq: number;
-  ts: number;
   kind: EventKind;
+  /** What the agent did, as a verb phrase ("decided", "finished the plan"). */
+  verb: string;
   /** The memory the event recorded, or the change it summarises. */
   text: string;
   /** A file change's path. */
@@ -24,8 +25,7 @@ export interface ActivityGroup {
   key: string;
   agent: string;
   sessionId: string;
-  /** Oldest and newest event in the group. */
-  start: number;
+  /** The group's newest event. */
   end: number;
   lines: ActivityLine[];
 }
@@ -63,6 +63,16 @@ export const ACTIVITY_VERB: Record<string, string> = {
   todo_done: "finished a to-do",
 };
 
+/** A plan event says what became of the plan: set, finished or dropped. */
+function verbFor(e: MemoryEvent): string {
+  if (e.kind === "plan_set") {
+    const status = str(e.payload?.status);
+    if (status === "done") return "finished the plan";
+    if (status === "abandoned") return "dropped the plan";
+  }
+  return ACTIVITY_VERB[e.kind] ?? e.kind;
+}
+
 function lineText(e: MemoryEvent): string {
   const p = e.payload ?? {};
   if (e.kind === "file_changed") return str(p.summary);
@@ -84,8 +94,11 @@ function entryIndex(entries: MemoryEntry[]): Map<string, number> {
 function entryFor(e: MemoryEvent, text: string, index: Map<string, number>): number | null {
   const kind = ENTRY_KIND[e.kind];
   if (!kind) return null;
+  // Every plan shares the key "plan": by key, an old plan would open the
+  // plan that stands now. A plan line links only to its own words.
+  const byKey = e.key && kind !== "plan";
   return (
-    (e.key ? index.get(`${kind}:k:${e.key}`) : undefined) ??
+    (byKey ? index.get(`${kind}:k:${e.key}`) : undefined) ??
     index.get(`${kind}:c:${text.trim()}`) ??
     null
   );
@@ -139,29 +152,29 @@ export function buildActivity(
         key: `${e.sessionId || "none"}:${e.seq}`,
         agent: e.agent,
         sessionId: e.sessionId,
-        start: e.ts,
         end: e.ts,
         lines: [],
       };
       groups.push(current);
     }
     const group = current!;
-    group.start = Math.min(group.start, e.ts);
     if (BRACKETS.has(e.kind)) continue;
     const text = lineText(e);
+    const verb = verbFor(e);
     const path = e.kind === "file_changed" ? str(e.payload?.path) || e.key || null : null;
     if (
       q &&
       !text.toLowerCase().includes(q) &&
       !(path ?? "").toLowerCase().includes(q) &&
-      !(ACTIVITY_VERB[e.kind] ?? e.kind).includes(q)
+      !verb.includes(q) &&
+      !(e.agent ?? "").toLowerCase().includes(q)
     ) {
       continue;
     }
     group.lines.push({
       seq: e.seq,
-      ts: e.ts,
       kind: e.kind,
+      verb,
       text,
       path,
       entryId: entryFor(e, text, index),

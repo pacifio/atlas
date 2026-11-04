@@ -96,7 +96,7 @@ export const memoryError: Scenario = {
   name: "memory-error",
   description: "Memory tab whose shared-memory record fails to open (the error states).",
   commands: {
-    memory_get_state: () => {
+    memory_list_entries: () => {
       throw new Error(LOCKED);
     },
     memory_review: () => {
@@ -111,7 +111,7 @@ export const memoryLoading: Scenario = {
   name: "memory-loading",
   description: "Memory tab while the record is still being read (the loading ghosts).",
   commands: {
-    memory_get_state: () => new Promise(() => {}),
+    memory_list_entries: () => new Promise(() => {}),
   },
   setup: memorySetup.setup,
 };

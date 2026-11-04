@@ -17,7 +17,6 @@ import { cn } from "@/lib/utils";
 import { Button, EmptyState, Skeleton } from "@tryatlas/design";
 import { KIND_ICON } from "../../lib/memory-kind-icon";
 import {
-  ACTIVITY_VERB,
   activityTally,
   type ActivityDay,
   type ActivityGroup,
@@ -196,9 +195,10 @@ function SessionGroup({
   onOpenEntry: (id: number) => void;
   onOpenSession: () => void;
 }) {
-  const [open, setOpen] = useState(group.lines.length <= FOLD_OVER);
+  const foldable = group.lines.length > FOLD_OVER;
+  const [open, setOpen] = useState(!foldable);
   const shown = open ? group.lines : group.lines.slice(0, FOLD_OVER - 1);
-  const hidden = group.lines.slice(shown.length);
+  const folded = group.lines.slice(FOLD_OVER - 1);
   return (
     <RailRow
       first={first}
@@ -241,15 +241,15 @@ function SessionGroup({
           <Line key={line.seq} line={line} onOpenEntry={onOpenEntry} />
         ))}
       </ul>
-      {hidden.length > 0 && (
+      {foldable && (
         <button
           type="button"
           aria-expanded={open}
-          onClick={() => setOpen(true)}
+          onClick={() => setOpen((o) => !o)}
           className="mt-1 flex cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 text-2xs text-muted-foreground transition-colors duration-fast hover:bg-element-hover hover:text-foreground"
         >
-          <ChevronDown aria-hidden className="size-3" />
-          {hidden.length} more: {activityTally(hidden)}
+          <ChevronDown aria-hidden className={cn("size-3", open && "rotate-180")} />
+          {open ? "Show less" : `${folded.length} more: ${activityTally(folded)}`}
         </button>
       )}
     </RailRow>
@@ -262,7 +262,7 @@ function Line({ line, onOpenEntry }: { line: ActivityLine; onOpenEntry: (id: num
     <>
       <Icon aria-hidden className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
       <span className="min-w-0 flex-1 text-sm leading-snug">
-        <span className="text-muted-foreground">{ACTIVITY_VERB[line.kind] ?? line.kind} </span>
+        <span className="text-muted-foreground">{line.verb} </span>
         {line.path ? (
           <code className="font-mono text-xs text-secondary-foreground">{line.path}</code>
         ) : null}
@@ -291,7 +291,12 @@ function Line({ line, onOpenEntry }: { line: ActivityLine; onOpenEntry: (id: num
 
 function ActivityGhost() {
   return (
-    <div aria-busy aria-label="Loading activity" className="mx-auto max-w-3xl space-y-6 px-4 pt-8">
+    <div
+      role="status"
+      aria-busy
+      aria-label="Loading activity"
+      className="mx-auto max-w-3xl space-y-6 px-4 pt-8"
+    >
       {Array.from({ length: 4 }, (_, i) => (
         <div key={i} className="flex gap-3.5">
           <Skeleton className="size-8 shrink-0" />

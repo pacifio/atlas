@@ -58,7 +58,12 @@ export function MemoryEntries({
   useEffect(() => {
     if (focusEntryId == null) return;
     const target = entries.find((e) => e.id === focusEntryId);
-    if (!target) return;
+    if (!target) {
+      // Gone by the time the record arrived: drop the ask, so it can't open
+      // whatever later takes that id.
+      if (loaded) clearFocusEntry();
+      return;
+    }
     setQuery("");
     setAgentFilter("");
     setScope(target.state === "archived" ? "archived" : "current");
@@ -69,7 +74,7 @@ export function MemoryEntries({
         ?.querySelector(`[data-entry-id="${target.id}"]`)
         ?.scrollIntoView({ block: "center" }),
     );
-  }, [focusEntryId, entries, clearFocusEntry]);
+  }, [focusEntryId, entries, loaded, clearFocusEntry]);
 
   const q = query.trim().toLowerCase();
   const scoped = useMemo(() => entries.filter((e) => inScope(e, scope)), [entries, scope]);
@@ -120,6 +125,9 @@ export function MemoryEntries({
       onScopeChange={(s) => {
         setScope(s);
         setSelectedId(null);
+        // The other scope may not offer this agent, which would hide the
+        // filter while it still applies.
+        setAgentFilter("");
       }}
       query={query}
       onQueryChange={setQuery}

@@ -177,22 +177,3 @@ export const TABLE_HEAD =
 
 /** A table row's rule. */
 export const TABLE_ROW = "border-b border-border-subtle";
-
-/** An expandable row's button: the hover wash, held while it is open. */
-export function rowButton(expanded: boolean, className?: string): string {
-  return cn(
-    "flex h-9 w-full cursor-pointer items-center px-3 text-left transition-colors duration-fast ease-out-strong",
-    expanded ? "bg-element-hover" : "hover:bg-element-hover",
-    className,
-  );
-}
-
-/** An expanded row's detail: one card-coloured step down from the row. */
-export const ROW_DETAIL = "space-y-3 border-t border-border-subtle bg-card px-4 py-3";
-
-/** The bordered well a detail's full text sits in. */
-export const DETAIL_WELL = "rounded-md border border-border bg-background px-3 py-2";
-
-/** Running text inside a `DETAIL_WELL`. */
-export const DETAIL_TEXT =
-  "whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-secondary-foreground";
