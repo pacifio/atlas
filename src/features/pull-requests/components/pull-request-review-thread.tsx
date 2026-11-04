@@ -146,11 +146,11 @@ export function ReviewThreadCard({
     }
   };
 
-  const StatusIcon = thread.isResolved ? CircleCheck : Circle;
+  const StateGlyph = thread.isResolved ? CircleCheck : Circle;
   return (
     <div className={CARD_CLASS} contentEditable={false} onPointerDown={stop}>
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <StatusIcon
+        <StateGlyph
           aria-hidden
           className={cn("size-3.5 shrink-0", thread.isResolved && "text-success")}
         />

@@ -68,8 +68,8 @@ export function themeDerived(name: DerivedVar): string {
 /**
  * The resolved colour for a shadcn base token (`chart-1`, `border`, …).
  *
- * Base tokens differ from theme keys in that `tokens.css` defines the whole set
- * on `:root`, so the computed style is a real fallback rather than an empty
+ * Base tokens differ from theme keys in that the package's `themes.css` defines
+ * the whole set on `:root`, so the computed style is a real fallback rather than an empty
  * string when nothing has been applied yet.
  */
 export function themeBase(token: string): string {

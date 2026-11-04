@@ -95,7 +95,7 @@ pub const BASE_TOKENS: &[&str] = &[
 
 /// shadcn's three font stacks. Like every base token they are optional, but
 /// unlike the rest they have no `[[base]]` rule: one a theme leaves out is
-/// Atlas's own default from `tokens.css`. A tweakcn import keeps them. Either
+/// Atlas's own default from `@tryatlas/design`'s `tokens.css`. A tweakcn import keeps them. Either
 /// way a user's font setting outranks them, so they only decide the fonts of
 /// someone who left that setting on "follow the theme".
 pub const FONT_TOKENS: &[&str] = &["font-sans", "font-serif", "font-mono"];

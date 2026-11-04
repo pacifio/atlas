@@ -12,7 +12,6 @@
  * item says which, so "Default" never hides where a font came from.
  */
 
-import { isMac } from "@/lib/platform";
 import { Select } from "@/ui/select";
 import { appearanceForMode } from "@/features/theme/apply-theme";
 import { themeIdFor, useThemeStore } from "@/features/theme/stores/theme-store";
@@ -25,9 +24,11 @@ import { SettingsGroup, SettingsRow, SettingsSection } from "../layout/settings-
 import { FontPicker } from "./font-picker";
 
 /** Atlas's own defaults, for when neither the setting nor the theme names a
- *  font. Mirrors `tokens.css`. */
-const SYSTEM_SANS = '-apple-system, "SF Pro Text", system-ui, sans-serif';
-const SYSTEM_MONO = '"SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace';
+ *  font: Geist and Geist Mono, which `@tryatlas/design` bundles (its
+ *  `tokens.css`), so they render offline on every platform. */
+const DEFAULT_SANS = '"Geist Variable", -apple-system, system-ui, sans-serif';
+const DEFAULT_MONO =
+  '"Geist Mono Variable", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace';
 // What the app renders with: setting, then theme, then default (`globals.css`).
 const UI_FONT = "var(--font-sans)";
 const COMPOSER_FONT = `var(--atlas-composer-font, ${UI_FONT})`;
@@ -78,8 +79,8 @@ export function TypographySection() {
             <FontControl
               setting="uiFontFamily"
               themeToken="font-sans"
-              defaultLabel="System font"
-              fallback={SYSTEM_SANS}
+              defaultLabel="Geist"
+              fallback={DEFAULT_SANS}
             />
           }
         >
@@ -116,8 +117,8 @@ export function TypographySection() {
               setting="codeFontFamily"
               size="editorFontSize"
               themeToken="font-mono"
-              defaultLabel={isMac ? "SF Mono" : "Default monospace"}
-              fallback={SYSTEM_MONO}
+              defaultLabel="Geist Mono"
+              fallback={DEFAULT_MONO}
               monospace
             />
           }

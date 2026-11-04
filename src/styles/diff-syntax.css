@@ -1,7 +1,7 @@
 /* Syntax-highlight theme for the git diff view (src/features/git/).
  *
- * Mirrors the code editor's palette — the `--cm-*` aliases in tokens.css are
- * the resolved theme's `syntax.*` / `editor.*` keys. lowlight emits
+ * Mirrors the code editor's palette: the resolved theme's `syntax.*` /
+ * `editor.*` keys. lowlight emits
  * highlight.js token classes, so we key the same colors off `.hljs-*` here.
  *
  * Scoped under `.diff-syntax` (specificity 0,2,0) AND intentionally UNLAYERED:

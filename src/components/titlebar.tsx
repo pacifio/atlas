@@ -196,7 +196,7 @@ export function Titlebar() {
  * buttons) plus a gap, divided by the interface zoom like the bar's height,
  * because the lights do not scale with it. Vertically the lights are centred
  * by `trafficLightPosition.y` = bar height / 2 − 2 (see `--titlebar-height` in
- * `tokens.css`), re-applied after launch and title changes by
+ * `globals.css`), re-applied after launch and title changes by
  * `commands::window::apply_traffic_light_inset`. The inset is dropped in
  * fullscreen, which hides the lights; Windows and Linux have none on the left.
  */

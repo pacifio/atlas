@@ -3,7 +3,7 @@
 //! (`timeFormat`, handed to `lib/format-time.ts`).
 //!
 //! Each one is written onto `<html>` as a custom property or a data attribute,
-//! and the stylesheets read it (`tokens.css`, `globals.css`). Nothing here
+//! and the stylesheets read it (`globals.css`). Nothing here
 //! re-renders React, so a change recolours or reflows at once, and every
 //! surface that styles itself through those rules follows without being told.
 //! The terminal's xterm (the alt screen) is the exception: it takes its font

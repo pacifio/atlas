@@ -13,7 +13,7 @@ import { agentMeta } from "@/features/agents/lib/agent-meta";
  * is how parallel Claude / Codex chat sessions are told apart. External
  * (registry-installed) agents render their manifest SVG, falling back to a
  * monogram of their label. `AgentMark` below wraps it in the neutral `.amark`
- * chip (tokens.css, from `agent.chip.*`); there is no per-agent token family
+ * chip (`@tryatlas/design`, from `agent.chip.*`); there is no per-agent token family
  * any more — the vendors' hues are constants in `agents/lib/agent-brand.ts`.
  */
 export function AgentGlyph({

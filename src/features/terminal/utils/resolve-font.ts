@@ -25,7 +25,7 @@ const CSS_GENERIC_FONT_FAMILIES = new Set([
 
 /** What the resolver asks for when handed nothing, matching the head of the
  *  default `--font-mono` stack; the platform native font backs it. */
-const TERMINAL_PRIMARY_FONT = "SF Mono";
+const TERMINAL_PRIMARY_FONT = "Geist Mono Variable";
 
 function getPlatformFallback(): string {
   if (typeof navigator === "undefined") return LINUX_FALLBACK;

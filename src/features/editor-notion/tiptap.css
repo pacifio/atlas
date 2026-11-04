@@ -3,8 +3,7 @@
  * Phase A keeps this minimal: enough typography to make the editor
  * read like a real document, plus the placeholder. The full design
  * theme (slash menu, bubble menu, custom block chrome, headings) lands
- * in Phases C and D. Everything here uses tokens from src/styles/tokens.css
- * — no hard-coded colors. */
+ * in Phases C and D. Everything here uses the theme's tokens — no hard-coded colors. */
 
 .atlas-tiptap {
   background: var(--background);

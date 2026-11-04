@@ -52,7 +52,7 @@ const FOLD_GUTTER_FONT_SIZE = "var(--text-sm)";
  */
 export function editorColorsFromTheme(theme: ResolvedTheme | null): EditorThemeColors {
   const key = (name: ThemeKey) => theme?.keys[name] ?? KEY_DEFAULTS[name];
-  // `tokens.css` defines the whole base-token set on `:root`, so an unresolved
+  // The package's `themes.css` defines the whole base-token set on `:root`, so an unresolved
   // base token has a real value to read rather than a literal to restate.
   const token = (name: string) => theme?.base[name] ?? themeBase(name);
   return {
@@ -109,7 +109,7 @@ export function buildEditorChromeTheme(theme: ResolvedTheme | null): Extension {
         backgroundColor: c.bg,
         color: c.fg,
         height: "100%",
-        // The theme owns the mono stack; `tokens.css` has the fallback chain.
+        // The theme owns the mono stack; the package's `tokens.css` has the fallback chain.
         fontFamily: "var(--font-mono)",
         fontSize: EDITOR_FONT_SIZE,
         lineHeight: EDITOR_LINE_HEIGHT,

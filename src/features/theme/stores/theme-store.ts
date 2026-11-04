@@ -117,7 +117,7 @@ const baseStore = create<ThemeState>()((set, get) => ({
         // the handler that existed to survive the first, rejecting the promise
         // no caller awaits. Failing to theme is not a reason to fail: the app
         // stays on what `index.html` replayed from the launch cache, or on
-        // `tokens.css`'s Atlas-dark fallback on a first run.
+        // the design package's Atlas-dark `:root` on a first run.
         const loaded =
           (await loadTheme(id)) ?? (id === FALLBACK_THEME ? null : await loadTheme(FALLBACK_THEME));
         // A newer `apply` started while this one was loading. It owns the
