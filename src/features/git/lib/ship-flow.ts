@@ -48,8 +48,9 @@ export interface ShipState {
   steps: ShipStep[];
   status: Record<ShipStep, StepStatus>;
   phase: "running" | "failed" | "done";
-  /** The step that failed and why, in words. */
-  error: { step: ShipStep; message: string } | null;
+  /** The step that failed and why, in words; with the command it ran and
+   *  everything it printed, when the failure says (for "Fix with agent"). */
+  error: { step: ShipStep; message: string; command?: string; output?: string } | null;
   pr: ShipPr | null;
   /** Where the work was pushed: the branch name, once known. */
   branch: string | null;
@@ -72,6 +73,8 @@ export interface ShipDeps {
   }) => Promise<{ number: number; url: string }>;
   /** A rejection in words. */
   describe: (error: unknown, step: ShipStep) => string;
+  /** The command a rejection came from and its full output, when known. */
+  detail?: (error: unknown, step: ShipStep) => { command?: string; output?: string };
 }
 
 export function planSteps(request: ShipRequest): ShipStep[] {
@@ -135,7 +138,10 @@ export async function runShip(
       set(patch, step, "done");
     } catch (error) {
       set(
-        { phase: "failed", error: { step, message: deps.describe(error, step) } },
+        {
+          phase: "failed",
+          error: { step, message: deps.describe(error, step), ...deps.detail?.(error, step) },
+        },
         step,
         "failed",
       );

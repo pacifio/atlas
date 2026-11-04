@@ -1,6 +1,8 @@
 import { ExternalLink, GitPullRequestArrow, RotateCcw, X } from "lucide-react";
 import { Button, IconButton, StatusIcon, type SessionStatusKind } from "@tryatlas/design";
 import { cn } from "@/lib/utils";
+import { FixWithAgentButton } from "@/features/ask-agent/components/ask-agent-button";
+import type { ErrorContext } from "@/features/ask-agent/lib/agent-context";
 
 export type ShipStepStatus = "pending" | "running" | "done" | "failed";
 
@@ -20,6 +22,8 @@ export interface ShipProgressViewProps {
   error: string | null;
   /** The label of the step a retry starts at. */
   retryLabel: string | null;
+  /** The failure as the agent gets it, for "Fix with agent". */
+  fix: ErrorContext | null;
   pr: { number: number; existing: boolean } | null;
   onRetry: () => void;
   onDismiss: () => void;
@@ -37,7 +41,8 @@ const GLYPH: Record<ShipStepStatus, SessionStatusKind> = {
 /**
  * "Commit, push & PR" in place: one row per step in the timeline's own
  * language (the session status glyph, then what the step did), the failing
- * step's error under it with a retry from there, and the pull request it ended
+ * step's error under it with a retry from there and "Fix with agent" (the step,
+ * its command and its output), and the pull request it ended
  * on. Renders from its props alone.
  *
  * A step changes state by cross-fading its glyph and ink; nothing moves, so
@@ -49,6 +54,7 @@ export function ShipProgressView({
   phase,
   error,
   retryLabel,
+  fix,
   pr,
   onRetry,
   onDismiss,
@@ -104,10 +110,13 @@ export function ShipProgressView({
       {phase === "failed" && error && (
         <div className="mt-2 space-y-2">
           <p className="text-xs whitespace-pre-wrap break-words text-error select-text">{error}</p>
-          <Button size="sm" variant="outline" onClick={onRetry}>
-            <RotateCcw size={12} />
-            {retryLabel ?? "Retry"}
-          </Button>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Button size="sm" variant="outline" onClick={onRetry}>
+              <RotateCcw size={12} />
+              {retryLabel ?? "Retry"}
+            </Button>
+            {fix && <FixWithAgentButton error={fix} />}
+          </div>
         </div>
       )}
 

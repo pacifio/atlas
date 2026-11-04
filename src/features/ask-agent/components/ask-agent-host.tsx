@@ -141,6 +141,17 @@ function AskAgentBox({
         onRemoveChip={(key) => setContexts((cs) => cs.filter((c) => c.key !== key))}
         prompt={prompt}
         onPromptChange={setPrompt}
+        suggestions={request.suggestions}
+        onSuggestion={(s) => {
+          // Fills, never sends: the session can still be picked, the words
+          // still edited. The caret goes back to the end of the field.
+          setPrompt(s);
+          requestAnimationFrame(() => {
+            const el = inputRef.current;
+            el?.focus();
+            el?.setSelectionRange(el.value.length, el.value.length);
+          });
+        }}
         targets={targets}
         target={target}
         onTargetChange={setTarget}

@@ -18,6 +18,8 @@ import { Copy, GitBranch, GitBranchPlus } from "lucide-react";
 
 import type { BranchInfo } from "@/features/git/stores/git-store";
 import { gitErrorText } from "@/features/notifications/lib/outcome-notifier";
+import { fixWithAgentAction } from "@/features/ask-agent/lib/open-ask";
+import { anyGitErrorContext } from "@/features/git/lib/git-errors";
 import { cn } from "@/lib/utils";
 
 import { gitCheckout, gitCreateBranch } from "../lib/session-git-api";
@@ -154,6 +156,7 @@ function BranchList({ path, git, onDone }: { path: string; git: SessionGit; onDo
           option.kind === "branch" ? "Could not switch branch" : "Could not create the branch",
           {
             description: gitErrorText(e),
+            action: fixWithAgentAction(anyGitErrorContext(e, path, "git checkout")),
           },
         ),
       )

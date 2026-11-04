@@ -33,7 +33,9 @@ import { CommitAvatar } from "./commit-avatar";
 import type { DiffJump } from "../lib/diff-jump";
 import { useSettingsStore } from "@/features/settings/stores/settings-store";
 import { useCollapsedFiles } from "../lib/use-collapsed-files";
-import { CopyGlyph, HintGroup, HintItem } from "@tryatlas/design";
+import { Button, CopyGlyph, HintGroup, HintItem, Icon } from "@tryatlas/design";
+import { openAskAgent } from "@/features/ask-agent/lib/ask-agent";
+import { COMMIT_ASKS, commitContext } from "../lib/ask-git";
 
 type ViewMode = "split" | "unified";
 
@@ -509,6 +511,9 @@ function CommitHeader({ detail, repoPath }: { detail: CommitDetail; repoPath: st
             </pre>
           )}
           {expanded && <CommitSessions repoPath={repoPath} sha={detail.hash} />}
+          <div className="mt-2 -ml-1.5 flex flex-wrap items-center gap-1">
+            <CommitAsks detail={detail} />
+          </div>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
           <HintGroup>
@@ -538,6 +543,30 @@ function CommitHeader({ detail, repoPath }: { detail: CommitDetail; repoPath: st
         </div>
       </div>
     </div>
+  );
+}
+
+/** "Explain" and "Revert with agent": the commit handed to a session, which
+ *  answers or reverts in its own turn. The toolbar's Revert is the direct
+ *  one. */
+function CommitAsks({ detail }: { detail: CommitDetail }) {
+  const ask = (prompt: string) => (e: { currentTarget: HTMLElement }) =>
+    openAskAgent({
+      context: [commitContext(detail.hash, detail.subject)],
+      prompt,
+      anchor: e.currentTarget,
+    });
+  return (
+    <>
+      <Button size="xs" variant="ghost" onClick={ask(COMMIT_ASKS.explain)}>
+        <Icon icon={Sparkles} size="xs" />
+        Explain
+      </Button>
+      <Button size="xs" variant="ghost" onClick={ask(COMMIT_ASKS.revert)}>
+        <Icon icon={Undo2} size="xs" />
+        Revert with agent
+      </Button>
+    </>
   );
 }
 

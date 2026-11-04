@@ -31,7 +31,10 @@
  * ```
  *
  * For an error, `<FixWithAgentButton error={{ kind: "error", source, message, log }} />`
- * opens the box pre-filled with "Fix this:". Without the box,
+ * opens the box pre-filled with "Fix this:"; for an error shown as a toast,
+ * `toast.error(msg, { action: fixWithAgentAction(error) })`. A surface with
+ * common asks passes `suggestions` ("Explain this change"), which the box
+ * offers as one-click fills. Without the box,
  * `await askAgent({ context, prompt, send: true })` sends from code and
  * `confirmAsk(result)` shows the pill. `openAskAgent({ context, anchor })`
  * opens the box against any element or rect.
@@ -62,14 +65,16 @@ import { projectPathForTab } from "@/features/chat/lib/tab-project";
 import type { ChatSendDetail } from "@/features/chat/hooks/use-queue-drain";
 import type { ChatInsertDetail } from "@/features/chat/lib/response-selection";
 
-import { useAskAgentStore, type AskAnchor } from "../stores/ask-agent-store";
-import { agentContextMention, capContext, type AgentContext } from "./agent-context";
+import { agentContextMention, type AgentContext } from "./agent-context";
 
 export type { AgentContext } from "./agent-context";
 
-/** Where the ask goes: the session in view, a new one, or an open session's
- *  tab id. */
-export type AskTarget = "active" | "new" | (string & {});
+import type { AskTarget } from "./open-ask";
+export type { AskTarget } from "./open-ask";
+// Opening the box needs none of the session machinery above, so it lives in
+// a leaf module that a low-level lib (git's error routing) can import
+// without pulling in the chat and layout stores.
+export { fixWithAgentAction, openAskAgent } from "./open-ask";
 
 export interface AskAgentOptions {
   context: readonly AgentContext[];
@@ -224,22 +229,6 @@ export function openAskedSession(tabId: string): void {
   useLayoutStore.getState().actions.setActiveTab(tabId);
   useChatStore.getState().actions.setActiveSession(tabId);
   window.dispatchEvent(new CustomEvent("atlas:chat-focus", { detail: { tabId } }));
-}
-
-/** Open the ask box, pre-filled, against `anchor` (an element, a rect, or
- *  nothing for the top of the window). */
-export function openAskAgent(request: {
-  context?: readonly AgentContext[];
-  prompt?: string;
-  anchor?: AskAnchor;
-  target?: AskTarget;
-}): void {
-  useAskAgentStore.getState().actions.open({
-    context: (request.context ?? []).map(capContext),
-    prompt: request.prompt,
-    anchor: request.anchor ?? null,
-    target: request.target,
-  });
 }
 
 /** The confirmation: "Sent to ‹session› · Open". */

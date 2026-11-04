@@ -20,6 +20,8 @@ import { invalidatePullRequestQueries } from "@/features/pull-requests/lib/pull-
 import type { PrError } from "@/features/pull-requests/lib/pull-requests-types";
 
 import { useGitStore } from "../stores/git-store";
+import { opOutputText } from "./ask-git";
+import { isGitError } from "./git-errors";
 import { useShipStore } from "../stores/ship-store";
 import { shipCommit, shipCreateBranch, shipPublish, shipPush, shipSnapshot } from "./git-ship-api";
 import {
@@ -52,6 +54,45 @@ export function describeShipError(error: unknown, step: ShipStep): string {
     return prErrorText(classifyPrError(error));
   }
   return gitErrorText(error);
+}
+
+/** What each step runs, for a failure that does not name its command. */
+const STEP_COMMAND: Record<ShipStep, string> = {
+  check: "gh auth status",
+  branch: "git checkout -b",
+  commit: "git commit",
+  push: "git push",
+  pr: "gh pr create",
+};
+
+/** The command a failed step ran and everything it printed: git's typed
+ *  failure names its command and carries its stderr, and a streamed op (the
+ *  commit's hooks, the push's) printed more than that into the op strip. */
+export function describeShipDetail(
+  error: unknown,
+  step: ShipStep,
+): { command: string; output?: string } {
+  if (isGitError(error)) {
+    const op = useGitStore.getState().activeOp;
+    // The strip's op is this failure's only when it failed the same way: a
+    // step that failed before streaming leaves an older op there.
+    const same =
+      !!op &&
+      !op.running &&
+      op.error?.command === error.command &&
+      op.error.message === error.message &&
+      op.error.rawStderr === error.rawStderr;
+    const streamed = same ? opOutputText(op.lines) : "";
+    const output = streamed.trim() ? streamed : error.rawStderr;
+    return { command: error.command || STEP_COMMAND[step], ...(output ? { output } : {}) };
+  }
+  if (isPrError(error)) {
+    // gh's own words, when they say more than the sentence shown.
+    const shown = describeShipError(error, step);
+    const output = error.message && error.message !== shown ? error.message : undefined;
+    return { command: STEP_COMMAND[step], ...(output ? { output } : {}) };
+  }
+  return { command: STEP_COMMAND[step] };
 }
 
 export function shipDeps(repoPath: string): ShipDeps {
@@ -87,6 +128,7 @@ export function shipDeps(repoPath: string): ShipDeps {
     },
     createPr: (input) => prCreate(repoPath, { ...input, draft: false }),
     describe: describeShipError,
+    detail: describeShipDetail,
   };
 }
 

@@ -42,6 +42,7 @@ import { chatTools } from "./chat-tools";
 import { chatTurnChanges, chatTurnChangesLong, chatTurnChangesNative } from "./chat-turn-changes";
 import { askAgent } from "./ask-agent";
 import { askFiles } from "./ask-files";
+import { askAgentSourceControl } from "./ask-agent-source-control";
 import { captureHealthy } from "./capture-healthy";
 import { collab } from "./collab";
 import { designSystem } from "./design-system";
@@ -133,6 +134,7 @@ const all: Scenario[] = [
   gitConflict,
   askAgent,
   askFiles,
+  askAgentSourceControl,
   diffLarge,
   diffComments,
   filesLarge,

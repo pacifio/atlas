@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronUp } from "lucide-react";
-import { Button, Checkbox, Input, Textarea } from "@tryatlas/design";
+import { ChevronDown, ChevronUp, Sparkles } from "lucide-react";
+import { Button, Checkbox, Icon, Input, Textarea } from "@tryatlas/design";
+
+import { openAskAgent } from "@/features/ask-agent/lib/ask-agent";
 
 import { gitBranchCompare } from "@/features/session-context/lib/session-git-api";
 import { featureBranchName } from "@/features/session-context/lib/git-quick-action";
@@ -11,6 +13,7 @@ import { useGitStore } from "../../stores/git-store";
 import { useShipStore } from "../../stores/ship-store";
 import { handleGitError } from "../../lib/git-errors";
 import { openPullRequest } from "../../lib/git-pr-api";
+import { shipErrorContext, stagedFilesContext, WRITE_COMMIT_PROMPT } from "../../lib/ask-git";
 import {
   RETRY_LABEL,
   STEP_LABEL,
@@ -311,6 +314,36 @@ export function CommitComposer({ stagedCount }: { stagedCount: number }) {
             <Checkbox checked={amend} onCheckedChange={setAmend} />
             Amend
           </label>
+          {/* The agent answers in its session; the box here stays the
+              user's, so nothing is committed that they did not put in it. */}
+          <Button
+            variant="ghost"
+            size="xs"
+            className="ml-auto"
+            disabled={stagedCount === 0}
+            title={
+              stagedCount === 0
+                ? "Stage changes for the agent to describe"
+                : "Ask the agent for a message from the staged diff"
+            }
+            onClick={(e) =>
+              openAskAgent({
+                context: [
+                  stagedFilesContext(
+                    useGitStore
+                      .getState()
+                      .files.filter((f) => f.staged)
+                      .map((f) => f.path),
+                  ),
+                ],
+                prompt: WRITE_COMMIT_PROMPT,
+                anchor: e.currentTarget,
+              })
+            }
+          >
+            <Icon icon={Sparkles} size="xs" />
+            Write with agent
+          </Button>
         </div>
         <div className="flex items-center gap-2">
           {last ? (
@@ -395,6 +428,10 @@ function ShipProgress({
     status: run.status[step],
   }));
   const resume = run.phase === "failed" ? resumeStep(run) : null;
+  const fix =
+    run.phase === "failed" && run.error
+      ? shipErrorContext({ ...run.error, step: STEP_LABEL[run.error.step] }, repoPath)
+      : null;
   const title =
     run.phase === "done"
       ? request.variant === "commit_push_pr"
@@ -412,6 +449,7 @@ function ShipProgress({
       phase={run.phase}
       error={run.error?.message ?? null}
       retryLabel={resume ? RETRY_LABEL[resume] : null}
+      fix={fix}
       pr={run.pr}
       onRetry={onRetry}
       onDismiss={onDismiss}

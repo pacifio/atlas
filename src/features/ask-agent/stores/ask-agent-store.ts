@@ -15,6 +15,8 @@ export type AskAnchor = Element | DOMRect | null;
 export interface AskRequest {
   context: readonly AgentContext[];
   prompt?: string;
+  /** Quick prompts the box offers as one-click fills ("Explain this change"). */
+  suggestions?: readonly string[];
   anchor: AskAnchor;
   /** Opens with this session picked; else the session in view. */
   target?: string;
