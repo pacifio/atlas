@@ -14,7 +14,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Check, CircleHelp } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { QuestionSpec } from "../lib/questions";
+import type { QuestionSpec } from "../../lib/questions";
 import { HintGroup, HintItem } from "@tryatlas/design";
 
 /** One question's answer, as the card reports it. */
@@ -29,7 +29,7 @@ function isAnswered(a: Answer): boolean {
   return a.selected.length > 0 || a.custom.trim().length > 0;
 }
 
-export function ApprovalCard({
+export function ApprovalCardView({
   questions,
   queueNote,
   onSubmit,
