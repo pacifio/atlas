@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 
 import { useArtifactsStore, type OpenSession } from "../stores/artifacts-store";
-import type { BoardPage, BoardSession, ProjectFilter } from "../types";
+import type { BoardSession, ProjectFilter } from "../types";
+import { readBoard, refreshCloudBoard } from "./board-api";
 import { boardKey, rowForCheckout } from "./board-key";
 import { clearDetailCache, invalidateCachedDetail } from "./detail-cache";
 
@@ -74,7 +74,7 @@ export function useTimelineBoard({
   const cloudFailureToldFor = useRef<string | null>(null);
 
   const retryCloud = useCallback(() => {
-    void invoke<boolean>("artifacts_cloud_refresh")
+    void refreshCloudBoard()
       .then((ok) => {
         if (ok) toast.success("Cloud sessions loaded.");
         // A failed retry re-arms the notice rather than raising a second one
@@ -168,12 +168,9 @@ export function useTimelineBoard({
       // rows it returns, so filtering afterwards would show only this project's
       // share of the newest few hundred; asking for one project reads its
       // history whole.
-      const page = await invoke<BoardPage>("artifacts_board", {
-        projects: projectPaths,
-        // Explicit, not `[path]`: one open folder is not a filter, and a
-        // server Project with no checkout has no path to send.
-        filter: projectFilter,
-      });
+      // The filter is explicit, not `[path]`: one open folder is not a filter,
+      // and a server Project with no checkout has no path to send.
+      const page = await readBoard(projectPaths, projectFilter);
       if (seq !== listSeq.current) return; // a newer read owns the state now
       const rows = page.sessions;
       setCloudPending(page.cloudPending);
@@ -188,7 +185,6 @@ export function useTimelineBoard({
       setLoaded(true);
     } catch (e) {
       if (seq === listSeq.current) setError(String(e));
-    } finally {
     }
     // `projectsKey` stands in for `projectPaths`: same content, stable identity.
     // oxlint-disable-next-line react-hooks/exhaustive-deps
