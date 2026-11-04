@@ -477,7 +477,7 @@
     width: 100%;
     overflow: hidden;
     /* `--font-sans`: the `uiFontFamily` setting, else the theme's font, else
-       the system font (the display-settings block at the end of this file). */
+       Geist (the display-settings block at the end of this file). */
     font-family: var(--font-sans);
     font-size: 13px;
     line-height: 1.45;
