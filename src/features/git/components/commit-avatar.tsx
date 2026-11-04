@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { User } from "lucide-react";
+import { Avatar, AvatarFallback, AvatarImage, Icon } from "@tryatlas/design";
 import { useGitStore } from "../stores/git-store";
 import { useGithubAvatars } from "../lib/git-avatars-api";
 
@@ -29,6 +30,8 @@ interface CommitAvatarProps {
   email: string | null | undefined;
   /** The repository the commit belongs to; defaults to the active one. */
   repoPath?: string;
+  /** Pixels. Commit rows are denser than the control ladder the package
+   *  `Avatar` sizes to, so the face is sized here. */
   size?: number;
   className?: string;
 }
@@ -76,30 +79,20 @@ export function CommitAvatar({ email, repoPath, size = 16, className }: CommitAv
   ].find((url): url is string => !!url && !failed.has(url));
 
   return (
-    <span
-      className={`relative inline-flex items-center justify-center rounded-full overflow-hidden shrink-0 bg-[var(--card)] border border-[var(--border)] ${
-        className ?? ""
-      }`}
-      style={{ width: size, height: size }}
-    >
+    <Avatar size="xs" className={className} style={{ width: size, height: size }}>
       {src ? (
-        <img
+        <AvatarImage
           key={src}
           src={src}
           alt=""
-          width={size}
-          height={size}
-          loading="lazy"
-          decoding="async"
-          onError={() => setFailed((prev) => new Set(prev).add(src))}
-          className="w-full h-full object-cover"
+          onLoadingStatusChange={(status) => {
+            if (status === "error") setFailed((prev) => new Set(prev).add(src));
+          }}
         />
-      ) : (
-        <User
-          size={Math.max(8, Math.floor(size * 0.55))}
-          className="text-[var(--muted-foreground)]"
-        />
-      )}
-    </span>
+      ) : null}
+      <AvatarFallback>
+        <Icon icon={User} size="xs" className="text-muted-foreground" />
+      </AvatarFallback>
+    </Avatar>
   );
 }

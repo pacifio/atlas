@@ -1,4 +1,6 @@
 import { memo } from "react";
+import { Tag as TagGlyph } from "lucide-react";
+import { Badge, Icon } from "@tryatlas/design";
 import { cn } from "@/lib/utils";
 import {
   type CommitRow,
@@ -7,8 +9,8 @@ import {
   LANE_WIDTH,
   ROW_HEIGHT,
   GRAPH_LEFT_PAD,
-} from "../lib/git-graph";
-import { CommitAvatar } from "./commit-avatar";
+} from "../../lib/git-graph";
+import { CommitAvatar } from "../commit-avatar";
 
 interface CommitRowViewProps {
   row: CommitRow;
@@ -35,19 +37,35 @@ function segmentPath(seg: LaneSegment): string {
   return `M${x1},${y1} C${x1},${cy} ${x2},${cy} ${x2},${y2}`;
 }
 
-function badgeClass(kind: RefBadge["kind"], isCurrent: boolean) {
-  if (kind === "tag") {
-    return "bg-[var(--muted-foreground)]/15 text-[var(--muted-foreground)] border-[var(--muted-foreground)]/30";
-  }
-  if (kind === "remote") {
-    return "bg-[var(--card)] text-[var(--muted-foreground)] border-[var(--border)]";
-  }
-  if (isCurrent) {
-    return "bg-[var(--primary)]/20 text-[var(--primary)] border-[var(--primary)]/40";
-  }
-  return "bg-[var(--card)] text-[var(--secondary-foreground)] border-[var(--border)]";
+/** A ref chip. Branches are outlined (the checked-out one carries a primary
+ *  dot); remotes and tags sit back on the card fill, a tag with its glyph. */
+function RefChip({ refBadge }: { refBadge: RefBadge }) {
+  const { kind, name, isCurrent } = refBadge;
+  const branch = kind !== "tag" && kind !== "remote";
+  return (
+    <Badge
+      variant={branch ? "outline" : "secondary"}
+      size="sm"
+      className="font-mono"
+      title={`${kind}: ${name}`}
+    >
+      {branch && isCurrent ? (
+        <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-primary" />
+      ) : null}
+      {kind === "tag" ? <Icon icon={TagGlyph} size="xs" /> : null}
+      {name}
+    </Badge>
+  );
 }
 
+/**
+ * One commit in the graph: the lane gutter (an SVG per row, so the lines are
+ * drawn by the browser and need no measuring), the ref chips and message, and
+ * in fullscreen the author, short sha and date columns.
+ *
+ * Lane colours arrive from Rust (`git_graph.rs`) as finished values, so they
+ * are passed to the SVG as presentation attributes rather than classes.
+ */
 export const CommitRowView = memo(function CommitRowView({
   row,
   repoPath,
@@ -71,14 +89,13 @@ export const CommitRowView = memo(function CommitRowView({
     <div
       onClick={() => onSelect(row.sha)}
       className={cn(
-        "group flex items-center cursor-pointer select-none",
+        "group flex items-center cursor-pointer select-none transition-colors duration-fast",
         selected
-          ? "bg-[var(--primary)]/15 text-[var(--foreground)]"
-          : "hover:bg-element-hover text-[var(--secondary-foreground)]",
+          ? "bg-element-selected text-foreground"
+          : "text-secondary-foreground hover:bg-element-hover",
       )}
       style={{ height: ROW_HEIGHT }}
     >
-      {/* SVG gutter */}
       <svg width={gutterWidth} height={ROW_HEIGHT} className="shrink-0" aria-hidden>
         {row.segments.map((seg, idx) => (
           <path
@@ -95,51 +112,29 @@ export const CommitRowView = memo(function CommitRowView({
           cy={ROW_HEIGHT / 2}
           r={3.5}
           fill={row.commitColor}
-          stroke={row.isHead ? "var(--primary)" : "transparent"}
+          className={row.isHead ? "stroke-primary" : undefined}
           strokeWidth={row.isHead ? 1.5 : 0}
         />
       </svg>
 
       {/* Row content — flush against the gutter; per-row gutter sizing handles the offset */}
-      <div className={cn("flex-1 min-w-0 flex items-center gap-2 pl-0", compact ? "pr-3" : "pr-4")}>
-        {/* Refs + message — flexes to fill remaining space */}
-        <div className="flex items-center gap-1.5 flex-1 min-w-0">
+      <div className={cn("flex min-w-0 flex-1 items-center gap-2", compact ? "pr-3" : "pr-4")}>
+        <div className="flex min-w-0 flex-1 items-center gap-1.5">
           {visibleRefs.slice(0, 4).map((r) => (
-            <span
-              key={`${r.kind}:${r.name}`}
-              className={cn(
-                "px-1 h-[14px] rounded-sm border text-3xs font-mono leading-none flex items-center shrink-0",
-                badgeClass(r.kind, r.isCurrent),
-              )}
-              title={`${r.kind}: ${r.name}`}
-            >
-              {r.name}
-            </span>
+            <RefChip key={`${r.kind}:${r.name}`} refBadge={r} />
           ))}
-          <span
-            className={cn(
-              "text-sm truncate",
-              selected ? "text-[var(--foreground)] font-medium" : "",
-            )}
-          >
-            {row.message}
-          </span>
+          <span className={cn("truncate text-xs", selected && "font-medium")}>{row.message}</span>
         </div>
         {!compact && (
           <>
-            {/* Author column — fixed width, avatar + name, aligned across all rows */}
-            <div className="flex items-center gap-1.5 w-[200px] shrink-0">
+            <div className="flex w-[200px] shrink-0 items-center gap-1.5">
               <CommitAvatar email={row.email} repoPath={repoPath} size={16} />
-              <span className="text-xs text-[var(--secondary-foreground)] truncate">
-                {row.author}
-              </span>
+              <span className="truncate text-xs text-secondary-foreground">{row.author}</span>
             </div>
-            {/* Short sha column */}
-            <span className="text-xs font-mono text-[var(--muted-foreground)] shrink-0 w-[68px]">
+            <span className="w-[68px] shrink-0 font-mono text-xs text-muted-foreground">
               {row.shortSha}
             </span>
-            {/* Date column */}
-            <span className="text-xs font-mono text-[var(--muted-foreground)] shrink-0 w-[160px] text-right">
+            <span className="w-[160px] shrink-0 text-right font-mono text-xs text-muted-foreground">
               {row.date}
             </span>
           </>

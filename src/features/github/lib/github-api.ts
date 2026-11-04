@@ -52,3 +52,14 @@ export function updateClonedRepo(projectPath: string, repoName: string): Promise
 export function deleteClonedRepo(projectPath: string, repoName: string): Promise<void> {
   return invoke<void>("delete_cloned_repo", { projectPath, repoName });
 }
+
+/** Open a page in the system browser; `window.open` where the opener plugin
+ *  is unavailable (the browser dev build). */
+export async function openExternal(url: string): Promise<void> {
+  try {
+    const { openUrl } = await import("@tauri-apps/plugin-opener");
+    await openUrl(url);
+  } catch {
+    window.open(url, "_blank");
+  }
+}
