@@ -21,6 +21,9 @@ import type { MemoryEntry } from "./shared-memory-api";
  *  types reads as an instruction about memory. */
 export const MEMORY_INSTRUCTION_PROMPT = "Update this project's shared memory: ";
 
+/** What a memory's "Ask agent…" suggests asking, beside it and in the box. */
+export const ENTRY_ASK_EXAMPLE = "This is outdated, we moved to Postgres";
+
 /** How many memories the prompt line's digest lists. The agent can search
  *  the rest with its memory tools; this is where to start, not a dump. */
 export const DIGEST_ENTRIES = 20;
@@ -124,7 +127,8 @@ export function activityAsk(
   if (openTab) {
     return { context: [what], prompt: "Why did you learn this? ", target: openTab };
   }
-  const when = new Date(group.end).toISOString();
+  const at = new Date(group.end);
+  const when = Number.isNaN(at.getTime()) ? "unknown" : at.toISOString();
   const provenance: QuoteContext = {
     kind: "quote",
     source: "memory activity provenance",

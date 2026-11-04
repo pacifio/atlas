@@ -46,6 +46,7 @@ import {
 import { AgentName, EntryAuthor, KindGlyph, StateBadge } from "./memory-entry-parts";
 import { RailNode, RailRow } from "./memory-rail";
 import { AskField } from "./memory-chrome";
+import { ENTRY_ASK_EXAMPLE } from "../../lib/memory-ask";
 
 /** Provenance dates arrive as `YYYY-MM-DD`; show them like the rest of the
  *  pane ("Sep 18"), and pass anything else through untouched. */
@@ -154,11 +155,7 @@ export function MemoryEntryDetailView(p: MemoryEntryDetailViewProps) {
               Postgres" goes to a session, and the agent rewrites the memory.
               The verdicts stay one click; editing by hand is in ⋯. */}
           {!p.editing && (
-            <AskField
-              label="Ask agent…"
-              hint="“this is outdated, we moved to Postgres”"
-              onOpen={p.onAskAgent}
-            />
+            <AskField label="Ask agent…" hint={`“${ENTRY_ASK_EXAMPLE}”`} onOpen={p.onAskAgent} />
           )}
 
           <div className="flex flex-wrap items-center gap-1.5">

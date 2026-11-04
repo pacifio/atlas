@@ -277,6 +277,12 @@ function SessionGroup({
   );
 }
 
+/** A line, short enough for a button's name. */
+function whatLabel(line: ActivityLine): string {
+  const flat = `${line.verb} ${line.path ?? line.text}`.replace(/\s+/g, " ").trim();
+  return flat.length > 48 ? `${flat.slice(0, 47).trimEnd()}…` : flat;
+}
+
 /** One thing the agent did. On hover it offers "Why did you learn this?",
  *  asked of the session that wrote it. */
 function Line({
@@ -317,7 +323,8 @@ function Line({
         <div className="flex min-w-0 flex-1 items-start gap-2 px-1.5 py-1">{body}</div>
       )}
       <AskAgentButton
-        label="Why did you learn this?"
+        // Named for its line, so a list of them is not one name repeated.
+        label={`Why did you learn this: ${whatLabel(line)}`}
         context={ask.context}
         prompt={ask.prompt}
         target={ask.target}

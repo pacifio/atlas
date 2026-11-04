@@ -204,7 +204,12 @@ export function AskField({
     >
       <MessageSquarePlus aria-hidden className="size-3 shrink-0" />
       <span className="shrink-0">{label}</span>
-      {hint ? <span className="min-w-0 truncate text-disabled">{hint}</span> : null}
+      {/* An example, not part of the button's name. */}
+      {hint ? (
+        <span aria-hidden className="min-w-0 truncate text-disabled">
+          {hint}
+        </span>
+      ) : null}
     </button>
   );
 }

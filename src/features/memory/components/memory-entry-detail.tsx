@@ -8,7 +8,7 @@ import { useSharedMemoryStore } from "../stores/shared-memory-store";
 import { sharedMemory, type MemoryEntry, type Provenance } from "../lib/shared-memory-api";
 import { provenanceSession } from "../lib/memory-entries";
 import { openMemorySession } from "../lib/open-memory-session";
-import { entryContext } from "../lib/memory-ask";
+import { ENTRY_ASK_EXAMPLE, entryContext } from "../lib/memory-ask";
 import { openAskAgent } from "@/features/ask-agent/lib/ask-agent";
 import { MemoryEntryDetailView } from "./views/memory-entry-detail-view";
 
@@ -151,7 +151,7 @@ export function MemoryEntryDetail({
         openAskAgent({
           context: [entryContext(e, projectPath)],
           anchor,
-          placeholder: "This is outdated, we moved to Postgres…",
+          placeholder: `${ENTRY_ASK_EXAMPLE}…`,
         })
       }
       onOpenSession={(p) => {

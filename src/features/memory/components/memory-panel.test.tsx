@@ -242,6 +242,25 @@ describe("the Memories list", () => {
     expect(screen.queryByRole("complementary")).toBeNull();
   });
 
+  it("hands an unreadable record to the agent to fix", async () => {
+    const base = invoke.getMockImplementation()!;
+    invoke.mockImplementation(async (cmd: string, args: Record<string, unknown>) => {
+      if (cmd === "memory_list_entries") throw new Error("database is locked");
+      return base(cmd, args);
+    });
+    const user = userEvent.setup();
+    render(<MemoryPanel />);
+    await user.click(await screen.findByRole("button", { name: /Fix with agent/ }));
+    const request = useAskAgentStore.getState().request;
+    expect(request?.prompt).toBe("Fix this: ");
+    expect(request?.context).toEqual([
+      expect.objectContaining({
+        kind: "error",
+        message: expect.stringContaining("database is locked"),
+      }),
+    ]);
+  });
+
   it("says Review can't be read when the record is locked, not that nothing waits", async () => {
     const base = invoke.getMockImplementation()!;
     invoke.mockImplementation(async (cmd: string, args: Record<string, unknown>) => {
