@@ -131,8 +131,9 @@ const FORMATS: { kind: ComposerFormat; title: string; icon: typeof Bold }[] = [
 ];
 
 export function FormatRow({ onFormat }: { onFormat: (kind: ComposerFormat) => void }) {
+  // Just the toggles: the shell's `formatRow` slot draws the ruled-off row.
   return (
-    <div className="flex flex-wrap items-center gap-0.5 border-b border-border-subtle px-4 pt-1.5 pb-1">
+    <>
       {FORMATS.map(({ kind, title, icon: Icon }) => (
         <Fragment key={kind}>
           {/* Inline styles first, then the block-level ones. */}
@@ -152,7 +153,7 @@ export function FormatRow({ onFormat }: { onFormat: (kind: ComposerFormat) => vo
           </HintItem>
         </Fragment>
       ))}
-    </div>
+    </>
   );
 }
 

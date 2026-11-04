@@ -2466,6 +2466,10 @@ html.platform-linux .animate-pulse {
 html.platform-linux .animate-spin[data-slot="session-pipeline-running"] {
   animation-timing-function: steps(36);
 }
+/* The package's IconButton `loading`: a 1 s turn, like any spinner. */
+html.platform-linux .animate-spin[data-slot="icon-button-spin"] {
+  animation-timing-function: steps(12);
+}
 /* The package's Globe, whose `motion-safe:` variants `.animate-ping` and
    `.animate-pulse` rules do not match. */
 html.platform-linux [data-slot="globe-ping"] {

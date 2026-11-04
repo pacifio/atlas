@@ -11,8 +11,9 @@ interface AtlasIconProps {
 
 /**
  * The Atlas mark at a pixel size, kept so call sites only changed their
- * import. From 32px up it is the package's `AtlasBadge` (the mark in its
- * tile); below that a tile would be a smudge, so it is the bare `AtlasMark`
+ * import. From 32px up it is the package's `AtlasBadge` in the app icon's
+ * tile (black with a white mark in every theme, as `atlas-icon.svg` drew it);
+ * below that a tile would be a smudge, so it is the bare `AtlasMark`
  * in the ink it sits in.
  *
  * `className` styles the frame around the mark, not the mark: a call site's
@@ -28,7 +29,7 @@ export function AtlasIcon({ size = 32, className, alt = "Atlas" }: AtlasIconProp
       style={{ width: size, height: size }}
     >
       {size >= 32 ? (
-        <AtlasBadge aria-hidden className="size-full [&_svg]:size-1/2" />
+        <AtlasBadge aria-hidden tone="app-icon" className="size-full [&_svg]:size-1/2" />
       ) : (
         <AtlasMark className="size-full" />
       )}

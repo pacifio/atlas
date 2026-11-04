@@ -1,17 +1,7 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { GitBranch, GitCommit, Maximize2, Minimize2, RefreshCw } from "lucide-react";
-import {
-  Button,
-  EmptyState,
-  HintGroup,
-  HintItem,
-  Icon,
-  IconButton,
-  Skeleton,
-  iconButtonVariants,
-} from "@tryatlas/design";
-import { cn } from "@/lib/utils";
+import { Button, EmptyState, HintGroup, HintItem, IconButton, Skeleton } from "@tryatlas/design";
 import { ROW_HEIGHT, commitCountLabel, type BuiltGraph } from "../../lib/git-graph";
 import { CommitRowView } from "./commit-row-view";
 
@@ -126,21 +116,18 @@ function GraphBody({
                 onClick={onToggleFullscreen}
               />
             </HintItem>
-            {/* `IconButton`'s own square on a plain button: the glyph spins
-                while refreshing, which the primitive's fixed glyph can't.
-                Inline, the branch bar above already has a refresh-shaped
+            {/* Inline, the branch bar above already has a refresh-shaped
                 Fetch and the watcher keeps the graph current, so a second
                 refresh glyph only shows in fullscreen, where that bar is not. */}
             {fullscreen && (
               <HintItem label="Refresh">
-                <button
-                  type="button"
-                  aria-label="Refresh"
+                <IconButton
+                  size="sm"
+                  icon={RefreshCw}
+                  label="Refresh"
+                  loading={refreshing}
                   onClick={onRefresh}
-                  className={iconButtonVariants({ size: "sm" })}
-                >
-                  <Icon icon={RefreshCw} size="sm" className={cn(refreshing && "animate-spin")} />
-                </button>
+                />
               </HintItem>
             )}
           </div>

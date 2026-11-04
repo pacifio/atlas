@@ -4,7 +4,7 @@ import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ImageZoomView } from "@/features/media/components/image-zoom-view";
 import type { ImageAttachment } from "@/types/agents";
-import { Hint, HintGroup, HintItem, Icon } from "@tryatlas/design";
+import { Hint, HintGroup, HintItem, Icon, IconButton } from "@tryatlas/design";
 
 /*
  * The one way an agent-chat image looks: a square tile, the same in the
@@ -51,22 +51,21 @@ export const ImageAttachmentStrip = memo(function ImageAttachmentStrip({
               <img src={src} alt="" className="h-full w-full object-cover" draggable={false} />
             </button>
             {onRemove && (
-              // Right, not top: a tooltip above would sit over the tile's row.
-              <Hint label="Remove image" side="right">
-                <button
-                  type="button"
-                  onClick={() => onRemove(i)}
-                  aria-label="Remove image"
-                  className={cn(
-                    "absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full cursor-pointer",
-                    "border border-border bg-card text-secondary-foreground hover:text-foreground",
-                    // Hidden until the tile is hovered or keyboard-focused.
-                    "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
-                  )}
-                >
-                  <Icon icon={X} size="xs" />
-                </button>
-              </Hint>
+              // Pinned to the tile's corner, and hidden until the tile is
+              // hovered or keyboard-focused.
+              <span className="absolute -top-1.5 -right-1.5 flex opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">
+                {/* Right, not top: a tooltip above would sit over the tile's row. */}
+                <Hint label="Remove image" side="right">
+                  <IconButton
+                    variant="floating"
+                    size="2xs"
+                    shape="round"
+                    icon={X}
+                    label="Remove image"
+                    onClick={() => onRemove(i)}
+                  />
+                </Hint>
+              </span>
             )}
           </div>
         ))}

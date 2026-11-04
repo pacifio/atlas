@@ -93,7 +93,7 @@ export function AddAgentDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[min(44rem,calc(100vh-4rem))] max-w-[min(44rem,calc(100vw-2rem))] gap-4">
+      <DialogContent size="lg" className="max-h-[min(44rem,calc(100vh-4rem))] gap-4">
         <DialogHeader className="mr-8">
           <DialogTitle>Add an agent</DialogTitle>
           <DialogDescription>

@@ -50,7 +50,9 @@ describe("RemoveAgentDialogView", () => {
 
   it("a click on the backdrop keeps", () => {
     const { onKeep, onRemove } = renderDialog();
-    fireEvent.click(screen.getByTestId("remove-agent-backdrop"));
+    const backdrop = document.querySelector('[data-slot="alert-dialog-backdrop-close"]');
+    expect(backdrop).toBeTruthy();
+    fireEvent.click(backdrop!);
     expect(onKeep).toHaveBeenCalled();
     expect(onRemove).not.toHaveBeenCalled();
   });

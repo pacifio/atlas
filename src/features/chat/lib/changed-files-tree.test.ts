@@ -4,7 +4,6 @@ import {
   buildChangedFilesTree,
   changedFilesOf,
   folderPaths,
-  formatDiffCount,
   splitForMiddleTruncate,
   sumStats,
   visibleRows,
@@ -142,21 +141,6 @@ describe("visibleRows", () => {
 describe("sumStats", () => {
   it("adds up the files' counts", () => {
     expect(sumStats([file("a", 3, 1), file("b", 4, 2)])).toEqual({ added: 7, removed: 3 });
-  });
-});
-
-describe("formatDiffCount", () => {
-  it.each([
-    [0, "0"],
-    [999, "999"],
-    [1000, "1k"],
-    [1234, "1.2k"],
-    [12_345, "12k"],
-    [999_499, "999k"],
-    [999_600, "1m"],
-    [3_400_000, "3.4m"],
-  ])("%d reads as %s", (value, expected) => {
-    expect(formatDiffCount(value)).toBe(expected);
   });
 });
 

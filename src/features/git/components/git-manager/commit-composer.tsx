@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronUp, Sparkles } from "lucide-react";
-import { Button, Checkbox, Icon, Input, Textarea } from "@tryatlas/design";
+import { Button, Checkbox, Icon, Input, Textarea, type StepListStep } from "@tryatlas/design";
 
 import { openAskAgent } from "@/features/ask-agent/lib/ask-agent";
 
@@ -26,7 +26,7 @@ import {
 } from "../../lib/ship-flow";
 import { dismissShip, retryShip, startShip } from "../../lib/ship-run";
 import { ShipButtonView, type ShipChoice, type ShipChoiceItem } from "../views/ship-button-view";
-import { ShipProgressView, type ShipStepRow } from "../views/ship-progress-view";
+import { ShipProgressView } from "../views/ship-progress-view";
 
 /** Expand/collapse toggle for an optional commit-form field. A collapsed field
  *  that still holds text shows a dot, so its content can't be committed
@@ -421,7 +421,7 @@ function ShipProgress({
     push: run.branch,
     pr: run.pr ? `#${run.pr.number}` : request.pr.base ? `into ${request.pr.base}` : null,
   };
-  const rows: ShipStepRow[] = run.steps.map((step) => ({
+  const rows: StepListStep[] = run.steps.map((step) => ({
     id: step,
     label: STEP_LABEL[step],
     detail: detail[step],

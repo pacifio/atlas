@@ -15,6 +15,7 @@
  * opening it. These are the facts you pick a Session *by*.
  */
 
+import { DiffStat } from "@tryatlas/design";
 import { GitBranch, MessageSquare } from "lucide-react";
 import { Fragment, memo, type ReactNode } from "react";
 import { AccountAvatar } from "@/features/auth/components/account-avatar";
@@ -119,7 +120,7 @@ export const SessionRow = memo(function SessionRow({
               {s.insertions + s.deletions > 0 && (
                 <>
                   <Dot />
-                  <DiffStat added={s.insertions} removed={s.deletions} />
+                  <DiffStat added={s.insertions} removed={s.deletions} className="shrink-0" />
                 </>
               )}
             </span>
@@ -180,17 +181,6 @@ export function ProjectMark({ name, className }: { name: string; className?: str
     >
       <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", hueFor(name))} />
       <span className="truncate">{name}</span>
-    </span>
-  );
-}
-
-/** A +/− pair. Tabular, so the column does not jitter between rows. */
-export function DiffStat({ added, removed }: { added: number; removed: number }) {
-  return (
-    <span className="inline-flex shrink-0 items-center gap-1.5 text-2xs tabular-nums">
-      <span className="text-[var(--diff-added-text)]">+{added}</span>
-      {/* U+2212 MINUS, not a hyphen: it lines up with the plus. */}
-      <span className="text-[var(--diff-removed-text)]">−{removed}</span>
     </span>
   );
 }

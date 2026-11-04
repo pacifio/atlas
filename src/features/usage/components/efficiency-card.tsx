@@ -1,10 +1,9 @@
 import { CAPTION, Card, EstTag, VALUE } from "@/components/usage-primitives";
 import { useAgentMetaResolver } from "@/features/agents/lib/agent-meta-context";
-import { TickMeter } from "@/features/chat/components/usage-meter";
 import { fmtCost, fmtPct, fmtTokens } from "@/features/monitor/lib/usage-format";
 import type { DailyBucket, GroupBy, SessionRow, UsageDashboard } from "../types";
 import { deltaPct, efficiency, keyOf, rankBy, type Efficiency } from "../lib/derive";
-import { DeltaChip } from "@tryatlas/design";
+import { DeltaChip, SegmentMeter } from "@tryatlas/design";
 
 const fmtRatio = (r: number) =>
   r >= 1 ? `${r.toFixed(1)}×` : `1:${Math.max(1, Math.round(1 / r))}`;
@@ -71,7 +70,14 @@ export function EfficiencyCard({
                 <DeltaChip delta={v === null ? null : deltaPct(v, p)} />
               </div>
               {t.meter && v !== null && (
-                <TickMeter value={v * 100} warnAt={101} ticks={32} className="mt-1.5" />
+                <SegmentMeter
+                  variant="gauge"
+                  value={v}
+                  warnAt={1.01}
+                  segments={32}
+                  label={typeof t.label === "string" ? t.label : undefined}
+                  className="mt-1.5"
+                />
               )}
             </div>
           );
