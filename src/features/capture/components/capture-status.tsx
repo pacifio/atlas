@@ -25,15 +25,11 @@ import { cn } from "@/lib/utils";
  */
 export function CaptureDot({
   tone = "success",
-  label,
 }: {
-  /** `idle` is the older name for `neutral`. */
-  tone?: "success" | "warning" | "error" | "neutral" | "idle";
-  /** Read by screen readers; without one the dot is decorative. */
-  label?: string;
+  tone?: "success" | "warning" | "error" | "neutral";
 }) {
   return (
-    <span className="relative grid size-2.5 shrink-0 place-items-center" aria-hidden={!label}>
+    <span className="relative grid size-2.5 shrink-0 place-items-center" aria-hidden>
       <span
         className={cn(
           "relative size-1.5 rounded-full",
@@ -41,12 +37,11 @@ export function CaptureDot({
             ? "bg-error"
             : tone === "warning"
               ? "bg-warning"
-              : tone === "neutral" || tone === "idle"
+              : tone === "neutral"
                 ? "border border-current bg-transparent text-disabled"
                 : "bg-success",
         )}
       />
-      {label && <span className="sr-only">{label}</span>}
     </span>
   );
 }
