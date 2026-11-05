@@ -22,6 +22,7 @@ import {
   type SettingsPatch,
 } from "@/features/settings/lib/atlas-config-api";
 import { DEFAULT_SETTINGS, type AppSettings } from "@/features/settings/lib/app-settings";
+import { useModelPricingStore } from "./model-pricing-store";
 
 // Re-exported because most of the app reaches for `AppSettings` through the
 // store it reads settings from; the definition itself lives one directory over
@@ -110,6 +111,9 @@ function applyIcons(iconTheme: string, themeMode: AppSettings["themeMode"]): voi
  *  settings write, twice (the reconcile and the `atlas:config-changed` echo) —
  *  and each apply collapses mermaid diagrams and re-themes every terminal. */
 function applySettingsSideEffects(next: AppSettings, previous: AppSettings): void {
+  if (!sameValue(next.modelPriceOverrides, previous.modelPriceOverrides)) {
+    useModelPricingStore.getState().actions.setOverrides(next.modelPriceOverrides);
+  }
   if (next.uiScale !== previous.uiScale) applyUiScale(next.uiScale);
   if (displaySettingsChanged(next, previous)) applyDisplaySettings(next);
   if (
@@ -251,6 +255,7 @@ export const useSettingsStore = createSelectors(
           configError: configErrorFrom(payload.configStatus),
         });
 
+        useModelPricingStore.getState().actions.setOverrides(settings.modelPriceOverrides);
         // Re-apply the persisted interface zoom (needs the Tauri WebView API,
         // so it can only run here, not in the pre-mount boot path).
         applyUiScale(settings.uiScale);

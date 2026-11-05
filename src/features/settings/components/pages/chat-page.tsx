@@ -11,6 +11,7 @@ import { NATIVE_AGENT_ID } from "@/types/agent";
 import { useAgentRegistryStore } from "@/features/agents/stores/agent-registry-store";
 import { SettingSelect, SettingStepper, SettingSwitch } from "../layout/setting-controls";
 import { useScopedSetting } from "../../lib/use-scoped-setting";
+import { ModelPriceOverridesSection } from "./model-price-overrides";
 
 const SIDEBAR_SORTS = [
   { value: "recent", label: "Latest activity" },
@@ -121,6 +122,7 @@ export function ChatPage() {
           />
         </SettingsGroup>
       </SettingsSection>
+      <ModelPriceOverridesSection />
     </SettingsPage>
   );
 }

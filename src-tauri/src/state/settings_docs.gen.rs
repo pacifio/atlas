@@ -321,6 +321,10 @@ const SETTINGS_DOCS: &[(&str, &str)] = &[
         "securityScan",
         "# Scan each new checkpoint's commit in the background for leaked credentials,\n# risky calls and dependencies with known advisories. Runs entirely on this\n# machine; only the public advisory lists are downloaded. Results are stored\n# with the checkpoint and not shown yet. Commits from before it was turned on\n# are not scanned. Off in released builds and on in development builds unless\n# this key is set. (default: false)",
     ),
+    (
+        "modelPriceOverrides",
+        "# modelPriceOverrides: Per-model input, output, cacheRead and cacheWrite\n# prices in USD per million tokens. Replaces models.dev prices, including for\n# models absent from its catalog. Names match exactly, then without a provider\n# prefix, then without an eight-digit date suffix. All four rates are\n# required; zero is allowed. Atlas Agent gateway turns use the account cap;\n# overrides have no effect there. Example: modelPriceOverrides = { \"my-model\"\n# = { input = 1.0, output = 2.0, cacheRead = 0.1, cacheWrite = 0.2 } }. An\n# empty table uses models.dev prices.",
+    ),
 ];
 
 /// The keys a project's `.atlas/config.toml` may override (`project` in the

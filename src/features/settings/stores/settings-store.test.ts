@@ -31,6 +31,7 @@ vi.mock("@/features/settings/lib/atlas-config-api", () => ({
 }));
 
 const { useSettingsStore } = await import("./settings-store");
+const { useModelPricingStore, priceForModel } = await import("./model-pricing-store");
 
 /** What IPC hands back: equal by value, never the same object. */
 const fromRust = (settings: AppSettings): AppSettings => JSON.parse(JSON.stringify(settings));
@@ -50,6 +51,23 @@ beforeEach(() => {
 });
 
 describe("settings side effects", () => {
+  it("applies model prices at startup, on external edits, and on rejected UI writes", async () => {
+    const modelPriceOverrides = {
+      private: { input: 1, output: 2, cacheRead: 0.25, cacheWrite: 0.5 },
+    };
+    const settings = { ...useSettingsStore.getState().settings, modelPriceOverrides };
+    const price = () => priceForModel(useModelPricingStore.getState().prices, "private");
+    useSettingsStore.getState().actions.hydrate({ settings, configGeneration: 2 });
+    expect(price()?.input).toBe(1);
+    configChanged?.({ settings: { ...settings, modelPriceOverrides: {} }, generation: 3 });
+    expect(price()).toBeNull();
+    updateAtlasConfig.mockRejectedValueOnce(new Error("write refused"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    useSettingsStore.getState().actions.updateSettings({ modelPriceOverrides });
+    expect(price()?.input).toBe(1);
+    await vi.waitFor(() => expect(price()).toBeNull());
+    warn.mockRestore();
+  });
   /**
    * Every IPC result is a freshly parsed object, so a reference test on
    * `themeOverrides` re-applied the whole theme on every settings write —

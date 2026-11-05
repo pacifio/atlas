@@ -46,7 +46,9 @@ use std::path::Path;
 use atlas_checkpoint::{Session, TokenTotals, TurnMessages, UsageDeltaRow};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
+
+use crate::state::{atlas_config::ModelPriceOverride, AtlasConfigHandle};
 
 use super::models_pricing::ModelPrice;
 
@@ -118,12 +120,46 @@ pub(crate) struct DayUsage {
 
 // ── The read, and the arithmetic on top of it ─────────────────────────────
 
-/// The price map Atlas already caches from models.dev. Empty when it has never
-/// been fetched — every cost then reads zero, which is honest.
+/// Cached models.dev prices with the user's overrides applied. Overrides also
+/// price models before the catalog has ever been fetched.
 ///
 /// Reads a file, so every caller runs it on the blocking pool.
 pub(crate) fn read_prices(app: &AppHandle) -> BTreeMap<String, ModelPrice> {
-    super::models_pricing::models_pricing_get(app.clone())
+    let catalog = super::models_pricing::models_pricing_get(app.clone());
+    let config = app.state::<AtlasConfigHandle>();
+    let overrides = config.lock().effective().model_price_overrides.clone();
+    apply_price_overrides(catalog, &overrides)
+}
+
+/// Resolve overrides before catalog entries, so a bare override also replaces
+/// a provider-qualified catalog price. Keep models.dev's capability metadata.
+pub(crate) fn apply_price_overrides(
+    catalog: BTreeMap<String, ModelPrice>,
+    overrides: &BTreeMap<String, ModelPriceOverride>,
+) -> BTreeMap<String, ModelPrice> {
+    if overrides.is_empty() {
+        return catalog;
+    }
+    let mut prices = catalog.clone();
+    let apply = |price: &mut ModelPrice, rate: &ModelPriceOverride| {
+        price.input = rate.input;
+        price.output = rate.output;
+        price.cache_read = rate.cache_read;
+        price.cache_write = rate.cache_write;
+    };
+    for (model, price) in &mut prices {
+        if let Some(rate) = price_for(Some(model), overrides) {
+            apply(price, rate);
+        }
+    }
+    for (model, rate) in overrides {
+        let mut price = price_for(Some(model), &catalog)
+            .cloned()
+            .unwrap_or_default();
+        apply(&mut price, rate);
+        prices.insert(model.clone(), price);
+    }
+    prices
 }
 
 /// Everything the usage dashboard reads out of one project's store, in one
@@ -299,24 +335,52 @@ pub(crate) fn cost_usd(totals: &TokenTotals, price: Option<&ModelPrice>) -> f64 
 /// 2. with a provider prefix stripped (`anthropic/claude-opus-4` → `claude-opus-4`),
 /// 3. with a dated release suffix stripped (`claude-opus-4-20250514` → `claude-opus-4`).
 ///
+/// Then repeat those candidates without context-window brackets, as the frontend does.
+///
 /// A miss is a miss: the session shows its tokens with no cost rather than the
 /// cost of some other model.
-pub(crate) fn price_for<'a>(
+pub(crate) fn price_for<'a, T>(
     model: Option<&str>,
-    prices: &'a BTreeMap<String, ModelPrice>,
-) -> Option<&'a ModelPrice> {
+    prices: &'a BTreeMap<String, T>,
+) -> Option<&'a T> {
     let model = model?.trim();
     if model.is_empty() {
         return None;
     }
-    if let Some(price) = prices.get(model) {
-        return Some(price);
-    }
-    let bare = model.rsplit('/').next().unwrap_or(model);
-    if let Some(price) = prices.get(bare) {
-        return Some(price);
-    }
-    prices.get(undated(bare))
+    let lookup = |id: &str| {
+        let bare = id.rsplit('/').next().unwrap_or(id);
+        prices
+            .get(id)
+            .or_else(|| prices.get(bare))
+            .or_else(|| prices.get(undated(bare)))
+    };
+    lookup(model).or_else(|| {
+        // Context-window variants use the same candidates as the frontend.
+        if !model.contains('[') {
+            return None;
+        }
+        let mut clean = String::with_capacity(model.len());
+        let mut rest = model;
+        while let Some(start) = rest.find('[') {
+            clean.push_str(&rest[..start]);
+            rest = &rest[start..];
+            let end = rest.find(']').filter(|end| {
+                !rest[..*end]
+                    .chars()
+                    .any(|ch| matches!(ch, '\n' | '\r' | '\u{2028}' | '\u{2029}'))
+            });
+            if let Some(end) = end {
+                rest = &rest[end + 1..];
+            } else {
+                // Unmatched brackets (or a line break) stay literal, just as
+                // in the frontend's /\[.*?\]/g replacement.
+                clean.push('[');
+                rest = &rest[1..];
+            }
+        }
+        clean.push_str(rest);
+        lookup(&clean)
+    })
 }
 
 /// `claude-opus-4-20250514` → `claude-opus-4`. Anything else is unchanged.
@@ -380,6 +444,129 @@ mod tests {
                 cached_price(5.0, 25.0, 0.5, 6.25),
             ),
         ])
+    }
+
+    #[test]
+    fn price_overrides_replace_catalog_prices_in_matching_order() {
+        let catalog = BTreeMap::from([
+            (
+                "vendor/model-20260101".into(),
+                cached_price(10.0, 20.0, 3.0, 4.0),
+            ),
+            ("model-20260101".into(), price(10.0, 20.0)),
+            ("model".into(), price(10.0, 20.0)),
+        ]);
+        let rate = |input| ModelPriceOverride {
+            input,
+            output: 2.0,
+            cache_read: 0.25,
+            cache_write: 0.5,
+        };
+        let spend = TokenTotals {
+            input_tokens: 1_000_000,
+            output_tokens: 2_000_000,
+            cache_read_tokens: 3_000_000,
+            cache_creation_tokens: 4_000_000,
+            ..Default::default()
+        };
+        for key in ["vendor/model-20260101", "model-20260101", "model"] {
+            let prices =
+                apply_price_overrides(catalog.clone(), &BTreeMap::from([(key.into(), rate(1.0))]));
+            assert_eq!(
+                cost_usd(&spend, price_for(Some(" vendor/model-20260101 "), &prices)),
+                7.75
+            );
+        }
+        let prices = apply_price_overrides(
+            catalog.clone(),
+            &BTreeMap::from([
+                ("vendor/model-20260101".into(), rate(1.0)),
+                ("model-20260101".into(), rate(2.0)),
+                ("model".into(), rate(3.0)),
+            ]),
+        );
+        for (model, expected) in [
+            ("vendor/model-20260101", 1.0),
+            ("other/model-20260101", 2.0),
+            ("other/model-20260102", 3.0),
+        ] {
+            assert_eq!(price_for(Some(model), &prices).unwrap().input, expected);
+        }
+        assert_eq!(
+            apply_price_overrides(catalog.clone(), &BTreeMap::new()),
+            catalog
+        );
+    }
+
+    #[test]
+    fn price_overrides_price_unlisted_models_without_a_catalog() {
+        let prices = apply_price_overrides(
+            BTreeMap::new(),
+            &BTreeMap::from([
+                (
+                    "private".into(),
+                    ModelPriceOverride {
+                        input: 1.0,
+                        output: 2.0,
+                        cache_read: 0.25,
+                        cache_write: 0.5,
+                    },
+                ),
+                (
+                    "free".into(),
+                    ModelPriceOverride {
+                        input: 0.0,
+                        output: 0.0,
+                        cache_read: 0.0,
+                        cache_write: 0.0,
+                    },
+                ),
+            ]),
+        );
+        assert_eq!(
+            cost_usd(
+                &totals(1_000_000, 0),
+                price_for(Some("vendor/private[1m]-20260101"), &prices)
+            ),
+            1.0
+        );
+        assert_eq!(price_for(Some("free"), &prices).unwrap().input, 0.0);
+        for model in ["private-1234567", "private-preview", "unknown", ""] {
+            assert!(price_for(Some(model), &prices).is_none());
+        }
+        assert_eq!(
+            cost_usd(&totals(1_000_000, 0), price_for(None, &prices)),
+            0.0
+        );
+    }
+
+    #[test]
+    fn price_overrides_preserve_model_capabilities() {
+        let catalog = BTreeMap::from([(
+            "model".into(),
+            ModelPrice {
+                reasoning: true,
+                images: true,
+                context: 200_000,
+                ..price(10.0, 20.0)
+            },
+        )]);
+        let prices = apply_price_overrides(
+            catalog,
+            &BTreeMap::from([(
+                "model".into(),
+                ModelPriceOverride {
+                    input: 1.0,
+                    output: 2.0,
+                    cache_read: 0.25,
+                    cache_write: 0.5,
+                },
+            )]),
+        );
+        let price = price_for(Some("model"), &prices).unwrap();
+        assert!(price.reasoning && price.images);
+        assert_eq!(price.context, 200_000);
+        assert_eq!(price.input, 1.0);
     }
 
     fn session(id: &str, agent: &str, model: Option<&str>, totals: TokenTotals) -> Session {

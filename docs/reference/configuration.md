@@ -231,6 +231,7 @@ bookkeeping).
 | `pullRequestGuideModel` | string | `""` | Pull Requests › Review guide › Guide model (per project too) | one line, at most 200 characters; empty keeps the agent's default |
 | `pullRequestGuideInstructions` | string | `""` | Pull Requests › Review guide › Guide instructions (per project too) | at most 4000 bytes |
 | `securityScan` | boolean | `false` | file only | — |
+| `modelPriceOverrides` | table | absent | Sessions › Cost estimates › Model price overrides | nonempty model names without surrounding whitespace; four finite, nonnegative rates |
 
 <!-- /generated:settings -->
 
