@@ -83,6 +83,16 @@ describe("feedback anonymity control (issue #69)", () => {
     expect(screen.getByText("Sending as Jane Doe")).toBeTruthy();
   });
 
+  it("describes the switch with the account it would attribute, not by renaming it", () => {
+    render(<FeedbackPanel />);
+
+    // The fixed name is all a screen reader would hear otherwise: the account
+    // name lives in the visible line, which the fixed name no longer includes.
+    const describedBy = switchControl().getAttribute("aria-describedby");
+    expect(describedBy).toBeTruthy();
+    expect(screen.getByText("Sending as Jane Doe").id).toBe(describedBy);
+  });
+
   it("drops the native title, so the hint is the app's own tooltip", () => {
     render(<FeedbackPanel />);
 

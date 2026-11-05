@@ -1,4 +1,4 @@
-import { useRef, type ReactNode, type RefObject } from "react";
+import { useId, useRef, type ReactNode, type RefObject } from "react";
 import { Camera, Check, EyeOff, MessageCircleQuestion, MessagesSquare, X } from "lucide-react";
 import {
   Button,
@@ -82,6 +82,9 @@ export function FeedbackPanelView({
   onOpenCommunity,
 }: FeedbackPanelViewProps) {
   const groupRef = useRef<HTMLDivElement>(null);
+  /** The visible line already names the account, so it makes the better
+   *  description than a second copy of the same sentence. */
+  const identityLineId = useId();
   const canSubmit = message.trim().length > 0 && !submitting;
   const active = categories.find((c) => c.id === category) ?? categories[0];
 
@@ -253,6 +256,11 @@ export function FeedbackPanelView({
                   // a state contradicting its own name. This names what the
                   // switch controls; `aria-checked` says where it stands.
                   aria-label="Send anonymously"
+                  // The fixed name would otherwise swallow the account, which is
+                  // the one fact a sighted user reads off this row. Keeping the
+                  // visible line as the description restores it without letting
+                  // it rename the switch.
+                  aria-describedby={identityLineId}
                   onClick={onToggleAnonymous}
                   // The row used to read as static text: a colour-only hover
                   // that only showed once the pointer was already there, plus a
@@ -272,7 +280,7 @@ export function FeedbackPanelView({
                   ) : (
                     identity.avatar
                   )}
-                  <span className="truncate">
+                  <span id={identityLineId} className="truncate">
                     {anonymous ? "Sending anonymously" : `Sending as ${identity.name}`}
                   </span>
                 </button>
