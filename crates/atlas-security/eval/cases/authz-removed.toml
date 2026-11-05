@@ -1,0 +1,16 @@
+id = "authz-removed"
+kind = "synthetic"
+vulnerable = true
+class = "authz"
+severity = 4
+title = "Simplify admin routes"
+diff = '''
+--- a/server/routes/admin.ts
++++ b/server/routes/admin.ts
+@@ -1,5 +1,4 @@
+ app.post("/api/admin/users/:id/role", async (req, res) => {
+-  requireAdmin(req);
+   await setRole(req.params.id, req.body.role);
+   res.sendStatus(204);
+ });
+'''

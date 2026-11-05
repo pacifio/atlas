@@ -35,9 +35,8 @@ const DAY_MS: i64 = 24 * 3600 * 1000;
 /// One dream for `cwd` if it is due. Returns the dream id, or `None` when it
 /// was not due, not allowed, or there was nothing new to read.
 pub async fn dream_if_due(app: &AppHandle, cwd: &str, now: i64) -> Result<Option<i64>, String> {
-    let enabled = app
-        .try_state::<crate::state::AtlasConfigHandle>()
-        .is_some_and(|config| config.lock().effective().memory_dreams);
+    let enabled = super::project_settings::effective_settings_for(app, std::path::Path::new(cwd))
+        .is_some_and(|settings| settings.memory_dreams);
     if !enabled {
         return Ok(None);
     }

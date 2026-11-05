@@ -118,12 +118,6 @@ impl SessionReads {
     pub fn has_read(&self, session_id: &str) -> bool {
         self.read.lock().contains(session_id)
     }
-
-    /// Drop what is remembered about `session_id` (its session ended).
-    #[cfg(test)]
-    pub fn forget(&self, session_id: &str) {
-        self.read.lock().remove(session_id);
-    }
 }
 
 // ── Ranking ──────────────────────────────────────────────────────────────────

@@ -32,6 +32,8 @@
           "additionalProperties": {
             "type": "string"
           },
+          "default": {},
+          "description": "The shadcn base tokens this variant sets. Any may be left out: Atlas derives it from `background`, `foreground` and `primary`.",
           "type": "object"
         },
         "keys": {
@@ -237,6 +239,70 @@
                 }
               ],
               "description": "Selected overlay for ordinary elements. Source: base.foreground → Atlas default. Transform: alpha 0.06."
+            },
+            "hue.blue": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/ThemeKeyValue"
+                }
+              ],
+              "description": "The blue identity hue: labels, project dots, meters. Source: palette.blue → Atlas default."
+            },
+            "hue.cyan": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/ThemeKeyValue"
+                }
+              ],
+              "description": "The cyan identity hue: labels, project dots, meters. Source: palette.cyan → Atlas default."
+            },
+            "hue.green": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/ThemeKeyValue"
+                }
+              ],
+              "description": "The green identity hue: labels, project dots, meters. Source: palette.green → Atlas default."
+            },
+            "hue.orange": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/ThemeKeyValue"
+                }
+              ],
+              "description": "The orange identity hue: labels, project dots, meters. Source: palette.orange → Atlas default."
+            },
+            "hue.pink": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/ThemeKeyValue"
+                }
+              ],
+              "description": "The pink identity hue: labels, project dots, meters. Source: palette.pink → Atlas default."
+            },
+            "hue.purple": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/ThemeKeyValue"
+                }
+              ],
+              "description": "The purple identity hue: labels, project dots, meters. Source: palette.purple → Atlas default."
+            },
+            "hue.red": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/ThemeKeyValue"
+                }
+              ],
+              "description": "The red identity hue: labels, project dots, meters. Source: palette.red → Atlas default."
+            },
+            "hue.yellow": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/ThemeKeyValue"
+                }
+              ],
+              "description": "The yellow identity hue: labels, project dots, meters. Source: palette.yellow → Atlas default."
             },
             "panel.background": {
               "allOf": [
@@ -633,15 +699,19 @@
           "type": "object"
         }
       },
-      "required": [
-        "base"
-      ],
       "type": "object"
     }
   },
   "properties": {
     "author": {
       "type": "string"
+    },
+    "base": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Base tokens shared by both variants — shadcn's `cssVars.theme`, where the radius, the fonts, tracking and spacing usually live. A variant's own `base` wins over this, and after parsing each variant's `base` already holds the merge, so readers need not look here; it is kept so a theme writes back the way it was written.",
+      "type": "object"
     },
     "dark": {
       "anyOf": [

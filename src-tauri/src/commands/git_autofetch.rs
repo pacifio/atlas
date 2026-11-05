@@ -248,9 +248,11 @@ impl GitAutoFetchState {
     }
 }
 
-fn enabled(app: &AppHandle) -> bool {
-    app.try_state::<crate::state::AtlasConfigHandle>()
-        .is_some_and(|config| config.lock().effective().git_auto_fetch)
+/// The setting as the project sets it: `gitAutoFetch` can be overridden per
+/// project.
+fn enabled(app: &AppHandle, path: &Path) -> bool {
+    super::project_settings::effective_settings_for(app, path)
+        .is_some_and(|settings| settings.git_auto_fetch)
 }
 
 /// Every credential path made non-interactive. `GIT_TERMINAL_PROMPT=0` (set
@@ -320,7 +322,7 @@ fn upstream_position(path: &Path) -> Option<UpstreamPosition> {
 
 /// Fetch `path` in the background if `trigger` makes it due. Returns at once.
 fn maybe_fetch(app: &AppHandle, path: PathBuf, trigger: Trigger) {
-    if !enabled(app) || !path.join(".git").exists() {
+    if !enabled(app, &path) || !path.join(".git").exists() {
         return;
     }
     let state = app.state::<GitAutoFetchState>();

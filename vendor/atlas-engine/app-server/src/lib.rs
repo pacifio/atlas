@@ -1350,9 +1350,11 @@ fn test_user_config_file_from_env() -> Option<std::path::PathBuf> {
 }
 
 fn loader_overrides_with_test_user_config_file(
-    mut loader_overrides: LoaderOverrides,
+    loader_overrides: LoaderOverrides,
     test_user_config_file: Option<std::path::PathBuf>,
 ) -> IoResult<LoaderOverrides> {
+    #[cfg(debug_assertions)]
+    let mut loader_overrides = loader_overrides;
     #[cfg(debug_assertions)]
     if let Some(path) = test_user_config_file {
         let path = AbsolutePathBuf::from_absolute_path(path).map_err(|err| {

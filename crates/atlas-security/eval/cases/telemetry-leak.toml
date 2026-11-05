@@ -1,0 +1,15 @@
+id = "telemetry-leak"
+kind = "synthetic"
+vulnerable = true
+class = "privacy"
+severity = 3
+title = "Better crash reports"
+diff = '''
+--- a/src-tauri/src/telemetry.rs
++++ b/src-tauri/src/telemetry.rs
+@@ -1,2 +1,4 @@
+     event.insert("error_kind", err.kind().to_string());
++    event.insert("open_file_path", editor.current_path().display().to_string());
++    event.insert("open_file_contents", editor.current_text());
+     send_telemetry(event).await;
+'''

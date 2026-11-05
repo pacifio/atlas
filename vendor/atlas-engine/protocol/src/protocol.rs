@@ -2478,7 +2478,20 @@ pub struct McpToolCallEndEvent {
     #[ts(type = "string")]
     pub duration: Duration,
     /// Result of the tool call. Note this could be an error.
+    #[schemars(schema_with = "tool_call_result_schema")]
     pub result: Result<CallToolResult, String>,
+}
+
+/// `Result<CallToolResult, String>` under the definition name schemars 0.8 gave it.
+/// schemars 1 names a `String` parameter `string`, which would rename the
+/// definition in the committed app-server schemas.
+fn tool_call_result_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    const NAME: &str = "Result_of_CallToolResult_or_String";
+    let schema = <Result<CallToolResult, String>>::json_schema(generator);
+    generator
+        .definitions_mut()
+        .insert(NAME.to_string(), schema.to_value());
+    schemars::Schema::new_ref(format!("#{}/{NAME}", generator.settings().definitions_path))
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS, PartialEq)]
@@ -2583,7 +2596,9 @@ pub enum SessionSource {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema, TS)]
 #[serde(try_from = "String", into = "String")]
-#[schemars(with = "String")]
+// The schema is the enum's own shape, as in 0.8, which ignored `with` here;
+// schemars 1 would otherwise take `try_from`/`into` and publish a plain string.
+#[schemars(!try_from, !into)]
 #[ts(type = "string")]
 pub enum ThreadSource {
     User,

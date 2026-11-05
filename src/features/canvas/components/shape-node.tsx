@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { NodeResizer, type NodeProps } from "@xyflow/react";
+import { CANVAS_FIELD_CLASS, CanvasNodeFrame, CanvasShape } from "@tryatlas/design";
 import { cn } from "@/lib/utils";
 import { useCanvasStore, type ShapeType } from "../stores/canvas-store";
 import { NodeHandles } from "./node-handles";
@@ -7,35 +8,6 @@ import { NodeHandles } from "./node-handles";
 export interface ShapeNodeData extends Record<string, unknown> {
   shapeType: ShapeType;
   text: string;
-}
-
-/** The shape outline, drawn in a normalized 100×100 viewBox stretched to the
- *  node box (`preserveAspectRatio: none`). `vector-effect: non-scaling-stroke`
- *  keeps the border an even width regardless of the box's aspect ratio. */
-function ShapeSvg({ type, stroke }: { type: ShapeType; stroke: string }) {
-  const common = {
-    fill: "var(--card)",
-    fillOpacity: 0.7,
-    stroke,
-    strokeWidth: 1.5,
-    vectorEffect: "non-scaling-stroke" as const,
-  };
-  return (
-    <svg
-      className="absolute inset-0 h-full w-full"
-      viewBox="0 0 100 100"
-      preserveAspectRatio="none"
-      aria-hidden
-    >
-      {type === "ellipse" ? (
-        <ellipse cx={50} cy={50} rx={49} ry={49} {...common} />
-      ) : type === "diamond" ? (
-        <polygon points="50,1 99,50 50,99 1,50" {...common} />
-      ) : (
-        <rect x={1} y={1} width={98} height={98} rx={type === "rounded" ? 14 : 0} {...common} />
-      )}
-    </svg>
-  );
 }
 
 /** Geometric flowchart shape. Connectable from any side (shared handles); the
@@ -66,8 +38,6 @@ export const ShapeNode = memo(function ShapeNode({ id, data, selected }: NodePro
     updateNote(id, { text: ref.current?.innerText ?? "" });
   }, [id, updateNote]);
 
-  const stroke = selected ? "var(--primary)" : "var(--atlas-border-strong)";
-
   return (
     // React Flow owns the box size (so NodeResizer can drive it); the shape fills
     // it. Size is persisted to the store via onResize.
@@ -76,8 +46,6 @@ export const ShapeNode = memo(function ShapeNode({ id, data, selected }: NodePro
         isVisible={selected}
         minWidth={40}
         minHeight={40}
-        lineClassName="!border-[var(--primary)]/70"
-        handleClassName="!bg-[var(--primary)] !border-border-strong !w-2 !h-2 !rounded-sm"
         onResizeStart={() => beginInteraction()}
         onResize={(_, p) => {
           moveNote(id, p.x, p.y);
@@ -85,26 +53,29 @@ export const ShapeNode = memo(function ShapeNode({ id, data, selected }: NodePro
         }}
       />
       <NodeHandles selected={selected} />
-      <ShapeSvg type={d.shapeType} stroke={stroke} />
-      {/* Centered label overlay */}
-      <div className="absolute inset-0 flex items-center justify-center p-3">
-        <div
-          ref={ref}
-          className={cn(
-            "max-w-full whitespace-pre-wrap break-words text-center outline-none",
-            "text-sm leading-snug text-[var(--foreground)] caret-[var(--primary)]",
-            // An empty contentEditable has no line box, so the caret can't render;
-            // a min line-height gives it one when the shape has no text yet.
-            "min-h-[1.25em] min-w-[2px]",
-            editing ? "nodrag cursor-text select-text" : "cursor-default select-none",
-          )}
-          contentEditable={editing}
-          suppressContentEditableWarning
-          onBlur={commit}
-        >
-          {d.text}
+      <CanvasNodeFrame kind="shape" selected={selected}>
+        {/* The outline is drawn bare; the label stays this node's own editable
+            element below, because the caret logic needs its ref. */}
+        <CanvasShape shape={d.shapeType} />
+        <div className="absolute inset-0 flex items-center justify-center p-3">
+          <div
+            ref={ref}
+            className={cn(
+              CANVAS_FIELD_CLASS.shapeLabel,
+              "max-w-full whitespace-pre-wrap break-words",
+              // An empty contentEditable has no line box, so the caret can't render;
+              // a min line-height gives it one when the shape has no text yet.
+              "min-h-[1.25em] min-w-[2px]",
+              editing ? "nodrag cursor-text select-text" : "cursor-default select-none",
+            )}
+            contentEditable={editing}
+            suppressContentEditableWarning
+            onBlur={commit}
+          >
+            {d.text}
+          </div>
         </div>
-      </div>
+      </CanvasNodeFrame>
     </div>
   );
 });

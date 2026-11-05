@@ -23,7 +23,7 @@ vi.mock("./draft-editor", () => ({
   DraftEditor: ({ draft }: { draft: { id: string } }) => {
     useEffect(() => {
       mounts.push(draft.id);
-      // eslint-disable-next-line react-hooks/exhaustive-deps
+      // oxlint-disable-next-line react-hooks/exhaustive-deps
     }, []);
     return <div data-draft={draft.id} />;
   },

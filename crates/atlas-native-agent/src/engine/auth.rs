@@ -56,7 +56,7 @@ const ASSUMED_TTL: Duration = Duration::from_secs(600);
 ///
 /// The future type is re-exported alongside it ([`ExternalAuthFuture`]) so an
 /// implementor names only this crate. `src-tauri` taking a direct dependency on
-/// a vendored engine crate to spell one type would put a `atlas-engine-*` entry in the
+/// an engine crate to spell one type would put an `atlas-engine-*` entry in the
 /// app's manifest, which the quarantine guard exists to prevent.
 pub trait AtlasTokenSource: Send + Sync {
     fn mint(&self) -> ExternalAuthFuture<'_, String>;

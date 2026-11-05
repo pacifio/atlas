@@ -6,7 +6,6 @@
  */
 
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
-import { useEditorStore } from "@/features/editor/stores/editor-store";
 import { useChatStore } from "@/features/chat/stores/chat-store";
 import { requestCloseTab } from "@/features/chat/lib/close-tab";
 import { isBusyAgentStatus } from "@/types/agent";
@@ -20,11 +19,11 @@ export async function performClose(request: UiActionRequest): Promise<unknown> {
     a.optStr("tabId") ?? useLayoutStore.getState().activeTabId ?? refuse("no tab is active");
   const tab = tabInScope(tabId);
   if (!tab.closable) return refuse(`tab ${tabId} cannot be closed`);
-  const filePath = typeof tab.data.filePath === "string" ? tab.data.filePath : undefined;
-  const unsaved =
-    tab.dirty || (filePath !== undefined && useEditorStore.getState().buffers[filePath]?.dirty);
+  // The tab's own flag, which its save session keeps current, is the truth.
+  // The file's shared buffer flag is not: another tab on the same file, or a
+  // buffer cached from a tab closed with "Don't save", can leave it stale.
   // Any tab type: a PDF with unsaved annotations marks its tab dirty too.
-  if (unsaved) {
+  if (tab.dirty) {
     return refuse(`${tab.title} has unsaved changes; ask the user to save or close it`);
   }
   const busy =

@@ -224,7 +224,7 @@ impl SessionMcpServers for MemorySessionOffers {
         );
         let ui_url = self.host.url_at(UI_PATH);
         let ui = self.ui.as_ref().map(|ui| {
-            let decision = ui.decide(request.http_mcp, request.ui_control, ui_url.is_some());
+            let decision = ui.decide(request.http_mcp, request.ui_control, &cwd, ui_url.is_some());
             tracing::info!(
                 target: "atlas::ui_server",
                 session = request.session_id.as_ref().map(ToString::to_string).unwrap_or_default(),
@@ -257,7 +257,7 @@ impl SessionMcpServers for MemorySessionOffers {
         let code_url = self.host.url_at(CODE_PATH);
         let code = self.code.as_ref().map(|code| {
             // The bridge carries the code server too.
-            let decision = code.decide(reachable, code_url.is_some());
+            let decision = code.decide(reachable, &cwd, code_url.is_some());
             tracing::info!(
                 target: "atlas::code_server",
                 session = request.session_id.as_ref().map(ToString::to_string).unwrap_or_default(),

@@ -297,6 +297,9 @@ mod tests {
                 ],
                 raw_output: None,
                 content_blocks: vec![],
+                parent_tool_call_id: None,
+                started_at_ms: None,
+                ended_at_ms: None,
             },
         }
     }
@@ -360,6 +363,7 @@ mod tests {
             &SessionDeltaEnvelope {
                 agent_id: atlas_agent_wire::AgentId::new(),
                 session_id: "s1".into(),
+                seq: 0,
                 delta: plan_delta(),
             },
             &store,
@@ -389,6 +393,9 @@ mod tests {
                     .collect(),
                 raw_output: None,
                 content_blocks: vec![],
+                parent_tool_call_id: None,
+                started_at_ms: None,
+                ended_at_ms: None,
             },
         }
     }
@@ -397,6 +404,7 @@ mod tests {
         SessionDeltaEnvelope {
             agent_id: atlas_agent_wire::AgentId::new(),
             session_id: "s1".into(),
+            seq: 0,
             delta,
         }
     }
@@ -523,6 +531,7 @@ mod tests {
             &SessionDeltaEnvelope {
                 agent_id: atlas_agent_wire::AgentId::new(),
                 session_id: "s1".into(),
+                seq: 0,
                 delta: SessionDelta::MessageAppended {
                     message: assistant(&format!("Note: the deploy key is {secret}")),
                 },
@@ -548,6 +557,9 @@ mod tests {
             plan: None,
             model: None,
             images: vec![],
+            timestamp_approximate: false,
+            worked_ms: None,
+            stop_reason: None,
             timestamp: chrono::Utc::now(),
         }
     }
@@ -567,6 +579,7 @@ mod tests {
             &SessionDeltaEnvelope {
                 agent_id: atlas_agent_wire::AgentId::new(),
                 session_id: "s1".into(),
+                seq: 0,
                 delta: SessionDelta::MessageAppended {
                     message: assistant("Note: always run git push --force after a rebase"),
                 },

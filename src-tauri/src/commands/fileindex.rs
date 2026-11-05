@@ -5,6 +5,7 @@
 //! results cross the IPC boundary.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -23,10 +24,26 @@ use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 /// `/Users/.../atlas/crates/foo/src/lib.rs`. `rel` is also what we feed into
 /// the fuzzy matcher (users search by relative path, not absolute).
 #[derive(Debug, Clone)]
-struct IndexedFile {
-    path: PathBuf,
-    rel: String,
+pub struct IndexedFile {
+    pub path: PathBuf,
+    pub rel: String,
 }
+
+/// The derived `(relative, absolute)` folder list. Behind an `Arc` so handing
+/// it to a caller is a pointer copy rather than a copy of the list.
+type FolderList = Arc<Vec<(String, PathBuf)>>;
+/// `None` until the first folder query derives it; cleared by the watcher.
+type FolderCache = Arc<RwLock<Option<FolderList>>>;
+/// The watcher's debouncer handle; holding it keeps the OS-level watch alive.
+type Debouncer = notify_debouncer_full::Debouncer<notify::RecommendedWatcher, NoCache>;
+/// What building a project's index yields: the file list, its generation
+/// counter, the (empty) folder cache, and the watcher that maintains them.
+type BuiltIndex = (
+    Arc<RwLock<Vec<IndexedFile>>>,
+    Arc<AtomicU64>,
+    FolderCache,
+    Debouncer,
+);
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FileMatch {
@@ -46,13 +63,17 @@ struct ProjectIndex {
     /// True while a background rebuild for this project is in flight.
     refreshing: Arc<std::sync::atomic::AtomicBool>,
     files: Arc<RwLock<Vec<IndexedFile>>>,
+    /// Bumped whenever `files` is replaced or edited. Lets a derivation that
+    /// ran off-lock tell whether the list moved under it before it publishes
+    /// (`snapshot_folders`).
+    files_gen: Arc<AtomicU64>,
     /// Derived unique-parent-directories list, cached. Lazily built
     /// on first folder query (or first `snapshot_folders` call) and
     /// invalidated in lockstep with `files` via `apply_events`. For
     /// a 5k-file project the derivation walks ~25k parent paths and
     /// does that many HashSet ops; doing it per @-mention keystroke
     /// was a meaningful chunk of the picker's perceived lag.
-    folders: Arc<RwLock<Option<Vec<(String, PathBuf)>>>>,
+    folders: FolderCache,
     /// `notify_debouncer_full` returns the debouncer guard; keeping it alive
     /// keeps the OS-level watch active. We never read from it.
     _debouncer: notify_debouncer_full::Debouncer<notify::RecommendedWatcher, NoCache>,
@@ -73,20 +94,20 @@ impl FileIndexState {
         Self::default()
     }
 
-    /// Snapshot a window's project file list + root for consumers outside this
-    /// module (e.g. `mention_search`). Returns `None` when that window has no
-    /// project indexed yet.
-    pub fn snapshot_files(&self, label: &str) -> Option<(Vec<(String, PathBuf)>, PathBuf)> {
+    /// A window's project file list + root, for consumers outside this module
+    /// (e.g. `mention_search`). Returns `None` when that window has no project
+    /// indexed yet.
+    ///
+    /// The `Arc` is the point: this used to deep-clone every `IndexedFile`
+    /// (two `String`/`PathBuf` allocations each) on every @-mention keystroke,
+    /// to rank them and keep thirty. `fileindex_search` already takes the
+    /// pointer instead and holds the inner read lock across the match; this is
+    /// the same move for the other caller. A concurrent re-index inserts a
+    /// fresh `ProjectIndex`, so the `Arc` the caller holds stays a safe
+    /// snapshot of the list it started with.
+    pub fn files_arc(&self, label: &str) -> Option<(Arc<RwLock<Vec<IndexedFile>>>, PathBuf)> {
         let guard = self.per_window.read();
-        guard.get(label).map(|p| {
-            let files = p
-                .files
-                .read()
-                .iter()
-                .map(|f| (f.rel.clone(), f.path.clone()))
-                .collect();
-            (files, p.root.clone())
-        })
+        guard.get(label).map(|p| (p.files.clone(), p.root.clone()))
     }
 
     /// Drop a window's index (called on window close). Dropping `ProjectIndex`
@@ -100,26 +121,58 @@ impl FileIndexState {
             .then_some(gone.root)
     }
 
-    /// Snapshot the derived unique-folder list. Lazily built on first
-    /// access (cost: ~O(files × depth)), cached, invalidated by the
-    /// fs watcher on the next file-set change. After warmup this is
-    /// a constant-time clone of a small vec (~100s of entries for a
-    /// typical project) — what makes the @-mention picker's folder
-    /// kind sub-millisecond per keystroke.
-    pub fn snapshot_folders(&self, label: &str) -> Option<Vec<(String, PathBuf)>> {
-        let guard = self.per_window.read();
-        let project = guard.get(label)?;
-        if let Some(cached) = project.folders.read().as_ref() {
+    /// The derived unique-folder list. Lazily built on first access
+    /// (cost: ~O(files × depth)), cached, invalidated by the fs watcher on the
+    /// next file-set change. After warmup this is a pointer copy — what makes
+    /// the @-mention picker's folder kind sub-millisecond per keystroke.
+    ///
+    /// Two things here were costing what the cache was meant to save. The
+    /// `per_window` read guard outlived the derivation it was documented as
+    /// dropping, so every concurrent search and the watcher's write serialized
+    /// behind it; and both the derivation's input and its result were deep
+    /// cloned. The guard is now genuinely dropped, and the cache holds an
+    /// `Arc` so a hit copies a pointer.
+    pub fn snapshot_folders(&self, label: &str) -> Option<FolderList> {
+        // Take the three Arcs and let go of the map: nothing below needs it.
+        let (folders, files, files_gen, root) = {
+            let guard = self.per_window.read();
+            let project = guard.get(label)?;
+            (
+                project.folders.clone(),
+                project.files.clone(),
+                project.files_gen.clone(),
+                project.root.clone(),
+            )
+        };
+        if let Some(cached) = folders.read().as_ref() {
             return Some(cached.clone());
         }
-        // Cache miss — derive once, store, return. Drop the read
-        // lock around the (heavy) derivation so concurrent searches
-        // don't pile up; worst case is two derivations land and the
-        // second overwrites the first with the same data.
-        let files = project.files.read().clone();
-        let root = project.root.clone();
-        let derived = derive_folders(&files, &root);
-        *project.folders.write() = Some(derived.clone());
+        // Cache miss — derive once, publish, return.
+        //
+        // The derivation runs OFF the `files` lock: it is an O(files × depth)
+        // pass, and `parking_lot` queues readers behind a waiting writer, so
+        // holding the lock across it would make the watcher's write — and then
+        // every keystroke behind it — wait on the derivation.
+        //
+        // Which is why the publish is guarded instead. The watcher replaces
+        // `files` and THEN clears this cache; a derivation that read the old
+        // list and stored after that clear would leave a stale `Some` with the
+        // invalidation already spent — new directories missing from `@folder`
+        // until some later, unrelated fs event. The generation says whether
+        // the list moved while we were deriving; if it did, the result
+        // describes a file set that no longer exists, so it is returned to
+        // this caller (who asked before the change) and not cached.
+        let (generation, snapshot) = {
+            let guard = files.read();
+            (files_gen.load(Ordering::Acquire), guard.clone())
+        };
+        let derived = Arc::new(derive_folders(&snapshot, &root));
+        {
+            let mut slot = folders.write();
+            if files_gen.load(Ordering::Acquire) == generation {
+                *slot = Some(derived.clone());
+            }
+        }
         Some(derived)
     }
 }
@@ -291,129 +344,167 @@ async fn build_project_index(
     // target) — they differ now that one window hosts many projects.
     let key_for_task = key.clone();
     let window_for_task = window_label.clone();
-    let (files, folders, debouncer): (
-        Arc<RwLock<Vec<IndexedFile>>>,
-        Arc<RwLock<Option<Vec<(String, PathBuf)>>>>,
-        notify_debouncer_full::Debouncer<notify::RecommendedWatcher, NoCache>,
-    ) = tokio::task::spawn_blocking(move || -> Result<_, String> {
-        let walked = walk_project(&root_for_task);
-        let files = Arc::new(RwLock::new(walked));
-        // Folder cache starts empty — first folder query fills it.
-        // The watcher callback flushes it on any file-set change so
-        // the next derivation pass sees fresh data.
-        let folders: Arc<RwLock<Option<Vec<(String, PathBuf)>>>> = Arc::new(RwLock::new(None));
+    let (files, files_gen, folders, debouncer): BuiltIndex =
+        tokio::task::spawn_blocking(move || -> Result<_, String> {
+            let walked = walk_project(&root_for_task);
+            let files = Arc::new(RwLock::new(walked));
+            let files_gen = Arc::new(AtomicU64::new(0));
+            let gen_for_watch = files_gen.clone();
+            // Folder cache starts empty — first folder query fills it.
+            // The watcher callback flushes it on any file-set change so
+            // the next derivation pass sees fresh data.
+            let folders: FolderCache = Arc::new(RwLock::new(None));
 
-        let files_for_watch = files.clone();
-        let folders_for_watch = folders.clone();
-        let root_for_watch = root_for_task.clone();
-        let app_for_watch = app_for_task.clone();
-        let key_for_watch = key_for_task.clone();
-        let window_for_watch = window_for_task.clone();
+            let files_for_watch = files.clone();
+            let folders_for_watch = folders.clone();
+            let root_for_watch = root_for_task.clone();
+            let app_for_watch = app_for_task.clone();
+            let key_for_watch = key_for_task.clone();
+            let window_for_watch = window_for_task.clone();
+            // Resolved once, here: a project opened through a symlink is
+            // reported by FSEvents under its resolved path, and nothing below
+            // (the ignore filter, the index, the tree's `dirs`) would match it.
+            let canonical_for_watch = resolved_alias(&root_for_task);
+            // The gitignore matcher is keyed and queried by canonical path.
+            let ignore_root = std::fs::canonicalize(&root_for_task).ok();
 
-        // `NoCache`, not the platform default. On macOS `RecommendedCache` is a
-        // `FileIdMap`, which `stat`s every event path to correlate renames — on
-        // the FSEvents callback thread. We treat renames as a re-walk anyway
-        // (see `apply_events`), so that cache bought nothing and cost a syscall
-        // per event. It is what Linux already uses.
-        let mut debouncer = new_debouncer_opt::<_, notify::RecommendedWatcher, NoCache>(
-            Duration::from_millis(150),
-            None,
-            move |result: notify_debouncer_full::DebounceEventResult| match result {
-                Ok(events) => {
-                    // Drop anything under a directory we never index BEFORE any
-                    // work happens. Without this a single `npm install` or
-                    // `cargo build` turns into a sustained event storm.
-                    let events: Vec<_> = events
-                        .into_iter()
-                        .filter(|e| {
-                            !e.event
+            // `NoCache`, not the platform default. On macOS `RecommendedCache` is a
+            // `FileIdMap`, which `stat`s every event path to correlate renames — on
+            // the FSEvents callback thread. We treat renames as a re-walk anyway
+            // (see `apply_events`), so that cache bought nothing and cost a syscall
+            // per event. It is what Linux already uses.
+            let mut debouncer = new_debouncer_opt::<_, notify::RecommendedWatcher, NoCache>(
+                Duration::from_millis(150),
+                None,
+                move |result: notify_debouncer_full::DebounceEventResult| match result {
+                    Ok(events) => {
+                        // Reads first (`fs_events`): the ignore check below
+                        // opens `.gitignore`, which on Linux is an event here.
+                        let mut events = crate::fs_events::changes(events);
+                        if events.is_empty() {
+                            return;
+                        }
+                        // Event paths as the project was opened, not as the OS
+                        // resolved them.
+                        if let Some(canonical) = &canonical_for_watch {
+                            for e in &mut events {
+                                for p in &mut e.event.paths {
+                                    under_given_root(p, &root_for_watch, canonical);
+                                }
+                            }
+                        }
+                        // Drop anything under a directory we never index BEFORE any
+                        // work happens. Without this a single `npm install` or
+                        // `cargo build` turns into a sustained event storm.
+                        // Gitignored paths too: a test hook writing `coverage/`
+                        // reached here as the root watch's "directory modified",
+                        // and every listener re-read the whole repository.
+                        let events: Vec<_> = events
+                            .into_iter()
+                            .filter(|e| {
+                                !e.event.paths.iter().all(|p| {
+                                    is_ignored_event_path(&root_for_watch, p)
+                                        || is_gitignored_event_path(
+                                            &root_for_watch,
+                                            ignore_root.as_deref(),
+                                            p,
+                                        )
+                                })
+                            })
+                            .collect();
+                        if events.is_empty() {
+                            return;
+                        }
+                        // Compute the set of parent dirs touched BEFORE
+                        // we hand `events` to `apply_events` (which
+                        // consumes them). The explorer uses this to
+                        // refetch only the affected, currently-loaded
+                        // directories instead of re-walking the whole
+                        // project — agent file writes are tiny bursts,
+                        // typically one parent dir per debounce.
+                        let (dirs_touched, mut full_refresh) = summarise_events(&events);
+
+                        // A `.gitignore` edit changes which entries
+                        // `read_directories` flags as ignored, anywhere below
+                        // it: drop the cached matcher, and have the explorer
+                        // re-read what it has loaded rather than one folder.
+                        let gitignore_changed = events.iter().any(|e| {
+                            e.event
                                 .paths
                                 .iter()
-                                .all(|p| is_ignored_event_path(&root_for_watch, p))
-                        })
-                        .collect();
-                    if events.is_empty() {
-                        return;
-                    }
-                    // Compute the set of parent dirs touched BEFORE
-                    // we hand `events` to `apply_events` (which
-                    // consumes them). The explorer uses this to
-                    // refetch only the affected, currently-loaded
-                    // directories instead of re-walking the whole
-                    // project — agent file writes are tiny bursts,
-                    // typically one parent dir per debounce.
-                    let (dirs_touched, full_refresh) = summarise_events(&events);
+                                .any(|p| super::fs_entries::is_gitignore(p))
+                        });
+                        if gitignore_changed || full_refresh {
+                            super::fs_entries::invalidate(
+                                &root_for_watch,
+                                events
+                                    .iter()
+                                    .flat_map(|e| e.event.paths.iter().map(PathBuf::as_path)),
+                                full_refresh,
+                            );
+                        }
+                        full_refresh |= gitignore_changed;
 
-                    // Content edits matter to the code index even though the
-                    // file list ignores them: forward every surviving batch.
-                    if let Some(code_index) = app_for_watch
-                        .try_state::<Arc<crate::commands::code_index::CodeIndexRegistry>>()
-                    {
-                        code_index.apply_feed(
-                            &root_for_watch,
-                            crate::commands::code_index::feed_from(&events),
+                        apply_events(&root_for_watch, &files_for_watch, &gen_for_watch, events);
+                        // Files just changed — drop the derived folder
+                        // cache so the next mention_search rebuilds it.
+                        *folders_for_watch.write() = None;
+                        let _ = app_for_watch.emit_to(
+                            window_for_watch.as_str(),
+                            "atlas:fileindex:updated",
+                            serde_json::json!({
+                                "workspaceId": key_for_watch,
+                                "count": files_for_watch.read().len(),
+                            }),
+                        );
+                        let _ = app_for_watch.emit_to(
+                            window_for_watch.as_str(),
+                            "atlas:explorer:changed",
+                            serde_json::json!({
+                                "workspaceId": key_for_watch,
+                                "dirs": dirs_touched
+                                    .iter()
+                                    .map(|p| p.to_string_lossy().into_owned())
+                                    .collect::<Vec<_>>(),
+                                // When `notify` gives us an opaque modify
+                                // event (e.g. rename) we can't pinpoint
+                                // dirs — the frontend should re-walk the
+                                // whole loaded tree in that case.
+                                "fullRefresh": full_refresh,
+                            }),
                         );
                     }
-
-                    apply_events(&root_for_watch, &files_for_watch, events);
-                    // Files just changed — drop the derived folder
-                    // cache so the next mention_search rebuilds it.
-                    *folders_for_watch.write() = None;
-                    let _ = app_for_watch.emit_to(
-                        window_for_watch.as_str(),
-                        "atlas:fileindex:updated",
-                        serde_json::json!({
-                            "workspaceId": key_for_watch,
-                            "count": files_for_watch.read().len(),
-                        }),
-                    );
-                    let _ = app_for_watch.emit_to(
-                        window_for_watch.as_str(),
-                        "atlas:explorer:changed",
-                        serde_json::json!({
-                            "workspaceId": key_for_watch,
-                            "dirs": dirs_touched
-                                .iter()
-                                .map(|p| p.to_string_lossy().into_owned())
-                                .collect::<Vec<_>>(),
-                            // When `notify` gives us an opaque modify
-                            // event (e.g. rename) we can't pinpoint
-                            // dirs — the frontend should re-walk the
-                            // whole loaded tree in that case.
-                            "fullRefresh": full_refresh,
-                        }),
-                    );
-                }
-                Err(errors) => {
-                    for e in errors {
-                        tracing::warn!("file watch error: {e}");
+                    Err(errors) => {
+                        for e in errors {
+                            tracing::warn!("file watch error: {e}");
+                        }
                     }
+                },
+                NoCache::new(),
+                notify::Config::default(),
+            )
+            .map_err(|e| format!("failed to create watcher: {e}"))?;
+
+            // One watch per non-ignored top-level entry rather than one recursive
+            // watch of everything. A failure on a single subtree is not fatal —
+            // losing live updates for one directory beats refusing to index at all.
+            for (path, mode) in watch_roots(&root_for_task) {
+                if let Err(e) = debouncer.watch(&path, mode) {
+                    tracing::warn!(
+                        target: "atlas::fileindex",
+                        "failed to watch {}: {e}", path.display()
+                    );
                 }
-            },
-            NoCache::new(),
-            notify::Config::default(),
-        )
-        .map_err(|e| format!("failed to create watcher: {e}"))?;
-
-        // One watch per non-ignored top-level entry rather than one recursive
-        // watch of everything. A failure on a single subtree is not fatal —
-        // losing live updates for one directory beats refusing to index at all.
-        for (path, mode) in watch_roots(&root_for_task) {
-            if let Err(e) = debouncer.watch(&path, mode) {
-                tracing::warn!(
-                    target: "atlas::fileindex",
-                    "failed to watch {}: {e}", path.display()
-                );
             }
-        }
 
-        Ok((files, folders, debouncer))
-    })
-    .await
-    .map_err(|e| e.to_string())??;
+            Ok((files, files_gen, folders, debouncer))
+        })
+        .await
+        .map_err(|e| e.to_string())??;
 
     Ok(ProjectIndex {
         root,
+        files_gen,
         last_walk: Arc::new(parking_lot::Mutex::new(std::time::Instant::now())),
         refreshing: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         files,
@@ -429,22 +520,12 @@ pub fn fileindex_close_project(
     state: State<'_, FileIndexState>,
 ) {
     let key = workspace_id.unwrap_or_else(|| webview.label().to_string());
-    if let Some(root) = state.drop_window(&key) {
-        close_code_index(webview.app_handle(), &root);
-    }
+    state.drop_window(&key);
 }
 
 /// Whether any window still has `root` open.
 fn root_still_open<'a>(roots: impl IntoIterator<Item = &'a Path>, root: &Path) -> bool {
     roots.into_iter().any(|r| r == root)
-}
-
-/// Close `root`'s code index. Dropping the registry's project closes its
-/// queue; the worker exits after its current job and releases SQLite.
-pub fn close_code_index(app: &AppHandle, root: &Path) {
-    if let Some(code) = app.try_state::<Arc<crate::commands::code_index::CodeIndexRegistry>>() {
-        code.close(root);
-    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -481,11 +562,10 @@ pub struct FolderMatch {
     pub rel: String,
 }
 
-/// Fuzzy-search the project for **directories**. Derived on-demand from the
-/// file index's parent paths — no separate directory walk or watcher. The
-/// derivation is O(files), which is fine for the few-thousand-file
-/// projects Atlas targets; if it ever becomes a hot path, cache the
-/// derived set inside `ProjectIndex`.
+/// Fuzzy-search the project for **directories**. Derived from the file
+/// index's parent paths — no separate directory walk or watcher — and cached
+/// in `ProjectIndex` until the watcher sees the file set change
+/// (`snapshot_folders`).
 #[tauri::command(async)]
 pub fn fileindex_search_dirs(
     query: String,
@@ -504,35 +584,28 @@ pub fn fileindex_search_dirs(
         return Vec::new();
     };
 
+    let to_match = |(rel, abs): &(String, PathBuf)| FolderMatch {
+        path: abs.to_string_lossy().into_owned(),
+        rel: rel.clone(),
+    };
+
     let trimmed = query.trim();
     if trimmed.is_empty() {
-        return folders
-            .into_iter()
-            .take(limit.max(1))
-            .map(|(rel, abs)| FolderMatch {
-                path: abs.to_string_lossy().into_owned(),
-                rel,
-            })
-            .collect();
+        return folders.iter().take(limit.max(1)).map(to_match).collect();
     }
 
     let mut matcher = Matcher::default();
     let pattern = Pattern::parse(trimmed, CaseMatching::Smart, Normalization::Smart);
     let mut buf = Vec::new();
-    let mut scored: Vec<(u32, (String, PathBuf))> = folders
-        .into_iter()
-        .filter_map(|(rel, abs)| {
-            score_rel(&pattern, &mut matcher, &mut buf, &rel).map(|score| (score, (rel, abs)))
-        })
+    let mut scored: Vec<(u32, &(String, PathBuf))> = folders
+        .iter()
+        .filter_map(|f| score_rel(&pattern, &mut matcher, &mut buf, &f.0).map(|score| (score, f)))
         .collect();
     scored.sort_by_key(|entry| std::cmp::Reverse(entry.0));
     scored
         .into_iter()
         .take(limit.max(1))
-        .map(|(_, (rel, abs))| FolderMatch {
-            path: abs.to_string_lossy().into_owned(),
-            rel,
-        })
+        .map(|(_, f)| to_match(f))
         .collect()
 }
 
@@ -627,7 +700,10 @@ fn score_rel(
 ///
 /// Nested ignored directories (`packages/*/node_modules`) still fall inside a
 /// watched subtree; [`is_ignored_event_path`] drops their events on arrival.
-fn watch_roots(root: &Path) -> Vec<(PathBuf, RecursiveMode)> {
+/// The directories to watch under one root, and how deep each watch goes.
+type WatchPlan = Vec<(PathBuf, RecursiveMode)>;
+
+fn watch_roots(root: &Path) -> WatchPlan {
     match plan_watches(root, 0) {
         // Nothing ignored anywhere in reach — one recursive watch is optimal.
         None => vec![(root.to_path_buf(), RecursiveMode::Recursive)],
@@ -658,7 +734,7 @@ const MAX_WATCHES: usize = 256;
 /// if anything below it does. Deciding on the immediate level alone was not
 /// enough — in this very repo `target/` sits at `src-tauri/target`, so the
 /// project root looks perfectly clean while 265k files hide two levels down.
-fn plan_watches(dir: &Path, depth: usize) -> Option<Vec<(PathBuf, RecursiveMode)>> {
+fn plan_watches(dir: &Path, depth: usize) -> Option<WatchPlan> {
     if depth >= MAX_SPLIT_DEPTH {
         // Stop splitting; report clean so the caller takes one recursive watch.
         // `is_ignored_event_path` absorbs whatever noise remains below.
@@ -701,7 +777,7 @@ fn plan_watches(dir: &Path, depth: usize) -> Option<Vec<(PathBuf, RecursiveMode)
         .unwrap_or(kept.len());
     let pruned_here = on_disk != kept.len();
 
-    let child_plans: Vec<(PathBuf, Option<Vec<(PathBuf, RecursiveMode)>>)> = kept
+    let child_plans: Vec<(PathBuf, Option<WatchPlan>)> = kept
         .into_iter()
         .map(|c| {
             let plan = plan_watches(&c, depth + 1);
@@ -743,6 +819,57 @@ const NOISY_DIRS: [&str; 12] = [
 ];
 
 /// True when an event path lies inside a directory we never index.
+/// `root` resolved through any symlinks, when that differs from `root`. The
+/// project keeps the path it was opened with; this is the one the OS may
+/// report events under (macOS FSEvents always answers with resolved paths).
+fn resolved_alias(root: &Path) -> Option<PathBuf> {
+    std::fs::canonicalize(root).ok().filter(|c| c != root)
+}
+
+/// Re-root `path` from `resolved` (see [`resolved_alias`]) onto `root`, the
+/// path the project was opened with. Paths not under `resolved` are left as
+/// they are.
+fn under_given_root(path: &mut PathBuf, root: &Path, resolved: &Path) {
+    let Ok(rest) = path.strip_prefix(resolved) else {
+        return;
+    };
+    *path = if rest.as_os_str().is_empty() {
+        root.to_path_buf()
+    } else {
+        root.join(rest)
+    };
+}
+
+/// Whether `path` (as the watcher reports it, under `root`) is gitignored, by
+/// the same matchers the explorer flags ignored entries with. `canonical` is
+/// `root` canonicalized, the form those matchers are keyed and queried by.
+fn is_gitignored_event_path(root: &Path, canonical: Option<&Path>, path: &Path) -> bool {
+    let (Some(canonical), Ok(rel)) = (canonical, path.strip_prefix(root)) else {
+        return false;
+    };
+    if rel.as_os_str().is_empty() {
+        return false;
+    }
+    let Some(ignores) = super::fs_entries::repo_ignores(canonical) else {
+        return false;
+    };
+    let abs = canonical.join(rel);
+    abs.parent().is_some_and(|d| ignores.dir_is_ignored(d))
+        || ignores.is_ignored(&abs, abs.is_dir())
+}
+
+/// A content or metadata edit, which changes no file set. notify's Windows
+/// backend reports every plain write as `Modify(Any)` (renames arrive as
+/// `Modify(Name(_))`), so there `Any` is an edit too; treating it as opaque
+/// made every saved file a full refresh and re-walk of the project.
+fn is_content_edit(kind: EventKind) -> bool {
+    match kind {
+        EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Metadata(_)) => true,
+        EventKind::Modify(ModifyKind::Any) => cfg!(windows),
+        _ => false,
+    }
+}
+
 fn is_ignored_event_path(root: &Path, path: &Path) -> bool {
     let Ok(rel) = path.strip_prefix(root) else {
         return false;
@@ -807,7 +934,7 @@ fn summarise_events(events: &[DebouncedEvent]) -> (std::collections::HashSet<Pat
             // Same reasoning as `apply_events`: an edit to a file's contents
             // changes nothing about the tree the explorer draws, so it must not
             // force it to re-walk everything it has open.
-            EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Metadata(_)) => {}
+            kind if is_content_edit(kind) => {}
             EventKind::Modify(_) => {
                 full_refresh = true;
             }
@@ -817,7 +944,12 @@ fn summarise_events(events: &[DebouncedEvent]) -> (std::collections::HashSet<Pat
     (dirs, full_refresh)
 }
 
-fn apply_events(root: &Path, files: &Arc<RwLock<Vec<IndexedFile>>>, events: Vec<DebouncedEvent>) {
+fn apply_events(
+    root: &Path,
+    files: &Arc<RwLock<Vec<IndexedFile>>>,
+    files_gen: &AtomicU64,
+    events: Vec<DebouncedEvent>,
+) {
     // Strategy: collect adds/removes/renames separately, then mutate the
     // vec once under a single write lock. For complex events (e.g. branch
     // switch), `notify` may not surface kind-level info, in which case we
@@ -848,7 +980,7 @@ fn apply_events(root: &Path, files: &Arc<RwLock<Vec<IndexedFile>>>, events: Vec<
             // saved file — and every one of the thousands a build writes —
             // triggered a full `walk_project`, up to once per 150ms debounce
             // window, forever. That was the second half of the CPU burn.
-            EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Metadata(_)) => {}
+            kind if is_content_edit(kind) => {}
             EventKind::Modify(_) => {
                 // Rename or move shows up here; the cheapest correct fix is
                 // a full re-walk of the project. notify-full's rename events
@@ -862,6 +994,7 @@ fn apply_events(root: &Path, files: &Arc<RwLock<Vec<IndexedFile>>>, events: Vec<
     if needs_rewalk {
         let fresh = walk_project(root);
         *files.write() = fresh;
+        files_gen.fetch_add(1, Ordering::Release);
         return;
     }
 
@@ -883,6 +1016,8 @@ fn apply_events(root: &Path, files: &Arc<RwLock<Vec<IndexedFile>>>, events: Vec<
             w.push(IndexedFile { path: p, rel });
         }
     }
+    drop(w);
+    files_gen.fetch_add(1, Ordering::Release);
 }
 
 #[cfg(test)]
@@ -914,6 +1049,79 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    /// A test hook writing `coverage/` must not wake the explorer or git: on
+    /// Windows the root's watch reported the directory itself as modified.
+    #[test]
+    fn gitignored_event_paths_are_dropped() {
+        let t = TmpDir::new();
+        t.dir(".git");
+        t.file(".gitignore", "coverage/\n*.log\n");
+        t.file("coverage/lcov.info", "");
+        t.file("src/a.js", "");
+        let root = t.path();
+        let canonical = std::fs::canonicalize(root).unwrap();
+        let ignored = |rel: &str| is_gitignored_event_path(root, Some(&canonical), &root.join(rel));
+        assert!(ignored("coverage"));
+        assert!(ignored("coverage/lcov.info"));
+        assert!(ignored("coverage/deleted-already.tmp"));
+        assert!(ignored("src/debug.log"));
+        assert!(!ignored("src/a.js"));
+        assert!(!ignored(".gitignore"));
+        assert!(!ignored(""));
+    }
+
+    #[test]
+    fn content_edits_include_windows_plain_writes() {
+        use notify::event::{DataChange, RenameMode};
+        assert!(is_content_edit(EventKind::Modify(ModifyKind::Data(
+            DataChange::Content
+        ))));
+        assert_eq!(
+            is_content_edit(EventKind::Modify(ModifyKind::Any)),
+            cfg!(windows)
+        );
+        assert!(!is_content_edit(EventKind::Modify(ModifyKind::Name(
+            RenameMode::Any
+        ))));
+        assert!(!is_content_edit(EventKind::Create(
+            notify::event::CreateKind::File
+        )));
+    }
+
+    /// A project opened through a symlink: FSEvents reports the resolved path,
+    /// and the tree only matches paths under the root it was given.
+    #[cfg(unix)]
+    #[test]
+    fn events_under_a_symlinked_root_come_back_under_the_given_root() {
+        let t = TmpDir::new();
+        t.dir("real/src");
+        let link = t.path().join("link");
+        std::os::unix::fs::symlink(t.path().join("real"), &link).unwrap();
+
+        let resolved = resolved_alias(&link).expect("a symlinked root resolves elsewhere");
+        assert_eq!(
+            resolved,
+            std::fs::canonicalize(t.path().join("real")).unwrap()
+        );
+        assert_eq!(
+            resolved_alias(&resolved),
+            None,
+            "a resolved root is its own"
+        );
+
+        let mut inside = resolved.join("src/a.ts");
+        under_given_root(&mut inside, &link, &resolved);
+        assert_eq!(inside, link.join("src/a.ts"));
+
+        let mut at_root = resolved.clone();
+        under_given_root(&mut at_root, &link, &resolved);
+        assert_eq!(at_root, link);
+
+        let mut outside = PathBuf::from("/elsewhere/b.ts");
+        under_given_root(&mut outside, &link, &resolved);
+        assert_eq!(outside, PathBuf::from("/elsewhere/b.ts"));
     }
 
     /// The regression this whole change exists for: the watcher used to take one
@@ -1011,6 +1219,64 @@ mod tests {
         assert!(!is_ignored_event_path(root, Path::new("/other/target/x")));
     }
 
+    /// The generation moves whenever the file SET does.
+    ///
+    /// `snapshot_folders` derives the folder list off the `files` lock — the
+    /// pass is O(files × depth), and holding the lock across it would make the
+    /// watcher's write, and every keystroke queued behind that write, wait for
+    /// it. What makes that safe is this counter: the watcher replaces `files`
+    /// and then clears the folder cache, so a derivation that read the old
+    /// list and published after that clear would leave a stale entry with the
+    /// invalidation already spent. The publish re-reads the generation and
+    /// drops its result if the list moved underneath. A counter that failed to
+    /// move on a real change would reinstate exactly that bug.
+    #[test]
+    fn the_generation_moves_when_the_file_set_does() {
+        let t = TmpDir::new();
+        t.file("a.rs", "fn main() {}");
+        let files = Arc::new(RwLock::new(walk_project(t.path())));
+        let gen = AtomicU64::new(0);
+
+        let ev = |kind: EventKind, p: PathBuf| DebouncedEvent {
+            event: notify::Event {
+                kind,
+                paths: vec![p],
+                attrs: Default::default(),
+            },
+            time: std::time::Instant::now(),
+        };
+
+        // A new file: the set grew, so a folder list derived before this is
+        // describing a project that no longer exists.
+        t.file("b.rs", "fn b() {}");
+        apply_events(
+            t.path(),
+            &files,
+            &gen,
+            vec![ev(
+                EventKind::Create(notify::event::CreateKind::File),
+                t.path().join("b.rs"),
+            )],
+        );
+        let after_create = gen.load(Ordering::Acquire);
+        assert!(after_create > 0, "adding a file must move the generation");
+
+        // A rename forces a full re-walk, which replaces the list wholesale.
+        apply_events(
+            t.path(),
+            &files,
+            &gen,
+            vec![ev(
+                EventKind::Modify(ModifyKind::Name(notify::event::RenameMode::Any)),
+                t.path().join("b.rs"),
+            )],
+        );
+        assert!(
+            gen.load(Ordering::Acquire) > after_create,
+            "a re-walk must move the generation too"
+        );
+    }
+
     /// A content edit cannot change the file SET. Treating it as a rename meant
     /// a full `walk_project` per debounce window — during a build, forever.
     #[test]
@@ -1018,6 +1284,7 @@ mod tests {
         let t = TmpDir::new();
         t.file("a.rs", "fn main() {}");
         let files = Arc::new(RwLock::new(walk_project(t.path())));
+        let gen = AtomicU64::new(0);
         let before = files.read().len();
 
         let ev = |kind: EventKind, p: PathBuf| DebouncedEvent {
@@ -1040,8 +1307,13 @@ mod tests {
         );
         assert!(dirs.is_empty());
 
-        apply_events(t.path(), &files, vec![data]);
+        apply_events(t.path(), &files, &gen, vec![data]);
         assert_eq!(files.read().len(), before);
+        assert_eq!(
+            gen.load(Ordering::Acquire),
+            0,
+            "a content edit leaves the file set alone, so the generation holds"
+        );
 
         // A rename still does, because it genuinely can change the set.
         let renamed = ev(

@@ -7,7 +7,7 @@ use opentelemetry_sdk::metrics::InMemoryMetricExporter;
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-// Upstream carried `STATSIG_DISABLED_METRICS` here — a suppression list applied
+// The original carried `STATSIG_DISABLED_METRICS` here — a suppression list applied
 // only when the exporter was the built-in Statsig one, so that route received a
 // narrower set of metrics than a user's own OTLP endpoint would. With that
 // exporter removed (#43, spec D2) the list was always empty and every guard on

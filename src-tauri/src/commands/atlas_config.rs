@@ -167,7 +167,7 @@ pub fn notify_settings_changed(app: &AppHandle, settings: &AppSettings, generati
     }
 }
 
-/// The gate for the vendored engine's curated-plugin sync
+/// The gate for the engine's curated-plugin sync
 /// (`atlas-engine-core-plugins`, `start_curated_repo_sync`): a `git fetch` of
 /// github.com/openai/plugins at every launch, opt-in from Atlas via
 /// `curatedPluginSync`. The engine runs in this process and reads the
@@ -227,6 +227,9 @@ pub fn start_watcher(app: &AppHandle, handle: AtlasConfigHandle) {
                 let Ok(events) = result else {
                     return;
                 };
+                // `reload_from_disk` opens the file; on Linux that open comes
+                // back here (`fs_events`) and would reload again, forever.
+                let events = crate::fs_events::changes(events);
                 let touches_config = events.iter().any(|e| {
                     e.paths.iter().any(|p| {
                         p.file_name()

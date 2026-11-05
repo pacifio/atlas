@@ -40,6 +40,8 @@ Most Atlas features cross three layers — React UI, a Tauri command, and a work
 
 Match the patterns already in the codebase: feature folder under `src/features/<feature>/`, Zustand store wrapped in `createSelectors`, Tailwind composed through `cn()`, IPC verbs grouped into a single `commands/<domain>.rs`. If your change doesn't fit any of them, propose the structure in the issue.
 
+Split a new surface into a container and views. The container (`components/<name>.tsx`) reads stores, calls the `*-api.ts` wrappers and handles `atlas:*` events; the views (`components/views/<name>-view.tsx`) render from props and callbacks alone. A view that needs an agent's name or mark calls `useAgentMeta(id)` or takes it as a prop, never `agentMeta()`, which reads a store. `tests/view-purity-contract.test.ts` enforces this, because nothing else can see a view that quietly imports a store. [Containers and views](docs/architecture.md#containers-and-views) has the full rule.
+
 New heavy dependencies need discussion first. The current list is deliberate.
 
 ## Design changes
@@ -48,9 +50,11 @@ Share the proposal in the issue before implementing anything that changes UI or 
 
 Atlas has a lot of surfaces — a change that looks right in one panel often reads wrong across the other twelve. A design pass up front is faster than a rewrite after review.
 
+Build UI from the `@tryatlas/design` primitives, scales and theme tokens ([design-system.md](docs/reference/design-system.md)). A change to a primitive, a shared scale or a theme key belongs in the [`tryatlas/design`](https://github.com/tryatlas/design) package, then a bump of desktop's pinned tag (ADR-0027); the few desktop-only scales (the titlebar height, the composer radius) stay in `src/styles/globals.css`. The design-system ratchet test fails on hand-written sizes and colours.
+
 ## Quickstart
 
-**macOS is the only currently-supported platform.** Linux and Windows build from the same Tauri codebase but are untested — a Windows build is planned, and reports from either OS are genuinely welcome in the meantime.
+**macOS and Linux are the supported platforms.** Linux support is what [docs/reference/linux-support.md](docs/reference/linux-support.md) says it is: glibc 2.35 or newer and WebKitGTK 4.1, shipped as deb, rpm, Arch, AppImage and tarball. Windows builds from the same Tauri codebase but is untested — a Windows build is planned, and reports are genuinely welcome in the meantime.
 
 You need:
 
@@ -65,9 +69,15 @@ We suggest using [mise](https://mise.jdx.dev/) to manage Bun and Node — the re
 ```bash
 git clone git@github.com:pacifio/atlas.git
 cd atlas
+mise install     # optional, see above
 bun install
+bun run doctor   # checks your toolchain against the pins, with a fix hint for each miss
 bun run dev:app
 ```
+
+`bun run doctor` is quick and changes nothing: it compares Node, Bun and Rust with `mise.toml` and `rust-toolchain.toml`, checks the Xcode tools and git hooks, and warns about optional pieces (Docker, `cargo-sweep`) and an oversized `target/`. `dev:app` also runs `scripts/target-gc.sh` before it starts, so `target/` is tidied without `ci:local`; it only acts after a Rust upgrade or once a week, and a failure never blocks dev.
+
+The repo commits shared VS Code settings in `.vscode/` (oxc as the formatter with format on save, rust-analyzer on its own target dir so it does not fight `dev:app` for the build lock) and recommends the matching extensions; `.editorconfig` covers other editors.
 
 The first Rust compile takes a few minutes; after that, seconds. `bun run dev:app` hot-reloads the frontend on save — Rust changes need a restart.
 
@@ -84,8 +94,8 @@ Other commands you'll use:
 
 ```bash
 bun run dev             # Vite only, in your browser, on a fake backend — see "UI work in the browser"
-bun run format          # oxfmt --write on src/
-bun run lint            # oxlint on src/
+bun run format          # oxfmt --write on src/, tests/, scripts/
+bun run lint            # oxlint on src/, tests/, scripts/
 ```
 
 A husky pre-commit hook runs `lint-staged` (oxfmt + oxlint on staged files) plus `bun run typecheck`, so most formatting/lint issues are caught before they ever reach CI (see Verification below).
@@ -164,6 +174,12 @@ PR straight into `main` only when the change has no version-branch dependency an
 
 Releases are tagged `alpha-X.Y.Z`, with occasional `exp-X.Y.Z-X.Y.Z` snapshots.
 
+### Releasing for Linux
+
+Pushing an `alpha-*` tag runs `.github/workflows/release-linux.yml`: it builds x86-64 and aarch64 on Ubuntu 22.04 (the glibc floor), packages a tarball, AppImage, deb, rpm and, on x86-64, an Arch package, then **verifies** them with `scripts/verify-linux-release.sh` (the binary loads within the floor, every package installs on clean Debian, Ubuntu, Fedora and Arch containers and starts, the GUI comes up under Xvfb) before one publish job attests, signs and releases both architectures. A pull request that touches a release input runs the same build and verification without publishing, so a red Linux release is seen before the tag.
+
+After publishing, set `uri_linux_x86_64` and `uri_linux_aarch64` in PostHog remote config to the release page; that is what tells Linux installs a new version exists. Then run the by-hand matrix in `docs/qa/linux-smoke-matrix.md`. Supported distros, what each package needs and how signing works are in `docs/reference/linux-support.md`.
+
 ### Versioning
 
 The version is written in three places: `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json`. The scripts change all three together, and refresh `Cargo.lock`'s entry for the app so CI's `--locked` builds still run. Everything else reads it from one of those: Rust through `CARGO_PKG_VERSION`, the About screen through `getVersion()`, the DMG scripts from `tauri.conf.json`.
@@ -179,7 +195,7 @@ Run `bun run bump` (`scripts/bump.sh`) once per release, on the version branch, 
 ## Verification
 
 ```bash
-bun run lint                       # oxlint on src/
+bun run lint                       # oxlint on src/, tests/, scripts/
 bun run format:check               # oxfmt --check on src/
 bun run typecheck                  # frontend typecheck (app + test code)
 bun run test                       # frontend and cross-cutting tests
@@ -271,6 +287,14 @@ container's cache volume:
 - **Once a week**, it removes artifacts cargo hasn't used in 30 days: mostly
   old dependency versions left behind by lockfile bumps. Getting one wrong
   costs a rebuild, never a broken build.
+- **Over a size cap**, only when `ATLAS_GC_MAX_MB` is set: it removes the
+  least recently used artifacts until the dir fits. For a target dir shared
+  by several worktrees, which churns through dependency versions faster than
+  30 days can age them out. `ATLAS_GC_UNUSED_DAYS` and `ATLAS_GC_EVERY_DAYS`
+  shorten the two windows above for the same case. The main checkout's
+  `target/` sets none of them. A `target/` that is a symlink (the shared dir)
+  is only collected by the worktree wrapper, under its build lock, since
+  cargo-sweep takes no lock of its own.
 
 Both use [`cargo-sweep`](https://github.com/holmgr/cargo-sweep), which the
 container image ships with. On your machine, install it once with

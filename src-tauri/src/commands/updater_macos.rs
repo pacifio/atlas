@@ -1,4 +1,4 @@
-//! In-app auto-updater (macOS DMG) — Figma/VSCode/Zed-style **background staged**
+//! In-app auto-updater (macOS DMG) — **background staged**
 //! updates.
 //!
 //! Atlas ships as an Apple-signed + notarized + stapled `.dmg` (no Tauri-updater

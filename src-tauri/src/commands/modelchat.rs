@@ -20,12 +20,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use rig_core::agent::{MultiTurnStreamItem, StreamingResult};
-use rig_core::client::completion::CompletionClient;
+use rig_core::completion::CompletionRequest;
 use rig_core::message::{ImageMediaType, Message as RigMessage, UserContent};
-use rig_core::providers::{anthropic, gemini, openai};
-use rig_core::streaming::{StreamedAssistantContent, StreamingChat};
-use rig_core::OneOrMany;
+use rig_core::operation::Completion;
+use rig_core::providers::anthropic::Anthropic;
+use rig_core::providers::gemini::Gemini;
+use rig_core::providers::openai::OpenAIConfig;
+use rig_core::streaming::{Item, StreamEvent, Streamed};
+use rig_core::DynModel;
 
 use super::byok;
 
@@ -43,6 +45,8 @@ pub(super) enum ApiKind {
 /// module) for the one-shot handoff summarizer.
 pub(super) fn provider_endpoint(provider: &str) -> Option<(ApiKind, &'static str)> {
     Some(match provider {
+        "minimax" => (ApiKind::OpenAi, "https://api.minimax.io/v1"),
+        "minimax-cn" => (ApiKind::OpenAi, "https://api.minimaxi.com/v1"),
         "openai" => (ApiKind::OpenAi, "https://api.openai.com/v1"),
         "anthropic" => (ApiKind::Anthropic, ""),
         "google" => (ApiKind::Google, ""),
@@ -205,53 +209,82 @@ fn to_rig(m: &ChatMsg) -> Option<RigMessage> {
                     None,
                 ));
             }
-            let content = OneOrMany::many(parts).ok()?;
-            Some(RigMessage::User { content })
+            if parts.is_empty() {
+                return None;
+            }
+            Some(RigMessage::User { content: parts })
         }
         _ => None,
     }
 }
 
-/// Split the conversation into `(prompt, prior_history)` — Rig's `stream_chat`
-/// wants the latest user turn separate from the history.
+/// Split the conversation into `(prompt, prior_history)` — Rig's request wants
+/// the latest user turn as the prompt, ahead of which the history goes.
 fn split_messages(msgs: &[ChatMsg]) -> Result<(RigMessage, Vec<RigMessage>), String> {
     let mut history: Vec<RigMessage> = msgs.iter().filter_map(to_rig).collect();
     let prompt = history.pop().ok_or("empty conversation")?;
     Ok((prompt, history))
 }
 
+/// The three-arm provider dispatch, shared with `memory_summarize`: Chat
+/// Completions (with `base_url`) for OpenAI and every OpenAI-compatible
+/// provider, native Anthropic, native Gemini.
+pub(super) fn build_model(
+    api: ApiKind,
+    base: &str,
+    key: &str,
+    model: &str,
+) -> DynModel<Completion> {
+    match api {
+        ApiKind::OpenAi => {
+            let mut config = OpenAIConfig::new(key);
+            config.base_url = base.to_string();
+            config.client().chat(model).into()
+        }
+        ApiKind::Anthropic => Anthropic::new(key).completion(model).into(),
+        ApiKind::Google => Gemini::new(key).completion(model).into(),
+    }
+}
+
+/// Start a stream for `prompt` after `history`.
+pub(super) fn start_stream(
+    model: &DynModel<Completion>,
+    prompt: RigMessage,
+    history: Vec<RigMessage>,
+) -> Result<Streamed<Completion>, String> {
+    let request = CompletionRequest::new(prompt).messages(history);
+    model.stream(request).map_err(|e| e.to_string())
+}
+
 // ── Stream drain (shared across providers) ──────────────────────────────────
 
-/// Iterate a Rig multi-turn stream, forwarding text deltas to the UI and
-/// capturing token usage. Generic over the provider response `R`.
-async fn drain<R>(
-    stream: &mut StreamingResult<R>,
+/// Iterate a Rig completion stream, forwarding text deltas to the UI, then read
+/// token usage from the folded response once the stream is exhausted.
+async fn drain(
+    mut stream: Streamed<Completion>,
     app: &AppHandle,
     stream_id: &str,
     cancel: &Arc<AtomicBool>,
 ) -> Result<(u64, u64), String> {
-    let mut input_tokens = 0u64;
-    let mut output_tokens = 0u64;
     while let Some(item) = stream.next().await {
         if cancel.load(Ordering::Relaxed) {
-            break;
+            return Ok((0, 0));
         }
-        match item.map_err(|e| e.to_string())? {
-            MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(t)) => {
-                if !t.text.is_empty() {
-                    emit(app, stream_id, ModelChatEvent::TextDelta { delta: t.text });
-                }
+        if let Item::Event(StreamEvent::Text { text, .. }) = item.map_err(|e| e.to_string())? {
+            if !text.is_empty() {
+                emit(app, stream_id, ModelChatEvent::TextDelta { delta: text });
             }
-            MultiTurnStreamItem::CompletionCall(call) => {
-                if let Some(usage) = call.usage {
-                    input_tokens = usage.input_tokens;
-                    output_tokens = usage.output_tokens;
-                }
-            }
-            _ => {}
         }
     }
-    Ok((input_tokens, output_tokens))
+    // The stream is fully read: its folded response carries the usage. A reply
+    // the provider never ended (connection cut before the terminal record)
+    // fails here as `Truncated` rather than as a stream item, so it must surface
+    // as an error, not as `Done` after partial text.
+    let response = stream.finish().await.map_err(|e| e.to_string())?;
+    Ok((
+        response.usage.input_tokens.unwrap_or(0),
+        response.usage.output_tokens.unwrap_or(0),
+    ))
 }
 
 // ── Stream command ──────────────────────────────────────────────────────────
@@ -334,33 +367,9 @@ async fn run_stream(
         .ok_or_else(|| format!("No API key configured for {provider}"))?;
     let (prompt, history) = split_messages(&messages)?;
 
-    match api {
-        ApiKind::OpenAi => {
-            let client = openai::CompletionsClient::builder()
-                .api_key(&key)
-                .base_url(base)
-                .build()
-                .map_err(|e| e.to_string())?;
-            let agent = client.agent(model).build();
-            let mut stream = agent.stream_chat(prompt, history).await;
-            drain(&mut stream, app, stream_id, cancel).await
-        }
-        ApiKind::Anthropic => {
-            let client = anthropic::Client::builder()
-                .api_key(&key)
-                .build()
-                .map_err(|e| e.to_string())?;
-            let agent = client.agent(model).build();
-            let mut stream = agent.stream_chat(prompt, history).await;
-            drain(&mut stream, app, stream_id, cancel).await
-        }
-        ApiKind::Google => {
-            let client = gemini::Client::new(&key).map_err(|e| e.to_string())?;
-            let agent = client.agent(model).build();
-            let mut stream = agent.stream_chat(prompt, history).await;
-            drain(&mut stream, app, stream_id, cancel).await
-        }
-    }
+    let model = build_model(api, base, &key, model);
+    let stream = start_stream(&model, prompt, history)?;
+    drain(stream, app, stream_id, cancel).await
 }
 
 #[tauri::command]
@@ -379,6 +388,7 @@ pub struct ModelInfo {
 
 fn fallback_models(provider: &str) -> Vec<&'static str> {
     match provider {
+        "minimax" | "minimax-cn" => vec!["MiniMax-M3.1-Flash", "MiniMax-M3"],
         "perplexity" => vec![
             "sonar",
             "sonar-pro",
@@ -498,6 +508,136 @@ async fn fetch_anthropic_models(base: &str, key: &str) -> Result<Vec<String>, St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Each request the fake server saw: its path and JSON body.
+    type SeenRequests = Arc<Mutex<Vec<(String, Value)>>>;
+
+    #[test]
+    fn test_minimax_regions() {
+        for (provider, endpoint) in [
+            ("minimax", "https://api.minimax.io/v1"),
+            ("minimax-cn", "https://api.minimaxi.com/v1"),
+        ] {
+            assert_eq!(
+                provider_endpoint(provider),
+                Some((ApiKind::OpenAi, endpoint))
+            );
+            assert_eq!(
+                fallback_models(provider),
+                vec!["MiniMax-M3.1-Flash", "MiniMax-M3"]
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_minimax_stream_request_preserves_model_and_history() {
+        use axum::{extract::State, http::Uri, routing::post, Json, Router};
+
+        let requests: SeenRequests = Arc::default();
+        let router = Router::new()
+            .route(
+                "/{*path}",
+                post(
+                    |State(requests): State<SeenRequests>,
+                     uri: Uri,
+                     Json(body): Json<Value>| async move {
+                        requests.lock().push((uri.path().to_string(), body));
+                        (
+                            [("content-type", "text/event-stream")],
+                            "data: {\"id\":\"test\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"test\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"test\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"test\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+                        )
+                    },
+                ),
+            )
+            .with_state(requests.clone());
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+
+        for provider in ["minimax", "minimax-cn", "openrouter"] {
+            let (api, endpoint) = provider_endpoint(provider).unwrap();
+            assert_eq!(api, ApiKind::OpenAi);
+            let path = url::Url::parse(endpoint).unwrap().path().to_string();
+            let base = format!("http://{addr}{path}");
+            let models = if provider == "openrouter" {
+                vec![
+                    "minimax/minimax-m3.1-flash",
+                    "minimax/minimax-m3",
+                    "minimax/minimax-m2.7",
+                ]
+            } else {
+                vec![
+                    fallback_models(provider)[0],
+                    "MiniMax-M3",
+                    "MiniMax-M2.7",
+                    "my-custom-model",
+                ]
+            };
+            for model in models {
+                let messages = vec![
+                    ChatMsg {
+                        role: "user".into(),
+                        content: "earlier question".into(),
+                        images: vec![],
+                    },
+                    ChatMsg {
+                        role: "assistant".into(),
+                        content: "earlier answer".into(),
+                        images: vec![],
+                    },
+                    ChatMsg {
+                        role: "user".into(),
+                        content: "inspect this".into(),
+                        images: vec![ImageData {
+                            mime: "image/png".into(),
+                            data: "aW1hZ2U=".into(),
+                        }],
+                    },
+                ];
+                let (prompt, history) = split_messages(&messages).unwrap();
+                let chat_model = build_model(api, &base, "offline-test-key", model);
+                let mut stream = start_stream(&chat_model, prompt, history).unwrap();
+                tokio::time::timeout(Duration::from_secs(5), async {
+                    while let Some(item) = stream.next().await {
+                        item.expect("mock streaming response");
+                    }
+                })
+                .await
+                .expect("request must complete");
+                let (request_path, body) = requests.lock().pop().expect("captured HTTP request");
+                assert_eq!(request_path, format!("{path}/chat/completions"));
+                assert_eq!(body["model"], model);
+                assert_eq!(body["stream"], true);
+                assert_eq!(body["messages"].as_array().unwrap().len(), 3);
+                assert_eq!(body["messages"][0]["role"], "user");
+                assert!(body["messages"][0]["content"]
+                    .to_string()
+                    .contains("earlier question"));
+                assert_eq!(body["messages"][1]["role"], "assistant");
+                assert!(body["messages"][1]["content"]
+                    .to_string()
+                    .contains("earlier answer"));
+                assert_eq!(body["messages"][2]["content"][0]["text"], "inspect this");
+                assert_eq!(
+                    body["messages"][2]["content"][1]["image_url"]["url"],
+                    "data:image/png;base64,aW1hZ2U="
+                );
+                for field in [
+                    "thinking",
+                    "reasoning_effort",
+                    "reasoning_split",
+                    "service_tier",
+                    "store",
+                    "previous_response_id",
+                ] {
+                    assert!(body.get(field).is_none(), "unexpected {field}: {body}");
+                }
+            }
+        }
+        server.abort();
+    }
 
     #[test]
     fn test_orcarouter_endpoint() {

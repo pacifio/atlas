@@ -1,56 +1,29 @@
 import { createElement, type ReactElement } from "react";
-import {
-  AlertTriangle,
-  BellRing,
-  Bot,
-  Check,
-  Download,
-  GitBranch,
-  Hand,
-  KeyRound,
-  MessageSquare,
-  SquareTerminal,
-  Sparkles,
-  X,
-} from "lucide-react";
+import { AlertTriangle, Bot, Check, Hand, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AgentGlyph } from "@/features/artifacts/components/agent-glyph";
 import { catalogEntry, type NotificationKind } from "../lib/catalog";
 import { leadingBadge, type LeadingBadge } from "../lib/leading-badge";
+import { sourceIconFor, type SourceIconTone } from "../lib/source-icon";
 
 const BADGE_STYLE: Record<LeadingBadge, { bg: string; Icon: typeof Check }> = {
-  done: { bg: "bg-[var(--atlas-status-success-foreground)]", Icon: Check },
-  failed: { bg: "bg-[var(--atlas-status-error-foreground)]", Icon: X },
-  "needs-you": { bg: "bg-[var(--primary)]", Icon: Hand },
-  warning: { bg: "bg-[var(--atlas-status-warning-foreground)]", Icon: AlertTriangle },
+  done: { bg: "bg-success", Icon: Check },
+  failed: { bg: "bg-error", Icon: X },
+  "needs-you": { bg: "bg-primary", Icon: Hand },
+  warning: { bg: "bg-warning", Icon: AlertTriangle },
+};
+
+const TONE_CLASS: Record<SourceIconTone, string> = {
+  primary: "text-primary",
+  muted: "text-secondary-foreground",
+  warning: "text-warning",
+  error: "text-error",
 };
 
 /** Source icon for kinds that do not come from an agent. */
 function SourceIcon({ kind, size }: { kind: NotificationKind; size: number }) {
-  const common = { size, strokeWidth: 1.5 };
-  const error = "text-[var(--atlas-status-error-foreground)]";
-  if (kind === "atlas-signed-out") return <KeyRound {...common} className="text-primary" />;
-  if (kind === "app-update-ready") return <Download {...common} className="text-primary" />;
-  if (kind === "model-download-done")
-    return <Download {...common} className="text-secondary-foreground" />;
-  if (kind === "model-download-failed") return <Download {...common} className={error} />;
-  if (kind === "git-op-done")
-    return <GitBranch {...common} className="text-secondary-foreground" />;
-  if (kind === "git-op-failed") return <GitBranch {...common} className={error} />;
-  const warn = "text-[var(--atlas-status-warning-foreground)]";
-  if (kind === "git-autofetch-failing" || kind === "git-behind")
-    return <GitBranch {...common} className={warn} />;
-  if (kind === "config-error") return <AlertTriangle {...common} className={warn} />;
-  if (kind === "agent-update-failed") return <Download {...common} className={warn} />;
-  const source = catalogEntry(kind).source;
-  if (source === "chat") return <MessageSquare {...common} className="text-primary" />;
-  if (kind === "terminal-failed")
-    return <AlertTriangle {...common} className="text-[var(--atlas-status-error-foreground)]" />;
-  if (kind === "terminal-attention")
-    return <BellRing {...common} className="text-[var(--atlas-status-warning-foreground)]" />;
-  if (source === "terminal")
-    return <SquareTerminal {...common} className="text-secondary-foreground" />;
-  return <Sparkles {...common} className="text-secondary-foreground" />;
+  const { icon: Glyph, tone } = sourceIconFor(kind);
+  return <Glyph size={size} strokeWidth={1.5} className={TONE_CLASS[tone]} />;
 }
 
 /**
@@ -88,7 +61,7 @@ export function NotificationLeadingIcon({
           data-badge={badge}
           className={cn(
             "absolute -bottom-1 -right-1 grid size-2.5 place-items-center rounded-full",
-            "ring-2 ring-[var(--card)] text-[var(--card)]",
+            "ring-2 ring-card text-card",
             b.bg,
           )}
         >
@@ -99,7 +72,7 @@ export function NotificationLeadingIcon({
   );
 }
 
-/** The icon as a sonner toast's `icon` (deliver.ts is plain TS). */
+/** The icon as a toast's `icon` (deliver.ts is plain TS). */
 export function notificationToastIcon(kind: NotificationKind, agentType?: string): ReactElement {
   return createElement(NotificationLeadingIcon, { kind, agentType });
 }

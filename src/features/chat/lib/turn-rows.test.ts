@@ -8,6 +8,7 @@ import {
   type WorkHeaderRow,
   toolDisplayName,
   memoryToolOf,
+  mcpToolOf,
 } from "./turn-rows";
 import type { ChatMessage, ToolCallDisplay } from "@/types/agent";
 
@@ -52,7 +53,7 @@ function turn(...toolCalls: ToolCallDisplay[]): ChatMessage[] {
 
 function markers(messages: ChatMessage[]): MarkerRow[] {
   return projectRows(messages, OPTS).rows.flatMap((row) =>
-    row.kind === RowKind.MarkerGroup ? row.markers : [],
+    row.kind === RowKind.MarkerGroup ? row.markers : row.kind === RowKind.Marker ? [row] : [],
   );
 }
 
@@ -118,6 +119,22 @@ describe("a tool call that reports its edit as a diff content block", () => {
     const m = markers(turn(both))[0];
     expect(m.detail).toBe("src/known.ts");
     expect(m.path).toBe("/repo/src/known.ts");
+  });
+
+  it("opens a file the engine renamed where it went", () => {
+    const moved = toolCall({
+      id: "tc-move",
+      kind: "edit",
+      toolName: "Edit /repo/src/c.rs",
+      arguments: {
+        paths: ["/repo/src/c.rs"],
+        patch: "\n\nMoved to: /repo/src/d.rs",
+        changes: [
+          { path: "/repo/src/c.rs", kind: "rename", lines: [0, 0], movePath: "/repo/src/d.rs" },
+        ],
+      },
+    });
+    expect(markers(turn(moved))[0].path).toBe("/repo/src/d.rs");
   });
 
   it("leaves a terminal block alone — it is output, not a diff", () => {
@@ -356,88 +373,66 @@ describe("a shell call is classified by its command, not its tool name", () => {
 });
 
 describe("the folded block's one-line summary", () => {
-  const groupOf = (...commands: string[]) => {
-    const rows = projectRows(
-      turn(
-        ...commands.map((command, n) =>
-          toolCall({ id: `c${n}`, kind: "execute", arguments: { command } }),
-        ),
-      ),
-      OPTS,
-    ).rows;
-    return rows.find((r): r is MarkerGroupRow => r.kind === RowKind.MarkerGroup);
-  };
+  const groupOf = (...calls: ToolCallDisplay[]) =>
+    projectRows(turn(...calls), OPTS).rows.find(
+      (r): r is MarkerGroupRow => r.kind === RowKind.MarkerGroup,
+    );
+  const sh = (id: string, command: string) =>
+    toolCall({ id, kind: "execute", arguments: { command } });
 
-  it("names each thing the turn did, in a fixed order", () => {
-    const g = groupOf("cargo build", "make test", "cat a.ts", "cat b.ts");
-    expect(g?.summary).toBe("Read files, ran commands");
+  it("counts each kind of thing the block did, in the order it first happened", () => {
+    const g = groupOf(
+      sh("a", "cargo build"),
+      sh("b", "make test"),
+      sh("c", "cat a.ts"),
+      sh("d", "cat b.ts"),
+    );
+    expect(g?.summary).toBe("Ran 2 commands and read 2 files");
   });
 
-  it("leads with the first bucket in the sentence, not the commonest", () => {
-    // Six commands to two reads, and the sentence still opens with the reads:
-    // the observed Codex summary led with a wrench over six terminal rows.
-    const g = groupOf("cat a.ts", "cat b.ts", "make", "make", "make", "make", "make", "make");
-    expect(g?.summary).toBe("Read files, ran commands");
+  it("names what changed the project before what only looked at it", () => {
+    const g = groupOf(
+      sh("a", "cat a.ts"),
+      sh("b", "rg foo"),
+      toolCall({ id: "c", kind: null, toolName: "acme__load_skill" }),
+      sh("d", "make"),
+    );
+    expect([g?.summary, g?.tool]).toEqual([
+      "Read 1 file, ran 1 command, and performed 2 other actions",
+      "read",
+    ]);
   });
 
-  it("counts a search toward having read files", () => {
-    // The screenshot's turn read exactly one file by glyph yet said "read
-    // files" — only the search alongside it makes that plural add up.
-    const g = groupOf("cat ci.yml", "rg 'bazzite' .");
-    expect(g?.summary).toBe("Read files");
+  it("counts edits by the files they changed, not by calls", () => {
+    const write = (id: string, file_path: string) =>
+      toolCall({ id, kind: "edit", toolName: "write", arguments: { file_path, content: "x" } });
+    const g = groupOf(write("a", "/r/a.ts"), write("b", "/r/a.ts"), write("c", "/r/b.ts"));
+    expect(g?.summary).toBe("Changed 2 files");
   });
 
-  it("uses the singular for a bucket with one call in it", () => {
-    expect(groupOf("cargo build")?.summary).toBe("Ran a command");
-    expect(groupOf("cat a.ts")?.summary).toBe("Read a file");
-  });
-
-  it("puts a tool call first and a command last, whatever the order they ran", () => {
-    const rows = projectRows(
-      turn(
-        toolCall({ id: "a", kind: "execute", arguments: { command: "make" } }),
-        toolCall({ id: "b", kind: null, toolName: "acme__load_skill" }),
-        toolCall({
-          id: "c",
-          kind: "edit",
-          toolName: "write",
-          arguments: { file_path: "/a.ts", content: "x" },
-        }),
-      ),
-      OPTS,
-    ).rows;
-    const g = rows.find((r): r is MarkerGroupRow => r.kind === RowKind.MarkerGroup);
-    expect(g?.summary).toBe("Loaded a tool, edited a file, ran a command");
+  it("counts edits that named no file as one file each", () => {
+    const rm = (id: string) => toolCall({ id, kind: "delete", toolName: "delete", arguments: {} });
+    expect(groupOf(rm("a"), rm("b"), rm("c"))?.summary).toBe("Changed 3 files");
   });
 
   it("says an organisation call checked the organization, not that it loaded a tool", () => {
-    const rows = projectRows(
-      turn(
-        toolCall({ id: "a", kind: null, toolName: "atlas_org.org_sessions" }),
-        toolCall({ id: "b", kind: "execute", arguments: { command: "make" } }),
-      ),
-      OPTS,
-    ).rows;
-    const g = rows.find((r): r is MarkerGroupRow => r.kind === RowKind.MarkerGroup);
-    expect(g?.summary).toBe("Checked your organization, ran a command");
-    expect(g?.tool).toBe("org");
+    const g = groupOf(
+      toolCall({ id: "a", kind: null, toolName: "atlas_org.org_sessions" }),
+      sh("b", "make"),
+    );
+    expect([g?.summary, g?.tool]).toEqual(["Checked your organization and ran 1 command", "org"]);
   });
 
   it("says a memory call used Atlas memory, not that it read a file or loaded a tool", () => {
-    const rows = projectRows(
-      turn(
-        toolCall({
-          id: "a",
-          kind: null,
-          toolName: "mcp__atlas_memory__memory_search",
-          arguments: { query: "discount code" },
-        }),
-      ),
-      OPTS,
-    ).rows;
-    const g = rows.find((r): r is MarkerGroupRow => r.kind === RowKind.MarkerGroup);
-    expect(g?.summary).toBe("Used Atlas memory");
-    expect(g?.tool).toBe("memory");
+    const memory = (id: string) =>
+      toolCall({
+        id,
+        kind: null,
+        toolName: "mcp__atlas_memory__memory_search",
+        arguments: { query: "discount code" },
+      });
+    const g = groupOf(memory("a"), memory("b"));
+    expect([g?.summary, g?.tool]).toEqual(["Used Atlas memory 2 times", "memory"]);
   });
 });
 
@@ -468,28 +463,49 @@ describe("tool activity in the transcript", () => {
       ],
       OPTS,
     ).rows;
+    // One finished call is a line of its own, not a block that opens onto it.
     expect(rows.map((row) => row.kind)).toEqual([
       RowKind.WorkHeader,
       RowKind.Prose,
-      RowKind.MarkerGroup,
+      RowKind.Marker,
       RowKind.Prose,
-      RowKind.MarkerGroup,
+      RowKind.Marker,
       RowKind.Prose,
     ]);
-    const groups = rows.filter((row): row is MarkerGroupRow => row.kind === RowKind.MarkerGroup);
-    expect(groups.map((group) => group.markers.map((marker) => marker.toolCallId))).toEqual([
-      ["a"],
-      ["b"],
-    ]);
-    expect(groups.map((group) => group.open)).toEqual([false, false]);
-    expect(groups[0].id).not.toBe(groups[1].id);
+    const lines = rows.filter((row): row is MarkerRow => row.kind === RowKind.Marker);
+    expect(lines.map((line) => line.toolCallId)).toEqual(["a", "b"]);
+  });
+
+  it("keeps a finished call a block until the turn settles, so a chain does not flicker", () => {
+    const rows = projectRows(
+      [message("m1", "", [toolCall({ id: "a", kind: "execute", arguments: { command: "pwd" } })])],
+      { ...OPTS, streaming: true },
+    ).rows;
+    expect(rows.map((row) => row.kind)).toContain(RowKind.MarkerGroup);
+    expect(rows.map((row) => row.kind)).not.toContain(RowKind.Marker);
+  });
+
+  it("keeps a lone call a block while it runs, for its live label", () => {
+    const rows = projectRows(
+      [
+        message("m1", "", [
+          toolCall({ id: "a", status: "running", kind: "execute", arguments: { command: "pwd" } }),
+        ]),
+      ],
+      { ...OPTS, streaming: true },
+    ).rows;
+    expect(rows.some((row) => row.kind === RowKind.MarkerGroup)).toBe(true);
   });
 
   it("opens only the selected sequence", () => {
+    const pair = (a: string, b: string) => [
+      toolCall({ id: a, kind: "execute", arguments: { command: "pwd" } }),
+      toolCall({ id: b, kind: "execute", arguments: { command: "ls" } }),
+    ];
     const messages = [
-      message("m1", "", [toolCall({ id: "a", kind: "execute", arguments: { command: "pwd" } })]),
+      message("m1", "", pair("a", "a2")),
       message("m2", "Some prose"),
-      message("m3", "", [toolCall({ id: "b", kind: "execute", arguments: { command: "ls" } })]),
+      message("m3", "", pair("b", "b2")),
     ];
     const collapsed = projectRows(messages, OPTS).rows.filter(
       (row): row is MarkerGroupRow => row.kind === RowKind.MarkerGroup,
@@ -520,7 +536,7 @@ describe("tool activity in the transcript", () => {
     expect(group?.running).toBe(true);
     expect(group?.open).toBe(false);
     expect(group?.liveLabel).toBe("Reading turn-rows.ts");
-    expect(group?.summary).toBe("Read a file");
+    expect(group?.summary).toBe("Read 1 file");
   });
 
   it("names the file a live edit is writing, and clears the live label when settled", () => {
@@ -539,12 +555,9 @@ describe("tool activity in the transcript", () => {
     const settled = projectRows([message("m1", "", [{ ...call, status: "completed" }])], {
       ...OPTS,
       streaming: false,
-    }).rows.find((row): row is MarkerGroupRow => row.kind === RowKind.MarkerGroup);
-    expect([settled?.running, settled?.liveLabel, settled?.summary]).toEqual([
-      false,
-      null,
-      "Edited a file",
-    ]);
+    }).rows.find((row): row is MarkerRow => row.kind === RowKind.Marker);
+    // Settled, the lone call is a plain line again: no live label to clear.
+    expect([settled?.state, settled?.verb]).toEqual(["done", "Created"]);
   });
 
   // The regression this whole live line exists to prevent: "Running command"
@@ -565,7 +578,7 @@ describe("tool activity in the transcript", () => {
       ],
       { ...OPTS, streaming: true },
     ).rows.find((row): row is MarkerGroupRow => row.kind === RowKind.MarkerGroup);
-    expect([group?.liveTool, group?.liveLabel]).toEqual(["run", "Running bun run typecheck"]);
+    expect([group?.liveTool, group?.liveLabel]).toEqual(["run", "Running bun"]);
   });
 
   it("names the running call, not a later one still pending", () => {
@@ -589,7 +602,7 @@ describe("tool activity in the transcript", () => {
       { ...OPTS, streaming: true },
     ).rows.find((row): row is MarkerGroupRow => row.kind === RowKind.MarkerGroup);
     // Naming `b` would claim cargo test was running before it had started.
-    expect(group?.liveLabel).toBe("Running cargo build");
+    expect(group?.liveLabel).toBe("Running cargo");
   });
 
   it("counts finished calls beside the live line and times only the running one", () => {
@@ -640,7 +653,7 @@ describe("tool activity in the transcript", () => {
     // queue time on screen as if the command were working.
     expect([group?.running, group?.liveLabel, group?.liveStartedAt]).toEqual([
       true,
-      "Running cargo test",
+      "Running cargo",
       null,
     ]);
   });
@@ -663,7 +676,7 @@ describe("the icon a folded block leads with", () => {
       toolCall({ id: "b", kind: "execute", arguments: { command: "cargo build" } }),
       toolCall({ id: "c", kind: "read", toolName: "read", arguments: { file_path: "/r/a.ts" } }),
     ]);
-    expect([g?.summary, g?.tool]).toEqual(["Read a file, ran commands", "read"]);
+    expect([g?.summary, g?.tool]).toEqual(["Ran 2 commands and read 1 file", "run"]);
   });
 
   it("is the running call's own icon while the block is live", () => {
@@ -674,9 +687,9 @@ describe("the icon a folded block leads with", () => {
       ],
       true,
     );
-    // The block's own icon is the book — a search counts toward "read files",
-    // which leads "ran commands" — but the live line wears the magnifier.
-    expect([g?.tool, g?.liveTool, g?.liveLabel]).toEqual(["read", "search", "Searching for foo"]);
+    // The block's own icon is the terminal, for "Ran 1 command", which leads;
+    // the live line wears the running search's magnifier.
+    expect([g?.tool, g?.liveTool, g?.liveLabel]).toEqual(["run", "search", "Searching for foo"]);
   });
 });
 
@@ -711,13 +724,39 @@ describe("the work header", () => {
     expect(rows[2]).toMatchObject({ text: "Done — the build passes.", showHeader: true });
   });
 
+  it("keeps a failed call in view when the turn folds", () => {
+    const failing: ChatMessage = {
+      ...turn()[0],
+      id: "a2",
+      toolCalls: [
+        toolCall({ id: "ok", kind: "execute", arguments: { command: "pwd" } }),
+        toolCall({ id: "bad", kind: "execute", status: "failed", arguments: { command: "make" } }),
+      ],
+    };
+    const rows = project([
+      user("u1", "2026-08-23T00:00:00Z"),
+      said("a1", "Looking."),
+      failing,
+      said("a3", "Fixed it another way."),
+    ]);
+    expect(rows.map((r) => r.kind)).toEqual([
+      RowKind.User,
+      RowKind.WorkHeader,
+      RowKind.Marker,
+      RowKind.Prose,
+    ]);
+    expect(rows[2]).toMatchObject({ toolCallId: "bad", state: "failed" });
+    // The answer still carries the model line the folded first prose row had.
+    expect(rows[3]).toMatchObject({ showHeader: true });
+  });
+
   it("puts the work back in the thread when opened", () => {
     const rows = project(thread(), { expandedTurns: new Set(["wk:t:a1"]) });
     expect(rows.map((r) => r.kind)).toEqual([
       RowKind.User,
       RowKind.WorkHeader,
       RowKind.Prose,
-      RowKind.MarkerGroup,
+      RowKind.Marker,
       RowKind.Prose,
     ]);
     expect(rows[1]).toMatchObject({ open: true });
@@ -745,6 +784,21 @@ describe("the work header", () => {
     expect(project(thread())[1]).toMatchObject({ workedMs: null, foldable: true });
   });
 
+  it("says the turn was stopped when the user cancelled it", () => {
+    const stopped = project(thread({ workedMs: 12_000, stopReason: "cancelled" }));
+    expect(stopped[1]).toMatchObject({ workedMs: 12_000, stopped: true });
+    const finished = project(thread({ workedMs: 12_000, stopReason: "end_turn" }));
+    expect(finished[1]).toMatchObject({ stopped: false });
+  });
+
+  it("heads a stopped prose-only turn even with no figure to show", () => {
+    const rows = project([
+      user("u1", "2026-08-23T00:00:00Z"),
+      said("a1", "Partial.", { stopReason: "cancelled" }),
+    ]);
+    expect(rows[1]).toMatchObject({ kind: RowKind.WorkHeader, stopped: true, workedMs: null });
+  });
+
   it("is a plain caption on a prose-only turn, and absent when that turn was not timed", () => {
     const timed = project([
       user("u1", "2026-08-23T00:00:00Z"),
@@ -764,5 +818,136 @@ describe("an Atlas tool's marker", () => {
     expect(toolDisplayName("mcp__github__create_issue")).toBe("mcp__github__create_issue");
     const m = markers(turn(toolCall({ kind: null, toolName: "mcp__atlas_code__repo_map" })))[0];
     expect(m.verb).toBe("Repo map");
+  });
+});
+
+describe("a marker's duration", () => {
+  it("is the span between the call's two stamps, once it settled", () => {
+    const [m] = markers(turn(toolCall({ startedAt: 1_000, endedAt: 4_500 })));
+    expect(m.durationMs).toBe(3_500);
+  });
+
+  it("is absent while the call runs, or when either stamp is missing", () => {
+    expect(
+      markers(turn(toolCall({ status: "running", startedAt: 1_000 })))[0].durationMs,
+    ).toBeUndefined();
+    expect(markers(turn(toolCall({ endedAt: 4_500 })))[0].durationMs).toBeUndefined();
+  });
+});
+
+describe("the response footer at the end of a turn", () => {
+  // The last response's hover footer is drawn after the changed-files card,
+  // by the turn footer row, so it ends the whole response.
+  function editedTurn(): ChatMessage[] {
+    return [
+      {
+        id: "m1",
+        role: "assistant",
+        content: "Done.",
+        toolCalls: [toolCall({ id: "tc1" })],
+        fileChanges: [],
+        plan: null,
+        timestamp: "2026-08-23T00:00:05Z",
+        mode: "tool",
+        turnSummary: {
+          turnSeq: 1,
+          files: [{ path: "a.ts", kind: "edit", added: 1, removed: 0 }],
+          repoAtTurn: true,
+        },
+      } as ChatMessage,
+    ];
+  }
+
+  it("moves the last response's footer onto the turn footer row", () => {
+    const rows = projectRows(editedTurn(), OPTS).rows;
+    const prose = rows.find((r) => r.kind === RowKind.Prose);
+    const footer = rows.find((r) => r.kind === RowKind.TurnFooter);
+    expect(prose?.kind === RowKind.Prose && prose.footerBelow).toBe(true);
+    expect(footer).toMatchObject({
+      responseRowId: "p:m1",
+      responseText: "Done.",
+      responseTimestamp: "2026-08-23T00:00:05Z",
+    });
+    expect(rows[rows.length - 1]).toBe(footer);
+  });
+
+  it("shows no clock for a replayed response", () => {
+    const messages = editedTurn();
+    messages[0].timestampApproximate = true;
+    const rows = projectRows(messages, OPTS).rows;
+    const prose = rows.find((r) => r.kind === RowKind.Prose);
+    expect(prose?.kind === RowKind.Prose && prose.timestampApproximate).toBe(true);
+    const footer = rows.find((r) => r.kind === RowKind.TurnFooter);
+    expect(footer).toMatchObject({ responseShowTimestamp: false });
+  });
+
+  it("keeps the footer on the response when rows sit between it and the footer row", () => {
+    // The response, then a tool call it made afterwards: a row between the
+    // response and the footer row, which a next-sibling hover cannot cross.
+    const messages: ChatMessage[] = [
+      {
+        id: "m1",
+        role: "assistant",
+        content: "Done.",
+        toolCalls: [],
+        fileChanges: [],
+        plan: null,
+        timestamp: "2026-08-23T00:00:05Z",
+        mode: "text",
+      } as ChatMessage,
+      {
+        id: "m2",
+        role: "assistant",
+        content: "",
+        toolCalls: [toolCall({ id: "tc-after" })],
+        fileChanges: [],
+        plan: null,
+        timestamp: "2026-08-23T00:00:06Z",
+        mode: "tool",
+        turnSummary: {
+          turnSeq: 1,
+          files: [{ path: "a.ts", kind: "edit", added: 1, removed: 0 }],
+          repoAtTurn: true,
+        },
+      } as ChatMessage,
+    ];
+    const rows = projectRows(messages, OPTS).rows;
+    const proseIndex = rows.findIndex((r) => r.kind === RowKind.Prose);
+    const footerIndex = rows.findIndex((r) => r.kind === RowKind.TurnFooter);
+    expect(footerIndex - proseIndex).toBeGreaterThan(1);
+    const prose = rows[proseIndex];
+    expect(prose.kind === RowKind.Prose && prose.footerBelow).toBeFalsy();
+    expect(rows[footerIndex]).not.toHaveProperty("responseRowId");
+  });
+
+  it("puts the footer row right after the response it carries", () => {
+    const rows = projectRows(editedTurn(), OPTS).rows;
+    for (const [index, row] of rows.entries()) {
+      if (row.kind === RowKind.Prose && row.footerBelow) {
+        expect(rows[index + 1]?.kind).toBe(RowKind.TurnFooter);
+      }
+    }
+  });
+
+  it("leaves a turn without a footer row alone", () => {
+    const messages = editedTurn();
+    delete messages[0].turnSummary;
+    const rows = projectRows(messages, OPTS).rows;
+    const prose = rows.find((r) => r.kind === RowKind.Prose);
+    expect(prose?.kind === RowKind.Prose && prose.footerBelow).toBeFalsy();
+    expect(rows.some((r) => r.kind === RowKind.TurnFooter)).toBe(false);
+  });
+});
+
+describe("third-party MCP calls", () => {
+  it("read as their server and tool; browser drivers are one server", () => {
+    expect(mcpToolOf("mcp__github__list_pull_requests")).toEqual({
+      server: "github",
+      tool: "List pull requests",
+    });
+    expect(mcpToolOf("mcp__playwright__browser_snapshot")?.server).toBe("browser");
+    // Atlas's own servers keep their own readings.
+    expect(mcpToolOf("mcp__atlas_code__find_symbol")).toBeNull();
+    expect(mcpToolOf("Read")).toBeNull();
   });
 });

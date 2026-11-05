@@ -98,3 +98,26 @@ describe("import", () => {
     expect(useKeybindingsStore.getState().file).toBe(before);
   });
 });
+
+describe("editing the built-in Default", () => {
+  it("forks it into an active 'My keybindings' instead of refusing", () => {
+    actions().setBinding("tabs.close", ["cmd+shift+w"]);
+    expect(active().builtIn).toBeUndefined();
+    expect(active().name).toBe("My keybindings");
+    expect(active().bindings["tabs.close"]).toEqual(["cmd+shift+w"]);
+    const builtIn = useKeybindingsStore.getState().file.profiles.find((p) => p.builtIn)!;
+    expect(builtIn.bindings).toEqual({});
+  });
+
+  it("does not fork for an edit that changes nothing", () => {
+    actions().resetBinding("tabs.close");
+    expect(active().builtIn).toBe(true);
+    expect(useKeybindingsStore.getState().file.profiles).toHaveLength(1);
+  });
+
+  it("forks when the keymap under Default changes", () => {
+    actions().setProfilePreset("default", "zed");
+    expect(active().builtIn).toBeUndefined();
+    expect(active().basedOn).toBe("zed");
+  });
+});

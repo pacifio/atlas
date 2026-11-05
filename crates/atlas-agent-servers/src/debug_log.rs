@@ -1,4 +1,4 @@
-//! The debug tap — ported from `zed-ref/crates/agent_servers/src/acp.rs:49-250`.
+//! The debug tap.
 //!
 //! Every line in both directions, plus the agent's stderr, is recorded here.
 //! Two jobs, and the second is the load-bearing one:
@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 
 use agent_client_protocol::schema::v1 as acp;
 
-/// Zed's cap, kept as-is. A chatty agent must not grow this without bound.
+/// A chatty agent must not grow this without bound.
 const MAX_DEBUG_BACKLOG_MESSAGES: usize = 2000;
 
 /// Total payload bytes the ring may retain, across every message in it.

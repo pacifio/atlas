@@ -1,7 +1,7 @@
-//! The launcher for the native agent, on the ported engine.
+//! The launcher for the native agent, on the engine.
 //!
 //! The only implementation of `AgentServer` for the native agent. It was one of
-//! two while the port was being proved; the previous native one is gone (#54), and what
+//! two while the engine was being proved; the previous native one is gone (#54), and what
 //! made the swap invisible was that both answered to the same agent id.
 //!
 //! Like the previous native one, `connect` starts no process — the engine runs in this
@@ -24,7 +24,7 @@ use crate::engine::config::EngineSettings;
 use crate::engine::connection::EngineConnection;
 use crate::ATLAS_AGENT_ID;
 
-/// The native agent, on the ported engine.
+/// The native agent, on the engine.
 #[derive(Clone)]
 pub struct EngineAgentServer {
     settings: EngineSettings,

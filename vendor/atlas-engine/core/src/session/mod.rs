@@ -4045,7 +4045,7 @@ impl Session {
     }
 
     /// `retry_delay` is how long the caller is about to wait, when it knows.
-    /// Added by Atlas: the retry sites compute this and upstream dropped it, so
+    /// Added by Atlas: the retry sites compute this and the original dropped it, so
     /// a client could tell the user a retry was coming but not when.
     pub(crate) async fn notify_stream_error(
         &self,

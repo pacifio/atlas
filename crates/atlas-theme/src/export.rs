@@ -23,7 +23,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
-use crate::{Theme, ThemeVariant, NON_COLOR_BASE_TOKENS};
+use crate::{derive, Theme, ThemeVariant, NON_COLOR_BASE_TOKENS};
 
 /// The `@theme`-level tokens: appearance-independent, so shadcn puts them in
 /// `cssVars.theme` rather than repeating them under light and dark.
@@ -62,6 +62,7 @@ pub fn to_shadcn_registry_item(theme: &Theme) -> ShadcnExport {
     let mut css_vars = Map::new();
     let mut theme_level = Map::new();
     let mut exported = 0usize;
+    let mut derived = 0usize;
     let mut dropped_by_category: BTreeMap<String, usize> = BTreeMap::new();
     let mut variants = Vec::new();
 
@@ -72,7 +73,11 @@ pub fn to_shadcn_registry_item(theme: &Theme) -> ShadcnExport {
         let Some(variant) = variant else { continue };
         variants.push(appearance.to_string());
         let mut block = Map::new();
-        for (token, value) in &variant.base {
+        // Every token, written or derived (ADR-0022): a shadcn consumer has
+        // no rules to fill a gap with, so the export is the resolved set.
+        let base = derive::resolve_base(&variant.base, &variant.palette, appearance == "dark");
+        derived += base.len() - variant.base.len();
+        for (token, value) in &base {
             if THEME_LEVEL.contains(&token.as_str()) {
                 // Appearance-independent: written once, from whichever variant
                 // states it first. A theme whose variants disagree about the
@@ -106,6 +111,11 @@ pub fn to_shadcn_registry_item(theme: &Theme) -> ShadcnExport {
         "Base tokens cross verbatim: shadcn's names are Atlas's names, so the chrome is exact."
             .to_string(),
     ];
+    if derived > 0 {
+        notes.push(format!(
+            "{derived} base tokens this theme leaves out were written as Atlas derives them, so the item is complete."
+        ));
+    }
     if dropped > 0 {
         notes.push(format!(
             "{dropped} Atlas values have no shadcn equivalent and were dropped — the editor, terminal, syntax, diff and agent colors. To move this theme to another Atlas install, copy the TOML instead."
@@ -151,7 +161,7 @@ fn count_dropped(variant: &ThemeVariant, out: &mut BTreeMap<String, usize>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::built_in_themes;
+    use crate::{built_in_themes, BASE_TOKENS};
 
     #[test]
     fn every_base_token_survives_the_export() {
@@ -178,5 +188,25 @@ mod tests {
             export.report.dropped > 0,
             "the theme keys must be reported as dropped"
         );
+    }
+
+    #[test]
+    fn a_theme_of_two_seeds_exports_every_token() {
+        let source = "schema = 1\nid = \"seeds\"\nname = \"Seeds\"\nauthor = \"A\"\nlicense = \"MIT\"\n[dark.base]\nbackground = \"#101418\"\nprimary = \"#7aa2f7\"\n";
+        let theme = crate::parse_theme(source, "test").unwrap();
+        let export = to_shadcn_registry_item(&theme);
+        let item: Value = serde_json::from_str(&export.json).unwrap();
+        for token in BASE_TOKENS {
+            let found = item["cssVars"]["dark"]
+                .get(*token)
+                .or_else(|| item["cssVars"]["theme"].get(*token));
+            assert!(found.is_some(), "{token} missing from the export");
+        }
+        assert_eq!(item["cssVars"]["dark"]["primary"], "#7aa2f7");
+        assert!(export
+            .report
+            .notes
+            .iter()
+            .any(|note| note.contains("40 base tokens")));
     }
 }

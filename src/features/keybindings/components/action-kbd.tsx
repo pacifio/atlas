@@ -1,6 +1,6 @@
-import { KbdKeys } from "@/ui/kbd";
 import type { ActionId } from "../lib/actions";
 import { useActionShortcut } from "../lib/use-action-shortcut";
+import { KbdKeys } from "@tryatlas/design";
 
 /** The live keycaps for an action in the active profile; renders nothing
  *  when the action is unbound. */

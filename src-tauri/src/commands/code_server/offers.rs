@@ -55,8 +55,8 @@ impl CodeOffer {
     }
 
     /// Decide for one request; the setting is read only when it can matter.
-    pub fn decide(&self, reachable: bool, server_running: bool) -> CodeOfferDecision {
-        let enabled = reachable && (self.gate)();
+    pub fn decide(&self, reachable: bool, cwd: &str, server_running: bool) -> CodeOfferDecision {
+        let enabled = reachable && (self.gate)(cwd);
         CodeOfferDecision::decide(reachable, enabled, server_running)
     }
 }

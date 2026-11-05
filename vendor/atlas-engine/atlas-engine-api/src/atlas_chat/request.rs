@@ -1,7 +1,7 @@
 // Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 //! The Chat Completions request body, built for the Atlas gateway (spec D3).
 //!
-//! Added by Atlas. Upstream deleted its Chat Completions dialect deliberately —
+//! Added by Atlas. The original engine deleted its Chat Completions dialect deliberately —
 //! `wire_api = "chat"` fails to deserialize with an error pointing at the
 //! removal discussion — so there was nothing to resurrect and this is authored
 //! from scratch against the gateway contract (`docs/reference/atlas-ai-api.md`).
@@ -43,6 +43,7 @@
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
+use atlas_engine_protocol::models::AgentMessageInputContent;
 use atlas_engine_protocol::models::ContentItem;
 use atlas_engine_protocol::models::ResponseItem;
 use serde::Serialize;
@@ -219,7 +220,7 @@ pub struct ChatRequestInput<'a> {
 /// A built request, plus the one thing the stream parser needs to know about it.
 pub struct BuiltChatRequest {
     pub request: ChatCompletionsRequest,
-    /// Names of tools that were freeform upstream and had to be flattened into
+    /// Names of tools that were freeform in the original tool shape and had to be flattened into
     /// functions to cross this wire.
     ///
     /// The reply has to be turned back, or the engine's router sends a
@@ -480,6 +481,39 @@ fn push_item(messages: &mut Vec<ChatMessage>, item: &ResponseItem, keep_images: 
         // replayed reasoning item would be a `400` at best. This is the
         // accepted loss recorded in the gateway-fit research, not an oversight.
         ResponseItem::Reasoning { .. } => {}
+        // Inter-agent mail (multi-agent v2): a spawned child's task, a parent's
+        // follow-up, a child's FINAL_ANSWER. The Responses wire carries it as
+        // an item of its own; Chat Completions has no such thing, so it rides
+        // as a user message — which is the form the engine's own agent charter
+        // tells the model to expect ("messages in the analysis channel: Message
+        // Type / Task name / Sender / Payload").
+        //
+        // `encrypted_content` is not encrypted on this path. The engine uses
+        // `new_encrypted` for any message that did not come straight from a
+        // user's plaintext, and the gateway does no envelope encryption, so
+        // the field holds the message itself (the rollouts show it verbatim).
+        //
+        // Before this arm the item fell through to the drop below. A child then
+        // never saw its task — it ran on its system prompt alone, which is why
+        // "count the files" became a hundred-call tour of the repository — and
+        // the parent never saw a result, so it polled `wait_agent` until the
+        // user stopped it.
+        ResponseItem::AgentMessage { content, .. } => {
+            let text: String = content
+                .iter()
+                .map(|part| match part {
+                    AgentMessageInputContent::InputText { text } => text.as_str(),
+                    AgentMessageInputContent::EncryptedContent { encrypted_content } => {
+                        encrypted_content.as_str()
+                    }
+                })
+                .collect();
+            if !text.is_empty() {
+                messages.push(ChatMessage::User {
+                    content: vec![ContentPart::Text { text }],
+                });
+            }
+        }
         // Responses-native items with no Chat Completions counterpart. The
         // authored catalogue turns off every feature that produces one, so
         // reaching this arm means something was configured on that this wire

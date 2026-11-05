@@ -1,9 +1,8 @@
 import { memo } from "react";
-import { ChevronUp, ListTodo } from "lucide-react";
-import { cn } from "@/lib/utils";
 import { useChatStore } from "../stores/chat-store";
 import { isBusyAgentStatus } from "@/types/agent";
 import { ComposerDropup, useComposerDropup } from "./composer-dropup";
+import { PlanTasksListView, PlanTasksTriggerView } from "./views/plan-tasks-pill-view";
 
 /**
  * The live plan as a composer-footer pill + its own morphing dropup panel —
@@ -20,111 +19,6 @@ import { ComposerDropup, useComposerDropup } from "./composer-dropup";
  * (ResizeObserver → height tween), Esc/outside closes, and it participates in
  * the `atlas:composer-menu-open` mutual-exclusion signal.
  */
-
-/** Determinate progress ring (the pill's arc). `frac` 0..1. */
-function ArcRing({ frac, size = 14 }: { frac: number; size?: number }) {
-  const r = 6;
-  const c = 2 * Math.PI * r;
-  return (
-    <svg width={size} height={size} viewBox="0 0 16 16" className="shrink-0 -rotate-90" aria-hidden>
-      <circle
-        cx="8"
-        cy="8"
-        r={r}
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        className="opacity-25"
-      />
-      <circle
-        cx="8"
-        cy="8"
-        r={r}
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeDasharray={`${Math.max(0.001, frac) * c} ${c}`}
-        style={{
-          transition: "stroke-dasharray 300ms cubic-bezier(0.32,0.72,0,1)",
-        }}
-      />
-    </svg>
-  );
-}
-
-/** Per-row status glyph: check / spinning arc / faint circle. `active` gates
- *  the in-progress spin: the panel stays MOUNTED while closed (height 0), and
- *  an `animation: … infinite` keeps running under `height: 0` — a continuous
- *  compositor tax for the entire streaming turn, live during exactly the
- *  scroll-while-streaming window where transcript blanking shows. */
-function StepIcon({ status, active }: { status: string; active: boolean }) {
-  if (status === "completed") {
-    return (
-      <svg width={16} height={16} viewBox="0 0 16 16" className="shrink-0" aria-hidden>
-        <circle
-          cx="8"
-          cy="8"
-          r="6.5"
-          fill="none"
-          stroke="var(--muted-foreground)"
-          strokeWidth="1.5"
-        />
-        <path
-          d="M5.2 8.2 7.2 10.2 11 5.8"
-          fill="none"
-          stroke="var(--muted-foreground)"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-    );
-  }
-  if (status === "in_progress") {
-    return (
-      <svg
-        width={16}
-        height={16}
-        viewBox="0 0 16 16"
-        className={cn("shrink-0 text-[var(--foreground)]", active && "atlas-arc-spin")}
-        aria-hidden
-      >
-        <circle
-          cx="8"
-          cy="8"
-          r="6.5"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          className="opacity-20"
-        />
-        <circle
-          cx="8"
-          cy="8"
-          r="6.5"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeDasharray="12 29"
-        />
-      </svg>
-    );
-  }
-  return (
-    <svg width={16} height={16} viewBox="0 0 16 16" className="shrink-0" aria-hidden>
-      <circle
-        cx="8"
-        cy="8"
-        r="6.5"
-        fill="none"
-        stroke="var(--atlas-border-strong)"
-        strokeWidth="1.5"
-      />
-    </svg>
-  );
-}
 
 export const PlanTasksPill = memo(function PlanTasksPill({ tabId }: { tabId: string }) {
   const plan = useChatStore((s) => s.sessions[tabId]?.livePlan);
@@ -144,65 +38,14 @@ export const PlanTasksPill = memo(function PlanTasksPill({ tabId }: { tabId: str
       {/* Morphing panel — right-anchored dropup, shared with the options and
           usage pills. */}
       <ComposerDropup open={open} panelHeight={panelHeight} contentRef={contentRef} width={320}>
-        <>
-          <div className="flex h-9 items-center gap-2 px-3">
-            <ListTodo size={13} className="shrink-0 text-[var(--secondary-foreground)]" />
-            <span className="flex-1 truncate text-sm font-medium text-[var(--foreground)]">
-              Implementation plan
-            </span>
-            <span className="font-mono text-2xs tabular-nums text-[var(--muted-foreground)]">
-              {completed}/{plan.length}
-            </span>
-          </div>
-          <div className="hide-scrollbar max-h-[260px] overflow-y-auto px-2 pb-2">
-            {plan.map((step) => (
-              <div
-                key={step.id}
-                className="flex min-h-8 items-center gap-2.5 rounded-lg px-1.5 py-1"
-              >
-                <StepIcon status={step.status} active={open} />
-                <span
-                  className={cn(
-                    "min-w-0 flex-1 truncate text-sm leading-5",
-                    step.status === "completed" &&
-                      "text-[var(--muted-foreground)] line-through decoration-[var(--muted-foreground)]",
-                    step.status === "in_progress" && "text-[var(--foreground)]",
-                    step.status === "pending" && "text-[var(--secondary-foreground)] opacity-70",
-                  )}
-                >
-                  {step.description}
-                </span>
-              </div>
-            ))}
-          </div>
-        </>
+        <PlanTasksListView steps={plan} open={open} />
       </ComposerDropup>
-
-      {/* The footer pill: arc progress + count. */}
-      <button
-        onClick={toggle}
-        className={cn(
-          "flex h-6.5 items-center gap-1.5 rounded-full border px-2 text-2xs font-medium leading-none transition-colors cursor-pointer",
-          open
-            ? "border-[var(--atlas-border-strong)] bg-[var(--atlas-element-selected)] text-[var(--foreground)]"
-            : "border-[var(--border)] bg-[var(--card)] text-[var(--secondary-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]",
-        )}
-        title="Implementation plan"
-      >
-        <span className="text-[var(--primary)]">
-          <ArcRing frac={plan.length ? completed / plan.length : 0} />
-        </span>
-        <span className="tabular-nums">
-          {completed}/{plan.length}
-        </span>
-        <ChevronUp
-          size={10}
-          className={cn(
-            "shrink-0 text-[var(--muted-foreground)] transition-transform duration-200",
-            open && "rotate-180",
-          )}
-        />
-      </button>
+      <PlanTasksTriggerView
+        completed={completed}
+        total={plan.length}
+        open={open}
+        onToggle={toggle}
+      />
     </div>
   );
 });

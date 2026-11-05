@@ -588,7 +588,7 @@ impl Default for OtelConfig {
             environment: DEFAULT_OTEL_ENVIRONMENT.to_owned(),
             exporter: OtelExporterKind::None,
             trace_exporter: OtelExporterKind::None,
-            // Upstream defaulted this to `Statsig` — a hardcoded endpoint and
+            // The original defaulted this to `Statsig` — a hardcoded endpoint and
             // client key, on by default. Removed for Atlas (#43, spec D2);
             // metrics now export nowhere unless a user configures an endpoint.
             metrics_exporter: OtelExporterKind::None,

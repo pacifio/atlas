@@ -4,9 +4,8 @@ import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 import type { EditorThemeColors } from "./types";
 import { getActiveTheme } from "@/features/theme/apply-theme";
-import type { ResolvedTheme } from "@/features/theme/resolve-theme";
-import { THEME_KEY_REGISTRY, type ThemeKey } from "@/features/theme/theme-key-registry";
 import { themeBase } from "@/features/theme/theme-values";
+import { type ResolvedTheme, THEME_KEY_REGISTRY, type ThemeKey } from "@tryatlas/design/theme";
 
 /**
  * Atlas's per-appearance default for every theme key, read from the registry
@@ -37,8 +36,10 @@ const KEY_DEFAULTS = Object.fromEntries(
  * stylesheet fallback in `styles/globals.css` (`.cm-editor`) mirrors these two
  * values for the case where the runtime theme injection loses its race.
  */
-const EDITOR_FONT_SIZE = "13px";
-const EDITOR_LINE_HEIGHT = "20px";
+// `editorFontSize`, set on <html> by `display-settings.ts`; the 20/13 line
+// height scales with it, and CodeMirror re-measures when the variable changes.
+const EDITOR_FONT_SIZE = "var(--atlas-editor-font-size, 13px)";
+const EDITOR_LINE_HEIGHT = "calc(var(--atlas-editor-font-size, 13px) * 20 / 13)";
 // The fold-gutter label sits a step down from the editor body — text-sm (12px)
 // is the exact step the previous literal `12px` already rendered at.
 const FOLD_GUTTER_FONT_SIZE = "var(--text-sm)";
@@ -51,7 +52,7 @@ const FOLD_GUTTER_FONT_SIZE = "var(--text-sm)";
  */
 export function editorColorsFromTheme(theme: ResolvedTheme | null): EditorThemeColors {
   const key = (name: ThemeKey) => theme?.keys[name] ?? KEY_DEFAULTS[name];
-  // `tokens.css` defines the whole base-token set on `:root`, so an unresolved
+  // The package's `themes.css` defines the whole base-token set on `:root`, so an unresolved
   // base token has a real value to read rather than a literal to restate.
   const token = (name: string) => theme?.base[name] ?? themeBase(name);
   return {
@@ -108,7 +109,7 @@ export function buildEditorChromeTheme(theme: ResolvedTheme | null): Extension {
         backgroundColor: c.bg,
         color: c.fg,
         height: "100%",
-        // The theme owns the mono stack; `tokens.css` has the fallback chain.
+        // The theme owns the mono stack; the package's `tokens.css` has the fallback chain.
         fontFamily: "var(--font-mono)",
         fontSize: EDITOR_FONT_SIZE,
         lineHeight: EDITOR_LINE_HEIGHT,
@@ -125,7 +126,6 @@ export function buildEditorChromeTheme(theme: ResolvedTheme | null): Extension {
         backgroundColor: c.gutterBg,
         color: c.gutterFg,
         border: "none",
-        minWidth: "40px",
       },
       ".cm-activeLineGutter": {
         color: c.activeLineGutterFg,
@@ -211,7 +211,7 @@ export function buildHighlightStyle(theme: ResolvedTheme | null): HighlightStyle
     // `atom` is what several grammars use where others use bool/null.
     { tag: tags.atom, color: c.constant },
     // Shebangs, pragmas, front-matter fences. Uses `attributeName` because
-    // that is what `--atlas-syntax-attribute` already resolves to for the diff viewer's
+    // that is what `--syntax-attribute` already resolves to for the diff viewer's
     // `.hljs-meta` (see apply-editor-theme.ts) — one concept, one color across
     // both code surfaces.
     { tag: tags.meta, color: c.attributeName },

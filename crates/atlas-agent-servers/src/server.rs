@@ -1,8 +1,7 @@
-//! The launcher layer — ported from
-//! `zed-ref/crates/agent_servers/src/{agent_servers.rs, custom.rs}`.
+//! The launcher layer.
 //!
 //! There is exactly **one** launcher, [`CustomAgentServer`], and it is generic.
-//! Zed has no per-agent server types any more and neither does Atlas: an agent
+//! There are no per-agent server types: an agent
 //! exists because the user installed it, and this layer only knows how to start
 //! whatever command the store resolves for it.
 //!
@@ -26,8 +25,7 @@ use crate::connection::{
 
 /// Resolves the command for one installed agent.
 ///
-/// Ported from Zed's `ExternalAgentServer` (`project/src/agent_server_store.rs:117-143`).
-/// Implemented in stage 2 by `atlas-agent-store`; this crate only consumes it,
+/// Implemented by `atlas-agent-store`; this crate only consumes it,
 /// which is what keeps the transport independent of how a binary got onto disk.
 pub trait ExternalAgentServer: Send + Sync {
     fn get_command(
@@ -64,11 +62,11 @@ pub trait ExternalAgentServer: Send + Sync {
 /// What a connect attempt is given: the resolver for this agent, plus the
 /// channels the UI watches while it starts.
 ///
-/// Zed's carries an `Entity<AgentServerStore>` and two `watch::Sender`s; the
-/// shape is the same with the store reduced to the one trait this layer needs.
+/// The store is reduced to the one trait this layer needs, plus two
+/// `watch::Sender`s for the UI.
 ///
-/// `server` is optional because an in-process agent has no command to resolve —
-/// Zed's `NativeAgentServer::connect` ignores the delegate for the same reason.
+/// `server` is optional because an in-process agent has no command to resolve,
+/// so its connect path ignores the delegate.
 pub struct AgentServerDelegate {
     pub server: Option<Arc<dyn ExternalAgentServer>>,
     pub new_version_available: Option<tokio::sync::watch::Sender<Option<String>>>,
@@ -107,9 +105,8 @@ impl AgentServerDelegate {
 
 /// Everything about *this host* that a connect attempt needs.
 ///
-/// Zed reads these off globals (`ReleaseChannel`, `AppVersion`, `SettingsStore`,
-/// the project's MCP config). They are parameters here so this crate stays leaf-
-/// level and testable.
+/// The release channel, app version, settings and MCP config are parameters
+/// rather than globals, so this crate stays leaf-level and testable.
 #[derive(Clone)]
 pub struct ConnectOptions {
     pub root_dir: Option<PathBuf>,
@@ -152,7 +149,7 @@ impl dyn AgentServer {
     }
 }
 
-/// The one launcher. Ported from `CustomAgentServer` (`custom.rs:193-281`).
+/// The one launcher.
 pub struct CustomAgentServer {
     id: AgentId,
     default_mode: Option<acp::SessionModeId>,
@@ -223,8 +220,8 @@ impl AgentServer for CustomAgentServer {
 
 /// Proxy variables to pass through to the agent.
 ///
-/// Zed sources these from its `ProxySettings`; Atlas's settings live above this
-/// crate, so the process environment is the source here.
+/// Atlas's settings live above this crate, so the process environment is the
+/// source here.
 pub fn load_proxy_env() -> HashMap<String, String> {
     let mut env = HashMap::new();
 
@@ -305,7 +302,7 @@ const CLAUDE_AGENT_ID: &str = "claude-code";
 const CODEX_AGENT_ID: &str = "codex";
 const GEMINI_AGENT_ID: &str = "gemini";
 
-/// Per-agent environment workarounds, ported from `custom.rs:229-254`.
+/// Per-agent environment workarounds.
 ///
 /// Each is a fix for how that CLI behaves, not a capability decision — capability
 /// questions are answered by what the agent advertises at `initialize`.
@@ -331,8 +328,8 @@ pub fn env_quirks_from(
         // environment. The spawn inherits the host's today, so this is what
         // keeps them there if it ever stops doing so. These are the two names
         // codex's auth reads (`CODEX_API_KEY_ENV_VAR`, `OPENAI_API_KEY_ENV_VAR`
-        // in `vendor/atlas-engine/login/src/auth/manager.rs`); Zed's `custom.rs`
-        // spells the second `OPEN_AI_API_KEY`, which nothing reads.
+        // in `vendor/atlas-engine/login/src/auth/manager.rs`). Note the spelling
+        // `OPENAI_API_KEY`; `OPEN_AI_API_KEY` is read by nothing.
         CODEX_AGENT_ID => {
             for key in ["CODEX_API_KEY", "OPENAI_API_KEY"] {
                 if let Some(value) = host_env(key) {

@@ -16,7 +16,7 @@
 //! itself and hands it to the engine through `model_catalog_json`, the
 //! engine's first-class static path.
 //!
-//! # Where these rows differ from an upstream row, and why
+//! # Where these rows differ from an original row, and why
 //!
 //! Every difference is the gateway's allowlist showing through. Reasoning
 //! effort, reasoning summaries, verbosity and service tiers all ride request
@@ -72,9 +72,9 @@ const ENGINE_MODALITIES: [&str; 3] = ["text", "image", "audio"];
 ///
 /// Authored as JSON and parsed rather than built as a struct literal, for two
 /// reasons: it is the same document the engine loads from disk, so this is the
-/// shape being asserted on; and the upstream record has forty-odd fields, most
+/// shape being asserted on; and the original record has forty-odd fields, most
 /// of them defaulted, so a struct literal would have to restate every default
-/// and would break on every upstream field addition.
+/// and would break on every field the original adds.
 ///
 /// `description`, `context_window` and `input_modalities` are `Option`
 /// because the gateway serves `null` for an unannotated model. `description`
@@ -158,13 +158,13 @@ pub fn row(
 
         // The engine's own bundled prompt, unedited.
         //
-        // It opens by naming the upstream product and the model family, which
+        // It opens by naming the original product and the model family, which
         // is wrong on every row here — the trademark scrub that fixes it is its
         // own gated piece of work, and doing it inside the catalogue would put
         // a rewritten system prompt in a commit about model metadata.
         "model_messages": { "instructions_template": atlas_engine_models_manager::model_info::BASE_INSTRUCTIONS.as_str() },
         "include_skills_usage_instructions": true,
-        // Both name surfaces that belong to the upstream product, not to Atlas.
+        // Both name surfaces that belong to the original product, not to Atlas.
         "include_plugin_usage_instructions": false,
         "include_apps_usage_instructions": false,
 

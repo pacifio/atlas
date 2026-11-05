@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 import importedThemes from "@/dev/mock-backend/fixtures/imported-themes.json";
-import { parseColor } from "./color";
-import { resolveTheme } from "./resolve-theme";
-import { THEME_KEY_REGISTRY } from "./theme-key-registry";
-import type { Theme } from "./lib/theme-api";
+import { parseColor, resolveTheme, THEME_KEY_REGISTRY, type Theme } from "@tryatlas/design/theme";
 
 /**
  * The end of the import path.
@@ -24,7 +21,8 @@ import type { Theme } from "./lib/theme-api";
  * members of a Zed family, and a VS Code theme with an `include`.
  */
 
-const themes = importedThemes as Theme[];
+// Through `unknown`: see the same cast in `fixtures/theme-import.ts`.
+const themes = importedThemes as unknown as Theme[];
 
 describe("an imported theme resolves like any other", () => {
   it("covers all three importers", () => {

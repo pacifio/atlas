@@ -1,4 +1,4 @@
-import type { ToolContentBlock } from "@/types/agent";
+import type { Subagent, ToolContentBlock } from "@/types/agent";
 
 // Wire shapes for the `atlas-agents` Rust surface. These mirror
 // `crates/atlas-agents/src/{session,events,plugin,manager}.rs` — keep in sync
@@ -41,6 +41,14 @@ export interface ToolCall {
   locations: unknown[];
   /** Structural content blocks (P1.4). Omitted by Rust when empty. */
   content_blocks?: ToolContentBlock[];
+  /** The subagent launch this call belongs to, when the agent attributed it.
+   *  Omitted by Rust for the parent's own work, which is almost every call. */
+  parent_tool_call_id?: string;
+  /** Epoch ms the thread first saw this call. Never moves on later updates. */
+  started_at_ms?: number;
+  /** Epoch ms the call first settled (completed, failed, rejected, cancelled).
+   *  Absent while it runs. */
+  ended_at_ms?: number;
 }
 
 export interface PlanEntry {
@@ -64,6 +72,16 @@ export interface SessionMessage {
    *  side omits the key rather than sending an empty list. */
   images?: MessageImage[];
   timestamp: string;
+  /** True when `timestamp` is only when Atlas replayed the message (an agent's
+   *  `session/load` replay carries no per-message time). Absent otherwise. */
+  timestamp_approximate?: boolean;
+  /** Wall time of the turn this message ends, in ms. Snapshot only — the live
+   *  stream carries it as `turn_finished.started_at_ms`/`ended_at_ms`. Absent
+   *  on every message but a turn's last, and on replayed turns. */
+  worked_ms?: number;
+  /** How the turn this message ends stopped (`end_turn`, `cancelled`, …). Set
+   *  on the same message as `worked_ms`. */
+  stop_reason?: string;
 }
 
 /** An image on a snapshot `SessionMessage` (`atlas_agent_wire::MessageImage`). */
@@ -150,9 +168,55 @@ export interface SessionSnapshot {
   prompt_image_supported: boolean;
   plan: PlanEntry[];
   messages: SessionMessage[];
+  /** Children this session delegated to, in launch order. Carried with the
+   *  transcript — a reloaded session whose subagents were dropped would show
+   *  the same delegated work as plain tool calls. Empty on the metadata-only
+   *  read (`agents_snapshot_meta`), like `messages`. */
+  subagents?: Subagent[];
   usage: Usage;
   created_at: string;
   updated_at: string;
+  /** The `seq` of the last delta this snapshot reflects. A client that
+   *  buffered the stream applies only deltas above it. */
+  as_of_seq?: number;
+  /** Permission prompts still waiting, oldest first — what lets a reload (or a
+   *  late joiner) mid-prompt still answer. */
+  pending_permissions?: PendingPermissionWire[];
+  /** The newest elicitation still waiting, if any. */
+  pending_elicitation?: PendingElicitationWire | null;
+  /** The session's turn queue (owned by Rust; the composer strip mirrors it). */
+  queue?: QueuedPrompt[];
+  /** A hold keeps this session running without its tab (Universal RC). */
+  held?: boolean;
+}
+
+/** Who caused something in a session: the window's own user, or a remote
+ *  principal steering it (Universal RC). Mirrors `atlas_agent_wire::Origin`. */
+export type Origin = { kind: "local" } | { kind: "remote"; id: string; name?: string };
+
+/** One prompt parked in a session's turn queue. `text` is what the strip shows. */
+export interface QueuedPrompt {
+  id: string;
+  text: string;
+  origin: Origin;
+}
+
+/** A still-open permission prompt on a snapshot — the `permission_request`
+ *  delta's fields. */
+export interface PendingPermissionWire {
+  request_id: string;
+  tool_call: unknown;
+  options: unknown;
+}
+
+/** A still-open elicitation on a snapshot — the `elicitation_requested`
+ *  delta's fields. */
+export interface PendingElicitationWire {
+  request_id: string;
+  mode: "form" | "url";
+  message: string;
+  requested_schema?: unknown;
+  url?: string | null;
 }
 
 /**
@@ -192,8 +256,12 @@ export type AgentStreamEvent = AgentDelta | LoadingStatusEvent | AgentUpdateEven
 /**
  * Single multiplexed delta stream emitted on the `atlas:agents` window event.
  * `kind` discriminates; `agent_id` + `session_id` route to the right tab.
+ * Every delta also carries `seq`, its dense per-session stream position (see
+ * `SessionSnapshot.as_of_seq`).
  */
-export type AgentDelta =
+export type AgentDelta = AgentDeltaBody & { seq?: number };
+
+type AgentDeltaBody =
   | {
       kind: "status";
       agent_id: AgentId;
@@ -240,6 +308,14 @@ export type AgentDelta =
       delta: string;
     }
   | {
+      // A subagent was launched, made progress, or ended. The full snapshot
+      // travels, like `tool_call_upserted`, so nothing has to merge fields.
+      kind: "subagent_upserted";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      subagent: Subagent;
+    }
+  | {
       kind: "plan_updated";
       agent_id: AgentId;
       session_id: AcpSessionId;
@@ -253,16 +329,23 @@ export type AgentDelta =
       turns: number;
     }
   | {
+      /** The session's mode changed. `origin` names who set it — the window
+       *  or a remote driver — when it went through the host's steering entry;
+       *  absent when the agent changed it on its own. */
       kind: "mode_changed";
       agent_id: AgentId;
       session_id: AcpSessionId;
       mode_id: string;
+      origin?: Origin;
     }
   | {
+      /** The session's model changed through the host. `origin` names who
+       *  picked it (see `mode_changed`). */
       kind: "model_changed";
       agent_id: AgentId;
       session_id: AcpSessionId;
       model_id: string;
+      origin?: Origin;
     }
   | {
       kind: "available_commands";
@@ -303,6 +386,9 @@ export type AgentDelta =
       agent_id: AgentId;
       session_id: AcpSessionId;
       config_options: unknown[];
+      /** Who set the option, when the list is the confirmed echo of a set
+       *  through the host; absent when the agent changed it on its own. */
+      origin?: Origin;
     }
   | {
       kind: "context_usage";
@@ -356,6 +442,13 @@ export type AgentDelta =
       session_id: AcpSessionId;
       stop_reason: string;
       turn_seq?: number;
+      /** Epoch ms the turn opened. Absent when the thread never saw it open. */
+      started_at_ms?: number;
+      /** Epoch ms the turn stopped. */
+      ended_at_ms?: number;
+      /** How long the turn ran, in ms, on Rust's monotonic clock — not
+       *  `ended_at_ms - started_at_ms`, which a sleep or a clock step bends. */
+      worked_ms?: number;
     }
   | {
       kind: "turn_failed";
@@ -375,8 +468,45 @@ export type AgentDelta =
       last_error: string;
     }
   | {
+      /** The computer slept while this turn was running, so the reply may have
+       *  been cut off. Emitted by the host on waking, for any agent. */
+      kind: "slept_mid_turn";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      turn_seq: number;
+      /** Roughly how long the machine was asleep. */
+      slept_secs: number;
+    }
+  | {
       kind: "agent_disconnected";
       agent_id: AgentId;
       session_id: AcpSessionId;
       reason: string;
+    }
+  | {
+      /** A prompt reached the agent — sent from this window, a queue, or a
+       *  remote driver. `client_message_id` echoes the id the sender minted,
+       *  so the window adopts its own optimistic row instead of drawing a
+       *  second. `message.content` is what the agent was sent. */
+      kind: "user_message";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      message: SessionMessage;
+      origin: Origin;
+      client_message_id?: string;
+    }
+  | {
+      /** The session's whole turn queue, after a change. */
+      kind: "queue_changed";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      queue: QueuedPrompt[];
+    }
+  | {
+      /** A hold (Universal RC) now keeps — or no longer keeps — this session
+       *  running without its tab. */
+      kind: "hold_changed";
+      agent_id: AgentId;
+      session_id: AcpSessionId;
+      held: boolean;
     };

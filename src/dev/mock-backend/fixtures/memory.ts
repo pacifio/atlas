@@ -546,7 +546,7 @@ function queryGraph(projectPath: string, query: string, topK: number): QueryHit[
  * Rust's `memory_graph_layout_save` is a pure passthrough (`commands/memory_graph.rs`)
  * — it persists whatever px positions the frontend's Matter world already had,
  * which are always canvas-relative (0,0 at the canvas's top-left corner, per
- * `memory-graph-canvas.tsx`'s wall bodies) and therefore always on-screen. A
+ * `memory-graph-scene.ts`'s wall bodies) and therefore always on-screen. A
  * real saved layout can never be centred on (0,0) the way an origin-centred
  * scheme would produce, because nothing in the live simulation would ever push
  * a node to a negative coordinate and leave it there. Band/row offsets here
@@ -795,7 +795,8 @@ type EventSeed = [
 const S1 = "0193f0aa-1111-7000-9000-aaaaaaaaaaaa";
 const S2 = "0193f0bb-2222-7000-9000-bbbbbbbbbbbb";
 const S3 = "0193f0cc-3333-7000-9000-cccccccccccc";
-const S4 = "0193f0dd-4444-7000-9000-dddddddddddd";
+/** The newest session in the activity log (`memory-ask-agent` opens it). */
+export const S4 = "0193f0dd-4444-7000-9000-dddddddddddd";
 
 /**
  * Four sessions over five days, two agents plus one installed from the ACP
@@ -829,7 +830,7 @@ const EVENT_SEEDS: EventSeed[] = [
     "claude",
     S1,
     "decision",
-    "colour-source",
+    "tokens-source",
     { text: "Tokens are the only colour source; no hex literals in JSX." },
   ],
   [
@@ -979,7 +980,7 @@ const EVENT_SEEDS: EventSeed[] = [
     "claude",
     S4,
     "fact",
-    "",
+    "focus-refetch",
     { text: "The refetch comes from the window `focus` listener in main.tsx, not from the query." },
   ],
   [
@@ -1078,6 +1079,8 @@ type EntrySeed = [
   confidence: number,
   minutesAgo: number,
   uses: number,
+  /** Otherwise derived: a confidence under 0.5 is a candidate. */
+  state?: MemoryEntry["state"],
 ];
 
 /**
@@ -1206,11 +1209,154 @@ const ENTRY_SEEDS: EntrySeed[] = [
     5 * 24 * 60 - 30,
     2,
   ],
+  // ── 13+: preferences, what waits for review, and what was set aside ──
+  [
+    "preference",
+    "review-size",
+    "Keep pull requests under ~400 changed lines; split anything bigger into a stack.",
+    "user",
+    "",
+    1,
+    2 * 24 * 60,
+    11,
+  ],
+  [
+    "preference",
+    "test-first",
+    "Write the failing test before the fix, and name it after the bug it pins.",
+    "claude",
+    S4,
+    1,
+    3 * 60 + 30,
+    3,
+  ],
+  [
+    "fact",
+    "pagination",
+    "Staging seeds 200 users across 3 orgs; pagination only breaks past page 3.",
+    "opencode",
+    S3,
+    0.42,
+    26 * 60 - 5,
+    0,
+  ],
+  [
+    "decision",
+    "flag-rollout",
+    "Ship the focus-refetch fix behind the `admin_refetch_v2` flag for a week before removing the old path.",
+    "claude",
+    S4,
+    0.38,
+    2 * 60,
+    0,
+  ],
+  [
+    "architecture",
+    "session-store",
+    "Sessions are opaque tokens in Redis, keyed by a hash of the cookie value.",
+    "extractor",
+    S2,
+    0.45,
+    3 * 24 * 60 - 22,
+    0,
+  ],
+  [
+    "fact",
+    "node-version",
+    "CI runs Node 20; the local scripts assume Node 22.",
+    "extractor",
+    S1,
+    0.66,
+    5 * 24 * 60 - 18,
+    1,
+  ],
+  [
+    "fact",
+    "node-version-2",
+    "CI and local both run Node 22 since the toolchain bump in mise.toml.",
+    "codex",
+    S2,
+    0.9,
+    3 * 24 * 60 - 30,
+    2,
+  ],
+  [
+    "decision",
+    "retry-4xx",
+    "Never retry a 4xx; only 5xx responses and network errors go through withRetry.",
+    "opencode",
+    S3,
+    0.88,
+    26 * 60 - 14,
+    1,
+  ],
+  [
+    "fact",
+    "react-table",
+    "The admin table is built on react-table v7.",
+    "claude",
+    S1,
+    1,
+    5 * 24 * 60 - 40,
+    4,
+    "archived",
+  ],
+  [
+    "failure",
+    "hmr-settings",
+    "Vite HMR drops state in the settings dialog; restart the dev server after editing it.",
+    "codex",
+    S2,
+    0.7,
+    3 * 24 * 60 - 35,
+    0,
+    "archived",
+  ],
+];
+
+/** What each fake session was, for provenance ("Learned in …") and the
+ *  commits it produced, newest first. */
+const SESSION_RECORDS: Record<string, { title: string; commits: string[] }> = {
+  [S1]: {
+    title: "Regenerate the whole design-token palette",
+    commits: ["9c41e07ab2d3", "4b0e9f12c8aa"],
+  },
+  [S2]: { title: "Move the user reads onto /v2", commits: ["e1a77c3d905f"] },
+  [S3]: { title: "Why does pagination break past page 3?", commits: [] },
+  [S4]: { title: "Why does the admin table refetch on focus?", commits: ["3f9c2ab1d4e0"] },
+};
+
+/** The review queue's proposals beyond plain candidates, by entry id; each
+ *  leaves the queue once it is decided. */
+let pendingMerges: { keep: number; drop: number[] }[] = [{ keep: 2, drop: [20] }];
+let pendingConflicts: { a: number; b: number }[] = [{ a: 18, b: 19 }];
+let pendingDreams: {
+  id: number;
+  op: { op: string; content?: string; reason?: string };
+  why: string;
+  entries: number[];
+}[] = [
+  {
+    id: 41,
+    op: { op: "archive", reason: "transient" },
+    why: "It describes one change to one component, not something the project should keep knowing.",
+    entries: [9],
+  },
+  {
+    id: 42,
+    op: {
+      op: "rewrite",
+      content:
+        "request() in src/lib/api.ts unwraps every response, so every caller inherits its retries and error handling.",
+    },
+    why: "Agents asked about error handling four times this week and read this line each time; the rewrite says the part they needed.",
+    entries: [4],
+  },
 ];
 
 function seededEntries(): MemoryEntry[] {
   return ENTRY_SEEDS.map(
-    ([kind, key, content, source, sessionId, confidence, minutesAgo, uses], index) => {
+    ([kind, key, content, source, sessionId, confidence, minutesAgo, uses, state], index) => {
       const imported = source.startsWith("import:");
       const byAgent = !imported && source !== "user" && source !== "extractor";
       return {
@@ -1228,7 +1374,7 @@ function seededEntries(): MemoryEntry[] {
         lastUsedAt: uses ? ago(Math.max(10, minutesAgo / 4)) : null,
         uses,
         revision: index + 1,
-        state: confidence < 0.5 ? "candidate" : "active",
+        state: state ?? (confidence < 0.5 ? "candidate" : "active"),
       };
     },
   );
@@ -1429,6 +1575,9 @@ export const memoryHandlers: TypedHandlers<MemoryResponses> = {
     eventLog.set(String(projectPath), []);
     entryLog.set(String(projectPath), []);
     indexedExtraSeqs = [];
+    pendingMerges = [];
+    pendingConflicts = [];
+    pendingDreams = [];
     return null;
   },
 
@@ -1467,13 +1616,105 @@ export const memoryHandlers: TypedHandlers<MemoryResponses> = {
     else entry.uses += 1;
     return entry;
   },
-  memory_review: ({ projectPath }): ReviewQueue => ({
-    candidates: entriesFor(String(projectPath)).filter((e) => e.state === "candidate"),
-    merges: [],
-    conflicts: [],
-    dreams: [],
-  }),
-  memory_session_writes: (): SessionWrite[] => [],
+  memory_review: ({ projectPath }): ReviewQueue => {
+    const entries = entriesFor(String(projectPath));
+    const byId = (id: number) => entries.find((e) => e.id === id);
+    const live = (id: number) => {
+      const e = byId(id);
+      return e && e.state !== "archived" ? e : undefined;
+    };
+    return {
+      candidates: entries.filter((e) => e.state === "candidate"),
+      merges: pendingMerges.flatMap(({ keep, drop }) => {
+        const k = live(keep);
+        const d = drop.map(live).filter((e): e is MemoryEntry => !!e);
+        return k && d.length ? [{ keep: k, drop: d }] : [];
+      }),
+      conflicts: pendingConflicts.flatMap(({ a, b }) => {
+        const ea = live(a);
+        const eb = live(b);
+        return ea && eb ? [{ a: ea, b: eb }] : [];
+      }),
+      dreams: pendingDreams.map((d) => ({
+        id: d.id,
+        op: d.op,
+        why: d.why,
+        entries: d.entries.map(byId).filter((e): e is MemoryEntry => !!e),
+      })),
+    };
+  },
+  // What the current chat session wrote, for the "Memory updated" block under
+  // the transcript. Every kind is represented, long names included: the block
+  // renders each kind as an icon, and the version before that gave the kind a
+  // fixed-width text column that `architecture` and `preference` overran into
+  // the content beside them. A `candidate` and an already-removed row cover
+  // the two states that change what the row offers.
+  memory_session_writes: (): SessionWrite[] => [
+    {
+      id: 901,
+      rev: 9010,
+      op: "insert",
+      kind: "architecture",
+      content:
+        "The web declares full theme token sets under `[data-theme=\"dark\"]` in CSS, while the desktop writes the active theme's variables at runtime, so inverted scopes must be generated in JS alongside the page's block in the same style element.",
+      state: "active",
+      at: ago(2),
+      live: true,
+    },
+    {
+      id: 902,
+      rev: 9020,
+      op: "insert",
+      kind: "preference",
+      content:
+        "Desktop rendering changes should mirror how the web does it; the web reference implementation lives in `~/Desktop/server`.",
+      state: "active",
+      at: ago(3),
+      live: true,
+    },
+    {
+      id: 903,
+      rev: 9030,
+      op: "insert",
+      kind: "failure",
+      content:
+        "lucide v1 dropped its brand icons, so GitHub/X marks must be inlined as SVG — a wrong-but-present glyph reads as a different product.",
+      state: "active",
+      at: ago(4),
+      live: true,
+    },
+    {
+      id: 904,
+      rev: 9040,
+      op: "insert",
+      kind: "decision",
+      content: "The comments side panel was retired, replaced by the footer comments morph.",
+      state: "active",
+      at: ago(5),
+      live: true,
+    },
+    {
+      id: 905,
+      rev: 9050,
+      op: "insert",
+      kind: "fact",
+      content:
+        "The desktop app has no localStorage equivalent for per-browser read state, so the comments panel ships All/Open tabs with no Unread tab.",
+      state: "candidate",
+      at: ago(6),
+      live: true,
+    },
+    {
+      id: 906,
+      rev: 9060,
+      op: "insert",
+      kind: "file_changed",
+      content: "src/features/memory/components/memory-updated-card.tsx",
+      state: "active",
+      at: ago(7),
+      live: false,
+    },
+  ],
   memory_promote: ({ projectPath, id }): boolean => {
     const entry = entriesFor(String(projectPath)).find((e) => e.id === Number(id));
     if (!entry) return false;
@@ -1487,14 +1728,45 @@ export const memoryHandlers: TypedHandlers<MemoryResponses> = {
     for (const e of hit) e.state = "archived";
     return hit.length;
   },
-  memory_merge: ({ projectPath, drop }): number => {
+  memory_merge: ({ projectPath, keep, drop }): number => {
+    pendingMerges = pendingMerges.filter((m) => m.keep !== Number(keep));
     const wanted = new Set((drop as number[]).map(Number));
     const hit = entriesFor(String(projectPath)).filter((e) => wanted.has(e.id));
     for (const e of hit) e.state = "archived";
     return hit.length;
   },
-  memory_resolve_conflict: (): boolean => true,
-  memory_dream_accept: (): string => "accepted",
+  memory_resolve_conflict: ({ projectPath, a, b, keep }): boolean => {
+    const pair = (x: number, y: number) =>
+      (x === Number(a) && y === Number(b)) || (x === Number(b) && y === Number(a));
+    pendingConflicts = pendingConflicts.filter((c) => !pair(c.a, c.b));
+    // "Not the same" on a duplicate settles it as two memories.
+    pendingMerges = pendingMerges
+      .map((m) =>
+        m.keep === Number(a) ? { ...m, drop: m.drop.filter((d) => d !== Number(b)) } : m,
+      )
+      .filter((m) => m.drop.length > 0);
+    if (keep !== "both") {
+      const loser = keep === "a" ? Number(b) : Number(a);
+      const entry = entriesFor(String(projectPath)).find((e) => e.id === loser);
+      if (entry) entry.state = "archived";
+    }
+    return true;
+  },
+  memory_dream_accept: ({ projectPath, id }): string => {
+    const dream = pendingDreams.find((d) => d.id === Number(id));
+    pendingDreams = pendingDreams.filter((d) => d.id !== Number(id));
+    if (!dream) return "obsolete";
+    const entries = entriesFor(String(projectPath));
+    for (const target of dream.entries) {
+      const entry = entries.find((e) => e.id === target);
+      if (!entry) continue;
+      if (dream.op.op === "archive") entry.state = "archived";
+      if (dream.op.op === "rewrite" && dream.op.content) {
+        Object.assign(entry, { content: dream.op.content, updatedAt: Date.now() });
+      }
+    }
+    return "accepted";
+  },
   memory_export_preview: ({ projectPath, ids }): ExportPreview => {
     const wanted = new Set((ids as number[]).map(Number));
     const lines = entriesFor(String(projectPath))
@@ -1519,7 +1791,10 @@ export const memoryHandlers: TypedHandlers<MemoryResponses> = {
     const name = String(projectPath).split("/").pop() || "project";
     return `${HOME}/.atlas/memory-repos/${name}-3f9c2ab1`;
   },
-  memory_dream_dismiss: (): null => null,
+  memory_dream_dismiss: ({ id }): null => {
+    pendingDreams = pendingDreams.filter((d) => d.id !== Number(id));
+    return null;
+  },
   memory_health_status: (): HealthStatus => ({
     checkedAt: Date.now(),
     record: { checkedAt: Date.now(), found: [], repaired: [], deferred: [] },
@@ -1530,6 +1805,10 @@ export const memoryHandlers: TypedHandlers<MemoryResponses> = {
     const entry = entriesFor(String(projectPath)).find((e) => e.id === Number(id));
     if (!entry) return [];
     const added = new Date(entry.createdAt).toISOString().slice(0, 10);
+    if (entry.source === "user") {
+      return [{ source: "atlas-user", agent: "user", added, title: null, commits: [] }];
+    }
+    const record = SESSION_RECORDS[entry.sessionId];
     return [
       {
         source: entry.sessionId
@@ -1537,8 +1816,8 @@ export const memoryHandlers: TypedHandlers<MemoryResponses> = {
           : entry.source,
         agent: entry.agent || entry.source,
         added,
-        title: null,
-        commits: [],
+        title: record?.title ?? null,
+        commits: record?.commits ?? [],
       },
     ];
   },

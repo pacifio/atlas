@@ -9,7 +9,7 @@ of the user mid-turn except tool permission: the connection serves the three app
 answers every other engine request, including `item/tool/requestUserInput` and
 `mcpServer/elicitation/request`, with an error. The engine itself ships a first-class
 `request_user_input` tool (structured questions with options; the client adds a free-form
-"Other") that blocks the turn until answered, and gates it upstream to the Plan collaboration
+"Other") that blocks the turn until answered, and gates it, as shipped, to the Plan collaboration
 mode unless the `DefaultModeRequestUserInput` feature is on. Atlas sets neither.
 
 Organisation actions (ADR-0014) make ambiguity routine: "find the comments and solve them" may
@@ -22,7 +22,7 @@ composer, in the same place as the permission card.
 
 **Atlas Agent may ask a clarifying question mid-turn, through the engine's own tool, in every
 mode.** The thread config Atlas builds turns the `DefaultModeRequestUserInput` feature on rather
-than patching the fork's mode gate, so nothing under `vendor/atlas-engine` changes. The native
+than patching the engine's mode gate, so nothing under `vendor/atlas-engine` changes. The native
 connection serves `item/tool/requestUserInput` by raising it as an elicitation on the thread, and
 the existing question card renders and answers it. The turn blocks until the user answers or
 dismisses; dismissal is a tool error the model reads, never a hung turn.

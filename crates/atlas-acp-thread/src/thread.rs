@@ -1,10 +1,10 @@
-//! The session model — ported from `zed-ref/crates/acp_thread/src/acp_thread.rs`.
+//! The session model.
 //!
 //! `AcpThread` is one agent session: an ordered list of entries (user messages,
 //! assistant messages, tool calls, elicitations, plans, compactions) plus the
 //! bookkeeping that keeps them correct while updates stream in out of order.
 //!
-//! What is ported here is the *mechanism*, not Zed's rendering:
+//! This is the *mechanism*, not any rendering. It covers:
 //! - chunk merging by protocol `messageId`, including the rule that a
 //!   server echoing back a user chunk must not split the optimistic prompt;
 //! - the tool-call upsert path, where a `WaitingForConfirmation` status survives
@@ -34,10 +34,8 @@ use crate::EventSink;
 
 /// One piece of renderable content.
 ///
-/// Zed holds `Entity<Markdown>` here and re-renders it reactively. Markdown
-/// entities are explicitly out of the port (the frontend already renders
-/// markdown), so text is carried as a plain `String` and the *concatenation*
-/// rules — which is the part that has to be right — are ported verbatim.
+/// Text is carried as a plain `String` because the frontend already renders
+/// markdown; the *concatenation* rules are the part that has to be right.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ContentBlock {
     Empty,
@@ -128,9 +126,8 @@ impl ContentBlock {
         }
     }
 
-    /// Zed renders this through `MentionUri`, which lives in `mention.rs` —
-    /// explicitly not ported (Atlas has its own mention system). The bare URI is
-    /// what is left of that once the mention layer is removed.
+    /// Atlas has its own mention system, so there is no mention layer here and
+    /// a resource link renders as its bare URI.
     fn resource_link_string(uri: &str) -> String {
         uri.to_string()
     }
@@ -165,6 +162,17 @@ pub struct UserMessage {
     pub content: ContentBlock,
     pub chunks: Vec<acp::ContentBlock>,
     pub indented: bool,
+}
+
+impl UserMessage {
+    /// The prompt as the agent was sent it, one block after another with a
+    /// blank line between (`prompt::flatten_text`). `content` merges the
+    /// blocks for display and glues text blocks end to end, so a turn's large
+    /// paste (`prompt::with_pasted_texts`) would run straight on from the
+    /// prose. A retry re-sends this, and it carries every paste in full.
+    pub fn prompt_text(&self) -> String {
+        crate::prompt::flatten_text(&self.chunks)
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -239,8 +247,8 @@ pub struct ContextCompaction {
     pub status: ContextCompactionStatus,
 }
 
-/// A proposed or applied edit. Zed backs this with a multibuffer diff, which is
-/// out of the port; the payload the agent actually sends is these three fields.
+/// A proposed or applied edit: the payload the agent actually sends, which is
+/// these three fields. Diff rendering stays in the frontend.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diff {
     pub path: PathBuf,
@@ -262,10 +270,9 @@ impl Diff {
     }
 }
 
-/// The size spread is a consequence of the port: Zed's variants are all GPUI
-/// entity handles (one pointer each), while these hold the payload inline
-/// because there is no entity store. Boxing would diverge from the ported shape
-/// for a `Vec` that holds a handful of items per tool call.
+/// The size spread is a consequence of holding each payload inline rather than
+/// behind a handle. Boxing would add an allocation for a `Vec` that holds a
+/// handful of items per tool call.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum ToolCallContent {
@@ -510,10 +517,47 @@ pub struct ToolCall {
     pub raw_input: Option<serde_json::Value>,
     pub raw_output: Option<serde_json::Value>,
     pub tool_name: Option<Arc<str>>,
+    /// The subagent launch this call belongs to, when the agent said so.
+    ///
+    /// A child's work arrives on the parent session, indistinguishable from
+    /// the parent's own except for this: see [`crate::subagent`]. Carried per
+    /// call rather than resolved once, because a call can be attributed to a
+    /// child by a later update than the one that created it.
+    pub parent_tool_call_id: Option<Arc<str>>,
+    /// Set when this call LAUNCHED a subagent (rather than belonging to one).
+    pub launched_subagent: Option<crate::subagent::SubagentLaunch>,
+    /// The launch handed the child off to run on its own, so this call
+    /// completing means "started", not "finished"
+    /// ([`crate::subagent::launched_async`]). Sticky: the marker arrives once,
+    /// with the launch's result, and later updates of the same call do not
+    /// repeat it.
+    pub launched_async: bool,
+    /// When the thread first saw this call. Set once, at construction; no
+    /// update moves it.
+    pub started_at: chrono::DateTime<chrono::Utc>,
+    /// The same moment on the monotonic clock, which is what the call's span
+    /// is measured on: a wall clock stepped by NTP (or by hand) mid-call would
+    /// otherwise stretch or shrink it.
+    pub started_clock: Instant,
+    /// When the call first reached a terminal status: `started_at` plus the
+    /// monotonic time it ran. Set once, by the thread as it announces the
+    /// change ([`AcpThread::entry_updated`]); a later update to a call that
+    /// has already ended does not move it.
+    pub ended_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl ToolCall {
     pub fn from_acp(tool_call: acp::ToolCall, status: ToolCallStatus) -> Result<Self> {
+        let tool_name = tool_name_from_meta(&tool_call.meta);
+        let parent_tool_call_id = crate::subagent::parent_tool_call_id(tool_call.meta.as_ref());
+        let launched_subagent = crate::subagent::launch_of(
+            tool_name.as_deref(),
+            Some(tool_call.title.as_str()),
+            tool_call.raw_input.as_ref(),
+            tool_call.meta.as_ref(),
+        );
+        let launched_async =
+            crate::subagent::launched_async(tool_call.raw_output.as_ref(), tool_call.meta.as_ref());
         let label = Self::label_for(tool_call.kind, tool_call.title);
         let mut content = Vec::with_capacity(tool_call.content.len());
         for item in tool_call.content {
@@ -531,14 +575,38 @@ impl ToolCall {
             locations: tool_call.locations,
             raw_input: tool_call.raw_input,
             raw_output: tool_call.raw_output,
-            tool_name: tool_name_from_meta(&tool_call.meta),
+            tool_name,
+            parent_tool_call_id,
+            launched_subagent,
+            launched_async,
+            started_at: chrono::Utc::now(),
+            started_clock: Instant::now(),
+            ended_at: None,
         })
     }
 
-    /// Zed additionally markdown-escapes an `Edit` title, because it renders the
-    /// label as markdown. Nothing renders markdown in this crate, so only the
-    /// multi-line truncation — which is real behaviour, not presentation —
-    /// is ported.
+    /// Whether this call has ended, one way or another.
+    pub fn is_settled(&self) -> bool {
+        matches!(
+            self.status,
+            ToolCallStatus::Completed
+                | ToolCallStatus::Failed
+                | ToolCallStatus::Rejected
+                | ToolCallStatus::Canceled
+        )
+    }
+
+    /// Stamp the end the first time the call is seen settled.
+    fn note_settled(&mut self) {
+        if self.ended_at.is_none() && self.is_settled() {
+            let ran = chrono::Duration::from_std(self.started_clock.elapsed()).unwrap_or_default();
+            self.ended_at = Some(self.started_at + ran);
+        }
+    }
+
+    /// Nothing renders markdown in this crate, so no escaping happens here; only
+    /// the multi-line truncation — which is real behaviour, not presentation —
+    /// is applied.
     fn label_for(kind: acp::ToolKind, title: String) -> String {
         if kind == acp::ToolKind::Execute || kind == acp::ToolKind::Edit {
             title
@@ -577,6 +645,14 @@ impl ToolCall {
             self.tool_name = Some(tool_name);
         }
 
+        // Only ever set, never cleared: a later update of a child's call can
+        // omit the attribution it already sent (a progress beat after the
+        // child finished), and dropping it would move the row back to the
+        // root mid-flight.
+        if let Some(parent) = crate::subagent::parent_tool_call_id(meta.as_ref()) {
+            self.parent_tool_call_id = Some(parent);
+        }
+
         if let Some(title) = title {
             self.label = Self::label_for(self.kind, title);
         }
@@ -612,6 +688,32 @@ impl ToolCall {
 
         if let Some(raw_output) = raw_output {
             self.raw_output = Some(raw_output);
+        }
+
+        // After the fields, not with them: a tool use streams its JSON input
+        // after the call is announced, so the launch is only readable once
+        // `raw_input` has landed.
+        //
+        // Re-read on EVERY update, not only while it is unknown. Observed
+        // from opencode: the launch is announced as `title: "task"` with an
+        // empty input, and the real description, prompt and role arrive in a
+        // later update. Detecting once left such a child named "Subagent" for
+        // its whole life. Every field here is read from the call's
+        // accumulated state (`raw_input` is only ever overwritten by a
+        // present value), so a later read is strictly better informed.
+        if let Some(launch) = crate::subagent::launch_of(
+            self.tool_name.as_deref(),
+            Some(self.label.as_str()),
+            self.raw_input.as_ref(),
+            meta.as_ref(),
+        ) {
+            self.launched_subagent = Some(launch);
+        }
+        // Sticky, like the parent link: the marker rides on the update that
+        // carries the launch's result, and the `completed` update that
+        // follows it a moment later does not repeat it.
+        if crate::subagent::launched_async(self.raw_output.as_ref(), meta.as_ref()) {
+            self.launched_async = true;
         }
 
         Ok(())
@@ -892,7 +994,10 @@ pub enum AcpThreadEvent {
     ElicitationRequested(ElicitationEntryId),
     ElicitationResponded(ElicitationEntryId),
     Retry(RetryStatus),
-    Stopped(acp::StopReason),
+    /// The turn stopped. Carries the turn's own record, so a consumer that
+    /// drains events behind the thread reads THIS turn's timing rather than
+    /// whatever `AcpThread::turns` holds by the time it looks.
+    Stopped(acp::StopReason, TurnRecord),
     Error,
     LoadError(LoadError),
     PromptCapabilitiesUpdated,
@@ -903,9 +1008,44 @@ pub enum AcpThreadEvent {
     WorkingDirectoriesUpdated,
 }
 
-/// The turn currently in flight, if any. Zed also holds the send task here; the
-/// task lives with the caller in this port, so only the identity remains — and
-/// the identity is the point: it is what tells a turn reporting back late
+/// One finished turn, as the thread timed it.
+///
+/// What a snapshot needs to say "worked for 4m 12s" about a turn after the
+/// client that watched it live has reloaded: the live figure travels on
+/// `turn_finished`, and this is the same figure kept where a snapshot can
+/// read it back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TurnRecord {
+    /// When `begin_turn` opened it. `None` for a stop announced with no turn
+    /// opened, which has no start to measure from.
+    pub started_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub ended_at: chrono::DateTime<chrono::Utc>,
+    pub stop_reason: acp::StopReason,
+    /// The entries the turn produced. The prompt is pushed before the turn
+    /// opens, so this is the agent's half only.
+    pub entries: Range<usize>,
+    /// How long it ran, on the monotonic clock — the figure "Worked for"
+    /// shows. Not `ended_at - started_at`: the wall clock can be stepped
+    /// mid-turn, and it keeps running while the machine sleeps, where the
+    /// monotonic clock pauses on macOS and Linux. The time a
+    /// `slept_mid_turn` notice reports is exactly that pause (the sleep
+    /// watch measures the wall clock running ahead of this one), so it is
+    /// already left out and must not be subtracted again. `None` with
+    /// `started_at`.
+    pub worked_ms: Option<u64>,
+}
+
+/// The open turn: when it began, on both clocks, and how many entries there
+/// were then.
+#[derive(Debug, Clone, Copy)]
+struct OpenTurn {
+    at: chrono::DateTime<chrono::Utc>,
+    clock: Instant,
+    entries: usize,
+}
+
+/// The turn currently in flight, if any. The send task lives with the caller, so
+/// only the identity is held here — and the identity is the point: it is what tells a turn reporting back late
 /// whether it is still the one running.
 #[derive(Debug)]
 struct RunningTurn {
@@ -976,6 +1116,17 @@ pub fn is_host_machinery_title(title: &str) -> bool {
 pub struct AcpThread {
     session_id: acp::SessionId,
     work_dirs: Vec<PathBuf>,
+    /// The projects attached to the session, as Atlas currently grants them
+    /// ([`crate::SessionRoots`]). What the client-side `fs/*` handlers widen
+    /// to — read-only roots for reads, read-write roots for reads and writes —
+    /// and what [`Self::own_work_dirs`] leaves out.
+    attached_roots: crate::SessionRoots,
+    /// Every path ever attached to this thread. A read-write root is opened
+    /// with the session as one of its `work_dirs` (that is how it reaches the
+    /// agent as an additional directory), so a root later made read-only or
+    /// detached must stop counting as a working directory: this is how the
+    /// thread tells its own folders from attached ones.
+    attached_ever: Vec<PathBuf>,
     parent_session_id: Option<acp::SessionId>,
     title: Option<Arc<str>>,
     entries: Vec<AgentThreadEntry>,
@@ -996,12 +1147,29 @@ pub struct AcpThread {
     /// per-message timestamp, so a replayed conversation is stamped at replay
     /// time. That is a limit of the protocol, not a choice — but it is stable
     /// per thread, which is the property the projection actually needed
-    /// (ATL-221).
+    /// (ATL-221). Those entries are counted in `replayed_entries`, so the wire
+    /// can say their time is approximate rather than pass it off as real.
     entry_created_at: Vec<chrono::DateTime<chrono::Utc>>,
+    /// True while the agent replays a stored conversation (`session/load`):
+    /// what arrives then was said earlier, at a time ACP does not carry.
+    replaying: bool,
+    /// How many leading entries came from such a replay. A replay fills a fresh
+    /// thread, so they are always a prefix; `entry_time_approximate` reads it.
+    replayed_entries: usize,
     elicitations: ElicitationStore,
     plan: Plan,
     turn_id: u32,
     running_turn: Option<RunningTurn>,
+    /// Why the last turn ended, once one has. What a child launched to run on
+    /// its own ended as: the agent holds a turn open until such children
+    /// settle, so the turn's end is theirs too — a Stop stopped them.
+    last_stop_reason: Option<acp::StopReason>,
+    /// When the open turn began, and how many entries there were then. Kept
+    /// apart from `running_turn` because a cancel clears that before the
+    /// cancelled turn reports its own stop, and the stop still needs a start.
+    turn_opened: Option<OpenTurn>,
+    /// Every turn that stopped, oldest first.
+    turns: Vec<TurnRecord>,
     connection: Arc<dyn AgentConnection>,
     token_usage: Option<TokenUsage>,
     cost: Option<SessionCost>,
@@ -1024,6 +1192,8 @@ impl AcpThread {
         Self {
             session_id,
             work_dirs,
+            attached_roots: crate::SessionRoots::default(),
+            attached_ever: Vec::new(),
             parent_session_id: None,
             // Filtered on the way in as well as on update: a resume seeds this
             // from the stored row (`agent_host.rs`, the `Some(session_id)`
@@ -1032,10 +1202,15 @@ impl AcpThread {
             title: title.filter(|title| !is_host_machinery_title(title)),
             entries: Vec::new(),
             entry_created_at: Vec::new(),
+            replaying: false,
+            replayed_entries: 0,
             elicitations: ElicitationStore::default(),
             plan: Plan::default(),
             turn_id: 0,
             running_turn: None,
+            last_stop_reason: None,
+            turn_opened: None,
+            turns: Vec::new(),
             connection,
             token_usage: None,
             cost: None,
@@ -1067,6 +1242,52 @@ impl AcpThread {
     pub fn set_work_dirs(&mut self, work_dirs: Vec<PathBuf>) {
         self.work_dirs = work_dirs;
         self.emit(AcpThreadEvent::WorkingDirectoriesUpdated);
+    }
+
+    /// The session's own folders: its working directories without any that
+    /// are, or were, attached projects. The first one (the cwd) is always
+    /// kept. What history records as the session's folders, so attaching a
+    /// project never moves the session to another project's group.
+    pub fn own_work_dirs(&self) -> Vec<PathBuf> {
+        self.work_dirs
+            .iter()
+            .enumerate()
+            .filter(|(ix, dir)| *ix == 0 || !self.attached_ever.contains(dir))
+            .map(|(_, dir)| dir.clone())
+            .collect()
+    }
+
+    /// The projects currently attached to the session.
+    pub fn attached_roots(&self) -> &crate::SessionRoots {
+        &self.attached_roots
+    }
+
+    /// Replace the projects attached to the session. Silent: nothing about
+    /// the thread the sidebar shows changes.
+    pub fn set_attached_roots(&mut self, roots: crate::SessionRoots) {
+        for path in roots.all() {
+            if !self.attached_ever.contains(path) {
+                self.attached_ever.push(path.clone());
+            }
+        }
+        self.attached_roots = roots;
+    }
+
+    /// Where the client-side `fs/read_text_file` may read: the session's own
+    /// folders and every attached project.
+    pub fn readable_roots(&self) -> Vec<PathBuf> {
+        let mut roots = self.own_work_dirs();
+        roots.extend(self.attached_roots.all().cloned());
+        roots
+    }
+
+    /// Where the client-side `fs/write_text_file` may write: the session's
+    /// own folders and the read-write attached projects — never a read-only
+    /// one, even one the session was opened with as read-write.
+    pub fn writable_roots(&self) -> Vec<PathBuf> {
+        let mut roots = self.own_work_dirs();
+        roots.extend(self.attached_roots.read_write.iter().cloned());
+        roots
     }
 
     pub fn title(&self) -> Option<&Arc<str>> {
@@ -1103,8 +1324,7 @@ impl AcpThread {
 
     /// A thread is a draft until its first message is sent.
     ///
-    /// Zed's `is_draft_thread` (`acp_thread.rs:2346-2348`). Note what it is
-    /// *not*: an ACP session may already exist for a draft — Atlas opens one
+    /// Note what it is *not*: an ACP session may already exist for a draft — Atlas opens one
     /// when the tab mounts — but that session is re-created on reload, so its
     /// id is worth nothing to history until a message has gone through it.
     pub fn is_draft(&self) -> bool {
@@ -1120,6 +1340,29 @@ impl AcpThread {
     /// this value does and does not mean.
     pub fn entry_created_at(&self, ix: usize) -> Option<chrono::DateTime<chrono::Utc>> {
         self.entry_created_at.get(ix).copied()
+    }
+
+    /// Whether the time of the entry at `ix` is only when Atlas replayed it,
+    /// not when it was said: true for every entry an agent's `session/load`
+    /// replay produced, since ACP carries no per-message time.
+    pub fn entry_time_approximate(&self, ix: usize) -> bool {
+        ix < self.replayed_entries
+    }
+
+    /// The agent is about to replay a stored conversation into this thread.
+    /// Everything appended until [`Self::end_replay`] (or the user's next
+    /// prompt, or the next turn) is marked approximate.
+    pub fn begin_replay(&mut self) {
+        self.replaying = true;
+    }
+
+    /// The replay is over: what arrives from here on is live, and timed.
+    /// Called once the `session/load` answer has landed AND every frame the
+    /// agent sent before it has been applied — an external agent's replay
+    /// frames can still be queued on the dispatch task when the answer
+    /// resolves, so the caller orders this behind them.
+    pub fn end_replay(&mut self) {
+        self.replaying = false;
     }
 
     pub fn entries(&self) -> &[AgentThreadEntry] {
@@ -1179,8 +1422,36 @@ impl AcpThread {
         self.running_turn.is_some()
     }
 
+    /// Why the last turn ended; `None` before any has (and for a thread
+    /// rebuilt by a replay, which ends no turn).
+    pub fn last_stop_reason(&self) -> Option<acp::StopReason> {
+        self.last_stop_reason
+    }
+
+    /// Every turn that stopped, oldest first, with its timing.
+    pub fn turns(&self) -> &[TurnRecord] {
+        &self.turns
+    }
+
     fn emit(&self, event: AcpThreadEvent) {
         let _ = self.events.send(event);
+    }
+
+    /// Announce that the entry at `ix` changed.
+    ///
+    /// Every change goes through here, which is what makes it the one place a
+    /// tool call's end is stamped: whichever path settled it — an agent
+    /// update, a permission answer, a cancel — the time it first reads as
+    /// ended is the time it is announced as such.
+    fn entry_updated(&mut self, ix: usize) {
+        self.note_settled(ix);
+        self.emit(AcpThreadEvent::EntryUpdated(ix));
+    }
+
+    fn note_settled(&mut self, ix: usize) {
+        if let Some(AgentThreadEntry::ToolCall(call)) = self.entries.get_mut(ix) {
+            call.note_settled();
+        }
     }
 
     /// Drop every entry from `from` to the end, announcing the removal.
@@ -1196,12 +1467,19 @@ impl AcpThread {
         }
         self.entries.truncate(from);
         self.entry_created_at.truncate(from);
+        self.replayed_entries = self.replayed_entries.min(from);
+        // A turn whose output was taken back is not one to time any more.
+        self.turns.retain(|turn| turn.entries.end <= from);
+        // And a turn still open counts from where the thread now ends: left
+        // past it, the turn's range would miss everything it goes on to say.
+        if let Some(open) = &mut self.turn_opened {
+            open.entries = open.entries.min(from);
+        }
         self.emit(AcpThreadEvent::EntriesRemoved(from..len));
     }
 
     // ---- session/update -------------------------------------------------
 
-    /// Ported from `AcpThread::handle_session_update` (`acp_thread.rs:2549-2652`).
     pub fn handle_session_update(&mut self, update: acp::SessionUpdate) -> Result<(), acp::Error> {
         match update {
             acp::SessionUpdate::UserMessageChunk(acp::ContentChunk {
@@ -1259,11 +1537,9 @@ impl AcpThread {
             }
             acp::SessionUpdate::Plan(plan) => self.update_plan(plan),
             acp::SessionUpdate::SessionInfoUpdate(info_update) => {
-                // Zed additionally re-emits `TitleUpdated` when an unchanged
-                // title clears a *provisional* one it was showing while the
-                // agent named the session. Provisional titles are a Zed UI
-                // affordance that is not ported, so that branch has no meaning
-                // here.
+                // There are no provisional titles (shown while the agent has
+                // not yet named the session), so an unchanged title needs no
+                // re-emit.
                 if let MaybeUndefined::Value(title) = info_update.title {
                     let title: Arc<str> = title.into();
                     // Dropped, not stored-then-hidden: every consumer of
@@ -1317,6 +1593,11 @@ impl AcpThread {
         self.entries.push(entry);
         self.entry_created_at.push(chrono::Utc::now());
         debug_assert_eq!(self.entries.len(), self.entry_created_at.len());
+        if self.replaying {
+            self.replayed_entries = self.entries.len();
+        }
+        // A call can arrive already finished (a replay, a fast tool).
+        self.note_settled(self.entries.len() - 1);
         self.emit(AcpThreadEvent::NewEntry);
     }
 
@@ -1325,6 +1606,8 @@ impl AcpThread {
         client_id: Option<ClientUserMessageId>,
         chunk: acp::ContentBlock,
     ) {
+        // The user speaking now ends any replay: this message is timed.
+        self.replaying = false;
         let is_optimistic = client_id.is_some();
         self.push_user_content_block_with_protocol_id(client_id, is_optimistic, None, chunk, false)
     }
@@ -1377,7 +1660,7 @@ impl AcpThread {
                 }
                 content.append(chunk.clone());
                 chunks.push(chunk);
-                self.emit(AcpThreadEvent::EntryUpdated(entries_len - 1));
+                self.entry_updated(entries_len - 1);
                 return;
             }
         }
@@ -1449,7 +1732,7 @@ impl AcpThread {
                         });
                     }
                 }
-                self.emit(AcpThreadEvent::EntryUpdated(idx));
+                self.entry_updated(idx);
                 return;
             }
         }
@@ -1529,7 +1812,6 @@ impl AcpThread {
         self.upsert_tool_call_inner(tool_call.into(), status)
     }
 
-    /// Ported from `upsert_tool_call_inner` (`acp_thread.rs:3200-3256`).
     pub fn upsert_tool_call_inner(
         &mut self,
         update: acp::ToolCallUpdate,
@@ -1550,7 +1832,7 @@ impl AcpThread {
             };
             result.map_err(|e| acp::Error::internal_error().data(e.to_string()))?;
 
-            self.emit(AcpThreadEvent::EntryUpdated(ix));
+            self.entry_updated(ix);
         } else {
             let tool_call: acp::ToolCall = update.try_into().map_err(|_| {
                 acp::Error::invalid_params().data("tool call update is not a full tool call")
@@ -1563,8 +1845,6 @@ impl AcpThread {
         Ok(())
     }
 
-    /// Ported from `update_tool_call` (`acp_thread.rs:3115-3185`).
-    ///
     /// An update for an id that was never announced becomes a *failed* entry
     /// rather than being dropped: the agent believes it ran a tool, and silently
     /// discarding that leaves the transcript claiming it never happened.
@@ -1575,6 +1855,9 @@ impl AcpThread {
             Some(ix) => ix,
             None => {
                 let failed_tool_call = ToolCall {
+                    parent_tool_call_id: None,
+                    launched_subagent: None,
+                    launched_async: false,
                     id: update.id().clone(),
                     label: "Tool call not found".into(),
                     kind: acp::ToolKind::Fetch,
@@ -1586,6 +1869,9 @@ impl AcpThread {
                     raw_input: None,
                     raw_output: None,
                     tool_name: None,
+                    started_at: chrono::Utc::now(),
+                    started_clock: Instant::now(),
+                    ended_at: None,
                 };
                 self.push_entry(AgentThreadEntry::ToolCall(failed_tool_call));
                 return Ok(());
@@ -1615,14 +1901,12 @@ impl AcpThread {
         };
         result?;
 
-        self.emit(AcpThreadEvent::EntryUpdated(ix));
+        self.entry_updated(ix);
         Ok(())
     }
 
     // ---- permission -----------------------------------------------------
 
-    /// Ported from `request_tool_call_authorization` (`acp_thread.rs:3383-3418`).
-    ///
     /// Returns the waiter the caller answers `session/request_permission` with.
     /// A dropped sender resolves to `Cancelled`, so the agent is never left
     /// waiting on a prompt that went away with its thread.
@@ -1728,11 +2012,10 @@ impl AcpThread {
         }
 
         call.status = ToolCallStatus::Canceled;
-        self.emit(AcpThreadEvent::EntryUpdated(ix));
+        self.entry_updated(ix);
         self.emit(AcpThreadEvent::ToolAuthorizationReceived(id.clone()));
     }
 
-    /// Ported from `authorize_tool_call` (`acp_thread.rs:3433-3489`).
     pub fn authorize_tool_call(&mut self, id: acp::ToolCallId, outcome: SelectedPermissionOutcome) {
         let Some((ix, call)) = self.tool_call_mut(&id) else {
             return;
@@ -1768,7 +2051,7 @@ impl AcpThread {
                 .ok();
         }
 
-        self.emit(AcpThreadEvent::EntryUpdated(ix));
+        self.entry_updated(ix);
     }
 
     // ---- elicitations ---------------------------------------------------
@@ -1810,7 +2093,7 @@ impl AcpThread {
         if !self.elicitations.respond_to_elicitation_by_id(id, response) {
             return;
         }
-        self.emit(AcpThreadEvent::EntryUpdated(ix));
+        self.entry_updated(ix);
     }
 
     pub fn complete_url_elicitation(&mut self, elicitation_id: &acp::ElicitationId) {
@@ -1826,7 +2109,7 @@ impl AcpThread {
         if !self.elicitations.complete_url_elicitation_by_id(&entry_id) {
             return;
         }
-        self.emit(AcpThreadEvent::EntryUpdated(ix));
+        self.entry_updated(ix);
     }
 
     pub fn cancel_elicitation(&mut self, id: &ElicitationEntryId) {
@@ -1836,7 +2119,7 @@ impl AcpThread {
         if !self.elicitations.cancel_elicitation_by_id(id, true) {
             return;
         }
-        self.emit(AcpThreadEvent::EntryUpdated(ix));
+        self.entry_updated(ix);
     }
 
     fn elicitation_entry_ix(&self, id: &ElicitationEntryId) -> Option<usize> {
@@ -1865,7 +2148,7 @@ impl AcpThread {
             }
         }
         for ix in updated {
-            self.emit(AcpThreadEvent::EntryUpdated(ix));
+            self.entry_updated(ix);
         }
     }
 
@@ -1929,9 +2212,9 @@ impl AcpThread {
 
     /// Open a context-compaction entry, or move an open one to a new status.
     ///
-    /// Zed's native agent drives these entries the same way — compaction is
-    /// something an agent *does*, not something the protocol reports, so it has
-    /// no `session/update` variant and reaches the timeline through here.
+    /// Compaction is something an agent *does*, not something the protocol
+    /// reports, so it has no `session/update` variant and reaches the timeline
+    /// through here.
     pub fn upsert_context_compaction(
         &mut self,
         id: ContextCompactionId,
@@ -1945,7 +2228,7 @@ impl AcpThread {
                 if let AgentThreadEntry::ContextCompaction(compaction) = &mut self.entries[ix] {
                     compaction.status = status;
                 }
-                self.emit(AcpThreadEvent::EntryUpdated(ix));
+                self.entry_updated(ix);
             }
             None => {
                 self.push_entry(AgentThreadEntry::ContextCompaction(ContextCompaction {
@@ -1971,18 +2254,24 @@ impl AcpThread {
     /// The previous turn is cancelled with `InterruptedByFollowUp` rather than
     /// `Cancelled` — the distinction reaches any tool call still waiting on a
     /// permission answer, which is a different thing from the user pressing
-    /// stop. Ported from `run_turn` (`acp_thread.rs:3740-3752`).
+    /// stop.
     pub fn begin_turn(&mut self) -> u32 {
         self.had_error = false;
+        self.replaying = false;
         self.cancel_inner(RequestPermissionOutcome::InterruptedByFollowUp);
         self.turn_id += 1;
         self.running_turn = Some(RunningTurn { id: self.turn_id });
+        self.turn_opened = Some(OpenTurn {
+            at: chrono::Utc::now(),
+            clock: Instant::now(),
+            entries: self.entries.len(),
+        });
         self.emit(AcpThreadEvent::StatusChanged);
         self.turn_id
     }
 
     /// Closes the running turn. `stop_reason` is emitted so the UI leaves the
-    /// generating state for the same reasons Zed does.
+    /// generating state.
     ///
     /// Deliberately NOT guarded on `running_turn`. A guard would make
     /// `set_error()` followed by `end_turn()` emit nothing instead of a second
@@ -1992,15 +2281,38 @@ impl AcpThread {
     /// `atlas-agent-delta`'s tests use `end_turn` as "announce Stopped" without
     /// a turn open. Adding the guard would break that use for a case nothing
     /// reaches. Checked while fixing `cancel_inner` below (ATL-218 finding 4).
+    ///
+    /// The one stop it does swallow is a second one for a turn already
+    /// closed: no turn opened since the last stop was recorded. That is a late
+    /// duplicate — a cancel answered after the stop it raced — and announcing
+    /// it would relabel the finished turn with the duplicate's reason. Only
+    /// the very first stop of a thread may arrive with no turn opened.
     pub fn end_turn(&mut self, stop_reason: acp::StopReason) {
+        let opened = self.turn_opened.take();
+        if opened.is_none() && !self.turns.is_empty() {
+            self.running_turn = None;
+            return;
+        }
         self.running_turn = None;
-        self.emit(AcpThreadEvent::Stopped(stop_reason));
+        self.last_stop_reason = Some(stop_reason);
+        let start = opened.map_or(0, |turn| turn.entries);
+        let record = TurnRecord {
+            started_at: opened.map(|turn| turn.at),
+            ended_at: chrono::Utc::now(),
+            stop_reason,
+            entries: start.min(self.entries.len())..self.entries.len(),
+            worked_ms: opened
+                .map(|turn| u64::try_from(turn.clock.elapsed().as_millis()).unwrap_or(u64::MAX)),
+        };
+        self.turns.push(record.clone());
+        self.emit(AcpThreadEvent::Stopped(stop_reason, record));
         self.emit(AcpThreadEvent::StatusChanged);
     }
 
     pub fn set_error(&mut self) {
         self.had_error = true;
         self.running_turn = None;
+        self.turn_opened = None;
         self.emit(AcpThreadEvent::Error);
         self.emit(AcpThreadEvent::StatusChanged);
     }
@@ -2063,11 +2375,11 @@ impl AcpThread {
     pub fn emit_load_error(&mut self, error: LoadError) {
         self.had_error = true;
         self.running_turn = None;
+        self.turn_opened = None;
         self.emit(AcpThreadEvent::LoadError(error));
         self.emit(AcpThreadEvent::StatusChanged);
     }
 
-    /// Ported from `AcpThread::cancel` (`acp_thread.rs:3901-3922`).
     pub fn cancel(&mut self) {
         self.cancel_inner(RequestPermissionOutcome::Cancelled)
     }
@@ -2139,7 +2451,7 @@ impl AcpThread {
             }
         }
         for ix in updated {
-            self.emit(AcpThreadEvent::EntryUpdated(ix));
+            self.entry_updated(ix);
         }
     }
 
@@ -2149,11 +2461,9 @@ impl AcpThread {
         let terminal_id = event.terminal_id().clone();
         self.terminals.handle_event(event);
         // The terminal's state is what a referencing tool call renders, so a
-        // change to it is a change to that entry. Zed does not need this step:
-        // its terminal is an entity a view holds directly, so `cx.notify()` on
-        // the terminal re-renders the tool call for free. Atlas's terminals
-        // reach the UI only THROUGH the tool call's projection, so the link has
-        // to be made explicitly or the output never moves.
+        // change to it is a change to that entry. Atlas's terminals reach the UI only
+        // THROUGH the tool call's projection, so the link has to be made
+        // explicitly or the output never moves.
         self.note_terminal_output(&terminal_id);
     }
 
@@ -2180,7 +2490,7 @@ impl AcpThread {
                 .map(|(ix, _)| ix)
                 .collect();
         for ix in updated {
-            self.emit(AcpThreadEvent::EntryUpdated(ix));
+            self.entry_updated(ix);
         }
     }
 
@@ -2195,9 +2505,7 @@ impl AcpThread {
     /// gets: a buffer that dropped its front otherwise reads as a command that
     /// started mid-sentence. The exit status is deliberately NOT in here — the
     /// agent reports how its own tool call ended through `tool_call_update`,
-    /// and the tool call's status is where the UI shows it. Zed's
-    /// `Terminal::to_markdown` (`terminal.rs:604-609`) is content-only for the
-    /// same reason.
+    /// and the tool call's status is where the UI shows it.
     /// How [`Self::terminal_output`]'s answer has grown past `from` bytes.
     ///
     /// `None` when the id names no terminal this thread holds, or when the
@@ -2212,6 +2520,13 @@ impl AcpThread {
         from: usize,
     ) -> Option<TerminalAppend> {
         self.terminals.get(id)?.output_appended(from)
+    }
+
+    /// Where a terminal's output ends in the command's total output; the
+    /// `from` for the next [`Self::terminal_output_appended`]. See
+    /// [`AcpTerminal::output_end`].
+    pub fn terminal_output_end(&self, id: &acp::TerminalId) -> Option<usize> {
+        self.terminals.get(id).map(AcpTerminal::output_end)
     }
 
     pub fn terminal_output(&self, id: &acp::TerminalId) -> Option<String> {

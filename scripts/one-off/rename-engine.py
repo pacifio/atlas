@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One-off: rename the vendored engine from its upstream name to atlas-engine
+"""One-off: rename the engine from its upstream name to atlas-engine
 (ADR-0011). Committed with the sweep it produced so a reviewer can re-run it on
 the parent commit; deleted in the follow-up PR because it necessarily spells
 the retired names.
@@ -46,7 +46,7 @@ ATLAS_SIDE = [
     "crates/atlas-thread-metadata/tests/sqlite_floor.rs",
 ]
 ATLAS_SIDE_GLOBS = ["crates/atlas-native-agent/**/*", "tests/*.test.ts"]
-# Hand-edited: it names the path the engine was vendored under, on purpose.
+# Hand-edited: it names the path the engine was first imported under, on purpose.
 ATLAS_SIDE_SKIP = {"tests/vendor-licensing.test.ts", "tests/no-legacy-names.test.ts"}
 
 CODE_EXT = {".rs", ".ts", ".tsx", ".js", ".mjs", ".cjs", ".py", ".proto", ".lark"}
@@ -58,7 +58,7 @@ KEEP_NAME = re.compile(r"gpt[-_][\w.-]*codex[\w.-]*|codex-auto-review|codex-mini
 # ── protected tokens ────────────────────────────────────────────────────────
 PROTECT_LINE = re.compile(r"Modified by Atlas from upstream OpenAI Codex|OpenAI-Codex-")
 PROTECT_TOKEN = re.compile(
-    r"https?://[^\s\"'`)>\]]*"                      # every URL, upstream's included
+    r"https?://[^\s\"'`)>\]]*"                      # every URL, the original's included
     r"|atlas-agent-codex-port-spec"                 # the archived spec keeps its filename
     r"|gpt[-_][\w.]*?[-_]codex[\w.-]*"              # gpt-5-codex, gpt_5_codex_prompt, gpt-5.2-codex_friendly
     r"|\bcodex-auto-review\b|\bcodex-mini[\w-]*\b"  # model slugs
@@ -346,7 +346,7 @@ def fork_blobs() -> dict[str, str]:
 
 
 def modified_set() -> list[str]:
-    """Working-tree files under the engine that differ from the fork tree.
+    """Working-tree files under the engine that differ from the fork-point tree.
 
     Compared by blob hash at the same relative path, so it needs neither the
     index nor a commit — a renamed file has no counterpart and counts as

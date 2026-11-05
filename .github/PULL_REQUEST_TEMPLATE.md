@@ -40,7 +40,7 @@ the crates flagged `clippy: true` in `ci.yml`, the workspace lint table for the
 rest), plus a Windows-target clippy pass for the crates flagged `cross`;
 `cargo test --lib` and clippy for `src-tauri` on macOS, and clippy for it on
 Linux and Windows; and the engine
-dialect (`atlas-engine-api`) with the vendored crates Atlas has edited. So there are no
+dialect (`atlas-engine-api`) with the engine crates Atlas has edited. So there are no
 boxes for those. Locally, `bun run test:rust` runs a subset of CI's Rust tests
 (its header says what it skips) and no clippy. `bun run ci:local` runs what CI
 would for your branch, clippy included, and sends the jobs that need Linux to a

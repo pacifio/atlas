@@ -1,14 +1,11 @@
 //! The managed Node runtime.
 //!
-//! Ported from `zed-ref/crates/node_runtime/src/node_runtime.rs` (its
-//! `ManagedNodeRuntime`, `read_package_executable`, `npm_command_env`) and used
-//! for exactly the two things Zed uses it for: running an npx-distributed agent,
-//! and satisfying a binary target whose `cmd` is `"node"`.
+//! Used for exactly two things: running an npx-distributed agent, and
+//! satisfying a binary target whose `cmd` is `"node"`.
 //!
-//! DECIDED, research §D12-8: managed only. Zed can fall back to a system Node;
-//! Atlas does not, and this is what retires `node_setup.rs`'s nvm flow. The
-//! reason is the one Zed gives implicitly by requiring `cmd == "node"` and
-//! supplying its own runtime — an agent that works on the developer's machine
+//! DECIDED, research §D12-8: managed only. There is no fallback to a system Node,
+//! and this is what retires `node_setup.rs`'s nvm flow. The reason is that an
+//! agent that works on the developer's machine
 //! and not on the user's because their Node is three majors old is a support
 //! burden with no upside.
 //!
@@ -28,7 +25,12 @@ use tokio::sync::watch;
 use crate::archive::{install_archive, registry_archive_kind_for_url};
 use crate::http::{get_body, HttpClient};
 
-const NODE_VERSION: &str = "v24.11.0";
+/// The managed runtime. Floor: Node 24.14.1 (npm 11.11.0). Older npms do not
+/// record `libc` in the hidden lockfile, so `npm_tree` cannot tell a platform
+/// package npm skipped for the wrong libc from one it failed to download —
+/// on Linux every install then reports the musl twin as a gap and is thrown
+/// away. Keep `tests/fake_node/mod.rs` in step.
+const NODE_VERSION: &str = "v24.22.2";
 const NODE_CA_CERTS_ENV_VAR: &str = "NODE_EXTRA_CA_CERTS";
 
 /// How long one `npm <subcommand>` other than `install` may run before it is
@@ -90,12 +92,76 @@ enum Inner {
     Managed {
         containing_dir: PathBuf,
         http: Arc<dyn HttpClient>,
-        /// Serialises installation: two agents resolving at once must not both
-        /// download Node over the top of each other.
+        /// The installed runtime, once one has passed its check.
         install: tokio::sync::Mutex<Option<PathBuf>>,
+        /// The download in flight, if any. One per process: two agents
+        /// resolving at once share it, and a caller that gives up waiting
+        /// (a connect past its deadline) leaves it running — a 50 MB
+        /// download that restarted from zero every time a caller gave up
+        /// could never finish on a slow link.
+        job: std::sync::Mutex<Option<NodeJob>>,
     },
     Unavailable(String),
 }
+
+/// The result of one managed-runtime install, shared by its waiters.
+type NodeJob = futures::future::Shared<
+    futures::future::BoxFuture<'static, std::result::Result<PathBuf, Arc<anyhow::Error>>>,
+>;
+
+/// Report `what` on `status` now, and again with the elapsed time every
+/// [`STATUS_TICK`] until the returned task is aborted (or dropped: the guard
+/// aborts on drop).
+///
+/// The elapsed time is for the renderer as much as for the user. Its bind
+/// deadline re-arms only while the status *changes*; a long install that
+/// said "Installing …" once and then nothing for ten minutes looked exactly
+/// like a wedged one. A status that keeps moving is a job that is alive.
+pub(crate) fn tick_status(status: LoadingStatus, what: String) -> StatusTicker {
+    status.send(Some(format!("{what}…"))).ok();
+    let handle = tokio::spawn(async move {
+        let started = std::time::Instant::now();
+        let mut interval = tokio::time::interval(STATUS_TICK);
+        interval.tick().await; // the first tick is immediate
+        loop {
+            interval.tick().await;
+            let secs = started.elapsed().as_secs();
+            let elapsed = if secs < 60 {
+                format!("{secs}s")
+            } else {
+                format!("{}m {:02}s", secs / 60, secs % 60)
+            };
+            if status.send(Some(format!("{what}… {elapsed}"))).is_err() {
+                return;
+            }
+        }
+    });
+    StatusTicker(handle)
+}
+
+/// How often a running install restates its status.
+const STATUS_TICK: Duration = Duration::from_secs(20);
+
+/// Aborts the ticker when dropped, so no caller can forget to.
+pub(crate) struct StatusTicker(tokio::task::JoinHandle<()>);
+
+impl StatusTicker {
+    pub(crate) fn abort(&self) {
+        self.0.abort();
+    }
+}
+
+impl Drop for StatusTicker {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// How long the runtime's health check (`node npm --version`) may take. A
+/// runtime that answers nothing — a wedged filesystem, a Gatekeeper scan of
+/// a freshly extracted binary — used to park every agent behind the install
+/// lock with no error and no status text.
+const NODE_CHECK_TIMEOUT: Duration = Duration::from_secs(30);
 
 impl NodeRuntime {
     /// A runtime that installs itself under `<data_dir>/node` on first use.
@@ -104,11 +170,11 @@ impl NodeRuntime {
             containing_dir: data_dir.join("node"),
             http,
             install: tokio::sync::Mutex::new(None),
+            job: std::sync::Mutex::new(None),
         }))
     }
 
-    /// A runtime that fails with `reason` when anything asks for it. Zed's
-    /// `NodeRuntime::unavailable()`; here it is how a test builds a store whose
+    /// A runtime that fails with `reason` when anything asks for it. It is how a test builds a store whose
     /// agents never need Node.
     pub fn unavailable(reason: impl Into<String>) -> Self {
         Self(Arc::new(Inner::Unavailable(reason.into())))
@@ -132,7 +198,7 @@ impl NodeRuntime {
 
     /// Run `npm <subcommand> <args>`, retrying once.
     ///
-    /// The retry is Zed's (`node_runtime.rs:764-800`) and is not superstition:
+    /// The retry is not superstition:
     /// npm's first run after an install can fail while it populates its cache.
     pub async fn run_npm_subcommand(
         &self,
@@ -213,92 +279,137 @@ impl NodeRuntime {
         }
     }
 
-    // The `install` guard is held across the download and extract on purpose:
-    // it is a double-checked install lock, and the whole point is that a second
-    // caller waits rather than racing a `remove_dir_all(containing_dir)` against
-    // an extraction already in flight. That is what `tokio::sync::Mutex` is for.
-    #[expect(
-        clippy::await_holding_invalid_type,
-        reason = "the install lock must span the download so concurrent callers do not race the extract"
-    )]
     async fn install_if_needed(&self, loading_status: Option<&LoadingStatus>) -> Result<PathBuf> {
-        let (containing_dir, http, install) = match &*self.0 {
+        let (install, job_slot) = match &*self.0 {
             Inner::Unavailable(reason) => bail!("Node.js is unavailable: {reason}"),
-            Inner::Managed {
-                containing_dir,
-                http,
-                install,
-            } => (containing_dir, http, install),
+            Inner::Managed { install, job, .. } => (install, job),
         };
 
-        let mut install = install.lock().await;
-        if let Some(node_dir) = install.as_ref() {
+        if let Some(node_dir) = install.lock().await.as_ref() {
             return Ok(node_dir.clone());
         }
 
-        let (os, arch) = node_platform()?;
-        let node_dir = containing_dir.join(format!("node-{NODE_VERSION}-{os}-{arch}"));
-
-        if !node_install_works(&node_dir).await {
-            // Not just the version directory: Zed wipes the whole containing
-            // directory (`node_runtime.rs:680-683`) so an abandoned install of
-            // another version does not accumulate.
-            let _ = tokio::fs::remove_dir_all(containing_dir).await;
-
-            let extension = if cfg!(windows) { "zip" } else { "tar.gz" };
-            let file_name = format!("node-{NODE_VERSION}-{os}-{arch}.{extension}");
-            let url = format!("https://nodejs.org/dist/{NODE_VERSION}/{file_name}");
-            tracing::info!(url, "downloading the managed Node.js runtime");
-            if let Some(tx) = loading_status {
-                tx.send(Some("Downloading Node.js…".to_owned())).ok();
+        // Join the install in flight, or start it. Started on its own task:
+        // see [`Inner::Managed::job`].
+        let job = {
+            let mut slot = job_slot
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            match slot.as_ref() {
+                Some(job) => job.clone(),
+                None => {
+                    let job = self.start_install_job(loading_status.cloned());
+                    *slot = Some(job.clone());
+                    job
+                }
             }
-
-            // Before the bytes, the digest for them. This runtime is about to
-            // be executed as a child process on every npx agent, and unlike
-            // the registry it costs nothing to verify.
-            let digest = node_archive_digest(&**http, &file_name).await?;
-
-            // The tarball's single top-level directory is the version directory,
-            // so extracting it *into* the containing dir produces `node_dir`.
-            let kind = registry_archive_kind_for_url(&url)?;
-            // Bounded, because the install lock is held across this: a stalled
-            // nodejs.org socket would otherwise block every agent for good.
-            // A timeout leaves `install` as `None`, so the next caller retries.
-            tokio::time::timeout(
-                NODE_INSTALL_TIMEOUT,
-                install_archive(&**http, &url, Some(&digest), containing_dir, &kind),
-            )
-            .await
-            .map_err(|_elapsed| {
-                anyhow::anyhow!(
-                    "the Node.js runtime download from {url} did not finish within {} minutes \
-                     (nodejs.org may be unreachable)",
-                    NODE_INSTALL_TIMEOUT.as_secs() / 60
-                )
-            })?
-            .context("installing the managed Node.js runtime")?;
-
-            anyhow::ensure!(
-                node_install_works(&node_dir).await,
-                "the downloaded Node.js runtime at {node_dir:?} does not run"
-            );
-
-            // A fresh runtime starts with a fresh npm cache. This is the only
-            // place the cache is wiped: keeping it across launches is what lets
-            // an install revalidate metadata instead of re-downloading tarballs,
-            // and lets an offline host fall back to what it already fetched.
-            let _ = tokio::fs::remove_dir_all(node_dir.join("cache")).await;
-        }
-
-        // Outside the install branch on purpose, so an installation from an
-        // earlier Atlas version gets these too.
-        let _ = tokio::fs::create_dir_all(node_dir.join("cache")).await;
-        let _ = tokio::fs::write(node_dir.join("blank_user_npmrc"), USER_NPMRC).await;
-        let _ = tokio::fs::write(node_dir.join("blank_global_npmrc"), []).await;
-
-        *install = Some(node_dir.clone());
+        };
+        let node_dir = job.await.map_err(|error| anyhow::anyhow!("{error:#}"))?;
+        *install.lock().await = Some(node_dir.clone());
         Ok(node_dir)
     }
+
+    fn start_install_job(&self, loading_status: Option<LoadingStatus>) -> NodeJob {
+        use futures::FutureExt as _;
+        let inner = self.0.clone();
+        let task = tokio::spawn(async move {
+            let result = install_runtime(&inner, loading_status.as_ref()).await;
+            if let Inner::Managed { job, .. } = &*inner {
+                // Unregister before resolving, so a caller that wakes and
+                // asks again finds the cached path rather than a done job.
+                job.lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .take();
+            }
+            result
+        });
+        async move {
+            match task.await {
+                Ok(result) => result.map_err(Arc::new),
+                Err(join) => Err(Arc::new(anyhow::anyhow!(
+                    "the Node.js install task failed: {join}"
+                ))),
+            }
+        }
+        .boxed()
+        .shared()
+    }
+}
+
+/// Check the runtime on disk and download it if it does not run. The body of
+/// the install job; one call per process at a time.
+async fn install_runtime(inner: &Inner, loading_status: Option<&LoadingStatus>) -> Result<PathBuf> {
+    let Inner::Managed {
+        containing_dir,
+        http,
+        ..
+    } = inner
+    else {
+        bail!("Node.js is unavailable");
+    };
+
+    let (os, arch) = node_platform()?;
+    let node_dir = containing_dir.join(format!("node-{NODE_VERSION}-{os}-{arch}"));
+
+    if !node_install_works(&node_dir).await {
+        let extension = if cfg!(windows) { "zip" } else { "tar.gz" };
+        let file_name = format!("node-{NODE_VERSION}-{os}-{arch}.{extension}");
+        let url = format!("https://nodejs.org/dist/{NODE_VERSION}/{file_name}");
+        tracing::info!(url, "downloading the managed Node.js runtime");
+        let _ticker =
+            loading_status.map(|tx| tick_status(tx.clone(), "Downloading Node.js".to_owned()));
+
+        // Before the bytes, the digest for them. This runtime is about to
+        // be executed as a child process on every npx agent, and unlike
+        // the registry it costs nothing to verify.
+        let digest = node_archive_digest(&**http, &file_name).await?;
+
+        // The tarball's single top-level directory is the version directory,
+        // so extracting it *into* the containing dir produces `node_dir`.
+        //
+        // Nothing is removed first. `install_archive` stages the download,
+        // verifies it, and only then replaces `containing_dir` whole — which
+        // is also what clears an abandoned install of another version. A
+        // `remove_dir_all` before the fetch used to make a dropped download
+        // cost the runtime that was there AND the npm cache under it, the
+        // cache the offline fallback depends on.
+        let kind = registry_archive_kind_for_url(&url)?;
+        tokio::time::timeout(
+            NODE_INSTALL_TIMEOUT,
+            install_archive(&**http, &url, Some(&digest), containing_dir, &kind),
+        )
+        .await
+        .map_err(|_elapsed| {
+            anyhow::anyhow!(
+                "the Node.js runtime download from {url} did not finish within {} minutes \
+                 (nodejs.org may be unreachable)",
+                NODE_INSTALL_TIMEOUT.as_secs() / 60
+            )
+        })?
+        .context("installing the managed Node.js runtime")?;
+
+        anyhow::ensure!(
+            node_install_works(&node_dir).await,
+            "the downloaded Node.js runtime at {node_dir:?} does not run"
+        );
+
+        // A fresh runtime starts with a fresh npm cache. This is the only
+        // place the cache is wiped: keeping it across launches is what lets
+        // an install revalidate metadata instead of re-downloading tarballs,
+        // and lets an offline host fall back to what it already fetched.
+        let _ = tokio::fs::remove_dir_all(node_dir.join("cache")).await;
+    }
+
+    // Outside the install branch on purpose, so an installation from an
+    // earlier Atlas version gets these too.
+    let _ = tokio::fs::create_dir_all(node_dir.join("cache")).await;
+    let _ = tokio::fs::write(node_dir.join("blank_user_npmrc"), USER_NPMRC).await;
+    let _ = tokio::fs::write(node_dir.join("blank_global_npmrc"), []).await;
+
+    if let Some(tx) = loading_status {
+        tx.send(None).ok();
+    }
+    Ok(node_dir)
 }
 
 /// `npm <subcommand>` outlived its deadline ([`npm_timeout`]) and was killed.
@@ -326,8 +437,7 @@ impl std::error::Error for NpmTimedOut {}
 
 /// Whether the Node at `node_dir` actually runs.
 ///
-/// Zed checks by running npm rather than by checking the file exists
-/// (`node_runtime.rs:641-676`): a half-extracted or wrong-architecture install
+/// This checks by running npm rather than by checking the file exists: a half-extracted or wrong-architecture install
 /// has the file and fails at the worst possible moment otherwise.
 async fn node_install_works(node_dir: &Path) -> bool {
     let node_binary = node_dir.join(NODE_PATH);
@@ -336,7 +446,8 @@ async fn node_install_works(node_dir: &Path) -> bool {
     }
 
     let npm_file = node_dir.join(NPM_PATH);
-    let result = atlas_process::async_command(&node_binary)
+    let mut command = atlas_process::async_command(&node_binary);
+    command
         .env(
             NODE_CA_CERTS_ENV_VAR,
             std::env::var(NODE_CA_CERTS_ENV_VAR).unwrap_or_default(),
@@ -346,8 +457,19 @@ async fn node_install_works(node_dir: &Path) -> bool {
         .args(["--cache".into(), node_dir.join("cache")])
         .args(["--userconfig".into(), node_dir.join("blank_user_npmrc")])
         .args(["--globalconfig".into(), node_dir.join("blank_global_npmrc")])
-        .output()
-        .await;
+        // Expiry drops the future; the check must take its process with it.
+        .kill_on_drop(true);
+    let result = match tokio::time::timeout(NODE_CHECK_TIMEOUT, command.output()).await {
+        Ok(result) => result,
+        Err(_elapsed) => {
+            tracing::warn!(
+                node = %node_binary.display(),
+                timeout_secs = NODE_CHECK_TIMEOUT.as_secs(),
+                "the managed Node.js binary did not answer its check in time"
+            );
+            return false;
+        }
+    };
 
     match result {
         Ok(output) if output.status.success() => true,
@@ -385,13 +507,17 @@ fn node_platform() -> Result<(&'static str, &'static str)> {
     Ok((os, arch))
 }
 
-/// The platform npm gates `os`/`cpu` on — `process.platform`/`process.arch` of
-/// the managed Node, which is the Atlas build's own arch (an x64 build under
-/// Rosetta gets an x64 Node and resolves x64 packages, consistently).
+/// The platform npm gates `os`/`cpu`/`libc` on — `process.platform`/
+/// `process.arch` of the managed Node, which is the Atlas build's own arch (an
+/// x64 build under Rosetta gets an x64 Node and resolves x64 packages,
+/// consistently). On Linux the libc is always glibc: the managed Node is
+/// nodejs.org's Linux build, which is glibc-only, and npm reads the family
+/// from that Node's own runtime report.
 pub fn npm_platform() -> Option<crate::npm_tree::NpmPlatform> {
     let (os, cpu) = node_platform().ok()?;
     let os = if os == "win" { "win32" } else { os };
-    Some(crate::npm_tree::NpmPlatform { os, cpu })
+    let libc = (os == "linux").then_some("glibc");
+    Some(crate::npm_tree::NpmPlatform { os, cpu, libc })
 }
 
 /// The inherited environment keys npm must not see.
@@ -412,8 +538,8 @@ fn inherited_npm_config_keys(
         .collect()
 }
 
-/// The fetch policy every managed npm run gets. Zed's
-/// (`node_runtime.rs:1124-1158`) plus bounded network waits: the Codex
+/// The fetch policy every managed npm run gets: a
+/// base policy plus bounded network waits: the Codex
 /// platform tarball alone is 220 MB. Note `fetch-timeout` is npm's per-socket
 /// *idle* timeout (`@npmcli/agent` maps it to `timeouts.idle`), not a transfer
 /// cap — it ends a stalled socket, never a slow download; the whole-invocation
@@ -437,7 +563,7 @@ const NPM_FETCH_ARGS: &[&str] = &[
     "10000",
 ];
 
-/// Ported from `build_npm_command_args` (`node_runtime.rs:1124-1158`). Every
+/// Every
 /// path is pinned at the managed install so npm never reads the user's npmrc or
 /// writes their global cache, and every path goes out in its plain spelling
 /// ([`plain_process_path`]) whatever the caller resolved it to.
@@ -544,7 +670,6 @@ pub(crate) fn plain_process_path(path: &Path) -> PathBuf {
 }
 
 /// The executable an npm package declares, resolved out of its `package.json`.
-/// Ported from `node_runtime.rs:1019-1064`.
 pub async fn read_package_executable(node_modules_dir: &Path, name: &str) -> Result<PathBuf> {
     #[derive(serde::Deserialize)]
     #[serde(untagged)]
@@ -589,22 +714,19 @@ pub async fn read_package_executable(node_modules_dir: &Path, name: &str) -> Res
 /// Turn `pkg@1.2.3` into `("pkg", "pkg@0.0.0 - 1.2.3")` — a version *ceiling*,
 /// not a pin.
 ///
-/// Ported verbatim, comment and all, from `agent_server_store.rs:1436-1477`:
+/// People are using npm's min-release-age more frequently, which means a fresh
+/// registry will likely list package versions the user cannot install. So the
+/// version is a ceiling and not an exact pin: npm resolves the latest version
+/// it can find that satisfies the constraint. This is a best-effort attempt to
+/// install a version that works without overriding the user's security
+/// settings.
 ///
-/// > People are using min-release-age more frequently. Which means a fresh
-/// > registry will likely have new package versions than the user can install.
-/// > We set the version to now be a ceiling and not an exact pin instead. This
-/// > allows npm to resolve the latest version it can find that satisfies the
-/// > constraint. […] This is a best-effort attempt to install a version that
-/// > works without overriding the user's security settings.
-/// >
-/// > We use npm's hyphen-range syntax (`0.0.0 - <version>`, equivalent to
-/// > `<=<version>`) instead of the more compact `<=<version>` form because on
-/// > Windows, `npm` is `npm.cmd` (a batch file run by cmd.exe), and the quotes
-/// > our shell builder emits are PowerShell string-literal syntax that PS strips
-/// > during parsing. […] so `package@<=0.25.3` reaches cmd.exe bare and the
-/// > unquoted `<` is interpreted as input redirection. See
-/// > zed-industries/zed#55921.
+/// The spec uses npm's hyphen-range syntax (`0.0.0 - <version>`, equivalent to
+/// `<=<version>`) instead of the more compact `<=<version>` form because on
+/// Windows, `npm` is `npm.cmd` (a batch file run by cmd.exe), and the quotes a
+/// PowerShell-targeted shell builder emits are stripped during parsing, so
+/// `package@<=0.25.3` would reach cmd.exe bare and the unquoted `<` would be
+/// interpreted as input redirection. See zed-industries/zed#55921.
 pub fn bounded_npm_package_spec(package_spec: &str) -> (&str, String) {
     let Some((package_name, version)) = package_spec.rsplit_once('@') else {
         return (package_spec, package_spec.to_string());
@@ -784,37 +906,37 @@ mod tests {
     /// The real file's shape: two spaces, digest first, many lines, and the
     /// one we want is not the first.
     const SHASUMS_SAMPLE: &str = "\
-0000000000000000000000000000000000000000000000000000000000000001  node-v24.11.0-linux-x64.tar.gz
-0000000000000000000000000000000000000000000000000000000000000002  node-v24.11.0-darwin-arm64.tar.gz
-0000000000000000000000000000000000000000000000000000000000000003  node-v24.11.0-win-x64.zip
+0000000000000000000000000000000000000000000000000000000000000001  node-v24.22.2-linux-x64.tar.gz
+0000000000000000000000000000000000000000000000000000000000000002  node-v24.22.2-darwin-arm64.tar.gz
+0000000000000000000000000000000000000000000000000000000000000003  node-v24.22.2-win-x64.zip
 ";
 
     #[test]
     fn reads_one_digest_out_of_a_shasums_listing() {
         assert_eq!(
-            digest_for(SHASUMS_SAMPLE, "node-v24.11.0-darwin-arm64.tar.gz").as_deref(),
+            digest_for(SHASUMS_SAMPLE, "node-v24.22.2-darwin-arm64.tar.gz").as_deref(),
             Some("0000000000000000000000000000000000000000000000000000000000000002"),
         );
     }
 
     #[test]
     fn a_file_the_listing_does_not_mention_has_no_digest() {
-        assert!(digest_for(SHASUMS_SAMPLE, "node-v24.11.0-linux-arm64.tar.gz").is_none());
+        assert!(digest_for(SHASUMS_SAMPLE, "node-v24.22.2-linux-arm64.tar.gz").is_none());
     }
 
     /// A prefix match would hand back the wrong release's digest, and the
     /// install would then fail for a reason that says nothing useful.
     #[test]
     fn a_similar_file_name_is_not_a_match() {
-        assert!(digest_for(SHASUMS_SAMPLE, "node-v24.11.0-linux-x64.tar").is_none());
-        assert!(digest_for(SHASUMS_SAMPLE, "node-v24.11.0-linux-x64.tar.gz.asc").is_none());
+        assert!(digest_for(SHASUMS_SAMPLE, "node-v24.22.2-linux-x64.tar").is_none());
+        assert!(digest_for(SHASUMS_SAMPLE, "node-v24.22.2-linux-x64.tar.gz.asc").is_none());
     }
 
     #[test]
     fn tolerates_single_space_and_binary_mode_markers() {
-        let listing = "00000000000000000000000000000000000000000000000000000000000000ab *node-v24.11.0-linux-x64.tar.gz\n";
+        let listing = "00000000000000000000000000000000000000000000000000000000000000ab *node-v24.22.2-linux-x64.tar.gz\n";
         assert_eq!(
-            digest_for(listing, "node-v24.11.0-linux-x64.tar.gz").as_deref(),
+            digest_for(listing, "node-v24.22.2-linux-x64.tar.gz").as_deref(),
             Some("00000000000000000000000000000000000000000000000000000000000000ab"),
         );
     }
@@ -823,8 +945,8 @@ mod tests {
     /// signature block at the end of the real file is exactly this shape.
     #[test]
     fn ignores_lines_that_are_not_digests() {
-        let listing = "-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA256\n\nnot-a-digest node-v24.11.0-linux-x64.tar.gz\n";
-        assert!(digest_for(listing, "node-v24.11.0-linux-x64.tar.gz").is_none());
+        let listing = "-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA256\n\nnot-a-digest node-v24.22.2-linux-x64.tar.gz\n";
+        assert!(digest_for(listing, "node-v24.22.2-linux-x64.tar.gz").is_none());
     }
 
     #[test]

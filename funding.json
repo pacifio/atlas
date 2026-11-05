@@ -1,0 +1,76 @@
+{
+  "$schema": "https://fundingjson.org/schema/v1.1.0.json",
+  "version": "v1.1.0",
+  "entity": {
+    "type": "individual",
+    "role": "owner",
+    "name": "Adib Mohsin",
+    "email": "adibmohsin.root@gmail.com",
+    "phone": "",
+    "description": "Adib Mohsin is the founder and maintainer of Atlas, the agentic visibility and control layer for teams shipping with coding agents, based in Dhaka, Bangladesh. He was an early core contributor to Headroom (70k+ stars), where he built the Go and TypeScript SDKs and wrote the docs, and he wrote USearch's Zig binding.",
+    "webpageUrl": {
+      "url": "https://tryatlas.cc",
+      "wellKnown": "https://tryatlas.cc/.well-known/funding-manifest-urls"
+    }
+  },
+  "projects": [
+    {
+      "guid": "atlas",
+      "name": "Atlas",
+      "description": "Atlas is the agentic visibility and control layer for teams shipping with coding agents. When a whole engineering team runs agents on one codebase, git shows the diff but not whose agent made it or what it was told. Atlas records every agent session, links each commit to the session and prompt behind it, and puts the team's sessions on one shared timeline where teammates comment on each other's work while the agent is still running. For engineers it is a control-surface IDE built around agents' context: memory shared across agents, remote control of a live session, and editor, terminal and git in one window. For engineering managers it sets AI spend against the commits it shipped. The shared timeline is fully open source. A CLI plugs the same recording and shared memory into the agents a team already runs in a terminal in about 3 minutes, because we learned teams won't switch their stack. Atlas has 9k+ GitHub stars, 500+ weekly active users and 4B+ tokens processed, and it is free to use. Docs: https://docs.tryatlas.cc",
+      "webpageUrl": {
+        "url": "https://tryatlas.cc",
+        "wellKnown": ""
+      },
+      "repositoryUrl": {
+        "url": "https://github.com/pacifio/atlas",
+        "wellKnown": ""
+      },
+      "licenses": [
+        "spdx:Apache-2.0"
+      ],
+      "tags": [
+        "developer-tools",
+        "ai",
+        "coding-agents",
+        "source-control",
+        "open-source",
+        "cli"
+      ]
+    }
+  ],
+  "funding": {
+    "channels": [
+      {
+        "guid": "bank",
+        "type": "bank",
+        "address": "",
+        "description": "Bank wire. Email adibmohsin.root@gmail.com for account details and tax documents."
+      }
+    ],
+    "plans": [
+      {
+        "guid": "maintenance-y1",
+        "status": "active",
+        "name": "Atlas open-source maintenance, year 1",
+        "description": "Maintainer time on Atlas's open-source shared timeline and CLI: reviewing contributions, fixing issues, keeping the docs current and cutting releases.",
+        "amount": 25000,
+        "currency": "USD",
+        "frequency": "yearly",
+        "channels": [
+          "bank"
+        ]
+      }
+    ],
+    "history": [
+      {
+        "year": 2026,
+        "income": 10000,
+        "expenses": 0,
+        "taxes": 0,
+        "currency": "USD",
+        "description": "Non-dilutive grant from the OpenCore Ventures Catalyst program."
+      }
+    ]
+  }
+}

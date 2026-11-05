@@ -31,9 +31,10 @@ interface Popup {
 
 function createPopup(): Popup {
   const el = document.createElement("div");
-  el.className = "atlas-slash-popup";
+  el.dataset.slashPopup = "";
   el.style.position = "absolute";
-  el.style.zIndex = "1000";
+  // The package's popover layer, the one every menu uses.
+  el.style.zIndex = "var(--z-popover)";
   el.style.display = "none";
   document.body.appendChild(el);
   const root = createRoot(el);

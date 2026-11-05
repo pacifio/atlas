@@ -207,8 +207,8 @@ describe("CI's Rust jobs", () => {
     expect(header).not.toMatch(/^\s*RUSTC_WRAPPER:/m);
   });
 
-  it("keeps scripts/test-rust.sh testing the same vendored crates as the engine dialect job", () => {
-    // `bun run test:rust` is the local subset of CI; its vendored `-p` list is
+  it("keeps scripts/test-rust.sh testing the same engine crates as the engine dialect job", () => {
+    // `bun run test:rust` is the local subset of CI; its engine `-p` list is
     // a copy of the job's, and a copy drifts unless something compares them.
     const packages = (text: string) =>
       [...text.matchAll(/-p (atlas-engine-[a-z0-9-]+)/g)].map((m) => m[1]).sort();
@@ -254,11 +254,16 @@ describe("release-linux's Rust build", () => {
   const header = src.slice(0, src.search(/^jobs:\s*$/m));
   const jobs = [...jobBlocks(RELEASE_LINUX)];
 
-  it("has the single job that makes a workflow-wide RUSTC_WRAPPER safe", () => {
-    // ci.yml forbids it workflow-wide; here it is fine only while one job,
-    // which installs sccache first, is all there is.
+  it("runs cargo in one job only, which makes a workflow-wide RUSTC_WRAPPER safe", () => {
+    // ci.yml forbids it workflow-wide; here it is fine only while the one job
+    // that runs cargo installs sccache first (below). The publish job, which
+    // assembles both architectures' packages, must never run cargo: it has no
+    // sccache, and RUSTC_WRAPPER would fail its first cargo call.
     expect(header).toMatch(/^ {2}RUSTC_WRAPPER:\s*sccache\s*$/m);
-    expect(jobs.map(([id]) => id)).toEqual(["build-linux"]);
+    expect(jobs.map(([id]) => id)).toEqual(["build-linux", "publish"]);
+    const runsCargo = (s: Step) =>
+      Boolean(s.uses?.startsWith("Swatinem/rust-cache@")) || /\bcargo |build:app/.test(s.run ?? "");
+    expect(stepsOf(jobs[1][1]).some(runsCargo)).toBe(false);
   });
 
   it("installs sccache before anything runs cargo", () => {

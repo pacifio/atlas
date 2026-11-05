@@ -1,13 +1,13 @@
 import { CodeBlockLowlight } from "@tiptap/extension-code-block-lowlight";
-import { CopyGlyph } from "@/ui/animated-icon";
 import {
   NodeViewWrapper,
   NodeViewContent,
   ReactNodeViewRenderer,
   type NodeViewProps,
 } from "@tiptap/react";
-import { useState } from "react";
-import { Hint } from "@/ui/tooltip";
+import { useEffect, useRef, useState } from "react";
+import { CopyGlyph, Hint, buttonVariants } from "@tryatlas/design";
+import { copyText } from "@/lib/clipboard";
 
 /**
  * CodeBlockLowlight wrapped in a React NodeView that adds the header
@@ -30,21 +30,27 @@ function CodeBlockView({ node, updateAttributes }: NodeViewProps) {
   const language = (node.attrs.language as string | null) || "plain";
   const [copied, setCopied] = useState(false);
 
+  const copiedTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(copiedTimer.current), []);
+
+  // Through the native pasteboard: WKWebView's web clipboard can report a
+  // copy it never made. "Copied" only when it landed.
   const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(node.textContent);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1200);
-    } catch {
-      // ignore — clipboard permissions / non-secure contexts
-    }
+    if (!(await copyText(node.textContent))) return;
+    setCopied(true);
+    window.clearTimeout(copiedTimer.current);
+    copiedTimer.current = window.setTimeout(() => setCopied(false), 1200);
   };
 
   return (
-    <NodeViewWrapper className="atlas-code">
-      <div className="atlas-code-header" contentEditable={false}>
+    // The package `Code variant="block"` frame: a bordered surface panel.
+    <NodeViewWrapper className="atlas-code my-2.5 overflow-hidden rounded-md border border-border bg-panel">
+      <div
+        className="flex items-center gap-2 border-b border-border-subtle px-3 py-1.5"
+        contentEditable={false}
+      >
         <input
-          className="atlas-code-lang"
+          className="w-28 bg-transparent font-mono text-xs text-muted-foreground outline-none placeholder:text-muted-foreground"
           value={language === "plain" ? "" : language}
           placeholder="language"
           onChange={(e) => {
@@ -52,19 +58,27 @@ function CodeBlockView({ node, updateAttributes }: NodeViewProps) {
             updateAttributes({ language: val.length > 0 ? val : null });
           }}
         />
-        <span style={{ flex: 1 }} />
+        <span className="flex-1" />
         <Hint label={copied ? "Copied" : "Copy"}>
-          <button type="button" className="atlas-code-copy" onClick={handleCopy}>
+          <button
+            type="button"
+            className={buttonVariants({ variant: "ghost", size: "xs" })}
+            onClick={handleCopy}
+          >
             <CopyGlyph copied={copied} size="sm" />
-            {copied ? " Copied" : ""}
+            {copied ? "Copied" : null}
           </button>
         </Hint>
       </div>
       {/* NodeViewContent's `as` prop is narrowed to "div" in our Tiptap
-          types — wrap in <pre> for the design's monospace block frame
-          and let lowlight paint hljs token classes inside. */}
+          types — wrap in <pre> for the design's monospace block frame and let
+          lowlight paint `.hljs-*` token spans inside, coloured by the package's
+          `syntax.css`. Never the bare `hljs` class: that stylesheet's
+          `.hljs` rule paints its own background and padding. */}
       <pre>
-        <NodeViewContent className={`hljs language-${language}`} />
+        <NodeViewContent
+          className={`font-mono text-base leading-relaxed text-secondary-foreground language-${language}`}
+        />
       </pre>
     </NodeViewWrapper>
   );

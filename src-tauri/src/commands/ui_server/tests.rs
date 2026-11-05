@@ -33,7 +33,7 @@ fn sharing(on: bool) -> SharingGate {
 }
 
 fn navigation(on: bool) -> NavigationGate {
-    Arc::new(move || on)
+    Arc::new(move |_: &str| on)
 }
 
 /// A bridge whose "window" answers every request with `answer`, recording
@@ -532,12 +532,12 @@ fn each_decision_is_one_log_line_naming_the_agent_its_capabilities_and_the_outco
 fn the_setting_is_not_read_for_a_connection_that_cannot_use_the_server() {
     let reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let counted = reads.clone();
-    let ui = UiOffer::new(Arc::new(move || {
+    let ui = UiOffer::new(Arc::new(move |_: &str| {
         counted.fetch_add(1, Ordering::SeqCst);
         true
     }));
-    ui.decide(true, false, true);
-    ui.decide(false, true, true);
+    ui.decide(true, false, "/p", true);
+    ui.decide(false, true, "/p", true);
     assert_eq!(reads.load(Ordering::SeqCst), 0);
 }
 
@@ -626,7 +626,7 @@ async fn a_token_offered_with_ui_control_drives_the_window() {
 async fn switching_navigation_off_refuses_the_next_call_of_a_connected_client() {
     let flag = Arc::new(std::sync::atomic::AtomicBool::new(true));
     let read = flag.clone();
-    let nav: NavigationGate = Arc::new(move || read.load(Ordering::SeqCst));
+    let nav: NavigationGate = Arc::new(move |_: &str| read.load(Ordering::SeqCst));
     let tokens = Arc::new(MemoryTokens::default());
     let (bridge, asked) = answering_bridge(|_| UiReply {
         ok: true,

@@ -1,10 +1,9 @@
 import { describe, expect, it } from "vitest";
-import builtinThemes from "@/dev/mock-backend/fixtures/builtin-themes.json";
+import { BUILTIN_THEMES } from "@/dev/mock-backend/fixtures/builtin-themes";
 import { previewTheme } from "./preview-theme";
-import { resolveTheme } from "./resolve-theme";
-import type { Theme } from "./lib/theme-api";
+import { resolveTheme, type Theme } from "@tryatlas/design/theme";
 
-const themes = builtinThemes as Theme[];
+const themes = BUILTIN_THEMES;
 const withBoth = themes.find((theme) => theme.dark && theme.light)!;
 
 /** A theme that sets almost nothing — an import, or a half-written file. */
@@ -24,7 +23,7 @@ describe("previewTheme", () => {
     const preview = previewTheme(withBoth, "light");
     const resolved = resolveTheme(withBoth, "light");
     expect(preview.appearance).toBe("light");
-    expect(preview.vars["--atlas-syntax-keyword"]).toBe(resolved.keys["syntax.keyword"]);
+    expect(preview.vars["--syntax-keyword"]).toBe(resolved.keys["syntax.keyword"]);
     expect(preview.vars["--background"]).toBe(resolved.base.background);
   });
 
@@ -47,17 +46,16 @@ describe("previewTheme", () => {
   });
 
   it("previews a theme with no base tokens at all", () => {
-    // The derivation chain ends in a per-appearance Atlas default for every
-    // key, and `FALLBACKS` borrows from it for the base tokens the miniature
-    // draws with — so nothing here can inherit the ACTIVE theme's colours.
+    // Every base token is derived (ADR-0022), so nothing inside a preview can
+    // inherit the ACTIVE theme's colours from `:root`.
     const preview = previewTheme(sparse("empty"), "dark");
     for (const value of Object.values(preview.swatch)) {
       expect(value).toMatch(/^#|^rgb|^hsl|^oklch/);
     }
-    expect(preview.vars["--background"]).toBe(preview.vars["--atlas-editor-background"]);
-    expect(preview.vars["--muted-foreground"]).toBe(
-      preview.vars["--atlas-editor-gutter-foreground"],
-    );
+    for (const token of ["--border", "--muted-foreground", "--sidebar", "--ring"] as const) {
+      expect(preview.vars[token], token).toBeTruthy();
+    }
+    expect(preview.vars["--background"]).toBe(preview.vars["--editor-background"]);
   });
 
   it("leaves a theme's own base tokens alone", () => {

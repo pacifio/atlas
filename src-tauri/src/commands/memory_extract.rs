@@ -26,6 +26,7 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -41,6 +42,29 @@ use super::shared_memory::{SharedMemoryStore, Writer};
 /// and asks for structured output), but a hung call must not park the
 /// background queue.
 const EXTRACT_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// How long background calls stay off the gateway after one was abandoned.
+///
+/// The gateway reserves one of the user's concurrency slots (four) before it
+/// calls the provider, and frees it when the request settles. A non-streamed
+/// request the client stops waiting for does not settle early: the slot stays
+/// held until the provider answers or the reservation's TTL sweeps it — 15
+/// minutes, `RESERVATION_TTL_MS` in the server's `apps/ai/src/gate.ts`. So
+/// every timed-out pass took a slot from the user for up to that long, and
+/// four in a row (a slow model, one pass per finished turn) left the user's
+/// own turns answered `429 Too many requests in flight`. Waiting out the TTL
+/// keeps background work to at most one stranded slot.
+const STRANDED_HOLD: Duration = Duration::from_secs(15 * 60);
+
+/// How long background calls stay off the gateway after it answered `429`:
+/// the slots are in use — by the user's own turns, most likely — and a
+/// memory pass is the one caller that can always wait.
+const REFUSED_HOLD: Duration = Duration::from_secs(2 * 60);
+
+/// The start of the error a gateway call returns while background calls are
+/// paused ([`GatewayGate`]). Not a failure: the pass is skipped and its turns
+/// are read by a later one.
+pub const GATEWAY_PAUSED: &str = "background gateway calls are paused";
 
 /// How long after a session's end a turn job from it still counts as that
 /// session's last turn (the two are queued from different threads, so the
@@ -312,6 +336,12 @@ impl Extractor {
         .await;
         let found = match found {
             Ok(found) => found,
+            Err(e) if e.to_string().starts_with(GATEWAY_PAUSED) => {
+                // Skipped, not failed: the counters are untouched, so a later
+                // pass (or the catch-up) reads these turns.
+                tracing::debug!(target: "atlas::shared_memory", "extraction pass skipped: {e}");
+                return (false, 0);
+            }
             Err(e) => {
                 // Warn, not debug: a pass that keeps failing (the gateway
                 // unreachable, no model for the org) is otherwise invisible,
@@ -677,17 +707,124 @@ fn mcp_server(token: &str, dotted: bool) -> Option<&str> {
     (ident(server) && ident(tool) && !tool.bytes().all(|b| b.is_ascii_digit())).then_some(server)
 }
 
+// ── The gateway's share for background calls ─────────────────────────────────
+
+/// Keeps background model calls (extraction, dreams) from using up the
+/// gateway's per-user concurrency slots, which the user's own turns need.
+///
+/// One call at a time, and none for a while after a call was abandoned
+/// ([`STRANDED_HOLD`]) or refused ([`REFUSED_HOLD`]). Process-wide: every
+/// project's passes share one account's slots.
+#[derive(Default)]
+pub struct GatewayGate {
+    busy: AtomicBool,
+    closed_until: Mutex<Option<Instant>>,
+}
+
+impl GatewayGate {
+    /// A permit for one call, or `None` while a call is in flight or the gate
+    /// is closed.
+    fn enter(self: &Arc<Self>) -> Option<GatewayPermit> {
+        self.enter_at(Instant::now())
+    }
+
+    fn enter_at(self: &Arc<Self>, now: Instant) -> Option<GatewayPermit> {
+        if self.closed_until.lock().is_some_and(|until| now < until) {
+            return None;
+        }
+        if self.busy.swap(true, Ordering::AcqRel) {
+            return None;
+        }
+        Some(GatewayPermit {
+            gate: self.clone(),
+            outcome: None,
+        })
+    }
+
+    /// Closed until `until`, never shortening a longer closure.
+    fn close_until(&self, until: Instant) {
+        let mut closed = self.closed_until.lock();
+        if closed.is_none_or(|current| current < until) {
+            *closed = Some(until);
+        }
+    }
+}
+
+/// How a permitted call ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Outcome {
+    /// The gateway answered, or the request never reached it: no slot held.
+    Settled,
+    /// The gateway answered `429`.
+    Refused,
+}
+
+/// One background call's turn at the gateway. A permit dropped without an
+/// outcome is an abandoned request — its future was dropped by a caller's
+/// timeout, or the HTTP client gave up mid-request — and closes the gate for
+/// [`STRANDED_HOLD`].
+struct GatewayPermit {
+    gate: Arc<GatewayGate>,
+    outcome: Option<Outcome>,
+}
+
+impl GatewayPermit {
+    fn finish(mut self, outcome: Outcome) {
+        self.outcome = Some(outcome);
+    }
+}
+
+impl Drop for GatewayPermit {
+    fn drop(&mut self) {
+        let (hold, why) = match self.outcome {
+            Some(Outcome::Settled) => (None, ""),
+            Some(Outcome::Refused) => (
+                Some(REFUSED_HOLD),
+                "the gateway is at its concurrency limit",
+            ),
+            None => (
+                Some(STRANDED_HOLD),
+                "an abandoned call may still hold a gateway slot",
+            ),
+        };
+        if let Some(hold) = hold {
+            tracing::warn!(
+                target: "atlas::shared_memory",
+                "background gateway calls paused for {}s: {why}",
+                hold.as_secs()
+            );
+            self.gate.close_until(Instant::now() + hold);
+        }
+        self.gate.busy.store(false, Ordering::Release);
+    }
+}
+
+/// Why a gateway call failed, as far as its slot is concerned.
+enum GatewayFailure {
+    /// Sent, but no answer arrived: the request may still hold its slot.
+    Abandoned(String),
+    /// `429`: the user's concurrency slots are all in use.
+    Refused(String),
+    /// Failed before the request went out, or the gateway answered with an
+    /// error. Either way no slot is left held.
+    Other(String),
+}
+
 // ── The real model ───────────────────────────────────────────────────────────
 
 /// The app's models: the Atlas gateway over the signed-in account, or the
 /// user's BYOK provider.
 pub struct AppExtractionModel {
     app: AppHandle,
+    gate: Arc<GatewayGate>,
 }
 
 impl AppExtractionModel {
     pub fn new(app: AppHandle) -> Self {
-        Self { app }
+        Self {
+            app,
+            gate: Arc::default(),
+        }
     }
 }
 
@@ -710,7 +847,31 @@ impl ExtractionModel for AppExtractionModel {
                     super::memory_summarize::run_completion(&self.app, prompt, &provider, &model)
                         .await
                 }
-                Route::Gateway => gateway_completion(&self.app, prompt).await,
+                Route::Gateway => {
+                    let Some(permit) = self.gate.enter() else {
+                        return Err(format!("{GATEWAY_PAUSED} to leave its slots to your turns"));
+                    };
+                    // A caller's timeout drops this future, and the permit
+                    // with it, before an outcome is set: abandoned.
+                    match gateway_completion(&self.app, prompt).await {
+                        Ok(answer) => {
+                            permit.finish(Outcome::Settled);
+                            Ok(answer)
+                        }
+                        Err(GatewayFailure::Refused(e)) => {
+                            permit.finish(Outcome::Refused);
+                            Err(e)
+                        }
+                        Err(GatewayFailure::Abandoned(e)) => {
+                            drop(permit);
+                            Err(e)
+                        }
+                        Err(GatewayFailure::Other(e)) => {
+                            permit.finish(Outcome::Settled);
+                            Err(e)
+                        }
+                    }
+                }
             }
         })
     }
@@ -718,32 +879,36 @@ impl ExtractionModel for AppExtractionModel {
 
 /// One non-streamed chat completion on the gateway, on the model the gateway
 /// lists first for this account (the native agent's default).
-async fn gateway_completion(app: &AppHandle, prompt: String) -> Result<String, String> {
+async fn gateway_completion(app: &AppHandle, prompt: String) -> Result<String, GatewayFailure> {
     use atlas_native_agent::engine::catalog_cache::{project, resolve};
     use atlas_native_agent::engine::config::GATEWAY_BASE_URL;
     use atlas_native_agent::engine::{EngineHome, GatewayCatalogueFetcher, SystemClock};
+    use GatewayFailure::{Abandoned, Other, Refused};
 
     let core = app
         .try_state::<super::auth::AuthState>()
-        .ok_or("auth is not ready")?
+        .ok_or_else(|| Other("auth is not ready".into()))?
         .core();
     let org = match core.snapshot() {
         crate::auth::AuthSnapshot::SignedIn { active_org_id, .. } => active_org_id,
-        _ => return Err("not signed in".into()),
+        _ => return Err(Other("not signed in".into())),
     };
     let token = core
         .mint_access_token()
         .await
-        .map_err(|e| format!("no account token: {e:?}"))?;
+        .map_err(|e| Other(format!("no account token: {e:?}")))?;
 
-    let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| Other(e.to_string()))?;
     let home = EngineHome::under_config_dir(&config_dir);
     let fetcher = GatewayCatalogueFetcher::registered(GATEWAY_BASE_URL);
     let catalogue = resolve(home.path(), &fetcher, &SystemClock, false)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| Other(e.to_string()))?;
     let model = project(catalogue.cache())
-        .ok_or("the gateway lists no model this account may use")?
+        .ok_or_else(|| Other("the gateway lists no model this account may use".into()))?
         .default_model;
 
     let url = format!(
@@ -763,13 +928,26 @@ async fn gateway_completion(app: &AppHandle, prompt: String) -> Result<String, S
     if let Some(org) = org {
         request = request.header("atlas-org", org);
     }
-    let response = request.send().await.map_err(|e| e.to_string())?;
+    // A request that was sent and then failed — the timeout above, a reset —
+    // may still hold its slot on the gateway; only one that never connected
+    // certainly does not.
+    let in_transit = |e: reqwest::Error| {
+        if e.is_connect() {
+            Other(e.to_string())
+        } else {
+            Abandoned(e.to_string())
+        }
+    };
+    let response = request.send().await.map_err(in_transit)?;
     let status = response.status();
-    let body = response.text().await.map_err(|e| e.to_string())?;
-    if !status.is_success() {
-        return Err(format!("the gateway answered {status}"));
+    let body = response.text().await.map_err(in_transit)?;
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        return Err(Refused(format!("the gateway answered {status}")));
     }
-    completion_text(&body).ok_or_else(|| "the gateway's answer had no message".into())
+    if !status.is_success() {
+        return Err(Other(format!("the gateway answered {status}")));
+    }
+    completion_text(&body).ok_or_else(|| Other("the gateway's answer had no message".into()))
 }
 
 /// The assistant text of a chat-completions response body.
@@ -1552,6 +1730,9 @@ mod tests {
                 locations: vec![],
                 raw_output: None,
                 content_blocks: vec![],
+                parent_tool_call_id: None,
+                started_at_ms: None,
+                ended_at_ms: None,
             };
         assert!(is_external(&call("WebFetch", None, Some("fetch"))));
         assert!(is_external(&call("WebSearch", None, None)));
@@ -1594,5 +1775,95 @@ mod tests {
             None,
             Some("other")
         )));
+    }
+}
+
+#[cfg(test)]
+mod gateway_gate_tests {
+    use super::*;
+
+    #[test]
+    fn one_background_call_at_a_time() {
+        let gate = Arc::new(GatewayGate::default());
+        let first = gate.enter().expect("an idle gate admits a call");
+        assert!(gate.enter().is_none(), "a second call waits for the first");
+        first.finish(Outcome::Settled);
+        assert!(
+            gate.enter().is_some(),
+            "a settled call frees the gate at once"
+        );
+    }
+
+    #[test]
+    fn an_abandoned_call_closes_the_gate_for_the_reservation_ttl() {
+        let gate = Arc::new(GatewayGate::default());
+        let start = Instant::now();
+        drop(gate.enter().unwrap()); // dropped with no outcome: abandoned
+        assert!(gate.enter_at(start + Duration::from_secs(60)).is_none());
+        assert!(gate
+            .enter_at(start + STRANDED_HOLD - Duration::from_secs(1))
+            .is_none());
+        assert!(gate
+            .enter_at(start + STRANDED_HOLD + Duration::from_secs(1))
+            .is_some());
+    }
+
+    #[test]
+    fn a_refusal_backs_off_briefly() {
+        let gate = Arc::new(GatewayGate::default());
+        let start = Instant::now();
+        gate.enter().unwrap().finish(Outcome::Refused);
+        assert!(gate.enter_at(start + Duration::from_secs(30)).is_none());
+        assert!(gate
+            .enter_at(start + REFUSED_HOLD + Duration::from_secs(1))
+            .is_some());
+    }
+
+    #[test]
+    fn a_refusal_never_shortens_a_stranded_hold() {
+        let gate = Arc::new(GatewayGate::default());
+        let start = Instant::now();
+        gate.close_until(start + STRANDED_HOLD);
+        gate.close_until(start + REFUSED_HOLD);
+        assert!(gate
+            .enter_at(start + REFUSED_HOLD + Duration::from_secs(1))
+            .is_none());
+    }
+
+    /// A model that never answers, behind the real gate — the shape of the
+    /// production incident: a caller's timeout drops the call mid-flight.
+    struct Hanging {
+        gate: Arc<GatewayGate>,
+    }
+
+    impl ExtractionModel for Hanging {
+        fn signed_in(&self) -> bool {
+            true
+        }
+        fn complete(&self, _route: Route, _prompt: String) -> Completion<'_> {
+            Box::pin(async move {
+                let Some(permit) = self.gate.enter() else {
+                    return Err(format!("{GATEWAY_PAUSED} to leave its slots to your turns"));
+                };
+                std::future::pending::<()>().await;
+                permit.finish(Outcome::Settled);
+                Ok(String::new())
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn a_timed_out_call_stops_the_next_one_reaching_the_gateway() {
+        let model = Hanging {
+            gate: Arc::default(),
+        };
+        let first = tokio::time::timeout(
+            Duration::from_millis(20),
+            model.complete(Route::Gateway, "p".into()),
+        )
+        .await;
+        assert!(first.is_err(), "the first call times out");
+        let second = model.complete(Route::Gateway, "p".into()).await;
+        assert!(second.unwrap_err().starts_with(GATEWAY_PAUSED));
     }
 }

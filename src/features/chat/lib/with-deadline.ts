@@ -81,3 +81,24 @@ export function withDeadline<T>(
     );
   });
 }
+
+/**
+ * A `stillWorking` that answers true only while `read()` keeps CHANGING.
+ *
+ * The bind used to pass `() => !!status`, which re-armed the deadline for as
+ * long as any status string existed. An install that reported "Installing …"
+ * once and then wedged kept that string forever, so the deadline never fired
+ * and the chat read "Installing …" for the life of the app. The backend's
+ * install jobs now restate their status with the elapsed time while they run,
+ * so "changed since last asked" is a liveness signal: a job that is alive
+ * moves, a wedged one does not.
+ */
+export function progressSince(read: () => string | undefined): () => boolean {
+  let last = read();
+  return () => {
+    const now = read();
+    const moved = !!now && now !== last;
+    last = now;
+    return moved;
+  };
+}

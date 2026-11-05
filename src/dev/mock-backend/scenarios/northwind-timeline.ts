@@ -396,10 +396,13 @@ export function announcePresence(): void {
 // ── Handlers ──────────────────────────────────────────────────────────────
 
 export const northwindTimelineCommands: Partial<TypedHandlers<MockResponses>> = {
-  artifacts_board: ({ projects }): BoardPage => {
+  artifacts_board: ({ projects, filter }): BoardPage => {
     const paths = Array.isArray(projects) ? (projects as string[]) : [];
-    if (!paths.includes(PROJECT.path))
-      return artifactsHandlers.artifacts_board({ projects }) as BoardPage;
+    const scope = (filter ?? null) as { local: string } | { remote: string } | null;
+    const ours = scope
+      ? "local" in scope && scope.local === PROJECT.path
+      : paths.includes(PROJECT.path);
+    if (!ours) return artifactsHandlers.artifacts_board({ projects, filter }) as BoardPage;
     return { sessions: sessions().map(boardRow), cloudPending: false, cloudFailed: false };
   },
   // Only your own Sessions are on this disk; a teammate's is read from the server.

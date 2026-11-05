@@ -143,6 +143,8 @@ export const spacesApi = {
   /** Absolute cache path for `convertFileSrc`, keyed by immutable hash. */
   mediaFetch: (convId: string, contentHash: string, mime: string) =>
     invoke<string>("spaces_media_fetch", { convId, contentHash, mime }),
+  /** Absolute paths of files on the OS clipboard (Finder copy), for paste. */
+  clipboardFilePaths: () => invoke<string[]>("clipboard_file_paths"),
 };
 
 export function listenSpaces(handler: (envelope: SpaceEnvelope) => void): Promise<UnlistenFn> {

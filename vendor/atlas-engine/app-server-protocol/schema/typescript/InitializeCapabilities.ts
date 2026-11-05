@@ -29,4 +29,4 @@ optOutNotificationMethods?: Array<string> | null,
 /**
  * MCP extension settings declared by the app-server client.
  */
-extensions?: { [key in string]?: JsonValue } | null, };
+extensions?: { [key in string]: JsonValue } | null, };

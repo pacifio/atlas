@@ -81,8 +81,6 @@ pub struct CodexMemory {
     threads: Vec<CodexThread>,
 }
 
-/// History-list row for a Codex session, shaped to match `ClaudeSessionMeta`
-/// so the chat sidebar can merge both agents' sessions uniformly. `id` is the
 // The Codex SESSION-HISTORY surface used to live here: `list_codex_sessions`
 // and `codex_delete_session`, reading and archiving rows in
 // `~/.codex/state_*.sqlite` so the sidebar could show Codex chats. Both are
@@ -277,8 +275,8 @@ pub async fn collect_corpus(project_path: &str) -> Vec<MemoryDoc> {
     }
 
     // Code is not folded in: agents search it through the `atlas_code` tools
-    // (`semantic_search`, `find_symbol`, grep), and memory keeps what code
-    // can't say (code-index plan Phase 4).
+    // (grep, find_files — ADR-0021 removed the index-backed ones), and memory
+    // keeps what code can't say.
     docs.extend(read_shared_memory_docs(&project_path));
     // Fold the knowledge base in (source "note") so KB notes are retrievable by
     // every agent through the same embedding + the `memory_search` tool — they
@@ -843,17 +841,13 @@ mod tests {
     }
     use super::*;
 
-    /// Code is searched through `atlas_code`, not the memory corpus: even with
-    /// a built code index in the project, no `codebase` document is gathered.
+    /// Code is searched through `atlas_code`, not the memory corpus: a project
+    /// full of source files gathers no `codebase` document.
     #[tokio::test]
     async fn the_corpus_has_no_codebase_docs() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join(".git")).unwrap();
         std::fs::write(dir.path().join("lib.rs"), "pub fn indexed() {}\n").unwrap();
-        atlas_codeindex::CodeIndex::open(dir.path())
-            .unwrap()
-            .full_build(&atlas_search::CancelToken::new(), &|_| {})
-            .unwrap();
         let docs = collect_corpus(dir.path().to_str().unwrap()).await;
         assert!(docs.iter().all(|d| d.source != "codebase"));
     }

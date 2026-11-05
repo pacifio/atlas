@@ -9,19 +9,13 @@ use atlas_engine_protocol::protocol::AtlasEngineErrorInfo as CoreAtlasEngineErro
 use atlas_engine_protocol::protocol::GranularApprovalConfig as CoreGranularApprovalConfig;
 use atlas_engine_protocol::protocol::NonSteerableTurnKind as CoreNonSteerableTurnKind;
 #[cfg(test)]
-use schemars::r#gen::SchemaGenerator;
+use schemars::Schema;
 #[cfg(test)]
-use schemars::schema::InstanceType;
+use schemars::SchemaGenerator;
 #[cfg(test)]
-use schemars::schema::Metadata;
-#[cfg(test)]
-use schemars::schema::Schema;
-#[cfg(test)]
-use schemars::schema::SchemaObject;
+use schemars::json_schema;
 use serde::Deserialize;
 use serde::Serialize;
-#[cfg(test)]
-use serde_json::Value as JsonValue;
 
 // Macro to declare a camelCased API v2 enum mirroring a core enum which
 // tends to use either snake_case or kebab-case.
@@ -255,8 +249,8 @@ pub enum ApprovalsReviewer {
 
 #[cfg(test)]
 impl JsonSchema for ApprovalsReviewer {
-    fn schema_name() -> String {
-        "ApprovalsReviewer".to_string()
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "ApprovalsReviewer".into()
     }
 
     fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
@@ -269,21 +263,11 @@ impl JsonSchema for ApprovalsReviewer {
 
 #[cfg(test)]
 fn string_enum_schema_with_description(values: &[&str], description: &str) -> Schema {
-    let mut schema = SchemaObject {
-        instance_type: Some(InstanceType::String.into()),
-        metadata: Some(Box::new(Metadata {
-            description: Some(description.to_string()),
-            ..Default::default()
-        })),
-        ..Default::default()
-    };
-    schema.enum_values = Some(
-        values
-            .iter()
-            .map(|value| JsonValue::String((*value).to_string()))
-            .collect(),
-    );
-    Schema::Object(schema)
+    json_schema!({
+        "type": "string",
+        "description": description,
+        "enum": values,
+    })
 }
 
 impl ApprovalsReviewer {

@@ -4,16 +4,38 @@ The non-colour half of Atlas's design system: the scales, what they are called,
 which primitive to reach for, and the test that stops the app drifting back off
 them. Colour is the other half and lives in [`theme-keys.md`](./theme-keys.md).
 
-Everything here is defined in two files:
+The scales, the named utilities, the primitives and the ratchet's rules belong
+to **`@tryatlas/design`** ([ADR-0027](../adr/0027-one-design-package-filled-from-desktop-themes-ship-as-generated-css.md)),
+in the `tryatlas/design` repo, which desktop installs at a pinned tag. They were
+copied out of desktop and are changed there now. `src/styles/globals.css`
+imports the package's stylesheet first — `styles-core.css`, which is
+`styles.css` with `default-theme.css` in place of `themes.css`. Desktop
+applies themes through its own engine (`applyTheme`, or `index.html`'s replay
+of the last one), so the generated theme blocks would never match; the Atlas
+theme at `:root` is the floor a first launch paints until that engine writes
+the active theme over it at `html:root`:
 
-| file | holds |
-|---|---|
-| `src/styles/tokens.css` | the raw custom properties on `:root` — the shadcn base tokens, control heights, layout constants, radius derivation, elevation, motion durations and z-index layers |
-| `src/styles/globals.css` | the Tailwind namespaces (`@theme`), the named utilities (`@utility`), and the global focus rule |
+| file (in the package)          | holds                                                                                                                                                           |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/styles/tokens.css`        | the non-colour custom properties — font stacks, control heights, radius derivation, elevation, motion durations and z-index layers                              |
+| `src/styles/themes.css`        | generated: every built-in theme resolved, one block per theme and appearance; in `styles.css` only, so desktop does not load it                                 |
+| `src/styles/default-theme.css` | generated: the Atlas theme alone at `:root`, dark unless the OS prefers light (`data-appearance` overrides); in `styles-core.css`, desktop's first-launch floor |
+| `src/styles/utilities.css`     | the Tailwind namespaces (`@theme`), the named utilities (`@utility`), and the global focus and border rules                                                     |
 
-Primitives live in `src/ui/`. The gallery that renders all of it is the dev-only
-mock scenario **`localhost:1420/?scenario=design-system`** — open it before and
-after any change to this page.
+`globals.css` keeps only what is desktop's: the 13px root, the titlebar height,
+`font-terminal`, `rounded-composer` and the feature CSS. The other file in
+`src/styles/` is desktop's too: `markdown.css`, which `globals.css` imports.
+The diff views' token colours are the package's `.diff-syntax` scope in
+`syntax.css`. Primitives are imported
+from the package root (`import { Button } from "@tryatlas/design"`); there is no
+`src/ui/` any more.
+
+The package's **Storybook** ([design.tryatlas.cc](https://design.tryatlas.cc))
+renders every scale and primitive under every built-in theme — open it before
+and after any change to this page. The dev-only mock scenario
+**`localhost:1420/?scenario=design-system`** shows what only desktop can: the
+active theme's colour roles as desktop's applier resolved them (an imported
+theme, a theme-editor preview), and desktop's own utilities.
 
 ## Naming rules
 
@@ -23,7 +45,7 @@ after any change to this page.
    control heights and durations are custom, because Tailwind's equivalents take
    bare numbers and cannot be given names.
 2. **A scale step is named, never measured.** `text-xs`, not `text-[11px]`;
-   `z-popover`, not `z-[9999]`. The number belongs in `tokens.css` exactly once.
+   `z-popover`, not `z-[9999]`. The number belongs in the package's `tokens.css` exactly once.
 3. **A token is a role, not a value.** There are no 12-step colour ramps and no
    per-component colour tokens. A theme key exists only when a theme author
    needs that surface to differ from the base tokens.
@@ -32,23 +54,31 @@ after any change to this page.
    names for a base token or a theme key, and the sweep spent them. Write the
    shadcn name (`bg-card`, `text-muted-foreground`) or the theme key
    (`bg-element-hover`, `text-disabled`). Do not add a synonym for either.
+   Where no utility exists, a theme key's variable is its name with `.` and `_`
+   as `-` and no prefix (ADR-0027): `element.hover` is `var(--element-hover)`.
+   The old `--atlas-` spelling is gone and the ratchet bans it.
 
 ## Type
 
 Nine steps (decision 24). Half-pixel sizes — the audit found ~130 of them —
 round **up** to the next step.
 
-| utility | px | line-height | typical use |
-|---|---|---|---|
-| `text-3xs` | 9 | 12 | a badge on a dense row |
-| `text-2xs` | 10 | 14 | eyebrows, captions, keycaps |
-| `text-xs` | 11 | 15 | control text; the most common size in Atlas |
-| `text-sm` | 12 | 16 | list rows, secondary chrome |
-| `text-base` | 13 | 18 | body text, chat messages |
-| `text-md` | 14 | 20 | panel and dialog titles |
-| `text-lg` | 16 | 22 | page headings |
-| `text-xl` | 20 | 26 | empty-state headlines |
-| `text-2xl` | 24 | 30 | the largest thing in the app |
+| utility     | px  | line-height | typical use                                 |
+| ----------- | --- | ----------- | ------------------------------------------- |
+| `text-3xs`  | 9   | 12          | a badge on a dense row                      |
+| `text-2xs`  | 10  | 14          | eyebrows, captions, keycaps                 |
+| `text-xs`   | 11  | 15          | control text; the most common size in Atlas |
+| `text-sm`   | 12  | 16          | list rows, secondary chrome                 |
+| `text-base` | 13  | 18          | body text, chat messages                    |
+| `text-md`   | 14  | 20          | panel and dialog titles                     |
+| `text-lg`   | 16  | 22          | page headings                               |
+| `text-xl`   | 20  | 26          | empty-state headlines                       |
+| `text-2xl`  | 24  | 30          | the largest thing in the app                |
+
+**Geist and Geist Mono** are the default faces. The package bundles them
+(`@fontsource-variable`), so they render offline in Tauri; the theme or the
+user's font setting can still replace either. The display steps (`lg` and up)
+carry their own negative tracking, and `heading` tightens by -0.01em.
 
 **Two weights only**: `font-medium` (500) and `font-semibold` (600). Nothing
 lighter, nothing heavier — the app is a dense monochrome UI and 400 disappears
@@ -56,36 +86,36 @@ against it.
 
 ### Named text styles
 
-Six `@utility` classes. Reach for one of these *before* reaching for a size plus
+Six `@utility` classes. Reach for one of these _before_ reaching for a size plus
 a weight plus a colour — that combination is how the 1,335 arbitrary sizes got
 there.
 
-| utility | what it is |
-|---|---|
+| utility   | what it is                                                               |
+| --------- | ------------------------------------------------------------------------ |
 | `eyebrow` | the section header above a group of rows — 10px, 600, uppercase, tracked |
-| `label` | the text on and beside a control — 11px, 500 |
-| `body` | running prose: a description, a message — 13px, 500 |
-| `caption` | the dimmed second line under something — 10px, 500, muted |
-| `code` | any monospace run: a path, a hash, a command — 12px, 500 |
-| `heading` | a panel or dialog title — 14px, 600 |
+| `label`   | the text on and beside a control — 11px, 500                             |
+| `body`    | running prose: a description, a message — 13px, 500                      |
+| `caption` | the dimmed second line under something — 10px, 500, muted                |
+| `code`    | any monospace run: a path, a hash, a command — 12px, 500                 |
+| `heading` | a panel or dialog title — 14px, 600                                      |
 
 ## Control heights
 
 Four steps (decision 25). The heights the audit found at 22, 28 and 30 snap to
 the nearest step.
 
-| utility | px | use |
-|---|---|---|
-| `h-control-xs` | 20 | inline chip, keycap |
-| `h-control-sm` | 24 | dense toolbar control |
-| `h-control-md` | 26 | **the default control** |
-| `h-control-lg` | 32 | primary action, search field |
+| utility        | px  | use                          |
+| -------------- | --- | ---------------------------- |
+| `h-control-xs` | 20  | inline chip, keycap          |
+| `h-control-sm` | 24  | dense toolbar control        |
+| `h-control-md` | 26  | **the default control**      |
+| `h-control-lg` | 32  | primary action, search field |
 
 `size-control-xs … size-control-lg` give the same value on both axes, for an
 icon-only control.
 
-Two named layout constants, which are **not** controls and are not on the scale:
-`h-titlebar` (30px) and `h-tab-strip` (36px, the centre tab strip).
+One named layout constant, which is **not** a control and is not on the scale,
+and is desktop's (`globals.css`): `h-titlebar` (36pt on screen at any zoom).
 
 ## Radius
 
@@ -96,21 +126,21 @@ moves the whole scale:
 sm = r − 4    md = r − 2    lg = r    xl = r + 4    full = 9999px
 ```
 
-| utility | use |
-|---|---|
-| `rounded` | alias of `rounded-sm` — bare `rounded` is the control radius |
-| `rounded-sm` | controls: buttons, inputs, keycaps |
-| `rounded-md` | cards and rows |
-| `rounded-lg` | popovers and menus |
-| `rounded-xl` | dialogs |
-| `rounded-full` | pills and avatars |
+| utility        | use                                                          |
+| -------------- | ------------------------------------------------------------ |
+| `rounded`      | alias of `rounded-sm` — bare `rounded` is the control radius |
+| `rounded-sm`   | controls: buttons, inputs, keycaps                           |
+| `rounded-md`   | cards and rows                                               |
+| `rounded-lg`   | popovers and menus                                           |
+| `rounded-xl`   | dialogs                                                      |
+| `rounded-full` | pills and avatars                                            |
 
 Rendered today: **4 / 6 / 8 / 12**. Before Foundations it was 2 / 4 / 6 with no
 `xl`, and bare `rounded` was 4px. Two things to know:
 
 - **Bare `rounded` changed.** Tailwind's own `rounded` is a static `0.25rem`
-  that no theme value can reach, so `globals.css` redeclares it in the utilities
-  layer, after the generated rules. It therefore beats `.rounded` and still
+  that no theme value can reach, so the package's `utilities.css` restates it in
+  the utilities layer, after the generated rules. It therefore beats `.rounded` and still
   loses to `.rounded-lg` on an element carrying both.
 - **The scale reads `--radius-base`, which is now plain `var(--radius)`.** It
   briefly carried a `max(…, 8px)` floor: Atlas sets its root font-size to 13px
@@ -125,18 +155,18 @@ Rendered today: **4 / 6 / 8 / 12**. Before Foundations it was 2 / 4 / 6 with no
 
 Three levels (decision 27). The shadow **colour comes from the theme**: each
 level points at one of the theme's shadcn `--shadow-*` tokens through an
-`--elevation-*` variable in `tokens.css`. A theme's `[light.base]` and
+`--elevation-*` variable in the package's `tokens.css`. A theme's `[light.base]` and
 `[dark.base]` tables set their own `--shadow-*` ramps independently — a light
 appearance is not the dark ramp reused as-is. Pure black at the dark table's
 alphas reads as a heavy halo on a light surface, so a light ramp should tint
 from the theme's own light-appearance foreground (or another dark-enough base
 colour) at a much lower alpha instead.
 
-| utility | level |
-|---|---|
+| utility     | level                  |
+| ----------- | ---------------------- |
 | `shadow-sm` | raised off the surface |
-| `shadow-md` | menus and popovers |
-| `shadow-lg` | dialogs |
+| `shadow-md` | menus and popovers     |
+| `shadow-lg` | dialogs                |
 
 `shadow-xl` and `shadow-2xl` are pointed at the dialog level as well, because
 left alone they render Tailwind's 10%-black default, which is invisible on
@@ -171,13 +201,13 @@ One thing to keep in mind:
 
 Two utilities, and the colour is **deliberately not a theme key**.
 
-| utility | what it is |
-|---|---|
-| `scrim` | a dialog, a command palette, a lightbox — the app behind is out of reach |
-| `scrim-soft` | an in-panel drawer whose own surface carries the depth |
+| utility      | what it is                                                               |
+| ------------ | ------------------------------------------------------------------------ |
+| `scrim`      | a dialog, a command palette, a lightbox — the app behind is out of reach |
+| `scrim-soft` | an in-panel drawer whose own surface carries the depth                   |
 
 The decision, because it looks like an omission: a scrim's whole job is to push
-what is behind it away from the reader, and only *darkening* does that. Over a
+what is behind it away from the reader, and only _darkening_ does that. Over a
 light theme a light scrim separates nothing. Every light UI worth copying
 darkens — macOS sheets, VS Code light, and shadcn's own `DialogOverlay`, which
 is a bare `bg-black/50` in both appearances and is not a token there either.
@@ -186,14 +216,14 @@ the wrong answer would silently switch the dim off. Appearance is carried by the
 alpha instead: 60% black reads as a heavy dim on cream and as a deepening on
 near-black, which is the same instruction in both.
 
-What *was* drift is that 29 sites wrote nine different alphas by hand
+What _was_ drift is that 29 sites wrote nine different alphas by hand
 (`bg-black/10` through `/80`). Those two utilities are now the whole vocabulary,
 and `scrim` is also the right fill for a control that sits over arbitrary media
 — a user's photo, a PDF page — for the same reason: nothing about the theme
 tells you what is underneath.
 
 **The mirror of this is `bg-white/[0.06]`, and that one is not invariant.** A
-white hairline or a white wash is the *dark*-appearance reading of "this surface
+white hairline or a white wash is the _dark_-appearance reading of "this surface
 catches the light"; on cream it is nothing at all. Those 49 sites moved onto the
 element roles — `bg-element-hover` / `-selected` / `-active`,
 `border-border-subtle` / `-border` / `-border-strong` — which are the theme's own
@@ -205,24 +235,23 @@ else's photo, and the Windows close button's system red in the titlebar.
 
 ## Z-index
 
-Nine named layers (decision 28). Nothing outside `globals.css` writes a
-z-index — not a class, not an inline style.
+Nine named layers (decision 28), defined in the package's `tokens.css`. Nothing
+else writes a z-index — not a class, not an inline style.
 
-| utility | value | what sits there |
-|---|---|---|
-| `z-panel` | 10 | in-panel stacking: sticky headers, resize handles |
-| `z-titlebar` | 40 | the titlebar and its dock |
-| `z-drawer` | 60 | a panel that slides over the chrome: the project rail, the notification drawer |
-| `z-overlay` | 100 | a dialog's scrim |
-| `z-modal` | 110 | the dialog itself |
-| `z-popover` | 200 | menus, popovers, comboboxes |
-| `z-toast` | 300 | toasts |
-| `z-tooltip` | 400 | tooltips |
-| `z-drag` | 500 | whatever is under the cursor mid-drag |
+| utility      | value | what sits there                                                               |
+| ------------ | ----- | ----------------------------------------------------------------------------- |
+| `z-panel`    | 10    | in-panel stacking: sticky headers, resize handles                             |
+| `z-titlebar` | 40    | the titlebar and its dock                                                     |
+| `z-drawer`   | 60    | a panel that slides over the chrome: the app sidebar, the notification drawer |
+| `z-overlay`  | 100   | a dialog's scrim                                                              |
+| `z-modal`    | 110   | the dialog itself                                                             |
+| `z-popover`  | 200   | menus, popovers, comboboxes                                                   |
+| `z-toast`    | 300   | toasts                                                                        |
+| `z-tooltip`  | 400   | tooltips                                                                      |
+| `z-drag`     | 500   | whatever is under the cursor mid-drag                                         |
 
 `popover` sits **above** `modal` deliberately: a menu opened inside a dialog has
-to escape it. That is the ordering bug the audit found, where everything shared
-9999.
+to escape it. That is the ordering bug the audit found, where everything shared 9999.
 
 `drawer` was the band nothing named. A drawer has to clear the titlebar and has
 to lose to a dialog, so the project rail wrote `z-[55]`/`z-[60]` and the
@@ -237,30 +266,37 @@ above its dim, and `overlay`/`modal` stay the dialog's pair.
 Four durations and exactly three easing curves (decision 29). No new curve gets
 added without a decision.
 
-| utility | value | |
-|---|---|---|
-| `duration-instant` | 80ms | a state flip the user should not perceive as motion |
-| `duration-fast` | 120ms | hover and focus transitions |
-| `duration-base` | 180ms | the default: menus, popovers, tabs |
-| `duration-slow` | 260ms | panels and drawers travelling a long way |
+| utility            | value |                                                     |
+| ------------------ | ----- | --------------------------------------------------- |
+| `duration-instant` | 80ms  | a state flip the user should not perceive as motion |
+| `duration-fast`    | 120ms | hover and focus transitions                         |
+| `duration-base`    | 180ms | the default: menus, popovers, tabs                  |
+| `duration-slow`    | 260ms | panels and drawers travelling a long way            |
 
-| easing | use |
-|---|---|
-| `ease-out-strong` | entrances; the default |
-| `ease-in-out-strong` | two-way state changes |
-| `ease-drawer` | panels and drawers sliding in |
+| easing               | use                           |
+| -------------------- | ----------------------------- |
+| `ease-out-strong`    | entrances; the default        |
+| `ease-in-out-strong` | two-way state changes         |
+| `ease-drawer`        | panels and drawers sliding in |
 
-`src/ui/tooltip-timing.ts` is the model for a component that needs more than a
-duration — a shared open delay, a warm-start window, reduced-motion handling.
-Copy its shape rather than scattering timers.
+The package's `tooltip-timing.ts` is the model for a component that needs more
+than a duration — a shared open delay, a warm-start window, reduced-motion
+handling. Copy its shape rather than scattering timers.
+
+**A transition names what it animates.** `transition-all` and `transition: all`
+are banned (the ratchet suite): `all` animates whatever changes next, including
+a width or a padding nobody meant to animate, and that is a layout recalculation
+every frame. Use `transition-colors` for a hover colour, `transition-opacity`,
+or `transition-[translate,opacity]` when movement goes with it — movement by
+`translate`/`transform`, which stay on the compositor.
 
 ## Icons
 
-One wrapper: `src/ui/icon.tsx` (decision 30).
+One wrapper: the package's `Icon` (decision 30).
 
 ```tsx
 import { Search } from "lucide-react";
-import { Icon } from "@/ui/icon";
+import { Icon } from "@tryatlas/design";
 
 <Icon icon={Search} size="sm" />;
 ```
@@ -283,14 +319,14 @@ is done, it is one pass with this mapping:
 
 Note that `11 → 12` moves the single most common icon size in the app, in dense
 chrome sized around it, so it wants the before/after check on
-`?scenario=design-system` that decision 23 asks for. Foundations shipped the
-wrapper and uses it in the `src/ui` primitives only.
+screens that decision 23 asks for. Foundations shipped the wrapper and uses it
+in the package's primitives only.
 
 ## States
 
 **Focus** (decision 31). There is one keyboard focus indicator: a 2px
 `var(--ring)` outline on `:focus-visible`, offset 1px, declared in `@layer base`
-in `globals.css`. `:focus` stays bare, so a mouse click never draws a ring and a
+in the package's `utilities.css`. `:focus` stays bare, so a mouse click never draws a ring and a
 `role="tab"` host never looks stuck.
 
 A control that draws its own indicator opts out with `focus-ring-none` (or
@@ -298,8 +334,9 @@ Tailwind's `focus-visible:outline-none`). Both are utilities, which is why the
 global rule has to live in `@layer base` — an unlayered rule would outrank every
 utility regardless of specificity.
 
-`--ring` is a real accent: every built-in theme sets it to its `primary`, and the
-pre-theme fallback in `tokens.css` matches. It used to equal `--border-strong`,
+`--ring` is a real accent: every built-in theme sets it to its `primary`, and so
+does the `:root` block in the package's `themes.css` (which desktop does not
+load). It used to equal `--border-strong`,
 which is why a focus ring was indistinguishable from a border.
 
 **Disabled** (decision 31). One visual treatment, everywhere: `opacity-50` plus
@@ -307,7 +344,7 @@ which is why a focus ring was indistinguishable from a border.
 `data-disabled` attribute (`data-disabled:opacity-50 data-disabled:cursor-not-allowed`)
 rather than the `:disabled` pseudo-class, since `data-disabled` is present
 whether or not the control also carries the native `disabled` attribute — see
-`focusableWhenDisabled` below. Every other `src/ui` primitive, which renders a
+`focusableWhenDisabled` below. Every other primitive, which renders a
 plain element rather than Base UI's `Button`, still carries the same pair as
 `disabled:opacity-50 disabled:cursor-not-allowed`. For an element that cannot
 take `:disabled` at all — a `div` acting as a control — use the `disabled-look`
@@ -316,8 +353,10 @@ utility. Do not invent a third opacity; the audit found five (30 / 40 / 45 /
 
 ## Primitives
 
-`src/ui/` (decision 32). Variants come from `class-variance-authority`, which is
-the only dependency Foundations added.
+`@tryatlas/design` (decision 32), imported from the package root. Variants come
+from `class-variance-authority`; the recipes (`buttonVariants`…) are also on
+`@tryatlas/design/variants`, the server-safe entry. To change a primitive,
+change the package and bump desktop's pin; desktop never wraps or forks one.
 
 Each file is shaped like shadcn's **base-style** component — same file name, same
 exported `<name>Variants`, same `variant` / `size` prop pair, same `data-slot` —
@@ -329,10 +368,10 @@ structure rewritten. Two deliberate departures:
   `Button` and `IconButton` are built directly on `@base-ui/react/button`
   instead and take its own `render` prop — `<Button render={<a href="/x" />}>`
   composes the element, with props merged by Base UI rather than cloned by a
-  Slot. `render` is meant for composing with *other components* (a
+  Slot. `render` is meant for composing with _other components_ (a
   Dialog/Menu/Popover trigger, most often — see `DialogClose` in
   `dialog.tsx`, which renders as an `IconButton`); a plain link that should
-  merely *look* like a button is still styled directly —
+  merely _look_ like a button is still styled directly —
   `<a className={buttonVariants({ variant: "ghost" })}>` — since a link has
   its own keyboard semantics that Button's `role="button"` handling isn't
   meant to replace (this is also Base UI's own guidance).
@@ -340,33 +379,37 @@ structure rewritten. Two deliberate departures:
 `Button` and `IconButton` also take `focusableWhenDisabled` (Base UI's own
 prop, default `false`, unchanged from Base UI's default). A disabled control
 is out of the tab order unless a call site opts in. Reach for it specifically
-where a disabled control also carries a `Hint`/`Tooltip` explaining *why* it
+where a disabled control also carries a `Hint`/`Tooltip` explaining _why_ it
 is disabled — otherwise the tooltip can never be reached by keyboard. Most
 disabled controls in Atlas explain nothing, so the default stays `false`
 rather than flipping every disabled control into the tab order; see the
-`IconButton` gallery section (`?scenario=design-system`) for the three states
-side by side.
+`IconButton` stories in the package's Storybook for the three states side by
+side.
 
-| primitive | reach for it when |
-|---|---|
-| `Button` | the control has a visible text label. Six variants: `default`, `destructive`, `outline`, `secondary`, `ghost`, `link`. `md` (26px) is the default size. |
-| `IconButton` | the control is a glyph and nothing else. `label` is **required** and becomes the `aria-label`; wrap it in `Tooltip` to show the same string. The square is a control height and the glyph is one step below it. |
-| `Input` | a single-line text field. It keeps the global focus ring and lifts its border to `--border-focus`. For a secret, `SecretInput` already wraps it. |
-| `Badge` | a short status word. Seven variants, four of them the status roles (`destructive`, `success`, `warning`, `info`). Not a control, so not on the control-height scale. |
-| `Kbd` | the content is a keystroke. `KbdCombo combo="⌘⇧F"` and `KbdKeys keys={[…]}` are the two forms the app uses. |
-| `Tooltip` / `Hint` | a hint for an icon-only control. `Hint` is the one-liner; `Tooltip`/`TooltipTrigger`/`TooltipContent` is the composed form. Timing comes from `tooltip-timing.ts`, not from the library. |
-| `Dialog` | a centred modal. `DialogOverlay` is the scrim (Base UI calls it the Backdrop), `DialogContent` the panel. No Positioner — a centred modal places itself. |
-| `Popover` | anchored content that is not a list of commands. |
-| `DropdownMenu` | a list of commands anchored to a trigger. Base UI has no "DropdownMenu": a trigger-anchored menu *is* `Menu`, and the wrapper renames it back. |
-| `ContextMenu` | the same list, opened by right-click at the pointer. |
+| primitive          | reach for it when                                                                                                                                                                                                                                                  |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `Button`           | the control has a visible text label. Eight variants: `default`, `destructive`, `outline`, `secondary`, `ghost`, `link`, and the toned outlines `destructive-outline` and `warning-outline` for an action that answers a problem. `md` (26px) is the default size. |
+| `IconButton`       | the control is a glyph and nothing else. `label` is **required** and becomes the `aria-label`; wrap it in `Tooltip` to show the same string. The square is a control height and the glyph is one step below it.                                                    |
+| `Input`            | a single-line text field. It keeps the global focus ring and lifts its border to `--border-focus`. For a secret, `SecretInput` already wraps it.                                                                                                                   |
+| `Badge`            | a short status word. Eight variants: five status tones (`destructive`, `severe`, `success`, `warning`, `info`), where `severe` is a derived step between error and warning for a severity scale. Not a control, so not on the control-height scale.                                                                                               |
+| `Kbd`              | the content is a keystroke. `KbdCombo combo="⌘⇧F"` and `KbdKeys keys={[…]}` are the two forms the app uses.                                                                                                                                                        |
+| `Tooltip` / `Hint` | a hint for an icon-only control. `Hint` is the one-liner; `Tooltip`/`TooltipTrigger`/`TooltipContent` is the composed form. Timing comes from `tooltip-timing.ts`, not from the library.                                                                           |
+| `Dialog`           | a centred modal. `DialogOverlay` is the scrim (Base UI calls it the Backdrop), `DialogContent` the panel. No Positioner — a centred modal places itself.                                                                                                           |
+| `Popover`          | anchored content that is not a list of commands.                                                                                                                                                                                                                   |
+| `DropdownMenu`     | a list of commands anchored to a trigger. Base UI has no "DropdownMenu": a trigger-anchored menu _is_ `Menu`, and the wrapper renames it back.                                                                                                                     |
+| `ContextMenu`      | the same list, opened by right-click at the pointer.                                                                                                                                                                                                               |
+
+`Button` and `IconButton` also carry `ghost-destructive`: a quiet action that
+throws work away (discard, drop, delete), ghost at rest and the error tone only
+under the pointer.
 
 Those five overlay primitives arrived with the Base UI migration (decision 16).
 Three rules they all share, because Base UI's anatomy differs from Radix's:
 
 - **`Portal > Positioner > Popup`** for anything anchored (popover, both menus,
   tooltip). A centred dialog has no Positioner.
-- **Positioning props belong to the Positioner.** Each wrapper *declares*
-  `side` / `sideOffset` / `align` / `alignOffset` and *forwards* them. Left in
+- **Positioning props belong to the Positioner.** Each wrapper _declares_
+  `side` / `sideOffset` / `align` / `alignOffset` and _forwards_ them. Left in
   `...props` they land on the Popup, and positioning silently stops working —
   no type error, no lint error.
 - **The z-index belongs to the Positioner too.** The Popup is statically
@@ -395,7 +438,7 @@ theme resolution never happens in CSS.**
 
 Decision 14 and ADR-0009 originally read as a blanket ban on `color-mix()`,
 justified by "Atlas's minimum is macOS 11". The evidence does not support that
-version argument, and the ADR's *other* argument is the load-bearing one:
+version argument, and the ADR's _other_ argument is the load-bearing one:
 
 - `color-mix()` needs Safari **16.2**; relative colour syntax (`rgb(from …)`)
   needs **16.4**. ADR-0009's rejection bullet cited the 16.4 number against
@@ -406,10 +449,10 @@ version argument, and the ADR's *other* argument is the load-bearing one:
   Banning `color-mix()` on a 16.2 argument while the utility layer requires 16.4
   buys nothing.
 - macOS 11 Big Sur's terminal Safari is 16.6.1, above both. `minimumSystemVersion
-  = 11.0` therefore does **not** imply a pre-`color-mix()` WKWebView; only a Big
+= 11.0` therefore does **not** imply a pre-`color-mix()` WKWebView; only a Big
   Sur install that stopped taking Safari updates does, and that install already
   renders Tailwind v4 degraded whatever this rule says.
-- The argument that *does* survive is version-independent: resolution must
+- The argument that _does_ survive is version-independent: resolution must
   happen in TypeScript because the resolved map has to feed xterm, both pixi
   graphs, recharts and CodeMirror, which need concrete colour values and cannot
   read a custom property. That is about the **resolver**, not about whether a
@@ -417,12 +460,12 @@ version argument, and the ADR's *other* argument is the load-bearing one:
 
 So the rule is drawn where the real constraint is:
 
-| | |
-|---|---|
-| A theme key derived in CSS | **Never.** `keys.toml` + the TS resolver is the one derivation site (decision 42). |
-| `color-mix()` tinting a resolved token in a rule or a style prop | Fine. 23 sites do, all of them `var(--token) N%, transparent`. |
-| Tailwind's `/N` opacity modifier | Fine — the build emits an rgba fallback and an `@supports` upgrade. |
-| Relative colour syntax (`rgb(from …)`, `oklch(from …)`) | **Never.** Safari 16.4, no fallback, and the `colour-literal` ratchet rule already catches it. |
+|                                                                  |                                                                                                |
+| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| A theme key derived in CSS                                       | **Never.** `keys.toml` + the TS resolver is the one derivation site (decision 42).             |
+| `color-mix()` tinting a resolved token in a rule or a style prop | Fine. 23 sites do, all of them `var(--token) N%, transparent`.                                 |
+| Tailwind's `/N` opacity modifier                                 | Fine — the build emits an rgba fallback and an `@supports` upgrade.                            |
+| Relative colour syntax (`rgb(from …)`, `oklch(from …)`)          | **Never.** Safari 16.4, no fallback. The `colour-literal` ratchet rule catches the `rgb(from …)` and `hsl(from …)` forms, not `oklch(from …)`. |
 
 The alternative — replacing the 23 call sites — was rejected: each is a
 presentational tint, so it would mean either ~15 new public theme keys (days
@@ -434,30 +477,38 @@ i.e. 23 new chances for a stale palette. Both are worse than the risk removed.
 
 `tests/design-system-ratchet.test.ts` is one of the contract suites in `tests/`.
 Nothing else in the toolchain can see this drift — a new `text-[11.5px]`
-type-checks, lints and renders.
+type-checks, lints and renders. The rules and the runner are the package's
+(`runRatchet` from `@tryatlas/design/ratchet`), so desktop, web and docs hold one
+set; desktop passes its own roots and exemptions. Two checks are scoped wider,
+to all of `src/` and `index.html`: the package's `transition-all` rule (see
+Motion), passed back to `runRatchet` with that scope, and desktop's own ban on
+the retired `--atlas-` spelling of every theme key and derived variable (names
+from the package's registries). Desktop does not turn on the package's
+`banAtlasPrefix`, because app variables that are not theme keys
+(`--atlas-chat-column`, `--atlas-boot-*`) keep the prefix (ADR-0027).
 
-**What it counts**, across `src/features/**`, `src/components/**`, `src/ui/**`
-and `src/dev/**`:
+**What it counts**, across `src/features/**`, `src/components/**` and
+`src/dev/**` (the primitives are held to the same rules in the package):
 
-| rule | pattern |
-|---|---|
-| `arbitrary-text-size` | `text-[…px]` and friends |
-| `arbitrary-z-index` | `z-[…]` |
-| `arbitrary-shadow` | `shadow-[…]` |
-| `arbitrary-radius` | `rounded-[…]`, any corner |
-| `colour-literal` | `#rrggbb`, `rgb(`, `rgba(`, `hsl(`, `hsla(` |
-| `white-black-utility` | `white`/`black` after any colour utility prefix, opacity modifier or not |
-| `tailwind-palette` | Tailwind's stock ramps — `bg-amber-500`, `text-red-400`, … |
-| `bare-z-index` | a bare `z-50` or higher; below 50 is local stacking |
-| `inline-numeric-style` | inline `zIndex:`, `fontSize:`, `boxShadow:` with a literal |
+| rule                   | pattern                                                                  |
+| ---------------------- | ------------------------------------------------------------------------ |
+| `arbitrary-text-size`  | `text-[…px]` and friends                                                 |
+| `arbitrary-z-index`    | `z-[…]`                                                                  |
+| `arbitrary-shadow`     | `shadow-[…]`                                                             |
+| `arbitrary-radius`     | `rounded-[…]`, any corner                                                |
+| `colour-literal`       | `#rrggbb`, `rgb(`, `rgba(`, `hsl(`, `hsla(`                              |
+| `white-black-utility`  | `white`/`black` after any colour utility prefix, opacity modifier or not |
+| `tailwind-palette`     | Tailwind's stock ramps — `bg-amber-500`, `text-red-400`, …               |
+| `bare-z-index`         | a bare `z-50` or higher; below 50 is local stacking                      |
+| `inline-numeric-style` | inline `zIndex:`, `fontSize:`, `boxShadow:` with a literal               |
 
-`src/styles` is the only wholesale exclusion — it *is* the scale.
+`src/styles` is the only wholesale exclusion — it _is_ the scale.
 
-`src/ui` and `src/dev` used to be excluded too, on the same "they define these
-values" argument, and it was untrue of nearly every file in them: the 2026-09-18
-review found a hardcoded white canvas ink and a literal 50%-black popover shadow
-sitting in `src/ui`, where exactly 2 of 19 files carried a violation and neither
-defined anything. `src/dev` keeps one narrow **directory** exemption, for the
+The primitives (then `src/ui`) and `src/dev` used to be excluded too, on the
+same "they define these values" argument, and it was untrue of nearly every
+file in them: the 2026-09-18 review found a hardcoded white canvas ink and a
+literal 50%-black popover shadow among the primitives, where exactly 2 of 19
+files carried a violation and neither defined anything. `src/dev` keeps one narrow **directory** exemption, for the
 mock fixtures whose colours ARE their content (theme files, and the text of fake
 source files the editor renders rather than applies).
 
@@ -475,13 +526,14 @@ violation fails outright rather than being absorbed.
 Which means the exits have to be real ones:
 
 - **`EXEMPT_FILES`** — a whole file, with the argument written next to the path.
-  Two shapes qualify: the file *defines* the scale (`theme-key-registry.ts`,
-  `color.ts`), or the colour is *not Atlas's to choose* — a third party's brand
-  mark (`agent-brand.ts`, `agent-icons.tsx`), a palette the **user** picks a
+  Two shapes qualify: the file _defines_ the scale (the key registry and the
+  colour maths, both in the package now), or the colour is _not Atlas's to choose_ — a third party's brand
+  mark (`agent-brand.ts`; the vendor marks themselves come from
+  `@tryatlas/design`, exempt in the package's own ratchet), a palette the **user** picks a
   value from (spaces sticky notes, knowledge covers, PDF ink), or something that
   has to survive being shown over content Atlas did not draw.
 - **`EXEMPT_DIRS`** — the same bar, for a directory. One shape qualifies: the
-  files' colours *are* their content.
+  files' colours _are_ their content.
 - **`ratchet-allow: <reason>`** — one site inside an otherwise ordinary file.
   Put it in a comment on the line, or anywhere in the comment block directly
   above it. The rest of the file keeps being scanned, which a whole-file entry
@@ -489,11 +541,10 @@ Which means the exits have to be real ones:
 
 Both demand prose and both are checked: a marker with under 20 characters of
 reason, or an exempt file with under 40, fails the suite on its own. That is the
-point — the record of *why* is the thing being enforced, not the count.
+point — the record of _why_ is the thing being enforced, not the count.
 
 What survives today, so the shape is clear: the vendors' agent marks, the
-user-pickable palettes (spaces, knowledge covers, PDF ink), the colour resolver
-and its fixtures, the ANSI `rgb()` string builder in the terminal, the
+user-pickable palettes (spaces, knowledge covers, PDF ink), the ANSI `rgb()` string builder in the terminal, the
 post-crash error boundary, per-identity avatar hues, pixi's numeric `fontSize`,
 mermaid's own `themeVariables`, the PDF page and the lightbox matte (decision
 3), Windows' close-button red, and the dev-build badge.

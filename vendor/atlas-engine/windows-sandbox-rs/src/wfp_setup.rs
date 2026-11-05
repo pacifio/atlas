@@ -2,7 +2,7 @@
 use crate::install_wfp_filters_for_account;
 use std::panic;
 
-// Upstream emitted WFP setup success/failure counters from this helper, and
+// The original emitted WFP setup success/failure counters from this helper, and
 // **only** over the built-in Statsig route — the parent process passed the
 // resolved Statsig environment down through the elevation payload, and the
 // comment on the old `build_wfp_metrics_provider` said other exporters were

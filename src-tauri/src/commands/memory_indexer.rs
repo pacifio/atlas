@@ -294,18 +294,6 @@ impl MemoryRegistry {
         });
     }
 
-    /// Queue one `IndexCorpus` pass for `cwd`, the pass that embeds the whole
-    /// corpus. If the project's engine is not open yet, opening it queues its
-    /// own cold pass, so this never queues two. Non-blocking, like
-    /// [`enqueue_index`](Self::enqueue_index).
-    pub fn request_reindex(&self, cwd: &str) {
-        if self.open_engine(cwd).is_some() {
-            self.enqueue_index(cwd);
-        } else {
-            let _ = self.engine_for(cwd);
-        }
-    }
-
     /// Get-only lookup: the engine if this project is currently open, `None`
     /// otherwise. Background jobs (index/promotion) use this instead of
     /// [`engine_for`](Self::engine_for) so a stale queued job for a closed
@@ -356,7 +344,11 @@ impl MemoryRegistry {
 
         let watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
             if let Ok(event) = res {
-                if event.paths.iter().any(|p| is_corpus_path(p)) {
+                // The indexer reads the corpus it watches; on Linux a read is
+                // an event (`fs_events`).
+                if crate::fs_events::is_change(event.kind)
+                    && event.paths.iter().any(|p| is_corpus_path(p))
+                {
                     // Non-blocking; a dropped signal just means the debounce already
                     // has a pending tick.
                     let _ = sig_tx.try_send(());
@@ -586,6 +578,10 @@ async fn handle(app: &AppHandle, registry: &MemoryRegistry, job: Job) {
                     tracing::info!(target: "atlas::memory_indexer", "dream {id} for {cwd}");
                 }
                 Ok(None) => {}
+                // Not a failure: the dream stays due and runs on a later job.
+                Err(e) if e.contains(super::memory_extract::GATEWAY_PAUSED) => {
+                    tracing::debug!(target: "atlas::memory_indexer", "Dream {cwd} skipped: {e}");
+                }
                 Err(e) => tracing::warn!(target: "atlas::memory_indexer", "Dream {cwd}: {e}"),
             }
         }
@@ -664,9 +660,6 @@ async fn health_one(app: &AppHandle, registry: &MemoryRegistry, cwd: &str) -> Re
     let _ = registry.provider(app).await;
     let now = chrono::Utc::now().timestamp_millis();
     let owned = cwd.to_string();
-    let code = app
-        .try_state::<Arc<super::code_index::CodeIndexRegistry>>()
-        .map(|r| r.inner().clone());
     let (record, restored, archived, linked) = tokio::task::spawn_blocking(move || -> Result<_, String> {
         let store = super::shared_memory::store_for(&owned)?;
         let report = store.heal(now).map_err(|e| format!("{e:#}"))?;
@@ -674,14 +667,9 @@ async fn health_one(app: &AppHandle, registry: &MemoryRegistry, cwd: &str) -> Re
             tracing::warn!(target: "atlas::memory_indexer", "memory snapshot failed: {e:#}");
         }
         // Unused candidates, and unused memories whose cited code changed,
-        // leave for the archive. Cited code is read through the code index
-        // when one is open, so a symbol that only moved still holds.
-        let resolver = match &code {
-            Some(registry) => {
-                super::code_index::citations::CodeIndexResolver::for_scope(registry, store.root())
-            }
-            None => super::code_index::citations::CodeIndexResolver::with_index(store.root(), None),
-        };
+        // leave for the archive. Citations are checked against the file on
+        // disk; a symbol that only moved no longer holds on its own.
+        let resolver = atlas_memory::citation::FileResolver::new(store.root());
         let archived = store.expire(now, &resolver).unwrap_or_else(|e| {
             tracing::warn!(target: "atlas::memory_indexer", "memory expiry failed: {e:#}");
             0
@@ -719,9 +707,8 @@ async fn health_one(app: &AppHandle, registry: &MemoryRegistry, cwd: &str) -> Re
     queue_catch_up(app, registry, cwd, now).await;
     // The Agent Memory Repo mirror, when the user turned it on: rewritten
     // and committed only when memory changed.
-    let mirror = app
-        .try_state::<crate::state::AtlasConfigHandle>()
-        .is_some_and(|config| config.lock().effective().memory_repo_mirror);
+    let mirror = super::project_settings::effective_settings_for(app, std::path::Path::new(cwd))
+        .is_some_and(|settings| settings.memory_repo_mirror);
     if let (true, Some(home)) = (mirror, dirs::home_dir()) {
         let owned = cwd.to_string();
         let refreshed = tokio::task::spawn_blocking(move || {
@@ -737,9 +724,8 @@ async fn health_one(app: &AppHandle, registry: &MemoryRegistry, cwd: &str) -> Re
     }
     // The daily dream, when the user turned it on; it decides itself
     // whether it is due.
-    let dreams = app
-        .try_state::<crate::state::AtlasConfigHandle>()
-        .is_some_and(|config| config.lock().effective().memory_dreams);
+    let dreams = super::project_settings::effective_settings_for(app, std::path::Path::new(cwd))
+        .is_some_and(|settings| settings.memory_dreams);
     if dreams {
         registry.send_or_remember(Job::Dream {
             cwd: cwd.to_string(),
@@ -1363,34 +1349,6 @@ mod tests {
         assert!(matches!(job_rx.try_recv(), Ok(Job::IndexCorpus { cwd }) if cwd == "/proj/a"));
         assert!(matches!(job_rx.try_recv(), Ok(Job::Compact { cwd }) if cwd == "/proj/a"));
         assert!(job_rx.try_recv().is_err());
-    }
-
-    /// `request_reindex` asks for exactly one corpus pass. A never-opened
-    /// project gets the cold pass its open queues; an open one gets the
-    /// nudge. Neither ever blocks.
-    #[test]
-    fn request_reindex_queues_exactly_one_index_corpus() {
-        let (job_tx, mut job_rx) = mpsc::channel::<Job>(16);
-        let registry = MemoryRegistry::with_window(job_tx, Duration::from_millis(50));
-        let root = tmp_root("reindex");
-        let cwd = root.to_string_lossy().to_string();
-
-        // Not open yet: opening queues the cold IndexCorpus + one-time Compact.
-        registry.request_reindex(&cwd);
-        assert!(matches!(job_rx.try_recv(), Ok(Job::IndexCorpus { cwd: c }) if c == cwd));
-        assert!(matches!(job_rx.try_recv(), Ok(Job::Compact { cwd: c }) if c == cwd));
-        assert!(matches!(job_rx.try_recv(), Ok(Job::Health { cwd: c }) if c == cwd));
-        assert!(
-            job_rx.try_recv().is_err(),
-            "no second IndexCorpus on first open"
-        );
-
-        // Open: exactly one IndexCorpus, no further Compact.
-        registry.request_reindex(&cwd);
-        assert!(matches!(job_rx.try_recv(), Ok(Job::IndexCorpus { cwd: c }) if c == cwd));
-        assert!(job_rx.try_recv().is_err());
-
-        std::fs::remove_dir_all(&root).ok();
     }
 
     /// A job for cwd-A only ever touches cwd-A's `.atlas/memory/`; cwd-B's engine

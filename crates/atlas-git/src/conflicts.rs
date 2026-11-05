@@ -2,8 +2,7 @@
 //!
 //! `git diff --check` prints one line per leftover conflict marker
 //! (`path:line: leftover conflict marker`); counting them per path is how
-//! GitHub Desktop shows "N conflicts remaining" without reading file
-//! contents (diff-check.ts). Exit code 2 means markers were found — an
+//! "N conflicts remaining" is shown without reading file contents. Exit code 2 means markers were found — an
 //! expected outcome, not an error.
 
 use std::collections::HashMap;

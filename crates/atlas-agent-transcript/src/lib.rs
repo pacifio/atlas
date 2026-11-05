@@ -58,8 +58,9 @@ pub enum TranscriptKind {
 /// finds nothing (was: only `/` was replaced → 0 rows for any path with a
 /// space).
 ///
-/// A port of the SDK's `xt()` (`@anthropic-ai/claude-agent-sdk` `core.mjs`,
-/// 0.3.287), including the two details a plain reading misses:
+/// This must match the slug the SDK writes (its `xt()`, in
+/// `@anthropic-ai/claude-agent-sdk` 0.3.287), including the two details a
+/// plain reading misses:
 ///
 /// - **UTF-16, not chars.** The JS regex `/[^a-zA-Z0-9]/g` replaces code
 ///   units, so a character outside the BMP (an emoji) is a surrogate pair and

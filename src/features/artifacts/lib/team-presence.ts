@@ -91,3 +91,14 @@ export function useOnlineIds(): ReadonlySet<string> {
   const chatOnline = useCommsStore.use.online();
   return useMemo(() => onlineIds(byProject, chatOnline), [byProject, chatOnline]);
 }
+
+/** "Ada, Grace and 3 others are online" — the stack's accessible name. */
+export function onlineLabel(members: OrgMember[]): string {
+  const names = members.map((m) => m.name || m.email);
+  if (names.length === 0) return "Nobody else is online";
+  if (names.length === 1) return `${names[0]} is online`;
+  if (names.length <= 3) {
+    return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]} are online`;
+  }
+  return `${names.slice(0, 2).join(", ")} and ${names.length - 2} others are online`;
+}

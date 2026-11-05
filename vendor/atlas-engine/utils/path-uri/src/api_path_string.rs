@@ -255,11 +255,11 @@ impl Serialize for LegacyAppPathString {
 }
 
 impl JsonSchema for LegacyAppPathString {
-    fn schema_name() -> String {
-        "LegacyAppPathString".to_string()
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "LegacyAppPathString".into()
     }
 
-    fn json_schema(generator: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
         String::json_schema(generator)
     }
 }

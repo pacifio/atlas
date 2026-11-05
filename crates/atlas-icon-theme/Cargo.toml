@@ -13,7 +13,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 # Already in the tree: `atlas-agent-store` reads zips with the same major, so
 # this adds no new crate to the dependency graph. A `.vsix` is a plain zip.
-zip = "8"
+zip = "9.1"
 
 [dev-dependencies]
 tempfile = { workspace = true }

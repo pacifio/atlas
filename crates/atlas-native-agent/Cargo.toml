@@ -2,7 +2,7 @@
 name = "atlas-native-agent"
 version = "0.1.0"
 edition = "2021"
-description = "Atlas Agent — the native agent — on the ported AgentConnection seam."
+description = "Atlas Agent — the native agent — on the AgentConnection seam."
 
 # Integration tests are declared, not auto-discovered. Cargo builds every
 # `tests/*.rs` it finds, which means a stale file left behind by a deletion is a
@@ -22,8 +22,7 @@ path = "tests/engine_gateway_turn.rs"
 
 [dependencies]
 atlas-process = { path = "../atlas-process" }
-# The seam. Same exact pin as every other crate in the ported stack
-# (`zed-ref/Cargo.toml:518`).
+# The seam. Same exact pin as every other ACP crate in the workspace.
 agent-client-protocol = { version = "=2.0.0", features = ["unstable"] }
 atlas-acp-thread = { path = "../atlas-acp-thread" }
 # `strip_injected_context`: the engine's rollout stores the WIRE prompt, and
@@ -31,23 +30,23 @@ atlas-acp-thread = { path = "../atlas-acp-thread" }
 # as if the user typed them.
 atlas-agent-transcript = { path = "../atlas-agent-transcript" }
 # For the `AgentServer` trait: the native agent occupies the same slot an
-# external one does, exactly as Zed's `NativeAgentServer` does.
+# external one does.
 atlas-agent-servers = { path = "../atlas-agent-servers" }
 anyhow = "1"
 futures = "0.3"
 # The catalogue fetch (ADR-0007): one `GET /v1/catalogue` per connect, at
 # most. Same feature shape as the workspace's own stanza — no default TLS, so
 # this client sits on rustls like every other one in the app.
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 serde_json = "1"
 tokio = { version = "1", features = ["fs", "macros", "rt", "sync", "time"] }
 tracing = "0.1"
 
-# --- The ported engine (#45, ADR-0004) --------------------------------------
+# --- The engine (#45, ADR-0004) --------------------------------------
 # No longer optional. These sat behind the `ported-engine` feature so the previous native
-# path could keep shipping while the port was proved; that path is gone (#54),
+# path could keep shipping while the engine was proved; that path is gone (#54),
 # so gating them would gate the whole crate.
-base64 = { version = "0.22" }
+base64 = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 toml = { version = "0.9" }
 # For the gateway-dialect surfaces the seam re-exports (the org source).
@@ -61,12 +60,28 @@ atlas-engine-utils-json-to-toml = { path = "../../vendor/atlas-engine/utils/json
 atlas-engine-core = { path = "../../vendor/atlas-engine/core" }
 atlas-engine-exec-server = { path = "../../vendor/atlas-engine/exec-server" }
 atlas-engine-feedback = { path = "../../vendor/atlas-engine/feedback" }
+# Re-exported (`ensure_credential_store`) so the app installs the same OS credential store
+# the engine uses; the app cannot name an engine crate itself.
+atlas-engine-keyring-store = { workspace = true }
 atlas-engine-login = { path = "../../vendor/atlas-engine/login" }
 # For the engine's bundled base prompt, which the authored catalogue (D3) uses as
 # every row's `instructions_template`.
 atlas-engine-models-manager = { path = "../../vendor/atlas-engine/models-manager" }
 atlas-engine-protocol = { path = "../../vendor/atlas-engine/protocol" }
 atlas-engine-rollout = { path = "../../vendor/atlas-engine/rollout" }
+
+# The Windows sandbox launcher, re-entered as `atlas.exe --run-as-windows-sandbox`
+# (`helper.rs`). Already in the graph through `atlas-engine-sandboxing`.
+[target.'cfg(windows)'.dependencies]
+atlas-engine-windows-sandbox = { workspace = true }
+
+# The Linux sandbox helper, which the app becomes when started under the arg0
+# `atlas-engine-linux-sandbox` (`src/linux_sandbox.rs`), and the crate that
+# names that arg0 and finds bubblewrap. Linux-only, so the macOS and Windows
+# builds compile exactly what they did before Linux was supported.
+[target.'cfg(target_os = "linux")'.dependencies]
+atlas-engine-linux-sandbox = { workspace = true }
+atlas-engine-sandboxing = { workspace = true }
 
 [dev-dependencies]
 async-trait = "0.1"
@@ -77,13 +92,13 @@ async-trait = "0.1"
 # transform and the tool call never spawns, which is why the three
 # sandboxed-command tests in `engine_turn.rs` passed on macOS seatbelt and
 # failed on Linux CI having run nothing. These three crates let the *test
-# binary* be that helper, exactly as upstream's own suites do
+# binary* be that helper, exactly as the engine's own suites do
 # (`vendor/atlas-engine/core/tests/suite/mod.rs`): `ctor` runs
 # `configure_test_binary_dispatch` before any test, which installs the arg0
 # aliases and hands back the helper's path.
 #
-# Dev-only on purpose. The shipped app has no arg0 dispatch and ships macOS, so
-# giving it a helper path would be a lie about what the binary does.
+# The app has its own helper now (`src/linux_sandbox.rs`); the tests still use
+# the test binary, because the helper has to be the binary that is running.
 atlas-engine-sandboxing = { workspace = true }
 atlas-engine-test-binary-support = { workspace = true }
 # Pinned by the workspace to the same version `atlas-engine-core`'s tests use, so this

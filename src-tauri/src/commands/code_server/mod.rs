@@ -8,11 +8,10 @@
 //!   user's "Let agents search code with Atlas" setting is on. Not gated by
 //!   the shared-memory toggle — code search holds no memory — and never
 //!   decided by which agent it is.
-//! - **Ten read-only tools** ([`tools`]) over the session's launch directory
-//!   (`Grant::cwd`); nothing outside it is read. `grep` and `find_files` run
-//!   the `atlas_search` engine; the code index adds `find_symbol`, `outline`,
-//!   `read_symbol`, `related`, `impact_of_diff`, `repo_map`,
-//!   `semantic_search` and `task_context`.
+//! - **Two read-only tools** ([`tools`]) over the session's launch directory
+//!   (`Grant::cwd`); nothing outside it is read. `grep` and `find_files` both
+//!   run the `atlas_search` engine on demand — nothing is indexed, cached or
+//!   watched, so neither costs anything between calls.
 //! - **Bounded**: each call runs on a blocking thread with a 15 s deadline
 //!   and stops when the call is cancelled or its future is dropped.
 //! - **The project search overlay runs on the same engine** ([`code_grep`]).
@@ -42,7 +41,9 @@ pub const CODE_PATH: &str = "/code";
 /// Whether the user lets agents use the code tools (Settings → General →
 /// "Let agents search code with Atlas"). Checked when a session is offered
 /// the server and on every call, so switching it off stops them at once.
-pub type CodeToolsGate = Arc<dyn Fn() -> bool + Send + Sync>;
+/// Given the session's launch directory: the setting can be overridden per
+/// project.
+pub type CodeToolsGate = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 
 /// One matching line, for the project search overlay.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -81,7 +82,6 @@ pub async fn code_grep(
     case_sensitive: Option<bool>,
     whole_word: Option<bool>,
     max_results: Option<usize>,
-    registry: tauri::State<'_, Arc<crate::commands::code_index::CodeIndexRegistry>>,
 ) -> Result<CodeGrepResult, String> {
     let options = OverlaySearch {
         regex: regex.unwrap_or(false),
@@ -89,7 +89,7 @@ pub async fn code_grep(
         whole_word: whole_word.unwrap_or(false),
         max_results: max_results.unwrap_or(100),
     };
-    grep_overlay(path, query, options, Some(registry.inner().as_ref())).await
+    grep_overlay(path, query, options).await
 }
 
 /// The overlay's toggles, defaults applied.
@@ -101,16 +101,14 @@ pub(crate) struct OverlaySearch {
     pub max_results: usize,
 }
 
-/// [`code_grep`] without the Tauri state: `registry` supplies the grep
-/// prefilter of a large git project, when one is built.
+/// [`code_grep`] without the Tauri state.
 pub(crate) async fn grep_overlay(
     path: String,
     query: String,
     options: OverlaySearch,
-    registry: Option<&crate::commands::code_index::CodeIndexRegistry>,
 ) -> Result<CodeGrepResult, String> {
     let max = options.max_results.clamp(1, 500);
-    let mut req = atlas_search::GrepRequest {
+    let req = atlas_search::GrepRequest {
         mode: atlas_search::OutputMode::Content,
         literal: !options.regex,
         case_insensitive: Some(!options.case_sensitive),
@@ -118,11 +116,6 @@ pub(crate) async fn grep_overlay(
         limit: Some(max),
         ..atlas_search::GrepRequest::new(path, query)
     };
-    // Same prefilter the agents' grep uses.
-    req.candidates = registry
-        .and_then(|r| r.root_for(&req.root))
-        .and_then(|p| p.grep_index())
-        .map(|g| g as Arc<dyn atlas_search::CandidateSource>);
     let cancel = atlas_search::CancelToken::new().with_deadline(Instant::now() + tools::DEADLINE);
     // Off the async runtime: the walk reads every candidate file.
     let res = tokio::task::spawn_blocking(move || atlas_search::grep(&req, &cancel))

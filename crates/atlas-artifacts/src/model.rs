@@ -113,6 +113,117 @@ pub struct RemoteSession {
     pub incomplete: bool,
 }
 
+/// One page of the Organisation's trace — `GET /sessions/trace`: the Sessions
+/// active in a window, each with its Checkpoints.
+///
+/// Serialized back out unchanged for the Timeline's Trace view, so the field
+/// names are the wire's.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TracePage {
+    #[serde(default)]
+    pub from: String,
+    #[serde(default)]
+    pub to: String,
+    #[serde(default)]
+    pub sessions: Vec<TraceSession>,
+    #[serde(default)]
+    pub workspaces: Vec<TraceWorkspace>,
+    /// `None` on the last page.
+    #[serde(default)]
+    pub next_cursor: Option<String>,
+    /// Server-side caveats, surfaced as the board's are.
+    #[serde(default)]
+    pub notes: Vec<String>,
+}
+
+/// A Workspace one of the page's Sessions belongs to.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TraceWorkspace {
+    pub id: String,
+    #[serde(default)]
+    pub slug: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub number: Option<i64>,
+}
+
+/// One Session on the trace.
+///
+/// There is no stored end: a finished Session ends at `last_activity_at`, a
+/// `live` one has not ended.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TraceSession {
+    pub id: String,
+    #[serde(default)]
+    pub number: Option<i64>,
+    #[serde(default)]
+    pub workspace_id: String,
+    #[serde(default)]
+    pub workspace_slug: Option<String>,
+    /// `None` on a row the host read from its own disk — that work is the
+    /// signed-in account's by construction.
+    #[serde(default)]
+    pub author_id: Option<String>,
+    /// User ids, the Session's author first.
+    #[serde(default)]
+    pub participants: Vec<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub agent: Option<String>,
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub started_at: String,
+    #[serde(default)]
+    pub last_activity_at: String,
+    #[serde(default)]
+    pub live: bool,
+    #[serde(default)]
+    pub incomplete: bool,
+    #[serde(default)]
+    pub checkpoints: Vec<TraceCheckpoint>,
+    /// The server sent this Session's newest Checkpoints, not all of them.
+    #[serde(default)]
+    pub checkpoints_truncated: bool,
+    /// Host-only: the checkout a row read from disk came from. Never on the
+    /// wire, so never serialized when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_path: Option<String>,
+}
+
+/// One Checkpoint on the trace.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TraceCheckpoint {
+    pub id: String,
+    pub session_id: String,
+    pub at: String,
+    /// Who drove the Session when this landed; `None` from the host's disk.
+    #[serde(default)]
+    pub author_id: Option<String>,
+    pub commit_sha: String,
+    #[serde(default)]
+    pub branch: Option<String>,
+    /// `linked` or `orphaned`, kept as the wire's word.
+    #[serde(default)]
+    pub link_state: String,
+    #[serde(default)]
+    pub insertions: i64,
+    #[serde(default)]
+    pub deletions: i64,
+    #[serde(default)]
+    pub files: i64,
+    /// Host-only, like [`RemoteEntry`]'s: the subject read from git on the
+    /// machine holding the repository. The server has none to send.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit_subject: Option<String>,
+}
+
 /// One page of the Organisation's board.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -255,6 +366,9 @@ pub enum AnchorKind {
     Message,
     ToolCall,
     Checkpoint,
+    /// A span of a shared Thread's transcript. Never minted here; read so an
+    /// inbox page holding a comment on a Thread still decodes.
+    ThreadRange,
 }
 
 impl AnchorKind {
@@ -264,6 +378,7 @@ impl AnchorKind {
             Self::Message => "message",
             Self::ToolCall => "tool_call",
             Self::Checkpoint => "checkpoint",
+            Self::ThreadRange => "thread_range",
         }
     }
 
@@ -313,6 +428,21 @@ pub struct Comment {
     pub resolved_at: Option<String>,
     #[serde(default)]
     pub resolved_by: Option<String>,
+    /// Who voted it up and who voted it down — member ids, oldest first.
+    /// Absent from servers older than votes, hence the default.
+    #[serde(default)]
+    pub votes: CommentVotes,
+}
+
+/// The people on each side of a comment's vote, not two counts: one frame
+/// serves every socket, and a reader can tell its own vote from the rest.
+/// Only members vote, so both lists are bounded by the Organisation.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommentVotes {
+    #[serde(default)]
+    pub up: Vec<String>,
+    #[serde(default)]
+    pub down: Vec<String>,
 }
 
 impl Comment {
@@ -430,9 +560,110 @@ pub struct InboxPage {
     pub next_cursor: Option<String>,
 }
 
+/// A public share link, as its owner sees it.
+///
+/// The password is never among the fields — only whether there is one. A share
+/// is created with its slug and then only revoked: the slug, the password, the
+/// scope and the expiry are what somebody was *given*, and editing any of them
+/// would turn the link in their hand into a link to somewhere else.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtifactShare {
+    pub id: String,
+    /// `session` for one run, `workspace` for a whole Project's worth.
+    pub scope: String,
+    pub workspace_id: String,
+    /// The Session, for a `session` scope; `None` for a Project-wide link.
+    #[serde(default)]
+    pub session_id: Option<String>,
+    /// The unguessable part of the public address. 128 bits of entropy.
+    pub slug: String,
+    #[serde(default)]
+    pub has_password: bool,
+    #[serde(default)]
+    pub comments_enabled: bool,
+    #[serde(default)]
+    pub expires_at: Option<String>,
+    /// Set once revoked. A revoked share is refused immediately rather than
+    /// waiting for any token already issued against it to expire.
+    #[serde(default)]
+    pub revoked_at: Option<String>,
+    #[serde(default)]
+    pub created_by: String,
+    #[serde(default)]
+    pub created_at: String,
+}
+
+impl ArtifactShare {
+    /// Whether this link still opens.
+    pub fn is_live(&self) -> bool {
+        self.revoked_at.is_none()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_trace_page_parses_the_wire_and_goes_back_out_without_host_fields() {
+        let wire = serde_json::json!({
+            "from": "2026-10-28T00:00:00.000Z", "to": "2026-11-04T00:00:00.000Z",
+            "sessions": [{
+                "id": "ses_1", "number": 12, "workspaceId": "ws_1", "workspaceSlug": "atlas",
+                "authorId": "user_ada", "participants": ["user_ada", "user_bo"],
+                "title": null, "agent": "Claude Code", "source": "acp",
+                "startedAt": "2026-11-03T09:00:00.000Z", "lastActivityAt": "2026-11-03T11:00:00.000Z",
+                "live": false, "incomplete": false, "checkpointsTruncated": true,
+                "checkpoints": [{
+                    "id": "cp_1", "sessionId": "ses_1", "at": "2026-11-03T10:00:00.000Z",
+                    "authorId": "user_bo", "commitSha": "abc1234", "branch": null,
+                    "linkState": "orphaned", "insertions": 3, "deletions": 1, "files": 2
+                }]
+            }],
+            "workspaces": [{ "id": "ws_1", "slug": "atlas", "name": "Atlas", "number": null }],
+            "nextCursor": "c2", "notes": []
+        });
+        let page: TracePage = serde_json::from_value(wire).unwrap();
+        let s = &page.sessions[0];
+        assert_eq!(s.participants, vec!["user_ada", "user_bo"]);
+        assert!(s.checkpoints_truncated);
+        assert_eq!(s.checkpoints[0].link_state, "orphaned");
+        assert_eq!(s.checkpoints[0].author_id.as_deref(), Some("user_bo"));
+        assert_eq!(page.next_cursor.as_deref(), Some("c2"));
+
+        // Out to the renderer under the wire's names, with no host-only
+        // fields invented for a row the server sent.
+        let back = serde_json::to_value(&page).unwrap();
+        assert_eq!(
+            back["sessions"][0]["lastActivityAt"],
+            "2026-11-03T11:00:00.000Z"
+        );
+        assert!(back["sessions"][0].get("projectPath").is_none());
+        assert!(back["sessions"][0]["checkpoints"][0]
+            .get("commitSubject")
+            .is_none());
+    }
+
+    #[test]
+    fn comment_votes_parse_and_default_to_none() {
+        let base = serde_json::json!({
+            "id": "c1", "sessionId": "s1", "anchorKind": "message", "anchorId": "m1",
+            "authorId": "u1", "body": "hi", "createdAt": "2026-10-19T00:00:00Z"
+        });
+        // A server older than votes sends no field: nobody has voted.
+        let old: Comment = serde_json::from_value(base.clone()).unwrap();
+        assert_eq!(old.votes, CommentVotes::default());
+
+        let mut voted = base;
+        voted["votes"] = serde_json::json!({ "up": ["u2", "u3"], "down": ["u4"] });
+        let c: Comment = serde_json::from_value(voted).unwrap();
+        assert_eq!(c.votes.up, vec!["u2", "u3"]);
+        assert_eq!(c.votes.down, vec!["u4"]);
+        // And it goes back out to the renderer under the same name.
+        let back = serde_json::to_value(&c).unwrap();
+        assert_eq!(back["votes"]["up"][1], "u3");
+    }
 
     #[test]
     fn every_commentable_entry_kind_maps_to_an_anchor() {

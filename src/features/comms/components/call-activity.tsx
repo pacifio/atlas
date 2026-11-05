@@ -1,25 +1,19 @@
 import { memo, useCallback, useState } from "react";
-import { ChevronDown, ExternalLink, FileText, Loader2, Phone, Video } from "lucide-react";
 import { save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
-import { cn } from "@/lib/utils";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/ui/tooltip";
 import { comms, parseRefusal } from "../lib/comms-api";
 import { copyShareLink, memberCallUrl } from "../lib/call-links";
 import { useCommsStore } from "../stores/comms-store";
 import { AudioPlayer } from "./audio-player";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { formatClock } from "../lib/derive";
+import { formatBytes } from "../lib/derive";
 import type { ChatCall, OrgMemberProfile, RecordingTrack } from "../types";
+import { CallActivityView } from "./views/call-activity-view";
 
 /**
- * A call, rendered as a Linear-style activity row rather than a message bubble.
- *
- * A call is not something anyone said, so it does not get a bubble, an avatar
- * column of its own, or a hover toolbar — it is an *update* on the timeline:
- * icon gutter, one muted sentence. (It once drew a Linear-style connector line
- * between consecutive calls; removed — it fought the gutter alignment.)
+ * A call on the timeline: the container for `CallActivityView` (the row), with
+ * the IPC, the dialogs and the recording fetch.
  *
  * Recordings are deliberately NOT fetched with the row. Their URLs are minted
  * for ~60 seconds, so a URL fetched at render is expired by the time anyone
@@ -37,7 +31,6 @@ export const CallActivity = memo(function CallActivity({
   const [loading, setLoading] = useState(false);
   const orgId = useCommsStore((s) => s.connection.orgId) ?? "";
 
-  const live = call.ended_at === null;
   const hasRecording = call.recording_state === "ready";
 
   const toggle = useCallback(() => {
@@ -57,158 +50,25 @@ export const CallActivity = memo(function CallActivity({
       .finally(() => setLoading(false));
   }, [open, hasRecording, call.id]);
 
-  const who = author?.name ?? "Someone";
-  const verb = live ? "started" : "ended";
-  const kind = call.mode === "video" ? "video call" : "call";
-  const Icon = call.mode === "video" ? Video : Phone;
-
   return (
-    <div className="relative flex gap-2 px-3 py-[3px]">
-      <div className="flex w-9 shrink-0 justify-center">
-        <span
-          className={cn(
-            "relative z-panel mt-[3px] flex h-5 w-5 items-center justify-center rounded-full border",
-            live
-              ? "border-border-strong bg-[var(--atlas-element-active)] text-foreground"
-              : "border-border-subtle bg-card text-muted-foreground",
-          )}
-        >
-          <Icon size={11} />
-        </span>
-      </div>
-
-      <div className="min-w-0 flex-1 py-[2px]">
-        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm leading-[18px] text-muted-foreground">
-          {/* The sentence IS the share link. A hover-revealed "Copy link"
-              button used to sit at the end of this row; because the row wraps,
-              revealing it pushed the transcript line and the recording
-              disclosure down by a line the moment the pointer arrived. The
-              affordance now lives on text that is always there, so nothing
-              moves — the tooltip is what says it is clickable. */}
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <button
-                  type="button"
-                  onClick={() => void copyShareLink(orgId, call)}
-                  className="group/link cursor-pointer rounded text-left underline-offset-2 hover:underline focus-visible:underline focus-visible:outline-none"
-                >
-                  {/* Both halves brighten together: the name carries its own
-                    colour, so a hover rule on the button alone would lift the
-                    verb and leave the name behind. */}
-                  <span className="text-secondary-foreground transition-colors group-hover/link:text-foreground">
-                    {who}
-                  </span>{" "}
-                  <span className="transition-colors group-hover/link:text-foreground">
-                    {verb} a {kind}
-                  </span>
-                </button>
-              }
-            />
-            <TooltipContent side="top">
-              {call.join_slug !== null
-                ? "Click to copy the guest link"
-                : "Click to copy the call link"}
-            </TooltipContent>
-          </Tooltip>
-          {!live && call.ended_at !== null && (
-            <span className="text-disabled">
-              · {formatDuration(call.started_at, call.ended_at)}
-            </span>
-          )}
-          {live && (
-            <span className="rounded-full bg-[var(--atlas-element-active)] px-1.5 py-px text-2xs font-medium text-foreground">
-              Ongoing
-            </span>
-          )}
-          {call.recording_state === "recording" && (
-            <span className="rounded-full bg-card px-1.5 py-px text-2xs font-medium text-muted-foreground">
-              Recording
-            </span>
-          )}
-          {call.recording_state === "processing" && (
-            <span className="rounded-full bg-card px-1.5 py-px text-2xs font-medium text-muted-foreground">
-              Processing
-            </span>
-          )}
-          {call.recording_state === "failed" && (
-            <span className="rounded-full bg-card px-1.5 py-px text-2xs font-medium text-error">
-              Recording failed
-            </span>
-          )}
-          <span className="text-disabled">{formatClock(call.started_at)}</span>
-
-          {/* Row actions: the log carries the meeting link. Join only while
-              the room is still open. */}
-          {live && (
-            <button
-              type="button"
-              title="Join this call in your browser"
-              onClick={() => void joinCall(orgId, call.id)}
-              className="flex cursor-pointer items-center gap-1 rounded px-1 py-0.5 text-xs text-secondary-foreground transition-colors hover:bg-element-hover hover:text-foreground"
-            >
-              <ExternalLink size={10} />
-              Join
-            </button>
-          )}
-        </div>
-
-        {/* Transcript: the state IS the live update (frames patch it); when
-            ready the CSV is one save away. Wording mirrors the web's card. */}
-        {call.transcript_state === "pending" && (
-          <span className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Loader2 size={10} className="animate-spin" />
-            Transcript is being produced…
-          </span>
-        )}
-        {call.transcript_state === "failed" && (
-          <span className="mt-0.5 block text-xs text-disabled">
-            No transcript arrived for this call.
-          </span>
-        )}
-        {call.transcript_state === "ready" && (
-          <button
-            type="button"
-            onClick={() => void saveTranscript(call.id)}
-            className="-ml-1 mt-0.5 flex cursor-pointer items-center gap-1 rounded px-1 py-0.5 text-xs text-secondary-foreground transition-colors hover:bg-element-hover hover:text-foreground"
-          >
-            <FileText size={11} />
-            Save transcript
-          </button>
-        )}
-
-        {hasRecording && (
-          <button
-            type="button"
-            onClick={toggle}
-            className="mt-1 flex items-center gap-1 rounded px-1 py-0.5 -ml-1 text-xs text-secondary-foreground transition-colors hover:bg-element-hover hover:text-foreground cursor-pointer"
-          >
-            <ChevronDown
-              size={11}
-              className={cn("transition-transform", open ? "rotate-0" : "-rotate-90")}
-            />
-            Recording
-          </button>
-        )}
-
-        {open && hasRecording && (
-          <div className="mt-1 flex flex-col gap-1">
-            {loading && (
-              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <Loader2 size={11} className="animate-spin" />
-                Preparing links…
-              </span>
-            )}
-            {!loading && (tracks ?? []).map((t) => <TrackRow key={t.id} track={t} />)}
-            {!loading && tracks?.length === 0 && (
-              <span className="text-xs text-disabled">No tracks were kept.</span>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
+    <CallActivityView
+      call={call}
+      authorName={author?.name ?? "Someone"}
+      recordingOpen={open}
+      onRecordingToggle={toggle}
+      recording={{
+        status: loading ? "loading" : tracks !== null ? "ready" : "idle",
+        tracks: tracks ?? EMPTY_TRACKS,
+      }}
+      renderTrack={(t) => <TrackRow key={t.id} track={t} />}
+      onCopyLink={() => void copyShareLink(orgId, call)}
+      onJoin={() => void joinCall(orgId, call.id)}
+      onSaveTranscript={() => void saveTranscript(call.id)}
+    />
   );
 });
+
+const EMPTY_TRACKS: RecordingTrack[] = [];
 
 /**
  * One recorded track, as an audio block rather than a bare download row.
@@ -275,21 +135,4 @@ async function saveTrack(track: RecordingTrack): Promise<void> {
     console.warn("comms: save recording failed:", track.id, e);
     toast.error("Could not save that recording.");
   }
-}
-
-/** Whole minutes above a minute, seconds below — the web log's phrasing. */
-function formatDuration(from: number, to: number): string {
-  const s = Math.max(0, Math.round((to - from) / 1000));
-  if (s < 60) return `${s} sec`;
-  const m = Math.round(s / 60);
-  if (m < 60) return `${m} min`;
-  const h = Math.floor(m / 60);
-  const rem = m % 60;
-  return rem === 0 ? `${h} hr` : `${h} hr ${rem} min`;
-}
-
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }

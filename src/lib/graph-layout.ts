@@ -1,5 +1,5 @@
 // Deterministic Fruchterman–Reingold force-directed layout. Produces the
-// hub-and-spoke / spider arrangement (à la Obsidian's graph view) instead of a
+// hub-and-spoke / spider arrangement instead of a
 // flat ring. Used to SEED both the KB and memory graphs on first open (before
 // the user has a persisted layout); the live Matter sim then takes over.
 //

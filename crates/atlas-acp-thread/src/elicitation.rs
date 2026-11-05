@@ -1,4 +1,4 @@
-//! Elicitations — ported from `zed-ref/crates/acp_thread/src/acp_thread.rs:404-752`.
+//! Elicitations.
 //!
 //! An elicitation is the agent asking the user something mid-flight: a form to
 //! fill in, or a URL to visit (device-code logins arrive this way). Two scopes
@@ -7,7 +7,7 @@
 //! while *session*-scoped ones live in the thread's timeline. Both share this
 //! store so the pending/answered bookkeeping is written once.
 //!
-//! The bookkeeping that is easy to get wrong, and is ported verbatim:
+//! The bookkeeping that is easy to get wrong:
 //! - answering is idempotent — only a `Pending` elicitation resolves its
 //!   oneshot, so a duplicate response is dropped instead of panicking on a
 //!   consumed sender;
@@ -141,8 +141,7 @@ impl ElicitationStore {
 
     /// The waiter handed back to the caller.
     ///
-    /// Zed spawns this as a GPUI `Task` that emits on completion; here it is a
-    /// plain future the caller awaits. A dropped sender resolves to `Cancel`
+    /// A plain future the caller awaits. A dropped sender resolves to `Cancel`
     /// rather than an error, so an agent waiting on `elicitation/create` is
     /// never left hanging by a store that went away.
     pub(crate) async fn response_future<E: Send + 'static>(

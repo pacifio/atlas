@@ -1,9 +1,8 @@
 //! Getting a registry agent's binary onto disk, and keeping the disk tidy.
 //!
-//! Ported from `zed-ref/crates/project/src/agent_server_store.rs:896-1115` (the
-//! archive-kind rules, the versioned cache directory, the stale-directory GC)
-//! and `zed-ref/crates/http_client/src/github_download.rs` (staged download,
-//! checksum verification, extraction).
+//! It covers the archive-kind rules, the versioned cache directory, the
+//! stale-directory GC, and the staged download with checksum verification and
+//! extraction.
 //!
 //! Three properties are the point of this module, and each is a bug that
 //! happened to someone:
@@ -34,8 +33,8 @@ use crate::http::{get_body, HttpClient};
 const GITHUB_API_URL: &str = "https://api.github.com";
 const GITHUB_RELEASE_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// The archive formats we can extract. Zed's `AssetKind` also has `Gz`, which
-/// is unreachable from this path: a bare `.gz` is in the rejected-suffix list
+/// The archive formats we can extract. There is no bare-gzip kind: a bare
+/// `.gz` is in the rejected-suffix list
 /// below, and `.tar.gz` matches before it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AssetKind {
@@ -55,7 +54,6 @@ pub enum RegistryArchiveKind {
     },
 }
 
-/// Ported verbatim from `agent_server_store.rs:906-948`.
 pub fn registry_archive_kind_for_url(archive_url: &str) -> Result<RegistryArchiveKind> {
     const UNSUPPORTED_SUFFIXES: &[&str] = &[
         // Installer formats explicitly rejected by the registry schema.
@@ -129,7 +127,7 @@ pub struct GithubReleaseArchive {
     pub asset_name: String,
 }
 
-/// Ported from `agent_server_store.rs:978-1005`. Recognising a GitHub release
+/// Recognising a GitHub release
 /// URL is what makes checksum recovery possible for registry entries that
 /// published no `sha256`.
 pub fn github_release_archive_from_url(archive_url: &str) -> Option<GithubReleaseArchive> {
@@ -176,8 +174,7 @@ struct GithubReleaseAsset {
 
 /// The checksum GitHub itself recorded for a release asset.
 ///
-/// Best-effort by design (Zed's `agent_server_store.rs:1228-1256` swallows every
-/// failure the same way): if the API is unreachable, rate-limited, or the asset
+/// Best-effort by design: if the API is unreachable, rate-limited, or the asset
 /// has no digest, the download proceeds unverified rather than failing. A
 /// registry entry that published its own `sha256` never reaches here.
 pub async fn github_release_digest(
@@ -209,7 +206,7 @@ pub async fn github_release_digest(
 
 /// Turn anything into something safe to use as a single path component.
 ///
-/// Ported from `agent_server_store.rs:1006-1019`. Registry ids and versions
+/// Registry ids and versions
 /// reach the filesystem here, and a version like `release/2.3.5` would
 /// otherwise create a directory tree.
 pub fn sanitize_path_component(input: &str) -> String {
@@ -230,7 +227,7 @@ pub fn sanitize_path_component(input: &str) -> String {
 
 /// `<base>/v_<version>_<hash(version)[..16]>_<hash(url+sha)[..16]>`.
 ///
-/// Ported from `agent_server_store.rs:1023-1049`. The version goes in twice on
+/// The version goes in twice on
 /// purpose: sanitized so a human can read the directory, hashed so two versions
 /// that sanitize to the same string still get separate directories. The archive
 /// hash covers the URL *and* the expected checksum, which is what makes a
@@ -283,7 +280,7 @@ fn is_ours(name: &str) -> bool {
 /// Delete the install directories of versions we no longer run, and the
 /// staging directories of downloads that never finished.
 ///
-/// Ported from `agent_server_store.rs:1055-1115`, including the mtime rule:
+/// The mtime rule:
 /// only directories *older* than the current one are removed, so a concurrent
 /// extraction of a different version that finished after we looked survives.
 ///
@@ -400,10 +397,9 @@ const EXTRACTED_MODE_MASK: u32 = 0o755;
 /// what keeps a failed or mismatched download from replacing a working install
 /// (`github_download.rs:43-129`).
 ///
-/// Divergence from Zed: the payload is always staged to a file, even when no
-/// checksum was published. Zed streams straight into the extractor in that
-/// case; one code path is worth the temp file, and the verified path had to
-/// stage anyway.
+/// The payload is always staged to a file, even when no checksum was
+/// published: one code path is worth the temp file, and the verified path had
+/// to stage anyway.
 pub async fn install_archive(
     http: &dyn HttpClient,
     url: &str,
@@ -648,7 +644,7 @@ fn unpack_tar(reader: impl std::io::Read, destination: &Path, limits: InstallLim
     // bound them: a tar of empty files costs about 4.7 wire-bytes per inode,
     // so the byte ceiling on its own still permits millions of them.
     let mut archive = tar::Archive::new(LimitedReader::new(reader, limits.max_uncompressed_bytes));
-    // Zed turns mtime preservation off (`github_download.rs:288-292`): it is
+    // Mtime preservation is off: it is
     // irrelevant to a downloaded archive, and some filesystems error when asked
     // to apply it after extraction.
     archive.set_preserve_mtime(false);

@@ -42,6 +42,30 @@ export interface GitFileStatus {
   staged: boolean;
 }
 
+/**
+ * `next`, or the EXISTING array when it describes the same working tree.
+ *
+ * `refresh` runs on `atlas:git-changed`, on `atlas:explorer:changed` — i.e. on
+ * every file save — on autofetch, and after every git action. Rebuilding the
+ * array each time handed a new identity to its subscribers
+ * (`file-tree`, `changes-view`, `conflicts-view`,
+ * `stashes-view`, `git-manager-panel`) whether or not anything had changed, and
+ * identity is what they re-render on: `file-tree` rebuilt its git-overlay Maps,
+ * `changes-view` re-invoked `git_diff_file` for an unchanged selection, and
+ * `conflicts-view` re-ran its load effect. Keeping the old array when the
+ * contents match turns a save into no work at all.
+ */
+export function sameFiles(prev: GitFileStatus[], next: GitFileStatus[]): GitFileStatus[] {
+  if (prev === next) return prev;
+  if (prev.length !== next.length) return next;
+  for (let i = 0; i < prev.length; i++) {
+    const a = prev[i];
+    const b = next[i];
+    if (a.path !== b.path || a.status !== b.status || a.staged !== b.staged) return next;
+  }
+  return prev;
+}
+
 export interface GitLogEntry {
   hash: string;
   short_hash: string;
@@ -134,8 +158,10 @@ export interface ActiveGitOp {
   opId: string;
   kind: string;
   running: boolean;
-  /** Live child output (hooks included), newest last. Capped. */
-  lines: { stream: "stdout" | "stderr"; text: string }[];
+  /** Live child output (hooks included), newest last. Capped. `seq` counts
+   *  every line the op has printed, so it stays a stable key after the cap
+   *  trims the front. */
+  lines: { seq: number; stream: "stdout" | "stderr"; text: string }[];
   /** Weighted progress for network ops (`--progress` stderr parsing). */
   progress: { percent: number; title: string } | null;
   error: GitErrorPayload | null;
@@ -147,7 +173,8 @@ export type GitOpEvent = {
   kind: string;
 } & (
   | { phase: "started" }
-  | { phase: "output"; stream: "stdout" | "stderr"; line: string }
+  // Batched by Rust (`OpEmitter`): every line since the last flush, ~80ms.
+  | { phase: "output"; lines: { stream: "stdout" | "stderr"; line: string }[] }
   | { phase: "progress"; percent: number; title: string }
   | { phase: "done"; ok: boolean; error?: GitErrorPayload }
 );
@@ -166,31 +193,6 @@ function newOpId(): string {
  * watcher after any mutation, including our own `emit_synthetic_change`) drives
  * a live refresh of the things that change frequently.
  */
-/** How many mounted views currently read `diff` (the whole-working-tree
- *  fallback diff). `loadDiff` is a no-op at zero so background fs/git events
- *  don't spawn git + ship multi-MB strings for data nothing renders. */
-let diffConsumers = 0;
-
-/** Mount-scoped: call from an effect in any view that reads `diff`; returns
- *  the release fn for cleanup. Fetches on retain so the view never sees the
- *  stale/empty diff the gate left behind, and drops the retained string when
- *  the last consumer leaves. */
-export function retainGitDiff(): () => void {
-  diffConsumers += 1;
-  void useGitStore.getState().actions.loadDiff();
-  let released = false;
-  return () => {
-    if (released) return;
-    released = true;
-    diffConsumers -= 1;
-    if (diffConsumers === 0) {
-      useGitStore.setState((s) => {
-        s.diff = "";
-      });
-    }
-  };
-}
-
 let gitStatusFreshListenerInit = false;
 function ensureGitStatusFreshListener(): void {
   if (gitStatusFreshListenerInit) return;
@@ -210,7 +212,7 @@ function ensureGitStatusFreshListener(): void {
     useGitStore.setState((s) => {
       s.isRepo = e.payload.status.is_repo;
       s.branch = e.payload.status.branch;
-      s.files = e.payload.status.files;
+      s.files = sameFiles(s.files, e.payload.status.files);
       s.ahead = e.payload.status.ahead;
       s.behind = e.payload.status.behind;
     });
@@ -227,8 +229,8 @@ function ensureGitStatusFreshListener(): void {
   // Live updates from the git watcher — commit / checkout / branch / fetch /
   // stage / push all fire `atlas:git-changed`. One snapshot call covers
   // status, branches, ahead/behind, stashes and in-progress state (the old
-  // six-loader fan-out was 10-25 git spawns per change); the log and the
-  // working diff are the only extra loads.
+  // six-loader fan-out was 10-25 git spawns per change); the log is the
+  // only extra load.
   void listen<{ project: string }>("atlas:git-changed", (e) => {
     const current = useGitStore.getState().repoPath;
     if (!current || current !== e.payload.project) return;
@@ -239,7 +241,6 @@ function ensureGitStatusFreshListener(): void {
     // and so lands on this event, and none of them reload the log
     // themselves.
     void actions.loadLog(current).catch(() => {});
-    void actions.loadDiff().catch(() => {});
   });
 
   // Streaming output from long git operations (commit hooks today; push/
@@ -260,11 +261,13 @@ function ensureGitStatusFreshListener(): void {
           };
           break;
         case "output":
+          // One store update per batch, not per line: a pre-push hook's test
+          // run or a big pull's per-file stat is thousands of lines.
           if (s.activeOp?.opId === p.opId) {
-            s.activeOp.lines.push({ stream: p.stream, text: p.line });
-            if (s.activeOp.lines.length > OP_LINES_CAP) {
-              s.activeOp.lines.splice(0, s.activeOp.lines.length - OP_LINES_CAP);
-            }
+            const prev = s.activeOp.lines;
+            let seq = prev.length ? prev[prev.length - 1].seq + 1 : 0;
+            const added = p.lines.map((l) => ({ seq: seq++, stream: l.stream, text: l.line }));
+            s.activeOp.lines = prev.concat(added).slice(-OP_LINES_CAP);
           }
           break;
         case "progress":
@@ -301,7 +304,6 @@ function ensureGitStatusFreshListener(): void {
       if (!repoPath) return;
       const actions = useGitStore.getState().actions;
       void actions.refreshStatusNow(repoPath).catch(() => {});
-      void actions.loadDiff().catch(() => {});
     }, 120);
   });
 }
@@ -309,11 +311,12 @@ function ensureGitStatusFreshListener(): void {
 interface GitState {
   isRepo: boolean;
   branch: string;
+  /** HEAD is detached: `branch` names no branch. */
+  detached: boolean;
   branches: GitBranch[];
   branchesFull: BranchInfo[];
   files: GitFileStatus[];
   log: GitLogEntry[];
-  diff: string;
   ahead: number;
   behind: number;
   loading: boolean;
@@ -348,7 +351,6 @@ interface GitActions {
     showPullChoice: (choice: PullChoice) => void;
     dismissPullChoice: () => void;
     loadLog: (path: string) => Promise<void>;
-    loadDiff: () => Promise<void>;
     listBranches: () => Promise<void>;
     loadBranchesFull: () => Promise<void>;
     loadStashes: () => Promise<void>;
@@ -417,11 +419,11 @@ export const useGitStore = createSelectors(
       return {
         isRepo: false,
         branch: "",
+        detached: false,
         branches: [],
         branchesFull: [],
         files: [],
         log: [],
-        diff: "",
         ahead: 0,
         behind: 0,
         loading: false,
@@ -459,11 +461,15 @@ export const useGitStore = createSelectors(
               set((s) => {
                 s.isRepo = snap.isRepo;
                 s.branch = snap.branch;
-                s.files = snap.files.map((f) => ({
-                  path: f.path,
-                  status: f.status,
-                  staged: f.staged,
-                }));
+                s.detached = snap.detached;
+                s.files = sameFiles(
+                  s.files,
+                  snap.files.map((f) => ({
+                    path: f.path,
+                    status: f.status,
+                    staged: f.staged,
+                  })),
+                );
                 s.ahead = snap.ahead;
                 s.behind = snap.behind;
                 s.branchesFull = snap.branches;
@@ -504,25 +510,6 @@ export const useGitStore = createSelectors(
               });
             } catch {
               /* not a repo */
-            }
-          },
-          loadDiff: async () => {
-            // Subscriber-gated: the whole-working-tree diff has exactly one
-            // consumer (the changes view's no-selection fallback), yet this
-            // used to run on EVERY fs burst and git event — a git spawn plus
-            // a potentially multi-MB string over IPC into the store, for data
-            // nothing rendered. `retainGitDiff` re-fetches on mount, so
-            // skipped loads are recovered the moment the view opens.
-            if (diffConsumers === 0) return;
-            const p = repo();
-            if (!p) return;
-            try {
-              const diff = await invoke<string>("git_diff_all", { path: p });
-              set((s) => {
-                s.diff = diff;
-              });
-            } catch {
-              /* ignore */
             }
           },
           listBranches: async () => {
@@ -600,9 +587,9 @@ export const useGitStore = createSelectors(
           refreshAll: async (path) => {
             const a = get().actions;
             // The snapshot covers status/branches/stashes/in-progress;
-            // only the diff, remotes, tags and log are separate loads.
+            // only the remotes, tags and log are separate loads.
             await a.loadStatus(path);
-            await Promise.all([a.loadDiff(), a.loadRemotes(), a.loadTags(), a.loadLog(path)]);
+            await Promise.all([a.loadRemotes(), a.loadTags(), a.loadLog(path)]);
           },
 
           checkout: async (branch) => {
@@ -613,7 +600,6 @@ export const useGitStore = createSelectors(
             // Switching branches changes HEAD + working-tree status — update
             // now; the watcher (HEAD move) reconciles branch lists shortly.
             await get().actions.refreshStatusNow(p);
-            void get().actions.loadDiff();
           },
           createBranch: async (name) => {
             const p = repo();
@@ -649,7 +635,6 @@ export const useGitStore = createSelectors(
             await invoke("git_undo_commit", { path: p });
             await get().actions.refresh(p);
             void get().actions.loadLog(p);
-            void get().actions.loadDiff();
           },
           squashLast: async (count, summary, description) => {
             const p = repo();
@@ -677,28 +662,24 @@ export const useGitStore = createSelectors(
             // Refresh immediately — don't wait for the `.git/index` fs
             // watcher (FSEvents latency + 200 ms debounce + stale round-trip).
             await get().actions.refreshStatusNow(p);
-            void get().actions.loadDiff();
           },
           unstageFiles: async (paths) => {
             const p = repo();
             if (!p) return;
             await invoke("git_unstage", { path: p, files: paths });
             await get().actions.refreshStatusNow(p);
-            void get().actions.loadDiff();
           },
           discard: async (paths) => {
             const p = repo();
             if (!p) return;
             await invoke("git_discard", { path: p, files: paths });
             await get().actions.refreshStatusNow(p);
-            void get().actions.loadDiff();
           },
           discardAdded: async (paths) => {
             const p = repo();
             if (!p) return;
             await invoke("git_delete_added", { path: p, files: paths });
             await get().actions.refreshStatusNow(p);
-            void get().actions.loadDiff();
           },
           commit: async (summary, description, amend = false, coAuthors) => {
             const p = repo();
@@ -724,7 +705,6 @@ export const useGitStore = createSelectors(
             // Commit clears the staged set and moves HEAD — one snapshot
             // covers status, ahead/behind and branches.
             await get().actions.refresh(p);
-            void get().actions.loadDiff();
           },
           fetch: async () => {
             const p = repo();

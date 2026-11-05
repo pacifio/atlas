@@ -53,12 +53,65 @@ const ALLOWED_OVERLAPS: Record<string, string> = {};
  */
 const MIN_MOCKED = 200;
 
+const TS_SRC = path.join(REPO_ROOT, "src");
+
+/**
+ * The reverse direction: commands the app really `invoke`s that the mock does
+ * not answer. An unmocked command resolves `null`, so the panel behind it
+ * renders empty or throws on `null.foo`, and the only symptom is a screen that
+ * looks unfinished in `bun run dev`. Each entry names the reason a fake is
+ * pointless or impossible; "not done yet" is not one, fix those instead.
+ * Keep this list short and only ever delete from it.
+ */
+const UNMOCKED_ALLOWED: Record<string, string> = {};
+
 /**
  * Commands Tauri routes itself, which have no `#[tauri::command]` anywhere in
  * `src-tauri/src`. The mock answers them because the plugins are not loaded in
  * a plain browser.
  */
 const PLUGIN_PREFIX = "plugin:";
+
+/** Same literal scan as `ipc-contract.test.ts` (kept in step by hand). */
+const TYPE_ARG = (() => {
+  const atom = "(?:=>|[^<>])";
+  let level = `<${atom}*>`;
+  for (let i = 0; i < 3; i++) level = `<(?:${atom}|${level})*>`;
+  return level;
+})();
+const INVOKE_LITERAL = new RegExp(
+  `\\binvoke\\s*(?:${TYPE_ARG})?\\s*\\(\\s*["'\`]([a-zA-Z0-9_]+)["'\`]`,
+  "g",
+);
+
+/** Dynamic `invoke(cmd)` sites whose literals the scan cannot follow; see the
+ *  same table in `ipc-contract.test.ts`. */
+const DYNAMIC_COMMANDS = ["git_stage_hunk", "git_unstage_hunk", "git_discard_hunk"];
+
+function walkTs(dir: string): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...walkTs(full));
+    else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) out.push(full);
+  }
+  return out;
+}
+
+/** Commands the shipping frontend invokes. `src/dev/` forwards names
+ *  generically and is the mock itself, so it is not a caller. */
+function invokedCommands(): Set<string> {
+  const found = new Set<string>(DYNAMIC_COMMANDS);
+  const devRoot = path.join(TS_SRC, "dev") + path.sep;
+  for (const file of walkTs(TS_SRC)) {
+    if (file.startsWith(devRoot)) continue;
+    const src = readFileSync(file, "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, " ")
+      .replace(/(^|[^:\\])\/\/.*$/gm, "$1");
+    for (const match of src.matchAll(INVOKE_LITERAL)) found.add(match[1]);
+  }
+  return found;
+}
 
 function walk(dir: string): string[] {
   const out: string[] = [];
@@ -211,5 +264,23 @@ describe("browser mock backend contract", () => {
       (name) => (baseOwners().get(name)?.length ?? 0) > 1 && baseHandlers[name] === misc[name],
     );
     expect(winsWrongly).toEqual([]);
+  });
+
+  it("answers every command the app invokes, or says why not", () => {
+    const invoked = invokedCommands();
+    expect(invoked.size).toBeGreaterThan(200);
+
+    const missing = [...invoked]
+      .filter((name) => !mocked.has(name) && !(name in UNMOCKED_ALLOWED))
+      .sort();
+    expect(
+      missing,
+      "These commands resolve null in `bun run dev`. Add a fake (see the README) or an UNMOCKED_ALLOWED entry with a reason.",
+    ).toEqual([]);
+
+    const stale = Object.keys(UNMOCKED_ALLOWED).filter(
+      (name) => mocked.has(name) || !invoked.has(name),
+    );
+    expect(stale, "UNMOCKED_ALLOWED entries that are now mocked or no longer invoked").toEqual([]);
   });
 });

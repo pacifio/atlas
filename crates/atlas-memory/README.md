@@ -13,7 +13,7 @@ installed ACP agent) shares it without special-casing.
 > extraction/persistence and the embedding-provider trait (`src/session.rs`,
 > `src/embedding.rs`) came from the SDK, which was deleted in #54; they are
 > Atlas's own code now. `tests/behaviour.rs` pins their behaviour — run it before
-> touching either. The ported grafeo graph store, its consolidation pass and the
+> touching either. The grafeo graph store, its consolidation pass and the
 > dream gates were removed in #89 (retrieval is HNSW-only; global promotion runs
 > over the record table).
 

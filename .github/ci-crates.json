@@ -53,10 +53,6 @@
     "clippy": true
   },
   {
-    "crate": "atlas-codeindex",
-    "clippy": true
-  },
-  {
     "crate": "atlas-comms",
     "clippy": true
   },
@@ -72,10 +68,6 @@
   {
     "crate": "atlas-gitdiff",
     "cross": true
-  },
-  {
-    "crate": "atlas-grepindex",
-    "clippy": true
   },
   {
     "crate": "atlas-icon-theme",
@@ -105,7 +97,15 @@
     "cross": true
   },
   {
+    "crate": "atlas-remote-control",
+    "clippy": true
+  },
+  {
     "crate": "atlas-retrieval",
+    "clippy": true
+  },
+  {
+    "crate": "atlas-security",
     "clippy": true
   },
   {

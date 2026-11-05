@@ -1,9 +1,8 @@
 //! Typed git errors: classify raw stderr/stdout into a stable code the UI
 //! can route on, plus a human message written for a person, not a parser.
 //!
-//! The pattern table is ported from dugite's `GitError` regexes and GitHub
-//! Desktop's `getDescriptionForError` (core.ts) — first match wins, so
-//! specific patterns must precede generic ones.
+//! The pattern table is matched in order — first match wins, so specific
+//! patterns must precede generic ones.
 
 use regex::Regex;
 use serde::Serialize;

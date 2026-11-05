@@ -50,6 +50,7 @@ impl MemoryServer {
     /// Bind `127.0.0.1:0` and serve the memory tools over `memory`, admitting
     /// only requests bearing a live token from `tokens`. Returns once bound;
     /// serving continues on the runtime.
+    #[cfg(test)]
     pub async fn start(
         memory: SharedMemoryStore,
         tokens: Arc<MemoryTokens>,
@@ -61,7 +62,7 @@ impl MemoryServer {
         Self::start_with(memory, tokens, clocks, reads, gate, sources, Vec::new()).await
     }
 
-    /// [`start`](Self::start), also serving each of `mounts` — another MCP
+    /// `start`, also serving each of `mounts` — another MCP
     /// service already routed at its own path, such as the UI tool server at
     /// `/ui` — on the same listener and behind the same token check. One
     /// listener means one token per session covers every service: the token

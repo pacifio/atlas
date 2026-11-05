@@ -12,9 +12,9 @@ use atlas_engine_protocol::protocol::ThreadHistoryMode as CoreThreadHistoryMode;
 use atlas_engine_protocol::protocol::ThreadSource as CoreThreadSource;
 use atlas_engine_utils_absolute_path::AbsolutePathBuf;
 #[cfg(test)]
-use schemars::r#gen::SchemaGenerator;
+use schemars::Schema;
 #[cfg(test)]
-use schemars::schema::Schema;
+use schemars::SchemaGenerator;
 use serde::Deserialize;
 use serde::Serialize;
 use std::path::PathBuf;
@@ -108,8 +108,8 @@ pub enum ThreadSource {
 
 #[cfg(test)]
 impl JsonSchema for ThreadSource {
-    fn schema_name() -> String {
-        "ThreadSource".to_string()
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "ThreadSource".into()
     }
 
     fn json_schema(generator: &mut SchemaGenerator) -> Schema {

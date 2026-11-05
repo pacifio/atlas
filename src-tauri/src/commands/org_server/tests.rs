@@ -333,6 +333,7 @@ impl OrganisationCloud for FakeOrganisation {
                 deleted_at: None,
                 resolved_at: None,
                 resolved_by: None,
+                votes: Default::default(),
             };
             list.push(posted.clone());
             let mut owed: Vec<(String, &'static str)> = mentions
@@ -661,6 +662,7 @@ fn comment(id: &str, parent: Option<&str>) -> Comment {
         deleted_at: None,
         resolved_at: None,
         resolved_by: None,
+        votes: Default::default(),
     }
 }
 
@@ -751,20 +753,20 @@ fn sharing(on: bool) -> SharingGate {
 }
 
 fn setting(on: bool) -> OrgAccessGate {
-    Arc::new(move || on)
+    Arc::new(move |_: &str| on)
 }
 
 /// A setting the test can flip while a session runs.
 fn switchable(on: bool) -> (OrgAccessGate, Arc<AtomicBool>) {
     let flag = Arc::new(AtomicBool::new(on));
     let read = flag.clone();
-    (Arc::new(move || read.load(Ordering::SeqCst)), flag)
+    (Arc::new(move |_: &str| read.load(Ordering::SeqCst)), flag)
 }
 
 /// A window that is never asked anything in these tests.
 fn quiet_ui() -> axum::Router {
     let bridge = Arc::new(UiBridge::new(Arc::new(|_| Err("no window".into()))));
-    ui_server::router(ui_server::UiTools::new(bridge, Arc::new(|| true)))
+    ui_server::router(ui_server::UiTools::new(bridge, Arc::new(|_: &str| true)))
 }
 
 async fn serve(
@@ -5200,10 +5202,7 @@ fn the_tool_list_carries_the_cache_fields_the_2026_07_28_spec_requires() {
 fn the_instructions_state_the_protocol_in_three_sentences_or_fewer() {
     assert!(INSTRUCTIONS.contains("Call org_whoami first"));
     assert!(INSTRUCTIONS.contains("ask the user which one"));
-    assert!(
-        INSTRUCTIONS.matches(". ").count() + 1 <= 3,
-        "{INSTRUCTIONS}"
-    );
+    assert!(INSTRUCTIONS.matches(". ").count() < 3, "{INSTRUCTIONS}");
 }
 
 /// The Chat Completions wire drops a server's instructions (`reshape_tools`
@@ -5555,7 +5554,7 @@ fn offers(
     orgs: Arc<FakeSessionOrgs>,
 ) -> MemorySessionOffers {
     MemorySessionOffers::new(host, sharing(true))
-        .with_ui(UiOffer::new(Arc::new(|| true)))
+        .with_ui(UiOffer::new(Arc::new(|_: &str| true)))
         .with_org(OrgOffer::new(setting(setting_on), orgs))
 }
 
@@ -5744,8 +5743,8 @@ async fn a_signed_out_user_is_not_offered_the_org_server() {
 #[tokio::test(flavor = "multi_thread")]
 async fn without_the_org_third_the_offer_is_as_before() {
     let host = running_host(Arc::new(FakeOrganisation::default())).await;
-    let offers =
-        MemorySessionOffers::new(host, sharing(true)).with_ui(UiOffer::new(Arc::new(|| true)));
+    let offers = MemorySessionOffers::new(host, sharing(true))
+        .with_ui(UiOffer::new(Arc::new(|_: &str| true)));
     assert_eq!(
         names(&offers.offer(&session_request(true))),
         ["atlas_memory", UI_SERVER_NAME]
@@ -5804,7 +5803,7 @@ fn the_setting_is_not_read_for_a_connection_that_cannot_use_the_server() {
     let counted = reads.clone();
     let orgs = FakeSessionOrgs::new(true, Some(acme()));
     let offer = OrgOffer::new(
-        Arc::new(move || {
+        Arc::new(move |_: &str| {
             counted.fetch_add(1, Ordering::SeqCst);
             true
         }),

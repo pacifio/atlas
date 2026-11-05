@@ -186,12 +186,23 @@ fn update_uri_flag() -> &'static str {
     "uri_win_intel"
 }
 
-/// macOS (and, until it has an updater, Linux): the architecture picks the
-/// DMG. Compile-time architecture is *almost* the whole story, since each
+/// Linux: the architecture picks the release page to announce
+/// (`updater_linux.rs` never downloads it). The key is per-arch so a release
+/// built for one arch only is never announced on the other.
+#[cfg(target_os = "linux")]
+fn update_uri_flag() -> &'static str {
+    if cfg!(target_arch = "aarch64") {
+        "uri_linux_aarch64"
+    } else {
+        "uri_linux_x86_64"
+    }
+}
+
+/// macOS: the architecture picks the DMG. Compile-time architecture is *almost* the whole story, since each
 /// build is single-arch. The exception is an Intel build running under
 /// **Rosetta** on Apple Silicon: that machine can run the native ARM app, and
 /// keying off the binary alone would pin it to the translated build forever.
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
 fn update_uri_flag() -> &'static str {
     // Short-circuit: an ARM build is only ever on ARM hardware, so the sysctl
     // below never runs there.
@@ -222,8 +233,9 @@ fn running_under_rosetta() -> bool {
     })
 }
 
-/// Not macOS (and not Windows, which never asks): nothing is ever translated.
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+/// Neither macOS nor Linux nor Windows (none of which asks): nothing is ever
+/// translated.
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 fn running_under_rosetta() -> bool {
     false
 }
@@ -884,7 +896,19 @@ mod tests {
         assert_eq!(update_uri_flag(), "uri_win_intel");
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_update_uri_key_on_linux_is_this_architectures_release() {
+        // Never a DMG key, which is what Linux read before it had its own.
+        let expected = if cfg!(target_arch = "aarch64") {
+            "uri_linux_aarch64"
+        } else {
+            "uri_linux_x86_64"
+        };
+        assert_eq!(update_uri_flag(), expected);
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     #[test]
     fn the_update_uri_key_matches_the_architecture_that_can_run_the_dmg() {
         let flag = update_uri_flag();
@@ -907,7 +931,7 @@ mod tests {
         }
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     #[test]
     fn rosetta_detection_is_stable_and_false_on_native_hardware() {
         // Cached behind a `OnceLock`, so it must not change between calls.

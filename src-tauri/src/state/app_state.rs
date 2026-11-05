@@ -14,21 +14,18 @@ use tauri::{AppHandle, Manager};
 /// shape. Older payloads with a smaller `version` are loadable as long as
 /// the missing fields default to sensible values.
 ///
-/// v2 introduced the multi-project model (`projects`/`groups`/
+/// v2 introduced the multi-project model (`projects`/
 /// `active_workspace_id`); `current_project` is retained only as a
 /// migration source for v1 payloads.
 ///
 /// v3 introduced the Organisation layer above projects
 /// (`organisations`/`active_organisation_id`, plus `org_id` on each
-/// project/group). v2 payloads are migrated by wrapping all existing
+/// project). v2 payloads are migrated by wrapping all existing
 /// projects in a default local "Personal" org.
 ///
 /// v4 removed `AppSettings` from this struct entirely (issue #64) — user
-/// preferences now live in their own validated `config.toml`
-/// (`crate::state::atlas_config`). `settings_config_migrated` records whether
-/// that one-time export already happened, so a user who deletes `config.toml`
-/// afterward gets fresh defaults rather than a silent re-import of whatever
-/// was last in `state.json`.
+/// preferences live in their own validated `config.toml`
+/// (`crate::state::atlas_config`).
 pub const SCHEMA_VERSION: u32 = 4;
 
 /// Just enough to name a project: the {name, path} pair the legacy v1
@@ -69,47 +66,19 @@ pub struct Project {
     pub id: String,
     pub name: String,
     pub path: String,
-    #[serde(default)]
-    pub group_id: Option<String>,
     /// Owning Organisation. `None` on pre-v3 payloads — `migrate()` backfills
     /// it to the default org. The sidebar filters projects by the active org.
     #[serde(default)]
     pub org_id: Option<String>,
-    #[serde(default)]
-    pub color: Option<String>,
     /// Optional git remote. The ONLY field (besides id/name) that syncs to the
     /// server (`workspace_refs.git_url`) for one-click clone; the source tree
     /// itself never syncs. `None` for local-only projects.
     #[serde(default)]
     pub git_url: Option<String>,
-    /// Pinned to the top of the sidebar and kept out of the hot-set LRU.
-    /// Frontend-owned; Rust only stores it. Absent from this struct until
-    /// `tests/state-payload-contract.test.ts` found it: `pin()` scheduled a
-    /// save and serde dropped the field, so a pin never survived a restart.
-    #[serde(default)]
-    pub pinned: bool,
     /// ISO-8601 timestamp of the last time this project was the active
     /// one; used to order the sidebar / pick a fallback on close.
     #[serde(default)]
     pub last_active_at: Option<String>,
-}
-
-/// A user-defined collapsible folder that groups projects in the sidebar.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProjectGroup {
-    pub id: String,
-    pub name: String,
-    #[serde(default)]
-    pub order: u32,
-    /// Owning Organisation (mirrors `Project::org_id`). `None` on pre-v3
-    /// payloads — `migrate()` backfills it to the default org.
-    #[serde(default)]
-    pub org_id: Option<String>,
-    /// Pinned groups float to the top of the Recent tier. See `Project::pinned`
-    /// for why this was missing.
-    #[serde(default)]
-    pub pinned: bool,
 }
 
 /// A top-level tenant that owns a set of projects (the Linear "workspace
@@ -162,10 +131,8 @@ pub struct AppState {
     #[serde(default)]
     pub workspaces: Vec<Project>,
     #[serde(default)]
-    pub groups: Vec<ProjectGroup>,
-    #[serde(default)]
     pub active_workspace_id: Option<String>,
-    /// The Organisation layer above projects (v3). Each project/group is
+    /// The Organisation layer above projects (v3). Each project is
     /// tagged with an `org_id`; the sidebar shows only the active org's set.
     #[serde(default)]
     pub organisations: Vec<Organisation>,
@@ -176,11 +143,6 @@ pub struct AppState {
     /// `None` on old `state.json` files — backfilled + persisted at startup.
     #[serde(default)]
     pub telemetry_anon_id: Option<String>,
-    /// Whether the one-time `state.json.settings` → `config.toml` export
-    /// (issue #64) has already run. See the `SCHEMA_VERSION` doc for why this
-    /// can't just be "does config.toml exist".
-    #[serde(default)]
-    pub settings_config_migrated: bool,
     #[serde(default = "default_version")]
     pub version: u32,
 }
@@ -212,8 +174,6 @@ pub struct AppStatePatch {
     #[serde(default)]
     pub workspaces: Vec<Project>,
     #[serde(default)]
-    pub groups: Vec<ProjectGroup>,
-    #[serde(default)]
     pub active_workspace_id: Option<String>,
     #[serde(default)]
     pub organisations: Vec<Organisation>,
@@ -227,12 +187,10 @@ impl Default for AppState {
             current_project: None,
             recent_projects: Vec::new(),
             workspaces: Vec::new(),
-            groups: Vec::new(),
             active_workspace_id: None,
             organisations: Vec::new(),
             active_organisation_id: None,
             telemetry_anon_id: None,
-            settings_config_migrated: false,
             version: SCHEMA_VERSION,
         }
     }
@@ -275,7 +233,7 @@ impl AppState {
     /// v1 → v2: if no projects exist yet but a legacy `current_project` is
     /// present, synthesize a single project from it and make it active.
     ///
-    /// v2 → v3: if no organisations exist yet, wrap every project/group in a
+    /// v2 → v3: if no organisations exist yet, wrap every project in a
     /// default local "Personal" org and make it active.
     fn migrate(&mut self) {
         if self.workspaces.is_empty() {
@@ -286,11 +244,8 @@ impl AppState {
                     id,
                     name: project.name,
                     path: project.path,
-                    group_id: None,
                     org_id: None,
-                    color: None,
                     git_url: None,
-                    pinned: false,
                     last_active_at: None,
                 });
             }
@@ -327,7 +282,7 @@ impl AppState {
             }
         }
 
-        // Backfill org ownership on any untagged project/group (covers both
+        // Backfill org ownership on any untagged project (covers both
         // the fresh migration above and stray untagged entries — the frontend
         // can mint `org_id: null` rows during a boot race, and every render
         // surface filters strictly by org, so an untagged row would otherwise
@@ -339,28 +294,10 @@ impl AppState {
             .clone()
             .or_else(|| self.organisations.first().map(|o| o.id.clone()));
         if let Some(default_org) = default_org {
-            let group_orgs: std::collections::HashMap<String, String> = self
-                .groups
-                .iter()
-                .filter_map(|g| Some((g.id.clone(), g.org_id.clone()?)))
-                .collect();
             let mut backfilled = 0usize;
-            for group in &mut self.groups {
-                if group.org_id.is_none() {
-                    group.org_id = Some(default_org.clone());
-                    backfilled += 1;
-                }
-            }
             for ws in &mut self.workspaces {
                 if ws.org_id.is_none() {
-                    // A project inside an org-tagged group belongs to that
-                    // group's org; only truly orphaned rows get the default.
-                    ws.org_id = Some(
-                        ws.group_id
-                            .as_ref()
-                            .and_then(|gid| group_orgs.get(gid).cloned())
-                            .unwrap_or_else(|| default_org.clone()),
-                    );
+                    ws.org_id = Some(default_org.clone());
                     backfilled += 1;
                 }
             }
@@ -368,7 +305,7 @@ impl AppState {
                 tracing::info!(
                     count = backfilled,
                     default_org = %default_org,
-                    "backfilled org_id on untagged projects/groups"
+                    "backfilled org_id on untagged projects"
                 );
             }
         }
@@ -391,7 +328,6 @@ impl AppState {
         self.current_project = None;
         self.recent_projects = p.recent_projects;
         self.workspaces = p.workspaces;
-        self.groups = p.groups;
         self.active_workspace_id = p.active_workspace_id;
         self.organisations = p.organisations;
         self.active_organisation_id = p.active_organisation_id;
@@ -419,7 +355,7 @@ impl AppState {
     /// (issue #64) so `serde_json` would otherwise silently drop it on the
     /// floor as an unrecognized key. The caller feeds this to
     /// `atlas_config::bootstrap` for the one-time `config.toml` export.
-    pub fn load(app: &AppHandle) -> (Self, Option<serde_json::Value>) {
+    pub fn load(app: &AppHandle) -> Self {
         let raw = Self::path(app).and_then(|path| std::fs::read_to_string(&path).ok());
         Self::from_raw(raw.as_deref())
     }
@@ -437,32 +373,23 @@ impl AppState {
     /// doing nothing at all until the second launch, by which point the
     /// boot-time save in `setup()` had written a `state.json` for this path
     /// to parse and migrate.
-    fn from_raw(raw: Option<&str>) -> (Self, Option<serde_json::Value>) {
-        let legacy_settings = raw
-            .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
-            .and_then(|v| v.get("settings").cloned());
+    fn from_raw(raw: Option<&str>) -> Self {
         let mut state: AppState = raw
             .map(|raw| serde_json::from_str(raw).unwrap_or_default())
             .unwrap_or_default();
         state.migrate();
-        (state, legacy_settings)
+        state
     }
 
     /// Merge `state` over whatever `state.json` already holds, rather than
     /// replacing the file wholesale.
     ///
-    /// The typed `AppState` deliberately has no `settings` field any more
-    /// (issue #64), so `to_string_pretty(state)` DROPS the legacy `settings`
-    /// object — the very thing `atlas_config::bootstrap` still needs whenever
-    /// migration hasn't succeeded yet. A save triggered for some unrelated
-    /// reason (a rotated telemetry id, say) would then destroy the user's only
-    /// surviving copy of their preferences. Merging preserves it, and any
-    /// other key an older or newer build writes, for exactly the reason
-    /// `config.toml` patches preserve unknown TOML keys.
-    ///
-    /// Once migration IS recorded as done the legacy copy has served its
-    /// purpose and is dropped, so `state.json` doesn't carry a stale shadow of
-    /// `config.toml` forever.
+    /// Merging keeps any key another build of Atlas writes, for exactly the
+    /// reason `config.toml` patches preserve unknown TOML keys. The keys
+    /// Atlas itself retired are dropped: `settings` (now `config.toml`) and
+    /// its `settingsConfigMigrated` marker, so `state.json` carries no stale
+    /// shadow of the settings, and `groups`, the project folders the sidebar
+    /// no longer has.
     fn merged_for_save(path: &Path, state: &AppState) -> serde_json::Result<serde_json::Value> {
         let mut merged = std::fs::read_to_string(path)
             .ok()
@@ -475,9 +402,9 @@ impl AppState {
             for (k, v) in src {
                 dst.insert(k.clone(), v.clone());
             }
-            if state.settings_config_migrated {
-                dst.remove("settings");
-            }
+            dst.remove("settings");
+            dst.remove("settingsConfigMigrated");
+            dst.remove("groups");
         }
         Ok(merged)
     }
@@ -487,12 +414,12 @@ impl AppState {
     ///
     /// The temp name carries a UUID rather than being the fixed
     /// `state.json.tmp`: saves overlap in practice (the boot-time telemetry-id
-    /// / migration-marker write against the frontend's debounced flush), and
+    /// write against the frontend's debounced flush), and
     /// two of them sharing one temp path can interleave into exactly the torn
     /// file the rename is supposed to prevent. That matters more since
-    /// [`Self::merged_for_save`] made this a read-modify-write, and because
-    /// this file holds the only copy of the legacy settings until migration
-    /// succeeds. `sync_all` before the rename is what makes the atomicity
+    /// [`Self::merged_for_save`] made this a read-modify-write, and a torn
+    /// `state.json` loses every project. `sync_all` before the rename is what
+    /// makes the atomicity
     /// real — otherwise the rename can reach disk ahead of its bytes.
     pub fn save(app: &AppHandle, state: &AppState) -> std::io::Result<()> {
         use std::io::Write;
@@ -553,49 +480,17 @@ mod tests {
         .unwrap();
     }
 
-    /// The typed `AppState` has no `settings` field any more (issue #64), so
-    /// serializing it over `state.json` wholesale silently DELETES the legacy
-    /// settings object. While `settings_config_migrated` is still false that
-    /// object is the only surviving copy of the user's preferences —
-    /// `config.toml` either doesn't exist yet or couldn't be read — and a save
-    /// fired for an entirely unrelated reason (a rotated telemetry id) must
-    /// not destroy it.
+    /// Settings live in `config.toml`; a save drops the copy an older build
+    /// left in `state.json` rather than carrying a stale shadow forever.
     #[test]
-    fn a_save_before_migration_preserves_the_legacy_settings() {
+    fn a_save_drops_the_retired_settings_object() {
         let (_dir, path) = tmp_state_path();
         state_file_with_legacy_settings(&path);
 
-        let state = AppState {
-            settings_config_migrated: false,
-            ..AppState::default()
-        };
-        let merged = AppState::merged_for_save(&path, &state).unwrap();
+        let merged = AppState::merged_for_save(&path, &AppState::default()).unwrap();
 
-        assert_eq!(
-            merged.get("settings").and_then(|s| s.get("enterToSend")),
-            Some(&serde_json::json!(false)),
-            "the legacy settings must survive a save made for an unrelated reason"
-        );
-    }
-
-    /// ...and once migration IS recorded, the legacy copy has served its
-    /// purpose: drop it rather than carrying a stale shadow of `config.toml`
-    /// in `state.json` forever.
-    #[test]
-    fn a_save_after_migration_drops_the_legacy_settings() {
-        let (_dir, path) = tmp_state_path();
-        state_file_with_legacy_settings(&path);
-
-        let state = AppState {
-            settings_config_migrated: true,
-            ..AppState::default()
-        };
-        let merged = AppState::merged_for_save(&path, &state).unwrap();
-
-        assert!(
-            merged.get("settings").is_none(),
-            "a migrated state.json keeps no settings shadow"
-        );
+        assert!(merged.get("settings").is_none());
+        assert!(merged.get("settingsConfigMigrated").is_none());
     }
 
     /// Merging must not resurrect stale values for keys the struct owns — the
@@ -605,20 +500,15 @@ mod tests {
         let (_dir, path) = tmp_state_path();
         std::fs::write(
             &path,
-            serde_json::json!({ "version": 1, "settingsConfigMigrated": false, "recentProjects": [
+            serde_json::json!({ "version": 1, "recentProjects": [
                 { "name": "old", "path": "/old", "lastOpened": "then" }
             ]})
             .to_string(),
         )
         .unwrap();
 
-        let state = AppState {
-            settings_config_migrated: true,
-            ..AppState::default()
-        };
-        let merged = AppState::merged_for_save(&path, &state).unwrap();
+        let merged = AppState::merged_for_save(&path, &AppState::default()).unwrap();
 
-        assert_eq!(merged["settingsConfigMigrated"], serde_json::json!(true));
         assert_eq!(merged["recentProjects"], serde_json::json!([]));
     }
 
@@ -635,7 +525,6 @@ mod tests {
             "currentProject": null,
             "recentProjects": [],
             "workspaces": [],
-            "groups": [],
             "activeWorkspaceId": "proj-1",
             "organisations": [],
             "activeOrganisationId": null,
@@ -685,18 +574,21 @@ mod tests {
         assert_eq!(renamed.active_workspace_id, None);
     }
 
-    /// `pinned` was frontend-only: `pin()` scheduled a save and serde threw the
-    /// field away, so a pinned project or group came back unpinned on the next
-    /// launch. Found by `tests/state-payload-contract.test.ts`.
+    /// The project folders are gone from the sidebar, and so is their key: a
+    /// save drops the `groups` an older build left in `state.json`.
     #[test]
-    fn a_project_and_a_group_keep_their_pin() {
-        let patch: AppStatePatch = serde_json::from_value(serde_json::json!({
-            "workspaces": [{ "id": "p1", "name": "a", "path": "/a", "pinned": true }],
-            "groups": [{ "id": "g1", "name": "g", "pinned": true }],
-        }))
-        .expect("patch deserializes");
-        assert!(patch.workspaces[0].pinned);
-        assert!(patch.groups[0].pinned);
+    fn a_save_drops_the_retired_groups_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        std::fs::write(
+            &path,
+            r#"{ "groups": [{ "id": "g1", "name": "g" }], "recentProjects": [] }"#,
+        )
+        .unwrap();
+
+        let merged = AppState::merged_for_save(&path, &AppState::default()).unwrap();
+
+        assert!(merged.get("groups").is_none());
     }
 
     /// The regression test for the analytics bug: a settings save must not cost
@@ -722,7 +614,7 @@ mod tests {
     /// directory and silently does nothing until the app is relaunched.
     #[test]
     fn a_first_run_still_gets_the_default_organisation() {
-        let (state, legacy) = AppState::from_raw(None);
+        let state = AppState::from_raw(None);
 
         assert_eq!(
             state.organisations.len(),
@@ -736,19 +628,17 @@ mod tests {
             "default org exists but nothing is active"
         );
         assert_eq!(state.version, SCHEMA_VERSION);
-        assert!(legacy.is_none());
     }
 
     /// A present-but-unreadable `state.json` takes the same fallback and is
     /// migrated the same way: the two inputs must never diverge again.
     #[test]
     fn a_corrupt_state_file_still_gets_the_default_organisation() {
-        let (state, legacy) = AppState::from_raw(Some("{ not json"));
+        let state = AppState::from_raw(Some("{ not json"));
 
         assert_eq!(state.organisations.len(), 1);
         assert_eq!(state.organisations[0].name, "Personal");
         assert!(state.active_organisation_id.is_some());
-        assert!(legacy.is_none());
     }
 
     /// A patch with unknown/extra keys (an older or newer frontend) still parses,
@@ -772,11 +662,7 @@ mod tests {
     /// older Atlas build still carries a `settings` object; `serde_json`
     /// silently drops unrecognized keys for structs without
     /// `deny_unknown_fields`, so this must parse cleanly and leave every other
-    /// field intact rather than erroring or resetting anything. What happens
-    /// to that dropped value is `AppState::load`'s job (it re-parses the raw
-    /// JSON separately to recover it for migration) and
-    /// `atlas_config::settings_from_legacy_json`'s job (extracting it into
-    /// `AppSettings`) — both tested on their own.
+    /// field intact rather than erroring or resetting anything.
     #[test]
     fn a_legacy_settings_key_in_state_json_does_not_break_parsing() {
         let state: AppState = serde_json::from_value(serde_json::json!({

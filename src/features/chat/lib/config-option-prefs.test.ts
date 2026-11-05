@@ -1,7 +1,6 @@
 // @vitest-environment happy-dom
 //
-// Per-agent config-option preferences (#33). Zed re-applies persisted defaults
-// at session open; Atlas keeps per-agent prefs on the frontend (the same home
+// Per-agent config-option preferences (#33). Atlas keeps per-agent prefs on the frontend (the same home
 // as the mode pref) and pushes them after bind — validated against what the
 // agent actually advertises, never as a blind override.
 

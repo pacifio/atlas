@@ -170,12 +170,17 @@ export function askUserQuestionMulti(): {
   };
 }
 
-/** The `tool_call` half of a `permission_request` delta. */
+/** The `tool_call` half of a `permission_request` delta. `toolName` and
+ *  `content` are what an outward action's card reads (`outward-approval.ts`):
+ *  the organisation tool's own name, and the recipient then the body as text
+ *  blocks. Omitted for every other card, as the wire omits them. */
 export function permissionToolCall(opts: {
   id: string;
   title: string;
   kind: string;
   rawInput: unknown;
+  toolName?: string;
+  content?: string[];
 }): ToolCallRef {
   return {
     toolCallId: opts.id,
@@ -183,5 +188,21 @@ export function permissionToolCall(opts: {
     kind: opts.kind,
     status: "pending",
     rawInput: opts.rawInput,
+    ...(opts.toolName ? { toolName: opts.toolName } : {}),
+    ...(opts.content ? { content: opts.content } : {}),
   };
+}
+
+/** The three options the native seam offers on an outward reply
+ *  (ADR-0014). Allow is a click on these cards, never a key. */
+export function outwardOptions(): PermissionOptionRef[] {
+  return [
+    { optionId: "allow_once", name: "Post reply", kind: "allow_once" },
+    {
+      optionId: "allow_always",
+      name: "Post, and don't ask again this session",
+      kind: "allow_always",
+    },
+    { optionId: "reject_once", name: "Decline", kind: "reject_once" },
+  ];
 }

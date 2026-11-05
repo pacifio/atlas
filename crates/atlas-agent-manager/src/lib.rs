@@ -1,11 +1,9 @@
 //! The manager: who is connected, and which sessions are open on them.
 //!
-//! Ported from Zed's `AgentConnectionStore`
-//! (`zed-ref/crates/agent_ui/src/agent_connection_store.rs`) with the session
-//! ownership Zed spreads across `ConversationView` folded in, because Atlas has
-//! no per-agent view to hold it.
+//! It owns both the connection table and session ownership, because Atlas has
+//! no per-agent view to hold the latter.
 //!
-//! This is the first thing to link all three ported crates: sessions come from
+//! It links the three lower crates: sessions come from
 //! `atlas-acp-thread`, connections from `atlas-agent-servers`, and installed
 //! agents from `atlas-agent-store`.
 //!
@@ -29,21 +27,16 @@
 //! attempt nobody stops finishes its download, spawns its process and completes
 //! its handshake for an agent the user already killed (ATL-228).
 //!
-//! # Not ported
+//! # Concurrency model
 //!
-//! GPUI. Zed's entries are `Entity<AgentConnectionEntry>` compared by identity,
-//! its connect is a `Task`, and its notifications are `cx.emit`. Here those are
-//! `Arc<Mutex<_>>` compared with `Arc::ptr_eq`, a `Shared` future, and a
-//! broadcast channel.
+//! Entries are `Arc<Mutex<_>>` compared with `Arc::ptr_eq`, the connect is a
+//! `Shared` future, and notifications go over a broadcast channel.
 //!
-//! That substitution is not free, and this file used to claim it was: "the
-//! mechanism is unchanged; only the runtime is". It is the other way round.
-//! Zed's store is `Rc`-based and cannot leave the GPUI main thread, so its
-//! check-then-insert is one uninterruptible borrow and its correctness came
-//! from the runtime it ran on. Ported onto multi-threaded tokio with the same
-//! shape, the guarantee stopped holding. Anything else moved across from
-//! Zed's GPUI-side code deserves the same question: what was the original
-//! leaning on that did not come with it?
+//! This runs on multi-threaded tokio, so nothing is serialised for free: a
+//! single-threaded design makes check-then-insert one uninterruptible step, but
+//! here that guarantee has to be built explicitly (hence the single `entries`
+//! guard above). Any new logic should be asked the same question: what was it
+//! leaning on the runtime for?
 
 pub mod catalog;
 pub mod manager;

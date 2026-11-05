@@ -1133,6 +1133,13 @@
             "kind": {
               "$ref": "#/definitions/SubAgentActivityKind"
             },
+            "prompt": {
+              "description": "The task a `Started` child was given, when known.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "type": {
               "enum": [
                 "subAgentActivity"

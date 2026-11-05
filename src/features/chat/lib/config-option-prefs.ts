@@ -1,7 +1,6 @@
 // Per-agent config-option preferences (#33).
 //
-// Zed re-applies persisted per-agent defaults at session open
-// (`zed-ref/acp.rs:1370-1420`). Atlas keeps per-agent preferences on the
+// Atlas keeps per-agent preferences on the
 // frontend — the same home as the last-mode pref — and pushes them after bind.
 // The discipline is the mode pref's: a remembered pick is only ever pushed when
 // the agent still ADVERTISES that knob and offers that value; no pick means
@@ -70,4 +69,15 @@ export function configOptionPushes(
     }
   }
   return pushes;
+}
+
+/** Forget a pick, so the agent's own default applies again. */
+export function clearConfigOptionPref(agentType: string, configId: string): void {
+  try {
+    const prefs = loadConfigOptionPrefs(agentType);
+    delete prefs[configId];
+    localStorage.setItem(key(agentType), JSON.stringify(prefs));
+  } catch {
+    // storage unavailable — preferences are best-effort
+  }
 }

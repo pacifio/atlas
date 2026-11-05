@@ -92,7 +92,6 @@ export const PROJECT = {
   id: "ws-northwind-shop",
   name: "northwind-shop",
   path: "/Users/uzayer/Developer/northwind-shop",
-  groupId: null,
   orgId: ORG_ID,
 };
 

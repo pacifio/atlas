@@ -1,4 +1,4 @@
-//! The bundled SQLite must be new enough for the ported engine's state layer.
+//! The bundled SQLite must be new enough for the engine's state layer.
 //!
 //! The engine's `atlas-engine-state` crate pins bundled SQLite to **≥ 3.51.3** with a
 //! compile-time assert (`vendor/atlas-engine/state/src/lib.rs:7`), citing the

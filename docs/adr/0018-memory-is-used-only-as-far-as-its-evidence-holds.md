@@ -26,6 +26,6 @@ Most memories cite no code: the extractor can't cite, and agents often don't. Wh
 
 - Reads stay cheap: results are cached by file size and mtime, commit evidence is checked for at most 300 entries per read, and both caches are bounded.
 - Extracted and captured memories have no citations; they get commit evidence when capture recorded the session, and nothing otherwise.
-- A moved symbol is found by the code index when one is open for the scope, else by a same-length window search of the file.
+- A moved symbol is found by a same-length window search of the file. (Until ADR-0021 an open code index found it first; that path is gone, and this fallback is now the only one.)
 - Commit evidence is computed at read time and stored nowhere: a rebase that re-points a commit, or a capture store that is deleted, changes the answer without a migration.
 - Archiving is a revision (ADR-0017), so a restatement by another session revives an archived memory.

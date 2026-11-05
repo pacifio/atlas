@@ -60,17 +60,18 @@ describe("the Memory updated card", () => {
     expect(screen.getByText("removed")).toBeTruthy();
   });
 
-  it("opens a row's entry in Memory ▸ Shared", async () => {
-    useMemoryStore.setState({ subTab: "graph", focusEntryId: null });
+  it("opens a row's entry in Memory ▸ Memories", async () => {
+    useMemoryStore.setState({ subTab: "activity", focusEntryId: null });
     const user = userEvent.setup();
     render(<MemoryUpdatedCard projectPath="/repo" sessionId="s-a" />);
     await user.click(await screen.findByText("Memory updated: 2 saved"));
     await user.click(screen.getByRole("button", { name: "Sign JWTs with EdDSA" }));
-    expect(useMemoryStore.getState().subTab).toBe("shared");
+    expect(useMemoryStore.getState().subTab).toBe("memories");
     expect(useMemoryStore.getState().focusEntryId).toBe(2);
     const layout = useLayoutStore.getState();
-    const active = layout.tabs.find((t) => t.id === layout.activeByGroup[layout.focusedGroupId]);
-    expect(active?.type).toBe("memory");
+    // Memory is a destination (ADR-0024): it opens over the columns.
+    expect(layout.destinationShown).toBe(true);
+    expect(layout.destination?.type).toBe("memory");
   });
 
   it("offers no Forget on a write whose entry is gone or archived", async () => {

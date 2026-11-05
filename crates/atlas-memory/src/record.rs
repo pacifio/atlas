@@ -636,6 +636,20 @@ impl std::fmt::Debug for RecordStore {
     }
 }
 
+/// `list(kind, .., Origin::Any)`: newest first by write time. Served by
+/// `entries_kind_updated` (schema v7). One copy, shared with
+/// `tests/briefing_index.rs`, so the plan that test asserts on is the plan
+/// this query gets — a hand-copied literal could drift and keep passing.
+#[doc(hidden)]
+pub const LIST_ANY_SQL: &str =
+    "SELECT * FROM entries WHERE kind = ?1 ORDER BY updated_at DESC, id DESC LIMIT ?2";
+
+/// `links_of`: every link touching an entry, from either side. The `b` side
+/// is served by `links_b` (schema v7); see `LIST_ANY_SQL` for why it is shared.
+#[doc(hidden)]
+pub const LINKS_OF_SQL: &str = "SELECT CASE WHEN a = ?1 THEN b ELSE a END, rel FROM links \
+     WHERE a = ?1 OR b = ?1 ORDER BY at, rel";
+
 impl RecordStore {
     /// Open (creating if needed) `<root>/.atlas/memory/memory.sqlite`. Prefer
     /// [`open_scope`], which keeps one handle per root per process.
@@ -1084,15 +1098,48 @@ impl RecordStore {
             Origin::EventLog => {
                 "SELECT * FROM entries WHERE kind = ?1 AND seq IS NOT NULL ORDER BY seq DESC LIMIT ?2"
             }
-            Origin::Any => {
-                "SELECT * FROM entries WHERE kind = ?1 ORDER BY updated_at DESC, id DESC LIMIT ?2"
-            }
+            Origin::Any => LIST_ANY_SQL,
         };
         let mut stmt = conn.prepare(sql)?;
         let rows = stmt.query_map(params![kind.as_str(), limit as i64], entry_from_row)?;
         let mut out = rows.collect::<rusqlite::Result<Vec<_>>>()?;
         out.reverse();
         Ok(out)
+    }
+
+    /// SQLite's query plan for `sql`, as one string. Tests only.
+    ///
+    /// The briefing's reads are the first thing an agent waits on, and the
+    /// difference between an index seek and a full scan there does not show up
+    /// as a failure — only as a slower first token. `tests/briefing_index.rs`
+    /// asserts on this so a lost index is a red test rather than a regression
+    /// nobody attributes. `prepare` compiles one statement, so `sql` cannot
+    /// smuggle a second. Every `?N` is bound to NULL: the planner does not
+    /// need the values, but SQLite refuses to step a statement with any left
+    /// unbound.
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn explain(&self, sql: &str) -> Result<String> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}"))?;
+        let nulls = std::iter::repeat_n(rusqlite::types::Null, stmt.parameter_count());
+        let rows = stmt.query_map(rusqlite::params_from_iter(nulls), |r| r.get::<_, String>(3))?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?.join("\n"))
+    }
+
+    /// Drop an index, so a benchmark can measure what it is worth. Behind
+    /// `test-util` because it is destructive — an index the app lost would show
+    /// up only as a slower first token, and nothing recreates one until the
+    /// next schema migration. `name` is an identifier, nothing else: it is
+    /// spliced into SQL.
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn drop_index_for_test(&self, name: &str) -> Result<()> {
+        anyhow::ensure!(
+            !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'),
+            "not an index name: {name:?}"
+        );
+        self.conn()
+            .execute(&format!("DROP INDEX IF EXISTS {name}"), [])?;
+        Ok(())
     }
 
     /// Every entry of `kind`, however many (storage is unbounded).
@@ -2736,10 +2783,7 @@ impl RecordStore {
     /// Every link touching `id`, as `(other, rel)`.
     pub fn links_of(&self, id: i64) -> Result<Vec<(i64, String)>> {
         let conn = self.conn();
-        let mut stmt = conn.prepare(
-            "SELECT CASE WHEN a = ?1 THEN b ELSE a END, rel FROM links \
-             WHERE a = ?1 OR b = ?1 ORDER BY at, rel",
-        )?;
+        let mut stmt = conn.prepare(LINKS_OF_SQL)?;
         let rows = stmt.query_map([id], |r| Ok((r.get(0)?, r.get(1)?)))?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
@@ -3243,7 +3287,7 @@ fn json_names_id(v: &serde_json::Value, id: i64) -> bool {
 
 // ── Schema ───────────────────────────────────────────────────────────────────
 
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 
 /// The log as the Shared tab lists and searches it: every event not retracted.
 const LIVE_EVENTS: &str = "WHERE seq NOT IN (SELECT seq FROM retracted_events)";
@@ -3359,6 +3403,33 @@ fn migrate_schema(conn: &Connection) -> Result<()> {
              );
              CREATE INDEX IF NOT EXISTS revisions_session ON revisions(session, at);
              PRAGMA user_version = 6;
+             COMMIT;",
+        )
+        .inspect_err(|_| {
+            let _ = conn.execute_batch("ROLLBACK;");
+        })?;
+    }
+    if version < 7 {
+        // v7: indexes for the two shapes `memory_briefing` reads in, both of
+        // which were full scans.
+        //
+        // `list(kind, …, Origin::Any)` orders by `updated_at DESC, id DESC`,
+        // and the briefing runs it seven times — the plan, the four durable
+        // kinds, preferences and file-changes — before the agent's first
+        // token.
+        // `entries_kind_seq` cannot serve that order, so each call scanned its
+        // whole kind and filesorted it, materializing every column including
+        // `content`.
+        //
+        // `links_of` asks `WHERE a = ?1 OR b = ?1`; the primary key `(a, b,
+        // rel)` serves the `a` half and nothing served the `b` half, so every
+        // citation check half-scanned `links`.
+        conn.execute_batch(
+            "BEGIN;
+             CREATE INDEX IF NOT EXISTS entries_kind_updated
+                 ON entries(kind, updated_at DESC, id DESC);
+             CREATE INDEX IF NOT EXISTS links_b ON links(b);
+             PRAGMA user_version = 7;
              COMMIT;",
         )
         .inspect_err(|_| {
@@ -3766,6 +3837,10 @@ fn migrate_v1(conn: &Connection) -> Result<()> {
          CREATE INDEX IF NOT EXISTS entries_kind_seq  ON entries(kind, seq);
          CREATE INDEX IF NOT EXISTS entries_kind_key  ON entries(kind, key);
          CREATE INDEX IF NOT EXISTS entries_kind_hash ON entries(kind, content_hash);
+         -- Serves `list(kind, .., Origin::Any)`, which the briefing runs once
+         -- per kind; see the v7 step in `migrate_schema`.
+         CREATE INDEX IF NOT EXISTS entries_kind_updated
+             ON entries(kind, updated_at DESC, id DESC);
          CREATE TABLE IF NOT EXISTS sessions (
              session_id  TEXT PRIMARY KEY,
              agent       TEXT NOT NULL DEFAULT '',

@@ -13,7 +13,7 @@ import {
   encodeSpaceFrame,
   frameAwareness,
   hasNewcomer,
-  selectionColours,
+  selectionHues,
   SPACE_FRAME_AWARENESS,
   SPACE_FRAME_UPDATE,
   type SpaceActor,
@@ -232,13 +232,14 @@ describe("selection outlines", () => {
       viewport: null,
       following: null,
     });
+    // Two of the eight wire colours: green and blue in the theme's hues.
     const actors = new Map([
-      ["a", actor("a", "#111", ["n1", "n2"])],
-      ["b", actor("b", "#222", ["n2", "n3"])],
+      ["a", actor("a", ACTOR_COLOURS[3], ["n1", "n2"])],
+      ["b", actor("b", ACTOR_COLOURS[5], ["n2", "n3"])],
     ]);
-    const colours = selectionColours(actors);
-    expect(colours.get("n1")).toBe("#111");
-    expect(colours.get("n2")).toBe("#111"); // a claimed it first
-    expect(colours.get("n3")).toBe("#222");
+    const hues = selectionHues(actors);
+    expect(hues.get("n1")).toBe("green");
+    expect(hues.get("n2")).toBe("green"); // a claimed it first
+    expect(hues.get("n3")).toBe("blue");
   });
 });

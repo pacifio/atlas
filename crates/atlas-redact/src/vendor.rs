@@ -73,8 +73,28 @@ fn rule_regex(index: usize) -> Option<&'static Regex> {
 }
 
 pub(crate) fn detect(input: &str) -> Vec<Region> {
+    matches(input)
+        .into_iter()
+        .map(|(_, region)| region)
+        .collect()
+}
+
+/// Ids of the rules that matched `input`, each once, in corpus order.
+pub(crate) fn matched_ids(input: &str) -> Vec<&'static str> {
+    let mut ids: Vec<&'static str> = Vec::new();
+    for (index, _) in matches(input) {
+        let id = VENDOR_RULES[index].id;
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    ids
+}
+
+/// Every match: the rule that found it and the secret's span.
+fn matches(input: &str) -> Vec<(usize, Region)> {
     let haystack = input.to_ascii_lowercase();
-    let mut regions = Vec::new();
+    let mut found = Vec::new();
 
     for (index, rule) in VENDOR_RULES.iter().enumerate() {
         if !rule.keywords.is_empty()
@@ -97,14 +117,13 @@ pub(crate) fn detect(input: &str) -> Vec<Region> {
             if !rule.passes_entropy(secret.as_str()) {
                 continue;
             }
-            regions.push(Region::new(
-                secret.start(),
-                secret.end(),
-                Category::VendorRule,
+            found.push((
+                index,
+                Region::new(secret.start(), secret.end(), Category::VendorRule),
             ));
         }
     }
-    regions
+    found
 }
 
 /// How many rules are vendored. Exposed so a test can assert the corpus did not

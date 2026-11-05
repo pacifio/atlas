@@ -50,8 +50,9 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 // failure they showed: `EndTurn` instead of `Cancelled`, and a command that
 // "ran 0 times".
 //
-// Atlas ships macOS and has no arg0 dispatch, so the app has no helper to
-// offer (see `EngineSettings::linux_sandbox_exe`). The tests do: upstream's own
+// The app is its own helper (`run_engine_helper_if_asked` dispatches this
+// alias, see `EngineSettings::linux_sandbox_exe`), but the helper has to be
+// the binary that is running, which here is the test binary. The engine's own
 // suites make the *test binary* the helper, and this is that same construction
 // — `vendor/atlas-engine/core/tests/suite/mod.rs`. The `#[ctor]` runs before any test
 // thread exists, which is what makes the `set_var`/PATH work inside it sound.
@@ -235,6 +236,33 @@ impl Harness {
             .join("")
     }
 
+    /// What a tool call in the newest thread would flatten to on the wire —
+    /// the same function the projector uses, so this is the `result` field the
+    /// UI's output pane renders.
+    fn tool_results(&self) -> Vec<String> {
+        let thread = self.thread();
+        let thread = thread
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        thread
+            .entries()
+            .iter()
+            .filter_map(|e| match e {
+                atlas_acp_thread::AgentThreadEntry::ToolCall(call) => Some(call),
+                _ => None,
+            })
+            .filter_map(|call| {
+                let mut out = String::new();
+                for block in &call.content {
+                    if let atlas_acp_thread::ToolCallContent::Terminal(id) = block {
+                        out.push_str(&thread.terminal_output(id).unwrap_or_default());
+                    }
+                }
+                (!out.is_empty()).then_some(out)
+            })
+            .collect()
+    }
+
     fn thread(&self) -> atlas_acp_thread::AcpThreadHandle {
         self.threads
             .lock()
@@ -291,7 +319,7 @@ async fn harness_full(
         Some("test-model".to_string()),
         home.path().to_path_buf(),
     );
-    // Production leaves this `None`. Without it every sandboxed command in this
+    // `new` leaves this `None`. Without it every sandboxed command in this
     // file is refused before it spawns on Linux — see the module header.
     settings.linux_sandbox_exe = test_linux_sandbox_exe();
     let settings = tune(settings);
@@ -1206,6 +1234,49 @@ async fn control_an_approved_command_really_does_run() {
     );
 }
 
+/// A command's output reaches the wire.
+///
+/// It is carried by a terminal now rather than a text block the sink rebuilt
+/// from everything printed so far — the shape the projector has a cheap path
+/// for, which is what stops a chatty command's cost growing with its own
+/// output. The unit tests beside `command_terminal_id` assert that shape; this
+/// runs a real command through a real engine turn and asserts the bytes come
+/// out the other end, so a terminal that was announced but never filled — or
+/// filled but never flattened — is a red test rather than an empty output pane.
+#[tokio::test]
+async fn a_commands_output_reaches_its_tool_call() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let command = "echo atlas-output-marker".to_string();
+
+    let h = harness_with(vec![
+        (Some(1), sse_ok(command_turn(&command))),
+        (None, sse_ok(assistant_turn("done"))),
+    ])
+    .await;
+    let session_id = h.open_thread_in(dir.path().to_path_buf()).await;
+
+    let connection = h.connection.clone();
+    let prompting = {
+        let session_id = session_id.clone();
+        tokio::spawn(async move {
+            connection
+                .prompt(acp::PromptRequest::new(session_id, text("echo it")))
+                .await
+        })
+    };
+
+    // `echo` is trusted, so no approval is asked for — and asking for one that
+    // never comes would just time out. Approval is the subject of the tests
+    // above; this one is about the bytes.
+    let _ = tokio::time::timeout(Duration::from_secs(60), prompting).await;
+
+    let results = h.tool_results();
+    assert!(
+        results.iter().any(|r| r.contains("atlas-output-marker")),
+        "the command's output never reached its tool call: {results:?}",
+    );
+}
+
 // ---------------------------------------------------------------------------
 // #83 — the memory tool server, handed to the engine as an MCP server.
 // ---------------------------------------------------------------------------
@@ -1760,7 +1831,7 @@ async fn the_native_agent_answers_to_its_stored_agent_id() {
 
 #[tokio::test]
 async fn a_turn_emits_the_events_the_live_thread_feed_records_on() {
-    // Bar item 3, at the seam. The recorder is not changed by the port — it
+    // Bar item 3, at the seam. The recorder is not changed by the engine cutover — it
     // observes `AcpThreadEvent`s, and both engines produce them through the
     // same `AcpThread`. What has to hold is that an engine turn still emits
     // events the feed acts on; if it did not, rows would silently stop
@@ -1846,5 +1917,101 @@ async fn a_streamed_answer_is_not_rendered_twice() {
         rendered.matches("unique-marker-xyz").count(),
         1,
         "the answer was rendered more than once: {rendered}",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Attached projects: an open session's roots change from its next turn.
+//
+// Asserted on the filesystem, like the tool-execution tests above: a command
+// that writes into a sibling folder succeeds only once that folder is a
+// read-write attached project, and never while it is read-only. The folders
+// live under the cargo target's tmp dir, not the system temp dir: macOS
+// seatbelt's workspace-write lets `/tmp` and `$TMPDIR` through, which would
+// make every write succeed and the test prove nothing.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn an_attached_project_is_writable_from_the_next_turn_only_when_read_write() {
+    let base = tempfile::Builder::new()
+        .prefix("atlas-roots-")
+        .tempdir_in(env!("CARGO_TARGET_TMPDIR"))
+        .expect("a scratch folder outside the system temp dir");
+    let app = base.path().join("app");
+    let server = base.path().join("server");
+    let docs = base.path().join("docs");
+    for dir in [&app, &server, &docs] {
+        std::fs::create_dir_all(dir).expect("mkdir");
+    }
+    let touch =
+        |dir: &std::path::Path, name: &str| format!("touch {}", dir.join(name).to_string_lossy());
+
+    let h = harness_with(vec![
+        // Turn 1, nothing attached: the write into `server` is refused.
+        (Some(1), sse_ok(command_turn(&touch(&server, "before")))),
+        (Some(1), sse_ok(assistant_turn("done"))),
+        // Turn 2, `server` read-write and `docs` read-only.
+        (
+            Some(1),
+            sse_ok(command_turn(&format!(
+                "{}; {}",
+                touch(&server, "after"),
+                touch(&docs, "after")
+            ))),
+        ),
+        (None, sse_ok(assistant_turn("done"))),
+    ])
+    .await;
+    let session_id = h.open_thread_in(app.clone()).await;
+    // Accept edits: commands run in the sandbox without a prompt, so the
+    // sandbox alone decides what lands.
+    h.connection
+        .session_modes(&session_id)
+        .expect("modes")
+        .set_mode(acp::SessionModeId::new("acceptEdits"))
+        .await
+        .expect("accept edits");
+
+    let run = |prompt: &'static str| {
+        let connection = h.connection.clone();
+        let session_id = session_id.clone();
+        async move {
+            tokio::time::timeout(
+                Duration::from_secs(60),
+                connection.prompt(acp::PromptRequest::new(session_id, text(prompt))),
+            )
+            .await
+            .expect("the turn should not hang")
+            .expect("the turn should complete")
+        }
+    };
+
+    run("try the sibling").await;
+    assert!(
+        !server.join("before").exists(),
+        "control: a sibling folder must not be writable before it is attached, \
+         or the rest of this test proves nothing"
+    );
+
+    assert!(h.connection.supports_live_session_roots());
+    h.connection
+        .update_session_roots(
+            &session_id,
+            atlas_acp_thread::SessionRoots {
+                read_only: vec![docs.clone()],
+                read_write: vec![server.clone()],
+            },
+        )
+        .await
+        .expect("the engine takes the new roots");
+
+    run("try both").await;
+    assert!(
+        server.join("after").exists(),
+        "a read-write attached project is writable from the next turn"
+    );
+    assert!(
+        !docs.join("after").exists(),
+        "a read-only attached project is never writable"
     );
 }

@@ -1,8 +1,7 @@
 //! The HTTP seam.
 //!
-//! Zed threads an `Arc<dyn HttpClient>` through its registry store and its
-//! downloader so tests can answer with a canned body. Same shape here, for the
-//! same reason: without it every test of the registry parser or the checksum
+//! An `Arc<dyn HttpClient>` is threaded through the registry store and the
+//! downloader so tests can answer with a canned body. Without it every test of the registry parser or the checksum
 //! path would be a network test.
 //!
 //! Responses are streamed rather than buffered because the same client fetches
@@ -41,8 +40,7 @@ pub trait HttpClient: Send + Sync {
 
 /// GET a whole body, giving up after `timeout`.
 ///
-/// Zed wraps the request *and* the body read in one timeout
-/// (`agent_registry_store.rs:530-560`), because the shared client only has a
+/// The request *and* the body read share one timeout, because the shared client only has a
 /// connect timeout and a stalled body read would otherwise hang forever.
 pub async fn get_body(
     client: &dyn HttpClient,

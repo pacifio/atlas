@@ -1216,7 +1216,7 @@ fn offered(offer: &SessionMcpOffer) -> Option<(String, String, String)> {
 async fn no_entry_offered_to_another_process_carries_the_token() {
     let host = running_host(always_on()).await;
     let offers = MemorySessionOffers::new(host.clone(), always_on()).with_code(
-        crate::commands::code_server::CodeOffer::new(Arc::new(|| true)),
+        crate::commands::code_server::CodeOffer::new(Arc::new(|_: &str| true)),
     );
     for http_mcp in [true, false] {
         let offer = offers.offer(&request(http_mcp, "/p", None));

@@ -5,4 +5,4 @@
 /**
  * Successful response for `fs/writeFile`.
  */
-export type FsWriteFileResponse = Record<string, never>;
+export type FsWriteFileResponse = Record<symbol, never>;

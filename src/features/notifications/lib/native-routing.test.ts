@@ -30,13 +30,25 @@ describe("banner payload round trip", () => {
     expect(targetForResponse(click(encodeBannerPayload(target)))).toEqual(target);
   });
 
+  it("rebuilds a session target no tab shows, by its thread id", () => {
+    const target: NotificationTarget = {
+      type: "session",
+      tabId: "",
+      sessionId: "s",
+      threadId: "thread-1",
+    };
+    expect(targetForResponse(click(encodeBannerPayload(target)))).toEqual(target);
+    const lost: NotificationTarget = { type: "session", tabId: "", sessionId: "s" };
+    expect(targetForResponse(click(encodeBannerPayload(lost)))).toBeNull();
+  });
+
   it("rebuilds the app-level targets (sign-in, Chat), which own no tab", () => {
     for (const target of [
       { type: "atlas-sign-in" },
       { type: "agent-sign-in", agentType: "cursor" },
       { type: "chat-conversation", convId: "c1", orgId: "o" },
       { type: "app-update" },
-      { type: "settings", section: "models" },
+      { type: "settings", section: "memory" },
       { type: "settings", section: "agents" },
       { type: "config-file" },
       { type: "git-panel", projectId: "p1", projectName: "Atlas" },

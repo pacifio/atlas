@@ -67,9 +67,10 @@ impl UiOffer {
         &self,
         http_mcp: bool,
         ui_control: bool,
+        cwd: &str,
         server_running: bool,
     ) -> UiOfferDecision {
-        let navigation_on = http_mcp && ui_control && (self.gate)();
+        let navigation_on = http_mcp && ui_control && (self.gate)(cwd);
         UiOfferDecision::decide(http_mcp, ui_control, navigation_on, server_running)
     }
 }

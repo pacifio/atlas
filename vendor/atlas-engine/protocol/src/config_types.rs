@@ -1,14 +1,11 @@
 // Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 use atlas_engine_utils_absolute_path::AbsolutePathBuf;
 use schemars::JsonSchema;
-use schemars::r#gen::SchemaGenerator;
-use schemars::schema::InstanceType;
-use schemars::schema::Metadata;
-use schemars::schema::Schema;
-use schemars::schema::SchemaObject;
+use schemars::Schema;
+use schemars::SchemaGenerator;
+use schemars::json_schema;
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::Value;
 use std::collections::HashMap;
 use std::fmt;
 use std::num::NonZeroU64;
@@ -173,8 +170,8 @@ pub enum ApprovalsReviewer {
 }
 
 impl JsonSchema for ApprovalsReviewer {
-    fn schema_name() -> String {
-        "ApprovalsReviewer".to_string()
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "ApprovalsReviewer".into()
     }
 
     fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
@@ -255,21 +252,11 @@ impl Default for ShellEnvironmentPolicy {
 }
 
 fn string_enum_schema_with_description(values: &[&str], description: &str) -> Schema {
-    let mut schema = SchemaObject {
-        instance_type: Some(InstanceType::String.into()),
-        metadata: Some(Box::new(Metadata {
-            description: Some(description.to_string()),
-            ..Default::default()
-        })),
-        ..Default::default()
-    };
-    schema.enum_values = Some(
-        values
-            .iter()
-            .map(|value| Value::String((*value).to_string()))
-            .collect(),
-    );
-    Schema::Object(schema)
+    json_schema!({
+        "type": "string",
+        "description": description,
+        "enum": values,
+    })
 }
 
 #[derive(
@@ -321,6 +308,8 @@ pub enum Personality {
 /// configured mode hint defines the policy instead of a built-in policy.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Display, JsonSchema, TS, Default)]
 #[serde(rename_all = "camelCase", from = "MultiAgentModeWire")]
+// schemars 1 follows serde's `from`; the schema is the enum's own shape, as in 0.8.
+#[schemars(!from)]
 #[ts(rename_all = "camelCase")]
 #[strum(serialize_all = "camelCase")]
 pub enum MultiAgentMode {

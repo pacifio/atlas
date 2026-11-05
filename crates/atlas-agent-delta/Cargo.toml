@@ -2,13 +2,13 @@
 name = "atlas-agent-delta"
 version = "0.1.0"
 edition = "2021"
-description = "Projects ported-thread events into the additive-only SessionDelta wire."
+description = "Projects thread events into the additive-only SessionDelta wire."
 
 [lib]
 name = "atlas_agent_delta"
 
 [dependencies]
-# Same exact pin as the rest of the ported stack (`zed-ref/Cargo.toml:518`).
+# Same exact pin as the rest of the ACP stack.
 agent-client-protocol = { version = "=2.0.0", features = ["unstable"] }
 atlas-acp-thread = { path = "../atlas-acp-thread" }
 # For `ThreadEventSink`, the shape `ConnectOptions` wants.

@@ -1,4 +1,6 @@
 import { toast } from "sonner";
+import { fixWithAgentAction } from "@/features/ask-agent/lib/open-ask";
+import type { ErrorContext } from "@/features/ask-agent/lib/agent-context";
 import { useGitStore } from "../stores/git-store";
 
 /** Mirror of `atlas_git::GitErrorCode` (kebab-case serde). */
@@ -84,15 +86,58 @@ export function gitErrorTitle(payload: GitErrorPayload): string {
   return TITLES[payload.code] ?? "Git error";
 }
 
+/** A typed git failure as the agent gets it: where ("git push"), what the
+ *  panel says, git's own output, the command and the repository. `output`
+ *  replaces git's stderr when there is more of it (a hook's full output). */
+export function gitErrorContext(
+  payload: GitErrorPayload,
+  repoPath: string | null,
+  output?: string,
+): ErrorContext {
+  const verb = payload.command.split(/\s+/).slice(0, 2).join(" ");
+  const log = output?.trim() ? output : payload.rawStderr;
+  return {
+    kind: "error",
+    source: verb.startsWith("git") ? verb : "git",
+    message: [gitErrorTitle(payload), payload.message, ...(payload.files ?? [])].join("\n"),
+    ...(log ? { log } : {}),
+    ...(payload.command ? { command: payload.command } : {}),
+    ...(repoPath ? { cwd: repoPath } : {}),
+  };
+}
+
+/** Anything a git `catch` produced, as an error context: a typed git
+ *  failure in full, else `message` (the words the toast shows) or the
+ *  rejection's own. */
+export function anyGitErrorContext(
+  error: unknown,
+  repoPath: string | null,
+  source = "git",
+  message?: string,
+): ErrorContext {
+  if (isGitError(error)) return gitErrorContext(error, repoPath);
+  const own =
+    error instanceof Error
+      ? error.message
+      : typeof error === "object" &&
+          error !== null &&
+          typeof (error as { message?: unknown }).message === "string"
+        ? (error as { message: string }).message
+        : String(error);
+  return { kind: "error", source, message: message ?? own, ...(repoPath ? { cwd: repoPath } : {}) };
+}
+
 /**
  * Route a failed git invoke to the right surface: a dialog for actionable
  * failures (auth, rejected pushes, hooks, locks — raw output attached), a
  * toast otherwise. Accepts anything a `catch` can produce; legacy string
  * errors fall back to a plain error toast.
  */
-export function handleGitError(e: unknown): void {
+export function handleGitError(e: unknown, repoPath = useGitStore.getState().repoPath): void {
+  // Every failure toast carries "Fix with agent", in `repoPath` (the active
+  // repository unless the caller acts on another); the dialog has its own.
   if (!isGitError(e)) {
-    toast.error(String(e));
+    toast.error(String(e), { action: fixWithAgentAction(anyGitErrorContext(e, repoPath)) });
     return;
   }
   // Not a dead end: the fix is a choice between two pulls, so ask for it.
@@ -111,5 +156,6 @@ export function handleGitError(e: unknown): void {
   const detail = e.rawStderr.trim();
   toast.error(e.message, {
     description: detail ? (detail.length > 400 ? `${detail.slice(0, 400)}…` : detail) : undefined,
+    action: fixWithAgentAction(gitErrorContext(e, repoPath)),
   });
 }

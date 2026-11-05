@@ -108,6 +108,8 @@ fn a_tweakcn_registry_item_becomes_a_complete_two_variant_theme() {
         dark.base["font-sans"], "Montserrat, sans-serif",
         "cssVars.theme reaches both variants"
     );
+    // A font both variants share is written once, in the shared `[base]`.
+    assert_eq!(theme.base["font-sans"], "Montserrat, sans-serif");
     // Except `radius`: its rem assumes a 16px root and Atlas's is 13px, so it
     // is carried over as the px the author saw, and the report says so.
     assert_eq!(dark.base["radius"], "5.6px");

@@ -249,7 +249,7 @@ fn claude_thinking_arrives_as_reasoning_rather_than_as_the_answer() {
 
 #[test]
 fn a_multi_byte_character_split_across_chunk_boundaries_survives() {
-    // The exact bug class the vendored SDK patch was written for: decoding a
+    // The exact bug class the SDK patch was written for: decoding a
     // partial UTF-8 sequence produces a replacement character, and when the
     // stream is a file edit the corruption is written to disk.
     let frame = text_delta("héllo — ok");

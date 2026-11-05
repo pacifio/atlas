@@ -11,12 +11,17 @@
  * `size` is in pixels, because the callers want genuinely different marks: an
  * 11px chip glyph, and a 16px avatar on the detail's timeline rail where the
  * mark is what identifies the turn.
+ *
+ * The mark is chosen by the agent's identity, never its id: `useAgentMeta`
+ * answers `firstPartyIcon`, and an id that merely contains a first-party name
+ * (`claude-foo`, `codex-acp`) gets its registry icon or a monogram (ADR-0002).
+ * Aliases belong in `features/agents/lib/agent-identity.ts` (`firstPartyOf`).
  */
 
-import { AgentIcons, AgentMonogram, ExternalAgentIcon } from "@/components/agent-icons";
-import { AtlasIcon } from "@/components/atlas-icon";
+import { AgentMonogram, ExternalAgentMark } from "@tryatlas/design";
+import { FIRST_PARTY_MARKS } from "@/components/brand-marks";
 import { agentBrandColor } from "@/features/agents/lib/agent-brand";
-import { agentMeta } from "@/features/agents/lib/agent-meta";
+import { useAgentMeta } from "@/features/agents/lib/agent-meta-context";
 
 export function AgentGlyph({
   agent,
@@ -27,16 +32,13 @@ export function AgentGlyph({
   mono?: boolean;
   size?: number;
 }) {
-  // The brand hue is a constant, not a theme key: see `agent-brand.ts`.
-  const dim = { width: size, height: size, color: mono ? undefined : agentBrandColor(agent) };
-  if (agent.includes("claude")) return <AgentIcons.Claude style={dim} />;
-  if (agent.includes("codex")) return <AgentIcons.Codex style={dim} />;
-  if (agent.includes("opencode")) return <AgentIcons.OpenCode style={dim} />;
-  if (agent.includes("cursor")) return <AgentIcons.Cursor style={dim} />;
-  if (agent.includes("kilo")) return <AgentIcons.Kilo style={dim} />;
-  if (agent.includes("atlas-agent")) return <AtlasIcon size={size} className="rounded-sm" />;
+  const meta = useAgentMeta(agent);
+  if (meta.firstPartyIcon) {
+    // The brand hue is a constant, not a theme key: see `agent-brand.ts`.
+    const color = mono ? undefined : agentBrandColor(meta.firstPartyIcon);
+    return FIRST_PARTY_MARKS[meta.firstPartyIcon]({ size, color });
+  }
   // Registry-installed external agent: manifest SVG, else a monogram.
-  const meta = agentMeta(agent);
-  if (meta.iconDataUrl) return <ExternalAgentIcon dataUrl={meta.iconDataUrl} size={size} />;
+  if (meta.iconDataUrl) return <ExternalAgentMark dataUrl={meta.iconDataUrl} size={size} />;
   return <AgentMonogram label={meta.label} size={size} />;
 }

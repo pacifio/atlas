@@ -18,11 +18,13 @@ drift out of date without anything noticing.
 | how a feature crosses the stack; a subsystem's file paths       | `docs/architecture.md`                                                                                           |
 | verification gates, branching, PR checklist, telemetry rules    | `CONTRIBUTING.md`                                                                                                |
 | what a term means                                               | `CONTEXT.md`                                                                                                     |
-| why a decision is what it is                                    | `docs/adr/` (0003 and 0004 are each used twice)                                                                  |
+| why a decision is what it is                                    | `docs/adr/`                                                                                                      |
 | tokens, type/radius/elevation/z-index/motion scales, primitives | `docs/reference/design-system.md`                                                                                |
 | theme keys, theme import, icon themes, config, keybindings      | `docs/reference/`                                                                                                |
+| Linux packages, supported distros, release signing              | `docs/reference/linux-support.md`                                                                                |
 | the browser mock backend                                        | `src/dev/mock-backend/README.md`                                                                                 |
 | what a contract suite guards, and why nothing else can          | that suite's docblock in `tests/`                                                                                |
+| what the web app, the org agent (Atlas), ROI or RC do; their wire contracts | `../server/docs/api/` (pull first)                                                                      |
 | what CI actually runs                                           | `.github/workflows/ci.yml` (commented throughout); for a given diff, `node scripts/ci-affected.mjs --base <rev>` |
 
 **Count things, don't quote counts.** Commands, crates, tab types and test suites all
@@ -66,7 +68,9 @@ bun run ci:local        # what CI would run for this branch, as CI runs it (clip
   plan includes them. A red job here is a red job in CI; fix it before opening
   the PR. The app's Windows compile check (`app-windows`) is the one job that
   runs only in CI. `--linux` is the full container replica, for when you
-  suspect the Ubuntu userland itself.
+  suspect the Ubuntu userland itself. It plans against the merge base with
+  the branch's upstream, so a branch that tracks its own remote plans almost
+  nothing: pass the PR's base, `bun run ci:local --base origin/<version branch>`.
 
 Rust (`rust-toolchain.toml`), Bun and Node (`mise.toml`) are pinned to what CI
 installs. Bumping Rust brings new clippy lints: fix them in the same change.
@@ -85,9 +89,20 @@ Generated files — the TOML/SVG is the source, the committed output is derived,
 suite fails the moment they disagree. Edit the source and regenerate:
 
 ```bash
-bun run theme:keys     # crates/atlas-theme/keys.toml → TS registry, Rust, schema, docs
+bun run theme:keys     # @tryatlas/design's keys.toml, themes, Rust tables → crates/atlas-theme; schema, docs
 bun run icons:render   # macOS app icons
+bun run settings:gen   # settings-registry.toml → TS, Rust, docs; then
+                       # ATLAS_BLESS=1 cargo test -p atlas config_default
+                       # for docs/reference/config.default.toml
 ```
+
+The design system (primitives, scales, theme engine, `keys.toml`, built-in themes,
+the ratchet's rules) is `@tryatlas/design`, pinned to a git tag (ADR-0027). Change it
+there and bump the pin; `crates/atlas-theme/` holds committed copies, never edited by
+hand (`design-package-copies.test.ts`). `globals.css` imports `styles-core.css` (no
+built-in theme CSS: `applyTheme` writes the active theme at runtime). Theme variables
+are unprefixed (`element.hover` → `--element-hover`), and a theme file that isn't
+`schema = 1` is skipped while the default loads: there is no legacy theme support.
 
 Pre-commit (husky): lint-staged → `bun run typecheck` → `bun run test:contracts`.
 Pre-push: the full `bun run test`.
@@ -100,19 +115,30 @@ inside its directory.
 
 Each has a suite in `tests/`. Read that suite's docblock before changing what it guards.
 
-**The design-system ratchet is closed at zero** (`design-system-ratchet.test.ts`).
-Across `src/features`, `src/components`, `src/ui` and `src/dev` it bans: arbitrary
+**The design-system ratchet is closed at zero** (`design-system-ratchet.test.ts`: the
+package's `runRatchet` and rules, from `@tryatlas/design/ratchet`, on desktop's roots).
+Across `src/features`, `src/components` and `src/dev` it bans: arbitrary
 `text-[…]` / `z-[…]` / `shadow-[…]` / `rounded-[…]`; colour literals (`#hex`, `rgb()`,
 `hsl()`); `*-white` and `*-black` utilities; Tailwind's stock ramps (`bg-amber-500` —
 no theme can restate them); bare `z-` at 50 or above; and inline numeric `zIndex` /
-`fontSize` / `boxShadow`. Use the scale and the tokens. The only exits are
+`fontSize` / `boxShadow`. Across all of `src/` and `index.html` it also bans
+`transition-all` and, with no exit at all, the retired `--atlas-` spelling of a theme
+key. Use the scale and the tokens. Otherwise the only exits are
 `EXEMPT_FILES` or an inline `ratchet-allow: <reason>` comment — on the line or anywhere
 in the comment block above it — and the reason must be a real argument of 20+
 characters, which the suite also checks. A violation type-checks, lints and renders
 perfectly; this suite is the only thing in the toolchain that can see it.
 
+**`bun run lint` also runs `@shadcn/lint`**, whose rules are errors. `no-unknown-classes`
+catches a class Tailwind can't generate — a typo, or a plugin utility Atlas doesn't ship —
+which otherwise renders as nothing. `no-restyle` stops `className` from overriding a
+`@tryatlas/design` primitive's look: when it fires, use the variant its message names, or
+add one to the primitive in the package; don't restyle at the call site. Plain stylesheet classes are
+allowlisted by exact name in `.oxlintrc.json` (`shadcn-lint-allowlist.test.ts` keeps
+that list honest — never add a wildcard).
+
 **Anything reading a _resolved_ colour needs a theme subscription**
-(`theme-subscription-contract.test.ts`). CSS naming `var(--atlas-…)` recolours for
+(`theme-subscription-contract.test.ts`). CSS naming a theme key, `var(--element-hover)`, recolours for
 free; xterm, pixi, recharts and friends cannot, so they must hear the change.
 
 **The IPC and event seams are opaque strings to `tsc`.** `invoke("name")`, the
@@ -131,12 +157,13 @@ restates `opt-level = 1`.
 LICENSE/NOTICE travel with the code (`vendor-licensing.test.ts`, needs `fetch-depth: 0`),
 and the stripped telemetry paths must stay stripped (`engine-no-phone-home.test.ts`).
 Per ADR-0003 the port is first-party code — editing it, manifests included, is ordinary
-work, not a fork edit. `clippy.toml` at the repo root is upstream's, restored; without
-it the `atlas-native-agent` Clippy job fails on ~500 vendored sites.
+work, not a fork edit. `clippy.toml` at the repo root is the engine's own lint config, kept at the root; without
+it the `atlas-native-agent` Clippy job fails on ~500 engine sites.
 
 **Node singletons and the Vite `dedupe` list are load-bearing.** Two copies of
 `@codemirror/*` or `pdfjs-dist` break editor theming and PDF rendering _in production
-only_. `bun install`/`bun update` leave nested duplicates; after a lockfile change do
+only_. `@tryatlas/design`, `@base-ui/react` and `motion` are in the `dedupe` list too
+(a second `@base-ui/react` splits the floating-UI contexts). `bun install`/`bun update` leave nested duplicates; after a lockfile change do
 `rm -rf node_modules && bun install` (a full `rm -rf node_modules bun.lock` to dedupe).
 `bun-singletons.test.ts` is what tells you. `manualChunks` is equally load-bearing —
 each rule encodes a production incident, documented inline.
@@ -182,9 +209,11 @@ Each of these is a multi-file edit where missing one compiles fine.
   `[profile.dev.package.<name>]` stanza, and an entry in `.github/ci-crates.json`.
   If it reads a file outside its own directory, that file also goes in
   `EXTRA_INPUTS` in `scripts/ci-affected.mjs` (`ci-affected.test.ts` checks).
-- **A tab/panel type** — `TAB_TYPES` in `src/lib/constants.ts`, plus the lazy import,
-  the render branch and `NEW_TAB_OPTIONS` in
-  `src/features/layout/components/center-panel.tsx`. If it stays mounted across tab
+- **A tab/panel type** — first decide its placement (session, surface or destination;
+  the test is in ADR-0024) and add it to `TAB_PLACEMENT`. Then `TAB_TYPES` in `src/lib/constants.ts`, plus the lazy import
+  and the render branch in `src/features/layout/components/tab-panels.tsx` (the tab registry;
+  `center-panel.tsx` only lays out the columns), and
+  (if ⌘T should offer it) an entry in `SURFACES` in `src/features/layout/lib/surfaces.ts`. If it stays mounted across tab
   switches it also joins `PERSISTENT_TYPES`, guarded by
   `persistent-tab-render-contract.test.ts`.
 - **A mock** — an unmocked command resolves `null`, so an empty panel in `bun run dev`
@@ -194,7 +223,7 @@ Each of these is a multi-file edit where missing one compiles fine.
 
 Frontend is organised by **feature**, not file type: `src/features/<feature>/` holds
 `components/`, `stores/`, `lib/`. Cross-feature widgets in `src/components/`, primitives
-in `src/ui/`, shared helpers in `src/lib/`; `@/` aliases `src/`. **Filenames are
+from `@tryatlas/design`, shared helpers in `src/lib/`; `@/` aliases `src/`. **Filenames are
 kebab-case** (`center-panel.tsx`), the sole exception being `src/App.tsx`. Zustand +
 Immer stores wrapped in `createSelectors` so `useStore.use.x()` works; stores never call
 other stores — cross-feature coordination is `getState()` at an action boundary or a
@@ -241,15 +270,24 @@ transcript / memory) in the same change. The contract tests are the authority;
 
 **Linux-only paths cannot be answered from this Mac.** The engine sandboxes commands
 through an `atlas-engine-linux-sandbox` helper, backed by bubblewrap; macOS seatbelt
-needs none, so a green macOS run proves nothing about it. `bun run ci:local
-atlas-native-agent` runs that job in a container; CI's Linux jobs are the authority.
+needs none, so a green macOS run proves nothing about it. On Linux the app binary _is_
+that helper: `run_engine_helper_if_asked` dispatches the arg0 alias that
+`crates/atlas-native-agent/src/linux_sandbox.rs` installs. Lose either half and every
+sandboxed command is refused before it runs, with the turn ending normally. `bun run
+ci:local atlas-native-agent` runs that job in a container; CI's Linux jobs are the
+authority, and `release-linux.yml`'s `Verify` is the authority on the shipped packages.
+Two more cost nothing on a Mac and most of a core on Linux: inotify reports _reads_ as
+events, so every watcher drops `EventKind::Access` first (`src-tauri/src/fs_events.rs`,
+`watcher-access-filter.test.ts`); and WebKitGTK presents a frame per animation tick, so
+infinite animations are stepped under `html.platform-linux`
+(`linux-animation-steps.test.ts`). `docs/reference/linux-support.md` has the numbers.
 
 **CI runs on aarch64 only.** The Linux jobs use `ubuntu-24.04-arm` and the app job uses
 Apple Silicon `macos-latest`. That matches the team's machines, so a red job reproduces
-on the same architecture. No CI job compiles or tests x86-64. Until the Linux and
-Windows releases move to ARM, `release-linux.yml` still builds x86-64, so a green CI run
-says nothing about x86-specific behaviour (seccomp syscall tables, SIMD, `usize`-width
-assumptions in FFI).
+on the same architecture. `ci.yml` compiles and tests no x86-64. `release-linux.yml`
+builds and verifies both x86-64 and aarch64, on tags and as a dry run on pull requests
+that touch a release input, so x86-specific behaviour (seccomp syscall tables, SIMD,
+`usize`-width assumptions in FFI) is checked there and nowhere else.
 
 ## Versioning, branching, commits
 

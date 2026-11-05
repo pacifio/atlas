@@ -27,6 +27,6 @@ Agents switching between Claude Code, Codex and the native agent all write into 
 
 - One corpus re-embed on upgrade: the old corpus files are derived and are deleted on first open.
 - `uses`, `last_used_at` and the event sequence are not revisioned; a rebuild restores content, kind, key, state, confidence and provenance, not usage counters.
-- The record and the code index share one retrieval core, `crates/atlas-retrieval` (cache keys, the f16 codec, the healing vector file, RRF).
+- The record's retrieval core is `crates/atlas-retrieval` (cache keys, the f16 codec, the healing vector file, RRF). It was shared with the code index until ADR-0021 removed that; memory is its only consumer now.
 - Every later write path (expiry, feedback, dream proposals) goes through `after_write`, so it is revisioned and sealed without further work.
 - The reconciler (M2) is built on this: every repair rebuilds a projection from canonical data.

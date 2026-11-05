@@ -5,10 +5,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
- * Apache-2.0 obligations for the vendored engine (issue #44, spec D11 / Phase 1).
+ * Apache-2.0 obligations for the engine (issue #44, spec D11 / Phase 1).
  *
  * Atlas's own code is **MIT** (`LICENSE`, "Copyright (c) 2026 Adib Mohsin");
- * the vendored engine is **Apache-2.0**. The second cannot be absorbed into the
+ * the engine is **Apache-2.0**. The second cannot be absorbed into the
  * first — Apache-2.0 code stays Apache-2.0 however it is bundled — so the
  * obligations travel with the distribution rather than being satisfied by
  * Atlas's own licence file.
@@ -22,7 +22,7 @@ import { fileURLToPath } from "node:url";
  *   - **§4(b)** — every modified file must carry a prominent notice that it
  *     changed. The compiler has no opinion about a missing comment, and the
  *     set of modified files only grows.
- *   - **§4(c)** — attribution inside vendored sources is never stripped. The
+ *   - **§4(c)** — attribution inside engine sources is never stripped. The
  *     Phase 5 rename sweep is precisely the operation that would strip it, and
  *     that sweep has not run yet, so this test exists before its risk does.
  *
@@ -33,10 +33,10 @@ import { fileURLToPath } from "node:url";
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 /** Where the engine lives now (ADR-0011) … */
 const VENDOR = path.join(REPO_ROOT, "vendor", "atlas-engine");
-/** … and the path it was vendored under, which is where its git history is. */
+/** … and the path it was imported under, which is where its git history is. */
 const VENDORED_AT = "vendor/codex";
 /**
- * The commit that vendored the engine (#42). Also computed below from the
+ * The commit that imported the engine (#42). Also computed below from the
  * history of `VENDORED_AT`; the two must agree, so a rewritten history is
  * noticed rather than silently moving the fork point.
  */
@@ -45,11 +45,11 @@ const TAURI_DIR = path.join(REPO_ROOT, "src-tauri");
 const BUNDLED_CODEX_LICENSE = "licenses/OpenAI-Codex-LICENSE.txt";
 const BUNDLED_CODEX_NOTICE = "licenses/OpenAI-Codex-NOTICE.txt";
 
-/** The marker every modified vendored file carries. Grep-able on purpose. */
+/** The marker every modified engine file carries. Grep-able on purpose. */
 const CHANGE_NOTICE = "Modified by Atlas";
 
 /**
- * The second body of vendored third-party code: Material Icon Theme, bundled
+ * The second body of third-party code: Material Icon Theme, bundled
  * as Atlas's default icon theme (theme-system decision 12).
  *
  * MIT rather than Apache-2.0, so the obligation is shorter — the copyright
@@ -78,7 +78,7 @@ function git(...args: string[]): string {
 }
 
 /**
- * The commit that vendored the engine (#42) — computed, not hardcoded.
+ * The commit that imported the engine (#42) — computed, not hardcoded.
  *
  * `git log` lists newest first, so the oldest commit touching `vendor/codex`
  * is the one that created it. Everything after it is an Atlas modification,
@@ -107,7 +107,7 @@ function vendoringCommit(): string {
 const SHALLOW = "<shallow-clone>";
 
 /**
- * Vendored files Atlas has changed since vendoring, working tree included.
+ * Engine files Atlas has changed since the import, working tree included.
  *
  * Compared by blob hash against the fork commit's tree at the same relative
  * path, rather than by `git diff`: the tree was moved (ADR-0011), so a path
@@ -116,7 +116,7 @@ const SHALLOW = "<shallow-clone>";
  * edits it. A file with no counterpart in the fork tree was renamed, and a
  * rename changed its contents too, so it is modified.
  */
-/** Hashing the ~4k vendored files is the slow part; two tests need the
+/** Hashing the ~4k engine files is the slow part; two tests need the
  *  answer and the tree cannot change mid-run, so it is computed once, in the
  *  describe's `beforeAll` with a budget of its own (a concurrent build pushed
  *  a per-test 5s past its limit on a pre-commit run). */
@@ -200,7 +200,7 @@ const COMMENTABLE = new Set([
 ]);
 
 describe("§4(a) and §4(d) — the licence and NOTICE reach recipients", () => {
-  it("keeps both files in the vendored tree", () => {
+  it("keeps both files in the engine tree", () => {
     expect(existsSync(path.join(VENDOR, "LICENSE"))).toBe(true);
     expect(existsSync(path.join(VENDOR, "NOTICE"))).toBe(true);
   });
@@ -210,9 +210,9 @@ describe("§4(a) and §4(d) — the licence and NOTICE reach recipients", () => 
     // Keeping them is the simpler and safer read, and the spec chose it.
     const notice = read(path.join(VENDOR, "NOTICE"));
     expect(notice).toMatch(/OpenAI Codex/);
-    // `\s` and not a literal space: upstream's NOTICE separates "Copyright",
+    // `\s` and not a literal space: the original NOTICE separates "Copyright",
     // "2025" and "OpenAI" with U+00A0 non-breaking spaces. #42 requires this
-    // tree stay byte-identical to upstream and §4(d) requires the notice
+    // tree stay byte-identical to the original and §4(d) requires the notice
     // travel verbatim, so the assertion bends rather than the file.
     expect(notice).toMatch(/Copyright\s+2025\s+OpenAI/);
     expect(notice).toMatch(/Ratatui/);
@@ -228,14 +228,14 @@ describe("§4(a) and §4(d) — the licence and NOTICE reach recipients", () => 
     expect(resources, "bundle.resources missing").toBeDefined();
 
     const entries = Array.isArray(resources) ? resources : Object.keys(resources);
-    expect(entries, "vendored LICENSE not bundled").toContain(BUNDLED_CODEX_LICENSE);
-    expect(entries, "vendored NOTICE not bundled").toContain(BUNDLED_CODEX_NOTICE);
+    expect(entries, "engine LICENSE not bundled").toContain(BUNDLED_CODEX_LICENSE);
+    expect(entries, "engine NOTICE not bundled").toContain(BUNDLED_CODEX_NOTICE);
   });
 
-  it("bundles byte-identical copies of the vendored LICENSE and NOTICE", () => {
+  it("bundles byte-identical copies of the engine LICENSE and NOTICE", () => {
     // Windows WiX cannot bundle two source files named LICENSE. The bundle
     // therefore ships explicitly named copies; keep the legal texts tied to
-    // the canonical vendored files rather than merely checking their paths.
+    // the canonical engine files rather than merely checking their paths.
     expect(read(path.join(TAURI_DIR, BUNDLED_CODEX_LICENSE))).toBe(
       read(path.join(VENDOR, "LICENSE")),
     );
@@ -266,7 +266,7 @@ describe("§4(b) — modified files say they were modified", () => {
   }, 120_000);
 
   it("has the history it needs — a shallow clone cannot run this suite", () => {
-    // On a depth-1 clone the oldest commit touching the vendored path IS HEAD, so
+    // On a depth-1 clone the oldest commit touching the engine path IS HEAD, so
     // the diff against it is empty and the rule below holds vacuously. Name
     // the cause here so the next person reads it instead of the symptom (#58).
     const resolved = vendoringCommit();
@@ -287,12 +287,12 @@ describe("§4(b) — modified files say they were modified", () => {
     expect(modifiedVendoredFiles().length).toBeGreaterThan(5);
   });
 
-  // Reads every modified vendored file. The hashing is in `beforeAll`; the
+  // Reads every modified engine file. The hashing is in `beforeAll`; the
   // reading is not. Under 1s on a quiet machine, but past vitest's 5s default
   // when the disk is busy (a cargo build, a parallel suite, the pre-commit
   // hook): 12-14s observed on Windows, failing a run that had found nothing
   // wrong (#334). The budget is for a slow disk, not a slow check.
-  it("puts a change notice in every modified vendored file", () => {
+  it("puts a change notice in every modified engine file", () => {
     const modified = modifiedVendoredFiles().filter(
       (rel) => rel !== "vendor/atlas-engine/LICENSE" && rel !== "vendor/atlas-engine/NOTICE",
     );
@@ -317,9 +317,9 @@ describe("§4(b) — modified files say they were modified", () => {
     );
     expect(
       missing,
-      `these vendored files were changed without an Apache-2.0 §4(b) notice. ` +
+      `these engine files were changed without an Apache-2.0 §4(b) notice. ` +
         `Add the one-line "${CHANGE_NOTICE}" header — see CONTEXT.md, ` +
-        `"Vendored engine licensing":\n${missing.slice(0, 80).join("\n")}`,
+        `"Engine licensing":\n${missing.slice(0, 80).join("\n")}`,
     ).toEqual([]);
 
     // Files with no comment syntax carry their notice at tree level instead.
@@ -336,7 +336,7 @@ describe("§4(c) and the rename sweep — the rules are written down", () => {
     // Deliberately CONTEXT.md and not a doc of its own: CLAUDE.md makes it the
     // single-context file, so it is what the Phase 5 rename tickets will read.
     const context = read(path.join(REPO_ROOT, "CONTEXT.md"));
-    expect(context).toMatch(/Vendored engine licensing/);
+    expect(context).toMatch(/Engine licensing/);
     expect(context, "attribution-retention rule (§4(c)) not recorded").toMatch(
       /never strip|attribution/i,
     );

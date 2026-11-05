@@ -1060,6 +1060,7 @@ impl SharedMemoryStore {
 
     /// Entries relevant to `query` (`memory_search`), best first. Degrades to
     /// empty when the record can't be read.
+    #[cfg(test)]
     pub fn search_entries(
         &self,
         project_path: &str,
@@ -1073,7 +1074,7 @@ impl SharedMemoryStore {
             .collect()
     }
 
-    /// [`search_entries`](Self::search_entries) with the legs that found each
+    /// `search_entries` with the legs that found each
     /// hit (`bm25`, `dense`, by rank).
     pub fn search_hits(
         &self,

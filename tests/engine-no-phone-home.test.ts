@@ -4,16 +4,16 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
- * The vendored engine phones home nowhere (issue #43, spec D2 / Phase 1).
+ * The engine phones home nowhere (issue #43, spec D2 / Phase 1).
  *
- * Two paths shipped inside the closure upstream, and D2 is explicit that they
+ * Two paths shipped inside the closure at the fork point, and D2 is explicit that they
  * are "removed (not just configured off) before any build leaves developers'
  * machines":
  *
  *   1. **OTLP metrics to Statsig.** `atlas-engine-otel` carried a built-in exporter
  *      posting to `https://ab.chatgpt.com/otlp/v1/metrics` with a **hardcoded
  *      client key**, and `atlas-engine-core` *defaulted* the metrics exporter to it
- *      (`core/src/config/otel.rs`). Upstream gated it on `cfg!(debug_assertions)`
+ *      (`core/src/config/otel.rs`). The original gated it on `cfg!(debug_assertions)`
  *      — which means it was live in exactly the builds that ship.
  *   2. **Per-session analytics to the ChatGPT backend.** `atlas-engine-analytics`
  *      POSTed to `{chatgpt_base_url}/<upstream name>/analytics-events/events`, was
@@ -51,7 +51,7 @@ function walk(dir = VENDOR): string[] {
 }
 
 /**
- * The vendored tree is ~4k files and every assertion below scans all of it.
+ * The engine tree is ~4k files and every assertion below scans all of it.
  * Walking it AND re-reading every file once per assertion cost ~18s for this
  * file, which put individual tests over vitest's 5s default whenever enough
  * suites ran in parallel — a timeout that looked like a phone-home regression.
@@ -83,11 +83,11 @@ beforeAll(() => {
 /**
  * Test code, which is held to a different rule than shipping code.
  *
- * Upstream's own suites mount **local wiremock servers** on the paths the
+ * The engine's own suites mount **local wiremock servers** on the paths the
  * engine used to POST to, then assert what was sent. A mock bound to
  * `127.0.0.1` cannot phone home no matter what path it answers on, so a test
- * naming the old endpoint is not a leak — and rewriting eight upstream test
- * files would churn a tree #42 deliberately keeps byte-identical to upstream,
+ * naming the old endpoint is not a leak — and rewriting eight original test
+ * files would churn a tree #42 deliberately keeps byte-identical to the fork point,
  * in crates Atlas does not ship.
  *
  * Those suites now assert behaviour that no longer exists, which is real debt
@@ -145,7 +145,7 @@ function filesMatching(needle: RegExp): string[] {
 }
 
 describe("the engine's egress surface (parser health)", () => {
-  it("scans a plausible number of vendored files", () => {
+  it("scans a plausible number of engine files", () => {
     // A traversal that silently stopped would make every assertion below pass
     // by finding nothing. The engine is ~4k files.
     expect(sourceFiles().length).toBeGreaterThan(1000);
@@ -161,7 +161,7 @@ describe("the engine's egress surface (parser health)", () => {
 
 describe("the Statsig metrics exporter is gone", () => {
   it("has no hardcoded client key", () => {
-    // The literal that shipped upstream. Split so this file is not itself a
+    // The literal that shipped at the fork point. Split so this file is not itself a
     // hit for anyone grepping the repo for the key.
     const key = ["client-MkRuleRQBd6qakfnDYqJVR9", "JuXcY57Ljly3vi5JVUIO"].join("");
     expect(filesMatching(new RegExp(key))).toEqual([]);
@@ -188,7 +188,7 @@ describe("the ChatGPT analytics client is gone", () => {
   });
 
   it("builds no analytics URL from a base URL", () => {
-    // The upstream shape was `format!("{base_url}/<upstream name>/analytics-events/events")`.
+    // The original shape was `format!("{base_url}/<upstream name>/analytics-events/events")`.
     // Catches a rebuild of the path from pieces.
     expect(filesMatching(/\/analytics-events\//)).toEqual([]);
   });
@@ -197,7 +197,7 @@ describe("the ChatGPT analytics client is gone", () => {
     // The crate keeps its public surface — core calls ~35 `track_*` methods —
     // but nothing behind them may reach the network. No client, no POST.
     // `walk`, not `sourceFiles`: this assertion is scoped to one crate, and
-    // the memoized `sourceFiles()` is the whole vendored tree.
+    // the memoized `sourceFiles()` is the whole engine tree.
     const analytics = walk(path.join(VENDOR, "analytics"));
     expect(analytics.length, "analytics crate not found").toBeGreaterThan(3);
 
@@ -229,11 +229,11 @@ describe("the Sentry feedback uploader is gone", () => {
   });
 });
 
-describe("no telemetry ingest marker anywhere in vendored code", () => {
+describe("no telemetry ingest marker anywhere in engine code", () => {
   // The removals above are point checks against sites already known. The
   // fourth path (#63) shipped precisely because only known sites were
   // asserted: the guard could not fail on one it had never heard of. This is
-  // the structural half — any ingest-service marker in vendored CODE fails
+  // the structural half — any ingest-service marker in engine CODE fails
   // here (comments explaining a removal don't count), so a fifth site fails
   // rather than passes.
   it("matches no known telemetry vendor", () => {

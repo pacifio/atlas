@@ -1,8 +1,7 @@
 // Open a terminal tab that runs a command.
 //
-// Zed hands an agent's terminal-auth command to the workspace terminal
-// (`SpawnInTerminal`, `use_new_terminal: true`) rather than spawning it itself,
-// and that is the mechanism ported here. The reason is stdin: a login CLI that
+// An agent's terminal-auth command goes to the workspace terminal rather than
+// being spawned directly. The reason is stdin: a login CLI that
 // asks a question — a provider picker, a device-code confirmation, a y/n —
 // cannot be answered by a process spawned with pipes, and Atlas spawns auth
 // runs with stdin closed outright. A real PTY can be typed into.
@@ -11,7 +10,7 @@
 // created later by the panel, and the terminal writes the queued line into the
 // user's own interactive shell once it exists.
 
-import { useLayoutStore } from "@/features/layout/stores/layout-store";
+import { groupOf, useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useTerminalStore } from "../stores/terminal-store";
 
 /** POSIX-quote a token so a path with spaces survives reaching a shell. */
@@ -122,4 +121,30 @@ export function closeCommandTerminal(t: CommandTerminal): void {
   }
   // The tab was already the user's — only the terminal we added goes.
   terminal.closeTerminalById(t.terminalId);
+}
+
+/** Where a command terminal stands relative to the screen.
+ *
+ *  `"hidden"` is the one that matters: the tab is still open, just not the one
+ *  showing in its column. `"closed"` and `"visible"` are deliberately NOT
+ *  merged with it — a caller that hides UI while the terminal is out of sight
+ *  must still show that UI when the terminal is gone outright, or the user is
+ *  left with no way to finish or cancel whatever the terminal was for. */
+export type CommandTerminalPresence = "visible" | "hidden" | "closed";
+
+/**
+ * Whether a command terminal is the tab currently showing in its column.
+ *
+ * Per COLUMN, not per window: Atlas splits into up to three, each with its own
+ * active tab (`activeByGroup`). A terminal in the right-hand column is on
+ * screen while the user types in a chat on the left, so keying this off the
+ * focused tab would hide things about a terminal the user can plainly see.
+ */
+export function useCommandTerminalPresence(t: CommandTerminal | null): CommandTerminalPresence {
+  return useLayoutStore((s) => {
+    if (!t) return "closed";
+    const tab = s.tabs.find((candidate) => candidate.id === t.tabId);
+    if (!tab) return "closed";
+    return s.activeByGroup[groupOf(tab)] === tab.id ? "visible" : "hidden";
+  });
 }

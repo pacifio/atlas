@@ -1,5 +1,4 @@
-//! Connect-path tests, adapted from the mechanics in
-//! `zed-ref/crates/agent_servers/src/acp.rs:957-1025`.
+//! Connect-path tests.
 //!
 //! These drive a real child process over real pipes. The fake agent is a small
 //! python script rather than a mock transport, because what is under test is the
@@ -152,8 +151,8 @@ async fn a_successful_handshake_reports_the_agents_own_name_and_version() {
     assert_eq!(connection.agent_version().as_deref(), Some("9.9.9"));
 }
 
-/// Adapted from the protocol-version guard (`acp.rs:1023-1025`). Zed rejects
-/// anything below v1 outright rather than trying to degrade.
+/// The protocol-version guard: anything below v1 is rejected outright rather
+/// than degraded to.
 #[tokio::test]
 async fn an_agent_below_protocol_v1_is_rejected() {
     let Some(command) = fake_agent_command(0) else {
@@ -549,8 +548,8 @@ fn permission_agent_command() -> Option<AgentServerCommand> {
 /// The blocking regression (#28). Inbound messages are dispatched serially and
 /// our handlers used to be awaited INLINE — so an open permission prompt
 /// blocked every message behind it: no text, no tool results, and no way for
-/// the cancellation to ever arrive. Zed's handlers enqueue-and-return, and the
-/// drain defers every long await; this pins the ported shape.
+/// the cancellation to ever arrive. The handlers enqueue-and-return, and the
+/// drain defers every long await; this pins that shape.
 #[tokio::test]
 async fn a_pending_permission_does_not_block_the_messages_behind_it() {
     use atlas_acp_thread::{AgentConnection as _, AgentThreadEntry, ToolCallStatus};
@@ -675,7 +674,7 @@ for line in sys.stdin:
         send({"jsonrpc": "2.0", "id": msg["id"], "result": {"stopReason": "end_turn"}})
 "#;
 
-/// The port omission behind #29: Atlas advertises the embedded-terminal meta
+/// The omission behind #29: Atlas advertises the embedded-terminal meta
 /// extension but never consumed it, so a tool call carrying one hard-failed
 /// its upsert — a stuck or missing tool call, no output, and (through the same
 /// error) dropped permission requests and starved shell attribution.
@@ -1258,4 +1257,49 @@ async fn a_cancel_racing_the_prompt_is_still_seen() {
         .expect("prompt task panicked")
         .expect("a cancelled turn is a normal stop, not an error");
     assert_eq!(response.stop_reason, acp::StopReason::Cancelled);
+}
+
+/// The other half of the stuck start: the agent answers `initialize` and
+/// then never answers `session/new`. The fake agent is exactly that — it
+/// completes the handshake and sits — so the bind path's own deadline for
+/// the hop is what this pins, at its value, with the phase named.
+/// The clock is paused only AFTER the handshake: a paused runtime treats
+/// waiting on the child's stdout as idle and jumps straight to the initialize
+/// deadline, before a real python process can answer. Once connected, the
+/// child will never write again, so from there the jump is to the right timer.
+#[tokio::test]
+async fn an_agent_that_never_answers_session_new_times_out_at_the_deadline() {
+    let Some(command) = fake_agent_command(1) else {
+        eprintln!("skipping: no python3 on this machine");
+        return;
+    };
+    use atlas_acp_thread::AgentConnection as _;
+    let connection = Arc::new(connect(command).await.expect("the handshake completes"));
+
+    tokio::time::pause();
+    let started = tokio::time::Instant::now();
+    let error = match connection.new_session(vec![std::env::temp_dir()]).await {
+        Ok(_) => panic!("a session/new nobody answers must fail, not park the bind"),
+        Err(error) => error,
+    };
+    let elapsed = started.elapsed();
+
+    let load_error = error
+        .downcast_ref::<LoadError>()
+        .expect("expected a LoadError the manager can carry");
+    match load_error {
+        LoadError::TimedOut { phase, after, .. } => {
+            assert_eq!(
+                phase.as_ref(),
+                "session/new",
+                "the hop that stalled is named"
+            );
+            assert_eq!(after.to_owned(), REQUEST_TIMEOUT);
+        }
+        other => panic!("expected TimedOut, got {other:?}"),
+    }
+    assert!(
+        elapsed >= REQUEST_TIMEOUT && elapsed < REQUEST_TIMEOUT * 2,
+        "gave up after {elapsed:?}, not at the {REQUEST_TIMEOUT:?} deadline"
+    );
 }

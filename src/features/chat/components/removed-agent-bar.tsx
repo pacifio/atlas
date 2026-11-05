@@ -1,12 +1,11 @@
 import { ArrowLeftRight } from "lucide-react";
-import { cn } from "@/lib/utils";
 import { NATIVE_AGENT_ID, pluginIdForAgent } from "@/types/agent";
 import { agentMeta, catalogEntry } from "@/features/agents/lib/agent-meta";
 import { useAgentRegistryStore } from "@/features/agents/stores/agent-registry-store";
 import { useChatStore } from "../stores/chat-store";
 import { cycleChatAgent } from "../lib/switch-agent";
-import { COMPOSER_STRIP, COMPOSER_STRIP_ACTION } from "./composer-strip";
-import { ComposerStripClose, useStripHidden } from "./composer-strip-close";
+import { useStripHidden } from "./composer-strip-close";
+import { ChatNoticeView } from "./views/chat-notice-view";
 
 /**
  * The tab's agent was uninstalled. Tucked into the top of the composer like
@@ -34,27 +33,20 @@ export function RemovedAgentBar({ tabId }: { tabId: string }) {
   if (!removed) return null;
 
   return (
-    <div
+    <ChatNoticeView
+      placement="tucked"
       data-testid="removed-agent-bar"
-      className={COMPOSER_STRIP}
-      title="Switch this chat to another agent, or reinstall it from Settings → Agents"
+      title="Switch this session to another agent, or reinstall it from Settings → Agents"
+      action={{
+        label: "Switch agent",
+        icon: ArrowLeftRight,
+        title: "Switch this session to another agent",
+        onClick: () => cycleChatAgent(tabId),
+      }}
+      onDismiss={hide}
     >
-      <span className="min-w-0 truncate">
-        <span className="font-semibold text-[var(--foreground)]">{agentMeta(agentType).label}</span>
-        <span className="text-[var(--muted-foreground)]"> is no longer installed</span>
-      </span>
-      <span className="flex shrink-0 items-center gap-0.5">
-        <button
-          type="button"
-          onClick={() => cycleChatAgent(tabId)}
-          title="Switch this chat to another agent"
-          className={cn(COMPOSER_STRIP_ACTION, "cursor-pointer")}
-        >
-          <ArrowLeftRight size={11} />
-          Switch agent
-        </button>
-        <ComposerStripClose onClick={hide} />
-      </span>
-    </div>
+      <span className="font-semibold text-foreground">{agentMeta(agentType).label}</span> is no
+      longer installed
+    </ChatNoticeView>
   );
 }

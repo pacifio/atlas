@@ -1,7 +1,7 @@
 // Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 use std::time::Duration;
 
-use rand::Rng;
+use rand::RngExt;
 use tracing::error;
 
 const INITIAL_DELAY_MS: u64 = 200;

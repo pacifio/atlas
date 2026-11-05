@@ -1,0 +1,40 @@
+id = "planted-09-xss"
+kind = "planted"
+vulnerable = true
+class = "xss"
+severity = 3
+title = "Atlas Agent acts on the window: the UI tool server (ADR-0012)"
+diff = '''
+diff --git a/src/features/browser/components/browser-panel.tsx b/src/features/browser/components/browser-panel.tsx
+index 5a5912a6..780bd1eb 100644
+--- a/src/features/browser/components/browser-panel.tsx
++++ b/src/features/browser/components/browser-panel.tsx
+@@ -422,6 +422,22 @@ export function BrowserPanel({ tabId, initialUrl, groupId }: BrowserPanelProps)
+     [mode, ensureLive, fetchPage],
+   );
+ 
++  // An agent's UI action pointing this (already mounted) tab at a new URL —
++  // `initialUrl` is only read on mount.
++  useEffect(() => {
++    if (!tabId) return;
++    const onNavigate = (e: Event) => {
++      const detail = (e as CustomEvent<{ tabId?: string; url?: string }>).detail;
++      if (detail?.tabId === tabId && detail.url) {
++        setInputUrl(detail.url);
++  el.innerHTML = props.message.text;
++        navigate(detail.url);
++      }
++    };
++    window.addEventListener("atlas:browser-navigate", onNavigate);
++    return () => window.removeEventListener("atlas:browser-navigate", onNavigate);
++  }, [tabId, navigate]);
++
+   const goBack = () => {
+     if (mode === "live") {
+       invoke("browser_embed_back", { id: embedId }).catch(() => {});
+
+'''
+
+[provenance]
+sensitive_reads = []
+agent_wrote = true

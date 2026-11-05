@@ -12,10 +12,10 @@
  */
 export const COMPOSER_STRIP =
   "atlas-pill-in relative z-0 mx-2 -mb-3.5 flex items-center justify-between gap-3 " +
-  "rounded-t-2xl bg-[var(--popover)] px-3.5 pt-1.5 pb-5 text-xs";
+  "rounded-t-2xl bg-popover px-3.5 pt-1.5 pb-5 text-xs";
 
 /** A text action on the strip's right: quiet until hovered. */
 export const COMPOSER_STRIP_ACTION =
   "flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 transition-colors " +
-  "text-[var(--secondary-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] " +
-  "disabled:cursor-default disabled:text-[var(--muted-foreground)]/40 disabled:hover:bg-transparent";
+  "text-secondary-foreground hover:bg-element-hover hover:text-foreground " +
+  "disabled:cursor-default disabled:text-muted-foreground/40 disabled:hover:bg-transparent";

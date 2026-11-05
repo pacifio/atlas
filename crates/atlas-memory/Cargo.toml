@@ -7,6 +7,12 @@ description = "Atlas's on-device RAG/memory engine: MiniLM → usearch HNSW behi
 [lib]
 name = "atlas_memory"
 
+[features]
+# Read-only introspection the record store's own integration tests need
+# (`RecordStore::explain`, `drop_index_for_test`). Off for the app: one of them
+# drops an index, and nothing that ships should be able to reach it.
+test-util = []
+
 [dependencies]
 # `.atlas` vs `.atlas-dev`: whose data this process owns (see that crate).
 atlas-profile = { path = "../atlas-profile" }
@@ -50,6 +56,10 @@ tracing = "0.1"
 usearch = { version = "2.25.3", features = ["numkong"] }
 
 [dev-dependencies]
+# The crate's own integration tests, with the test-only helpers turned on. A
+# self dev-dependency is how a crate enables one of its features for `tests/`
+# without the app inheriting it.
+atlas-memory = { path = ".", features = ["test-util"] }
 # Unique temp dirs in the record-store tests.
 uuid = { version = "1", features = ["v4"] }
 # `#[tokio::test]` and `Runtime::new` in the tests (grafeo used to pull these

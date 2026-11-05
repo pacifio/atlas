@@ -22,10 +22,10 @@
 //! - **A canned prompt** — `/init`: a normal turn whose text the user did not
 //!   have to write.
 //! - **Frontend replies** — `/diff` and `/status` answer from this side
-//!   without a model turn, exactly as the upstream TUI answered them.
+//!   without a model turn, exactly as the engine's original TUI answered them.
 //! - **Skills** — whatever `skills/list` discovered for this session's cwd
 //!   (user and repo scope only: the engine's bundled system skills lean on
-//!   upstream services the gateway does not serve). Each runs as a turn whose
+//!   OpenAI services the gateway does not serve). Each runs as a turn whose
 //!   input is `UserInput::Skill`.
 //! - **Commands whose better surface Atlas already has** stay out of this
 //!   module: `/login`/`/logout` (signing into Atlas IS signing into the agent,
@@ -86,7 +86,7 @@ pub struct SkillRef {
 
 /// The prompt `/init` runs.
 ///
-/// The upstream CLI's `/init` was exactly this shape: a fixed instruction sent
+/// The original CLI's `/init` was exactly this shape: a fixed instruction sent
 /// as an ordinary turn. Kept as a turn rather than a protocol call because it
 /// *is* agent work — it reads the repo and writes a file, with the usual
 /// approval flow around the write.
@@ -141,7 +141,7 @@ pub fn available(skills: &[SkillRef]) -> Vec<acp::AvailableCommand> {
 
 /// The `/diff` reply: `git diff HEAD` in the session's working directory.
 ///
-/// Same command the upstream TUI ran for its `/diff`. Capped, because a
+/// Same command the original TUI ran for its `/diff`. Capped, because a
 /// mid-refactor tree can produce megabytes and the transcript is not a pager —
 /// the cap note says how to see the rest.
 pub fn diff_reply(cwd: &str) -> String {
