@@ -7,15 +7,49 @@
  * the app (no in-memory state) can still route to the exact thread tab or
  * terminal pane, in any project.
  */
-import { isNotificationSettingsSection, type NotificationTarget } from "./catalog";
+import {
+  cleanActionArgs,
+  isNotificationSettingsSection,
+  isPullRequestTarget,
+  isTimelineSessionTarget,
+  type NotificationAction,
+  type NotificationActionArgs,
+  type NotificationTarget,
+} from "./catalog";
 import type { PermissionRef } from "./permission-actions-rules";
 import type { SystemNotificationResponse } from "./notifier-api";
 
+/** `actions`: the banner's buttons — the `args` of those that carry any are
+ *  stored by action id, for `bannerActionArgs` to hand back on a press. */
 export function encodeBannerPayload(
   target: NotificationTarget,
   permission?: PermissionRef,
+  actions: NotificationAction[] = [],
 ): string {
-  return JSON.stringify({ v: 1, target, ...(permission ? { permission } : {}) });
+  const args = Object.fromEntries(actions.filter((a) => a.args).map((a) => [a.id, a.args]));
+  return JSON.stringify({
+    v: 1,
+    target,
+    ...(permission ? { permission } : {}),
+    ...(Object.keys(args).length ? { args } : {}),
+  });
+}
+
+/** The `args` of the banner button that was pressed, or undefined (a plain
+ *  click, a button without args, a malformed payload). */
+export function bannerActionArgs(
+  r: SystemNotificationResponse,
+): NotificationActionArgs | undefined {
+  if (r.actionId === null || !r.payload) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(r.payload);
+    if (typeof parsed !== "object" || parsed === null) return undefined;
+    const byId = (parsed as { args?: unknown }).args;
+    if (typeof byId !== "object" || byId === null) return undefined;
+    return cleanActionArgs((byId as Record<string, unknown>)[r.actionId]);
+  } catch {
+    return undefined;
+  }
 }
 
 /** The permission request an action button on a banner answers, or null. */
@@ -35,6 +69,8 @@ export function permissionForResponse(r: SystemNotificationResponse): Permission
   }
 }
 
+const hasText = (v: unknown): v is string => typeof v === "string" && v.length > 0;
+
 function isTarget(t: unknown): t is NotificationTarget {
   if (typeof t !== "object" || t === null) return false;
   const r = t as Record<string, unknown>;
@@ -46,6 +82,10 @@ function isTarget(t: unknown): t is NotificationTarget {
   if (r.type === "settings") return isNotificationSettingsSection(r.section);
   if (r.type === "config-file") return true;
   if (r.type === "git-panel") return typeof r.projectId === "string" && !!r.projectId;
+  if (r.type === "pull-request") return isPullRequestTarget(r);
+  if (r.type === "timeline-session") return isTimelineSessionTarget(r);
+  // A session no tab shows still opens, from history, by its thread id.
+  if (r.type === "session" && typeof r.tabId === "string" && hasText(r.threadId)) return true;
   if (typeof r.tabId !== "string" || !r.tabId) return false;
   if (r.type === "terminal") return typeof r.terminalId === "string";
   return r.type === "session";
@@ -55,7 +95,14 @@ function isTarget(t: unknown): t is NotificationTarget {
  *  button, a malformed or foreign payload). Action buttons are routed by the
  *  features that offer them. */
 export function targetForResponse(r: SystemNotificationResponse): NotificationTarget | null {
-  if (r.actionId !== null || !r.payload) return null;
+  return r.actionId !== null ? null : bannerTarget(r);
+}
+
+/** The target a banner was raised for, whether it was clicked or one of its
+ *  action buttons pressed — what an action handler runs against. Null for a
+ *  malformed or foreign payload. */
+export function bannerTarget(r: SystemNotificationResponse): NotificationTarget | null {
+  if (!r.payload) return null;
   try {
     const parsed: unknown = JSON.parse(r.payload);
     if (typeof parsed !== "object" || parsed === null) return null;

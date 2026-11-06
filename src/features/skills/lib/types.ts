@@ -23,8 +23,8 @@ export interface SkillMeta {
   path: string;
   delivery: Delivery;
   /**
-   * `true` when the skill lives in Atlas's canonical `.atlas/skills` store
-   * (Atlas authored or adopted it). `false` for external skills that only
+   * `true` when the skill lives in the canonical `.agents/skills` store
+   * (`~/.agents/skills`, or `<project>/.agents/skills`; ADR-0005). `false` for external skills that only
    * exist as a real directory inside an agent's skills dir (e.g. a
    * globally-installed Claude Code skill). External skills can be adopted via
    * "Make for all agents".
@@ -45,8 +45,8 @@ export type PackComponentKind = "command" | "agent" | "rule";
 /**
  * An invokable component (command/agent/rule) shipped by an installed pack.
  * Mirrors the Rust `PackComponentMeta` (serde camelCase). Surfaced in the
- * My Skills list and the `#<kind>:` mention rail. Read-only — projection of
- * these into tools is managed from the Packs tab.
+ * Installed list and the `#<kind>:` mention rail. Read-only — projection of
+ * these into tools is managed from the pack's dialog.
  */
 export interface PackComponentMeta {
   pack: string;
@@ -98,7 +98,7 @@ export interface ToolInfo {
 
 /**
  * Status of one (skill, tool, scope) cell:
- * - `canonical`  — the source row lives in Atlas's `.atlas/skills`.
+ * - `canonical`  — the source row lives in the canonical `.agents/skills` store.
  * - `synced`     — a projection (symlink, or copy whose hash == canonical).
  * - `drifted`    — a copy whose hash ≠ canonical (edited out-of-band).
  * - `external`   — a real skill Atlas didn't author (no canonical twin).

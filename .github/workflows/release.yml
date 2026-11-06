@@ -1,0 +1,190 @@
+name: Release
+
+# How a release happens (CONTRIBUTING.md → "Releasing" has the picture):
+#
+# 1. Every push to `main` runs release-please. It keeps one open pull request,
+#    "chore: release X.Y.Z". The version comes from the Conventional Commit
+#    titles merged since the last release (pre-1.0: any `feat` → minor, only
+#    `fix`/`perf` → patch), and CHANGELOG.md in the same PR lists them.
+# 2. release-please moves package.json only. `sync-version` runs
+#    scripts/bump.sh on the PR branch for the other three version files, then
+#    starts CI on it: a push made with GITHUB_TOKEN starts no workflow, and the
+#    PR needs "CI passed" to merge.
+# 3. Merging that PR tags `alpha-X.Y.Z` and publishes the GitHub release. The
+#    build jobs below attach the installers. They are called from here rather
+#    than triggered by the tag because a tag created with GITHUB_TOKEN starts
+#    no workflow either.
+#
+# Still by hand after the installers are attached: the PostHog remote-config
+# keys that tell installed apps an update exists (CONTRIBUTING.md lists them).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Not `${{ github.workflow }}-${{ github.ref }}`: the reusable Linux workflow
+# below evaluates its own concurrency group with this workflow's name and ref,
+# and the two must not collide.
+concurrency:
+  group: release-please-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release-please:
+    name: Release PR
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      release_created: ${{ steps.rp.outputs.release_created }}
+      tag: ${{ steps.rp.outputs.tag_name }}
+      version: ${{ steps.rp.outputs.version }}
+      pr: ${{ steps.rp.outputs.pr }}
+    steps:
+      - id: rp
+        uses: googleapis/release-please-action@v5.0.0
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  sync-version:
+    name: Sync version files on the release PR
+    needs: release-please
+    if: needs.release-please.outputs.pr != ''
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: write
+      actions: write
+    env:
+      BRANCH: ${{ fromJSON(needs.release-please.outputs.pr).headBranchName }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.BRANCH }}
+      - name: Run scripts/bump.sh at the release PR's version
+        run: |
+          version="$(jq -r '."."' .release-please-manifest.json)"
+          bash scripts/bump.sh "$version"
+          if ! git diff --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -am "chore: sync version files to $version"
+            git push origin "HEAD:$BRANCH"
+          fi
+      - name: Run CI on the release PR
+        run: gh workflow run ci.yml --ref "$BRANCH"
+
+  linux:
+    name: Linux packages
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    uses: ./.github/workflows/release-linux.yml
+    with:
+      tag: ${{ needs.release-please.outputs.tag }}
+      version: ${{ needs.release-please.outputs.version }}
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    secrets: inherit
+
+  # Signed and notarized DMGs for Apple Silicon and Intel, built by
+  # scripts/release-macos.sh exactly as on a laptop, with the Developer ID
+  # certificate imported into a throwaway keychain. Off until the signing
+  # secrets exist: set the repository variable MACOS_RELEASE=true once
+  # APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, APPLE_ID, APPLE_PASSWORD and
+  # POSTHOG_KEY are in the `release` environment. The environment's
+  # required reviewer approves each run.
+  macos:
+    name: macOS DMGs
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true' && vars.MACOS_RELEASE == 'true'
+    runs-on: macos-latest
+    environment: release
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.release-please.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
+      - uses: jdx/mise-action@v2
+      - name: Install the pinned Rust toolchain and the Intel target
+        run: |
+          rustup toolchain install
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - name: Install
+        run: bun install --frozen-lockfile
+      - name: Import the Developer ID certificate into a throwaway keychain
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          keychain="$RUNNER_TEMP/release.keychain-db"
+          keychain_password="$(openssl rand -hex 24)"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$keychain_password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" \
+            $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/cert.p12"
+      - name: Build, sign and notarize both DMGs
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          POSTHOG_KEY: ${{ secrets.POSTHOG_KEY }}
+          POSTHOG_HOST: ${{ secrets.POSTHOG_HOST }}
+        run: ./scripts/release-macos.sh
+      - name: Attach the DMGs to the release
+        run: gh release upload "$TAG" target/*-apple-darwin/release/bundle/dmg/Atlas_*.dmg --clobber
+      - name: Delete the keychain
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/release.keychain-db" || true
+
+  # The x64 MSI, unsigned (Atlas has no Windows code-signing certificate yet),
+  # exactly what `bun run build:app:win` makes locally. Off until the
+  # repository variable WINDOWS_RELEASE=true: without POSTHOG_KEY the
+  # build has no telemetry key, and so no updater.
+  windows:
+    name: Windows MSI
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true' && vars.WINDOWS_RELEASE == 'true'
+    runs-on: windows-latest
+    environment: release
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.release-please.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
+      - uses: jdx/mise-action@v2
+      - name: Install the pinned Rust toolchain and the x64 target
+        run: |
+          rustup toolchain install
+          rustup target add x86_64-pc-windows-msvc
+      - name: Install
+        run: bun install --frozen-lockfile
+      - name: Build the MSI
+        env:
+          POSTHOG_KEY: ${{ secrets.POSTHOG_KEY }}
+          POSTHOG_HOST: ${{ secrets.POSTHOG_HOST }}
+        run: bun run build:app:win
+      - name: Attach the MSI to the release
+        shell: bash
+        run: gh release upload "$TAG" target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi --clobber

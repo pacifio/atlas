@@ -1,28 +1,44 @@
 #!/usr/bin/env node
 /**
- * Generates every derived copy of the theme-key registry from the one
- * hand-edited source, `crates/atlas-theme/keys.toml`.
+ * Brings the theme engine's data in from `@tryatlas/design` and generates the
+ * files only desktop needs from it.
  *
- *   node scripts/generate-theme-keys.mjs           rewrite the generated files
- *   node scripts/generate-theme-keys.mjs --check    fail if any is stale
+ *   node scripts/generate-theme-keys.mjs           copy and rewrite
+ *   node scripts/generate-theme-keys.mjs --check    fail if anything is stale
  *
- * Outputs:
- *   src/features/theme/theme-key-registry.ts    the TS registry the resolver reads
- *   crates/atlas-theme/theme-keys.txt           key + description, read by Rust
- *   crates/atlas-theme/schema/theme-v1.json     the `keys` property of a variant
- *   docs/reference/theme-keys.md                the generated block only
+ * `keys.toml` and the built-in themes are the package's (ADR-0027): it owns
+ * the derivation rules and generates the TS registry, the Rust rule tables and
+ * the golden fixture from them. Desktop's Rust build must stay hermetic — cargo
+ * never reads `node_modules` — so this COPIES those files, byte for byte, into
+ * `crates/atlas-theme/`, where they are committed:
  *
- * The schema is the one output Rust writes rather than this script: its other
- * 100 lines come from `schemars` over the `Theme` struct, and re-serialising
- * them here would mean a second JSON printer that has to agree with serde_json
- * byte for byte. So `atlas_theme::json_schema()` injects the key properties
- * from the generated `theme-keys.txt`, and a write run shells out to
- * `cargo run -p atlas-theme --example generate_schema`. `--check` needs no
- * cargo: it compares the committed schema's key properties against this file.
+ *   keys.toml, themes/*.toml, theme-rules/{theme-keys,base-rules}.txt
+ *     → crates/atlas-theme/ (the rule tables at the crate root, as before)
+ *   theme-rules/base-derivation.json
+ *     → crates/atlas-theme/tests/fixtures/ (the golden fixture Rust runs)
+ *
+ * Never edit a copy: change the package, release it, bump the pin, run this.
+ * `tests/design-package-copies.test.ts` fails the moment a copy and the
+ * installed package disagree.
+ *
+ * Generated here, from the copies, because they describe desktop's own
+ * surfaces:
+ *
+ *   crates/atlas-theme/schema/theme-v1.json            the `keys` property of a variant
+ *   docs/reference/theme-keys.md                       the generated block only
+ *   src/dev/mock-backend/fixtures/builtin-themes.json  the mock's built-in themes
+ *
+ * The schema and the mock's built-ins are written by Rust rather than this
+ * script: the schema's other 100 lines come from `schemars` over the `Theme`
+ * struct, and the built-ins are the themes as Rust's parser hands them to the
+ * frontend. So a write run shells out to `cargo run -p atlas-theme --example
+ * generate_schema` and `generate_builtins`. `--check` needs no cargo: it
+ * compares the committed schema's key properties against this file.
  */
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -30,37 +46,99 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 const SOURCE = path.join(REPO_ROOT, "crates", "atlas-theme", "keys.toml");
 const SOURCE_REL = "crates/atlas-theme/keys.toml";
 const COMMAND = "bun run theme:keys";
+const PACKAGE = "@tryatlas/design";
 
 export const OUTPUTS = {
-  registry: "src/features/theme/theme-key-registry.ts",
   keyList: "crates/atlas-theme/theme-keys.txt",
+  baseRules: "crates/atlas-theme/base-rules.txt",
   schema: "crates/atlas-theme/schema/theme-v1.json",
   docs: "docs/reference/theme-keys.md",
+  builtins: "src/dev/mock-backend/fixtures/builtin-themes.json",
 };
+
+/** The installed package's root, resolved the way Node resolves an import. */
+export function packageRoot() {
+  const require = createRequire(path.join(REPO_ROOT, "package.json"));
+  return path.dirname(require.resolve(`${PACKAGE}/package.json`));
+}
+
+/**
+ * Every file desktop copies from the package, as `[from, to]`: `from` relative
+ * to the package root, `to` relative to this repo. The themes are listed from
+ * the package, so a theme it adds is copied and one it drops shows up in
+ * `strayThemes`.
+ */
+export function packageCopies() {
+  const themes = readdirSync(path.join(packageRoot(), "themes"))
+    .filter((name) => name.endsWith(".toml"))
+    .sort();
+  return [
+    ["keys.toml", SOURCE_REL],
+    ...themes.map((name) => [`themes/${name}`, `crates/atlas-theme/themes/${name}`]),
+    ["theme-rules/theme-keys.txt", OUTPUTS.keyList],
+    ["theme-rules/base-rules.txt", OUTPUTS.baseRules],
+    ["theme-rules/base-derivation.json", "crates/atlas-theme/tests/fixtures/base-derivation.json"],
+  ];
+}
+
+/** Committed theme files the package no longer ships. */
+export function strayThemes() {
+  const shipped = new Set(packageCopies().map(([, to]) => to));
+  return readdirSync(path.join(REPO_ROOT, "crates", "atlas-theme", "themes"))
+    .map((name) => `crates/atlas-theme/themes/${name}`)
+    .filter((relative) => !shipped.has(relative));
+}
 
 /** The eight palette hues a key may name. Mirrored in `atlas-theme`. */
 const PALETTE_KEYS = ["red", "orange", "yellow", "green", "cyan", "blue", "purple", "pink"];
 
 /**
- * The closed operation vocabulary. The value is how the transform is spelled in
- * the generated TS; `resolve-theme.ts` applies it to whichever source supplied
- * the colour. Adding an entry here means adding one to the registry preamble
- * below and, if it needs new inputs, to `DerivationContext`.
+ * The closed operation vocabulary, as the docs table and the schema's hover
+ * text spell it. The package's generator owns the operations themselves; this
+ * only has to recognise them, so an op it adds fails validation here until
+ * desktop learns to describe it. `amount: false` marks an operation that takes
+ * none.
  */
 const OPERATIONS = {
-  alpha: { call: "alpha", docs: (n) => `alpha ${n}`, prose: (n) => `alpha ${n}` },
-  lighten: { call: "lighter", docs: (n) => `lighten ${n}`, prose: (n) => `lighten ${n}` },
+  alpha: { docs: (n) => `alpha ${n}`, prose: (n) => `alpha ${n}` },
+  lighten: { docs: (n) => `lighten ${n}`, prose: (n) => `lighten ${n}` },
   toward_background: {
-    call: "towardBackground",
     docs: (n) => `mix ${n} → B:background`,
     prose: (n) => `mix ${n} toward base.background`,
   },
   toward_foreground: {
-    call: "towardForeground",
     docs: (n) => `mix ${n} → B:foreground`,
     prose: (n) => `mix ${n} toward base.foreground`,
   },
+  readable: {
+    amount: false,
+    docs: () => "readable: B:foreground or B:background",
+    prose: () =>
+      "whichever of base.foreground and base.background reads better on it (white or black while foreground itself is derived)",
+  },
 };
+
+/** `op`/`amount` problems for a key, a derived variable or a base rule. */
+function checkOperation(entry, at, problems, { required = false } = {}) {
+  if (entry.op === undefined) {
+    if (required) problems.push(`${at}: missing \`op\``);
+    if (entry.amount !== undefined) problems.push(`${at}: \`amount\` without an \`op\``);
+    return;
+  }
+  const operation = OPERATIONS[entry.op];
+  if (!operation) {
+    problems.push(
+      `${at}: unknown op \`${entry.op}\`; one of ${Object.keys(OPERATIONS).join(", ")}`,
+    );
+    return;
+  }
+  if (operation.amount === false) {
+    if (entry.amount !== undefined) problems.push(`${at}: \`${entry.op}\` takes no \`amount\``);
+    return;
+  }
+  const amount = Number(entry.amount?.number);
+  if (!(amount > 0 && amount <= 1)) problems.push(`${at}: \`amount\` must be in (0, 1]`);
+}
 
 const DOCS_BEGIN = "<!-- generated:theme-keys -->";
 const DOCS_END = "<!-- /generated:theme-keys -->";
@@ -170,6 +248,7 @@ export function readSource() {
   const groups = parsed.group ?? [];
   const keys = parsed.key ?? [];
   const derived = parsed.derived ?? [];
+  const baseRules = parsed.base ?? [];
   const tokens = new Set(baseTokens());
   const problems = [];
   const seen = new Set();
@@ -210,17 +289,7 @@ export function readSource() {
     if (key.palette === undefined && key.base === undefined) {
       problems.push(`${at}: needs a \`palette\` or a \`base\` source`);
     }
-    if (key.op !== undefined) {
-      if (!(key.op in OPERATIONS)) {
-        problems.push(
-          `${at}: unknown op \`${key.op}\`; one of ${Object.keys(OPERATIONS).join(", ")}`,
-        );
-      }
-      const amount = Number(key.amount?.number);
-      if (!(amount > 0 && amount <= 1)) problems.push(`${at}: \`amount\` must be in (0, 1]`);
-    } else if (key.amount !== undefined) {
-      problems.push(`${at}: \`amount\` without an \`op\``);
-    }
+    checkOperation(key, at, problems);
     for (const field of ["dark", "light", "note"]) {
       if (key[field] !== undefined && typeof key[field] !== "string") {
         problems.push(`${at}: \`${field}\` must be a string`);
@@ -233,7 +302,7 @@ export function readSource() {
   // dangling `from` fails the build rather than resolving to `undefined`.
   for (const entry of derived) {
     const at = `derived \`${entry.name ?? "?"}\``;
-    for (const field of ["name", "description", "op"]) {
+    for (const field of ["name", "description"]) {
       if (typeof entry[field] !== "string") problems.push(`${at}: missing \`${field}\``);
     }
     if (typeof entry.name !== "string") continue;
@@ -250,19 +319,56 @@ export function readSource() {
     if (entry.base !== undefined && !tokens.has(entry.base)) {
       problems.push(`${at}: unknown base token \`${entry.base}\``);
     }
-    if (entry.op !== undefined && !(entry.op in OPERATIONS)) {
-      problems.push(`${at}: unknown op \`${entry.op}\``);
+    checkOperation(entry, at, problems, { required: true });
+  }
+
+  // Base rules: exactly `BASE_TOKENS`, in its order, each sourcing only an
+  // earlier rule — which is what lets both interpreters resolve in one pass.
+  const tokenOrder = [...tokens];
+  const ruleNames = baseRules.map((rule) => rule.name);
+  if (ruleNames.join(" ") !== tokenOrder.join(" ")) {
+    problems.push(
+      `[[base]] must list exactly BASE_TOKENS (crates/atlas-theme/src/lib.rs), in its order`,
+    );
+  }
+  const earlier = new Set();
+  for (const rule of baseRules) {
+    const at = `base rule \`${rule.name ?? "?"}\``;
+    for (const field of ["name", "description"]) {
+      if (typeof rule[field] !== "string") problems.push(`${at}: missing \`${field}\``);
     }
-    const amount = Number(entry.amount?.number);
-    if (!(amount > 0 && amount <= 1)) problems.push(`${at}: \`amount\` must be in (0, 1]`);
+    if (rule.palette !== undefined && !PALETTE_KEYS.includes(rule.palette)) {
+      problems.push(`${at}: unknown palette hue \`${rule.palette}\``);
+    }
+    if (rule.base !== undefined && !earlier.has(rule.base)) {
+      problems.push(`${at}: \`base\` must name an earlier rule, got \`${rule.base}\``);
+    }
+    if (rule.base === undefined && typeof rule.dark !== "string") {
+      problems.push(`${at}: needs a \`base\` source or a \`dark\` default`);
+    }
+    for (const field of ["dark", "light"]) {
+      if (rule[field] !== undefined && typeof rule[field] !== "string") {
+        problems.push(`${at}: \`${field}\` must be a string`);
+      }
+      if (typeof rule[field] === "string" && /[\t\n]/.test(rule[field])) {
+        problems.push(`${at}: \`${field}\` may not hold a tab or newline`);
+      }
+    }
+    checkOperation(rule, at, problems);
+    earlier.add(rule.name);
   }
 
   // `.` and `_` both become `-`, so `a.b_c` and `a.b.c` would write the same
   // CSS variable and the second would silently win. Cheap to check, invisible
   // otherwise, and exactly the kind of thing a phase-2 rename could introduce.
-  // Derived variables share the `--atlas-` namespace, so they are checked with
-  // the keys rather than beside them.
+  // Keys carry no prefix (ADR-0027), so they share one namespace with the
+  // derived variables and with the shadcn base tokens (`--border`, `--ring`, …,
+  // and the `--font-*` stacks): a key that wrote `--border` would overwrite the
+  // base token for every consumer.
   const byVar = new Map();
+  for (const token of [...tokens, "font-sans", "font-serif", "font-mono"]) {
+    byVar.set(`--${token}`, `base.${token}`);
+  }
   for (const key of [...keys, ...derived]) {
     if (typeof key.name !== "string") continue;
     const existing = byVar.get(cssVar(key.name));
@@ -276,6 +382,16 @@ export function readSource() {
 
   return {
     groups,
+    baseRules: baseRules.map((rule) => ({
+      name: rule.name,
+      description: rule.description,
+      palette: rule.palette,
+      base: rule.base,
+      op: rule.op,
+      amount: rule.amount?.number,
+      dark: rule.dark,
+      light: rule.light ?? rule.dark,
+    })),
     derived: derived.map((entry) => ({
       name: entry.name,
       description: entry.description,
@@ -301,9 +417,9 @@ export function readSource() {
 
 // ─── Shared derivation vocabulary ────────────────────────────────────────────
 
-/** `--atlas-…`, matching `define()` in the generated registry. */
+/** `--…`, matching `define()` in the package's generated registry. */
 export function cssVar(name) {
-  return `--atlas-${name.replaceAll(".", "-").replaceAll("_", "-")}`;
+  return `--${name.replaceAll(".", "-").replaceAll("_", "-")}`;
 }
 
 /** Compact source chain for the docs table: `P:green → B:destructive → D`. */
@@ -331,185 +447,7 @@ export function keyDescription(key) {
 
 // ─── The generated files ─────────────────────────────────────────────────────
 
-function banner(comment) {
-  const lines = [
-    `Generated from ${SOURCE_REL} — do not edit.`,
-    `Run \`${COMMAND}\` after editing that file.`,
-  ];
-  return lines.map((line) => `${comment} ${line}`.trimEnd()).join("\n");
-}
-
-const REGISTRY_PREAMBLE = `${banner("//")}
-
-import { withAlpha, lighten, mix } from "./color";
-
-export const PALETTE_KEYS = [
-${PALETTE_KEYS.map((hue) => `  "${hue}",`).join("\n")}
-] as const;
-
-export type PaletteKey = (typeof PALETTE_KEYS)[number];
-export type Appearance = "dark" | "light";
-export type ColorTransform = (color: string, context: DerivationContext) => string;
-
-export interface DerivationContext {
-  base: Record<string, string>;
-  palette: Record<string, string>;
-  appearance: Appearance;
-}
-
-export interface ThemeKeyRule {
-  /** First derivation source after an explicit theme key. */
-  palette?: PaletteKey;
-  /** Second derivation source after the palette. */
-  base?: string;
-  /** Per-appearance Atlas default, used only when both sources are absent. */
-  atlasDefault: Record<Appearance, string>;
-  transform?: ColorTransform;
-  description: string;
-}
-
-export interface ThemeKeyDefinition<Key extends string = string> {
-  key: Key;
-  cssVar: \`--atlas-\${string}\`;
-  rule: ThemeKeyRule;
-}
-
-const alpha =
-  (amount: number): ColorTransform =>
-  (color) =>
-    withAlpha(color, amount);
-const lighter =
-  (amount: number): ColorTransform =>
-  (color) =>
-    lighten(color, amount);
-const towardBackground =
-  (amount: number): ColorTransform =>
-  (color, { base }) =>
-    mix(color, base.background ?? "#000000", amount);
-const towardForeground =
-  (amount: number): ColorTransform =>
-  (color, { base }) =>
-    mix(color, base.foreground ?? "#ffffff", amount);
-
-function define<const Key extends string>(
-  key: Key,
-  rule: Omit<ThemeKeyRule, "atlasDefault"> & {
-    dark: string;
-    light?: string;
-  },
-): ThemeKeyDefinition<Key> {
-  const { dark, light = dark, ...rest } = rule;
-  return {
-    key,
-    cssVar: \`--atlas-\${key.replaceAll(".", "-").replaceAll("_", "-")}\`,
-    rule: { ...rest, atlasDefault: { dark, light } },
-  };
-}
-
-/**
- * The public schema-1 theme-key registry. Every key appears once and carries
- * exactly one explicit → palette → base → Atlas-default derivation rule.
- */
-export const THEME_KEY_REGISTRY = [`;
-
-const REGISTRY_EPILOGUE = `] as const;
-
-export type ThemeKey = (typeof THEME_KEY_REGISTRY)[number]["key"];
-
-export const THEME_KEY_DEFINITION_BY_KEY = Object.fromEntries(
-  THEME_KEY_REGISTRY.map((definition) => [definition.key, definition]),
-) as Record<ThemeKey, (typeof THEME_KEY_REGISTRY)[number]>;
-
-export interface DerivedVarDefinition<Name extends string = string> {
-  name: Name;
-  cssVar: \`--atlas-\${string}\`;
-  /** The settable key this transforms, or null when it transforms a base token. */
-  from: ThemeKey | null;
-  /** The base token this transforms, or null when it transforms a key. */
-  base: string | null;
-  transform: ColorTransform;
-  description: string;
-}
-
-function derive<const Name extends string>(
-  name: Name,
-  rule: Omit<DerivedVarDefinition<Name>, "name" | "cssVar">,
-): DerivedVarDefinition<Name> {
-  return {
-    name,
-    cssVar: \`--atlas-\${name.replaceAll(".", "-").replaceAll("_", "-")}\`,
-    ...rule,
-  };
-}
-
-/**
- * Colours Atlas still writes as \`--atlas-…\` custom properties, but that no
- * theme may set: each is a pure transform of a key that IS settable, so a
- * theme author steers it through that key and never restates it. They are
- * deliberately absent from \`theme-keys.txt\` and from the JSON Schema, which is
- * what makes writing one in a theme file an unknown-key warning.
- */
-export const DERIVED_VAR_REGISTRY = [
-DERIVED_BODY
-] as const;
-
-export type DerivedVar = (typeof DERIVED_VAR_REGISTRY)[number]["name"];
-
-export function describeDerivation(definition: ThemeKeyDefinition): string {
-  const sources = [
-    definition.rule.palette ? \`palette.\${definition.rule.palette}\` : null,
-    definition.rule.base ? \`base.\${definition.rule.base}\` : null,
-    "Atlas appearance default",
-  ].filter(Boolean);
-  return sources.join(" → ");
-}
-`;
-
-function renderRegistry({ keys, derived }) {
-  const body = [];
-  let group = null;
-  for (const key of keys) {
-    if (key.group !== group) {
-      if (group !== null) body.push("");
-      group = key.group;
-    }
-    if (key.note) {
-      body.push("  /**");
-      // `trimEnd`: a blank line inside a TOML note would otherwise emit `   * `
-      // with a trailing space, which `oxfmt` strips — putting `format:check` and
-      // `theme:keys:check` permanently at odds.
-      for (const line of key.note.split("\n")) body.push(`   * ${line}`.trimEnd());
-      body.push("   */");
-    }
-    body.push(`  define("${key.name}", {`);
-    if (key.palette) body.push(`    palette: "${key.palette}",`);
-    if (key.base) body.push(`    base: "${key.base}",`);
-    if (key.op) body.push(`    transform: ${OPERATIONS[key.op].call}(${key.amount}),`);
-    body.push(`    dark: "${key.dark}",`);
-    body.push(`    light: "${key.light}",`);
-    body.push(`    description: "${key.description.replaceAll('"', '\\"')}",`);
-    body.push("  }),");
-  }
-  const derivedBody = derived.flatMap((entry) => [
-    `  derive("${entry.name}", {`,
-    `    from: ${entry.from ? `"${entry.from}"` : "null"},`,
-    `    base: ${entry.base ? `"${entry.base}"` : "null"},`,
-    `    transform: ${OPERATIONS[entry.op].call}(${entry.amount}),`,
-    `    description: "${entry.description.replaceAll('"', '\\"')}",`,
-    "  }),",
-  ]);
-  return `${REGISTRY_PREAMBLE}\n${body.join("\n")}\n${REGISTRY_EPILOGUE.replace(
-    "DERIVED_BODY",
-    derivedBody.join("\n"),
-  )}`;
-}
-
-function renderKeyList({ keys }) {
-  const rows = keys.map((key) => `${key.name}\t${keyDescription(key)}`);
-  return `${banner("#")}\n#\n# One key per line: the role name, a tab, and the hover text an author sees.\n${rows.join("\n")}\n`;
-}
-
-function renderDocs({ groups, keys, derived }, current) {
+function renderDocs({ groups, keys, derived, baseRules }, current) {
   const begin = current.indexOf(DOCS_BEGIN);
   const end = current.indexOf(DOCS_END);
   if (begin === -1 || end === -1 || end < begin) {
@@ -520,7 +458,33 @@ function renderDocs({ groups, keys, derived }, current) {
 
   const out = [
     DOCS_BEGIN,
-    `<!-- Generated from ${SOURCE_REL} by \`${COMMAND}\`. Edit that file, not this block. -->`,
+    `<!-- Generated from ${SOURCE_REL} by \`${COMMAND}\`. That file is @tryatlas/design's, copied in: change it in the package, never here. -->`,
+    "",
+    "## How a missing base token is derived",
+    "",
+    "Every base token is optional. One a theme leaves out comes from its rule:",
+    "`P:x` is `palette.x`, `B:x` is another base token, and `D` is the Atlas",
+    "default (dark / light). `background`, `foreground` and `primary` are the",
+    "seeds; a theme that sets only those still sets every token.",
+    "",
+    "| Token | Source | Transform | D (dark / light) | What it is |",
+    "|---|---|---|---|---|",
+    ...baseRules.map((entry) => {
+      const source = [
+        entry.palette && `P:${entry.palette}`,
+        entry.base && `B:${entry.base}`,
+        entry.dark && "D",
+      ]
+        .filter(Boolean)
+        .join(" → ");
+      const transform = entry.op ? OPERATIONS[entry.op].docs(entry.amount) : "—";
+      const fallback = !entry.dark
+        ? "—"
+        : entry.dark === entry.light
+          ? `\`${entry.dark}\``
+          : `\`${entry.dark}\` / \`${entry.light}\``;
+      return `| \`${entry.name}\` | ${source} | ${transform} | ${fallback} | ${entry.description} |`;
+    }),
     "",
     "## Full key list and derivation sources",
     "",
@@ -553,7 +517,7 @@ function renderDocs({ groups, keys, derived }, current) {
     out.push(
       "## Derived variables",
       "",
-      `Atlas writes these **${derived.length}** \`--atlas-…\` custom properties too, but`,
+      `Atlas writes these **${derived.length}** custom properties too, but`,
       "they are **not** theme keys: each is a pure transform of a key that is, so a",
       "theme steers it through that key. Writing one in a theme file is an",
       "unknown-key warning.",
@@ -616,15 +580,23 @@ function schemaKeysOf(text) {
 
 /** @returns {{ path: string, hint: string }[]} the outputs that are out of date. */
 export function staleOutputs() {
-  const source = readSource();
   const stale = [];
-  const compare = (relative, expected) => {
-    if (read(relative) !== expected) stale.push({ path: relative, hint: COMMAND });
-  };
-  compare(OUTPUTS.registry, renderRegistry(source));
-  compare(OUTPUTS.keyList, renderKeyList(source));
-  compare(OUTPUTS.docs, renderDocs(source, read(OUTPUTS.docs)));
+  const root = packageRoot();
+  for (const [from, to] of packageCopies()) {
+    const full = path.join(REPO_ROOT, to);
+    const expected = readFileSync(path.join(root, from), "utf8");
+    if (!existsSync(full) || readFileSync(full, "utf8") !== expected) {
+      stale.push({ path: to, hint: `${COMMAND}, which copies it from ${PACKAGE}` });
+    }
+  }
+  for (const stray of strayThemes()) {
+    stale.push({ path: stray, hint: `delete it: ${PACKAGE} no longer ships it` });
+  }
 
+  const source = readSource();
+  if (read(OUTPUTS.docs) !== renderDocs(source, read(OUTPUTS.docs))) {
+    stale.push({ path: OUTPUTS.docs, hint: COMMAND });
+  }
   const committed = JSON.stringify(sortValue(schemaKeysOf(read(OUTPUTS.schema))));
   const expected = JSON.stringify(sortValue(expectedSchemaKeys(source)));
   if (committed !== expected) {
@@ -636,39 +608,61 @@ export function staleOutputs() {
   return stale;
 }
 
-function write() {
-  const source = readSource();
-  const written = [];
-  const put = (relative, contents) => {
-    const full = path.join(REPO_ROOT, relative);
-    if (readFileSync(full, "utf8") === contents) return;
-    writeFileSync(full, contents);
-    written.push(relative);
-  };
-  put(OUTPUTS.registry, renderRegistry(source));
-  put(OUTPUTS.keyList, renderKeyList(source));
-  put(OUTPUTS.docs, renderDocs(source, read(OUTPUTS.docs)));
-
-  // The schema must be regenerated after `theme-keys.txt`, which it reads.
-  const cargo = spawnSync(
-    "cargo",
-    ["run", "--quiet", "-p", "atlas-theme", "--example", "generate_schema"],
-    { cwd: REPO_ROOT, encoding: "utf8" },
-  );
+/** `cargo run -p atlas-theme --example <name>`'s stdout, or null after saying why. */
+function cargoExample(name, output) {
+  const cargo = spawnSync("cargo", ["run", "--quiet", "-p", "atlas-theme", "--example", name], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  });
   if (cargo.error || cargo.status !== 0) {
     console.error(cargo.stderr ?? cargo.error?.message ?? "");
     console.error(
-      `cargo could not regenerate ${OUTPUTS.schema}. Run it yourself:\n` +
-        `  cargo run -p atlas-theme --example generate_schema > ${OUTPUTS.schema}`,
+      `cargo could not regenerate ${output}. Run it yourself:\n` +
+        `  cargo run -p atlas-theme --example ${name} > ${output}`,
     );
     process.exitCode = 1;
-    return;
+    return null;
   }
-  put(OUTPUTS.schema, cargo.stdout);
+  return cargo.stdout;
+}
+
+function write() {
+  const written = [];
+  const root = packageRoot();
+  for (const [from, to] of packageCopies()) {
+    const full = path.join(REPO_ROOT, to);
+    const contents = readFileSync(path.join(root, from), "utf8");
+    if (existsSync(full) && readFileSync(full, "utf8") === contents) continue;
+    copyFileSync(path.join(root, from), full);
+    written.push(to);
+  }
+  const strays = strayThemes();
+  if (strays.length > 0) {
+    console.error(`${PACKAGE} no longer ships these; delete them:\n  ${strays.join("\n  ")}`);
+    process.exitCode = 1;
+  }
+
+  const source = readSource();
+  const put = (relative, contents) => {
+    const full = path.join(REPO_ROOT, relative);
+    if (existsSync(full) && readFileSync(full, "utf8") === contents) return;
+    writeFileSync(full, contents);
+    written.push(relative);
+  };
+  put(OUTPUTS.docs, renderDocs(source, read(OUTPUTS.docs)));
+
+  // Both read the copies above through `include_str!`, so they run after them.
+  const schema = cargoExample("generate_schema", OUTPUTS.schema);
+  if (schema === null) return;
+  put(OUTPUTS.schema, schema);
+  const builtins = cargoExample("generate_builtins", OUTPUTS.builtins);
+  if (builtins === null) return;
+  put(OUTPUTS.builtins, builtins);
 
   console.log(
     written.length === 0
-      ? `${source.keys.length} theme keys; every generated file was already current.`
+      ? `${source.keys.length} theme keys; every copied and generated file was already current.`
       : `${source.keys.length} theme keys; rewrote:\n  ${written.join("\n  ")}`,
   );
 }
@@ -676,11 +670,11 @@ function write() {
 function check() {
   const stale = staleOutputs();
   if (stale.length === 0) {
-    console.log("theme keys: every generated file matches " + SOURCE_REL + ".");
+    console.log(`theme keys: every copy matches ${PACKAGE}, and every generated file its copy.`);
     return;
   }
-  console.error(`Stale, ${SOURCE_REL} has moved on:`);
-  for (const { path: relative, hint } of stale) console.error(`  ${relative}  — run \`${hint}\``);
+  console.error(`Stale against ${PACKAGE}:`);
+  for (const { path: relative, hint } of stale) console.error(`  ${relative}  — ${hint}`);
   process.exitCode = 1;
 }
 

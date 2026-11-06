@@ -1,10 +1,14 @@
 import { useSettingsStore } from "@/features/settings/stores/settings-store";
 import { TIER_ORDER, TIER_SETTINGS, kindsInTier } from "@/features/notifications/lib/prefs";
 import type { NotificationTier } from "@/features/notifications/lib/catalog";
-import { SectionTitle, SettingRow, Toggle } from "./settings-controls";
-
-const SELECT_CLASS =
-  "h-7 rounded-md border border-[var(--border)] bg-[var(--card)] px-2 text-xs text-[var(--foreground)] outline-none disabled:opacity-40";
+import {
+  SettingsGroup,
+  SettingsPage,
+  SettingsRow,
+  SettingsSection,
+} from "./layout/settings-layout";
+import { SettingSwitch } from "./layout/setting-controls";
+import { Select, Switch } from "@tryatlas/design";
 
 const DURATION_OPTIONS: { value: number; label: string }[] = [
   { value: 0, label: "Always" },
@@ -19,12 +23,12 @@ const DURATION_OPTIONS: { value: number; label: string }[] = [
  *  one of the presets still shows (rather than a blank select). */
 function DurationSelect({
   value,
-  disabled,
+  label,
   allowAlways,
   onChange,
 }: {
   value: number;
-  disabled: boolean;
+  label: string;
   allowAlways: boolean;
   onChange: (ms: number) => void;
 }) {
@@ -34,25 +38,19 @@ function DurationSelect({
     options.sort((a, b) => a.value - b.value);
   }
   return (
-    <select
+    <Select
       value={String(value)}
-      disabled={disabled}
-      onChange={(e) => onChange(Number(e.target.value))}
-      className={SELECT_CLASS}
-    >
-      {options.map((o) => (
-        <option key={o.value} value={String(o.value)}>
-          {o.label}
-        </option>
-      ))}
-    </select>
+      aria-label={label}
+      options={options.map((o) => ({ value: String(o.value), label: o.label }))}
+      onValueChange={(next) => onChange(Number(next))}
+    />
   );
 }
 
-/** One urgency tier: its banner + sound switches, and the catalog's kinds in
- *  it, each with its own switch (`notifyDisabledKinds`). Everything here is derived from the catalog — a new kind appears with
- *  no change to this file. */
-function TierGroup({ tier, masterOn }: { tier: NotificationTier; masterOn: boolean }) {
+/** One urgency tier: its banner and sound switches, and the catalog's kinds in
+ *  it, each with its own switch (`notifyDisabledKinds`). Everything here is
+ *  derived from the catalog — a new kind appears with no change to this file. */
+function TierSection({ tier, masterOn }: { tier: NotificationTier; masterOn: boolean }) {
   const settings = useSettingsStore.use.settings();
   const { updateSettings } = useSettingsStore.use.actions();
   const group = TIER_SETTINGS[tier];
@@ -64,58 +62,64 @@ function TierGroup({ tier, masterOn }: { tier: NotificationTier; masterOn: boole
     on
       ? settings.notifyDisabledKinds.filter((k) => k !== kind)
       : [...settings.notifyDisabledKinds.filter((k) => k !== kind), kind];
+  const off = !masterOn;
+  const offReason = "Notifications are off.";
   return (
-    <div className="flex flex-col gap-3">
-      <div>
-        <h3 className="text-xs font-semibold text-foreground">{group.title}</h3>
-        <p className="text-2xs text-muted-foreground mt-0.5">{group.description}</p>
-      </div>
-      <SettingRow
-        label="System notification"
-        description="A banner from the operating system, only while you are away."
-      >
-        <Toggle
-          checked={settings[group.native]}
-          disabled={!masterOn}
-          onChange={(next) => updateSettings({ [group.native]: next })}
+    <SettingsSection title={group.title} description={group.description}>
+      <SettingsGroup>
+        <SettingsRow
+          setting={group.native}
+          description="A banner from the operating system, only while you are away."
+          disabled={off}
+          disabledReason={offReason}
+          control={<SettingSwitch setting={group.native} />}
         />
-      </SettingRow>
-      <SettingRow label="Sound" description="A short sound with the banner.">
-        <Toggle
-          checked={settings[group.sound]}
-          disabled={!masterOn}
-          onChange={(next) => updateSettings({ [group.sound]: next })}
+        <SettingsRow
+          setting={group.sound}
+          description="A short sound with the banner."
+          disabled={off}
+          disabledReason={offReason}
+          control={<SettingSwitch setting={group.sound} />}
         />
-      </SettingRow>
-      {tier === "needs-you" && (
-        <SettingRow
-          label="Banner actions on permission requests"
-          description="Show Allow once and Deny on a permission banner, so you can answer without opening Atlas. Off: the banner only opens the session."
-        >
-          <Toggle
-            checked={settings.notifyPermissionActions}
-            disabled={!masterOn}
-            onChange={(next) => updateSettings({ notifyPermissionActions: next })}
+        {tier === "needs-you" && (
+          <SettingsRow
+            setting="notifyPermissionActions"
+            disabled={off}
+            disabledReason={offReason}
+            control={<SettingSwitch setting="notifyPermissionActions" />}
           />
-        </SettingRow>
-      )}
-      <ul className="flex flex-col gap-1.5 border-l border-[var(--border)] pl-3">
-        {kinds.map(({ kind, entry }) => (
-          <li key={kind} className="flex items-center justify-between gap-4">
-            <span className="text-2xs text-muted-foreground">{entry.label}</span>
-            {entry.locked ? (
-              <span className="text-2xs text-muted-foreground">Always on</span>
-            ) : (
-              <Toggle
-                checked={!disabled.has(kind)}
-                disabled={!masterOn}
-                onChange={(next) => updateSettings({ notifyDisabledKinds: withKind(kind, next) })}
-              />
-            )}
-          </li>
-        ))}
-      </ul>
-    </div>
+        )}
+        <SettingsRow
+          title="Kinds"
+          description="Each kind of notification in this group, on its own switch."
+          disabled={off}
+        >
+          <ul className="flex flex-col divide-y divide-border-subtle rounded-md border border-border-subtle">
+            {kinds.map(({ kind, entry }) => (
+              <li
+                key={kind}
+                className="flex min-h-9 items-center justify-between gap-4 px-3 py-1.5"
+              >
+                <span className="text-2xs text-secondary-foreground">{entry.label}</span>
+                {entry.locked ? (
+                  <span className="caption">Always on</span>
+                ) : (
+                  <Switch
+                    size="sm"
+                    checked={!disabled.has(kind)}
+                    disabled={off}
+                    aria-label={entry.label}
+                    onCheckedChange={(next) =>
+                      void updateSettings({ notifyDisabledKinds: withKind(kind, next) })
+                    }
+                  />
+                )}
+              </li>
+            ))}
+          </ul>
+        </SettingsRow>
+      </SettingsGroup>
+    </SettingsSection>
   );
 }
 
@@ -124,45 +128,48 @@ export function NotificationsSettings() {
   const { updateSettings } = useSettingsStore.use.actions();
   const masterOn = settings.notificationsEnabled;
   return (
-    <>
-      <SectionTitle
-        title="Notifications"
-        subtitle="What Atlas tells you, and how loudly. Nothing fires while you are looking at the thing it is about."
-      />
-      <SettingRow
-        label="Notifications"
-        description="Everything below. Sign-in problems always show, so you are never left with a silently stopped agent."
-      >
-        <Toggle
-          checked={masterOn}
-          onChange={(next) => updateSettings({ notificationsEnabled: next })}
-        />
-      </SettingRow>
-      <SettingRow
-        label="Notify on agent finish after"
-        description="An agent turn that finishes faster than this stays quiet. Failures and requests for you always notify."
-      >
-        <DurationSelect
-          value={settings.notifyAgentMinDurationMs}
-          disabled={!masterOn}
-          allowAlways
-          onChange={(ms) => updateSettings({ notifyAgentMinDurationMs: ms })}
-        />
-      </SettingRow>
-      <SettingRow
-        label="Notify on command success after"
-        description="A terminal command that succeeds faster than this stays quiet. Failures always notify."
-      >
-        <DurationSelect
-          value={settings.terminalNotifyMinDurationMs}
-          disabled={!masterOn}
-          allowAlways={false}
-          onChange={(ms) => updateSettings({ terminalNotifyMinDurationMs: ms })}
-        />
-      </SettingRow>
+    <SettingsPage
+      title="Notifications"
+      description="What Atlas tells you, and how loudly. Nothing fires while you are looking at the thing it is about."
+    >
+      <SettingsSection title="Notifications">
+        <SettingsGroup>
+          <SettingsRow
+            setting="notificationsEnabled"
+            description="Everything on this page. Sign-in problems always show, so an agent is never silently stopped."
+            control={<SettingSwitch setting="notificationsEnabled" />}
+          />
+          <SettingsRow
+            setting="notifyAgentMinDurationMs"
+            disabled={!masterOn}
+            disabledReason="Notifications are off."
+            control={
+              <DurationSelect
+                value={settings.notifyAgentMinDurationMs}
+                label="Notify on agent finish after"
+                allowAlways
+                onChange={(ms) => void updateSettings({ notifyAgentMinDurationMs: ms })}
+              />
+            }
+          />
+          <SettingsRow
+            setting="terminalNotifyMinDurationMs"
+            disabled={!masterOn}
+            disabledReason="Notifications are off."
+            control={
+              <DurationSelect
+                value={settings.terminalNotifyMinDurationMs}
+                label="Notify on command success after"
+                allowAlways={false}
+                onChange={(ms) => void updateSettings({ terminalNotifyMinDurationMs: ms })}
+              />
+            }
+          />
+        </SettingsGroup>
+      </SettingsSection>
       {TIER_ORDER.map((tier) => (
-        <TierGroup key={tier} tier={tier} masterOn={masterOn} />
+        <TierSection key={tier} tier={tier} masterOn={masterOn} />
       ))}
-    </>
+    </SettingsPage>
   );
 }

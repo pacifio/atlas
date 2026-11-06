@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
- * Keeps the vendored engine quarantined (issue #42, spec D2 / Phase 1).
+ * Keeps the engine quarantined (issue #42, spec D2 / Phase 1).
  *
  * The engine landed whole and compiles as workspace members, but **nothing
  * that ships may depend on it** until the seam is rewired (#45) and the
@@ -62,7 +62,7 @@ function uncommented(src: string): string {
     .join("\n");
 }
 
-/** Every manifest Atlas owns, excluding the vendored engine's own tree. */
+/** Every manifest Atlas owns, excluding the engine's own tree. */
 function atlasManifests(): string[] {
   const out: string[] = [path.join(REPO_ROOT, "src-tauri", "Cargo.toml")];
   const crates = path.join(REPO_ROOT, "crates");
@@ -73,7 +73,7 @@ function atlasManifests(): string[] {
   return out;
 }
 
-/** Vendored crate directories (recursive — some live under `ext/` and `utils/`). */
+/** Engine crate directories (recursive — some live under `ext/` and `utils/`). */
 function vendoredManifests(dir = VENDOR): string[] {
   if (!existsSync(dir)) return [];
   const out: string[] = [];
@@ -88,12 +88,12 @@ function vendoredManifests(dir = VENDOR): string[] {
 /** `atlas-engine-foo = …` / `atlas-engine-foo.workspace = true` in a dependency table. */
 const ENGINE_DEP = /^\s*(atlas-engine-[a-z0-9-]+|app_test_support|core_test_support)\s*[.=]/m;
 
-describe("the vendored engine is present and whole", () => {
-  it("is vendored under vendor/atlas-engine", () => {
+describe("the engine is present and whole", () => {
+  it("is under vendor/atlas-engine", () => {
     expect(existsSync(VENDOR), "vendor/atlas-engine is missing").toBe(true);
   });
 
-  it("carries upstream's LICENSE and NOTICE", () => {
+  it("carries the original LICENSE and NOTICE", () => {
     // Apache-2.0 §4 travels with the code, not just with the commit message.
     for (const f of ["LICENSE", "NOTICE"]) {
       expect(existsSync(path.join(VENDOR, f)), `vendor/atlas-engine/${f} missing`).toBe(true);
@@ -139,7 +139,7 @@ describe("the vendored engine is present and whole", () => {
   });
 });
 
-describe("nothing that ships depends on the vendored engine", () => {
+describe("nothing that ships depends on the engine", () => {
   it("finds Atlas's manifests (parser health)", () => {
     expect(atlasManifests().length).toBeGreaterThan(10);
   });

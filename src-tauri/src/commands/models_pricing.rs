@@ -23,7 +23,11 @@ const CATALOG_URL: &str = "https://models.dev/api.json";
 /// price simply contributes nothing — and so a cache file written before this
 /// field existed still deserializes (its 0.0s then differ from the fetched
 /// catalogue, which is what triggers the rewrite that fills them in).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+///
+/// Beside the price, the three facts models.dev states about a model that
+/// Settings → Agents labels its models with. Each defaults to "not stated",
+/// for the same reason as the cache rates.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelPrice {
     pub input: f64,
@@ -32,6 +36,15 @@ pub struct ModelPrice {
     pub cache_read: f64,
     #[serde(default)]
     pub cache_write: f64,
+    /// It reasons before answering.
+    #[serde(default)]
+    pub reasoning: bool,
+    /// It reads images.
+    #[serde(default)]
+    pub images: bool,
+    /// Its context window in tokens; 0 when unstated.
+    #[serde(default)]
+    pub context: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -101,6 +114,18 @@ fn parse_catalog(v: &serde_json::Value) -> BTreeMap<String, ModelPrice> {
                     output,
                     cache_read: rate("cache_read"),
                     cache_write: rate("cache_write"),
+                    reasoning: mval
+                        .get("reasoning")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false),
+                    images: mval
+                        .pointer("/modalities/input")
+                        .and_then(serde_json::Value::as_array)
+                        .is_some_and(|kinds| kinds.iter().any(|k| k == "image")),
+                    context: mval
+                        .pointer("/limit/context")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(0),
                 };
                 out.insert(format!("{pid}/{mid}"), price.clone());
                 // Bare model id as a fallback key (first provider wins).
@@ -184,4 +209,33 @@ pub fn models_pricing_get(app: AppHandle) -> BTreeMap<String, ModelPrice> {
 #[tauri::command]
 pub async fn models_pricing_refresh(app: AppHandle) -> Result<RefreshResult, String> {
     refresh(&app).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The facts Settings → Agents labels a model with come along with its
+    /// price, and a model that states none of them reads as unstated.
+    #[test]
+    fn a_models_capabilities_ride_with_its_price() {
+        let catalog = serde_json::json!({
+            "anthropic": { "models": {
+                "claude-opus-5": {
+                    "cost": { "input": 5.0, "output": 25.0 },
+                    "reasoning": true,
+                    "modalities": { "input": ["text", "image"], "output": ["text"] },
+                    "limit": { "context": 200000, "output": 64000 },
+                },
+                "plain": { "cost": { "input": 1.0, "output": 2.0 } },
+            } }
+        });
+        let prices = parse_catalog(&catalog);
+        let opus = &prices["anthropic/claude-opus-5"];
+        assert!(opus.reasoning && opus.images);
+        assert_eq!(opus.context, 200_000);
+        let plain = &prices["plain"];
+        assert!(!plain.reasoning && !plain.images);
+        assert_eq!(plain.context, 0);
+    }
 }

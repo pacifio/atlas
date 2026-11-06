@@ -1,15 +1,20 @@
+import { Skeleton } from "@tryatlas/design";
+
 // The home view's shape, before the home view's data: search pill, section
-// labels, seven avatar+text rows at CommsHome's own geometry. Bars follow the
-// house PanelSkeleton (bg-elevated at half opacity, deterministic width
-// jitter). The pulse is OPACITY-ONLY, per the atlas-marker-running precedent —
-// this renders inside `atlas-vibrant-panel`, where transforms mis-composite.
+// labels, seven avatar+text rows at CommsHome's own geometry, on the package
+// `Skeleton` (muted fill, deterministic width jitter). The pulse is
+// OPACITY-ONLY (`animate-pulse`) — this renders inside `atlas-vibrant-panel`,
+// where transforms mis-composite. Rounded shapes clip the bar in a wrapper so
+// the primitive keeps its own look.
 
 export function CommsSkeleton() {
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden atlas-marker-running">
+    <div data-view="comms-skeleton" className="flex min-h-0 flex-1 flex-col overflow-hidden">
       {/* Search pill, at the sticky search box's size. */}
       <div className="px-2.5 pb-1 pt-2.5">
-        <div className="h-[30px] rounded-lg bg-[var(--card)] opacity-50" />
+        <span className="block h-[30px] overflow-hidden rounded-lg">
+          <Skeleton className="size-full" />
+        </span>
       </div>
 
       <SectionBar w={72} />
@@ -28,7 +33,7 @@ export function CommsSkeleton() {
 function SectionBar({ w }: { w: number }) {
   return (
     <div className="px-3 pb-1.5 pt-3.5">
-      <div className="h-[10px] rounded bg-[var(--card)] opacity-50" style={{ width: w }} />
+      <Skeleton className="h-[10px]" style={{ width: w }} />
     </div>
   );
 }
@@ -39,18 +44,16 @@ function Row({ i, glyph }: { i: number; glyph?: boolean }) {
   const w = 78 + ((i * 37) % 90);
   return (
     <div className="flex items-center gap-2.5 py-[7px] pl-3.5 pr-2.5">
-      <div
-        className={
-          glyph
-            ? "h-4 w-4 rounded bg-[var(--card)] opacity-50"
-            : "h-[26px] w-[26px] shrink-0 rounded-full bg-[var(--card)] opacity-50"
-        }
-      />
+      {glyph ? (
+        <Skeleton className="size-4 shrink-0" />
+      ) : (
+        <span className="size-[26px] shrink-0 overflow-hidden rounded-full">
+          <Skeleton className="size-full" />
+        </span>
+      )}
       <div className="flex min-w-0 flex-1 flex-col gap-1">
-        <div className="h-[9px] rounded bg-[var(--card)] opacity-50" style={{ width: w }} />
-        {!glyph && (
-          <div className="h-[7px] rounded bg-[var(--card)] opacity-35" style={{ width: w + 34 }} />
-        )}
+        <Skeleton className="h-[9px]" style={{ width: w }} />
+        {!glyph && <Skeleton className="h-[7px]" style={{ width: w + 34 }} />}
       </div>
     </div>
   );

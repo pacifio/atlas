@@ -7,13 +7,12 @@
 //! Install and get an ordinary `Custom` entry in the installed map. That entry
 //! is what makes the agent exist; this module only shortens the typing.
 //!
-//! Zed has no PATH lookup at all (research §A3: "Resolution ladder (exact — no
-//! PATH lookup exists)"). Atlas keeps this much of its old discovery because
-//! the affordance is genuinely useful — a user who already has an agent CLI
+//! Spawning does no PATH lookup at all (research §A3). Atlas keeps this much of
+//! its old discovery because the affordance is genuinely useful — a user who already has an agent CLI
 //! should not have to find its path — but the thing that made the old version
 //! wrong was never the probing. It was that a PATH hit *outranked* the user's
 //! installed entry at spawn time (`atlas-registry/store.rs:709-725`, deleted
-//! with this port). Keeping the data and deleting the ladder is the whole
+//! with the old stack). Keeping the data and deleting the ladder is the whole
 //! change.
 //!
 //! Structurally, the invariant holds because nothing here implements

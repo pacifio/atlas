@@ -4,14 +4,14 @@ on:
   push:
     branches:
       - main
-      # Version branches (0.2.5, 0.10.0, …). Not for the check itself — work
+      # Hotfix branches (release/0.5, …). Not for the check itself — work
       # lands here via PRs that were already checked — but so the branch owns a
       # warm dependency cache. A pull request can restore caches from its base
-      # branch, and with no run ever having happened on a version branch there
-      # was nothing to restore: every contributor's first run rebuilt all
+      # branch, and with no run ever having happened on the base there is
+      # nothing to restore: every contributor's first run rebuilds all
       # ~1,160 crates in the app's graph from scratch, which is ~16 minutes on
       # the app job versus ~2.
-      - '[0-9]+.[0-9]+.[0-9]+'
+      - 'release/**'
   pull_request:
   # The Rust jobs run only for what a change affects (see the `changes` job),
   # so this weekly full run is the backstop: it catches anything the planner
@@ -57,7 +57,7 @@ env:
   #
   # Cache budget: GitHub gives the repo 10 GB, and it sat at ~9.7 GB before
   # sccache. Going over is not an error, it is least-recently-used eviction,
-  # i.e. the caches quietly thrash each other. So only `main` and the version
+  # i.e. the caches quietly thrash each other. So only `main` and the release
   # branches write, from a push or a manual run (`cache-write` in the `changes`
   # job decides, and each Rust job's SCCACHE_GHA_RW_MODE and rust-cache
   # `save-if` follow it). A manual run on any other branch reads but writes
@@ -75,8 +75,9 @@ env:
 # job on `macos-latest` (Apple Silicon), its Windows compile check on
 # `windows-11-arm`. The team develops on Apple Silicon, so
 # a red job reproduces on the same architecture it failed on, and Linux and
-# Windows releases are moving to ARM too. Until they do, `release-linux.yml`
-# still builds x86-64 on `ubuntu-latest`, and no CI job compiles or tests x86-64.
+# Windows releases are moving to ARM too. No job here compiles or tests x86-64;
+# `release-linux.yml` builds and verifies the x86-64 and aarch64 Linux releases,
+# including a dry run on pull requests that touch a release input.
 #
 # `ubuntu-24.04-arm` is the ARM twin of what `ubuntu-latest` points at today.
 # There is no `ubuntu-latest-arm` label, and a job naming a label no runner
@@ -121,7 +122,7 @@ jobs:
         # make rustup download the pinned toolchain just to read manifests.
         run: node scripts/ci-affected.mjs --github
       # Which runs may write caches (see "Cache budget" above). A push already
-      # only reaches `main` and the version branches; a manual run can be on
+      # only reaches `main` and the release branches; a manual run can be on
       # any branch, and expressions have no regex, hence a step.
       - name: Cache policy
         id: cache
@@ -133,7 +134,7 @@ jobs:
           if [ "$EVENT" = push ]; then
             write=true
           elif [ "$EVENT" = workflow_dispatch ] &&
-            { [ "$REF" = main ] || [[ "$REF" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; }; then
+            { [ "$REF" = main ] || [[ "$REF" == release/* ]]; }; then
             write=true
           fi
           echo "write=$write" >> "$GITHUB_OUTPUT"
@@ -149,7 +150,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           # Full history, not the depth-1 default: vendor-licensing.test.ts
-          # derives its fork point as the oldest commit touching the path the engine was vendored under,
+          # derives its fork point as the oldest commit touching the path the engine was first imported under,
           # and on a shallow clone that resolves to HEAD — the modification
           # set comes back empty and the suite fails (#58).
           fetch-depth: 0
@@ -288,16 +289,16 @@ jobs:
     # evidence for the dialect's correctness, and until #64 they ran in no CI
     # job at all.
     #
-    # Alongside it, the eight vendored crates Atlas has edited since the port
+    # Alongside it, the eight engine crates Atlas has edited since the port
     # — for the dialect wiring (#50, #52), the phone-home removals (#43), the
     # rename (#55) and Windows process spawning — whose own suites are green:
     # 915 tests. Changing ported code is ordinary work (ADR-0003), and this is
     # where a change to it gets checked.
     #
-    # Deliberately not the whole vendored engine: its other ~100 members are
-    # upstream's code with upstream's suites, unchanged by Atlas, so running
+    # Deliberately not the whole engine: its other ~100 members are
+    # code and suites carried over unchanged from the fork point, so running
     # them would buy a much longer job for no new evidence. When Atlas edits
-    # another vendored crate, add its `-p` here.
+    # another engine crate, add its `-p` here.
     name: engine dialect (atlas-engine-api)
     needs: changes
     if: needs.changes.outputs.engine-dialect == 'true'
@@ -314,7 +315,7 @@ jobs:
         with:
           workspaces: .
           save-if: ${{ needs.changes.outputs.cache-write == 'true' }}
-      # Some of the vendored suites build scratch git repositories; same reason
+      # Some of the engine suites build scratch git repositories; same reason
       # as in `crates`.
       - name: Configure git identity for test repos
         run: |
@@ -411,12 +412,25 @@ jobs:
       # `tests/engine-quarantine.test.ts` keeps `atlas-native-agent` the only
       # manifest allowed to name a `atlas-engine-*` crate, so no other job can reach
       # this sandbox. Flip the flag on any crate that later can.
+      #
+      # Installed is not enough on Ubuntu 24.04: AppArmor's
+      # `restrict_unprivileged_userns` hands an unconfined process's new user
+      # namespace no capabilities, so bwrap's `--unshare-net` cannot bring up
+      # loopback and dies with "loopback: Failed RTM_NEWADDR: Operation not
+      # permitted" before the command runs. A trusted command (no approval,
+      # so sandboxed with networking off) then reports bwrap's error as its
+      # output, which is what `a_commands_output_reaches_its_tool_call` caught.
+      # Desktop installs ship an AppArmor profile for bwrap; the runner does not.
       - name: Install bubblewrap (the engine's Linux sandbox needs it)
         if: matrix.sandbox
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends bubblewrap
           bwrap --version
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          bwrap --unshare-all --ro-bind / / true
       - name: Test
         working-directory: crates/${{ matrix.crate }}
         run: cargo test --locked

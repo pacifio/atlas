@@ -7,7 +7,8 @@ import {
 } from "@tiptap/react";
 import { useState } from "react";
 import { ChevronRight } from "lucide-react";
-import { Hint } from "@/ui/tooltip";
+import { Hint, iconButtonVariants } from "@tryatlas/design";
+import { cn } from "@/lib/utils";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -15,6 +16,19 @@ declare module "@tiptap/core" {
       setToggle: (attrs?: { title?: string; open?: boolean }) => ReturnType;
     };
   }
+}
+
+/**
+ * The body of a `<details>`: the editor's own `.atlas-toggle-body` wrapper
+ * (copy/paste), or, for the markdown file's bare GFM shape, a detached copy
+ * with the toggle's own `<summary>` removed.
+ */
+function toggleBody(details: HTMLElement): HTMLElement {
+  const wrapper = details.querySelector<HTMLElement>(":scope > .atlas-toggle-body");
+  if (wrapper) return wrapper;
+  const body = details.cloneNode(true) as HTMLElement;
+  body.querySelector(":scope > summary")?.remove();
+  return body;
 }
 
 /**
@@ -33,7 +47,8 @@ export const Toggle = Node.create({
     return {
       title: {
         default: "Untitled",
-        parseHTML: (el) => el.querySelector("summary")?.textContent?.trim() ?? "Untitled",
+        // `:scope >` so a nested toggle's summary is never read as this one's.
+        parseHTML: (el) => el.querySelector(":scope > summary")?.textContent?.trim() ?? "Untitled",
       },
       open: {
         default: true,
@@ -43,7 +58,10 @@ export const Toggle = Node.create({
   },
 
   parseHTML() {
-    return [{ tag: "details" }];
+    // The title lives in the `title` attribute, so the body is parsed from
+    // everything except the `<summary>`; reading `<details>` whole put the
+    // title into the body again on every load + save.
+    return [{ tag: "details", contentElement: toggleBody }];
   },
 
   renderHTML({ HTMLAttributes, node }) {
@@ -82,7 +100,12 @@ export const Toggle = Node.create({
           },
           node: { attrs: { title?: string; open?: boolean } },
         ) {
-          const title = (node.attrs.title || "Untitled").replace(/</g, "&lt;");
+          // The title is read back as HTML text, so a literal `&amp;` or
+          // `&lt;` in it would load as `&` or `<`. Only an `&` that starts an
+          // entity is escaped, so a plain "Q&A" is written as it reads.
+          const title = (node.attrs.title || "Untitled")
+            .replace(/&(?=#?\w+;)/g, "&amp;")
+            .replace(/</g, "&lt;");
           const open = node.attrs.open ? " open" : "";
           state.write(`<details${open}>\n<summary>${title}</summary>\n\n`);
           state.renderContent(node);
@@ -97,34 +120,58 @@ export const Toggle = Node.create({
   },
 });
 
-function ToggleView({ node, updateAttributes }: NodeViewProps) {
+const TITLE = "flex-1 bg-transparent text-left text-md font-medium text-foreground outline-none";
+const BODY = "mt-1 ml-3 border-l border-border-subtle pl-7";
+
+function ToggleView({ node, updateAttributes, editor, getPos }: NodeViewProps) {
   const open = Boolean(node.attrs.open);
   const title = (node.attrs.title as string) || "Untitled";
   const [editingTitle, setEditingTitle] = useState(false);
   const [draft, setDraft] = useState(title);
 
+  // Collapsing hides the body; a caret left in it would type into text no
+  // one can see. It moves to the block after the toggle, one made if none.
+  const toggleOpen = () => {
+    if (!open) return updateAttributes({ open: true });
+    const pos = getPos();
+    const from = editor.state.selection.from;
+    updateAttributes({ open: false });
+    if (typeof pos !== "number") return;
+    const end = pos + node.nodeSize;
+    if (!(pos < from && from < end)) return;
+    const after = editor.state.doc.resolve(end).nodeAfter;
+    let chain = editor.chain();
+    if (!after?.isTextblock) chain = chain.insertContentAt(end, { type: "paragraph" });
+    chain
+      .setTextSelection(end + 1)
+      .focus()
+      .run();
+  };
+
   return (
-    <NodeViewWrapper className="atlas-toggle" data-open={open ? "true" : "false"}>
-      <div className="atlas-toggle-header" contentEditable={false}>
+    <NodeViewWrapper className="my-2.5" data-open={open ? "true" : "false"}>
+      <div
+        className="flex items-center gap-2 rounded-md px-1.5 py-1 text-md text-foreground hover:bg-element-hover"
+        contentEditable={false}
+      >
         <Hint label={open ? "Collapse" : "Expand"}>
           <button
             type="button"
-            className="atlas-toggle-chev"
-            onClick={() => updateAttributes({ open: !open })}
+            className={iconButtonVariants({ variant: "ghost", size: "xs" })}
+            onClick={toggleOpen}
           >
             <ChevronRight
-              size={12}
+              className={cn(
+                "size-3 transition-transform duration-fast ease-out-strong motion-reduce:transition-none",
+                open && "rotate-90",
+              )}
               strokeWidth={1.7}
-              style={{
-                transform: open ? "rotate(90deg)" : "rotate(0deg)",
-                transition: "transform 120ms",
-              }}
             />
           </button>
         </Hint>
         {editingTitle ? (
           <input
-            className="atlas-toggle-title-input"
+            className={TITLE}
             value={draft}
             autoFocus
             onChange={(e) => setDraft(e.target.value)}
@@ -145,7 +192,7 @@ function ToggleView({ node, updateAttributes }: NodeViewProps) {
         ) : (
           <button
             type="button"
-            className="atlas-toggle-title"
+            className={cn(TITLE, "cursor-text")}
             onClick={() => {
               setDraft(title);
               setEditingTitle(true);
@@ -157,11 +204,11 @@ function ToggleView({ node, updateAttributes }: NodeViewProps) {
         )}
       </div>
       {open ? (
-        <NodeViewContent className="atlas-toggle-body" />
+        <NodeViewContent className={BODY} />
       ) : (
         // Keep ProseMirror happy by mounting a hidden NodeViewContent so
         // the children stay in the doc; visibility is just CSS-toggled.
-        <NodeViewContent className="atlas-toggle-body" style={{ display: "none" }} />
+        <NodeViewContent className={cn(BODY, "hidden")} />
       )}
     </NodeViewWrapper>
   );

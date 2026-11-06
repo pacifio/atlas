@@ -7,12 +7,11 @@
 //! We watch four things specifically (NOT all of `.git/`):
 //!   - `.git/HEAD`          — checkout / commit moves the symbolic ref
 //!   - `.git/packed-refs`   — `git pack-refs` rewrites; rare but
-//!                            necessary
+//!     necessary
 //!   - `.git/refs/`         — every branch / tag / remote update lives
-//!                            here as a loose ref file
+//!     here as a loose ref file
 //!   - `.git/index`         — `git add` / `git reset` (stage / unstage)
-//!                            — changes the working-tree status the
-//!                            Changes panel renders
+//!     changes the working-tree status the Changes panel renders
 //!
 //! Watching all of `.git/` would surface every blob write inside
 //! `.git/objects/…` during `git add` / `git commit` — huge noise for
@@ -63,7 +62,7 @@ impl GitWatcherState {
     }
 
     /// Return a cached `GitRefs` snapshot for `project_path`. Computes
-    /// + populates the cache on first call (~80 ms — three `git`
+    /// and populates the cache on first call (~80 ms — three `git`
     /// shell-outs) and on every call after a watcher-driven
     /// invalidation. Cached reads are sub-microsecond, which is the
     /// difference between the @-mention picker feeling instant and
@@ -201,7 +200,12 @@ pub async fn git_watch_start(
                 Duration::from_millis(200),
                 None,
                 move |result: notify_debouncer_full::DebounceEventResult| match result {
-                    Ok(_events) => {
+                    Ok(events) => {
+                        // A git status reads `.git/index`; on Linux that read
+                        // lands here (`fs_events`), and would announce itself.
+                        if !crate::fs_events::any_change(&events) {
+                            return;
+                        }
                         // Flush the refs cache first — by the time
                         // listeners (mention_search, git-store) see
                         // the event, a fresh compute would be cheap
@@ -218,16 +222,6 @@ pub async fn git_watch_start(
                         app_for_cb
                             .state::<super::capture::CaptureState>()
                             .note_git_change(&root_for_cb);
-
-                        // HEAD / index / ref moved: reconcile the code index
-                        // (a checkout rewrites files faster than per-file
-                        // events report them) and move the grep prefilter to
-                        // the new HEAD.
-                        if let Some(code_index) = app_for_cb
-                            .try_state::<Arc<crate::commands::code_index::CodeIndexRegistry>>()
-                        {
-                            code_index.note_git_change(&root_for_cb);
-                        }
 
                         let _ = app_for_cb.emit(
                             "atlas:git-changed",

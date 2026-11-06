@@ -1,11 +1,11 @@
 //! Conflict-resolution commands for the in-progress-operation flow
 //! (merge / rebase / cherry-pick / revert).
 //!
-//! Ported from GitHub Desktop's model: conflicted paths come from porcelain
+//! Conflicted paths come from porcelain
 //! v2 `u` entries, per-file "N conflicts remaining" from `git diff --check`
 //! (exit 2 = markers found, an expected code), and ours/theirs resolution is
 //! `git checkout --ours|--theirs` + `git add` — unless the chosen side
-//! DELETED the file, in which case it's `git rm` (stage.ts / rm.ts).
+//! DELETED the file, in which case it's `git rm`.
 
 use atlas_git::{conflicts, status as gstatus, GitCommand, GitErrorPayload};
 use serde::Serialize;

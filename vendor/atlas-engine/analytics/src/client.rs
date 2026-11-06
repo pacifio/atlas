@@ -78,7 +78,7 @@ pub struct AnalyticsEventsClient {
     queue: Option<AnalyticsEventsQueue>,
 }
 
-// Upstream put an `AnalyticsEventsDestination` here, resolving a ChatGPT-backend
+// The original put an `AnalyticsEventsDestination` here, resolving a ChatGPT-backend
 // analytics ingestion path off `chatgpt_base_url` — constructed for every
 // session, on unless config turned it off, and sending a subset of events even
 // under plain API-key auth. That destination, the POST that used it, the batch

@@ -242,7 +242,7 @@ const DISCOUNT_SESSION: SessionContent = {
   title: "Add a discount code field to checkout",
   author: "uzayer",
   agent: "claude-code",
-  model: "claude-opus-4",
+  model: "claude-opus-5-5",
   started: { daysAgo: 1, at: "10:32" },
   durationMin: 9,
   branch: "main",
@@ -372,7 +372,7 @@ export const CONTENT: NorthwindContent = {
       title: "Add a friendly 404 page",
       author: "uzayer",
       agent: "claude-code",
-      model: "claude-opus-4",
+      model: "claude-opus-5-5",
       started: { daysAgo: 6, at: "18:05" },
       durationMin: 4,
       branch: "main",
@@ -404,7 +404,7 @@ export const CONTENT: NorthwindContent = {
       title: "Add a check script",
       author: "uzayer",
       agent: "claude-code",
-      model: "claude-opus-4",
+      model: "claude-opus-5-5",
       started: { daysAgo: 6, at: "18:20" },
       durationMin: 3,
       branch: "main",
@@ -435,7 +435,7 @@ export const CONTENT: NorthwindContent = {
       title: "Add a sort control to the product list",
       author: "uzayer",
       agent: "claude-code",
-      model: "claude-opus-4",
+      model: "claude-opus-5-5",
       started: { daysAgo: 5, at: "10:05" },
       durationMin: 7,
       branch: "main",
@@ -509,7 +509,7 @@ export const CONTENT: NorthwindContent = {
       title: "Filter products as you type",
       author: "uzayer",
       agent: "claude-code",
-      model: "claude-opus-4",
+      model: "claude-opus-5-5",
       started: { daysAgo: 4, at: "09:40" },
       durationMin: 6,
       branch: "main",
@@ -546,7 +546,7 @@ export const CONTENT: NorthwindContent = {
       title: "Show every checkout error at once",
       author: "zuhayer",
       agent: "atlas-agent",
-      model: "claude-sonnet-4",
+      model: "claude-sonnet-5-5",
       started: { daysAgo: 4, at: "14:15" },
       durationMin: 8,
       branch: "main",
@@ -592,7 +592,7 @@ export const CONTENT: NorthwindContent = {
       title: "Review Zuhayer's checkout errors session",
       author: "uzayer",
       agent: "atlas-agent",
-      model: "claude-sonnet-4",
+      model: "claude-sonnet-5-5",
       started: { daysAgo: 4, at: "15:30" },
       durationMin: 3,
       branch: "main",
@@ -629,7 +629,7 @@ export const CONTENT: NorthwindContent = {
       title: "Mark sold-out products",
       author: "zuhayer",
       agent: "claude-code",
-      model: "claude-opus-4",
+      model: "claude-opus-5-5",
       started: { daysAgo: 3, at: "10:20" },
       durationMin: 7,
       branch: "main",
@@ -666,7 +666,7 @@ export const CONTENT: NorthwindContent = {
       title: "Load the catalog from data/products.json",
       author: "uzayer",
       agent: "claude-code",
-      model: "claude-opus-4",
+      model: "claude-opus-5-5",
       started: { daysAgo: 3, at: "13:45" },
       durationMin: 8,
       branch: "main",
@@ -731,7 +731,7 @@ export const CONTENT: NorthwindContent = {
       title: "Limit checkout field lengths",
       author: "uzayer",
       agent: "atlas-agent",
-      model: "claude-sonnet-4",
+      model: "claude-sonnet-5-5",
       started: { daysAgo: 2, at: "16:10" },
       durationMin: 6,
       branch: "main",
@@ -826,7 +826,7 @@ export const CONTENT: NorthwindContent = {
       title: "Move discount code validation to the server",
       author: "uzayer",
       agent: "claude-code",
-      model: "claude-opus-4",
+      model: "claude-opus-5-5",
       started: { daysAgo: 1, at: "16:02" },
       durationMin: 9,
       branch: "server-discounts",
@@ -921,7 +921,7 @@ export const CONTENT: NorthwindContent = {
       title: "Make discount codes case-insensitive",
       author: "uzayer",
       agent: "claude-code",
-      model: "claude-opus-4",
+      model: "claude-opus-5-5",
       started: { daysAgo: 0, at: "now-160" },
       durationMin: 6,
       branch: "main",
@@ -945,6 +945,93 @@ export const CONTENT: NorthwindContent = {
           text: "The orders route trims and uppercases `discountCode` once, before `OrderBook.place` sees it, so `northwind10` and ` Northwind10 ` both work and `checkDiscount` keeps matching exact uppercase codes. New API test for a lowercase code with spaces; all 35 tests pass.",
         },
         { kind: "checkpoint", id: "cp1", min: 6, commit: "c-normalize" },
+      ],
+    },
+    // Video 9's two small prompts. They exist only once their runs play,
+    // so the Timeline shows the take's own Claude Code and Codex Sessions.
+    {
+      id: "s-readme-tests",
+      createdOnCamera: "onRun",
+      title: "add a README section on running the tests",
+      author: "uzayer",
+      agent: "claude-code",
+      model: "claude-opus-5-5",
+      started: { daysAgo: 0, at: "now-1" },
+      durationMin: 1,
+      branch: "main",
+      tokens: { input: 9_400, output: 620, cacheRead: 41_000, cacheWrite: 3_100 },
+      costUsd: 0.21,
+      steps: [
+        {
+          kind: "prompt",
+          id: "p1",
+          min: 0,
+          text: "add a README section on running the tests",
+        },
+        {
+          kind: "tool",
+          id: "r-readme",
+          min: 0,
+          tool: "read",
+          title: "Read README.md",
+          path: "README.md",
+          result:
+            "## Check your work\n\n```bash\nbun test            # unit and API tests\nbun run typecheck   # tsc, no emit\nbun run check       # both of the above, in that order\n```\n\nRun `bun run check` before every commit.",
+        },
+        {
+          kind: "tool",
+          id: "e-readme",
+          min: 1,
+          tool: "edit",
+          title: "Edit README.md",
+          path: "README.md",
+          diff: {
+            before: "bun run check       # both of the above, in that order\n```",
+            after:
+              "bun run check       # both of the above, in that order\nbun test tests/cart.test.ts   # one file\nbun test --watch              # rerun on every save\n```",
+          },
+        },
+        {
+          kind: "response",
+          id: "resp1",
+          min: 1,
+          text: "The README already has a **Check your work** section with the test commands, so I added to it rather than starting a second one: how to run a single test file, and how to rerun the tests on every save.",
+        },
+      ],
+    },
+    {
+      id: "s-checkout-exports",
+      createdOnCamera: "onRun",
+      title: "what does the checkout module export?",
+      author: "uzayer",
+      agent: "codex",
+      model: "gpt-5",
+      started: { daysAgo: 0, at: "now-1" },
+      durationMin: 1,
+      branch: "main",
+      tokens: { input: 7_900, output: 310, cacheRead: 22_000, cacheWrite: 0 },
+      costUsd: 0.08,
+      steps: [
+        {
+          kind: "prompt",
+          id: "p1",
+          min: 0,
+          text: "what does the checkout module export?",
+        },
+        {
+          kind: "tool",
+          id: "r-checkout",
+          min: 0,
+          tool: "read",
+          title: "Read src/client/checkout.ts",
+          path: "src/client/checkout.ts",
+        },
+        {
+          kind: "response",
+          id: "resp1",
+          min: 1,
+          text: "Nothing. `src/client/checkout.ts` is a page script: when it loads it renders the order summary, applies discount codes and submits the form. It imports `api`, `ApiError` and `showCartCount` from `api.ts` and `totalsHtml` from `summary.ts`, but nothing imports it.",
+        },
       ],
     },
     {
@@ -1267,7 +1354,7 @@ export const CONTENT: NorthwindContent = {
         },
         {
           kind: "text",
-          text: "It isn't stuck. It listed every export in `cart.ts` and `orders.ts`, checked which ones the tests call, and found two gaps: `CartStore` has no tests, and nothing tries `OrderBook.get` with an unknown id. It's writing the `CartStore` tests in `tests/cart.test.ts` now, then the orders one.",
+          text: "Nothing is blocking it. Zuhayer's Codex session is a few minutes in and moving:\n\n1. It listed every export in `cart.ts` and `orders.ts` and checked which ones the tests already call.\n2. It found two gaps: `CartStore` has no tests at all, and nothing calls `OrderBook.get` with an id that doesn't exist.\n3. It's writing the `CartStore` tests in `tests/cart.test.ts` now. The `OrderBook.get` test comes after.\n\nNo need to interrupt Zuhayer.",
         },
       ],
     },
@@ -1289,6 +1376,18 @@ export const CONTENT: NorthwindContent = {
           ms: 900,
         },
         {
+          kind: "tool",
+          tool: "read",
+          title: "Read src/server/discounts.ts",
+          path: "src/server/discounts.ts",
+          result: read("x", 0, "c-validate", "src/server/discounts.ts", 1, 25).result,
+          ms: 600,
+        },
+        {
+          kind: "text",
+          text: "Zuhayer asked on your `src/server/api.ts` edit: *“Did you check what happens with an expired code?”*\n\nCodes can't expire yet. `CODES` in `src/server/discounts.ts` has a percent and a label for each code, and no date, so `checkDiscount` only knows valid or unknown. Here's a reply. I'll post it under your name if you allow it.",
+        },
+        {
           kind: "approval",
           title: "Reply to Zuhayer Masud's comment",
           args: {
@@ -1298,7 +1397,7 @@ export const CONTENT: NorthwindContent = {
               "Codes don't expire yet: checkDiscount only knows valid or unknown. I'll add an expiry date per code and a test for an expired one.",
           },
           effect: "replyToComment",
-          allowed: "Replied to Zuhayer's comment.",
+          allowed: "Replied to Zuhayer's comment on *Make discount codes case-insensitive*.",
           declined: "Okay, I won't reply.",
         },
       ],
@@ -1319,6 +1418,10 @@ export const CONTENT: NorthwindContent = {
           result:
             "Make discount codes case-insensitive · Uzayer Masud · Claude Code · today · 6 min\nFiles: src/server/api.ts, tests/discounts.test.ts\nCheckpoint: Make discount codes case-insensitive (3f6b8d0)\nComments: 1, from Zuhayer Masud",
           ms: 900,
+        },
+        {
+          kind: "text",
+          text: "Here's a short report for #shop, with the session attached so anyone can open it on the Timeline.",
         },
         {
           kind: "approval",
@@ -1343,6 +1446,10 @@ export const CONTENT: NorthwindContent = {
       match: ["post", "discount code", "shop"],
       beats: [
         {
+          kind: "text",
+          text: "Here's the post for #shop. *Add a discount code field to checkout* goes with it as a card, so Zuhayer can open the exact run from the message.",
+        },
+        {
           kind: "approval",
           title: "Post a message to #shop",
           args: {
@@ -1352,7 +1459,8 @@ export const CONTENT: NorthwindContent = {
             session: "Add a discount code field to checkout",
           },
           effect: "postDiscountSession",
-          allowed: "Posted to #shop with the session attached.",
+          allowed:
+            "Posted to #shop, asking Zuhayer to check the validation, with *Add a discount code field to checkout* attached.",
           declined: "Okay, nothing was posted.",
         },
       ],
@@ -1430,55 +1538,24 @@ export const CONTENT: NorthwindContent = {
         },
       ],
     },
-    // Video 9 beat 1. "add a README section on running the tests".
+    // Video 9 beat 1. "add a README section on running the tests". The run
+    // IS `s-readme-tests`, recorded on the Timeline when it finishes.
     {
       id: "run-readme-tests",
       match: ["readme section"],
-      beats: [
-        {
-          kind: "tool",
-          tool: "read",
-          title: "Read README.md",
-          path: "README.md",
-          result:
-            "## Check your work\n\n```bash\nbun test            # unit and API tests\nbun run typecheck   # tsc, no emit\nbun run check       # both of the above, in that order\n```\n\nRun `bun run check` before every commit.",
-          ms: 500,
-        },
-        {
-          kind: "tool",
-          tool: "edit",
-          title: "Edit README.md",
-          path: "README.md",
-          diff: {
-            before: "bun run check       # both of the above, in that order\n```",
-            after:
-              "bun run check       # both of the above, in that order\nbun test tests/cart.test.ts   # one file\nbun test --watch              # rerun on every save\n```",
-          },
-          ms: 900,
-        },
-        {
-          kind: "text",
-          text: "The README already has a **Check your work** section with the test commands, so I added to it rather than starting a second one: how to run a single test file, and how to rerun the tests on every save.",
-        },
-      ],
+      agent: "claude-code",
+      replay: "s-readme-tests",
+      beats: [],
+      afterwards: "recordSession",
     },
-    // Video 9 beat 3. "what does the checkout module export?"
+    // Video 9 beat 3. "what does the checkout module export?", in Codex.
     {
       id: "run-checkout-exports",
       match: ["checkout module export"],
-      beats: [
-        {
-          kind: "tool",
-          tool: "read",
-          title: "Read src/client/checkout.ts",
-          path: "src/client/checkout.ts",
-          ms: 500,
-        },
-        {
-          kind: "text",
-          text: "Nothing. `src/client/checkout.ts` is a page script: when it loads it renders the order summary, applies discount codes and submits the form. It imports `api`, `ApiError` and `showCartCount` from `api.ts` and `totalsHtml` from `summary.ts`, but nothing imports it.",
-        },
-      ],
+      agent: "codex",
+      replay: "s-checkout-exports",
+      beats: [],
+      afterwards: "recordSession",
     },
     // Video 11 beat 1. "/remember the discount code rule".
     {
@@ -1489,10 +1566,11 @@ export const CONTENT: NorthwindContent = {
           kind: "tool",
           tool: "memory",
           title: "remember",
-          command: "atlas_memory_remember",
+          command: "memory_remember",
           args: {
             kind: "decision",
-            text: "Discount codes are case-insensitive: normalize them to uppercase once, at the API boundary (src/server/api.ts), not in the UI.",
+            content:
+              "Discount codes are case-insensitive: normalize them to uppercase once, at the API boundary (src/server/api.ts), not in the UI.",
           },
           result: "Stored as a decision.",
           ms: 800,
@@ -1514,7 +1592,7 @@ export const CONTENT: NorthwindContent = {
           kind: "tool",
           tool: "memory",
           title: "search memory",
-          command: "atlas_memory_search",
+          command: "memory_search",
           args: { query: "discount code normalize" },
           result:
             "decision · Claude Code · 0.92\nDiscount codes are case-insensitive: normalize them to uppercase once, at the API boundary (src/server/api.ts), not in the UI.",
@@ -1633,7 +1711,7 @@ export const CONTENT: NorthwindContent = {
       body: "<@usr_uzayer> Should this validate the code server-side?",
     },
     zuhayerMessage: {
-      body: "server-side check is in",
+      body: "Server-side check is in, tests included.",
       sessionRef: { session: "s-server-discounts", checkpoint: "c-validate" },
     },
     zuhayerShare: {

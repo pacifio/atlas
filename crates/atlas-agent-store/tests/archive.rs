@@ -1,10 +1,8 @@
 //! Archive resolution: which URLs we accept, where an install lands, what gets
 //! collected, and what happens when the bytes are wrong.
 //!
-//! The pure-function cases are ported from
-//! `zed-ref/crates/project/src/agent_server_store.rs:2000-2130` and kept
-//! case-for-case, including the path-traversal ones — those are the reason the
-//! percent-decode is checked rather than trusted.
+//! The pure-function cases include the path-traversal ones — those are the
+//! reason the percent-decode is checked rather than trusted.
 
 use std::io::Write as _;
 use std::path::Path;
@@ -714,8 +712,11 @@ async fn refuses_a_zip_that_understates_its_own_size() {
     .await
     .unwrap_err();
 
+    // Either our ceiling ("expands …") or, since zip 9, the reader itself
+    // ("larger than its declared uncompressed size") refuses it.
+    let message = format!("{error:#}");
     assert!(
-        format!("{error:#}").contains("expands"),
+        message.contains("expands") || message.contains("larger than its declared"),
         "unexpected error: {error:#}"
     );
     assert!(!destination.exists(), "a zip bomb installed anyway");

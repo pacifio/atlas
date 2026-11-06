@@ -29,7 +29,10 @@ const toast = vi.hoisted(() =>
 );
 vi.mock("sonner", () => ({ toast }));
 
+import { invoke } from "@tauri-apps/api/core";
 import { useChatStore } from "../stores/chat-store";
+import { useRcStore } from "../stores/rc-store";
+import type { RcRoom } from "./rc-api";
 import { useMemorySharingStore } from "@/features/memory/stores/memory-sharing-store";
 import { useSettingsStore } from "@/features/settings/stores/settings-store";
 import { DEFAULT_SETTINGS, type AppSettings } from "@/features/settings/lib/app-settings";
@@ -60,8 +63,28 @@ describe("switchAgentForTab while starting", () => {
     actions.setAcpBinding(TAB, "agent-1", "acp-1", "/tmp");
     actions.updateSessionStatus(TAB, "running");
     switchAgentForTab(TAB, "codex");
-    expect(openAgentChatInNewTab).toHaveBeenCalledWith("codex");
+    expect(openAgentChatInNewTab).toHaveBeenCalledWith("codex", { model: undefined });
     expect(useChatStore.getState().sessions[TAB].agentType).toBe("claude-code");
+  });
+
+  it("carries a model picked with the agent, in place and into a new tab", () => {
+    switchAgentForTab(TAB, "codex", { model: "gpt-5" });
+    const sess = useChatStore.getState().sessions[TAB];
+    expect(sess.agentType).toBe("codex");
+    // Unbound: recorded for the bind to apply, nothing pushed yet.
+    expect(sess.acpCurrentModel).toBe("gpt-5");
+
+    const { actions } = useChatStore.getState();
+    actions.setAcpBinding(TAB, "agent-1", "acp-1", "/tmp");
+    actions.updateSessionStatus(TAB, "running");
+    switchAgentForTab(TAB, "claude-code", { model: "opus" });
+    expect(openAgentChatInNewTab).toHaveBeenCalledWith("claude-code", { model: "opus" });
+  });
+
+  it("a model picked on the agent the tab is already on just selects it", () => {
+    switchAgentForTab(TAB, "claude-code", { model: "opus" });
+    expect(useChatStore.getState().sessions[TAB].acpCurrentModel).toBe("opus");
+    expect(openAgentChatInNewTab).not.toHaveBeenCalled();
   });
 
   it("a chat holding a first message on an unfinished bind switches in place and carries it", () => {
@@ -140,7 +163,7 @@ describe("switchAgentForTab on an idle chat", () => {
 
     switchAgentForTab(TAB, "claude-code");
 
-    expect(openAgentChatInNewTab).toHaveBeenCalledWith("claude-code");
+    expect(openAgentChatInNewTab).toHaveBeenCalledWith("claude-code", { model: undefined });
     const sess = useChatStore.getState().sessions[TAB];
     expect(sess.agentType).toBe("codex");
     expect(sess.acpSessionId).toBe("acp-1");
@@ -183,9 +206,45 @@ describe("switchAgentForTab on an idle chat", () => {
 
     switchAgentForTab(TAB, "claude-code");
 
-    expect(openAgentChatInNewTab).toHaveBeenCalledWith("claude-code");
+    expect(openAgentChatInNewTab).toHaveBeenCalledWith("claude-code", { model: undefined });
     expect(useChatStore.getState().sessions[TAB].agentType).toBe("codex");
     expect(handoffs).toEqual([]);
+  });
+
+  it("an in-place switch ends the old session's remote-control room, and says so", async () => {
+    converse();
+    const room: RcRoom = {
+      sessionId: "acp-1",
+      roomId: "01ROOM",
+      scope: null,
+      memberTier: "view",
+      viewerUrl: "https://app.example.invalid/rc/rooms/01ROOM",
+      startedAt: 0,
+      state: "live",
+      ownerOnline: true,
+      viewers: 1,
+      peers: [],
+      acceptRequests: true,
+      driver: { id: "me", name: null, isOwner: true, lost: false },
+      pending: [],
+      lastError: null,
+      endReason: null,
+    };
+    useRcStore.getState().actions.upsert(room);
+    vi.mocked(invoke).mockClear();
+
+    switchAgentForTab(TAB, "claude-code");
+    await Promise.resolve();
+
+    // The room is the session's; the tab left it for a fresh one.
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith("rc_stop", { sessionId: "acp-1" });
+    // An ended room is left alone: nothing to stop twice.
+    vi.mocked(invoke).mockClear();
+    useRcStore.getState().actions.upsert({ ...room, state: "ended" });
+    useChatStore.getState().actions.setAcpBinding(TAB, "agent-1", "acp-1", "/repo");
+    switchAgentForTab(TAB, "codex");
+    expect(vi.mocked(invoke)).not.toHaveBeenCalledWith("rc_stop", expect.anything());
+    useRcStore.setState({ bySession: {} });
   });
 
   it("resets in place by default, attaching nothing", () => {
@@ -220,7 +279,7 @@ describe("switchAgentForTab on an idle chat", () => {
 
       switchAgentForTab(TAB, "claude-code");
 
-      expect(openAgentChatInNewTab).toHaveBeenCalledWith("claude-code");
+      expect(openAgentChatInNewTab).toHaveBeenCalledWith("claude-code", { model: undefined });
       expect(useChatStore.getState().sessions[TAB].agentType).toBe("codex");
       expect(handoffs).toEqual([]);
     },
@@ -401,7 +460,9 @@ describe("switchAgentForTab with rememberBeforeSwitch", () => {
     status("running");
     clickSwitchNow();
 
-    await vi.waitFor(() => expect(openAgentChatInNewTab).toHaveBeenCalledWith("claude-code"));
+    await vi.waitFor(() =>
+      expect(openAgentChatInNewTab).toHaveBeenCalledWith("claude-code", { model: undefined }),
+    );
     expect(stops).toEqual([]);
     expect(agent()).toBe("codex");
   });
@@ -470,7 +531,7 @@ describe("switchAgentForTab with rememberBeforeSwitch", () => {
     await vi.advanceTimersByTimeAsync(REMEMBER_STOP_GRACE_MS);
 
     expect(stops).toEqual([TAB]);
-    expect(openAgentChatInNewTab).toHaveBeenCalledWith("claude-code");
+    expect(openAgentChatInNewTab).toHaveBeenCalledWith("claude-code", { model: undefined });
     expect(agent()).toBe("codex");
     expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("new tab"));
   });
@@ -542,7 +603,7 @@ describe("switchAgentForTab with rememberBeforeSwitch", () => {
     switchAgentForTab(TAB, "claude-code");
     status("running");
     expect(isSwitchPending(TAB)).toBe(true);
-    useChatStore.getState().actions.enqueueMessage(TAB, "now add a retry");
+    useChatStore.getState().actions.enqueueMessage(TAB, "now add a retry", []);
     status("idle");
     await vi.waitFor(() => expect(agent()).toBe("claude-code"));
 
@@ -562,8 +623,8 @@ describe("switchAgentForTab with rememberBeforeSwitch", () => {
     switchAgentForTab(TAB, "claude-code");
     status("running");
     const { actions } = useChatStore.getState();
-    actions.enqueueMessage(TAB, "now add a retry");
-    actions.enqueueMessage(TAB, "and a test");
+    actions.enqueueMessage(TAB, "now add a retry", []);
+    actions.enqueueMessage(TAB, "and a test", []);
     status("idle");
     await vi.waitFor(() => expect(agent()).toBe("claude-code"));
 
@@ -587,15 +648,26 @@ describe("switchAgentForTab with rememberBeforeSwitch", () => {
 
     switchAgentForTab(TAB, "claude-code");
     status("running");
-    useChatStore.getState().actions.enqueueMessage(TAB, "now add a retry");
+    useChatStore.getState().actions.enqueueMessage(TAB, "now add a retry", []);
     status("idle");
-    await vi.waitFor(() => expect(openAgentChatInNewTab).toHaveBeenCalledWith("claude-code"));
+    await vi.waitFor(() =>
+      expect(openAgentChatInNewTab).toHaveBeenCalledWith("claude-code", { model: undefined }),
+    );
 
     expect(agent()).toBe("codex");
-    expect(sends).toEqual([
-      { tabId: TAB, text: "/remember" },
-      { tabId: TAB, text: "now add a retry" },
+    // The tab's session is bound, so the message goes back into ITS queue —
+    // Rust's, which owns it — and the hold the switch took is lifted, which
+    // is what drains it (the turn controller sends it, not the window).
+    expect(sends).toEqual([{ tabId: TAB, text: "/remember" }]);
+    const calls = vi.mocked(invoke).mock.calls;
+    expect(calls).toContainEqual([
+      "agents_queue_add",
+      expect.objectContaining({ text: "now add a retry" }),
     ]);
-    expect(useChatStore.getState().queues[TAB] ?? []).toEqual([]);
+    expect(calls).toContainEqual([
+      "agents_queue_pause",
+      expect.objectContaining({ paused: false }),
+    ]);
+    expect(useChatStore.getState().queues[TAB]).toEqual(["now add a retry"]);
   });
 });

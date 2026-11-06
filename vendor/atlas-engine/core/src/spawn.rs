@@ -51,7 +51,58 @@ pub(crate) struct SpawnChildRequest<'a> {
     pub env: HashMap<String, String>,
 }
 
-pub(crate) async fn spawn_child_async(request: SpawnChildRequest<'_>) -> std::io::Result<Child> {
+/// A spawned shell-tool child, with whatever holds the processes it starts.
+pub(crate) struct SpawnedChild {
+    pub child: Child,
+    pub tree: ProcessTree,
+}
+
+/// Atlas: the processes a shell call started, so cancel and timeout reach
+/// them and not just the shell.
+///
+/// Unix does this with the child's process group, which `exec` signals
+/// directly; this type is empty there. Windows has no group to signal —
+/// `kill_child_process_group` is a no-op and `TerminateProcess` stops only the
+/// direct child — so a `powershell -Command` running another program left
+/// that program orphaned when the turn was stopped. Here the child runs in a
+/// Job Object instead:
+///
+/// - [`ProcessTree::kill`] on cancel and timeout ends every member;
+/// - dropping it, as an abandoned call does, closes the job, and
+///   `KILL_ON_JOB_CLOSE` ends every member;
+/// - [`ProcessTree::release`] when the call finishes on its own lets what it
+///   deliberately started (a dev server) keep running, as on Unix.
+#[derive(Debug, Default)]
+pub(crate) struct ProcessTree {
+    #[cfg(windows)]
+    job: Option<atlas_engine_utils_pty::JobObject>,
+}
+
+impl ProcessTree {
+    /// End every process the call started.
+    pub(crate) fn kill(&self) {
+        #[cfg(windows)]
+        if let Some(job) = &self.job
+            && let Err(error) = job.terminate()
+        {
+            tracing::warn!("terminating a shell call's process tree failed: {error}");
+        }
+    }
+
+    /// The call ended on its own: leave what it started running.
+    pub(crate) fn release(&self) {
+        #[cfg(windows)]
+        if let Some(job) = &self.job
+            && let Err(error) = job.preserve_descendants()
+        {
+            tracing::warn!("releasing a shell call's process tree failed: {error}");
+        }
+    }
+}
+
+pub(crate) async fn spawn_child_async(
+    request: SpawnChildRequest<'_>,
+) -> std::io::Result<SpawnedChild> {
     let SpawnChildRequest {
         program,
         args,
@@ -142,5 +193,38 @@ pub(crate) async fn spawn_child_async(request: SpawnChildRequest<'_>) -> std::io
         }
     }
 
-    cmd.kill_on_drop(true).spawn()
+    // Atlas: on Windows the child starts suspended and is resumed only once it
+    // is in the job, so nothing it starts can be created outside it. A job
+    // that cannot be made, or a nested job that refuses the child, falls back
+    // to the uncontained spawn this always was.
+    #[cfg(windows)]
+    let job = match atlas_engine_utils_pty::JobObject::create() {
+        Ok(job) => {
+            // Keeps CREATE_NO_WINDOW, which it also sets.
+            job.prepare_suspended_spawn(&mut cmd);
+            Some(job)
+        }
+        Err(error) => {
+            tracing::warn!(
+                "no job object for a shell call, its descendants are uncontained: {error}"
+            );
+            None
+        }
+    };
+
+    let child = cmd.kill_on_drop(true).spawn()?;
+
+    #[cfg(windows)]
+    let job = match (job, child.id()) {
+        (Some(job), Some(pid)) => job.assign_and_resume_process(pid)?.then_some(job),
+        _ => None,
+    };
+
+    Ok(SpawnedChild {
+        child,
+        tree: ProcessTree {
+            #[cfg(windows)]
+            job,
+        },
+    })
 }

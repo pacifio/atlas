@@ -1,10 +1,14 @@
 # ADR-0015: Code search is served by the `atlas_code` tool server
 
-**Status:** Accepted (2026-10-03). Phase 1 of `docs/superpowers/plans/2026-10-03-codeindex-search/`.
+**Status:** Partly superseded by ADR-0021 (2026-10-15) — the tool server stands, its code index
+does not. Accepted (2026-10-03) as Phase 1 of `docs/superpowers/plans/2026-10-03-codeindex-search/`.
+Amended by ADR-0020: an ACP agent gets the server through the stdio bridge whatever it advertises;
+only the in-process native agent gets it over HTTP.
 
 **For agents:** if an agent cannot search code, or searches the wrong place, look at the code tool
 server (`src-tauri/src/commands/code_server/`) and the engine it calls (`crates/atlas-search`),
-not at the shell or the prompts.
+not at the shell or the prompts. The index-backed tools this ADR describes no longer exist; only
+`grep` and `find_files` do.
 
 ## Context
 
@@ -17,7 +21,7 @@ offered them could search code either: `memory_search` returns whole-file summar
 numbers. The research behind this decision is `docs/research/codeindex-search/` (README and
 report 05).
 
-Two seams could carry a search tool. The vendored engine has a `ToolContributor` seam for
+Two seams could carry a search tool. The engine has a `ToolContributor` seam for
 extension tools. It is native-only, it would put Atlas code on the engine side of the ADR-0004
 boundary, and whether its tools reach `code_mode_only` models is unverified. The in-process MCP
 tool server is the route ADR-0010 established and ADR-0012 and ADR-0014 extended: a loopback HTTP

@@ -9,7 +9,7 @@ open a file at a line, show the Changes panel, open a settings section, or type 
 terminal. The user wants it to drive the whole window the way a user does from the keyboard and
 the palettes.
 
-Two seams could carry that. The vendored engine has a **dynamic-tools** seam (`dynamic_tools` on
+Two seams could carry that. The engine has a **dynamic-tools** seam (`dynamic_tools` on
 thread start, answered through the `item/tool/call` server request), which is native-only by
 construction but which Atlas refuses today and which would put UI-driving code on the engine side
 of the ADR-0004 boundary. The **in-process MCP tool server** is the route ADR-0010 already

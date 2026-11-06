@@ -37,7 +37,7 @@ fi
 # inside every crates/* directory, which predates the workspace: each run was
 # its own cargo start-up and fingerprint pass (and, before the workspace, its
 # own target/). `--workspace --exclude` selects every member — the 22 Atlas
-# crates, with their `tests/` dirs and doctests — minus the vendored engine
+# crates, with their `tests/` dirs and doctests — minus the engine
 # (`atlas-engine-*` and its two test-support crates; 64 of its manifests carry
 # their own suites) and the app, which has its own invocation below. Not a
 # `-p 'atlas-*'` glob: since ADR-0011 that also matches the engine.
@@ -53,9 +53,9 @@ echo "==> src-tauri --lib"
 cargo test --locked -p atlas --lib
 
 # CI's `engine dialect (atlas-engine-api)` job: the Atlas-authored dialect plus the
-# vendored crates Atlas has edited. Keep this list equal to that job's `-p`
+# engine crates Atlas has edited. Keep this list equal to that job's `-p`
 # list; tests/ci-coverage.test.ts checks it.
-echo "==> engine dialect + edited vendored crates"
+echo "==> engine dialect + edited engine crates"
 cargo test --locked \
   -p atlas-engine-api \
   -p atlas-engine-model-provider \

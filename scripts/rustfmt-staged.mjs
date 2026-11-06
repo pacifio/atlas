@@ -6,7 +6,7 @@
  * Why not `cargo fmt`: it formats whole packages, so one staged file would
  * rewrite every unstaged file around it. Why not a bare `rustfmt`: without
  * `--edition` it formats as 2015, and the workspace mixes editions — the
- * first-party crates are 2021 while the root sets 2024 for the vendored
+ * first-party crates are 2021 while the root sets 2024 for the
  * engine — so the edition comes from the nearest `Cargo.toml`, exactly as
  * `cargo fmt` would pick it.
  */

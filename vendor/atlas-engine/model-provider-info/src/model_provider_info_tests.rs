@@ -111,7 +111,7 @@ supports_standalone_web_search = true
     assert_eq!(expected_provider, provider);
 }
 
-/// Upstream's test asserted the opposite: that `wire_api = "chat"` fails with a
+/// The original test asserted the opposite: that `wire_api = "chat"` fails with a
 /// message pointing at the removal discussion. Atlas reinstated the variant
 /// (D3) because its gateway speaks that dialect, so the test is inverted rather
 /// than deleted — the string is the config spelling Atlas's own provider uses,

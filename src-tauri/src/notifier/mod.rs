@@ -58,9 +58,12 @@ pub enum Urgency {
 pub struct NotificationAction {
     pub id: String,
     pub label: String,
+    // Only the macOS backend renders action styles; toast and freedesktop ignore them.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     #[serde(default)]
     pub destructive: bool,
     /// The device must be unlocked before the action runs.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     #[serde(default)]
     pub requires_unlock: bool,
 }

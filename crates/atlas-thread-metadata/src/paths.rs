@@ -1,7 +1,4 @@
-//! `PathList` / `WorktreePaths` — Zed's path types, ported.
-//!
-//! Source: `zed-ref/crates/util/src/path_list.rs:18-130` and
-//! `zed-ref/crates/project/src/worktree_store.rs:46-150`.
+//! `PathList` / `WorktreePaths` — the thread store's path types.
 //!
 //! Two properties carry the whole design and are the reason these are not just
 //! `Vec<PathBuf>`:
@@ -12,8 +9,7 @@
 //! * **Display order is preserved separately.** The user's ordering is theirs;
 //!   it round-trips through the database in the `*_order` columns.
 //!
-//! Divergence from Zed: `SanitizedPath` (its Windows UNC/verbatim-prefix
-//! normalisation) is not ported. Paths are stored as given, minus a trailing
+//! There is no Windows UNC/verbatim-prefix normalisation. Paths are stored as given, minus a trailing
 //! separator, which is identity on the platforms Atlas ships.
 
 use std::hash::{Hash, Hasher};

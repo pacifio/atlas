@@ -91,29 +91,16 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("the no-grant setup state (bar 14)", () => {
-  it("names the organisation the user knows, not the id the gateway sent", async () => {
-    // The whole reason this stopped being the gateway's raw sentence: that
-    // string names the org by a 26-character opaque id the user has never seen.
+  it("says Free accounts have no credits, not the id the gateway sent", async () => {
+    // The gateway's raw sentence names the org by a 26-character opaque id the
+    // user has never seen.
     seed(NO_GRANT);
     render(<AiGrantBar />);
     const bar = await screen.findByTestId("ai-grant-bar");
-    expect(bar.textContent).toContain("Acme");
-    expect(bar.textContent).toContain("doesn't have AI grants");
+    expect(bar.textContent).toContain("Atlas Credits are not available for Free accounts");
     expect(bar.textContent).not.toContain("org_1");
     // The gateway's own words stay reachable rather than being thrown away.
     expect(bar.getAttribute("title")).toBe(NO_GRANT.message);
-  });
-
-  it("falls back to a generic subject when the org name is not known yet", async () => {
-    // `orgs: null` is "not known yet" — a blip after sign-in. Rendering
-    // "undefined doesn't have AI grants" would be worse than saying nothing.
-    orgs = null;
-    // ...and the desktop has not restored its orgs either.
-    desktopOrgs = [];
-    activeDesktopOrgId = null;
-    seed(NO_GRANT);
-    render(<AiGrantBar />);
-    expect((await screen.findByTestId("ai-grant-bar")).textContent).toContain("This organization");
   });
 
   it("waits for a running turn to end before it shows", () => {
@@ -125,7 +112,7 @@ describe("the no-grant setup state (bar 14)", () => {
     const { rerender } = render(<AiGrantBar turnRunning />);
     expect(screen.queryByTestId("ai-grant-bar")).toBeNull();
     rerender(<AiGrantBar turnRunning={false} />);
-    expect(screen.getByTestId("ai-grant-bar").textContent).toContain("doesn't have AI grants");
+    expect(screen.getByTestId("ai-grant-bar").textContent).toContain("Atlas Credits");
   });
 
   it("says nothing at all when the account is entitled", () => {
@@ -161,17 +148,17 @@ describe("the no-grant setup state (bar 14)", () => {
     expect(screen.queryByTestId("ai-grant-bar")).not.toBeNull();
   });
 
-  it("sends Request to the credits page rather than to analytics", async () => {
-    // It used to fire a PostHog `ai_access_requested` event — an ask that
-    // landed where the user's own team could never see it.
+  it("sends Purchase to the billing page rather than to analytics", async () => {
     seed(NO_GRANT);
     render(<AiGrantBar />);
-    await userEvent.click(screen.getByText("Request"));
-    await waitFor(() => expect(openUrl).toHaveBeenCalledWith("https://credits.tryatlas.cc/"));
+    await userEvent.click(screen.getByText("Purchase"));
+    await waitFor(() =>
+      expect(openUrl).toHaveBeenCalledWith("https://app.tryatlas.cc/settings/billing"),
+    );
     expect(invoke).not.toHaveBeenCalledWith("native_agent_request_access");
     // Nothing was recorded, so the bar has no "done" state to fall into: the
     // button stays live for a second try.
-    expect((screen.getByText("Request").closest("button") as HTMLButtonElement).disabled).toBe(
+    expect((screen.getByText("Purchase").closest("button") as HTMLButtonElement).disabled).toBe(
       false,
     );
   });
@@ -180,7 +167,7 @@ describe("the no-grant setup state (bar 14)", () => {
     seed(NO_GRANT);
     openUrl.mockRejectedValue(new Error("no handler"));
     render(<AiGrantBar />);
-    await userEvent.click(screen.getByText("Request"));
+    await userEvent.click(screen.getByText("Purchase"));
     await waitFor(() => expect(toastError).toHaveBeenCalled());
   });
 
@@ -272,23 +259,6 @@ describe("the grant store's composer lock", () => {
 
   // ── Which organisation the bar is about ─────────────────────────────────
 
-  it("names the DESKTOP's active org, not the account's cloud org", () => {
-    // The auth snapshot only knows cloud orgs. With the desktop on "Main" (a
-    // synced org the account also has) and the account's last cloud org
-    // "Demo", the bar read "Demo doesn't have AI grants" — the wrong org.
-    orgs = [
-      { id: "org_demo", name: "Demo" },
-      { id: "org_main", name: "Main" },
-    ];
-    activeOrgId = "org_demo";
-    desktopOrgs = [{ id: "local_main", name: "Main", syncEnabled: true, remoteId: "org_main" }];
-    activeDesktopOrgId = "local_main";
-    seed(NO_GRANT);
-    render(<AiGrantBar />);
-    expect(screen.getByTestId("ai-grant-bar").textContent).toContain("Main");
-    expect(screen.getByTestId("ai-grant-bar").textContent).not.toContain("Demo");
-  });
-
   it("tells a local org to turn on sync, without asking the gateway", async () => {
     // A local org is not missing a grant — it is not on the gateway's side at
     // all. Nothing to probe, nothing to request; the composer locks with the
@@ -308,7 +278,7 @@ describe("the grant store's composer lock", () => {
     expect(bar.textContent).toContain("Local");
     expect(bar.textContent).toContain("is local");
     expect(bar.textContent).not.toContain("Demo");
-    expect(bar.textContent).not.toContain("Request");
+    expect(bar.textContent).not.toContain("Purchase");
     expect(screen.getByTestId("composer").dataset.locked).toBe("yes");
     expect(invoke).not.toHaveBeenCalled();
   });

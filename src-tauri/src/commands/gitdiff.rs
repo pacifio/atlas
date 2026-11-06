@@ -1,34 +1,42 @@
-//! Structured side-by-side git diff commands, backed by the `atlas-gitdiff`
-//! engine (which vendors delta's word-diff). The frontend diff viewer + the
-//! editor gutter consume these.
+//! The editor gutter's line classification, backed by the `atlas-gitdiff`
+//! engine. The diff viewer reads `git_review` instead.
 
-use atlas_gitdiff::{build_file_diff, line_status, FileDiff, LineStatus};
+use atlas_gitdiff::{build_file_diff, line_status, LineStatus};
 
 /// Run `git diff` for one file and return the raw unified output. `staged`
 /// selects the index-vs-HEAD diff; otherwise it's worktree-vs-HEAD. `context`
 /// is the `-U` value (large → whole-file side-by-side). Falls back to
 /// `--no-index` against /dev/null so brand-new / untracked files render as
-/// all-added instead of an empty diff.
+/// all-added instead of an empty diff. `ignore_ws` adds `-w`
+/// (`diffIgnoreWhitespace`): a change that is only whitespace then reads as
+/// no change, the same as a clean file.
 fn run_git_diff(
     path: &str,
     file: &str,
     staged: bool,
     context: u32,
     commit: Option<&str>,
+    ignore_ws: bool,
 ) -> Result<String, String> {
     let ctx = format!("-U{context}");
+    let ws: &[&str] = if ignore_ws { &["-w"] } else { &[] };
     // Commit mode: the diff INTRODUCED by `commit` for this file. `git show`
     // diffs the commit against its parent (and against the empty tree for the
-    // root commit), so it works uniformly.
+    // root commit), so it works uniformly. `-m --first-parent` makes a merge
+    // show what it brought into its branch, matching `git_show` — without it a
+    // merge prints a combined diff, empty for a clean merge.
     if let Some(sha) = commit {
         let output = atlas_process::command("git")
-            .args(["show", "--no-color", &ctx, "--format=", sha, "--", file])
+            .args(["show", "--no-color", &ctx])
+            .args(ws)
+            .args(["--format=", "-m", "--first-parent", sha, "--", file])
             .current_dir(path)
             .output()
             .map_err(|e| e.to_string())?;
         return Ok(String::from_utf8_lossy(&output.stdout).to_string());
     }
     let mut args: Vec<&str> = vec!["diff", "--no-color", &ctx];
+    args.extend_from_slice(ws);
     if staged {
         args.push("--cached");
     }
@@ -63,7 +71,9 @@ fn run_git_diff(
         // editor gutter mark lines the user already staged and moved on from.
         if !staged && !exists_in_head(path, file) {
             let cached = atlas_process::command("git")
-                .args(["diff", "--no-color", &ctx, "--cached", "--", file])
+                .args(["diff", "--no-color", &ctx])
+                .args(ws)
+                .args(["--cached", "--", file])
                 .current_dir(path)
                 .output()
                 .map_err(|e| e.to_string())?;
@@ -116,148 +126,6 @@ fn devnull() -> &'static str {
     }
 }
 
-/// Lowercased file extension (drives syntax highlighting on the frontend).
-fn language_of(file: &str) -> String {
-    file.rsplit('/')
-        .next()
-        .and_then(|n| n.rsplit_once('.'))
-        .map(|(_, ext)| ext.to_lowercase())
-        .unwrap_or_default()
-}
-
-/// Full side-by-side diff model for one file (whole-file context).
-#[tauri::command]
-pub async fn git_diff_structured(
-    path: String,
-    file: String,
-    staged: bool,
-    commit: Option<String>,
-) -> Result<FileDiff, String> {
-    tokio::task::spawn_blocking(move || {
-        let diff = run_git_diff(&path, &file, staged, 100_000, commit.as_deref())?;
-        Ok(build_file_diff(&diff, &file, &language_of(&file)))
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
-/// Structured diff between two arbitrary TEXTS, with no repository involved.
-///
-/// This is what the agent chat's "Show changes" uses. A turn's edits are known
-/// only as tool ARGUMENTS — the before/after strings the agent passed to
-/// `Edit`/`Write` — and git cannot answer for them: the working tree reflects
-/// the CURRENT state, not the state at that turn. A file created in turn 1,
-/// edited in turn 2 and deleted in turn 3 has one git answer and three different
-/// correct diffs, and only the tool arguments know which is which.
-///
-/// Rather than reimplement line diffing (no diff crate in the project, and the
-/// vendored delta code does WORD-level spans within an already-diffed line), the
-/// two texts go to git itself via `--no-index` over temp files. That yields a
-/// real unified diff — hunks, line numbers, context — which `build_file_diff`
-/// turns into the same `FileDiff` the repository path produces. One engine, one
-/// renderer, two sources.
-#[tauri::command]
-pub async fn diff_structured_text(
-    old_text: String,
-    new_text: String,
-    file: String,
-) -> Result<FileDiff, String> {
-    tokio::task::spawn_blocking(move || {
-        let diff = run_text_diff(&old_text, &new_text, &file)?;
-        Ok(build_file_diff(&diff, &file, &language_of(&file)))
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
-/// `git diff --no-index` over two temp files holding the before/after text.
-///
-/// The temp files keep the original file's NAME under two parent dirs, so the
-/// diff header carries a usable path.
-fn run_text_diff(old_text: &str, new_text: &str, file: &str) -> Result<String, String> {
-    use std::fs;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    let name = std::path::Path::new(file)
-        .file_name()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "file".to_string());
-
-    // Unique per call: a turn's files diff concurrently.
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let base = std::env::temp_dir().join(format!("atlas-diff-{stamp}-{:p}", &name));
-    let a_dir = base.join("a");
-    let b_dir = base.join("b");
-    fs::create_dir_all(&a_dir).map_err(|e| e.to_string())?;
-    fs::create_dir_all(&b_dir).map_err(|e| e.to_string())?;
-    let a = a_dir.join(&name);
-    let b = b_dir.join(&name);
-    fs::write(&a, old_text).map_err(|e| e.to_string())?;
-    fs::write(&b, new_text).map_err(|e| e.to_string())?;
-
-    // `--no-index` exits 1 when the files differ, which is the normal case here,
-    // so the status is ignored and stdout taken as-is.
-    let output = atlas_process::command("git")
-        .args([
-            "diff",
-            "--no-color",
-            "--no-index",
-            "-U100000",
-            "--",
-            &a.to_string_lossy(),
-            &b.to_string_lossy(),
-        ])
-        .output();
-
-    // Best-effort cleanup — a leftover temp dir is harmless, a failed diff is not.
-    let _ = fs::remove_dir_all(&base);
-
-    Ok(String::from_utf8_lossy(&output.map_err(|e| e.to_string())?.stdout).to_string())
-}
-
-/// Serde-friendly changed-file entry (path + porcelain status letter).
-#[derive(serde::Serialize)]
-pub struct CommitFile {
-    pub path: String,
-    pub status: String,
-}
-
-/// Files changed by a single commit (name + status), for the diff viewer's
-/// commit-browsing tree. `git show --name-status` against the commit.
-#[tauri::command]
-pub async fn git_commit_changed_files(
-    path: String,
-    sha: String,
-) -> Result<Vec<CommitFile>, String> {
-    tokio::task::spawn_blocking(move || {
-        let output = atlas_process::command("git")
-            .args(["show", "--no-color", "--name-status", "--format=", &sha])
-            .current_dir(&path)
-            .output()
-            .map_err(|e| e.to_string())?;
-        let text = String::from_utf8_lossy(&output.stdout);
-        let mut out = Vec::new();
-        for line in text.lines() {
-            if line.trim().is_empty() {
-                continue;
-            }
-            let mut parts = line.split('\t');
-            let status = parts.next().unwrap_or("").to_string();
-            // Renames are `R100\told\tnew` — take the last field (new path).
-            let file = parts.next_back().unwrap_or("").to_string();
-            if !file.is_empty() {
-                out.push(CommitFile { path: file, status });
-            }
-        }
-        Ok(out)
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
 /// New-file line classification for the editor gutter (added / changed /
 /// deleted-before). Uses zero-context diff — cheap.
 #[tauri::command]
@@ -267,7 +135,8 @@ pub async fn git_diff_line_status(
     staged: bool,
 ) -> Result<LineStatus, String> {
     tokio::task::spawn_blocking(move || {
-        let diff = run_git_diff(&path, &file, staged, 0, None)?;
+        // The gutter marks every changed line, whitespace included.
+        let diff = run_git_diff(&path, &file, staged, 0, None, false)?;
         let fd = build_file_diff(&diff, &file, "");
         Ok(line_status(&fd))
     })

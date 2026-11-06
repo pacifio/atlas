@@ -11,7 +11,7 @@ use super::protocol::RemoteControlTarget;
 use atlas_engine_login::default_client::create_client_without_request_logging;
 use axum::http::HeaderMap;
 use axum::http::StatusCode;
-use rand::Rng;
+use rand::RngExt;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::fmt;

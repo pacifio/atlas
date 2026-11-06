@@ -18,6 +18,11 @@ export interface OpenFileOptions {
   /** Where to put the cursor once the file is open. Editor tabs only; other
    *  kinds of file ignore it. */
   reveal?: RevealTarget;
+  /** Open a text file for editing rather than reading: one the user opened
+   *  to change by hand (a merge conflict, a settings file, a file they just
+   *  created). Any other open is read-only until the tab's Edit toggle.
+   *  Editor tabs only. */
+  edit?: boolean;
 }
 
 /** The one tab id a text file opens under. Every opener must use it, or the
@@ -29,7 +34,7 @@ export function editorTabId(path: string): string {
 /** Resolve the file kind, sniffing the bytes for unrecognized extensions:
  *  extension classification is an allowlist, so unknown names fall to
  *  "unsupported" — but if the bytes are UTF-8/ASCII text we treat it as text. */
-async function resolveFileKind(path: string): Promise<FileKind> {
+export async function fileKindOf(path: string): Promise<FileKind> {
   let kind = classifyFile(path);
   if (kind === "unsupported") {
     try {
@@ -62,20 +67,24 @@ export function openFileAs(path: string, kind: FileKind, opts?: OpenFileOptions)
     dirty: false,
     data: { filePath: path, fileKind: kind },
   });
+  // After `addTab`, which leaves an already-open tab's data as it was.
+  if (opts?.edit && tabType === "editor") {
+    useLayoutStore.getState().actions.setTabData(id, { editing: true });
+  }
   return id;
 }
 
 /** Open `path` as a tab, classified by extension (or by sniffing the bytes),
  *  and resolve to the tab id. */
 export async function openFile(path: string, opts?: OpenFileOptions): Promise<string> {
-  return openFileAs(path, await resolveFileKind(path), opts);
+  return openFileAs(path, await fileKindOf(path), opts);
 }
 
 /** Open a file in Atlas when it's a kind Atlas can render; otherwise reveal it
  *  in the OS file manager (Finder on macOS). Used by terminal link clicks — the
  *  user wants compatible files in-app and everything else handed to the OS. */
 export async function openFileOrReveal(path: string): Promise<void> {
-  const kind = await resolveFileKind(path);
+  const kind = await fileKindOf(path);
   if (kind === "unsupported") {
     try {
       const { revealItemInDir } = await import("@tauri-apps/plugin-opener");

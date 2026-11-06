@@ -1,8 +1,12 @@
 # ADR-0016: The first-look code seed is a tool the agent pulls, not context Atlas pushes
 
-**Status:** Accepted (2026-10-04). Phase 4 of `docs/superpowers/plans/2026-10-03-codeindex-search/`.
+**Status:** Superseded by ADR-0021 (2026-10-15). `task_context` was served by the code index, and
+went with it. Accepted (2026-10-04) as Phase 4 of
+`docs/superpowers/plans/2026-10-03-codeindex-search/`.
 
-**For agents:** if an agent starts a code task without looking at the repository first, look at the code tool server's `task_context` tool and its instructions (`src-tauri/src/commands/code_index/semantic_tools.rs`, `code_server/tools.rs` `INSTRUCTIONS`), not at `agents_send`. Nothing is prepended to a prompt.
+**For agents:** there is no `task_context` tool. The finding below — that seeding a first turn helps
+— still stands; what no longer stands is the index it was seeded from. Nothing is prepended to a
+prompt, which is the part of this ADR that outlived it.
 
 ## Context
 

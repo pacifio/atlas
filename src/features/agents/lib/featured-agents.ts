@@ -4,7 +4,7 @@
 // Atlas ships no ACP agents (ADR-0002), so a fresh profile can switch to
 // exactly one thing: the native agent. That is correct as a *runtime* rule and
 // terrible as a first impression — the picker looked like Atlas supported one
-// agent. Zed solves it the same way: the switcher markets a handful of popular
+// agent. So the switcher markets a handful of popular
 // agents as one-click installs alongside the ones you have.
 //
 // This is marketing copy, not capability. Nothing here is spawnable, none of it

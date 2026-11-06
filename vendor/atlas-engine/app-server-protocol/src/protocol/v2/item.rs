@@ -372,6 +372,10 @@ pub enum ThreadItem {
         kind: SubAgentActivityKind,
         agent_thread_id: String,
         agent_path: String,
+        /// The task a `Started` child was given, when known.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        prompt: Option<String>,
     },
     WebSearch(WebSearchItem),
     #[serde(rename_all = "camelCase")]
@@ -911,6 +915,7 @@ impl From<CoreTurnItem> for ThreadItem {
                 kind: activity.kind.into(),
                 agent_thread_id: activity.agent_thread_id.to_string(),
                 agent_path: String::from(activity.agent_path),
+                prompt: activity.prompt,
             },
             CoreTurnItem::WebSearch(search) => ThreadItem::WebSearch(WebSearchItem {
                 id: search.id,

@@ -175,7 +175,7 @@ fn over_redaction_of_a_whole_transcript_would_be_visible_here() {
 I've added a token bucket keyed on org_id. The limiter lives in
 src/services/rate_limit.rs and reads RATE_LIMIT_RPM from settings.
 
-Run `cargo test --package atlas-codeindex rate_limit` to check it. The
+Run `cargo test --package atlas-search rate_limit` to check it. The
 existing test at tests/limits.rs:42 already covers the burst case.";
     assert_untouched(input);
 }

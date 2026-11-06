@@ -1,6 +1,5 @@
 //! The SQLite layer: list, upsert, delete. Nothing else.
 //!
-//! Ported from Zed's `ThreadMetadataDb` (`thread_metadata_store.rs:1468-1581`).
 //! Every thread statement here is one of those three, because the store keeps the
 //! whole table in memory and answers reads from there — the database is the
 //! durable copy, not the query engine.
@@ -17,18 +16,27 @@ use crate::model::{ThreadId, ThreadMetadata};
 use crate::paths::{PathList, SerializedPathList, WorktreePaths};
 use crate::schema;
 
+/// `archived` is not read: archiving was retired, and the column is left in the
+/// table only so older builds at this epoch can still write (see `schema`).
 const LIST_QUERY: &str = "SELECT thread_id, session_id, agent_id, title, title_override, \
      updated_at, created_at, interacted_at, folder_paths, folder_paths_order, \
-     main_worktree_paths, main_worktree_paths_order, remote_connection, archived, \
-     branch \
+     main_worktree_paths, main_worktree_paths_order, remote_connection, \
+     branch, settled_at, unsettled_at, pinned_at, pin_order, snoozed_until, snoozed_at, \
+     last_snooze_wake_at, last_viewed_at, last_turn_completed_at, model, \
+     attached_projects, pull_requests, unpinned_at \
      FROM threads \
      ORDER BY updated_at DESC";
 
+/// `archived` is never named, so a new row takes its default (`0`) and an
+/// existing one keeps whatever an older build wrote.
 const UPSERT: &str = "INSERT INTO threads(thread_id, session_id, agent_id, title, \
          title_override, updated_at, created_at, interacted_at, folder_paths, \
          folder_paths_order, main_worktree_paths, main_worktree_paths_order, \
-         remote_connection, archived, branch) \
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15) \
+         remote_connection, branch, settled_at, unsettled_at, pinned_at, pin_order, \
+         snoozed_until, snoozed_at, last_snooze_wake_at, last_viewed_at, \
+         last_turn_completed_at, model, attached_projects, pull_requests, unpinned_at) \
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, \
+         ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27) \
      ON CONFLICT(thread_id) DO UPDATE SET \
          session_id = excluded.session_id, \
          agent_id = excluded.agent_id, \
@@ -42,8 +50,20 @@ const UPSERT: &str = "INSERT INTO threads(thread_id, session_id, agent_id, title
          main_worktree_paths = excluded.main_worktree_paths, \
          main_worktree_paths_order = excluded.main_worktree_paths_order, \
          remote_connection = excluded.remote_connection, \
-         archived = excluded.archived, \
-         branch = excluded.branch";
+         branch = excluded.branch, \
+         settled_at = excluded.settled_at, \
+         unsettled_at = excluded.unsettled_at, \
+         pinned_at = excluded.pinned_at, \
+         pin_order = excluded.pin_order, \
+         snoozed_until = excluded.snoozed_until, \
+         snoozed_at = excluded.snoozed_at, \
+         last_snooze_wake_at = excluded.last_snooze_wake_at, \
+         last_viewed_at = excluded.last_viewed_at, \
+         last_turn_completed_at = excluded.last_turn_completed_at, \
+         model = excluded.model, \
+         attached_projects = excluded.attached_projects, \
+         pull_requests = excluded.pull_requests, \
+         unpinned_at = excluded.unpinned_at";
 
 /// The durable half of the store.
 pub(crate) struct Db {
@@ -110,8 +130,20 @@ impl Db {
                 mains.as_ref().map(|s| &s.paths),
                 mains.as_ref().map(|s| &s.order),
                 remote,
-                row.archived,
                 row.branch.as_deref(),
+                rfc3339(row.settled_at),
+                rfc3339(row.unsettled_at),
+                rfc3339(row.pinned_at),
+                row.pin_order.as_deref(),
+                rfc3339(row.snoozed_until),
+                rfc3339(row.snoozed_at),
+                rfc3339(row.last_snooze_wake_at),
+                rfc3339(row.last_viewed_at),
+                rfc3339(row.last_turn_completed_at),
+                row.model.as_deref(),
+                crate::projects::encode(&row.attached_projects),
+                crate::pull_requests::encode(&row.pull_requests),
+                rfc3339(row.unpinned_at),
             ],
         )?;
         Ok(())
@@ -122,9 +154,8 @@ impl Db {
     /// A draft row is only reachable through the in-memory binding its process
     /// held: with no session id there is nothing to re-find it by, so one left
     /// behind by a crash is an empty row the user can never open and never
-    /// clear. Zed prunes session-less rows in a migration for the same reason
-    /// (`thread_metadata_store.rs:1446-1458`); Atlas does it on every open,
-    /// because Atlas mints a fresh session per chat tab and so produces them
+    /// clear. Pruning them once in a migration would not be enough: this runs on every
+    /// open, because Atlas mints a fresh session per chat tab and so produces them
     /// routinely rather than once.
     fn prune_drafts(&self) -> Result<()> {
         self.conn
@@ -216,6 +247,30 @@ impl Db {
         Ok(())
     }
 
+    /// Recorded forks, `(child, parent)` session ids.
+    pub(crate) fn session_forks(&self) -> Result<Vec<(String, String)>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT child_session_id, parent_session_id FROM session_forks")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    pub(crate) fn save_session_fork(&self, child: &str, parent: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO session_forks(child_session_id, parent_session_id, at) VALUES (?1, ?2, ?3) \
+             ON CONFLICT(child_session_id) DO UPDATE SET parent_session_id = excluded.parent_session_id",
+            rusqlite::params![child, parent, chrono::Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
     pub(crate) fn delete(&self, thread_id: ThreadId) -> Result<()> {
         self.conn.execute(
             "DELETE FROM threads WHERE thread_id = ?1",
@@ -225,8 +280,7 @@ impl Db {
     }
 }
 
-/// An empty path list is stored as `NULL`, not as two empty strings — Zed's
-/// shape (`:1512-1524`), and the difference matters because `NULL` is what a
+/// An empty path list is stored as `NULL`, not as two empty strings — and the difference matters because `NULL` is what a
 /// row written before the column existed also reads as.
 fn optional(list: &PathList) -> Option<SerializedPathList> {
     if list.is_empty() {
@@ -284,13 +338,17 @@ fn decode(row: &rusqlite::Row<'_>) -> rusqlite::Result<ThreadMetadata> {
     let main_paths: Option<String> = row.get(10)?;
     let main_paths_order: Option<String> = row.get(11)?;
     let remote_connection: Option<String> = row.get(12)?;
-    let archived: bool = row.get(13)?;
-    let branch: Option<String> = row.get(14)?;
+    let branch: Option<String> = row.get(13)?;
+    let time = |index: usize| -> rusqlite::Result<Option<DateTime<Utc>>> {
+        Ok(timestamp(row.get::<_, Option<String>>(index)?))
+    };
+    let pin_order: Option<String> = row.get(17)?;
+    let model: Option<String> = row.get(23)?;
 
     let folder_paths = path_list(serialized(folder_paths, folder_paths_order));
     let main_paths = path_list(serialized(main_paths, main_paths_order));
     // A row written before `main_worktree_paths` existed — or by a build that
-    // never set it — has folder paths only. Zed's fallback (`:1745-1760`).
+    // never set it — has folder paths only.
     let worktree_paths = if main_paths.is_empty() {
         WorktreePaths::from_folder_paths(&folder_paths)
     } else {
@@ -304,7 +362,7 @@ fn decode(row: &rusqlite::Row<'_>) -> rusqlite::Result<ThreadMetadata> {
         agent_id: agent_id.into(),
         // `''` is how "no title" is stored, and a persisted default title is
         // not a title either — it is what the row already renders as when it
-        // has none (Zed's decode, `:1776`, `:1782`).
+        // has none.
         title: name(Some(title)),
         title_override: name(title_override),
         updated_at: timestamp(Some(updated_at)).unwrap_or_else(Utc::now),
@@ -315,7 +373,23 @@ fn decode(row: &rusqlite::Row<'_>) -> rusqlite::Result<ThreadMetadata> {
         branch: branch
             .filter(|b| !b.trim().is_empty())
             .map(|b| Arc::from(b.as_str())),
-        archived,
+        settled_at: time(14)?,
+        unsettled_at: time(15)?,
+        pinned_at: time(16)?,
+        pin_order: pin_order
+            .filter(|key| !key.is_empty())
+            .map(|key| Arc::from(key.as_str())),
+        unpinned_at: time(26)?,
+        snoozed_until: time(18)?,
+        snoozed_at: time(19)?,
+        last_snooze_wake_at: time(20)?,
+        last_viewed_at: time(21)?,
+        last_turn_completed_at: time(22)?,
+        model: model
+            .filter(|m| !m.trim().is_empty())
+            .map(|m| Arc::from(m.as_str())),
+        attached_projects: crate::projects::decode(row.get(24)?),
+        pull_requests: crate::pull_requests::decode(row.get(25)?),
     })
 }
 
@@ -339,6 +413,10 @@ fn name(value: Option<String>) -> Option<Arc<str>> {
     value
         .filter(|t| !t.trim().is_empty() && t != crate::model::DEFAULT_THREAD_TITLE)
         .map(|t| Arc::from(t.as_str()))
+}
+
+fn rfc3339(value: Option<DateTime<Utc>>) -> Option<String> {
+    value.map(|dt| dt.to_rfc3339())
 }
 
 fn timestamp(value: Option<String>) -> Option<DateTime<Utc>> {

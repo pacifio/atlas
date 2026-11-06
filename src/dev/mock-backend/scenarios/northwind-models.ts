@@ -11,29 +11,29 @@ import type { SessionModeInfo } from "@/types/agents";
 
 export const NORTHWIND_NATIVE_MODELS: SessionModeInfo[] = [
   {
-    id: "claude-sonnet-4",
-    name: "Claude Sonnet 4",
+    id: "claude-sonnet-5-5",
+    name: "Claude Sonnet 5.5",
     description: "The default for new sessions.",
     provider: "anthropic",
   },
   {
-    id: "claude-opus-5",
-    name: "Claude Opus 5",
+    id: "claude-opus-5-5",
+    name: "Claude Opus 5.5",
     description: "For the hardest problems.",
     provider: "anthropic",
     is_new: true,
   },
-  { id: "claude-haiku-4", name: "Claude Haiku 4", description: null, provider: "anthropic" },
+  { id: "claude-haiku-4-5", name: "Claude Haiku 4.5", description: null, provider: "anthropic" },
   {
-    id: "claude-opus-4",
-    name: "Claude Opus 4",
+    id: "claude-opus-4-1",
+    name: "Claude Opus 4.1",
     description: null,
     provider: "anthropic",
     legacy: true,
   },
   {
-    id: "claude-sonnet-3-7",
-    name: "Claude Sonnet 3.7",
+    id: "claude-sonnet-4-5",
+    name: "Claude Sonnet 4.5",
     description: null,
     provider: "anthropic",
     legacy: true,

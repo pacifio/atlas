@@ -225,6 +225,27 @@ impl TurnState {
     }
 }
 
+/// One turn's lifecycle as recorded: when it started and, once it ended
+/// (completed, aborted or rewound), when.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TurnSpan {
+    pub turn_seq: i64,
+    pub state: TurnState,
+    pub started_at: DateTime<Utc>,
+    pub ended_at: Option<DateTime<Utc>>,
+}
+
+/// One failed tool call, as a handoff note reads it: inline payloads only,
+/// cut short.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FailedCall {
+    pub tool_name: crate::tools::ToolName,
+    pub title: Option<String>,
+    pub arguments: Option<String>,
+    pub result: Option<String>,
+    pub turn_seq: i64,
+}
+
 /// Token accounting for a Session.
 ///
 /// Agent-dependent by nature: only the native agent reports a real input/output
@@ -650,6 +671,24 @@ pub struct Checkpoint {
     pub attribution: Option<serde_json::Value>,
     pub created_at: DateTime<Utc>,
     pub sync_state: SyncState,
+}
+
+/// One security scan of a Checkpoint's commit, as the scanner stored it.
+///
+/// The scanner's own result is `result_json`, opaque here: this crate stores
+/// and queues scans but does not know what a finding is. `status` is `done`,
+/// `partial` or `failed`; `level` is `none`, `low`, `medium`, `high` or
+/// `critical`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScanRow {
+    pub checkpoint_id: String,
+    pub scanner_version: String,
+    pub status: String,
+    pub level: String,
+    pub blocking: bool,
+    pub result_json: String,
+    pub attempts: i64,
+    pub created_at: DateTime<Utc>,
 }
 
 /// The patch an edit-shaped call applied. Attribution's input.

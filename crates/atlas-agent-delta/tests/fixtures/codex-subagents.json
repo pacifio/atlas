@@ -1,0 +1,130 @@
+[
+ {
+  "sessionUpdate": "tool_call",
+  "toolCallId": "call_8cd163cd0fed4ac38cc8401c496cc672",
+  "kind": "other",
+  "title": "Start subagent counter",
+  "status": "in_progress",
+  "rawInput": {
+   "agentThreadId": "01a14493-a642-7d11-918a-85a23299137a",
+   "agentPath": "/root/counter",
+   "activityKind": "started"
+  }
+ },
+ {
+  "sessionUpdate": "tool_call_update",
+  "toolCallId": "call_8cd163cd0fed4ac38cc8401c496cc672",
+  "status": "completed"
+ },
+ {
+  "sessionUpdate": "tool_call",
+  "toolCallId": "call_969e6906b55f446599c2c403a96bc442",
+  "kind": "other",
+  "title": "Start subagent greeter",
+  "status": "in_progress",
+  "rawInput": {
+   "agentThreadId": "01a14493-b123-74c0-b7a7-570b61e82af6",
+   "agentPath": "/root/greeter",
+   "activityKind": "started"
+  }
+ },
+ {
+  "sessionUpdate": "tool_call_update",
+  "toolCallId": "call_969e6906b55f446599c2c403a96bc442",
+  "status": "completed"
+ },
+ {
+  "sessionUpdate": "tool_call",
+  "toolCallId": "call_c38d107217a646cda39835e52bf6d8ae",
+  "kind": "other",
+  "title": "wait",
+  "status": "in_progress",
+  "rawInput": {
+   "prompt": null,
+   "senderThreadId": "01a14493-879b-7691-a3f3-748bff50bcb1",
+   "receiverThreadIds": [],
+   "agentsStates": {},
+   "model": null,
+   "reasoningEffort": null,
+   "status": "inProgress"
+  }
+ },
+ {
+  "sessionUpdate": "tool_call",
+  "toolCallId": "subagent-completed-01a14493-b168-7061-adc4-af3d12d6f6b0",
+  "kind": "other",
+  "title": "Complete subagent greeter",
+  "status": "in_progress",
+  "rawInput": {
+   "agentThreadId": "01a14493-b123-74c0-b7a7-570b61e82af6",
+   "agentPath": "/root/greeter",
+   "activityKind": "completed"
+  }
+ },
+ {
+  "sessionUpdate": "tool_call_update",
+  "toolCallId": "subagent-completed-01a14493-b168-7061-adc4-af3d12d6f6b0",
+  "status": "completed"
+ },
+ {
+  "sessionUpdate": "tool_call_update",
+  "toolCallId": "call_c38d107217a646cda39835e52bf6d8ae",
+  "status": "completed",
+  "rawInput": {
+   "prompt": null,
+   "senderThreadId": "01a14493-879b-7691-a3f3-748bff50bcb1",
+   "receiverThreadIds": [],
+   "agentsStates": {},
+   "model": null,
+   "reasoningEffort": null,
+   "status": "completed"
+  }
+ },
+ {
+  "sessionUpdate": "tool_call",
+  "toolCallId": "call_fcbcb1f1ac8a4e6da7653d1724dcc88b",
+  "kind": "other",
+  "title": "wait",
+  "status": "in_progress",
+  "rawInput": {
+   "prompt": null,
+   "senderThreadId": "01a14493-879b-7691-a3f3-748bff50bcb1",
+   "receiverThreadIds": [],
+   "agentsStates": {},
+   "model": null,
+   "reasoningEffort": null,
+   "status": "inProgress"
+  }
+ },
+ {
+  "sessionUpdate": "tool_call",
+  "toolCallId": "subagent-completed-01a14493-a68f-7dd3-8e5f-373351ddcc31",
+  "kind": "other",
+  "title": "Complete subagent counter",
+  "status": "in_progress",
+  "rawInput": {
+   "agentThreadId": "01a14493-a642-7d11-918a-85a23299137a",
+   "agentPath": "/root/counter",
+   "activityKind": "completed"
+  }
+ },
+ {
+  "sessionUpdate": "tool_call_update",
+  "toolCallId": "subagent-completed-01a14493-a68f-7dd3-8e5f-373351ddcc31",
+  "status": "completed"
+ },
+ {
+  "sessionUpdate": "tool_call_update",
+  "toolCallId": "call_fcbcb1f1ac8a4e6da7653d1724dcc88b",
+  "status": "completed",
+  "rawInput": {
+   "prompt": null,
+   "senderThreadId": "01a14493-879b-7691-a3f3-748bff50bcb1",
+   "receiverThreadIds": [],
+   "agentsStates": {},
+   "model": null,
+   "reasoningEffort": null,
+   "status": "completed"
+  }
+ }
+]

@@ -13,9 +13,9 @@ vi.mock("@tauri-apps/api/event", () => ({
   }),
 }));
 
-const { onlineIds, onlineTeammates, startTeamPresenceListener } = await import("./team-presence");
+const { onlineIds, onlineTeammates, startTeamPresenceListener, onlineLabel } =
+  await import("./team-presence");
 const { useTeamPresenceStore } = await import("../stores/team-presence-store");
-const { onlineLabel } = await import("../components/online-teammates");
 
 function member(userId: string, name: string): OrgMember {
   return {

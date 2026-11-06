@@ -20,7 +20,7 @@
  * the text the moment the request failed.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 
 import { useOrgDirectory } from "@/features/organisations/lib/use-org-directory";
@@ -31,11 +31,13 @@ import {
   applyComment,
   comments as api,
   EMPTY_THREADS,
+  findComment,
   type AnchorKind,
   type Comment,
   type CommentThreads,
 } from "./comments-api";
 import { queueFollow, queueUnfollow } from "./watch-queue";
+import { NO_VOTES, withVote, type VoteValue } from "./votes";
 
 /** The window channel the cloud bridge emits on. */
 const ARTIFACTS_EVENT = "atlas:artifacts-cloud";
@@ -58,6 +60,11 @@ export function useSessionComments(
   // cost is one request however many surfaces read it.
   const directory = useOrgDirectory();
   const [threads, setThreads] = useState<CommentThreads>(EMPTY_THREADS);
+  // Read by `vote`, which must not rebuild the actions on every frame.
+  const threadsRef = useRef(threads);
+  threadsRef.current = threads;
+  const meRef = useRef(directory.currentUserId);
+  meRef.current = directory.currentUserId;
 
   const shared = remoteProjectId !== null && sessionId !== null;
 
@@ -166,6 +173,29 @@ export function useSessionComments(
         if (!shared) return;
         const removed = await api.remove(remoteProjectId, sessionId, commentId);
         setThreads((current) => applyComment(current, removed));
+      },
+      // Drawn at once, as the server will store it, then replaced by its
+      // answer — a vote that waited on the round trip felt broken. A refusal
+      // puts the comment back the way it was and rethrows for the row to say.
+      vote: async (commentId: string, value: VoteValue) => {
+        if (!shared) return;
+        const me = meRef.current;
+        const before = findComment(threadsRef.current, commentId);
+        if (me && before) {
+          setThreads((current) =>
+            applyComment(current, {
+              ...before,
+              votes: withVote(before.votes ?? NO_VOTES, me, value),
+            }),
+          );
+        }
+        try {
+          const updated = await api.vote(remoteProjectId, sessionId, commentId, value);
+          setThreads((current) => applyComment(current, updated));
+        } catch (e) {
+          if (before) setThreads((current) => applyComment(current, before));
+          throw e;
+        }
       },
     }),
     [shared, remoteProjectId, sessionId],

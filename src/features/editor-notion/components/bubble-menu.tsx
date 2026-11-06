@@ -1,9 +1,7 @@
 import { useEffect, useState } from "react";
+import { useEditorState } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
 import type { Editor } from "@tiptap/core";
-import { cn } from "@/lib/utils";
-import { HintGroup, HintItem } from "@/ui/hint-group";
-import { Hint } from "@/ui/tooltip";
 import { sendToAgentChat } from "@/features/chat/lib/send-to-agent";
 import {
   Bold,
@@ -17,7 +15,11 @@ import {
   List,
   Quote,
   MessageSquarePlus,
+  X,
 } from "lucide-react";
+import { HintGroup, HintItem, Hint, Input, Separator, iconButtonVariants } from "@tryatlas/design";
+
+const TOOL = iconButtonVariants({ variant: "ghost", size: "md" });
 
 interface AtlasBubbleMenuProps {
   editor: Editor | null;
@@ -48,7 +50,28 @@ export function AtlasBubbleMenu({ editor }: AtlasBubbleMenuProps) {
     };
   }, [editor]);
 
-  if (!editor) return null;
+  // Tiptap does not re-render on transactions, so pressed states read in
+  // render would go stale; this re-renders when one of them flips.
+  const active = useEditorState({
+    editor,
+    selector: ({ editor: e }) =>
+      e
+        ? {
+            bold: e.isActive("bold"),
+            italic: e.isActive("italic"),
+            underline: e.isActive("underline"),
+            strike: e.isActive("strike"),
+            code: e.isActive("code"),
+            link: e.isActive("link"),
+            h1: e.isActive("heading", { level: 1 }),
+            h2: e.isActive("heading", { level: 2 }),
+            bulletList: e.isActive("bulletList"),
+            blockquote: e.isActive("blockquote"),
+          }
+        : null,
+  });
+
+  if (!editor || !active) return null;
 
   const tool = (props: {
     title: string;
@@ -65,9 +88,10 @@ export function AtlasBubbleMenu({ editor }: AtlasBubbleMenuProps) {
             e.preventDefault();
             props.onClick();
           }}
-          className={cn("atlas-bubble-btn", props.isActive && "is-active")}
+          aria-pressed={props.isActive}
+          className={TOOL}
         >
-          <Icon size={13} strokeWidth={1.7} />
+          <Icon className="size-3.5" strokeWidth={1.7} />
         </button>
       </HintItem>
     );
@@ -77,10 +101,19 @@ export function AtlasBubbleMenu({ editor }: AtlasBubbleMenuProps) {
     // The menu sits above the selection, so its tooltips open upward too and
     // never cover the selected text.
     <HintGroup side="top">
-      <BubbleMenu editor={editor} options={{ placement: "top" }} className="atlas-bubble-wrap">
+      <BubbleMenu
+        editor={editor}
+        options={{ placement: "top" }}
+        // The package menu surface (`DropdownMenuContent`'s tokens) without its
+        // scroll and entrance animation: a selection toolbar tracks the
+        // selection and should not pop on every drag.
+        className="z-popover flex items-center gap-px rounded-lg border border-border bg-popover p-0.5 text-foreground shadow-md"
+      >
         {linkOpen ? (
-          <div className="atlas-bubble-link">
-            <input
+          <div className="flex items-center gap-1 px-0.5">
+            <Input
+              size="sm"
+              className="w-[220px]"
               value={linkUrl}
               placeholder="https://…"
               autoFocus
@@ -112,49 +145,49 @@ export function AtlasBubbleMenu({ editor }: AtlasBubbleMenuProps) {
                   setLinkOpen(false);
                   setLinkUrl("");
                 }}
-                className="atlas-bubble-btn"
+                className={iconButtonVariants({ variant: "ghost", size: "xs" })}
               >
-                ×
+                <X className="size-3" />
               </button>
             </Hint>
           </div>
         ) : (
           <>
             {tool({
-              title: "Bold (⌘B)",
+              title: "Bold",
               icon: Bold,
-              isActive: editor.isActive("bold"),
+              isActive: active.bold,
               onClick: () => editor.chain().focus().toggleBold().run(),
             })}
             {tool({
               title: "Italic (⌘I)",
               icon: Italic,
-              isActive: editor.isActive("italic"),
+              isActive: active.italic,
               onClick: () => editor.chain().focus().toggleItalic().run(),
             })}
             {tool({
               title: "Underline (⌘U)",
               icon: Underline,
-              isActive: editor.isActive("underline"),
+              isActive: active.underline,
               onClick: () => editor.chain().focus().toggleUnderline().run(),
             })}
             {tool({
               title: "Strike",
               icon: Strikethrough,
-              isActive: editor.isActive("strike"),
+              isActive: active.strike,
               onClick: () => editor.chain().focus().toggleStrike().run(),
             })}
             {tool({
               title: "Inline code (`)",
               icon: Code,
-              isActive: editor.isActive("code"),
+              isActive: active.code,
               onClick: () => editor.chain().focus().toggleCode().run(),
             })}
-            <span className="atlas-bubble-sep" />
+            <Separator orientation="vertical" className="mx-0.5 h-4" />
             {tool({
-              title: "Link (⌘K)",
+              title: "Link",
               icon: LinkIcon,
-              isActive: editor.isActive("link"),
+              isActive: active.link,
               onClick: () => {
                 const existing = editor.getAttributes("link").href as string | undefined;
                 setLinkUrl(existing ?? "");
@@ -164,28 +197,28 @@ export function AtlasBubbleMenu({ editor }: AtlasBubbleMenuProps) {
             {tool({
               title: "H1",
               icon: Heading1,
-              isActive: editor.isActive("heading", { level: 1 }),
+              isActive: active.h1,
               onClick: () => editor.chain().focus().toggleHeading({ level: 1 }).run(),
             })}
             {tool({
               title: "H2",
               icon: Heading2,
-              isActive: editor.isActive("heading", { level: 2 }),
+              isActive: active.h2,
               onClick: () => editor.chain().focus().toggleHeading({ level: 2 }).run(),
             })}
             {tool({
               title: "Bullet list",
               icon: List,
-              isActive: editor.isActive("bulletList"),
+              isActive: active.bulletList,
               onClick: () => editor.chain().focus().toggleBulletList().run(),
             })}
             {tool({
               title: "Quote",
               icon: Quote,
-              isActive: editor.isActive("blockquote"),
+              isActive: active.blockquote,
               onClick: () => editor.chain().focus().toggleBlockquote().run(),
             })}
-            <span className="atlas-bubble-sep" />
+            <Separator orientation="vertical" className="mx-0.5 h-4" />
             {tool({
               title: "Send selection to chat",
               icon: MessageSquarePlus,

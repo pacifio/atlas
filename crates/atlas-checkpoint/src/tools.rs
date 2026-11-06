@@ -546,7 +546,7 @@ mod tests {
     fn claude_code_display_titles_reduce_to_their_leading_token() {
         for (title, kind, expected) in [
             (
-                "Bash(cargo test --package atlas-codeindex)",
+                "Bash(cargo test --package atlas-search)",
                 "execute",
                 ToolName::Bash,
             ),

@@ -17,7 +17,7 @@
 //! after a token re-mint stops covering it. So the source is a callback, read
 //! on each request, mirroring the D10 token provider's shape exactly.
 //!
-//! # Why a registration in a vendored crate
+//! # Why a registration in an engine crate
 //!
 //! The header has to be attached where the request is built, which is here;
 //! the org lives in Atlas's auth state, which this crate must not depend on.

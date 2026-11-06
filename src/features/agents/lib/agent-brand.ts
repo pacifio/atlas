@@ -76,6 +76,22 @@ export function modelVendorColor(vendor: ModelVendor): string {
 }
 
 /**
+ * Which family a model id belongs to, or `null` for one we cannot place. Used
+ * by the usage tables' tints and by `ModelVendorMark` / `ModelChip`, so a model
+ * reads the same vendor everywhere it appears.
+ */
+export function modelVendorOf(model: string): ModelVendor | null {
+  const m = model.toLowerCase();
+  if (/claude|opus|sonnet|haiku|fable|mythos/.test(m)) return "claude";
+  if (/gpt|codex|\bo[134]\b/.test(m)) return "codex";
+  if (/gemini|palm/.test(m)) return "gemini";
+  if (/llama|mistral|qwen|deepseek|phi|gemma/.test(m)) return "local";
+  if (/cursor/.test(m)) return "cursor";
+  if (/kilo/.test(m)) return "kilo";
+  return null;
+}
+
+/**
  * The tint for an agent's brand mark, or `undefined` to leave it inheriting
  * the surrounding colour — which is also what an external agent gets, since
  * its icon comes from its own manifest SVG.

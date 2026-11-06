@@ -1,9 +1,9 @@
-# Upstream Atlas Agent's `atlas-engine-rs/clippy.toml`, restored.
+# The engine's own `clippy.toml`, kept at the repo root.
 #
 # The ADR-0003 port copied the engine's source into `vendor/atlas-engine/` but not the
 # clippy config that sat beside it, and clippy resolves `clippy.toml` by walking
 # up from the crate manifest — so with no file anywhere in the tree, every
-# vendored crate was being linted under clippy's defaults instead of the config
+# engine crate was being linted under clippy's defaults instead of the config
 # its code was written against. The visible cost was ~510 warnings in
 # `atlas-native-agent`'s dependency graph that no source change had introduced,
 # which is what kept the CI job's `-D warnings` step red.
@@ -26,12 +26,12 @@
 # * `disallowed-methods` — likewise the list behind the table's
 #   `disallowed_methods = "deny"`. The ratatui entries are inert in this tree
 #   (Atlas ships no TUI and ratatui is not in the dependency graph); they are
-#   kept verbatim so the file stays diffable against upstream, which is the
-#   whole point of restoring it rather than writing a new one.
+#   kept verbatim so the file stays diffable against the engine's original config, which is the
+#   whole point of keeping it rather than writing a new one.
 #
 # * `large-error-threshold = 256` — the engine's error enums are deliberately
 #   rich, and every fallible function in the graph returns one. Raising the
-#   threshold is upstream's considered position on those types; the alternative
+#   threshold is the engine authors' considered position on those types; the alternative
 #   would be blanket-allowing `result_large_err` in the workspace lint table,
 #   which would also switch the lint off for first-party Atlas crates where it
 #   still has something to say.

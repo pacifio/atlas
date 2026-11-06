@@ -200,6 +200,8 @@ describe("the CI plan", () => {
       "atlas-memory",
       "atlas-process",
       "atlas-redact",
+      "atlas-remote-control",
+      "atlas-security",
     ]);
     expect(p.engineDialect).toBe(false);
   });
@@ -246,10 +248,10 @@ describe("the CI diff range", () => {
     });
   });
 
-  it("diffs a version-branch push against the previous head", () => {
+  it("diffs a release-branch push against the previous head", () => {
     const env = {
       GITHUB_EVENT_NAME: "push",
-      GITHUB_REF_NAME: "0.3.4",
+      GITHUB_REF_NAME: "release/0.5",
       BEFORE: "a1",
       GITHUB_SHA: "b2",
     };

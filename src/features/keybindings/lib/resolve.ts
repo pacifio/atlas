@@ -7,6 +7,7 @@ import { ACTIONS, type ActionDef, type ActionId, type When, isActionId } from ".
 import { type Combo, comboEquals, effectiveCombo, parseCombo, serializeCombo } from "./combo";
 import { PRESET_BY_ID, type Preset } from "./presets";
 import type { KeybindingProfile } from "./types";
+import { defaultWhenExpression, parseWhen, whenToExpression, type WhenNode } from "./when";
 
 export interface ResolvedBinding {
   actionId: ActionId;
@@ -14,7 +15,11 @@ export interface ResolvedBinding {
   /** Kept alongside the parsed form so the editor can show the exact
    *  string without re-serialising. */
   serialized: string;
+  /** The action's registry context: which panel's handler runs it. */
   when: When;
+  /** The condition it fires under, canonical text ("" = always) and parsed. */
+  whenExpr: string;
+  whenAst: WhenNode | undefined;
   source: "default" | "preset" | "user";
 }
 
@@ -23,6 +28,13 @@ export interface ResolvedActionState {
   overridden: boolean;
   /** Combos that failed to parse in the profile — shown as warnings. */
   invalid: string[];
+  /** The profile replaces this action's `when`. */
+  whenOverridden: boolean;
+  /** The profile's `when` for this action didn't parse; the default applies. */
+  invalidWhen: string | null;
+  /** The condition it fires under — also for an action with no chord. */
+  whenExpr: string;
+  whenAst: WhenNode | undefined;
 }
 
 export interface ResolvedState {
@@ -54,6 +66,7 @@ export function resolveProfile(profile: KeybindingProfile | undefined): Resolved
   const byAction = new Map<ActionId, ResolvedBinding[]>();
   const perAction = new Map<ActionId, ResolvedActionState>();
   const overrides = profile?.bindings ?? {};
+  const whenOverrides = profile?.when ?? {};
   const presetId = profile?.basedOn;
   const preset = (presetId && PRESET_BY_ID.get(presetId)) || null;
 
@@ -65,6 +78,14 @@ export function resolveProfile(profile: KeybindingProfile | undefined): Resolved
     const strings: readonly string[] = overridden ? (override ?? []) : baseChords(def, preset);
     const invalid: string[] = [];
     const combos: ResolvedBinding[] = [];
+    const rawWhen = has(whenOverrides, id) ? whenOverrides[id] : undefined;
+    const parsedWhen = rawWhen?.trim() ? parseWhen(rawWhen) : undefined;
+    const invalidWhen = rawWhen?.trim() && !parsedWhen ? rawWhen : null;
+    const whenOverridden = rawWhen !== undefined && !invalidWhen;
+    const whenAst = whenOverridden
+      ? (parsedWhen ?? undefined)
+      : (parseWhen(defaultWhenExpression(def.when)) ?? undefined);
+    const whenExpr = whenToExpression(whenAst);
     for (const s of strings) {
       const combo = parseCombo(s);
       if (!combo) {
@@ -77,15 +98,19 @@ export function resolveProfile(profile: KeybindingProfile | undefined): Resolved
         combo,
         serialized: serializeCombo(combo),
         when: def.when,
+        whenExpr,
+        whenAst,
         source: overridden ? "user" : fromPreset ? "preset" : "default",
       });
     }
     byAction.set(id, combos);
-    perAction.set(id, { overridden, invalid });
+    perAction.set(id, { overridden, invalid, whenOverridden, invalidWhen, whenExpr, whenAst });
     list.push(...combos);
   }
 
-  const unknownActionIds = Object.keys(overrides).filter((k) => !isActionId(k));
+  const unknownActionIds = [
+    ...new Set([...Object.keys(overrides), ...Object.keys(whenOverrides)]),
+  ].filter((k) => !isActionId(k));
   return {
     list,
     byAction,
@@ -112,10 +137,12 @@ export interface Conflict {
 }
 
 /**
- * Same chord, same scope → hard conflict (first in registry order wins, the
- * rest never fire). Same chord, one global + one scoped → soft: the scoped
+ * Same chord, same condition → hard conflict (first in registry order wins,
+ * the rest never fire). Same chord, different conditions → soft: the scoped
  * handler legitimately shadows the global one while its surface has focus
- * (terminal ⌘W vs. close-tab ⌘W is the canonical example).
+ * (terminal ⌘W vs. close-tab ⌘W is the canonical example). Conditions are
+ * compared as written, so two that can overlap in ways the text doesn't show
+ * stay soft.
  *
  * "Same chord" is the platform-effective chord: off macOS `cmd+k` and
  * `ctrl+k` are one key, and grouping by the written string would miss that.
@@ -132,8 +159,8 @@ export function findConflicts(list: ResolvedBinding[], mac?: boolean): Map<strin
   const out = new Map<string, Conflict>();
   for (const [serialized, bindings] of groups) {
     if (bindings.length < 2) continue;
-    const scopes = new Map<When, number>();
-    for (const b of bindings) scopes.set(b.when, (scopes.get(b.when) ?? 0) + 1);
+    const scopes = new Map<string, number>();
+    for (const b of bindings) scopes.set(b.whenExpr, (scopes.get(b.whenExpr) ?? 0) + 1);
     const hard = [...scopes.values()].some((n) => n > 1);
     out.set(serialized, { serialized, kind: hard ? "hard" : "soft", bindings });
   }

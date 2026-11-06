@@ -2,7 +2,6 @@ use atlas_terminal::TerminalManager;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::{mpsc, Mutex, Notify};
@@ -11,11 +10,11 @@ use tokio::sync::{mpsc, Mutex, Notify};
 /// crossing, small enough that one message never stalls the JS main thread
 /// (Tabby caps at 100 KB; Ghostty's per-lock parse unit is 64 KiB).
 const MAX_CHUNK: usize = 128 * 1024;
-/// Max unacknowledged chunks in flight to the webview. The JS side queues
-/// chunks and acks them in one batch AFTER consuming them in a frame-budgeted
-/// drain, so this window is real end-to-end backpressure: with it closed the
-/// batcher stops, the bounded reader queue fills, the PTY reader thread parks,
-/// and the child's write() blocks. Eight chunks (1 MiB) is enough that a
+/// Max unacknowledged chunks in flight to the webview. The JS side acks a
+/// chunk only once xterm has PARSED it (batched), so this window is real
+/// end-to-end backpressure: with it closed the batcher stops, the bounded
+/// reader queue fills, the PTY reader thread parks, and the child's write()
+/// blocks. Eight chunks (1 MiB) is enough that a
 /// frame's budget is never starved waiting on the round trip.
 const MAX_IN_FLIGHT: usize = 8;
 /// Reader-thread → batcher queue depth, in 64 KiB reads (≤512 KiB buffered).
@@ -23,10 +22,6 @@ const READ_QUEUE_CHUNKS: usize = 8;
 /// A read at least this large is forwarded as-is rather than copied into the
 /// coalescing buffer — coalescing only pays for small reads.
 const DIRECT_SEND_BYTES: usize = MAX_CHUNK / 2;
-/// Floor between tty line-discipline probes when the output carries no escape
-/// byte (an app flipping raw mode almost always redraws with escapes; `read -s`
-/// and `stty -echo` prompts are the exceptions this timer catches).
-const PROBE_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Per-session credit window shared between the emit task and `terminal_ack`.
 pub struct AckWindow {
@@ -59,13 +54,11 @@ pub async fn terminal_create(
 ) -> Result<String, String> {
     let (tx, mut rx) = mpsc::channel::<atlas_terminal::TerminalOutput>(READ_QUEUE_CHUNKS);
 
-    let (id, probe) = {
+    let id = {
         let mut manager = state.manager.lock().await;
-        let id = manager
+        manager
             .create_session(cols, rows, cwd.as_deref(), tx)
-            .map_err(|e| e.to_string())?;
-        let probe = manager.mode_probe(&id);
-        (id, probe)
+            .map_err(|e| e.to_string())?
     };
 
     let window = Arc::new(AckWindow {
@@ -83,9 +76,7 @@ pub async fn terminal_create(
     let session_id = id.clone();
     tokio::spawn(async move {
         let mut buf: Vec<u8> = Vec::with_capacity(16 * 1024);
-        let mut last_raw: Option<bool> = None;
-        let mut last_probe = Instant::now() - PROBE_INTERVAL;
-        'main: loop {
+        loop {
             if buf.is_empty() {
                 match rx.recv().await {
                     // A big read moves straight into the buffer (no copy);
@@ -116,37 +107,9 @@ pub async fn terminal_create(
             } else {
                 std::mem::take(&mut buf)
             };
-            // Decide whether to probe BEFORE the chunk moves into the send.
-            let has_escape = chunk.contains(&0x1b);
             window.in_flight.fetch_add(1, Ordering::AcqRel);
             if on_output.send(InvokeResponseBody::Raw(chunk)).is_err() {
-                break 'main;
-            }
-
-            // Sample the tty's line discipline on the back of the output that
-            // just arrived, and report only transitions. An app flipping the
-            // terminal into raw mode always redraws immediately afterwards, so
-            // output is a reliable carrier for the change — and hanging the
-            // check here costs NOTHING while the terminal sits idle, unlike a
-            // polling timer per session. Gated so a plain 50 MB `cat` does not
-            // pay an ioctl (under the master mutex) per chunk: probe when the
-            // chunk carries an escape byte, or every PROBE_INTERVAL otherwise.
-            let due = has_escape || last_probe.elapsed() >= PROBE_INTERVAL;
-            if !due {
-                continue;
-            }
-            last_probe = Instant::now();
-            if let Some(raw) = probe
-                .as_ref()
-                .and_then(atlas_terminal::TtyModeProbe::is_raw)
-            {
-                if last_raw != Some(raw) {
-                    last_raw = Some(raw);
-                    let _ = app_handle.emit(
-                        "terminal-mode",
-                        serde_json::json!({ "id": session_id.clone(), "raw": raw }),
-                    );
-                }
+                break;
             }
         }
         app_handle
@@ -161,8 +124,8 @@ pub async fn terminal_create(
 }
 
 /// Ack consumed output chunks, re-opening the credit window. `count` defaults
-/// to one; the frontend's drain passes how many it consumed in the frame, so
-/// this is one IPC per frame rather than one per chunk. Sync + parking_lot.
+/// to one; the frontend passes how many chunks xterm has parsed since its last ack,
+/// so this is one IPC per batch rather than one per chunk. Sync + parking_lot.
 #[tauri::command]
 pub fn terminal_ack(state: State<'_, TerminalState>, id: String, count: Option<usize>) {
     let n = count.unwrap_or(1).max(1);
@@ -175,13 +138,6 @@ pub fn terminal_ack(state: State<'_, TerminalState>, id: String, count: Option<u
             });
         w.notify.notify_one();
     }
-}
-
-/// The zsh shell-integration ZDOTDIR, so the frontend can relaunch an
-/// interactive root shell (`sudo -s`/`-i`/`su`) with the same integration.
-#[tauri::command]
-pub fn terminal_zsh_dir() -> Option<String> {
-    atlas_terminal::zsh_integration_dir().map(|p| p.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
@@ -222,15 +178,6 @@ pub async fn terminal_resize(
 }
 
 #[tauri::command]
-pub async fn terminal_kill_foreground(
-    state: State<'_, TerminalState>,
-    id: String,
-) -> Result<bool, String> {
-    let manager = state.manager.lock().await;
-    manager.kill_foreground(&id).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
 pub async fn terminal_close(state: State<'_, TerminalState>, id: String) -> Result<(), String> {
     {
         let mut manager = state.manager.lock().await;
@@ -266,15 +213,6 @@ pub async fn terminal_resolve_path(
     })
     .await
     .map_err(|e| e.to_string())
-}
-
-/// Resolve a path token against an EXPLICIT base directory (e.g. a historical
-/// command block's captured cwd), returning the existing absolute path or None.
-#[tauri::command]
-pub async fn resolve_path(base: String, raw: String) -> Result<Option<String>, String> {
-    tokio::task::spawn_blocking(move || resolve_path_with_base(Some(&base), &raw))
-        .await
-        .map_err(|e| e.to_string())
 }
 
 fn resolve_path_with_base(base: Option<&str>, raw: &str) -> Option<String> {
@@ -314,136 +252,4 @@ fn resolve_path_with_base(base: Option<&str>, raw: &str) -> Option<String> {
 
     let canon = dunce::canonicalize(&path).ok()?;
     Some(canon.to_string_lossy().into_owned())
-}
-
-// ── Autocomplete (command + path) for the terminal command input ────────────
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct PathCompletion {
-    pub name: String,
-    pub is_dir: bool,
-}
-
-/// Complete a path token (relative to `cwd`) for the terminal input. Splits the
-/// token at the last `/` into a directory part and a filename prefix, resolves
-/// the directory (expanding `~`, honouring absolute / cwd-relative), lists it,
-/// and returns entries whose name starts with the prefix (case-insensitive).
-/// Hidden entries are included only when the prefix itself starts with `.`.
-#[tauri::command]
-pub async fn terminal_path_complete(
-    cwd: String,
-    token: String,
-) -> Result<Vec<PathCompletion>, String> {
-    tokio::task::spawn_blocking(move || path_complete(&cwd, &token))
-        .await
-        .map_err(|e| e.to_string())
-}
-
-fn path_complete(cwd: &str, token: &str) -> Vec<PathCompletion> {
-    use std::path::PathBuf;
-
-    let (dir_part, prefix) = match token.rfind('/') {
-        Some(i) => (&token[..=i], &token[i + 1..]),
-        None => ("", token),
-    };
-
-    let base: PathBuf = if dir_part.is_empty() {
-        PathBuf::from(cwd)
-    } else if dir_part == "~" || dir_part == "~/" {
-        match dirs::home_dir() {
-            Some(h) => h,
-            None => return Vec::new(),
-        }
-    } else if let Some(rest) = dir_part.strip_prefix("~/") {
-        match dirs::home_dir() {
-            Some(h) => h.join(rest),
-            None => return Vec::new(),
-        }
-    } else if dir_part.starts_with('/') {
-        PathBuf::from(dir_part)
-    } else {
-        PathBuf::from(cwd).join(dir_part.strip_prefix("./").unwrap_or(dir_part))
-    };
-
-    let read = match std::fs::read_dir(&base) {
-        Ok(r) => r,
-        Err(_) => return Vec::new(),
-    };
-    let pl = prefix.to_lowercase();
-    let want_hidden = prefix.starts_with('.');
-    let mut out: Vec<PathCompletion> = Vec::new();
-    for entry in read {
-        let Ok(entry) = entry else { continue };
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if name.starts_with('.') && !want_hidden {
-            continue;
-        }
-        if !pl.is_empty() && !name.to_lowercase().starts_with(&pl) {
-            continue;
-        }
-        // `is_dir()` follows symlinks so a symlinked directory still completes
-        // with a trailing slash.
-        let is_dir = entry.path().is_dir();
-        out.push(PathCompletion { name, is_dir });
-    }
-    // Directories first, then case-insensitive alphabetical.
-    out.sort_by(|a, b| {
-        b.is_dir
-            .cmp(&a.is_dir)
-            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-    });
-    out.truncate(50);
-    out
-}
-
-/// Executable names on `$PATH` + a curated builtin list, deduped + sorted.
-/// Scanned once and cached for the process lifetime (`$PATH` rarely changes).
-#[tauri::command]
-pub async fn terminal_list_commands() -> Result<Vec<String>, String> {
-    use std::sync::OnceLock;
-    static COMMANDS: OnceLock<Vec<String>> = OnceLock::new();
-    if let Some(c) = COMMANDS.get() {
-        return Ok(c.clone());
-    }
-    let list = tokio::task::spawn_blocking(scan_commands)
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(COMMANDS.get_or_init(|| list).clone())
-}
-
-const SHELL_BUILTINS: &[&str] = &[
-    "cd", "pwd", "echo", "export", "alias", "unalias", "source", ".", "exit", "history", "jobs",
-    "fg", "bg", "kill", "set", "unset", "which", "type", "clear", "pushd", "popd", "dirs", "read",
-    "trap", "wait", "umask", "let", "local", "return", "eval", "exec", "time",
-];
-
-fn scan_commands() -> Vec<String> {
-    use std::collections::BTreeSet;
-    let mut set: BTreeSet<String> = SHELL_BUILTINS
-        .iter()
-        .map(std::string::ToString::to_string)
-        .collect();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if let Ok(path) = std::env::var("PATH") {
-            for dir in path.split(':').filter(|d| !d.is_empty()) {
-                let Ok(read) = std::fs::read_dir(dir) else {
-                    continue;
-                };
-                for entry in read {
-                    let Ok(entry) = entry else { continue };
-                    let Ok(meta) = entry.metadata() else { continue };
-                    if meta.is_dir() {
-                        continue;
-                    }
-                    if meta.permissions().mode() & 0o111 == 0 {
-                        continue;
-                    }
-                    set.insert(entry.file_name().to_string_lossy().into_owned());
-                }
-            }
-        }
-    }
-    set.into_iter().collect()
 }

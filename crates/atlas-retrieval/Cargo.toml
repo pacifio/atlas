@@ -5,10 +5,18 @@ edition = "2021"
 description = "The retrieval core memory and the code index share: content-keyed embedding cache codec, per-model usearch vector files that heal, RRF fusion, the Embedder trait."
 
 [dependencies]
-usearch = "2.25.3"
+# Without its default `numkong` SIMD backend here; it's turned back on for every
+# target but Windows below. numkong 7.x does not build with MSVC on Windows
+# ARM64, and Cargo unifies features: a default-features usearch here would turn
+# it back on for `atlas-memory` too (see that crate's Cargo.toml, #367).
+usearch = { version = "2.25.3", default-features = false }
 half = { workspace = true }
 blake3 = { workspace = true }
 thiserror = { workspace = true }
+
+# usearch's numkong SIMD backend everywhere it builds (see `usearch` above).
+[target.'cfg(not(windows))'.dependencies]
+usearch = { version = "2.25.3", features = ["numkong"] }
 
 [dev-dependencies]
 tempfile = "3"

@@ -1,0 +1,101 @@
+{
+  "$comment": "The app menu bar, in one place. Rust builds the native macOS menu from it (src-tauri/src/menu.rs) and the frontend draws the same menus in the Windows/Linux titlebar (src/features/menu/). type: action = a keybinding action id from src/features/keybindings/lib/actions.ts, run through runAction, with the user's chord as its accelerator; command = a menu-only command handled in src/features/menu/lib/run-menu-item.ts; role = a native macOS item (macOS only; the in-window bar skips it); separator. Pinned by tests/menu-model.test.ts and menu.rs's tests.",
+  "menus": [
+    {
+      "id": "app",
+      "label": "Atlas",
+      "items": [
+        { "type": "command", "id": "app.about", "label": "About Atlas" },
+        { "type": "command", "id": "app.checkUpdates", "label": "Check for Updates…" },
+        { "type": "separator" },
+        { "type": "action", "id": "app.settings", "label": "Settings…" },
+        { "type": "separator" },
+        { "type": "role", "role": "services" },
+        { "type": "separator" },
+        { "type": "role", "role": "hide" },
+        { "type": "role", "role": "hideOthers" },
+        { "type": "role", "role": "showAll" },
+        { "type": "separator" },
+        { "type": "role", "role": "quit" }
+      ]
+    },
+    {
+      "id": "file",
+      "label": "File",
+      "items": [
+        { "type": "action", "id": "tabs.newChat", "label": "New Agent Chat" },
+        { "type": "action", "id": "tabs.newTerminal", "label": "New Terminal" },
+        { "type": "action", "id": "tabs.newUntitled", "label": "New Untitled File" },
+        { "type": "action", "id": "nav.newTabPalette", "label": "New Tab…" },
+        { "type": "separator" },
+        { "type": "action", "id": "workspace.add", "label": "Add Project…" },
+        { "type": "action", "id": "app.capture", "label": "Session Capture…" },
+        { "type": "separator" },
+        { "type": "action", "id": "tabs.close", "label": "Close Tab" },
+        { "type": "action", "id": "split.close", "label": "Close Split" }
+      ]
+    },
+    {
+      "id": "edit",
+      "label": "Edit",
+      "items": [
+        { "type": "role", "role": "cut" },
+        { "type": "role", "role": "copy" },
+        { "type": "role", "role": "paste" },
+        { "type": "role", "role": "selectAll" },
+        { "type": "separator" },
+        { "type": "action", "id": "nav.search", "label": "Search in Project…" }
+      ]
+    },
+    {
+      "id": "view",
+      "label": "View",
+      "items": [
+        { "type": "action", "id": "nav.commandPalette", "label": "Command Palette…" },
+        { "type": "action", "id": "nav.filePicker", "label": "Go to File…" },
+        { "type": "separator" },
+        { "type": "action", "id": "workspace.toggleSidebar", "label": "Sidebar" },
+        { "type": "action", "id": "panels.left", "label": "Files" },
+        { "type": "action", "id": "panels.right", "label": "Source Control" },
+        { "type": "action", "id": "panels.teamChat", "label": "Team Chat" },
+        { "type": "action", "id": "panels.terminal", "label": "Terminal" },
+        { "type": "action", "id": "panels.knowledge", "label": "Knowledge" },
+        { "type": "separator" },
+        { "type": "action", "id": "nav.layoutSwitcher", "label": "Layouts…" },
+        { "type": "action", "id": "panels.zen", "label": "Zen Mode" },
+        { "type": "separator" },
+        { "type": "action", "id": "view.zoomIn", "label": "Zoom In" },
+        { "type": "action", "id": "view.zoomOut", "label": "Zoom Out" },
+        { "type": "action", "id": "view.zoomReset", "label": "Actual Size" },
+        { "type": "separator" },
+        { "type": "role", "role": "fullscreen" }
+      ]
+    },
+    {
+      "id": "window",
+      "label": "Window",
+      "items": [
+        { "type": "role", "role": "minimize" },
+        { "type": "role", "role": "zoom" },
+        { "type": "separator" },
+        { "type": "action", "id": "tabs.prev", "label": "Previous Tab" },
+        { "type": "action", "id": "tabs.next", "label": "Next Tab" },
+        { "type": "action", "id": "split.new", "label": "Split Right" },
+        { "type": "separator" },
+        { "type": "role", "role": "bringAllToFront" }
+      ]
+    },
+    {
+      "id": "help",
+      "label": "Help",
+      "items": [
+        { "type": "command", "id": "help.docs", "label": "Atlas Docs" },
+        { "type": "command", "id": "help.shortcuts", "label": "Keyboard Shortcuts" },
+        { "type": "command", "id": "help.feedback", "label": "Send Feedback…" },
+        { "type": "separator" },
+        { "type": "command", "id": "help.github", "label": "GitHub Repository" },
+        { "type": "command", "id": "help.discord", "label": "Discord Community" }
+      ]
+    }
+  ]
+}

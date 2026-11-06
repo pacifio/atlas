@@ -51,42 +51,6 @@ impl ModelSpec {
         let json = serde_json::to_vec_pretty(self).map_err(std::io::Error::other)?;
         std::fs::write(model_dir.join(SPEC_FILE), json)
     }
-
-    /// ibm-granite/granite-embedding-small-english-r2, the default code model:
-    /// CLS pooling, no prefixes (model card). Trained to 8192 positions; capped
-    /// at 1024 like the other code models, which fits the 1800-character chunks.
-    /// Batches of 4: attention memory grows with batch × tokens², and on CPU a
-    /// batch of 16 peaked at 4.5 GB against 1.29 GB for 4, at about the same speed.
-    pub fn granite_embedding_small() -> Self {
-        Self {
-            pooling: Pooling::Cls,
-            query_prefix: String::new(),
-            document_prefix: String::new(),
-            max_tokens: 1024,
-            batch_size: 4,
-        }
-    }
-
-    /// The preset Atlas runs a code model with, by the model's catalog id (its
-    /// directory name), or `None` for a model that is not a code model.
-    pub fn for_code_model(id: &str) -> Option<Self> {
-        match id {
-            "granite-embedding-small-r2" => Some(Self::granite_embedding_small()),
-            "coderankembed" => Some(Self::code_rank_embed()),
-            _ => None,
-        }
-    }
-
-    /// nomic-ai/CodeRankEmbed: CLS pooling, query instruction prefix (model card).
-    pub fn code_rank_embed() -> Self {
-        Self {
-            pooling: Pooling::Cls,
-            query_prefix: "Represent this query for searching relevant code: ".into(),
-            document_prefix: String::new(),
-            max_tokens: 1024,
-            batch_size: 8,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -102,30 +66,16 @@ mod tests {
     }
 
     #[test]
-    fn code_models_are_found_by_catalog_id() {
-        assert_eq!(
-            ModelSpec::for_code_model("granite-embedding-small-r2"),
-            Some(ModelSpec::granite_embedding_small())
-        );
-        assert_eq!(
-            ModelSpec::for_code_model("coderankembed"),
-            Some(ModelSpec::code_rank_embed())
-        );
-        assert_eq!(ModelSpec::for_code_model("all-minilm-l6-v2"), None);
-    }
-
-    #[test]
-    fn specs_round_trip_and_presets_match_their_model_cards() {
+    fn a_spec_round_trips_through_the_model_dir() {
         let dir = tempfile::tempdir().unwrap();
-        ModelSpec::code_rank_embed().write(dir.path()).unwrap();
-        let back = ModelSpec::load(dir.path());
-        assert_eq!(back.pooling, Pooling::Cls);
-        assert_eq!(
-            back.query_prefix,
-            "Represent this query for searching relevant code: "
-        );
-        let granite = ModelSpec::granite_embedding_small();
-        assert_eq!(granite.pooling, Pooling::Cls);
-        assert!(granite.query_prefix.is_empty() && granite.document_prefix.is_empty());
+        let spec = ModelSpec {
+            pooling: Pooling::Cls,
+            query_prefix: "query: ".into(),
+            document_prefix: "passage: ".into(),
+            max_tokens: 1024,
+            batch_size: 8,
+        };
+        spec.write(dir.path()).unwrap();
+        assert_eq!(ModelSpec::load(dir.path()), spec);
     }
 }

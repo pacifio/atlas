@@ -9,4 +9,4 @@ export type ExperimentalFeatureEnablementSetParams = {
  * Only named features are updated. Omitted features are left unchanged.
  * Send an empty map for a no-op.
  */
-enablement: { [key in string]?: boolean }, };
+enablement: { [key in string]: boolean }, };

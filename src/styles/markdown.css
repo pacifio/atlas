@@ -1,0 +1,29 @@
+/* Rendered markdown: what desktop adds to the package's `.prose-session`
+   (`@tryatlas/design`'s `session.css`), which carries the typography, fences,
+   tables, task lists and the prompt bubble's `.prose-session-user`. Unlayered,
+   like `session.css`, so the two meet on specificity. */
+
+/* Code that wraps. The package's fences never wrap (a fence's height is its
+   line count, which the transcript relies on). Markdown outside the
+   transcript wraps long lines unless the `wordWrap` setting is off
+   (`display-settings.ts` sets `data-word-wrap` on <html>). The class goes on
+   the prose root or a parent of it. */
+html:not([data-word-wrap="off"]) .atlas-prose-wrap pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+/* Markdown that has not finished parsing yet — see `CachedMarkdown`.
+   Rendered as the raw source at the same size as the formatted result, so an
+   unparsed block occupies roughly its final height instead of collapsing to
+   zero. A screen of zero-height blocks is what made the transcript flash blank
+   at the moment its window grew. */
+.atlas-md-pending {
+  margin: 0;
+  font: inherit;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  color: inherit;
+}

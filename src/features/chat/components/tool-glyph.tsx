@@ -9,9 +9,11 @@
  */
 
 import {
+  AppWindow,
   ArrowRightLeft,
   BookOpen,
   Brain,
+  BrainCircuit,
   Building2,
   File,
   FolderClosed,
@@ -27,7 +29,7 @@ import {
 import type { MarkerTool } from "../lib/turn-rows";
 
 /**
- * One icon per `MarkerTool` key, in the Codex desktop app's vocabulary: the
+ * One icon per `MarkerTool` key, in a small fixed vocabulary: the
  * wrench for a loaded tool, the book for a read, the boxed prompt for a
  * command, the folder for a listing, the magnifier for a search.
  *
@@ -50,10 +52,14 @@ const TOOL_ICON: Record<MarkerTool, LucideIcon> = {
   // An organisation call (ADR-0014): the building the organisation screens
   // already use.
   org: Building2,
+  // Atlas memory: the Memory tab's own icon.
+  memory: BrainCircuit,
+  // A browser-driving MCP server, whichever one.
+  browser: AppWindow,
   tool: Wrench,
 };
 
-/** Near the height of the 13px row text, drawn at the thin stroke Codex uses. */
+/** Near the height of the 13px row text, drawn at a thin stroke. */
 export const ICON_PX = 14;
 export const ICON_STROKE = 1.5;
 
@@ -61,11 +67,7 @@ export const ICON_STROKE = 1.5;
 export function ToolGlyph({ tool, failed }: { tool: MarkerTool; failed: boolean }) {
   const Icon = TOOL_ICON[tool];
   return (
-    <Icon
-      size={ICON_PX}
-      strokeWidth={ICON_STROKE}
-      className={failed ? "text-[var(--atlas-status-error-foreground)]" : undefined}
-    />
+    <Icon size={ICON_PX} strokeWidth={ICON_STROKE} className={failed ? "text-error" : undefined} />
   );
 }
 

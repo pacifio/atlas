@@ -131,7 +131,7 @@ pub fn build_session_handoff(
     current_session_id: &str,
     transcripts_dir: &Path,
 ) -> Option<(String, usize)> {
-    let roots = scope_roots(cwd, transcripts_dir);
+    let roots = scope_roots(cwd, Some(transcripts_dir));
     // A root whose capture was never enabled has no store and is skipped.
     let stores: Vec<(&PathBuf, Store)> = roots
         .iter()
@@ -194,8 +194,8 @@ enum Origin {
 /// a scope) and every subdirectory of one that Atlas has recorded a session in
 /// (subdirectory launches share it too) — found through the transcripts Atlas
 /// keeps for every session, since each launch directory keeps its own capture
-/// store.
-fn scope_roots(cwd: &str, transcripts_dir: &Path) -> Vec<PathBuf> {
+/// store. Without `transcripts_dir` only `cwd` and the worktrees are found.
+pub(crate) fn scope_roots(cwd: &str, transcripts_dir: Option<&Path>) -> Vec<PathBuf> {
     let mut roots = vec![PathBuf::from(cwd)];
     let mut seen: HashSet<PathBuf> = HashSet::from([canonical(Path::new(cwd))]);
     let worktrees: Vec<PathBuf> = atlas_checkpoint::git::worktree_paths(Path::new(cwd))
@@ -210,6 +210,9 @@ fn scope_roots(cwd: &str, transcripts_dir: &Path) -> Vec<PathBuf> {
             roots.push(wt.clone());
         }
     }
+    let Some(transcripts_dir) = transcripts_dir else {
+        return roots;
+    };
     let scope = canonical(&atlas_checkpoint::git::scope_root(Path::new(cwd)));
     for (launched, _) in super::agent_transcript::recorded_projects(transcripts_dir) {
         let dir = canonical(Path::new(&launched));
@@ -404,6 +407,9 @@ where
     SF: std::future::Future<Output = String>,
 {
     let (raw_body, turns) = raw?;
+    // Redacted before it is summarised by a provider or handed to the next
+    // agent (decision 2).
+    let raw_body = atlas_memory::record::redact(&raw_body);
     let (text, attribution) =
         if pref.mode == "provider" && !pref.provider.is_empty() && !pref.model.is_empty() {
             let summary =
@@ -902,6 +908,36 @@ mod tests {
         .await;
         assert_eq!(fell_back, handoff("User: hi\nAssistant: yo", "raw"));
         assert_eq!(handoff_block(None, &provider, never).await, None);
+    }
+
+    #[tokio::test]
+    async fn the_handoff_is_redacted_before_it_is_summarized_or_returned() {
+        use super::super::memory_sharing::SummarizerPref;
+        let secret = "sk-proj-AbCdEf0123456789GhIjKlMnOpQrStUv";
+        let raw = Some((format!("[user] use {secret}"), 1));
+        let pref = SummarizerPref {
+            mode: "provider".into(),
+            provider: "openai".into(),
+            model: "m".into(),
+        };
+        let sent = std::sync::Arc::new(parking_lot::Mutex::new(String::new()));
+        let seen = sent.clone();
+        let h = handoff_block(raw.clone(), &pref, |text, _, _| async move {
+            *seen.lock() = text.clone();
+            text // the summariser's failure fallback: the input back
+        })
+        .await
+        .unwrap();
+        assert!(!sent.lock().contains(secret));
+        assert!(!h.text.contains(secret));
+        let raw_pref = SummarizerPref {
+            mode: "raw".into(),
+            ..pref
+        };
+        let h = handoff_block(raw, &raw_pref, |t, _, _| async move { t })
+            .await
+            .unwrap();
+        assert!(!h.text.contains(secret));
     }
 
     #[test]

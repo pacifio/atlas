@@ -3,8 +3,8 @@
 # Podman). See the docblock in scripts/ci-local.mjs.
 #
 # Built for the host's architecture, never emulated: on arm64 that is CI's
-# arch; on x86-64 it is the arch release-linux.yml ships, which no CI job
-# tests. ci-local passes the three versions in from rust-toolchain.toml and
+# arch; on x86-64 it is the other arch release-linux.yml ships, which only
+# that workflow's own Verify step tests. ci-local passes the three versions in from rust-toolchain.toml and
 # mise.toml and tags the image by them, so a pin change builds a new image
 # rather than drifting from CI.
 #

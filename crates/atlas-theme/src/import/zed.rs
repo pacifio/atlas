@@ -268,11 +268,11 @@ fn import_one(
 
     draft.fill_palette();
     derive_base_tokens(&mut draft, style);
-    draft.fill_required_base();
+    draft.fill_base();
 
     record_ignored(style, &mut report);
     report.note(
-        "Atlas's theme keys were modeled on Zed's roles, so the editor, terminal, syntax and diff colors transfer directly",
+        "Zed's colour roles map onto Atlas's theme keys almost one-to-one, so the editor, terminal, syntax and diff colors transfer directly",
     );
     report.note(
         "Zed has no shadcn layer, so all 45 base tokens were derived from the style — check `primary`, `accent` and `card` first if the chrome looks off",
@@ -473,6 +473,7 @@ fn finish_theme_with_name(
         name_hint: Some(name.to_string()),
         author_hint: Some(author.unwrap_or(family).to_string()),
         license_hint: options.license_hint.clone(),
+        include_root: None,
     };
     finish_theme(drafts, report, &scoped)
 }

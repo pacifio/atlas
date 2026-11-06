@@ -73,8 +73,46 @@ export function stripNextSteps(content: string): string {
   let out = content;
   const dir = out.indexOf(NEXT_STEPS_MARKER);
   if (dir >= 0) out = out.slice(0, dir);
-  // `<next_step` (not `<next_steps`) so a partial tag never flashes mid-stream.
-  const tag = out.toLowerCase().lastIndexOf("<next_step");
+  const tag = lastIndexOfTagCI(out, OPEN_TAG);
   if (tag >= 0) out = out.slice(0, tag);
-  return out.replace(/\s+$/, "");
+  return out.trimEnd();
+}
+
+/** `<next_step`, not `<next_steps`, so a partial tag never flashes mid-stream. */
+const OPEN_TAG = "<next_step";
+
+/**
+ * `haystack.toLowerCase().lastIndexOf(tag)` without the copy.
+ *
+ * This runs on the streaming tail on every animation frame — the per-message
+ * cache above is keyed by message object, and Immer hands the tail a new
+ * identity per chunk, so the one message that matters is a guaranteed miss.
+ * Lower-casing the whole body to find a ten-character tag therefore allocated a
+ * full copy of the growing answer per frame, i.e. O(length²) over the turn.
+ *
+ * `lastIndexOf("<", …)` is a native search, and markdown prose holds few `<`
+ * characters, so this walks a handful of candidates and compares ten bytes at
+ * each. `tag` must be lower-case and ASCII.
+ */
+function lastIndexOfTagCI(haystack: string, tag: string): number {
+  // `lastIndexOf(x, -1)` is `lastIndexOf(x, 0)`, not "none": a `<` at index 0
+  // that is not the tag would be found again forever. Stop explicitly.
+  for (
+    let at = haystack.lastIndexOf("<");
+    at >= 0;
+    at = at > 0 ? haystack.lastIndexOf("<", at - 1) : -1
+  ) {
+    if (at + tag.length > haystack.length) continue;
+    let same = true;
+    for (let i = 1; i < tag.length; i++) {
+      const c = haystack.charCodeAt(at + i);
+      // ASCII upper → lower; anything else compares as itself.
+      if ((c >= 65 && c <= 90 ? c + 32 : c) !== tag.charCodeAt(i)) {
+        same = false;
+        break;
+      }
+    }
+    if (same) return at;
+  }
+  return -1;
 }

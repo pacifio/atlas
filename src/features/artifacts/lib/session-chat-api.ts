@@ -65,18 +65,23 @@ export const sessionChat = {
    * `checkpoints` scopes the grounding to those commits' spans — the work that
    * produced them, not just their diffstats. Empty/undefined grounds on the
    * whole Session, which is what every thread did before scoping existed.
+   *
+   * `remoteProjectId` lets Rust fall back to the server's copy when the
+   * Session is not in this machine's store, exactly as the viewer does.
    */
   retrieve: (
     projectPath: string,
     sessionId: string,
     query: string,
     checkpoints?: string[] | null,
+    remoteProjectId?: string | null,
   ) =>
     invoke<RetrieveResult>("session_chat_retrieve", {
       projectPath,
       sessionId,
       query,
       checkpoints: checkpoints?.length ? checkpoints : null,
+      remoteProjectId: remoteProjectId ?? null,
     }),
 
   threadsList: (agentSessionId: string) =>

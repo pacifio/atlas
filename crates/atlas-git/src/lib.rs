@@ -6,9 +6,9 @@
 //! no tokio) so `cargo test -p atlas-git` covers the parsing-heavy parts:
 //!
 //! - [`exec`] — the single spawn chokepoint (`GitCommand`), buffered and
-//!   streaming variants, ported from GitHub Desktop's `git()`.
+//!   streaming variants.
 //! - [`error`] — stderr → [`error::GitErrorCode`] taxonomy + friendly
-//!   messages (ported from dugite / Desktop's `getDescriptionForError`).
+//!   messages.
 //! - [`status`] — `git status --porcelain=2 -z` parser (branch header,
 //!   ahead/behind, renames, submodule codes, conflicts).
 

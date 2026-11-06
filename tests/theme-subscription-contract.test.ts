@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
  * Every consumer that reads a RESOLVED theme colour must have a way to hear
  * that the theme changed.
  *
- * Most of Atlas recolours for free, because a CSS rule naming `var(--atlas-…)`
+ * Most of Atlas recolours for free, because a CSS rule naming a theme key (`var(--element-hover)`)
  * is late-bound: `applyTheme` rewrites the `:root` block and the next paint is
  * the new theme. The exceptions are the subsystems that cannot use a custom
  * property — a canvas, a WebGL scene, an xterm `ITheme`, a recharts `fill`, a
@@ -26,7 +26,7 @@ import { fileURLToPath } from "node:url";
  * `atlas:theme-applied` event that `applyTheme` dispatches:
  *
  *   `onThemeApplied(cb)`   imperative owners (xterm, the two pixi scenes)
- *   `useThemeVersion()`    React (recharts, mermaid, the dither field)
+ *   `useThemeVersion()`    React (recharts, mermaid)
  *   a raw `window.addEventListener(THEME_APPLIED_EVENT, …)` (CodeMirror,
  *                          which reconfigures a compartment rather than
  *                          re-rendering)
@@ -94,7 +94,7 @@ const EXEMPT: Record<string, string> = {
   "src/features/theme/theme-values.ts":
     "It IS the reader, and the subscription machinery — `onThemeApplied` and `useThemeVersion` are defined here.",
   "src/features/editor/themes/build-cm-theme.ts":
-    "A pure builder: it turns a `ResolvedTheme` into CodeMirror extensions and holds nothing. Its two callers (`editor-panel.tsx`, `draft-editor.tsx`) subscribe and re-run it, which is the only place a subscription could do any good.",
+    "A pure builder: it turns a `ResolvedTheme` into CodeMirror extensions and holds nothing. Its caller (`draft-editor.tsx`) subscribes and re-runs it, which is the only place a subscription could do any good.",
   "src/features/terminal/lib/terminal-theme.ts":
     "A pure builder for xterm's `ITheme`. `terminal-session.ts` subscribes once for every session and calls this from `retheme()`.",
   "src/components/graph-palette.ts":
@@ -148,7 +148,7 @@ describe("theme subscription contract", () => {
       "src/components/graph-palette.ts", // both pixi graphs
       "src/features/usage/lib/palette.ts", // the Usage tab's series colours
       "src/features/editor/themes/build-cm-theme.ts", // CodeMirror
-      "src/components/mermaid-block.tsx", // mermaid
+      "src/components/views/mermaid-block-view.tsx", // mermaid
     ]) {
       expect(
         readers.map((r) => r.where),
@@ -218,11 +218,10 @@ describe("theme subscription contract", () => {
         "src/features/terminal/lib/terminal-session.ts",
       ],
       "src/components/graph-palette.ts": [
-        "src/features/knowledge/components/knowledge-graph.tsx",
-        "src/features/memory/components/memory-graph-canvas.tsx",
+        "src/features/knowledge/components/views/knowledge-graph-canvas.tsx",
+        "src/features/memory/components/views/memory-graph-canvas-view.tsx",
       ],
       "src/features/editor/themes/build-cm-theme.ts": [
-        "src/features/editor/components/editor-panel.tsx",
         "src/features/comms/components/draft-editor.tsx",
       ],
     };

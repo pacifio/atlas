@@ -3,8 +3,7 @@
 // it into its top-level blocks by source offset. A completed block's slice is
 // byte-identical every frame, so rendering each block through the source-keyed
 // `CachedMarkdown` cache makes completed blocks pure cache hits — only the
-// trailing (still-streaming) block re-parses. Mirrors Zed's `root_block_starts`
-// and Open WebUI's per-block-token rendering.
+// trailing (still-streaming) block re-parses.
 
 import { unified } from "unified";
 import remarkParse from "remark-parse";
@@ -29,22 +28,111 @@ function getBlockParser(): ReturnType<typeof buildParser> {
  * error — the caller renders that one block as a whole, which is always safe.
  */
 export function splitTopLevelBlocks(source: string): string[] {
-  if (!source) return [];
+  return splitFrom(source, 0, [], []).blocks;
+}
+
+/**
+ * A split, plus where the next one may resume from.
+ *
+ * `starts[i]` is the absolute source offset of `blocks[i]`. `windowStart` is
+ * the offset of the LAST-BUT-ONE block. Everything before it is settled:
+ * appending to the source cannot change those blocks, so the next split can
+ * keep them and parse only from there.
+ *
+ * Offsets are carried rather than recovered by searching for the block's text:
+ * a block that repeats (`ok` twice), or whose text is a prefix of a later block
+ * (`foo` then `foo bar`), makes `indexOf` land on the wrong one — which
+ * duplicated blocks and, worse, truncated the last one to its lookalike.
+ */
+export interface BlockSplit {
+  blocks: string[];
+  starts: number[];
+  windowStart: number;
+  /** The source this split describes — the next call checks it still prefixes. */
+  source: string;
+}
+
+export const EMPTY_SPLIT: BlockSplit = { blocks: [], starts: [], windowStart: 0, source: "" };
+
+/**
+ * `splitTopLevelBlocks` for a source that is still growing, reusing `prev`.
+ *
+ * The whole-source parse this replaces ran once per animation frame while an
+ * answer streamed, so a reply cost O(length) to split on every frame and
+ * O(length²) over the turn — the parse the "only the trailing block re-parses"
+ * design was meant to avoid, moved one layer down into the split itself.
+ *
+ * **Why one block of lookback is enough.** Appending to a markdown document can
+ * only reach backwards as far as the block immediately before the last one:
+ * `---` turns the paragraph *directly* above it into a setext heading, a lazy
+ * continuation extends the paragraph it touches, and a list can only absorb
+ * what follows it while nothing else has intervened (anything that intervened
+ * already closed it). An unclosed fence is one block by construction, so the
+ * tail is inside it and the window covers it. Keeping blocks up to
+ * `windowStart` and re-parsing from there is therefore the same answer a full
+ * parse gives, which `markdown-blocks-incremental.test.ts` checks block-for-block
+ * against every prefix of documents containing each of those constructs — and
+ * repeated and lookalike blocks, which is where a text-search version failed.
+ *
+ * Reuse is conditional on the settled prefix being unchanged — verified with a
+ * string compare, which is on the order of a thousand times cheaper than the
+ * parse it guards and is exact, so a source that was replaced rather than
+ * appended to simply re-splits in full.
+ */
+export function splitIncremental(source: string, prev: BlockSplit): BlockSplit {
+  if (!source) return EMPTY_SPLIT;
+  const reusable =
+    prev.windowStart > 0 &&
+    source.length >= prev.source.length &&
+    source.startsWith(prev.source.slice(0, prev.windowStart));
+  if (!reusable) return finish(source, splitFrom(source, 0, [], []));
+  // Settled: every block that starts before the window. The last-but-one
+  // block starts AT the window, so this is exactly blocks 0..n-3.
+  let keep = 0;
+  while (keep < prev.starts.length && prev.starts[keep] < prev.windowStart) keep++;
+  return finish(
+    source,
+    splitFrom(source, prev.windowStart, prev.blocks.slice(0, keep), prev.starts.slice(0, keep)),
+  );
+}
+
+function finish(source: string, split: { blocks: string[]; starts: number[] }): BlockSplit {
+  const { blocks, starts } = split;
+  const windowStart = starts.length >= 3 ? starts[starts.length - 2] : 0;
+  return { blocks, starts, windowStart, source };
+}
+
+/** Parse `source` from `offset`, appending its blocks (and their absolute
+ *  offsets) to the settled ones. */
+function splitFrom(
+  source: string,
+  offset: number,
+  settled: string[],
+  settledStarts: number[],
+): { blocks: string[]; starts: number[] } {
+  if (!source) return { blocks: [], starts: [] };
+  const tail = offset > 0 ? source.slice(offset) : source;
   try {
-    const tree = getBlockParser().parse(source) as { children?: OffsetNode[] };
+    const tree = getBlockParser().parse(tail) as { children?: OffsetNode[] };
     const children = tree.children ?? [];
-    if (children.length <= 1) return [source];
-    const blocks: string[] = [];
+    if (children.length <= 1 && settled.length === 0) return { blocks: [source], starts: [0] };
+    const blocks = settled.slice();
+    const starts = settledStarts.slice();
     for (const child of children) {
       const start = child.position?.start?.offset;
       const end = child.position?.end?.offset;
       if (start == null || end == null) continue;
-      const block = source.slice(start, end);
-      if (block.trim().length > 0) blocks.push(block);
+      const block = tail.slice(start, end);
+      if (block.trim().length > 0) {
+        blocks.push(block);
+        starts.push(offset + start);
+      }
     }
-    return blocks.length > 0 ? blocks : [source];
+    return blocks.length > 0 ? { blocks, starts } : { blocks: [source], starts: [0] };
   } catch {
-    return [source];
+    return settled.length > 0
+      ? { blocks: [...settled, tail], starts: [...settledStarts, offset] }
+      : { blocks: [source], starts: [0] };
   }
 }
 

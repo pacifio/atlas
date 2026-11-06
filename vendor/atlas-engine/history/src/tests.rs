@@ -381,7 +381,14 @@ fn rollout_item_variants_preserve_existing_payload_shapes() -> Result<()> {
 #[test]
 /// Keeps the generated schema aligned with each variant's actual persisted shape.
 fn rollout_item_schema_matches_tagged_payload_and_sibling_metadata() -> Result<()> {
-    let schema = serde_json::to_value(schemars::schema_for!(RolloutItem))?;
+    // draft-07, whose `definitions` and `enum` tags the assertions below read;
+    // `schema_for!` is 2020-12.
+    let schema = serde_json::to_value(
+        schemars::generate::SchemaSettings::draft07()
+            .with_transform(atlas_engine_protocol::schema_compat::Compat08::with_null())
+            .into_generator()
+            .into_root_schema_for::<RolloutItem>(),
+    )?;
     let variants = schema["oneOf"].as_array().expect("rollout variants");
     assert_eq!(variants.len(), 9);
 

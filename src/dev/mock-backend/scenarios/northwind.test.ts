@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 import type { BoardPage, SessionDetail } from "@/features/artifacts/types";
 import type { CommentThreads } from "@/features/artifacts/lib/comments-api";
-import type { CommitSession } from "@/features/git/components/git-manager/history-view";
+import type { CommitSession } from "@/features/git/components/commit-view";
 import type { CommsSnapshot } from "@/features/comms/lib/comms-api";
 import { northwindFilesAt } from "../fixtures/northwind-repo";
 import { CONTENT } from "./northwind-content";

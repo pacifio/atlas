@@ -17,7 +17,9 @@ import { invoke } from "@tauri-apps/api/core";
 import type { EntryKind } from "../types";
 
 /** Where a comment is attached. Mirrors the server's `anchorKind` exactly. */
-export type AnchorKind = "session" | "message" | "tool_call" | "checkpoint";
+/** `thread_range` is a span of a shared Thread's transcript: never minted
+ *  here, only read (an inbox entry on a Thread comment carries it). */
+export type AnchorKind = "session" | "message" | "tool_call" | "checkpoint" | "thread_range";
 
 /** The server's cap, enforced here so the composer can say so before sending. */
 export const COMMENT_BODY_MAX = 4000;
@@ -42,6 +44,16 @@ export interface Comment {
   /** Roots only — the server refuses to resolve a reply. */
   resolvedAt: string | null;
   resolvedBy: string | null;
+  /** Who voted it up and who down — member ids, oldest first. Absent from a
+   *  server older than votes; read it through `NO_VOTES`. */
+  votes?: CommentVotes;
+}
+
+/** The people on each side, not two counts — so a reader can tell its own
+ *  vote from the rest and name who agreed. Only members vote. */
+export interface CommentVotes {
+  up: string[];
+  down: string[];
 }
 
 /**
@@ -114,6 +126,11 @@ export const comments = {
       resolved: patch.resolved ?? null,
     }),
 
+  /** One person's vote: `1` up, `-1` down, `0` takes it back. A value, not a
+   *  toggle — a retry cannot undo itself. Members only. */
+  vote: (projectId: string, sessionId: string, commentId: string, value: 1 | -1 | 0) =>
+    invoke<Comment>("artifacts_cloud_comment_vote", { projectId, sessionId, commentId, value }),
+
   /** Answers with the comment, not nothing: the row survives with a null body. */
   remove: (projectId: string, sessionId: string, commentId: string) =>
     invoke<Comment>("artifacts_cloud_comment_delete", { projectId, sessionId, commentId }),
@@ -141,6 +158,17 @@ export function applyComment(threads: CommentThreads, comment: Comment): Comment
     return { ...threads, session: next };
   }
   return { ...threads, byAnchor: { ...threads.byAnchor, [comment.anchorId]: next } };
+}
+
+/** A comment by id, wherever it hangs in a bucketed set. */
+export function findComment(threads: CommentThreads, id: string): Comment | undefined {
+  const hit = threads.session.find((c) => c.id === id);
+  if (hit) return hit;
+  for (const bucket of Object.values(threads.byAnchor)) {
+    const found = bucket.find((c) => c.id === id);
+    if (found) return found;
+  }
+  return undefined;
 }
 
 /**

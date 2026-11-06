@@ -2,8 +2,7 @@
 //!
 //! Porcelain v2 gives us — in one spawn — everything the old v1 path needed
 //! three for: the branch name, upstream, ahead/behind, rename detection,
-//! submodule state and conflict codes. Ported from GitHub Desktop's
-//! `status-parser.ts`.
+//! submodule state and conflict codes.
 
 /// One changed path. `index`/`worktree` are the raw XY chars ('.', 'M', 'A',
 /// 'D', 'R', 'C', 'T', 'U', '?').

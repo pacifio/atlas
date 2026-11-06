@@ -24,7 +24,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use atlas_artifacts::{
-    AnchorKind, ArtifactsClient, ArtifactsEvent, ArtifactsManager, CloudBoard, Comment,
+    AnchorKind, ArtifactShare, ArtifactsClient, ArtifactsEvent, ArtifactsManager, CloudBoard,
+    Comment, InboxKind, InboxPage, InboxRead,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
@@ -62,9 +63,10 @@ impl ArtifactsCloudState {
 /// Mints the access JWT from the account session.
 ///
 /// Resolves `AuthState` per call rather than holding it: this source is built
-/// during `setup`, where registration order is not guaranteed.
-struct AppTokenSource {
-    app: AppHandle,
+/// during `setup`, where registration order is not guaranteed. Shared with
+/// Universal RC (`commands::rc`), whose doors are on the same ingest service.
+pub(crate) struct AppTokenSource {
+    pub(crate) app: AppHandle,
 }
 
 impl atlas_artifacts::TokenSource for AppTokenSource {
@@ -177,7 +179,7 @@ enum WireEvent {
     },
     CommentUpsert {
         session_id: String,
-        comment: Comment,
+        comment: Box<Comment>,
     },
     Presence {
         project_id: String,
@@ -213,7 +215,7 @@ fn emit(app: &AppHandle, event: ArtifactsEvent) {
             ..
         } => WireEvent::CommentUpsert {
             session_id,
-            comment: *comment,
+            comment,
         },
         ArtifactsEvent::Presence { key, online } => WireEvent::Presence {
             project_id: key.1,
@@ -539,8 +541,12 @@ pub async fn artifacts_cloud_session(
         .session_detail(&org_id, &project_id, &session_id)
         .await
         .map_err(|e| e.to_string())?;
+    Ok(local_detail(page))
+}
 
-    Ok(atlas_checkpoint::SessionDetail {
+/// A server page (or a whole read folded into one) in the local read model.
+fn local_detail(page: atlas_artifacts::SessionDetailPage) -> atlas_checkpoint::SessionDetail {
+    atlas_checkpoint::SessionDetail {
         summary: crate::commands::capture::remote_summary(page.summary),
         entries: page.entries.iter().map(remote_entry).collect(),
         counts: atlas_checkpoint::EntryCounts {
@@ -558,7 +564,253 @@ pub async fn artifacts_cloud_session(
                 count: t.count,
             })
             .collect(),
-    })
+    }
+}
+
+/// One message of a streamed Session read ([`artifacts_cloud_session_stream`]).
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum SessionStreamChunk {
+    /// The copy kept on disk by an earlier read: whole, as of then. Sent before
+    /// the network is touched, so a Session read before paints at once.
+    Cached {
+        detail: atlas_checkpoint::SessionDetail,
+    },
+    /// The server's first page agrees with the disk copy; nothing follows.
+    Unchanged,
+    /// One page: the whole-Session summary, counts and tallies, and THIS page's
+    /// entries only — the reader appends them. `done` on the last.
+    Page {
+        detail: atlas_checkpoint::SessionDetail,
+        done: bool,
+    },
+}
+
+/// How many pages one streamed read walks — `MAX_ENTRY_PAGES` in
+/// `atlas_artifacts::client`, for the same reason: one click must not become
+/// an unbounded crawl.
+const STREAM_MAX_PAGES: usize = 40;
+
+/// The newest streamed read per Session. A read that finds it is no longer the
+/// newest stops at its next page rather than walking the rest for nobody: a
+/// live Session is re-read on every board refresh, and `invoke` has no cancel.
+static STREAM_GENERATION: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<String, u64>>,
+> = std::sync::LazyLock::new(Default::default);
+
+fn stream_generation_bump(key: &str) -> u64 {
+    let mut map = STREAM_GENERATION
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let next = map.get(key).copied().unwrap_or(0) + 1;
+    map.insert(key.to_string(), next);
+    next
+}
+
+fn stream_is_current(key: &str, generation: u64) -> bool {
+    let map = STREAM_GENERATION
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    map.get(key).copied() == Some(generation)
+}
+
+/// One remote Session, streamed: the disk copy first if there is one, then the
+/// server's pages as they arrive.
+///
+/// [`artifacts_cloud_session`] reads a Session whole before answering, and the
+/// server spends ~0.7–1s on every 500-entry page before the first byte — so a
+/// 4,770-entry Session sat behind ten sequential round trips, ~12s of "Reading
+/// the session…", on EVERY open, because nothing outlived the app's in-memory
+/// cache. Now:
+///
+/// * a Session read before paints from `<app cache>/remote-sessions/` at once,
+///   and the first page decides whether that copy is still current — if so the
+///   read stops after one round trip;
+/// * one never read, or since grown, streams: the reader shows the first page
+///   after one round trip and appends the rest. The grouping it does (runs of
+///   tool calls, folded responses) is redone as entries arrive, so the final
+///   view is the whole-Session one, exactly as before.
+///
+/// The disk copy is written once the last page lands, and only then — a
+/// partial walk never replaces a whole one.
+#[tauri::command]
+pub async fn artifacts_cloud_session_stream(
+    project_id: String,
+    session_id: String,
+    on_chunk: tauri::ipc::Channel<SessionStreamChunk>,
+    app: AppHandle,
+) -> Result<(), String> {
+    let (client, org_id) = reader(&app)?;
+    let cache = remote_session_cache_path(&app, &org_id, &project_id, &session_id);
+    let key = format!("{org_id}\u{0}{project_id}\u{0}{session_id}");
+    let generation = stream_generation_bump(&key);
+
+    // What the disk copy was, for the freshness check against the first page.
+    let mut cached_mark: Option<(String, i64)> = None;
+    if let Some(path) = cache.clone() {
+        let read = tokio::task::spawn_blocking(move || read_cached_detail(&path))
+            .await
+            .ok()
+            .flatten();
+        if let Some(detail) = read {
+            cached_mark = Some(freshness_mark(&detail));
+            let _ = on_chunk.send(SessionStreamChunk::Cached { detail });
+        }
+    }
+
+    let mut cursor: Option<String> = None;
+    let mut entries: Vec<atlas_checkpoint::TimelineEntry> = Vec::new();
+    for page_no in 0..STREAM_MAX_PAGES {
+        if page_no > 0 && !stream_is_current(&key, generation) {
+            return Ok(());
+        }
+        let page = client
+            .session_page(&org_id, &project_id, &session_id, cursor.as_deref(), None)
+            .await
+            .map_err(|e| e.to_string())?;
+        let next = page.next_cursor.clone();
+        let detail = local_detail(page);
+
+        if page_no == 0 && cached_mark.as_ref() == Some(&freshness_mark(&detail)) {
+            if let Some(path) = cache.clone() {
+                // Recently used, for the eviction order.
+                let _ = tokio::task::spawn_blocking(move || touch(&path)).await;
+            }
+            let _ = on_chunk.send(SessionStreamChunk::Unchanged);
+            return Ok(());
+        }
+
+        // The last page, or the ceiling: either way nothing follows.
+        let done = next.is_none() || page_no + 1 == STREAM_MAX_PAGES;
+        entries.extend(detail.entries.iter().cloned());
+        let whole = done.then(|| atlas_checkpoint::SessionDetail {
+            summary: detail.summary.clone(),
+            entries: std::mem::take(&mut entries),
+            counts: detail.counts,
+            tools: detail.tools.clone(),
+        });
+        let _ = on_chunk.send(SessionStreamChunk::Page { detail, done });
+
+        if let Some(whole) = whole {
+            if let Some(path) = cache {
+                let _ =
+                    tokio::task::spawn_blocking(move || write_cached_detail(&path, &whole)).await;
+            }
+            return Ok(());
+        }
+        cursor = next;
+    }
+    Ok(())
+}
+
+/// What says a disk copy is still the Session the server holds: when it last
+/// changed, and how many entries it has.
+fn freshness_mark(detail: &atlas_checkpoint::SessionDetail) -> (String, i64) {
+    let c = &detail.counts;
+    (
+        detail.summary.updated_at.clone(),
+        c.prompts + c.responses + c.thinking + c.tool_calls + c.checkpoints,
+    )
+}
+
+/// The cap on everything kept under `remote-sessions/`. A long Session is a few
+/// megabytes of JSON; this holds dozens, and the least recently read go first.
+const REMOTE_SESSION_CACHE_BYTES: u64 = 256 * 1024 * 1024;
+
+/// `<app cache>/remote-sessions/<org>/<project>/<session>.json`, or `None` when
+/// the platform has no cache directory (the read then simply streams).
+///
+/// Keyed by the server Organisation first, so one tenant's Sessions are never
+/// served under another's. Ids are reduced to a safe alphabet before they
+/// become path segments.
+fn remote_session_cache_path(
+    app: &AppHandle,
+    org_id: &str,
+    project_id: &str,
+    session_id: &str,
+) -> Option<std::path::PathBuf> {
+    let safe = |s: &str| -> String {
+        s.chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect()
+    };
+    let root = app.path().app_cache_dir().ok()?.join("remote-sessions");
+    Some(
+        root.join(safe(org_id))
+            .join(safe(project_id))
+            .join(format!("{}.json", safe(session_id))),
+    )
+}
+
+fn read_cached_detail(path: &std::path::Path) -> Option<atlas_checkpoint::SessionDetail> {
+    let bytes = std::fs::read(path).ok()?;
+    // A copy from an older shape, or a torn write, is a miss — never an error
+    // in front of the reader; the stream that follows replaces it.
+    serde_json::from_slice(&bytes).ok()
+}
+
+fn write_cached_detail(path: &std::path::Path, detail: &atlas_checkpoint::SessionDetail) {
+    let Some(dir) = path.parent() else { return };
+    if std::fs::create_dir_all(dir).is_err() {
+        return;
+    }
+    let Ok(bytes) = serde_json::to_vec(detail) else {
+        return;
+    };
+    // Written aside and renamed, so a crash mid-write leaves the old copy or
+    // none — never half of one.
+    let tmp = path.with_extension("json.tmp");
+    if std::fs::write(&tmp, bytes).is_ok() && std::fs::rename(&tmp, path).is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    if let Some(root) = dir.parent().and_then(|p| p.parent()) {
+        evict_remote_sessions(root, REMOTE_SESSION_CACHE_BYTES);
+    }
+}
+
+fn touch(path: &std::path::Path) {
+    if let Ok(file) = std::fs::File::options().write(true).open(path) {
+        let _ = file.set_modified(std::time::SystemTime::now());
+    }
+}
+
+/// Delete the least recently read copies until everything under `root` fits.
+fn evict_remote_sessions(root: &std::path::Path, cap: u64) {
+    let mut files: Vec<(std::time::SystemTime, u64, std::path::PathBuf)> = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(read) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in read.flatten() {
+            let Ok(meta) = entry.metadata() else { continue };
+            if meta.is_dir() {
+                stack.push(entry.path());
+            } else {
+                let modified = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+                files.push((modified, meta.len(), entry.path()));
+            }
+        }
+    }
+    let mut total: u64 = files.iter().map(|(_, len, _)| len).sum();
+    if total <= cap {
+        return;
+    }
+    files.sort_by_key(|(modified, _, _)| *modified);
+    for (_, len, path) in files {
+        if total <= cap {
+            break;
+        }
+        if std::fs::remove_file(&path).is_ok() {
+            total = total.saturating_sub(len);
+        }
+    }
 }
 
 /// Fold one wire entry into the local read model.
@@ -705,6 +957,84 @@ pub async fn artifacts_cloud_comments(
     Ok(group(comments))
 }
 
+/// The public share link on one Session, if it has a live one.
+///
+/// Answers the Session's own share rather than the Project's whole list: the
+/// sheet asks about one Session, and handing it every link on the Project
+/// would make it the caller's job to work out which row is the right one.
+///
+/// `Ok(None)` covers both "no link" and "not on the server", which read the
+/// same to the sheet — there is nothing to show either way.
+#[tauri::command]
+pub async fn artifacts_cloud_session_share(
+    project_id: String,
+    session_id: String,
+    app: AppHandle,
+) -> Result<Option<ArtifactShare>, String> {
+    let (client, org_id) = reader(&app)?;
+    let shares = client
+        .shares(&org_id, &project_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(live_session_share(shares, &session_id))
+}
+
+/// Publish a Session on an unguessable link, and answer the link.
+///
+/// Session scope only — see `create_session_share` on the client for why a
+/// Project-wide link is not offered here.
+#[tauri::command]
+pub async fn artifacts_cloud_share_create(
+    project_id: String,
+    session_id: String,
+    comments: bool,
+    app: AppHandle,
+) -> Result<ArtifactShare, String> {
+    let (client, org_id) = reader(&app)?;
+    client
+        .create_session_share(&org_id, &project_id, &session_id, comments)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Take a link down. Every token already issued against it stops working.
+#[tauri::command]
+pub async fn artifacts_cloud_share_revoke(
+    project_id: String,
+    share_id: String,
+    app: AppHandle,
+) -> Result<(), String> {
+    let (client, org_id) = reader(&app)?;
+    client
+        .revoke_share(&org_id, &project_id, &share_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// The public address of a share slug — what a guest opens.
+#[tauri::command]
+pub fn artifacts_cloud_share_url(slug: String) -> String {
+    atlas_artifacts::share_web_url(&slug)
+}
+
+/// The Session's own live link, from a Project's whole list.
+///
+/// Live means not revoked and not past its expiry. A Session can carry more
+/// than one row over its life — publish, revoke, publish again — and only the
+/// one that still opens is an answer.
+fn live_session_share(shares: Vec<ArtifactShare>, session_id: &str) -> Option<ArtifactShare> {
+    let now = chrono::Utc::now();
+    shares.into_iter().find(|s| {
+        s.scope == "session"
+            && s.session_id.as_deref() == Some(session_id)
+            && s.revoked_at.is_none()
+            && s.expires_at
+                .as_deref()
+                .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
+                .is_none_or(|at| at > now)
+    })
+}
+
 /// Split a flat comment list into per-anchor buckets.
 fn group(comments: Vec<Comment>) -> CommentThreads {
     let mut by_anchor: std::collections::HashMap<String, Vec<Comment>> =
@@ -790,6 +1120,84 @@ pub async fn artifacts_cloud_comment_delete(
         .map_err(|e| e.to_string())
 }
 
+/// Vote on a comment: `1` up, `-1` down, `0` to take the vote back.
+#[tauri::command]
+pub async fn artifacts_cloud_comment_vote(
+    project_id: String,
+    session_id: String,
+    comment_id: String,
+    value: i8,
+    app: AppHandle,
+) -> Result<Comment, String> {
+    let (client, org_id) = reader(&app)?;
+    client
+        .vote_comment(&org_id, &project_id, &session_id, &comment_id, value)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+// ── The inbox ───────────────────────────────────────────────────────────────
+//
+// The signed-in person's mentions, replies and comments on their Sessions in
+// the active synced Organisation — the web's /inbox, on the same ingest doors.
+// Nothing pushes it; the window polls the unread count and reads pages on
+// demand.
+
+/// One page of the inbox. `filter` is the window's segmented control:
+/// `all`, `unread` or `mentions`. `cursor` continues a previous page.
+#[tauri::command]
+pub async fn artifacts_cloud_inbox(
+    filter: String,
+    cursor: Option<String>,
+    app: AppHandle,
+) -> Result<InboxPage, String> {
+    let (client, org_id) = reader(&app)?;
+    let (unread, kind) = match filter.as_str() {
+        "unread" => (true, None),
+        "mentions" => (false, Some(InboxKind::Mention)),
+        _ => (false, None),
+    };
+    client
+        .inbox_page(&org_id, unread, kind, cursor.as_deref(), Some(50))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// How many entries are unread — the sidebar's dot. One entry's page: the
+/// count is the Organisation's total whatever the page holds.
+#[tauri::command]
+pub async fn artifacts_cloud_inbox_unread(app: AppHandle) -> Result<u64, String> {
+    let (client, org_id) = reader(&app)?;
+    client
+        .inbox_page(&org_id, true, None, None, Some(1))
+        .await
+        .map(|page| page.unread)
+        .map_err(|e| e.to_string())
+}
+
+/// Mark entries read: these `ids`, or with `all` every entry in the active
+/// Organisation. The person's own act — the agent's org tools read the inbox
+/// and can never call this.
+#[tauri::command]
+pub async fn artifacts_cloud_inbox_read(
+    ids: Vec<String>,
+    all: bool,
+    app: AppHandle,
+) -> Result<(), String> {
+    let (client, org_id) = reader(&app)?;
+    let target = if all {
+        InboxRead::All { org_id: &org_id }
+    } else if ids.is_empty() {
+        return Ok(());
+    } else {
+        InboxRead::Ids(&ids)
+    };
+    client
+        .mark_inbox_read(target)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// The client and the Organisation it is pointed at, or a legible refusal.
 fn reader(app: &AppHandle) -> Result<(Arc<ArtifactsClient>, String), String> {
     let state = app
@@ -815,6 +1223,69 @@ fn parse_anchor(raw: &str) -> Result<AnchorKind, String> {
 mod tests {
     use super::*;
 
+    fn detail_with(entries: usize) -> atlas_checkpoint::SessionDetail {
+        let mut page = atlas_artifacts::SessionDetailPage::default();
+        page.summary.updated_at = "2026-11-01T10:00:00Z".into();
+        page.counts.prompts = entries as i64;
+        page.entries = (0..entries)
+            .map(|i| atlas_artifacts::RemoteEntry {
+                id: format!("e{i}"),
+                kind: "prompt".into(),
+                ..Default::default()
+            })
+            .collect();
+        local_detail(page)
+    }
+
+    #[test]
+    fn a_cached_session_reads_back_as_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("org/ws/ses.json");
+        let detail = detail_with(3);
+        write_cached_detail(&path, &detail);
+        assert_eq!(read_cached_detail(&path), Some(detail));
+    }
+
+    #[test]
+    fn a_torn_cache_file_is_a_miss_not_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ses.json");
+        std::fs::write(&path, b"{\"summary\":").unwrap();
+        assert_eq!(read_cached_detail(&path), None);
+    }
+
+    #[test]
+    fn freshness_follows_the_update_clock_and_the_entry_count() {
+        let a = detail_with(3);
+        let mut grown = detail_with(4);
+        assert_ne!(freshness_mark(&a), freshness_mark(&grown));
+        grown.counts.prompts = 3;
+        assert_eq!(freshness_mark(&a), freshness_mark(&grown));
+        grown.summary.updated_at = "2026-11-01T11:00:00Z".into();
+        assert_ne!(freshness_mark(&a), freshness_mark(&grown));
+    }
+
+    #[test]
+    fn eviction_drops_the_least_recently_read_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let old = root.join("org/ws/old.json");
+        let new = root.join("org/ws/new.json");
+        std::fs::create_dir_all(old.parent().unwrap()).unwrap();
+        std::fs::write(&old, vec![0u8; 600]).unwrap();
+        std::fs::write(&new, vec![0u8; 600]).unwrap();
+        let past = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        std::fs::File::options()
+            .write(true)
+            .open(&old)
+            .unwrap()
+            .set_modified(past)
+            .unwrap();
+        evict_remote_sessions(root, 1000);
+        assert!(!old.exists());
+        assert!(new.exists());
+    }
+
     fn comment(id: &str, kind: AnchorKind, anchor: &str, parent: Option<&str>) -> Comment {
         Comment {
             id: id.into(),
@@ -831,6 +1302,7 @@ mod tests {
             deleted_at: None,
             resolved_at: None,
             resolved_by: None,
+            votes: Default::default(),
         }
     }
 
@@ -843,7 +1315,7 @@ mod tests {
         let frames = [
             WireEvent::CommentUpsert {
                 session_id: "ses_1".into(),
-                comment: comment("c1", AnchorKind::Message, "msg_1", None),
+                comment: Box::new(comment("c1", AnchorKind::Message, "msg_1", None)),
             },
             WireEvent::EntryUpsert {
                 session_id: "ses_1".into(),
@@ -876,7 +1348,7 @@ mod tests {
         // The kind tag itself is what the renderer switches on.
         let json = serde_json::to_value(WireEvent::CommentUpsert {
             session_id: "ses_1".into(),
-            comment: comment("c1", AnchorKind::Message, "msg_1", None),
+            comment: Box::new(comment("c1", AnchorKind::Message, "msg_1", None)),
         })
         .unwrap();
         assert_eq!(json["kind"], "commentUpsert");

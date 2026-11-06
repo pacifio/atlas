@@ -4,7 +4,7 @@
  * imports is declared.
  */
 
-/** One `[[key]]` entry of `crates/atlas-theme/keys.toml`. */
+/** One `[[key]]` entry of `keys.toml` (desktop's copy, `crates/atlas-theme/keys.toml`). */
 export interface ThemeKeySource {
   name: string;
   group: string;
@@ -40,11 +40,21 @@ export interface ThemeKeyGroup {
 }
 
 export const OUTPUTS: {
-  registry: string;
   keyList: string;
+  baseRules: string;
   schema: string;
   docs: string;
+  builtins: string;
 };
+
+/** The installed `@tryatlas/design`'s root directory. */
+export function packageRoot(): string;
+
+/** Every file copied from the package, as `[from, to]` (package-relative, repo-relative). */
+export function packageCopies(): [string, string][];
+
+/** Committed theme files the package no longer ships. */
+export function strayThemes(): string[];
 
 /** Parses and validates the source; throws with every problem it found. */
 export function readSource(): {

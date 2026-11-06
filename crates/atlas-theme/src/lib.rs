@@ -11,11 +11,12 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-use schemars::{schema_for, JsonSchema};
+use schemars::{generate::SchemaSettings, transform::RecursiveTransform, JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub mod color;
+pub mod derive;
 pub mod export;
 pub mod import;
 pub mod toml_writer;
@@ -43,8 +44,10 @@ pub fn theme_keys() -> impl Iterator<Item = &'static str> {
 }
 
 /// The shadcn base tokens, in the order `docs/reference/theme-keys.md` and the
-/// built-in TOMLs list them. Public because the importers fill this exact set
-/// and the TOML writer emits it in this exact order.
+/// built-in TOMLs list them. None is required: [`derive`] fills one a theme
+/// leaves out, by the `[[base]]` rule of the same name in `keys.toml`, which
+/// must list exactly these in exactly this order. Public because the TOML
+/// writer emits them in this order.
 pub const BASE_TOKENS: &[&str] = &[
     "background",
     "foreground",
@@ -79,9 +82,6 @@ pub const BASE_TOKENS: &[&str] = &[
     "sidebar-border",
     "sidebar-ring",
     "radius",
-    "font-sans",
-    "font-serif",
-    "font-mono",
     "tracking-normal",
     "spacing",
     "shadow-2xs",
@@ -92,6 +92,13 @@ pub const BASE_TOKENS: &[&str] = &[
     "shadow-xl",
     "shadow-2xl",
 ];
+
+/// shadcn's three font stacks. Like every base token they are optional, but
+/// unlike the rest they have no `[[base]]` rule: one a theme leaves out is
+/// Atlas's own default from `@tryatlas/design`'s `tokens.css`. A tweakcn import keeps them. Either
+/// way a user's font setting outranks them, so they only decide the fonts of
+/// someone who left that setting on "follow the theme".
+pub const FONT_TOKENS: &[&str] = &["font-sans", "font-serif", "font-mono"];
 
 /// Base tokens whose value is free text (a length, a font stack, a composed
 /// shadow) rather than a colour, so the colour validator skips them — and
@@ -126,6 +133,13 @@ pub struct Theme {
     pub name: String,
     pub author: String,
     pub license: String,
+    /// Base tokens shared by both variants — shadcn's `cssVars.theme`, where
+    /// the radius, the fonts, tracking and spacing usually live. A variant's
+    /// own `base` wins over this, and after parsing each variant's `base`
+    /// already holds the merge, so readers need not look here; it is kept
+    /// so a theme writes back the way it was written.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub base: BTreeMap<String, String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dark: Option<ThemeVariant>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -138,6 +152,9 @@ pub struct Theme {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ThemeVariant {
+    /// The shadcn base tokens this variant sets. Any may be left out: Atlas
+    /// derives it from `background`, `foreground` and `primary`.
+    #[serde(default)]
     pub base: BTreeMap<String, String>,
     #[serde(default)]
     pub palette: BTreeMap<String, String>,
@@ -254,6 +271,8 @@ struct RawTheme {
     author: String,
     license: String,
     #[serde(default)]
+    base: Option<toml::Value>,
+    #[serde(default)]
     dark: Option<toml::Value>,
     #[serde(default)]
     light: Option<toml::Value>,
@@ -307,13 +326,15 @@ pub fn parse_theme(source: &str, origin: impl Into<String>) -> Result<Theme, The
     if raw.id.trim().is_empty() || raw.name.trim().is_empty() {
         return Err(validation(&origin, "id and name must not be empty"));
     }
+    let shared = flatten_string_table(raw.base.as_ref(), &origin, "base")?;
+    validate_shared_base(&shared, &origin)?;
     let dark = raw
         .dark
-        .map(|value| parse_variant(value, &origin, "dark"))
+        .map(|value| parse_variant(value, &shared, &origin, "dark"))
         .transpose()?;
     let light = raw
         .light
-        .map(|value| parse_variant(value, &origin, "light"))
+        .map(|value| parse_variant(value, &shared, &origin, "light"))
         .transpose()?;
     if dark.is_none() && light.is_none() {
         return Err(validation(
@@ -327,6 +348,7 @@ pub fn parse_theme(source: &str, origin: impl Into<String>) -> Result<Theme, The
         name: raw.name,
         author: raw.author,
         license: raw.license,
+        base: shared,
         dark,
         light,
         warnings: Vec::new(),
@@ -396,6 +418,15 @@ fn config_root_from(xdg: Option<&Path>, home: Option<&Path>) -> Option<PathBuf> 
     home.map(|home| home.join(".config").join(atlas_profile::config_dir_name()))
 }
 
+/// An id a theme file can be written under: letters, digits, `-` and `_`,
+/// so it is one path segment and nothing else.
+pub fn is_writable_id(id: &str) -> bool {
+    !id.is_empty()
+        && id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+}
+
 /// Write a theme into `dir` as `<id>.toml`, returning the path.
 ///
 /// The TOML is parsed first, and the id it declares is what names the file —
@@ -406,11 +437,7 @@ fn config_root_from(xdg: Option<&Path>, home: Option<&Path>) -> Option<PathBuf> 
 pub fn write_theme_to(dir: &Path, source: &str) -> Result<PathBuf, ThemeError> {
     let theme = parse_theme(source, "import")?;
     let id = theme.id.trim();
-    if id.is_empty()
-        || !id
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
-    {
+    if !is_writable_id(id) {
         return Err(validation(
             "import",
             format!("theme id '{id}' must be letters, digits, '-' or '_'"),
@@ -529,13 +556,19 @@ pub fn load_user_themes_from(dir: &Path) -> Result<(Vec<Theme>, Vec<ThemeWarning
 }
 
 pub fn all_themes() -> Result<ThemeCatalog, ThemeError> {
+    all_themes_from(user_theme_dir().as_deref())
+}
+
+/// [`all_themes`] over a given user-theme directory, so a test can assemble
+/// the real catalog without touching `~/.config`.
+fn all_themes_from(user_dir: Option<&Path>) -> Result<ThemeCatalog, ThemeError> {
     let mut by_id = built_in_themes()?
         .into_iter()
         .map(|theme| (theme.id.clone(), (theme, true)))
         .collect::<BTreeMap<_, _>>();
     let mut warnings = Vec::new();
-    if let Some(dir) = user_theme_dir() {
-        let (themes, failures) = load_user_themes_from(&dir)?;
+    if let Some(dir) = user_dir {
+        let (themes, failures) = load_user_themes_from(dir)?;
         for theme in themes {
             by_id.insert(theme.id.clone(), (theme, false));
         }
@@ -632,6 +665,39 @@ fn debounce(rx: &mpsc::Receiver<()>, window: Duration, mut on_change: impl FnMut
     }
 }
 
+/// Puts back three details of how schemars 0.8 wrote the schema, so that moving to
+/// schemars 1 leaves `schema/theme-v1.json` as editors already know it: a doc
+/// comment becomes one line per paragraph (1.x keeps the author's wrapping),
+/// `required` is sorted (1.x keeps field order), and `minimum` is a float.
+fn keep_schemars_0_8_shapes(schema: &mut Schema) {
+    use serde_json::Value;
+    let Some(object) = schema.as_object_mut() else {
+        return;
+    };
+    if let Some(Value::String(text)) = object.get_mut("description") {
+        *text = text
+            .trim()
+            .split("\n\n")
+            .map(|paragraph| {
+                paragraph
+                    .lines()
+                    .map(str::trim)
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+    }
+    if let Some(Value::Array(required)) = object.get_mut("required") {
+        required.sort_by(|a, b| a.as_str().cmp(&b.as_str()));
+    }
+    if let Some(value) = object.get_mut("minimum") {
+        if let Some(number) = value.as_f64().and_then(serde_json::Number::from_f64) {
+            *value = Value::Number(number);
+        }
+    }
+}
+
 /// The schema authors get through the `#:schema` comment at the top of a theme.
 ///
 /// `schemars` describes the struct, which types `keys` as an open map of
@@ -644,8 +710,16 @@ fn debounce(rx: &mpsc::Receiver<()>, window: Duration, mut on_change: impl FnMut
 /// unknown key as a warning for forward compatibility. That is deliberate — the
 /// editor should flag a key this build has never heard of.
 pub fn json_schema() -> serde_json::Value {
-    let mut schema =
-        serde_json::to_value(schema_for!(Theme)).expect("Theme JSON schema serializes");
+    // Draft-07 with `definitions`, which the loader below and the theme-key
+    // generator both address by path; `schema_for!` is 2020-12 (`$defs`) since
+    // schemars 1.
+    let mut schema = serde_json::to_value(
+        SchemaSettings::draft07()
+            .with_transform(RecursiveTransform(keep_schemars_0_8_shapes))
+            .into_generator()
+            .into_root_schema_for::<Theme>(),
+    )
+    .expect("Theme JSON schema serializes");
     let keys = schema
         .pointer_mut("/definitions/ThemeVariant/properties/keys")
         .and_then(serde_json::Value::as_object_mut)
@@ -674,6 +748,7 @@ pub fn json_schema() -> serde_json::Value {
 
 fn parse_variant(
     value: toml::Value,
+    shared: &BTreeMap<String, String>,
     origin: &str,
     appearance: &str,
 ) -> Result<ThemeVariant, ThemeError> {
@@ -691,7 +766,11 @@ fn parse_variant(
             format!("unknown {appearance} field(s): {}", unknown.join(", ")),
         ));
     }
-    let base = flatten_string_table(table.get("base"), origin, &format!("{appearance}.base"))?;
+    // The shared `[base]` first, then the variant's own on top of it. Every
+    // token is optional (ADR-0022), so `[<variant>.base]` may be absent.
+    let own = flatten_string_table(table.get("base"), origin, &format!("{appearance}.base"))?;
+    let mut base = shared.clone();
+    base.extend(own);
     let palette = flatten_string_table(
         table.get("palette"),
         origin,
@@ -712,11 +791,7 @@ fn flatten_string_table(
     field: &str,
 ) -> Result<BTreeMap<String, String>, ThemeError> {
     let Some(value) = value else {
-        return if field.ends_with(".base") {
-            Err(validation(origin, format!("[{field}] is required")))
-        } else {
-            Ok(BTreeMap::new())
-        };
+        return Ok(BTreeMap::new());
     };
     let mut out = BTreeMap::new();
     flatten_strings(value, "", &mut out, origin, field)?;
@@ -853,6 +928,27 @@ fn is_leaf_prefix(leaf: &str, key: &str) -> bool {
         .is_some_and(|rest| rest.starts_with('.'))
 }
 
+/// The top-level `[base]`: any base token, checked the way a variant's are,
+/// but never required to be complete — the variants are checked for that once
+/// it has been merged into them.
+fn validate_shared_base(shared: &BTreeMap<String, String>, origin: &str) -> Result<(), ThemeError> {
+    for (key, value) in shared {
+        if !BASE_TOKENS.contains(&key.as_str()) && !FONT_TOKENS.contains(&key.as_str()) {
+            return Err(validation(
+                origin,
+                format!("unknown base token '{key}' in base"),
+            ));
+        }
+        if !is_valid_base_value(key, value) {
+            return Err(validation(
+                origin,
+                format!("base.{key} is not a valid value: {value:?}"),
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn validate_variant(
     base: &BTreeMap<String, String>,
     palette: &BTreeMap<String, String>,
@@ -860,25 +956,15 @@ fn validate_variant(
     origin: &str,
     appearance: &str,
 ) -> Result<(), ThemeError> {
-    let allowed_base = BASE_TOKENS.iter().copied().collect::<BTreeSet<_>>();
+    let allowed_base = BASE_TOKENS
+        .iter()
+        .chain(FONT_TOKENS)
+        .copied()
+        .collect::<BTreeSet<_>>();
     if let Some(key) = base.keys().find(|key| !allowed_base.contains(key.as_str())) {
         return Err(validation(
             origin,
             format!("unknown base token '{key}' in {appearance}"),
-        ));
-    }
-    let missing = BASE_TOKENS
-        .iter()
-        .filter(|key| !base.contains_key(**key))
-        .copied()
-        .collect::<Vec<_>>();
-    if !missing.is_empty() {
-        return Err(validation(
-            origin,
-            format!(
-                "missing base token(s) in {appearance}: {}",
-                missing.join(", ")
-            ),
         ));
     }
     let palette_keys = PALETTE_KEYS.iter().copied().collect::<BTreeSet<_>>();
@@ -1050,8 +1136,26 @@ pub(crate) fn validation(origin: &str, message: impl Into<String>) -> ThemeError
 mod tests {
     use super::*;
 
+    /// What the theme editor keeps rather than slugging: an edit of a
+    /// hand-written `my_theme` must not save as a new `my-theme`.
+    #[test]
+    fn a_writable_id_is_one_safe_path_segment() {
+        assert!(is_writable_id("my_theme"));
+        assert!(is_writable_id("MyTheme-2"));
+        assert!(!is_writable_id(""));
+        assert!(!is_writable_id("../x"));
+        assert!(!is_writable_id("my theme"));
+    }
+
     fn minimal_theme(extra: &str) -> String {
-        let base = BASE_TOKENS
+        let base = minimal_base();
+        format!(
+            "schema = 1\nid = \"test\"\nname = \"Test\"\nauthor = \"Test\"\nlicense = \"MIT\"\n[dark.base]\n{base}\n{extra}\n"
+        )
+    }
+
+    fn minimal_base() -> String {
+        BASE_TOKENS
             .iter()
             .map(|key| {
                 let value = if NON_COLOR_BASE_TOKENS.contains(key) {
@@ -1062,10 +1166,7 @@ mod tests {
                 format!("\"{key}\" = \"{value}\"")
             })
             .collect::<Vec<_>>()
-            .join("\n");
-        format!(
-            "schema = 1\nid = \"test\"\nname = \"Test\"\nauthor = \"Test\"\nlicense = \"MIT\"\n[dark.base]\n{base}\n{extra}\n"
-        )
+            .join("\n")
     }
 
     #[test]
@@ -1194,6 +1295,47 @@ mod tests {
         assert!(warnings.iter().all(|warning| !warning.message.is_empty()));
     }
 
+    /// Atlas reads one theme schema and translates nothing older. A theme in
+    /// an old shape, or one naming another schema, fails to load like any other
+    /// bad file: it is reported by name and never enters the assembled
+    /// catalog, which still holds the default. An id that does not resolve
+    /// falls back to that default: `fallback_unknown_theme` in
+    /// `atlas_config.rs` (tested by
+    /// `unknown_config_theme_falls_back_in_memory_and_is_never_rewritten`)
+    /// and `apply` in the theme store.
+    #[test]
+    fn an_old_or_other_schema_user_theme_is_skipped_and_the_default_still_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("old.toml"),
+            "id = \"old\"\nname = \"Old\"\n[colors]\n\"--atlas-element-hover\" = \"#123456\"\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("next.toml"),
+            minimal_theme("").replace("schema = 1", "schema = 2"),
+        )
+        .unwrap();
+
+        let catalog = all_themes_from(Some(dir.path())).unwrap();
+        let ids = catalog
+            .themes
+            .iter()
+            .map(|(theme, _)| theme.id.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(!ids.contains(&"old") && !ids.contains(&"next"), "{ids:?}");
+        assert!(ids.contains(&DEFAULT_THEME_ID), "{ids:?}");
+        let warnings = catalog.warnings;
+        let keys = warnings.iter().map(|w| w.key.as_str()).collect::<Vec<_>>();
+        assert_eq!(keys, ["next.toml", "old.toml"]);
+        assert!(
+            warnings[0].message.contains("unsupported schema 2"),
+            "{warnings:?}"
+        );
+        assert!(warnings[1].message.contains("old.toml"), "{warnings:?}");
+    }
+
     // ── config_root (must track `config_root` in `atlas_config.rs`; #64 follow-up) ──
 
     /// The bug this whole fix exists for: `dirs::config_dir()` resolves to
@@ -1247,6 +1389,63 @@ mod tests {
     /// Free-text base tokens are written into a `:root { … }` style block, so
     /// a value that closes the block would be CSS injection from a theme file.
     #[test]
+    fn fonts_are_optional_base_tokens() {
+        assert!(
+            parse_theme(&minimal_theme(""), "test").is_ok(),
+            "no fonts is fine"
+        );
+        let source =
+            minimal_theme("").replacen("[dark.base]", "[dark.base]\n\"font-mono\" = \"Menlo\"", 1);
+        let theme = parse_theme(&source, "test").unwrap();
+        assert_eq!(theme.dark.unwrap().base["font-mono"], "Menlo");
+    }
+
+    #[test]
+    fn every_base_token_is_optional() {
+        let seeds = "schema = 1\nid = \"seeds\"\nname = \"Seeds\"\nauthor = \"A\"\nlicense = \"MIT\"\n[dark.base]\nbackground = \"#101418\"\nprimary = \"#7aa2f7\"\n";
+        let theme = parse_theme(seeds, "test").unwrap();
+        assert_eq!(
+            theme.dark.unwrap().base.len(),
+            2,
+            "parsed as written, not filled"
+        );
+        let bare = "schema = 1\nid = \"bare\"\nname = \"Bare\"\nauthor = \"A\"\nlicense = \"MIT\"\n[light]\n";
+        assert!(parse_theme(bare, "test").is_ok(), "no [light.base] at all");
+        let typo = "schema = 1\nid = \"t\"\nname = \"T\"\nauthor = \"A\"\nlicense = \"MIT\"\n[dark.base]\nbackgound = \"#000\"\n";
+        assert!(
+            parse_theme(typo, "test").is_err(),
+            "an unknown token is still an error"
+        );
+    }
+
+    #[test]
+    fn the_shared_base_reaches_both_variants_and_a_variant_wins() {
+        let source = minimal_theme("[light.base]\n\"font-sans\" = \"Inter\"\n").replacen(
+            "[dark.base]",
+            "[base]\n\"font-sans\" = \"Montserrat\"\n\"font-mono\" = \"Fira Code\"\n[dark.base]",
+            1,
+        );
+        let theme = parse_theme(&source, "test").unwrap();
+        assert_eq!(theme.base["font-mono"], "Fira Code");
+        let dark = theme.dark.unwrap();
+        let light = theme.light.unwrap();
+        assert_eq!(dark.base["font-sans"], "Montserrat");
+        assert_eq!(light.base["font-mono"], "Fira Code");
+        assert_eq!(
+            light.base["font-sans"], "Inter",
+            "the variant's own value wins"
+        );
+    }
+
+    #[test]
+    fn an_unknown_token_in_the_shared_base_is_an_error() {
+        let source =
+            minimal_theme("").replacen("[dark.base]", "[base]\nmystery = \"1px\"\n[dark.base]", 1);
+        let error = parse_theme(&source, "test").unwrap_err().to_string();
+        assert!(error.contains("mystery"), "{error}");
+    }
+
+    #[test]
     fn free_text_base_tokens_cannot_break_out_of_the_style_block() {
         for bad in [
             "1rem; } body { display: none",
@@ -1259,13 +1458,13 @@ mod tests {
             "@import 'x'",
         ] {
             let source = minimal_theme("").replacen(
-                "\"font-sans\" = \"1rem\"",
-                &format!("\"font-sans\" = {bad:?}"),
+                "\"spacing\" = \"1rem\"",
+                &format!("\"spacing\" = {bad:?}"),
                 1,
             );
             assert_ne!(source, minimal_theme(""), "fixture replaced");
             let error = parse_theme(&source, "test").unwrap_err().to_string();
-            assert!(error.contains("dark.base.font-sans"), "{bad:?}: {error}");
+            assert!(error.contains("dark.base.spacing"), "{bad:?}: {error}");
         }
         for good in [
             "\"Segoe UI\", ui-sans-serif, system-ui",
@@ -1274,7 +1473,7 @@ mod tests {
             "-0.01em",
         ] {
             assert!(is_safe_css_value(good), "{good:?}");
-            assert!(is_valid_base_value("font-sans", good), "{good:?}");
+            assert!(is_valid_base_value("spacing", good), "{good:?}");
         }
         assert!(!is_valid_base_value("background", "1rem"));
         assert!(is_valid_base_value("background", "#fff"));

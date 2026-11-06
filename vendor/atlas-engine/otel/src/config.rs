@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use atlas_engine_utils_absolute_path::AbsolutePathBuf;
 
-// Upstream shipped a built-in `Statsig` exporter here: a hardcoded ingestion
+// The original shipped a built-in `Statsig` exporter here: a hardcoded ingestion
 // endpoint and client key, resolved into an OTLP/HTTP exporter and gated only
 // on `cfg!(debug_assertions)` — live in exactly the builds that ship. It was
 // removed wholesale for Atlas (#43, spec D2), along with `resolve_exporter`,

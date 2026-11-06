@@ -1,8 +1,7 @@
 //! The store's contract: an agent exists because it is in the installed map,
 //! and for no other reason.
 //!
-//! The version-notification cases are ported from
-//! `zed-ref/crates/project/src/agent_server_store.rs:2187-2338`.
+//! Includes the version-notification cases.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -261,6 +260,12 @@ async fn env_layers_from_least_to_most_specific() {
                 default_mode: Some("ask".to_string()),
                 default_config_options: HashMap::new(),
                 favorite_config_option_values: HashMap::new(),
+                enabled: true,
+                display_name: None,
+                hidden_models: Vec::new(),
+                model_order: Vec::new(),
+                custom_models: Vec::new(),
+                secret_env: Vec::new(),
             },
         )]))
         .await;
@@ -363,6 +368,36 @@ async fn a_registry_binary_agent_installs_on_first_resolution() {
         .await
         .unwrap();
     assert_eq!(fixture.http.request_count(ARCHIVE_URL), 1);
+}
+
+/// Arguments set in Settings → Agents go after the distribution's own and
+/// before the caller's, so a registry agent keeps the flags it needs to speak
+/// ACP whatever the user adds.
+#[tokio::test]
+async fn a_registry_agent_appends_the_users_arguments() {
+    let contents = b"the agent";
+    let digest = format!("{:x}", Sha256::digest(contents));
+    let http = FakeHttp::new().with(ARCHIVE_URL, 200, contents.to_vec());
+    let fixture = fixture_with_http(
+        vec![binary_agent("some-cli", "1.0.0", Some(digest))],
+        http.clone(),
+    );
+    let mut entry = AgentServerSettings::registry();
+    entry.user_settings_mut().args.push("--verbose".into());
+    fixture
+        .store
+        .set_settings(settings(&[("some-cli", entry)]))
+        .await;
+
+    let command = fixture
+        .store
+        .agent_server(&AgentId::new("some-cli"))
+        .unwrap()
+        .get_command(vec!["--from-caller".into()], HashMap::new())
+        .await
+        .unwrap();
+
+    assert_eq!(command.args, ["--acp", "--verbose", "--from-caller"]);
 }
 
 #[tokio::test]
@@ -624,7 +659,7 @@ async fn agents_are_notified_independently() {
     assert_eq!(*b.borrow_and_update(), None);
 }
 
-/// Nobody watching is not a special case — Zed has the same test because the
+/// Nobody watching is not a special case — the
 /// version-comparison path used to assume a channel was there.
 #[tokio::test]
 async fn a_version_change_with_no_watcher_is_harmless() {

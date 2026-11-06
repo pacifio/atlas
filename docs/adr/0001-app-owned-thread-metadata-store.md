@@ -6,15 +6,15 @@
 
 ## Context
 
-Atlas's session sidebar and history were built by scraping each agent CLI's private storage: Claude's `~/.claude/projects` JSONL, Kilo's SQLite database, Codex's state database, merged with Atlas's own transcript stores and a live ACP `session/list` query (six sources total). This coupled Atlas to storage formats it does not own, required a bespoke reader per agent (special treatment by construction), made history impossible for agents without a reader, and tied Kilo/Codex resume to scraped identifiers. Zed — whose ACP stack Atlas is porting — never reads another program's storage.
+Atlas's session sidebar and history were built by scraping each agent CLI's private storage: Claude's `~/.claude/projects` JSONL, Kilo's SQLite database, Codex's state database, merged with Atlas's own transcript stores and a live ACP `session/list` query (six sources total). This coupled Atlas to storage formats it does not own, required a bespoke reader per agent (special treatment by construction), made history impossible for agents without a reader, and tied Kilo/Codex resume to scraped identifiers. An ACP client has no need to read another program's storage.
 
 The first version of this decision banned reading agent storage outright. That ban lumped two jobs together: **discovery** (knowing a session exists, plus its id, cwd, title, last activity, and whether another process is writing it now) and **replay/resume** (the conversation itself). It was right for replay and arbitrary for discovery, and it never actually held: the checkpoint importer reads `~/.claude/projects` continuously, and the Claude ACP adapter's own `session/list` reads that same directory through the SDK. The sidebar got the same data, slower and only once, and a Claude Code session run in a terminal never reached it.
 
-Primary-source research: `plans/atlas-history-zed-parity-research.md` (Zed's store schema and lifecycle, ACP spec shapes, adapter capability evidence, Atlas consumer inventory).
+Primary-source research: ACP spec shapes, adapter capability evidence, and the Atlas consumer inventory.
 
 ## Decision
 
-Port Zed's `ThreadMetadataStore` mechanism same-to-same, rendered in Atlas's design language, and keep it current with ongoing, project-scoped discovery.
+Keep an app-owned thread-metadata store, rendered in Atlas's design language, and keep it current with ongoing, project-scoped discovery.
 
 ### The store
 

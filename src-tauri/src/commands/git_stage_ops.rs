@@ -1,4 +1,4 @@
-//! Hunk / line-level staging (GitHub Desktop's partial-commit primitives).
+//! Hunk / line-level staging (partial-commit primitives).
 //!
 //! The UI sends the hunk it DISPLAYED (marker + text per line); we re-diff
 //! the file fresh, find the content-identical hunk (line numbers may have

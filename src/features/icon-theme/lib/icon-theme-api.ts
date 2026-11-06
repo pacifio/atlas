@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { OpenVsxExtension } from "@/lib/open-vsx";
 
 /**
  * The icon-theme IPC surface (decisions 4, 11, 12).
@@ -79,19 +80,6 @@ export interface IconFontFace {
   src: IconFontData[];
 }
 
-export interface OpenVsxIconTheme {
-  id: string;
-  namespace: string;
-  name: string;
-  displayName: string;
-  version: string;
-  description: string;
-  license: string;
-  downloads: number;
-  icon?: string;
-  installed: boolean;
-}
-
 export const ICON_THEMES_CHANGED_EVENT = "atlas:icon-themes-changed";
 
 export function listIconThemes(): Promise<IconThemeSummary[]> {
@@ -117,7 +105,7 @@ export function getIconThemeFonts(themeId: string): Promise<IconFontFace[]> {
   return invoke("get_icon_theme_fonts", { themeId });
 }
 
-export function searchIconThemes(query: string): Promise<OpenVsxIconTheme[]> {
+export function searchIconThemes(query: string): Promise<OpenVsxExtension[]> {
   return invoke("search_icon_themes", { query });
 }
 

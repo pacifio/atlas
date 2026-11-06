@@ -1,6 +1,5 @@
 /**
- * Terminal font resolution, ported (and trimmed) from Athas's
- * `resolve-font.ts`. xterm.js measures the character cell from the *first*
+ * Terminal font resolution. xterm.js measures the character cell from the *first*
  * resolvable font, so a broken/un-loaded primary font silently corrupts the
  * whole grid — and which fonts are "available" differs between the Vite dev
  * server (warm font cache, dev machine has the nice fonts installed) and a
@@ -24,9 +23,9 @@ const CSS_GENERIC_FONT_FAMILIES = new Set([
   "system-ui",
 ]);
 
-/** The app's preferred monospace identity. Used when actually installed;
- *  otherwise the resolver falls back to the platform native font. */
-const TERMINAL_PRIMARY_FONT = "JetBrains Mono, SF Mono";
+/** What the resolver asks for when handed nothing, matching the head of the
+ *  default `--font-mono` stack; the platform native font backs it. */
+const TERMINAL_PRIMARY_FONT = "Geist Mono Variable";
 
 function getPlatformFallback(): string {
   if (typeof navigator === "undefined") return LINUX_FALLBACK;
@@ -95,16 +94,19 @@ async function loadAndVerifyFont(fontName: string, fontSize: number): Promise<bo
  * family always carries the native + generic fallback so metrics are stable
  * and rendering is identical between dev and a shipped build.
  */
-export async function resolveTerminalFont(fontSize: number): Promise<string> {
+export async function resolveTerminalFont(fontSize: number, userFont = ""): Promise<string> {
   try {
     await document.fonts.ready;
   } catch {
     // Older WebViews may not expose the font-loading API — fall through.
   }
+  // The user's terminal font (or code font) leads when set; the same probe
+  // applies to it.
+  const requested = userFont.trim() || TERMINAL_PRIMARY_FONT;
   // Probe the first concrete primary; success just means we keep it leading.
-  const primary = splitFontFamilyList(TERMINAL_PRIMARY_FONT)[0] ?? MAC_FALLBACK;
+  const primary = splitFontFamilyList(requested)[0] ?? MAC_FALLBACK;
   const loaded = await loadAndVerifyFont(primary, fontSize);
   return loaded
-    ? buildTerminalFontFamily(TERMINAL_PRIMARY_FONT)
+    ? buildTerminalFontFamily(requested)
     : buildTerminalFontFamily(getPlatformFallback());
 }

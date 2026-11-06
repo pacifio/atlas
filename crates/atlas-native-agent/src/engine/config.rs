@@ -75,7 +75,7 @@ impl EngineHome {
 ///
 /// Both arms exist now. `Responses` is the engine's own dialect, which the
 /// Phase 2 dev provider uses; `Chat` is the Atlas gateway dialect authored in
-/// Phase 3 (D3), reinstated in the engine as `WireApi::Chat` after upstream
+/// Phase 3 (D3), reinstated in the engine as `WireApi::Chat` after the original
 /// removed it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WireDialect {
@@ -133,6 +133,18 @@ pub const GATEWAY_PROVIDER_ID: &str = "atlas";
 /// server states how long to wait and a second blind attempt buys little.
 pub const GATEWAY_STREAM_MAX_RETRIES: usize = 1;
 
+/// The developer message every spawned child runs under. See the
+/// `features.multi_agent_v2.subagent_developer_instructions` override for
+/// why it exists; the content is the brief a delegated task needs and no
+/// more, because everything else it could read is a reason to wander.
+pub const SUBAGENT_DEVELOPER_INSTRUCTIONS: &str = "\
+You are a subagent running one delegated task. The task is the message addressed to you; \
+it is your whole brief. Do only that: no orientation calls first (no memory briefing, no \
+survey of the repository), no exploration beyond what the task itself needs, and no fixes \
+or suggestions outside it. When you have the result, reply once with the result and nothing \
+else; that final message is delivered to the agent that spawned you, and nothing you do \
+after it is seen.";
+
 impl EngineProvider {
     /// A developer-configured provider for the Phase 2 tracer bullet.
     pub fn dev(
@@ -183,10 +195,12 @@ pub struct EngineSettings {
     pub cwd: PathBuf,
     /// The path to Atlas's own executable.
     ///
-    /// Sandboxed execution on macOS re-enters this binary, so the engine has to
-    /// be told what it is. This is the single process-level assumption in the
-    /// whole embedding, and it has an explicit code-level seam precisely so an
-    /// embedder can satisfy it without adopting the engine's argv0 dispatch.
+    /// Sandboxed file access re-enters this binary as the engine's fs helper on
+    /// every platform (and, on Windows, as its sandbox launcher), so the engine
+    /// has to be told what it is — and the binary has to *be* those helpers when
+    /// re-entered, which `crate::run_engine_helper_if_asked` in the app's
+    /// `main` is. This is the single process-level assumption in the whole
+    /// embedding.
     pub self_exe: Option<PathBuf>,
     /// The path to the `atlas-engine-linux-sandbox` helper, on Linux.
     ///
@@ -198,17 +212,14 @@ pub struct EngineSettings {
     /// Under the default `WorkspaceWrite` policy that turns every sandboxed
     /// tool call into a no-op that still ends the turn normally.
     ///
-    /// `None` in production and that is correct today: **Atlas ships macOS
-    /// only**, and nothing in the app is the helper. The field exists because
-    /// the integration tests do have a helper — the test binary itself, under
-    /// an arg0 alias — and without a way to hand it over the sandboxed-command
-    /// tests can only pass on macOS.
-    ///
-    /// A real Linux build would have to earn this rather than set it: `main.rs`
-    /// would need the engine's arg0 dispatch, so that Atlas re-entered as
-    /// `atlas-engine-linux-sandbox` runs the helper instead of the app, and only then
-    /// could this point at Atlas's own executable. That is deliberately not
-    /// implemented here.
+    /// `None` from [`EngineSettings::new`], on every platform. The app sets
+    /// it on Linux with [`EngineSettings::with_app_linux_sandbox_helper`],
+    /// which points it at an alias of Atlas's own executable; that is only
+    /// true of a binary whose `main` calls `run_engine_helper_if_asked`, which
+    /// dispatches the alias (`crate::linux_sandbox`). The integration tests
+    /// set it to their own test binary under the same alias instead. Nothing
+    /// guesses it: a path to a binary that does not dispatch would boot that
+    /// binary, a test harness or a second app, as the sandbox.
     pub linux_sandbox_exe: Option<PathBuf>,
     pub approval_policy: AskForApproval,
     pub sandbox_mode: SandboxMode,
@@ -243,8 +254,9 @@ impl EngineSettings {
             model,
             cwd,
             self_exe: std::env::current_exe().ok(),
-            // Never guessed. `current_exe()` is a helper only in a process that
-            // dispatches on arg0, and Atlas does not — see the field's docs.
+            // Never guessed. `current_exe()` is this helper only in a process
+            // that dispatches on arg0, which only the app's binary does — see
+            // the field's docs and `with_app_linux_sandbox_helper`.
             linux_sandbox_exe: None,
             // D5: the sandbox is on from day one on macOS, in the engine's own
             // default approval/sandbox mode. `WorkspaceWrite` plus
@@ -263,6 +275,31 @@ impl EngineSettings {
             },
             client_version: env!("CARGO_PKG_VERSION").to_string(),
         }
+    }
+
+    /// Makes Atlas's own executable the engine's Linux sandbox helper.
+    ///
+    /// Call only from the app, whose `main` dispatches the helper alias
+    /// (`run_engine_helper_if_asked`). Installs the alias in the engine home
+    /// (`crate::linux_sandbox::install_alias`) and points
+    /// `linux_sandbox_exe` at it. When that fails the field stays `None`,
+    /// the engine refuses sandboxed commands as it did before Linux was
+    /// supported, and the reason is logged.
+    #[cfg(target_os = "linux")]
+    pub fn with_app_linux_sandbox_helper(mut self) -> Self {
+        let Some(exe) = self.self_exe.as_deref() else {
+            tracing::warn!("native agent: no executable path, so no Linux sandbox helper");
+            return self;
+        };
+        match crate::linux_sandbox::install_alias(self.home.path(), exe) {
+            Ok(path) => self.linux_sandbox_exe = Some(path),
+            Err(e) => tracing::warn!(
+                error = %e,
+                "native agent: could not install the Linux sandbox helper alias; \
+                 sandboxed commands will be refused",
+            ),
+        }
+        self
     }
 
     /// Lowers the stream-retry ceiling, so a test can reach exhaustion without
@@ -334,7 +371,7 @@ impl EngineSettings {
             // the engine never presents a login screen, and auth comes from
             // whatever the seam installed.
             (key("requires_openai_auth"), TomlValue::Boolean(false)),
-            // D2. The analytics client's upload paths are gone from the fork
+            // D2. The analytics client's upload paths are gone from the engine
             // outright, so this is belt-and-braces rather than the mechanism —
             // but a config that says "off" is what makes the intent legible to
             // the next person reading it.
@@ -347,11 +384,11 @@ impl EngineSettings {
                 TomlValue::Integer(self.stream_max_retries as i64),
             ),
             // ADR-0013: the model may ask the user a clarifying question
-            // mid-turn, in every permission mode. Upstream gates its question
+            // mid-turn, in every permission mode. The engine gates its question
             // tool to the Plan collaboration mode; Atlas's four modes are
             // approval/sandbox pairs that all run in the engine's `Default`
             // collaboration mode, and this is the engine's own switch for
-            // opening `Default` — so nothing under the vendored engine
+            // opening `Default` — so nothing under the engine
             // changes. Reversed by deleting this row; the seam's handler for
             // the question can stay.
             //
@@ -362,13 +399,80 @@ impl EngineSettings {
                 "features.default_mode_request_user_input".to_string(),
                 TomlValue::Boolean(true),
             ),
-            // The feature is marked under development upstream, and the
+            // The feature is marked under development in the engine, and the
             // engine posts a warning naming it into every new thread unless
             // told not to. Turning it on is Atlas's decision, not something
             // the user did or can act on.
             (
                 "suppress_unstable_features_warning".to_string(),
                 TomlValue::Boolean(true),
+            ),
+            // Decision 5 (memory plan, 2026-10-03): the engine's own memories
+            // pipeline (phase-1 extraction, phase-2 consolidation into a
+            // global folder) stays off. Atlas's memory is the atlas_memory
+            // tool server, shared by every agent. CLI overrides are the
+            // engine's session-flags layer, merged after every project layer,
+            // so a repo's config cannot switch it back on. The feature has a
+            // legacy alias, `memory_tool`, which sorts after `memories` and is
+            // applied after it, so the alias is pinned off too; the
+            // `memories.*` switches no alias reaches back that up.
+            ("features.memories".to_string(), TomlValue::Boolean(false)),
+            (
+                "features.memory_tool".to_string(),
+                TomlValue::Boolean(false),
+            ),
+            (
+                "memories.use_memories".to_string(),
+                TomlValue::Boolean(false),
+            ),
+            (
+                "memories.generate_memories".to_string(),
+                TomlValue::Boolean(false),
+            ),
+            // Subagents reach the transcript only through v2. The engine's
+            // default is v1 (`multi_agent`), which reports a child as a
+            // `CollabAgentToolCall` the sink has no shape for; v2 also emits
+            // `SubAgentActivity {agentPath, …}`, which the sink maps to the
+            // same tool call the external adapter for this engine sends, so
+            // `atlas_acp_thread::subagent` reads a native child like any
+            // other. v2 wins over v1 whenever it is on
+            // (`multi_agent_version_override`), so `multi_agent` is left
+            // alone.
+            (
+                "features.multi_agent_v2.enabled".to_string(),
+                TomlValue::Boolean(true),
+            ),
+            // What a spawned child is told, as its developer message. The
+            // engine ships this empty and expects a server-side config to fill
+            // it; with nothing here a child ran on the team charter alone,
+            // and the first thing in its context was the memory server's
+            // "call memory_briefing before anything else" — fifteen thousand
+            // tokens of other sessions' plans, which a small model then
+            // treated as the job. "Count the files" became a hundred-call tour
+            // of the repository. The charter itself (mailbox format, wait
+            // guidance, slot count) is untouched: that lives in the usage
+            // hints, and a configured hint would REPLACE it.
+            (
+                "features.multi_agent_v2.subagent_developer_instructions".to_string(),
+                TomlValue::String(SUBAGENT_DEVELOPER_INSTRUCTIONS.to_string()),
+            ),
+            // The gateway admits four requests per user at once, and the
+            // engine's default of four threads per session (parent + 3) is
+            // exactly that: one delegating chat lawfully consumed the whole
+            // account, and a second tab, a memory pass or one stale slot
+            // answered the parent itself `429`. Three leaves one.
+            (
+                "features.multi_agent_v2.max_concurrent_threads_per_session".to_string(),
+                TomlValue::Integer(3),
+            ),
+            // The engine lets a parent ask `wait_agent` for up to an hour, and
+            // a parent that has lost track of its children escalates toward
+            // it — a session that ran forty minutes doing nothing was six
+            // waits of 30s → 600s. Two minutes bounds one wait to something a
+            // person watching the composer will sit through.
+            (
+                "features.multi_agent_v2.max_wait_timeout_ms".to_string(),
+                TomlValue::Integer(120_000),
             ),
         ];
         if cfg!(target_os = "windows") {
@@ -495,6 +599,77 @@ mod tests {
             Some("test-model".to_string()),
             tmp.to_path_buf(),
         )
+    }
+
+    #[test]
+    fn the_engines_own_memories_pipeline_stays_off() {
+        // Decision 5 (memory research, 2026-10-03): Atlas memory is the
+        // atlas_memory tool server, for every agent. The engine's
+        // memories pipeline would be a second store and a second write
+        // protocol in the native prompt; a repo config must not turn it on.
+        let tmp = std::env::temp_dir();
+        let overrides = settings(&tmp).cli_overrides();
+        assert_eq!(
+            overrides
+                .iter()
+                .find(|(k, _)| k == "features.memories")
+                .map(|(_, v)| v.clone()),
+            Some(TomlValue::Boolean(false)),
+        );
+    }
+
+    /// v1 children never reach ACP (the sink drops `CollabAgentToolCall`), so
+    /// a native chat that delegated showed no subagent at all. The override
+    /// layer sits above the home config, so a stale `config.toml` that turns
+    /// v2 off cannot bring that back.
+    #[tokio::test]
+    async fn subagents_run_on_multi_agent_v2_whatever_the_home_config_says() {
+        use atlas_engine_features::Feature;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let s = settings(tmp.path());
+        std::fs::create_dir_all(s.home.path()).expect("engine home");
+        std::fs::write(
+            s.home.path().join("config.toml"),
+            "[features]\nmulti_agent_v2 = false\n",
+        )
+        .expect("config file");
+
+        let config = s.build_config(None).await.expect("config loads");
+        assert!(config.features.enabled(Feature::MultiAgentV2));
+        // The table form, merged over the home config's bool: the child's
+        // brief, the budget under the gateway's four slots, the wait cap.
+        assert_eq!(
+            config
+                .multi_agent_v2
+                .subagent_developer_instructions
+                .as_deref(),
+            Some(SUBAGENT_DEVELOPER_INSTRUCTIONS),
+        );
+        assert_eq!(config.multi_agent_v2.max_concurrent_threads_per_session, 3);
+        assert_eq!(config.multi_agent_v2.max_wait_timeout_ms, 120_000);
+    }
+
+    /// The legacy alias `features.memory_tool` is applied after the canonical
+    /// key, so a config layer below the overrides that sets it must still
+    /// leave the engine's memories off.
+    #[tokio::test]
+    async fn the_legacy_memory_tool_alias_cannot_switch_the_pipeline_back_on() {
+        use atlas_engine_features::Feature;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let s = settings(tmp.path());
+        std::fs::create_dir_all(s.home.path()).expect("engine home");
+        std::fs::write(
+            s.home.path().join("config.toml"),
+            "[features]\nmemory_tool = true\n\n[memories]\nuse_memories = true\ngenerate_memories = true\n",
+        )
+        .expect("config file");
+
+        let config = s.build_config(None).await.expect("config loads");
+        assert!(!config.features.enabled(Feature::MemoryTool));
+        assert!(!config.memories.use_memories);
+        assert!(!config.memories.generate_memories);
     }
 
     /// A projected catalogue with one entitled row and one locked one — the
@@ -725,7 +900,7 @@ mod tests {
                 .contains(&ModeKind::Default),
             "every Atlas permission mode runs in the engine's Default collaboration mode",
         );
-        // Upstream marks the feature under development, which would post an
+        // The engine marks the feature under development, which would post an
         // "Under-development features enabled" warning into every new chat.
         // Turning it on is Atlas's decision (ADR-0013), not the user's.
         assert!(config.suppress_unstable_features_warning);
@@ -775,7 +950,7 @@ mod tests {
             Some(TomlValue::Integer(0)),
         );
 
-        // And not on the dev provider, which classifies errors upstream's way.
+        // And not on the dev provider, which classifies errors the way the original did.
         let dev = EngineSettings::from_env(Path::new("/tmp/atlas"), PathBuf::from("/tmp"));
         assert!(!dev
             .cli_overrides()

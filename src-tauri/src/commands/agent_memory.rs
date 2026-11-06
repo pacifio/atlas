@@ -81,8 +81,6 @@ pub struct CodexMemory {
     threads: Vec<CodexThread>,
 }
 
-/// History-list row for a Codex session, shaped to match `ClaudeSessionMeta`
-/// so the chat sidebar can merge both agents' sessions uniformly. `id` is the
 // The Codex SESSION-HISTORY surface used to live here: `list_codex_sessions`
 // and `codex_delete_session`, reading and archiving rows in
 // `~/.codex/state_*.sqlite` so the sidebar could show Codex chats. Both are
@@ -277,8 +275,8 @@ pub async fn collect_corpus(project_path: &str) -> Vec<MemoryDoc> {
     }
 
     // Code is not folded in: agents search it through the `atlas_code` tools
-    // (`semantic_search`, `find_symbol`, grep), and memory keeps what code
-    // can't say (code-index plan Phase 4).
+    // (grep, find_files — ADR-0021 removed the index-backed ones), and memory
+    // keeps what code can't say.
     docs.extend(read_shared_memory_docs(&project_path));
     // Fold the knowledge base in (source "note") so KB notes are retrievable by
     // every agent through the same embedding + the `memory_search` tool — they
@@ -320,13 +318,23 @@ fn read_capture_docs(project_path: &str) -> Vec<MemoryDoc> {
         Ok(Some(s)) => s,
         _ => return Vec::new(),
     };
-    let sessions = match store.sessions_for_project(project_path) {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::warn!(target: "atlas::memory", "capture corpus read failed: {e}");
-            return Vec::new();
+    // Live capture keys a Workspace by its canonical path; the importer by the
+    // path as given. Read both, once each (as `memory_pack::capture_heads`
+    // does): on a symlinked root the given path alone finds no live session.
+    let mut ids = vec![crate::commands::capture::project_id_for(
+        std::path::Path::new(project_path),
+    )];
+    if !ids.iter().any(|id| id == project_path) {
+        ids.push(project_path.to_string());
+    }
+    let mut seen = std::collections::HashSet::new();
+    let mut sessions = Vec::new();
+    for id in &ids {
+        match store.sessions_for_project(id) {
+            Ok(found) => sessions.extend(found.into_iter().filter(|s| seen.insert(s.id.clone()))),
+            Err(e) => tracing::warn!(target: "atlas::memory", "capture corpus read failed: {e}"),
         }
-    };
+    }
 
     let mut out: Vec<MemoryDoc> = Vec::new();
     for s in sessions {
@@ -833,17 +841,13 @@ mod tests {
     }
     use super::*;
 
-    /// Code is searched through `atlas_code`, not the memory corpus: even with
-    /// a built code index in the project, no `codebase` document is gathered.
+    /// Code is searched through `atlas_code`, not the memory corpus: a project
+    /// full of source files gathers no `codebase` document.
     #[tokio::test]
     async fn the_corpus_has_no_codebase_docs() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join(".git")).unwrap();
         std::fs::write(dir.path().join("lib.rs"), "pub fn indexed() {}\n").unwrap();
-        atlas_codeindex::CodeIndex::open(dir.path())
-            .unwrap()
-            .full_build(&atlas_search::CancelToken::new(), &|_| {})
-            .unwrap();
         let docs = collect_corpus(dir.path().to_str().unwrap()).await;
         assert!(docs.iter().all(|d| d.source != "codebase"));
     }
@@ -992,6 +996,50 @@ mod tests {
             .text
             .contains("refactor the retry loop in the gateway client"));
 
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Live capture keys a Workspace by its canonical path. Opened through a
+    /// symlink, the reader must still find those sessions, once.
+    #[cfg(unix)]
+    #[test]
+    fn a_capture_session_is_found_through_a_symlinked_root() {
+        use atlas_checkpoint::{model::ProjectMode, Capture, SessionKey, Source, Store};
+
+        let dir = scratch();
+        let canonical = crate::commands::capture::project_id_for(&dir);
+        let link =
+            std::env::temp_dir().join(format!("atlas-capture-link-{}", uuid::Uuid::new_v4()));
+        std::os::unix::fs::symlink(&dir, &link).expect("symlink");
+        {
+            let mut store = Store::open(atlas_checkpoint::atlas_dir(&dir)).expect("store opens");
+            let mut capture = Capture::new(&mut store, ProjectMode::Local);
+            capture
+                .record_prompt(
+                    &SessionKey {
+                        workspace_id: canonical.clone(),
+                        source: Source::Acp,
+                        native_session_id: "native-link".into(),
+                    },
+                    "find the flaky retry test",
+                    1,
+                    Some(atlas_native_agent::ATLAS_AGENT_ID),
+                    None,
+                    Some(&canonical),
+                )
+                .expect("prompt recorded");
+        }
+
+        let docs = read_capture_docs(&link.to_string_lossy());
+        assert_eq!(
+            docs.iter()
+                .filter(|d| d.id == "atlas-agent:native-link")
+                .count(),
+            1,
+            "found once, not missed or doubled"
+        );
+
+        std::fs::remove_file(&link).ok();
         std::fs::remove_dir_all(&dir).ok();
     }
 

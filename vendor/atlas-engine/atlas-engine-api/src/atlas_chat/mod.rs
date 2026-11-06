@@ -3,7 +3,7 @@
 //!
 //! Added by Atlas. This is the only genuinely new engine code in the port: the
 //! engine speaks exactly one wire format, and Chat Completions was *removed*
-//! upstream rather than never built, so there is nothing here to resurrect.
+//! before the port rather than never built, so there is nothing here to resurrect.
 //!
 //! Three pieces, and they only work together:
 //!

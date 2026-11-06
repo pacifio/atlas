@@ -1,6 +1,7 @@
 import { useAppStore } from "@/features/app/stores/app-store";
 import { useLayoutStore, type Tab } from "@/features/layout/stores/layout-store";
 import { useChatStore } from "@/features/chat/stores/chat-store";
+import { useProjectStore } from "@/features/projects/stores/project-store";
 import type { UiActionRequest } from "./types";
 
 export function tab(
@@ -29,12 +30,12 @@ export function seedWindow() {
     activeByGroup: { main: "editor:/p/src/App.tsx", g2: "terminal-1" },
     focusedGroupId: "main",
     activeTabId: "editor:/p/src/App.tsx",
-    leftPanel: { visible: true, width: 240, activeSection: "files" },
-    rightPanel: { visible: false, width: 300, activeSection: "changes", mode: "source-control" },
-    chatSidebar: { visible: true, width: 240 },
-    tabBarVisible: true,
+    sourceControl: { section: "changes" },
     zen: false,
+    destination: null,
+    destinationShown: false,
   });
+  useProjectStore.setState({ sidebarOpen: true });
   useChatStore.setState({
     sessions: { "chat-1": { acpSessionId: "sess-1" } } as never,
     activeSessionId: "chat-1",

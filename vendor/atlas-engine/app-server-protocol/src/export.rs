@@ -25,11 +25,13 @@ use anyhow::Context;
 use anyhow::Result;
 use anyhow::anyhow;
 use atlas_engine_history::RolloutLine;
-use schemars::schema_for;
+use atlas_engine_protocol::schema_compat::Compat08;
+use schemars::generate::SchemaSettings;
 use serde::Serialize;
 use serde_json::Map;
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::ffi::OsStr;
@@ -108,6 +110,12 @@ impl Default for GenerateTsOptions {
     }
 }
 
+/// The ts-rs bindings configuration: where to write, and ts-rs 12's defaults otherwise
+/// (`Record<symbol, never>` for empty structs, `{ [key in K]: V }` for maps).
+pub(crate) fn ts_config(out_dir: &Path) -> ts_rs::Config {
+    ts_rs::Config::new().with_out_dir(out_dir)
+}
+
 pub fn generate_ts_with_options(
     out_dir: &Path,
     prettier: Option<&Path>,
@@ -117,14 +125,14 @@ pub fn generate_ts_with_options(
     ensure_dir(out_dir)?;
     ensure_dir(&v2_out_dir)?;
 
-    ClientRequest::export_all_to(out_dir)?;
+    ClientRequest::export_all(&ts_config(out_dir))?;
     export_client_responses(out_dir)?;
-    ClientNotification::export_all_to(out_dir)?;
+    ClientNotification::export_all(&ts_config(out_dir))?;
 
-    ServerRequest::export_all_to(out_dir)?;
+    ServerRequest::export_all(&ts_config(out_dir))?;
     export_server_responses(out_dir)?;
-    ServerNotification::export_all_to(out_dir)?;
-    ServerNotificationEnvelope::export_all_to(out_dir)?;
+    ServerNotification::export_all(&ts_config(out_dir))?;
+    ServerNotificationEnvelope::export_all(&ts_config(out_dir))?;
 
     if !options.experimental_api {
         filter_experimental_ts(out_dir)?;
@@ -1329,9 +1337,15 @@ where
     let (raw_namespace, logical_name) = split_namespace(file_stem);
     let include_in_json_codegen =
         raw_namespace != Some("v1") || JSON_V1_ALLOWLIST.contains(&logical_name);
-    let schema = schema_for!(T);
+    // `schema_for!` defaults to draft 2020-12 (`$defs`) since schemars 1; the
+    // committed fixtures are draft-07 (`definitions`).
+    let schema = SchemaSettings::draft07()
+        .with_transform(Compat08::with_null())
+        .into_generator()
+        .into_root_schema_for::<T>();
     let mut schema_value = serde_json::to_value(schema)?;
     if include_in_json_codegen {
+        inline_internally_tagged_payloads(&mut schema_value);
         if file_stem == "ClientRequest" {
             strip_v1_client_request_variants_from_json_schema(&mut schema_value);
         } else if file_stem == "ServerNotification" {
@@ -1367,6 +1381,164 @@ where
         logical_name: logical_name.to_string(),
         value: schema_value,
     })
+}
+
+/// Merges the payload of an internally tagged newtype variant into the variant.
+///
+/// For `#[serde(tag = "type")] enum E { A(PayloadA) }` schemars 0.8 wrote one
+/// object holding the payload's properties next to the tag. schemars 1 writes
+/// `{ "allOf": [{ "$ref": PayloadA }], "properties": { "type": ... } }` and keeps
+/// `PayloadA` as a definition. The two accept the same documents, but the committed
+/// fixtures and their precomputed copies are the 0.8 form, and clients read them.
+///
+/// A variant's own description wins over the payload's, as it did in 0.8, and a
+/// payload that nothing else refers to afterwards loses its definition.
+fn inline_internally_tagged_payloads(schema: &mut Value) {
+    let mut inlined = BTreeSet::new();
+    loop {
+        let Some(definitions) = schema
+            .get("definitions")
+            .and_then(Value::as_object)
+            .cloned()
+        else {
+            return;
+        };
+        let before = inlined.len();
+        inline_payload_refs(schema, &definitions, &mut inlined);
+        let changed = inlined.len() != before;
+        if !changed {
+            break;
+        }
+    }
+    for name in inlined {
+        let target = format!("#/definitions/{name}");
+        if !json_refers_to(schema, &target)
+            && let Some(Value::Object(definitions)) = schema.get_mut("definitions")
+        {
+            definitions.remove(&name);
+        }
+    }
+}
+
+fn inline_payload_refs(
+    value: &mut Value,
+    definitions: &Map<String, Value>,
+    inlined: &mut BTreeSet<String>,
+) {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                inline_payload_refs(item, definitions, inlined);
+            }
+        }
+        Value::Object(object) => {
+            for child in object.values_mut() {
+                inline_payload_refs(child, definitions, inlined);
+            }
+            if has_single_value_tag(object) {
+                // A payload with `deny_unknown_fields` carries it onto the variant in
+                // schemars 1; 0.8 never wrote it on a tagged variant.
+                object.remove("additionalProperties");
+            }
+            if let Some(name) = tagged_payload_ref(object)
+                && let Some(Value::Object(payload)) = definitions.get(&name)
+                && (payload.contains_key("properties") || payload.contains_key("oneOf"))
+            {
+                merge_payload_into_variant(object, payload);
+                inlined.insert(name);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Whether `object` has a property that can hold only one string, the way the tag of
+/// an internally tagged variant does.
+fn has_single_value_tag(object: &Map<String, Value>) -> bool {
+    object.get("additionalProperties") == Some(&Value::Bool(false))
+        && object
+            .get("properties")
+            .and_then(Value::as_object)
+            .is_some_and(|properties| {
+                properties.values().any(|property| {
+                    property
+                        .get("enum")
+                        .and_then(Value::as_array)
+                        .is_some_and(|values| values.len() == 1 && values[0].is_string())
+                })
+            })
+}
+
+/// The definition a tagged variant's `allOf` points at, if `object` is such a variant.
+fn tagged_payload_ref(object: &Map<String, Value>) -> Option<String> {
+    let [Value::Object(reference)] = object.get("allOf")?.as_array()?.as_slice() else {
+        return None;
+    };
+    if reference.len() != 1 || !object.contains_key("properties") {
+        return None;
+    }
+    let target = reference.get("$ref")?.as_str()?;
+    Some(target.strip_prefix("#/definitions/")?.to_string())
+}
+
+fn merge_payload_into_variant(variant: &mut Map<String, Value>, payload: &Map<String, Value>) {
+    variant.remove("allOf");
+    if !payload.contains_key("properties") {
+        // A payload that is itself a `oneOf` (an enum) was copied in beside the tag
+        // properties, which stayed: that form is what the committed fixtures hold.
+        for (key, value) in payload {
+            variant.entry(key.clone()).or_insert_with(|| value.clone());
+        }
+        return;
+    }
+    // schemars 1 puts the payload's `deny_unknown_fields` on the variant; 0.8 did not.
+    variant.remove("additionalProperties");
+    let mut properties = payload
+        .get("properties")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    if let Some(Value::Object(tag)) = variant.remove("properties") {
+        properties.extend(tag);
+    }
+    let mut required: BTreeSet<String> = payload
+        .get("required")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|name| name.as_str().map(str::to_string))
+        .collect();
+    if let Some(Value::Array(tag)) = variant.remove("required") {
+        required.extend(
+            tag.iter()
+                .filter_map(|name| name.as_str().map(str::to_string)),
+        );
+    }
+    for (key, value) in payload {
+        if !matches!(
+            key.as_str(),
+            "properties" | "required" | "additionalProperties"
+        ) {
+            variant.entry(key.clone()).or_insert_with(|| value.clone());
+        }
+    }
+    variant.insert("properties".to_string(), Value::Object(properties));
+    if !required.is_empty() {
+        variant.insert(
+            "required".to_string(),
+            Value::Array(required.into_iter().map(Value::String).collect()),
+        );
+    }
+}
+
+fn json_refers_to(value: &Value, target: &str) -> bool {
+    match value {
+        Value::Array(items) => items.iter().any(|item| json_refers_to(item, target)),
+        Value::Object(object) => object.iter().any(|(key, child)| {
+            (key == "$ref" && child.as_str() == Some(target)) || json_refers_to(child, target)
+        }),
+        _ => false,
+    }
 }
 
 fn add_server_notification_emitted_at_to_json_schema(schema: &mut Value) -> Result<()> {
@@ -2404,27 +2576,29 @@ mod tests {
 
     #[test]
     fn generate_ts_with_experimental_api_retains_experimental_entries() -> Result<()> {
-        let client_request_ts = ClientRequest::export_to_string()?;
+        let client_request_ts = ClientRequest::export_to_string(&ts_config(Path::new(".")))?;
         assert_eq!(client_request_ts.contains("mock/experimentalMethod"), true);
         assert_eq!(
             client_request_ts.contains("MockExperimentalMethodParams"),
             true
         );
         assert_eq!(
-            v2::MockExperimentalMethodParams::export_to_string()?
+            v2::MockExperimentalMethodParams::export_to_string(&ts_config(Path::new(".")))?
                 .contains("MockExperimentalMethodParams"),
             true
         );
         assert_eq!(
-            v2::MockExperimentalMethodResponse::export_to_string()?
+            v2::MockExperimentalMethodResponse::export_to_string(&ts_config(Path::new(".")))?
                 .contains("MockExperimentalMethodResponse"),
             true
         );
 
-        let thread_start_ts = v2::ThreadStartParams::export_to_string()?;
+        let thread_start_ts = v2::ThreadStartParams::export_to_string(&ts_config(Path::new(".")))?;
         assert_eq!(thread_start_ts.contains("mockExperimentalField"), true);
         let command_execution_request_approval_ts =
-            v2::CommandExecutionRequestApprovalParams::export_to_string()?;
+            v2::CommandExecutionRequestApprovalParams::export_to_string(&ts_config(Path::new(
+                ".",
+            )))?;
         assert_eq!(
             command_execution_request_approval_ts.contains("additionalPermissions"),
             true

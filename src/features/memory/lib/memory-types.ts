@@ -34,4 +34,9 @@ export interface CodexMemory {
   threads: CodexThread[];
 }
 
-export type MemorySubTab = "graph" | "policy" | "shared";
+/** The Memory panel's tabs: what is remembered, how it changed, what waits
+ *  for review, and the agents' own memory files. */
+export type MemorySubTab = "memories" | "activity" | "review" | "files";
+
+/** The Agent files tab's two lenses. */
+export type AgentFilesView = "preferences" | "map";

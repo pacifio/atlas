@@ -1771,6 +1771,65 @@
   }
 
   /* ============================================================
+     PRICING — mirrors Settings → Billing → Plans in the web app
+     (server: apps/web/src/components/settings/billing-plans.tsx).
+     Every button goes to that page, which owns checkout; this
+     table only describes the plans, so keep it in step with it.
+     ============================================================ */
+  .pricing-section {
+    padding: 120px 0;
+    border-top: 1px solid var(--border-default);
+  }
+  .pricing-scroll { overflow-x: auto; margin-top: 56px; }
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+  }
+  .pricing-table {
+    width: 100%;
+    min-width: 760px;
+    table-layout: fixed;
+    border-collapse: collapse;
+  }
+  .pricing-table col.pricing-label-col { width: 224px; }
+  .pricing-table th,
+  .pricing-table td { padding: 0 12px; vertical-align: middle; text-align: left; font-weight: 400; }
+  .pricing-table th[scope="row"] { padding-left: 0; }
+  /* The recommended plan's column band runs unbroken from its name
+     to the last row, like the current plan's band in the app. */
+  .pricing-table .is-featured { background: #0a0a0a; }
+  .pricing-table thead th { padding-top: 20px; padding-bottom: 8px; }
+  .pricing-table thead .is-featured { border-radius: 12px 12px 0 0; }
+  .pricing-table tbody:last-child tr:last-child .is-featured { border-radius: 0 0 12px 12px; }
+  .pricing-plan {
+    display: block;
+    color: var(--text-primary);
+    font-size: 16px; font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .pricing-price { display: flex; align-items: baseline; gap: 4px; margin: 4px 0 16px; }
+  .pricing-figure { color: var(--text-primary); font-size: 14px; font-variant-numeric: tabular-nums; }
+  .pricing-interval { color: var(--text-tertiary); font-size: 13px; }
+  .pricing-table .btn { width: 100%; justify-content: center; border-radius: 999px; }
+  .pricing-group th {
+    padding: 28px 0 10px;
+    font-size: 11px; font-weight: 600;
+    color: var(--text-tertiary);
+    letter-spacing: 0.12em; text-transform: uppercase;
+  }
+  .pricing-row { border-top: 1px solid var(--border-default); }
+  .pricing-row th,
+  .pricing-row td { padding-top: 11px; padding-bottom: 11px; font-size: 13.5px; }
+  .pricing-row th { color: var(--text-secondary); }
+  .pricing-row td { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+  .pricing-row svg { width: 15px; height: 15px; display: block; }
+  .pricing-row .is-none svg { color: var(--text-ghost); }
+  .pricing-also td { padding-top: 14px; padding-bottom: 20px; vertical-align: top; }
+  .pricing-also ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+  .pricing-also li { color: var(--text-tertiary); font-size: 13px; line-height: 1.4; }
+  .pricing-also li:first-child { color: var(--text-primary); }
+
+  /* ============================================================
      FEATURES grid
      ============================================================ */
   .features {
@@ -2058,6 +2117,8 @@
     section.scaffold { padding: 72px 0; }
     .showcase-row { padding: 64px 0; }
     .roadmap-section { padding: 72px 0; }
+    .pricing-section { padding: 72px 0; }
+    .pricing-scroll { margin-top: 40px; }
     .footer-row { flex-direction: column; align-items: flex-start; gap: 20px; }
     .footer-links { margin-left: 0; }
     .kb-split { grid-template-columns: 140px 1fr; }
@@ -2554,7 +2615,7 @@
 <!-- Progressive blur at the top of the viewport: the app's transcript
      `GradualBlur`, ported. Content scrolling under the floating nav dissolves
      instead of being curtained off. Layers are generated in the script at the
-     end of the page (same band math as src/components/gradual-blur.tsx). -->
+     end of the page (same band math as `GradualBlur` in @tryatlas/design). -->
 <div class="scroll-fade" data-scroll-fade aria-hidden="true"></div>
 
 <!-- ====================== NAV ====================== -->
@@ -2568,7 +2629,11 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
       Docs
     </a>
-    <a href="https://github.com/pacifio/atlas" class="nav-link" target="_blank" rel="noopener">
+    <a href="#pricing" class="nav-link">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/></svg>
+      Pricing
+    </a>
+    <a href="https://github.com/tryatlas/atlas" class="nav-link" target="_blank" rel="noopener">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="m12 2 3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
       Star
       <span class="nav-star-count" data-star-count hidden></span>
@@ -2578,7 +2643,7 @@
       Discord
     </a>
     <div class="dl dl-sm" data-dl>
-      <a class="dl-main" href="https://github.com/pacifio/atlas/releases/download/alpha-0.3.4/Atlas_0.3.4_aarch64.dmg">
+      <a class="dl-main" href="https://github.com/tryatlas/atlas/releases/download/alpha-0.4.1-org-agent/Atlas_0.4.1_aarch64.dmg">
         <svg viewBox="0 0 384 512" fill="currentColor" aria-hidden="true"><path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z"/></svg>
         Mac
       </a>
@@ -2586,11 +2651,11 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
       </button>
       <div class="dl-menu" data-dl-menu role="menu">
-        <a class="dl-item" role="menuitem" href="https://github.com/pacifio/atlas/releases/download/alpha-0.3.4/Atlas_0.3.4_aarch64.dmg">For Apple ARM</a>
-        <a class="dl-item" role="menuitem" href="https://github.com/pacifio/atlas/releases/download/alpha-0.3.4/Atlas_0.3.4_x86_64.dmg">For Intel Macs</a>
+        <a class="dl-item" role="menuitem" href="https://github.com/tryatlas/atlas/releases/download/alpha-0.4.1-org-agent/Atlas_0.4.1_aarch64.dmg">For Apple ARM</a>
+        <a class="dl-item" role="menuitem" href="https://github.com/tryatlas/atlas/releases/download/alpha-0.4.1-org-agent/Atlas_0.4.1_x86_64.dmg">For Intel Macs</a>
       </div>
     </div>
-    <a class="nav-win-btn" aria-label="Download for Windows" href="https://github.com/pacifio/atlas/releases/download/alpha-0.3.4/Atlas_0.3.4_x64_en-US.msi">
+    <a class="nav-win-btn" aria-label="Download for Windows" href="https://github.com/tryatlas/atlas/releases/download/alpha-0.4.1-org-agent/Atlas_0.4.1_x64_en-US.msi">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#F25022" d="M0 0h11.377v11.372H0Z"/><path fill="#7FBA00" d="M12.623 0H24v11.372H12.623Z"/><path fill="#00A4EF" d="M0 12.623h11.377V24H0Z"/><path fill="#FFB900" d="M12.623 12.623H24V24H12.623Z"/></svg>
       <span class="nav-win-label">Windows</span>
     </a>
@@ -2613,7 +2678,7 @@
     <p class="hero-sub">Source control for agents. Use multiple coding agents, track their changes and query them in one place.</p>
     <div class="hero-cta">
       <div class="dl dl-lg" data-dl>
-        <a class="dl-main" href="https://github.com/pacifio/atlas/releases/download/alpha-0.3.4/Atlas_0.3.4_aarch64.dmg">
+        <a class="dl-main" href="https://github.com/tryatlas/atlas/releases/download/alpha-0.4.1-org-agent/Atlas_0.4.1_aarch64.dmg">
           <svg viewBox="0 0 384 512" fill="currentColor" aria-hidden="true"><path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z"/></svg>
           Download for Mac
         </a>
@@ -2621,15 +2686,15 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
         </button>
         <div class="dl-menu" data-dl-menu role="menu">
-          <a class="dl-item" role="menuitem" href="https://github.com/pacifio/atlas/releases/download/alpha-0.3.4/Atlas_0.3.4_aarch64.dmg">For Apple ARM</a>
-          <a class="dl-item" role="menuitem" href="https://github.com/pacifio/atlas/releases/download/alpha-0.3.4/Atlas_0.3.4_x86_64.dmg">For Intel Macs</a>
+          <a class="dl-item" role="menuitem" href="https://github.com/tryatlas/atlas/releases/download/alpha-0.4.1-org-agent/Atlas_0.4.1_aarch64.dmg">For Apple ARM</a>
+          <a class="dl-item" role="menuitem" href="https://github.com/tryatlas/atlas/releases/download/alpha-0.4.1-org-agent/Atlas_0.4.1_x86_64.dmg">For Intel Macs</a>
         </div>
       </div>
-      <a class="btn btn-secondary btn-lg btn-win" href="https://github.com/pacifio/atlas/releases/download/alpha-0.3.4/Atlas_0.3.4_x64_en-US.msi">
+      <a class="btn btn-secondary btn-lg btn-win" href="https://github.com/tryatlas/atlas/releases/download/alpha-0.4.1-org-agent/Atlas_0.4.1_x64_en-US.msi">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#F25022" d="M0 0h11.377v11.372H0Z"/><path fill="#7FBA00" d="M12.623 0H24v11.372H12.623Z"/><path fill="#00A4EF" d="M0 12.623h11.377V24H0Z"/><path fill="#FFB900" d="M12.623 12.623H24V24H12.623Z"/></svg>
         Download for Windows
       </a>
-      <a href="https://github.com/pacifio/atlas" target="_blank" rel="noopener" class="btn btn-secondary btn-lg">
+      <a href="https://github.com/tryatlas/atlas" target="_blank" rel="noopener" class="btn btn-secondary btn-lg">
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.36-3.88-1.36-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.18-3.1-.12-.29-.51-1.46.11-3.04 0 0 .97-.31 3.18 1.18a11 11 0 0 1 5.79 0c2.2-1.5 3.18-1.18 3.18-1.18.62 1.58.23 2.75.11 3.04.73.81 1.18 1.84 1.18 3.1 0 4.43-2.7 5.4-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56C20.21 21.38 23.5 17.08 23.5 12 23.5 5.65 18.35.5 12 .5z"/></svg>
         Star on GitHub
       </a>
@@ -4261,6 +4326,66 @@
   </div>
 </section>
 
+<!-- ====================== PRICING ====================== -->
+<section class="pricing-section" id="pricing">
+  <div class="wrap">
+    <span class="sec-eyebrow">Pricing</span>
+    <h2 class="sec-title">Free for your team. Pay when it grows.</h2>
+    <p class="sec-sub">The app is free and your own keys always work. Plans add seats, synced projects, session storage and included AI for the team. Questions, or help choosing? <a href="https://discord.gg/GmnFggaPfP" target="_blank" rel="noopener" style="color:var(--text-primary)">Ask us on Discord</a>.</p>
+    <div class="pricing-scroll">
+    <table class="pricing-table">
+      <caption class="sr-only">Plans compared</caption>
+      <colgroup><col class="pricing-label-col" /><col /><col /><col /><col /></colgroup>
+      <thead>
+        <tr>
+          <td></td>
+          <th scope="col">
+            <span class="pricing-plan">Free</span>
+            <span class="pricing-price"><span class="pricing-figure">$0</span><span class="pricing-interval">/ month</span></span>
+            <a class="btn btn-secondary" href="https://app.tryatlas.cc/settings/billing/plans" target="_blank" rel="noopener">Get started</a>
+          </th>
+          <th scope="col" class="is-featured">
+            <span class="pricing-plan">Pro</span>
+            <span class="pricing-price"><span class="pricing-figure">$20</span><span class="pricing-interval">/ month</span></span>
+            <a class="btn btn-primary" href="https://app.tryatlas.cc/settings/billing/plans" target="_blank" rel="noopener">Upgrade</a>
+          </th>
+          <th scope="col">
+            <span class="pricing-plan">Team</span>
+            <span class="pricing-price"><span class="pricing-figure">$100</span><span class="pricing-interval">/ month</span></span>
+            <a class="btn btn-secondary" href="https://app.tryatlas.cc/settings/billing/plans" target="_blank" rel="noopener">Upgrade</a>
+          </th>
+          <th scope="col">
+            <span class="pricing-plan">Business</span>
+            <span class="pricing-price"><span class="pricing-figure">$200</span><span class="pricing-interval">/ month</span></span>
+            <a class="btn btn-secondary" href="https://app.tryatlas.cc/settings/billing/plans" target="_blank" rel="noopener">Upgrade</a>
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="pricing-group"><th scope="rowgroup">Usage</th><td aria-hidden="true"></td><td class="is-featured" aria-hidden="true"></td><td aria-hidden="true"></td><td aria-hidden="true"></td></tr>
+        <tr class="pricing-row"><th scope="row">Members</th><td>3</td><td class="is-featured">5</td><td>25</td><td>100</td></tr>
+        <tr class="pricing-row"><th scope="row">Synced projects</th><td>Unlimited</td><td class="is-featured">10</td><td>50</td><td>Unlimited</td></tr>
+        <tr class="pricing-row"><th scope="row">Session storage</th><td>Standard</td><td class="is-featured">10 GB</td><td>100 GB</td><td>500 GB</td></tr>
+        <tr class="pricing-row"><th scope="row">AI each month</th><td class="is-none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/></svg><span class="sr-only">Not included</span></td><td class="is-featured">$8</td><td>$40</td><td>$80</td></tr>
+        <tr class="pricing-row"><th scope="row">Vectorization tokens / month</th><td>Unlimited</td><td class="is-featured">20M</td><td>100M</td><td>300M</td></tr>
+        <tr class="pricing-row"><th scope="row">Meeting minutes / month</th><td>Standard</td><td class="is-featured">Standard</td><td>Standard</td><td>Standard</td></tr>
+      </tbody>
+      <tbody>
+        <tr class="pricing-group"><th scope="rowgroup">Features</th><td aria-hidden="true"></td><td class="is-featured" aria-hidden="true"></td><td aria-hidden="true"></td><td aria-hidden="true"></td></tr>
+        <tr class="pricing-row"><th scope="row">Shared Threads</th><td><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg><span class="sr-only">Included</span></td><td class="is-featured"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg><span class="sr-only">Included</span></td><td><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg><span class="sr-only">Included</span></td><td><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg><span class="sr-only">Included</span></td></tr>
+        <tr class="pricing-row"><th scope="row">Participants per thread</th><td>8</td><td class="is-featured">8</td><td>8</td><td>25</td></tr>
+        <tr class="pricing-row"><th scope="row">Concurrent Runs per thread</th><td>4</td><td class="is-featured">4</td><td>4</td><td>10</td></tr>
+        <tr class="pricing-row"><th scope="row">Remote Runs</th><td class="is-none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/></svg><span class="sr-only">Not included</span></td><td class="is-none is-featured"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/></svg><span class="sr-only">Not included</span></td><td><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg><span class="sr-only">Included</span></td><td><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg><span class="sr-only">Included</span></td></tr>
+      </tbody>
+      <tbody>
+        <tr class="pricing-group"><th scope="rowgroup">Also included</th><td aria-hidden="true"></td><td class="is-featured" aria-hidden="true"></td><td aria-hidden="true"></td><td aria-hidden="true"></td></tr>
+        <tr class="pricing-row pricing-also"><th scope="row"><span class="sr-only">Highlights</span></th><td><ul><li>Team chat and voice calls</li><li>Session timeline</li></ul></td><td class="is-featured"><ul><li>AI included each month</li><li>Semantic search over your sessions</li></ul></td><td><ul><li>5&times; the AI of Pro</li><li>Remote Runs</li></ul></td><td><ul><li>10&times; the AI of Pro</li><li>Remote Runs</li></ul></td></tr>
+      </tbody>
+    </table>
+    </div>
+  </div>
+</section>
+
 <!-- ====================== CTA ====================== -->
 <section class="cta-section" id="download">
   <div class="wrap-tight">
@@ -4268,7 +4393,7 @@
     <p class="cta-sub">Free during the alpha. Bring your own keys. Native binary for Apple Silicon, Intel and Windows, no Electron. The Atlas account is optional — nothing is gated behind it.</p>
     <div class="cta-row">
       <div class="dl dl-lg" data-dl>
-        <a class="dl-main" href="https://github.com/pacifio/atlas/releases/download/alpha-0.3.4/Atlas_0.3.4_aarch64.dmg">
+        <a class="dl-main" href="https://github.com/tryatlas/atlas/releases/download/alpha-0.4.1-org-agent/Atlas_0.4.1_aarch64.dmg">
           <svg viewBox="0 0 384 512" fill="currentColor" aria-hidden="true"><path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z"/></svg>
           Download for Mac
         </a>
@@ -4276,19 +4401,19 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
         </button>
         <div class="dl-menu" data-dl-menu role="menu">
-          <a class="dl-item" role="menuitem" href="https://github.com/pacifio/atlas/releases/download/alpha-0.3.4/Atlas_0.3.4_aarch64.dmg">For Apple ARM</a>
-          <a class="dl-item" role="menuitem" href="https://github.com/pacifio/atlas/releases/download/alpha-0.3.4/Atlas_0.3.4_x86_64.dmg">For Intel Macs</a>
+          <a class="dl-item" role="menuitem" href="https://github.com/tryatlas/atlas/releases/download/alpha-0.4.1-org-agent/Atlas_0.4.1_aarch64.dmg">For Apple ARM</a>
+          <a class="dl-item" role="menuitem" href="https://github.com/tryatlas/atlas/releases/download/alpha-0.4.1-org-agent/Atlas_0.4.1_x86_64.dmg">For Intel Macs</a>
         </div>
       </div>
-      <a class="btn btn-secondary btn-lg btn-win" href="https://github.com/pacifio/atlas/releases/download/alpha-0.3.4/Atlas_0.3.4_x64_en-US.msi">
+      <a class="btn btn-secondary btn-lg btn-win" href="https://github.com/tryatlas/atlas/releases/download/alpha-0.4.1-org-agent/Atlas_0.4.1_x64_en-US.msi">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#F25022" d="M0 0h11.377v11.372H0Z"/><path fill="#7FBA00" d="M12.623 0H24v11.372H12.623Z"/><path fill="#00A4EF" d="M0 12.623h11.377V24H0Z"/><path fill="#FFB900" d="M12.623 12.623H24V24H12.623Z"/></svg>
         Download for Windows
       </a>
-      <a href="https://github.com/pacifio/atlas" target="_blank" rel="noopener" class="btn btn-secondary btn-lg">
+      <a href="https://github.com/tryatlas/atlas" target="_blank" rel="noopener" class="btn btn-secondary btn-lg">
         Read the source
       </a>
     </div>
-    <div class="cta-tiny">v0.3.4 · macOS 13+ (Apple Silicon &amp; Intel) · Windows 10+ (x64) · alpha</div>
+    <div class="cta-tiny">v0.4.1 · macOS 13+ (Apple Silicon &amp; Intel) · Windows 10+ (x64) · alpha</div>
   </div>
 </section>
 
@@ -4305,7 +4430,7 @@
         <address class="footer-address">1111B S Governors Ave #39146 Dover, DE 19904</address>
       </div>
       <div class="footer-links">
-        <a href="https://github.com/pacifio/atlas" target="_blank" rel="noopener">Github</a>
+        <a href="https://github.com/tryatlas/atlas" target="_blank" rel="noopener">Github</a>
         <span class="footer-sep">|</span>
         <a href="https://x.com/tryatlas_cc" target="_blank" rel="noopener" aria-label="X (Twitter)">X</a>
         <span class="footer-sep">|</span>
@@ -4364,7 +4489,7 @@
     } catch (_) {}
 
     try {
-      const res = await fetch('https://api.github.com/repos/pacifio/atlas', {
+      const res = await fetch('https://api.github.com/repos/tryatlas/atlas', {
         headers: { Accept: 'application/vnd.github+json' },
       });
       if (!res.ok) return;

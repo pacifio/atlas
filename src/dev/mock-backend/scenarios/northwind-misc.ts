@@ -52,7 +52,6 @@ import type {
   SharedState,
 } from "@/features/memory/lib/shared-memory-api";
 import type { InstalledPack, Pack, PackComponent, PackSearchHit } from "@/features/packs/lib/types";
-import type { CliStatus } from "@/features/settings/components/settings-panel";
 import { DEFAULT_SETTINGS } from "@/features/settings/lib/app-settings";
 import type { EnvEntry, EnvKeyMeta, ProfileInfo } from "@/features/settings/lib/byok-api";
 import type {
@@ -69,15 +68,21 @@ import type {
 import type { DailyBucket, SessionRow, UsageDashboard } from "@/features/usage/types";
 import type { UpdaterSnapshot, UpdateStatus } from "@/features/updater/lib/updater-api";
 import type { AgentCatalog, AgentCatalogEntry } from "@/types/agent-catalog";
+import type { AgentConfigPatch } from "@/features/agents/lib/agent-config-api";
 import type { NativeModelsRefresh } from "@/types/agents";
 import type { MockHandlers, MockResponses, TypedHandlers } from "../types";
 import type { AgentKey, MemoryContent } from "./northwind-content-types";
 import { adoptSession } from "../fake-agent";
+import { sessionLifecycleHandlers } from "../session-lifecycle";
+import { sessionPullRequestHandlers } from "../session-pull-requests";
+import { RESTING_LIFECYCLE } from "@/features/chat/lib/session-lifecycle";
 import { NORTHWIND_FILES } from "../fixtures/northwind-repo";
+import { applyAgentConfig } from "../fixtures/skills";
 import { CONTENT } from "./northwind-content";
 import { transcriptOf } from "./northwind-agent";
 import { NORTHWIND_NATIVE_MODELS } from "./northwind-models";
 import { lineStats } from "./northwind-timeline";
+import { northwindFileText, northwindWriteFile } from "./northwind-git";
 import {
   addMemory,
   CODEX_INSTALLED,
@@ -139,7 +144,6 @@ function appState(): AppStateWire {
     currentProject: null,
     recentProjects: [],
     workspaces: [PROJECT],
-    groups: [],
     activeWorkspaceId: PROJECT.id,
     organisations: [
       {
@@ -244,8 +248,8 @@ function sessionSummary(sessionId: string): SessionSummary {
 
 /** USD per 1M tokens: input, output, cache read, cache write. */
 const PRICE: Record<string, [number, number, number, number]> = {
-  "claude-opus-4": [15, 75, 1.5, 18.75],
-  "claude-sonnet-4": [3, 15, 0.3, 3.75],
+  "claude-opus-5-5": [15, 75, 1.5, 18.75],
+  "claude-sonnet-5-5": [3, 15, 0.3, 3.75],
   "gpt-5": [1.25, 10, 0.125, 0],
 };
 
@@ -298,9 +302,9 @@ const BACKFILL_TITLES = [
  * Never Codex: Uzayer installs it on camera in video 9.
  */
 function pickAgent(r: number): { agent: AgentKey; model: string } {
-  if (r < 0.55) return { agent: "claude-code", model: "claude-opus-4" };
-  if (r < 0.8) return { agent: "claude-code", model: "claude-sonnet-4" };
-  return { agent: "atlas-agent", model: "claude-sonnet-4" };
+  if (r < 0.55) return { agent: "claude-code", model: "claude-opus-5-5" };
+  if (r < 0.8) return { agent: "claude-code", model: "claude-sonnet-5-5" };
+  return { agent: "atlas-agent", model: "claude-sonnet-5-5" };
 }
 
 /**
@@ -471,6 +475,9 @@ const THREAD_AGENT: Record<AgentKey, string> = {
   "atlas-agent": "atlas-agent",
 };
 
+/** `autoSettleAfterDays`' default, in milliseconds. */
+const SETTLE_AFTER_MS = 3 * 86_400_000;
+
 /**
  * Uzayer's agent chats in Atlas: his recorded Sessions run from the composer.
  * Imported ones ran in a terminal before capture and never were Atlas chats;
@@ -486,7 +493,10 @@ function seedThreads(): ThreadRow[] {
       title: s.content.title,
       updatedAt: iso(s.lastMs),
       createdAt: iso(s.startMs),
-      archived: false,
+      ...RESTING_LIFECYCLE,
+      // Idle past the default three days: on the Settled shelf, settled at
+      // its last activity, as the idle sweep records it.
+      settledAt: Date.now() - s.lastMs > SETTLE_AFTER_MS ? iso(s.lastMs) : null,
       projectName: PROJECT.name,
       folderPaths: [PROJECT.path],
       // The branch the Session itself records: `main`, except the run that
@@ -494,6 +504,38 @@ function seedThreads(): ThreadRow[] {
       branch: s.content.branch,
       // The demo's own sessions: no other process is writing any of them.
       liveElsewhere: false,
+      attachedProjects: [],
+      model: "Claude Sonnet 4.5",
+      // The run on `server-discounts` went up as pull request 353, found on its branch.
+      // Merged, because the branch is: its commit is already on `main`.
+      pullRequests:
+        s.content.branch === "server-discounts"
+          ? [
+              {
+                repository: "northwind/northwind-shop",
+                number: 353,
+                url: "https://github.com/northwind/northwind-shop/pull/353",
+                source: "detected" as const,
+                linkedAt: iso(s.lastMs),
+                snapshot: {
+                  state: "merged" as const,
+                  title: "Validate discount codes on the server",
+                  headBranch: "server-discounts",
+                  baseBranch: "main",
+                  isDraft: false,
+                  updatedAt: iso(s.lastMs),
+                  mergedAt: iso(s.lastMs),
+                  checksState: "passing" as const,
+                  reviewDecision: "approved" as const,
+                  commentCount: 2,
+                  syncedAt: iso(s.lastMs),
+                },
+                watching: false,
+              },
+            ]
+          : [],
+      forkedFromSessionId: null,
+      heldWorking: false,
     }));
 }
 
@@ -503,7 +545,7 @@ const threadsChanged = () => void emit("atlas:threads-changed");
 /** One project; current when the sidebar is scoped to it, as Rust marks it
  *  (unscoped, nothing is current and the sidebar heads the list with it). */
 function threadProjects(cwd: string | null): ThreadProject[] {
-  const live = threads.filter((thread) => !thread.archived);
+  const live = threads.filter((thread) => thread.sessionId !== null);
   if (live.length === 0) return [];
   const isCurrent = cwd !== null && cwd !== "";
   return [{ name: PROJECT.name, paths: [PROJECT.path], isCurrent, threads: live }];
@@ -635,6 +677,12 @@ const catalogEntry = (
   supportsModes: false,
   supportsModels: false,
   transcript: "none",
+  enabled: true,
+  displayName: null,
+  launch: { command: null, args: [], variables: [] },
+  hiddenModels: [],
+  modelOrder: [],
+  customModels: [],
   login: null,
   authKinds: [],
   supportsLogout: false,
@@ -664,6 +712,12 @@ let catalog: AgentCatalogEntry[] = [
     supportsModes: true,
     supportsModels: true,
     transcript: "native",
+    enabled: true,
+    displayName: null,
+    launch: null,
+    hiddenModels: [],
+    modelOrder: [],
+    customModels: [],
     authKinds: ["env_var"],
     supportsRewind: true,
   }),
@@ -776,6 +830,7 @@ const EVENT_KIND: Record<MemoryContent["kind"], EventKind> = {
 const entryEdits = new Map<string, { content: string; updatedAt: number }>();
 const forgotten = new Set<string>();
 let sharing = true;
+let fromExternalSessions = false;
 
 function entries(): MemoryEntry[] {
   return memory()
@@ -799,6 +854,8 @@ function entries(): MemoryEntry[] {
         updatedAt: edit?.updatedAt ?? at,
         lastUsedAt: uses ? LOAD - Math.min(uses, 3) * 5 * HOUR : null,
         uses,
+        revision: index + 1,
+        state: "active",
       };
     })
     .filter((entry): entry is MemoryEntry => entry !== null)
@@ -1222,13 +1279,6 @@ let envEntries: EnvEntry[] = [
   },
 ];
 
-const CLI: CliStatus = {
-  installed: true,
-  path: `${HOME}/.local/bin/atlas`,
-  installedVersion: VERSION,
-  currentVersion: VERSION,
-};
-
 // ── Log (⌘K → Log) ────────────────────────────────────────────────────────
 
 type LogSeed = [
@@ -1280,7 +1330,7 @@ const LOG_SEEDS: LogSeed[] = [
     "turn",
     "Make discount codes case-insensitive",
     {
-      model: "claude-opus-4",
+      model: "claude-opus-5-5",
       tokens: 27_800,
     },
   ],
@@ -1410,6 +1460,13 @@ export const northwindMiscCommands: Partial<TypedHandlers<MockResponses>> = {
   acp_registry_update: (): null => null,
   agents_catalog: agentCatalog,
   agents_catalog_refresh: agentCatalog,
+  agents_configure: ({ agentId, patch }): AgentCatalogEntry => {
+    const entry = catalog.find((candidate) => candidate.id === String(agentId));
+    if (!entry) throw new Error(`'${String(agentId)}' is not an agent Atlas knows`);
+    return applyAgentConfig(entry, patch as AgentConfigPatch);
+  },
+  /** The real command creates the file; the mock only expands `~`. */
+  agents_open_config_file: ({ path }): string => String(path).replace(/^~(?=\/|$)/, "/Users/dev"),
 
   // ── memory ─────────────────────────────────────────────────────────────
   memory_embed_status: (): EmbedStatus => ({
@@ -1431,12 +1488,24 @@ export const northwindMiscCommands: Partial<TypedHandlers<MockResponses>> = {
       (policy) => policy.file_path === String(filePath) && policy.value === String(oldText),
     );
     if (!row) throw new Error("original text not found in file");
+    // The real command rewrites that span of the file, so CLAUDE.md and the
+    // git panel show the edit too.
+    const rel = row.file_path.slice(PROJECT.path.length + 1);
+    const text = northwindFileText(rel);
+    if (text?.includes(String(oldText))) {
+      northwindWriteFile(rel, text.replace(String(oldText), String(newText)));
+    }
     row.value = String(newText);
     return null;
   },
   memory_sharing_get: (): boolean => sharing,
   memory_sharing_set: ({ enabled }): null => {
     sharing = Boolean(enabled);
+    return null;
+  },
+  memory_from_external_sessions_get: (): boolean => fromExternalSessions,
+  memory_from_external_sessions_set: ({ enabled }): null => {
+    fromExternalSessions = Boolean(enabled);
     return null;
   },
   memory_summarizer_get: (): SummarizerPref => ({ mode: "raw", provider: "", model: "" }),
@@ -1575,8 +1644,6 @@ export const northwindMiscCommands: Partial<TypedHandlers<MockResponses>> = {
   },
 
   // ── settings ───────────────────────────────────────────────────────────
-  cli_status: (): CliStatus => CLI,
-  cli_install_helper: (): CliStatus => CLI,
   byok_env_list: (): EnvKeyMeta[] =>
     envEntries.map(({ provider, envVar, last4 }) => ({ provider, envVar, last4 })),
   byok_env_entries: (): EnvEntry[] => envEntries.map((entry) => ({ ...entry })),
@@ -1631,16 +1698,11 @@ export const northwindMiscRawCommands: MockHandlers = {
     version: null,
     currentVersion: VERSION,
   }),
-  codebase_index_status: ({ projectPath }) =>
-    isProject(projectPath)
-      ? { indexed: true, fileCount: 24, summaryCount: 19, builtAtMs: LOAD - 3 * HOUR }
-      : { indexed: false, fileCount: 0, summaryCount: 0, builtAtMs: 0 },
   load_project_session: (): string => "{}",
   load_editor_state: (): string => "{}",
 
   // ── chat history ────────────────────────────────────────────────────────
-  threads_history: ({ archivedOnly }): ThreadRow[] =>
-    threads.filter((thread) => (archivedOnly ? thread.archived : !thread.archived)),
+  threads_history: (): ThreadRow[] => threads,
   threads_projects: ({ cwd }): ThreadProject[] =>
     threadProjects(cwd === null || cwd === undefined ? null : String(cwd)),
   threads_resume: ({ threadId }): ResumedThread => {
@@ -1664,13 +1726,20 @@ export const northwindMiscRawCommands: MockHandlers = {
     threadsChanged();
     return null;
   },
-  threads_archive: ({ threadId }): null => {
-    threads = threads.map((thread) =>
-      thread.threadId === String(threadId) ? { ...thread, archived: true } : thread,
-    );
-    threadsChanged();
-    return null;
-  },
+  ...sessionLifecycleHandlers({
+    get: () => threads,
+    set: (rows) => {
+      threads = rows;
+    },
+    changed: threadsChanged,
+  }),
+  ...sessionPullRequestHandlers({
+    get: () => threads,
+    set: (rows) => {
+      threads = rows;
+    },
+    changed: threadsChanged,
+  }),
   threads_import_candidates: (): ImportCandidate[] => [
     {
       pluginId: "claude-acp",

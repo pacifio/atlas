@@ -1,6 +1,6 @@
 //! Git `--progress` stderr parsing → smooth 0..1 progress values.
 //!
-//! Port of GitHub Desktop's `progress/git.ts`: each operation declares an
+//! Each operation declares an
 //! ordered, weighted list of steps ("Receiving objects" 0.7, …). A parsed
 //! line advances monotonically through the steps — completed earlier steps
 //! contribute their full weight, the current one contributes

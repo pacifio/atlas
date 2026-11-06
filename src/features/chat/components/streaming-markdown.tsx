@@ -1,12 +1,17 @@
-import { memo, useEffect, useRef, useState, useMemo } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useState, useMemo } from "react";
 import {
   CachedMarkdown,
+  type CachedMarkdownProps,
   parseTransientOffThread,
   transientWorkerAvailable,
 } from "@/lib/markdown-cache";
+import { onMarkdownClick, onMarkdownCopy, onMarkdownKeyDown } from "@/lib/markdown-links";
+import { hasFileIcons, paintFileIcons } from "@/features/icon-theme/lib/icon-markup";
 import { parseMarkdown } from "@/lib/markdown-render";
 import {
-  splitTopLevelBlocks,
+  type BlockSplit,
+  EMPTY_SPLIT,
+  splitIncremental,
   hasReferenceDefinitions,
   isIncompleteCodeFence,
 } from "@/lib/markdown-blocks";
@@ -16,9 +21,7 @@ import { cn } from "@/lib/utils";
  * Block-level markdown renderer for the chat thread. Splits the message into
  * top-level blocks and renders each through the source-keyed `CachedMarkdown`
  * cache, so completed blocks are pure cache hits (never re-parsed) and only the
- * trailing (still-streaming) block re-parses per frame. This is the webview
- * translation of Zed's per-line layout cache / Open WebUI's per-block tokens:
- * markdown formats LIVE as it streams, with bounded re-work.
+ * trailing (still-streaming) block re-parses per frame. Markdown formats LIVE as it streams, with bounded re-work.
  *
  * Uses `display:contents` on each block wrapper so the N per-block `CachedMarkdown`
  * containers vanish from layout and their block elements remain layout-siblings
@@ -52,14 +55,17 @@ const TRANSIENT_THROTTLE_MS = 120;
 const TransientMarkdown = memo(function TransientMarkdown({
   source,
   className,
-  unstyled,
+  fileRoot,
 }: {
   source: string;
   className?: string;
-  unstyled?: boolean;
+  fileRoot?: string;
 }) {
   const small = source.length <= INLINE_PARSE_LIMIT;
-  const inline = useMemo(() => (small ? parseMarkdown(source) : null), [small, source]);
+  const inline = useMemo(
+    () => (small ? parseMarkdown(source, fileRoot) : null),
+    [small, source, fileRoot],
+  );
 
   // Large tail: throttled trailing-edge parse of the LATEST source. The parse
   // itself runs on the markdown worker via the transient lane (single slot,
@@ -70,6 +76,8 @@ const TransientMarkdown = memo(function TransientMarkdown({
   const [big, setBig] = useState("");
   const latest = useRef(source);
   latest.current = source;
+  const rootRef = useRef(fileRoot);
+  rootRef.current = fileRoot;
   const timer = useRef<number | null>(null);
   const lastRun = useRef(0);
   const alive = useRef(true);
@@ -85,13 +93,13 @@ const TransientMarkdown = memo(function TransientMarkdown({
       timer.current = null;
       lastRun.current = performance.now();
       if (transientWorkerAvailable()) {
-        void parseTransientOffThread(latest.current).then((html) => {
+        void parseTransientOffThread(latest.current, rootRef.current).then((html) => {
           // null/"" = superseded or timed out — skip the tick; a newer parse
           // is on the way (and settling re-renders through CachedMarkdown).
           if (alive.current && html) setBig(html);
         });
       } else {
-        setBig(parseMarkdown(latest.current));
+        setBig(parseMarkdown(latest.current, rootRef.current));
       }
     }, due);
   }, [small, source]);
@@ -113,7 +121,15 @@ const TransientMarkdown = memo(function TransientMarkdown({
   const html = inline ?? (big || lastHtml.current);
   lastHtml.current = html;
 
-  // Same external-link interception as CachedMarkdown — a click on a link in
+  // Each tick replaces the tail's HTML, chips and all. Painting before the
+  // browser does means a resolved icon is in place on every frame instead of
+  // flickering back to its fallback glyph; it is a cache lookup per chip.
+  useLayoutEffect(() => {
+    const node = ref.current;
+    if (node && hasFileIcons(html)) paintFileIcons(node);
+  }, [html]);
+
+  // Same link and file-chip handling as CachedMarkdown — a click on a link in
   // the live tail must not navigate the WKWebView away from Atlas. (Copy-code
   // bars are skipped: fences render as plain text until they close, and the
   // settled block gets them from CachedMarkdown.)
@@ -121,28 +137,21 @@ const TransientMarkdown = memo(function TransientMarkdown({
   useEffect(() => {
     const node = ref.current;
     if (!node) return;
-    const onClick = (e: MouseEvent) => {
-      const anchor = (e.target as HTMLElement | null)?.closest?.("a");
-      if (anchor instanceof HTMLAnchorElement && anchor.href && /^https?:/i.test(anchor.href)) {
-        e.preventDefault();
-        const href = anchor.href;
-        void import("@tauri-apps/plugin-opener").then((m) => m.openUrl(href)).catch(() => {});
-      }
-    };
+    const onClick = (e: MouseEvent) => void onMarkdownClick(e);
     node.addEventListener("click", onClick);
-    return () => node.removeEventListener("click", onClick);
+    node.addEventListener("keydown", onMarkdownKeyDown);
+    node.addEventListener("copy", onMarkdownCopy);
+    return () => {
+      node.removeEventListener("click", onClick);
+      node.removeEventListener("keydown", onMarkdownKeyDown);
+      node.removeEventListener("copy", onMarkdownCopy);
+    };
   }, []);
 
   return (
     <div
       ref={ref}
-      className={cn(
-        unstyled
-          ? "select-text"
-          : "prose-chat text-[var(--foreground)] leading-relaxed break-words select-text",
-        className,
-      )}
-      // eslint-disable-next-line react/no-danger
+      className={cn("prose-session select-text", className)}
       dangerouslySetInnerHTML={{ __html: html }}
     />
   );
@@ -153,22 +162,25 @@ const MarkdownBlock = memo(function MarkdownBlock({
   source,
   trailing,
   className,
-  unstyled,
+  codeActions,
   priority,
+  fileRoot,
 }: {
   source: string;
   trailing: boolean;
   className?: string;
-  unstyled?: boolean;
+  codeActions?: CachedMarkdownProps["codeActions"];
   priority?: number;
+  fileRoot?: string;
 }) {
   // A still-open code fence renders as plain text (no per-frame re-highlight of a
   // growing block); it snaps to highlighted once the closing fence streams in.
+  // Its root is the prose root (the size and colour the transcript reads at).
   if (trailing && isIncompleteCodeFence(source)) {
     return (
       <pre
         className={cn(
-          "whitespace-pre-wrap break-words font-mono text-base leading-relaxed text-[var(--foreground)] select-text",
+          "prose-session font-mono break-words whitespace-pre-wrap select-text",
           className,
         )}
       >
@@ -182,7 +194,7 @@ const MarkdownBlock = memo(function MarkdownBlock({
     return (
       <TransientMarkdown
         source={source}
-        unstyled={unstyled}
+        fileRoot={fileRoot}
         className={cn("[display:contents]", className)}
       />
     );
@@ -190,22 +202,36 @@ const MarkdownBlock = memo(function MarkdownBlock({
   return (
     <CachedMarkdown
       source={source}
-      unstyled={unstyled}
+      codeActions={codeActions}
       priority={priority}
+      fileRoot={fileRoot}
       className={cn("[display:contents]", className)}
     />
   );
 });
 
 /** rAF-coalesced block split: at most one split per frame while streaming; a
- *  synchronous, memoized split when settled. */
+ *  synchronous split when settled.
+ *
+ *  The split is incremental (`splitIncremental`): the carry holds the settled
+ *  blocks so a frame parses only the growing tail instead of the whole reply.
+ *  Without it each frame re-parsed every byte received so far, which made the
+ *  split alone quadratic in the length of the answer. */
 function useBlocks(source: string, streaming: boolean, whole: boolean): string[] {
-  const [blocks, setBlocks] = useState<string[]>(() =>
-    whole ? [source] : splitTopLevelBlocks(source),
-  );
+  const carry = useRef<BlockSplit>(EMPTY_SPLIT);
+  const [blocks, setBlocks] = useState<string[]>(() => {
+    if (whole) return [source];
+    carry.current = splitIncremental(source, EMPTY_SPLIT);
+    return carry.current.blocks;
+  });
   const rafRef = useRef<number | null>(null);
   const latest = useRef(source);
   latest.current = source;
+
+  const split = (text: string) => {
+    carry.current = splitIncremental(text, carry.current);
+    setBlocks(carry.current.blocks);
+  };
 
   useEffect(() => {
     if (whole) return;
@@ -215,15 +241,16 @@ function useBlocks(source: string, streaming: boolean, whole: boolean): string[]
         cancelAnimationFrame(rafRef.current);
         rafRef.current = null;
       }
-      setBlocks(splitTopLevelBlocks(source));
+      split(source);
       return;
     }
     // Streaming: coalesce to one split per frame.
     if (rafRef.current != null) return;
     rafRef.current = requestAnimationFrame(() => {
       rafRef.current = null;
-      setBlocks(splitTopLevelBlocks(latest.current));
+      split(latest.current);
     });
+    // `split` closes over refs only; re-creating it per render is not a dep.
   }, [source, streaming, whole]);
 
   useEffect(
@@ -248,16 +275,20 @@ export function StreamingMarkdown({
   source,
   streaming,
   className,
-  unstyled,
+  codeActions,
   priority,
+  fileRoot,
 }: {
   source: string;
   streaming: boolean;
   className?: string;
-  /** See `CachedMarkdown.unstyled` — the new transcript pins its own metrics. */
-  unstyled?: boolean;
+  /** See `CachedMarkdown.codeActions`; settled blocks only (an open fence
+   *  and the live tail never get them). */
+  codeActions?: CachedMarkdownProps["codeActions"];
   /** See `CachedMarkdown.priority`. */
   priority?: number;
+  /** See `CachedMarkdown.fileRoot`. */
+  fileRoot?: string;
 }) {
   // Reference-style link / footnote definitions need cross-block context, so
   // fall back to a single whole-message render — but only once SETTLED. During
@@ -272,8 +303,9 @@ export function StreamingMarkdown({
     return (
       <CachedMarkdown
         source={source}
-        unstyled={unstyled}
+        codeActions={codeActions}
         priority={priority}
+        fileRoot={fileRoot}
         className={className}
       />
     );
@@ -283,15 +315,16 @@ export function StreamingMarkdown({
   const trailingIsFence = streaming && lastIdx >= 0 && isIncompleteCodeFence(blocks[lastIdx]);
 
   return (
-    <div className={className}>
+    <div className={cn("prose-session", className)}>
       {blocks.map((blk, i) => (
         <MarkdownBlock
           key={i}
           source={blk}
           trailing={streaming && i === lastIdx}
           className={className}
-          unstyled={unstyled}
+          codeActions={codeActions}
           priority={priority}
+          fileRoot={fileRoot}
         />
       ))}
       {/* Terminal-style caret after the last block while streaming — unless the

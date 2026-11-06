@@ -1,9 +1,10 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 mod github;
 mod openai;
 
 use rama_http::HeaderMap;
 use rama_http::HeaderValue;
-use rand::Rng as _;
+use rand::RngExt as _;
 use std::collections::HashMap;
 
 const DUMMY_ALPHANUMERIC: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";

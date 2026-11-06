@@ -123,7 +123,7 @@ impl OrgOffer {
         cwd: &str,
         server_running: bool,
     ) -> (OrgOfferDecision, Option<OrgScope>) {
-        let setting_on = http_mcp && org_access && (self.gate)();
+        let setting_on = http_mcp && org_access && (self.gate)(cwd);
         let signed_in = setting_on && self.orgs.signed_in();
         // Bound means bound to a Workspace: a binding made before the server's
         // Workspace id was recorded names an organisation but nothing to read.

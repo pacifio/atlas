@@ -4,6 +4,26 @@ on:
   push:
     tags:
       - 'alpha-*'
+  # A dry run: the same build and the same verification, never published.
+  # Limited to what decides the artifact's shape, because a release build is
+  # long; the weekly CI run does not cover this, so a change outside these
+  # paths that breaks the Linux release is caught by the next tag at the
+  # latest, and by `Verify` before it publishes.
+  pull_request:
+    paths:
+      - '.github/workflows/release-linux.yml'
+      - 'scripts/package-linux.sh'
+      - 'scripts/verify-linux-release.sh'
+      - 'scripts/linux/**'
+      - 'src-tauri/tauri.conf.json'
+      - 'src-tauri/tauri.linux.conf.json'
+      - 'src-tauri/resources/dev.atlas.ide.desktop'
+      - 'src-tauri/src/main.rs'
+      - 'crates/atlas-native-agent/Cargo.toml'
+      - 'crates/atlas-agent-store/Cargo.toml'
+      - 'crates/atlas-native-agent/src/helper.rs'
+      - 'crates/atlas-native-agent/src/linux_sandbox*.rs'
+      - 'vendor/atlas-engine/linux-sandbox/**'
   workflow_dispatch:
     inputs:
       version:
@@ -12,6 +32,19 @@ on:
         default: ''
       tag:
         description: 'Release tag name (leave empty to match git tag or alpha-<version>)'
+        required: false
+        default: ''
+  # Called by release.yml once release-please has tagged a release. A tag that
+  # GITHUB_TOKEN creates starts no workflow, so the push trigger above never
+  # fires for those; it stays for a tag a maintainer pushes by hand.
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: false
+        default: ''
+      tag:
+        type: string
         required: false
         default: ''
 
@@ -42,45 +75,41 @@ env:
   SCCACHE_GHA_RW_MODE: ${{ github.event_name == 'workflow_dispatch' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && 'READ_WRITE' || 'READ_ONLY' }}
 
 jobs:
+  # One build per architecture, each on its own runner (never emulated).
+  #
+  # Ubuntu 22.04, not `ubuntu-latest`: the runner's glibc is the oldest glibc
+  # the binary can load on, and `ubuntu-latest` moved it from 2.35 to 2.39
+  # without a commit, dropping Debian 12 and Ubuntu 22.04 the day it did. RHEL 9
+  # (glibc 2.34) is below even this floor; RHEL 10 is the first. 22.04 is
+  # the oldest image that has WebKitGTK 4.1, which Tauri 2 requires, so 2.35
+  # is the floor `Verify` holds the binary to. Move it deliberately, with
+  # docs/reference/linux-support.md, when 22.04 runners are retired.
   build-linux:
-    name: Build Linux Packages
-    runs-on: ubuntu-latest
+    name: Build Linux packages (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
+          ref: ${{ inputs.tag }}
 
       - name: Extract release version
         id: meta
         env:
-          INPUT_VERSION: ${{ github.event.inputs.version }}
-          INPUT_TAG: ${{ github.event.inputs.tag }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
-          if [ -n "$INPUT_VERSION" ]; then
-            RAW_VER="$INPUT_VERSION"
-          elif [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
-            RAW_VER="${GITHUB_REF_NAME}"
-          else
-            RAW_VER=$(node -p 'JSON.parse(require("fs").readFileSync("package.json")).version')
-          fi
-          # Strip tag prefixes to get pure semver
-          VERSION="${RAW_VER#alpha-}"
-          VERSION="${VERSION#exp-}"
-          VERSION="${VERSION#v}"
-
-          if [ -n "$INPUT_TAG" ]; then
-            TAG="$INPUT_TAG"
-          elif [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
-            TAG="${GITHUB_REF_NAME}"
-          else
-            TAG="alpha-${VERSION}"
-          fi
-
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "Building Atlas ${VERSION} for tag ${TAG}"
+          ./scripts/linux/release-meta.sh | tee -a "$GITHUB_OUTPUT"
 
       - name: Install system build dependencies
         run: |
@@ -96,7 +125,12 @@ jobs:
             libglib2.0-dev \
             bubblewrap \
             rpm \
-            squashfs-tools
+            squashfs-tools \
+            xvfb \
+            meson \
+            ninja-build \
+            libcap-dev \
+            clang-15
 
       # Bun, Node and Rust at the versions mise.toml and rust-toolchain.toml
       # pin: a release is built with exactly what CI tested.
@@ -165,12 +199,42 @@ jobs:
           sudo swapon /swapfile_extra
           free -h
 
-      - name: Build frontend & Tauri Linux packages (deb, rpm, AppImage)
+      # The bubblewrap the AppImage carries, for machines without the distro
+      # package (the deb, rpm and Arch package depend on it instead). Built
+      # from a pinned, checksummed upstream release; the script says why.
+      - name: Build the bundled bubblewrap
+        run: |
+          ./scripts/linux/build-bwrap.sh src-tauri/binaries "${{ matrix.arch }}-unknown-linux-gnu"
+
+      # Tauri builds the binary and the AppImage only. The deb and rpm are
+      # package-linux.sh's, below: they install as `atl`/`tryatlas` rather
+      # than claiming `/usr/bin/atlas`, which belongs to the Atlas CLI.
+      # Clang for the C and C++ dependencies cc-rs compiles on aarch64. The
+      # runner's GCC 11 cannot build numkong (usearch's SIMD backend) there:
+      # its arm_neon.h wraps the dot-product intrinsics in
+      # `#pragma GCC target ("arch=armv8.2-a+dotprod")`, and a caller under
+      # numkong's `#pragma GCC target("+dotprod")` does not satisfy that arch,
+      # so the build dies with "inlining failed in call to 'always_inline'
+      # 'vdotq_s32': target specific option mismatch". GCC 12 wraps them the
+      # same way; GCC 13 (CI's ubuntu-24.04-arm, which builds it) changed the
+      # region to `+nothing+dotprod`. Jammy has no GCC 13, and a PPA's g++-13
+      # would raise the libstdc++ floor above the 12.x that Ubuntu 22.04 and
+      # Debian 12 ship, which Verify would refuse. Clang 15 is in jammy for
+      # arm64, takes numkong's `#pragma clang attribute` path (the one the
+      # macOS build already proves), and links the system libstdc++ 12, so
+      # the floor stands. x86-64 stays on the runner's GCC, which builds it.
+      - name: Use Clang for native dependencies on aarch64
+        if: matrix.arch == 'aarch64'
+        run: |
+          echo "CC=clang-15" >> "$GITHUB_ENV"
+          echo "CXX=clang++-15" >> "$GITHUB_ENV"
+
+      - name: Build frontend, binary and AppImage
         env:
           POSTHOG_KEY: ${{ secrets.POSTHOG_KEY }}
           POSTHOG_HOST: ${{ secrets.POSTHOG_HOST }}
         run: |
-          bun run build:app:linux -- --bundles appimage
+          bun run build:app:linux -- --bundles appimage --config src-tauri/binaries/tauri.bwrap.conf.json
 
       - name: Find and verify built binary
         id: find_bin
@@ -192,20 +256,28 @@ jobs:
           RELEASE_TAG: ${{ steps.meta.outputs.tag }}
           VERSION: ${{ steps.meta.outputs.version }}
         run: |
-          ./scripts/package-linux.sh x86_64
+          ./scripts/package-linux.sh "${{ matrix.arch }}"
 
+      # Arch Linux has no official aarch64 image; the AUR recipe the publish
+      # job writes covers both arches, and this proves it on x86-64.
       - name: Build Arch Linux package (.pkg.tar.zst) via Docker
+        if: matrix.arch == 'x86_64'
         run: |
           docker run --rm --ipc=host -v "${PWD}:/workspace" -w /workspace archlinux:latest bash -c '
             set -euo pipefail
-            pacman-key --init && pacman-key --populate archlinux || true
-            pacman -Sy --noconfirm archlinux-keyring || true
-            pacman -Syu --noconfirm base-devel pacman-contrib zstd
+            # No `|| true`: a keyring that cannot be trusted must stop the
+            # build, not produce a package from unverified dependencies.
+            pacman-key --init
+            pacman-key --populate archlinux
+            pacman -Sy --noconfirm archlinux-keyring
+            pacman -Syu --noconfirm base-devel pacman-contrib zstd namcap
             useradd -m builder
-            chown -R builder:builder /workspace/dist/release-linux
-            su builder -c "cd /workspace/dist/release-linux/aur-tryatlas-bin && makepkg -f --nodeps"
-            cp /workspace/dist/release-linux/aur-tryatlas-bin/*.pkg.tar.zst /workspace/dist/release-linux/
-            chmod -R a+rw /workspace/dist/release-linux
+            chown -R builder:builder /workspace/target/release-linux
+            su builder -c "cd /workspace/target/release-linux/aur-tryatlas-bin && makepkg -f --nodeps"
+            cp /workspace/target/release-linux/aur-tryatlas-bin/*.pkg.tar.zst /workspace/target/release-linux/
+            # The Arch linter, report only (see VERIFY_LINT in Verify).
+            namcap /workspace/target/release-linux/aur-tryatlas-bin/PKGBUILD /workspace/target/release-linux/*.pkg.tar.zst || true
+            chmod -R a+rw /workspace/target/release-linux
           '
 
       - name: Collect release artifacts
@@ -215,24 +287,19 @@ jobs:
           [ -d "target" ] && SEARCH_DIRS+=("target")
           [ -d "src-tauri/target" ] && SEARCH_DIRS+=("src-tauri/target")
           # Copy standalone tarball
-          cp dist/release-linux/*.tar.gz dist/artifacts/
+          cp target/release-linux/*.tar.gz dist/artifacts/
           # Copy Arch Linux package. `!debug` in the PKGBUILD stops makepkg
           # splitting out an empty debug package; drop one if it ever does, and
           # keep the plain `cp` so a missing package still fails the job.
-          rm -f dist/release-linux/*-debug-*.pkg.tar.zst
-          cp dist/release-linux/*.pkg.tar.zst dist/artifacts/
-          # Copy AUR PKGBUILD for convenience
-          cp dist/release-linux/aur-tryatlas-bin/PKGBUILD dist/artifacts/PKGBUILD-tryatlas-bin
-          # Copy conflict-free Debian and RPM packages generated by package-linux.sh
-          cp dist/release-linux/*.deb dist/artifacts/ 2>/dev/null || true
-          cp dist/release-linux/*.rpm dist/artifacts/ 2>/dev/null || true
-          # Fallback to Tauri deb/rpm bundles if custom ones were not generated
-          if ! ls dist/artifacts/*.deb >/dev/null 2>&1; then
-            find "${SEARCH_DIRS[@]}" -type f -name "*.deb" -exec cp -t dist/artifacts/ {} +
+          rm -f target/release-linux/*-debug-*.pkg.tar.zst
+          if [ "${{ matrix.arch }}" = x86_64 ]; then
+            cp target/release-linux/*.pkg.tar.zst dist/artifacts/
           fi
-          if ! ls dist/artifacts/*.rpm >/dev/null 2>&1; then
-            find "${SEARCH_DIRS[@]}" -type f -name "*.rpm" -exec cp -t dist/artifacts/ {} +
-          fi
+          # The conflict-free Debian and RPM packages from package-linux.sh.
+          # Plain `cp`, so a package that was not built fails the job here
+          # instead of shipping a release without it.
+          cp target/release-linux/*.deb dist/artifacts/
+          cp target/release-linux/*.rpm dist/artifacts/
           # Copy AppImage from Tauri bundles and normalize name to tryatlas package convention
           find "${SEARCH_DIRS[@]}" -type f -name "*.AppImage" -exec cp -t dist/artifacts/ {} +
           for appimage in dist/artifacts/*Atlas*.AppImage; do
@@ -248,6 +315,107 @@ jobs:
           ls -lh
           echo "=== Checksums ==="
           cat SHA256SUMS.txt
+
+      # The gate between built and published: the binary loads within the
+      # glibc floor, every package carries what it should and starts, the
+      # AppImage's GUI comes up under Xvfb, and the deb, rpm and Arch package
+      # install from the distros' own repositories and run. The script
+      # documents each check.
+      - name: Verify the release
+        env:
+          GLIBC_FLOOR: '2.35'
+          EXPECT_ARCH: ${{ matrix.arch }}
+          VERIFY_GUI: '1'
+          VERIFY_INSTALL: '1'
+          EXPECT_BUNDLED_BWRAP: '1'
+          VERIFY_LINT: report
+        run: |
+          ./scripts/verify-linux-release.sh "${{ steps.find_bin.outputs.bin_path }}" dist/artifacts
+
+      # SHA256SUMS.txt is per job and is written again over both arches by
+      # the publish job, so it is not handed on.
+      - name: Hand the packages to the publish job
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: |
+            dist/artifacts/*
+            !dist/artifacts/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  # One release from both architectures. It never runs cargo, which is what
+  # keeps the workflow-wide RUSTC_WRAPPER above safe.
+  publish:
+    name: Publish GitHub Release
+    needs: build-linux
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      # For the build-provenance attestation below.
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Extract release version
+        id: meta
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          ./scripts/linux/release-meta.sh | tee -a "$GITHUB_OUTPUT"
+
+      - name: Collect both architectures
+        uses: actions/download-artifact@v4
+        with:
+          pattern: linux-*
+          path: dist/artifacts
+          merge-multiple: true
+
+      # Signs the rpms in place, so it runs before the checksums are taken.
+      # Skipped, with a warning on the run, until the release key exists:
+      # see "Signing" in docs/reference/linux-support.md for the two secrets.
+      - name: Sign the rpm packages
+        env:
+          GPG_KEY: ${{ secrets.LINUX_RELEASE_GPG_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.LINUX_RELEASE_GPG_PASSPHRASE }}
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends rpm
+          ./scripts/linux/sign-release.sh rpm dist/artifacts
+
+      - name: Write the multi-arch AUR PKGBUILD and the checksums
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          RELEASE_TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          ./scripts/linux/aur-pkgbuild.sh dist/artifacts dist/aur/PKGBUILD
+          cp dist/aur/PKGBUILD dist/artifacts/PKGBUILD-tryatlas-bin
+          cd dist/artifacts
+          find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -exec sha256sum {} + | sort -k2 > SHA256SUMS.txt
+          ls -lh
+          cat SHA256SUMS.txt
+
+      # A detached signature over the checksums signs every file they list.
+      - name: Sign the checksums
+        env:
+          GPG_KEY: ${{ secrets.LINUX_RELEASE_GPG_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.LINUX_RELEASE_GPG_PASSPHRASE }}
+        run: ./scripts/linux/sign-release.sh sums dist/artifacts
+
+      # SLSA build provenance for every artifact, tied to this workflow run:
+      # `gh attestation verify <file> --repo tryatlas/atlas` checks it. Needs no
+      # key, so it ships whether or not the GPG key exists.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/artifacts/*
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2

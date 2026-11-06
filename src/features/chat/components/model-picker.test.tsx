@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { ModelPicker, searchScore } from "./model-picker";
+import { ModelPicker, searchScore, type PickerAgent } from "./model-picker";
 import { useSettingsStore } from "@/features/settings/stores/settings-store";
 import type { SessionModeInfo } from "@/types/agents";
 import { isMac } from "@/lib/platform";
@@ -16,13 +16,23 @@ vi.mock("@/features/settings/lib/atlas-config-api", () => ({
   onConfigError: () => Promise.resolve(() => {}),
 }));
 
-const MODELS: SessionModeInfo[] = [
+const NATIVE_MODELS: SessionModeInfo[] = [
   { id: "claude-opus-5", name: "Claude Opus 5", provider: "anthropic", is_new: true },
   { id: "claude-sonnet-4", name: "Claude Sonnet 4", provider: "anthropic" },
   { id: "claude-3-7", name: "Claude Sonnet 3.7", provider: "anthropic", legacy: true },
   { id: "claude-3-5", name: "Claude Haiku 3.5", provider: "anthropic", legacy: true },
   { id: "gpt-5", name: "GPT-5", provider: "openai", description: "Strong at refactors" },
-  { id: "house", name: "House model" },
+];
+
+const CLAUDE_MODELS: SessionModeInfo[] = [
+  { id: "default", name: "Default", description: "Recommended for most work" },
+  { id: "opus", name: "Opus 5.5" },
+];
+
+const agentsWith = (native = NATIVE_MODELS, claude = CLAUDE_MODELS): PickerAgent[] => [
+  { agentType: "atlas-agent", label: "Atlas Agent", models: native },
+  { agentType: "claude-code", label: "Claude Code", models: claude },
+  { agentType: "codex", label: "Codex", models: [] },
 ];
 
 /** Settings writes go to `config.toml` through Rust; here they land in the
@@ -38,22 +48,30 @@ function stubSettingsWrites(favoriteModels: string[] = []) {
   }));
 }
 
-function picker(onPick: (id: string) => void, currentModel: string, models: SessionModeInfo[]) {
+type OnPick = (agentType: string, modelId: string | null) => void;
+
+function picker(onPick: OnPick, currentModel: string, agents: PickerAgent[], addView?: string) {
   return (
     <ModelPicker
-      agentType="atlas-agent"
-      models={models}
+      agents={agents}
+      currentAgent="atlas-agent"
       currentModel={currentModel}
       onPick={onPick}
+      addView={addView}
     />
   );
 }
 
-function renderPicker(onPick = vi.fn(), currentModel = "claude-sonnet-4", models = MODELS) {
-  const r = render(picker(onPick, currentModel, models));
+function renderPicker(
+  onPick = vi.fn<OnPick>(),
+  currentModel = "claude-sonnet-4",
+  agents = agentsWith(),
+  addView?: string,
+) {
+  const r = render(picker(onPick, currentModel, agents, addView));
   return {
     onPick,
-    rerender: (m: SessionModeInfo[], cur = currentModel) => r.rerender(picker(onPick, cur, m)),
+    rerender: (a: PickerAgent[], cur = currentModel) => r.rerender(picker(onPick, cur, a)),
   };
 }
 
@@ -66,7 +84,7 @@ const highlighted = () => {
   return id ? document.getElementById(id)?.querySelector(".label")?.textContent : null;
 };
 const railButtons = () =>
-  within(screen.getByRole("toolbar", { name: "Providers" })).getAllByRole("button");
+  within(screen.getByRole("toolbar", { name: "Agents" })).getAllByRole("button");
 const pressed = () =>
   railButtons()
     .filter((b) => b.getAttribute("aria-pressed") === "true")
@@ -84,21 +102,114 @@ const chord = (k: string, code: string, shift = false) =>
   });
 const jump = (n: number) => chord(String(n), `Digit${n}`);
 const type = (value: string) => fireEvent.change(input(), { target: { value } });
+const headings = () =>
+  Array.from(screen.getByRole("listbox").querySelectorAll(":scope > [role=presentation]"))
+    .filter((el) => !el.querySelector("[role=option]"))
+    .map((el) => el.querySelector("span.truncate")?.textContent);
+/** Each row's caption line, as read (marks carry their own <title>). */
+const captions = () =>
+  screen.queryAllByRole("option").map((o) =>
+    Array.from(o.querySelectorAll(".caption > span"))
+      .map((s) => s.textContent)
+      .join(""),
+  );
 
 describe("ModelPicker", () => {
   beforeEach(() => stubSettingsWrites());
   afterEach(cleanup);
 
-  it("builds the rail from the providers the agent stated, and files the rest under the agent", () => {
+  it("builds the rail from the agents, marks the current one, and opens on it", () => {
     renderPicker();
     expect(railButtons().map((t) => t.getAttribute("aria-label"))).toEqual([
-      "Favorites",
-      "Claude",
-      "OpenAI",
-      "Atlas Agent",
+      "Pinned",
+      "Atlas Agent (current)",
+      "Claude Code",
+      "Codex",
     ]);
-    fireEvent.click(screen.getByRole("button", { name: "Atlas Agent" }));
-    expect(rows()).toEqual(["House model"]);
+    expect(pressed()).toEqual(["Atlas Agent (current)"]);
+  });
+
+  it("heads the agent's models by provider only when it stated more than one", () => {
+    renderPicker();
+    expect(headings()).toEqual(["Claude", "OpenAI"]);
+    expect(rows()).toEqual(["Claude Opus 5", "Claude Sonnet 4", "GPT-5", "Legacy models"]);
+    fireEvent.click(screen.getByRole("button", { name: "Claude Code" }));
+    expect(headings()).toEqual([]);
+    expect(rows()).toEqual(["Default", "Opus 5.5"]);
+  });
+
+  it("shows a model's description under its name, and no repeated agent caption", () => {
+    renderPicker();
+    fireEvent.click(screen.getByRole("button", { name: "Claude Code" }));
+    expect(captions()).toEqual(["Recommended for most work", ""]);
+  });
+
+  describe("across agents", () => {
+    it("picks another agent's model with its agent", () => {
+      const { onPick } = renderPicker();
+      fireEvent.click(screen.getByRole("button", { name: "Claude Code" }));
+      fireEvent.click(screen.getByText("Opus 5.5"));
+      expect(onPick).toHaveBeenCalledWith("claude-code", "opus");
+    });
+
+    it("offers a switch for an agent with no models yet, by button and by Enter", () => {
+      const { onPick } = renderPicker();
+      fireEvent.click(screen.getByRole("button", { name: "Codex" }));
+      expect(rows()).toEqual([]);
+      fireEvent.click(screen.getByRole("button", { name: /Switch to Codex/ }));
+      expect(onPick).toHaveBeenLastCalledWith("codex", null);
+      onPick.mockClear();
+      act(() => input().focus());
+      key("Enter");
+      expect(onPick).toHaveBeenCalledWith("codex", null);
+    });
+
+    it("checks the current model only on the current agent", () => {
+      renderPicker(vi.fn(), "default", agentsWith([{ id: "default", name: "Default" }]));
+      expect(screen.getAllByLabelText("Current")).toHaveLength(1);
+      fireEvent.click(screen.getByRole("button", { name: "Claude Code" }));
+      expect(screen.queryAllByLabelText("Current")).toHaveLength(0);
+    });
+
+    it("renders the add view from the rail's trailing entry", () => {
+      renderPicker(vi.fn(), "claude-sonnet-4", agentsWith(), "Install more");
+      fireEvent.click(screen.getByRole("button", { name: "Add agents" }));
+      expect(screen.getByText("Install more")).toBeTruthy();
+    });
+  });
+
+  describe("favorites", () => {
+    it("pins an agent's starred models on top of its view", () => {
+      stubSettingsWrites(["atlas-agent:gpt-5"]);
+      renderPicker();
+      // One provider left: not headed by it, but set apart from the pinned.
+      expect(headings()).toEqual(["Pinned", "All models"]);
+      expect(rows()[0]).toBe("GPT-5");
+    });
+
+    it("lists every agent's favorites, headed by agent", () => {
+      stubSettingsWrites(["claude-code:opus", "atlas-agent:gpt-5"]);
+      const { onPick } = renderPicker();
+      fireEvent.click(screen.getByRole("button", { name: "Pinned" }));
+      expect(headings()).toEqual(["Atlas Agent", "Claude Code"]);
+      expect(rows()).toEqual(["GPT-5", "Opus 5.5"]);
+      jump(2);
+      expect(onPick).toHaveBeenCalledWith("claude-code", "opus");
+    });
+
+    it("stars into settings with the agent in the key", () => {
+      renderPicker();
+      fireEvent.click(screen.getByRole("button", { name: "Claude Code" }));
+      fireEvent.mouseMove(screen.getAllByRole("option")[1]!.parentElement!);
+      fireEvent.click(screen.getByRole("button", { name: "Pin" }));
+      expect(useSettingsStore.getState().settings.favoriteModels).toEqual(["claude-code:opus"]);
+    });
+
+    it("says so when the favorites view is empty", () => {
+      renderPicker();
+      fireEvent.click(screen.getByRole("button", { name: "Pinned" }));
+      expect(screen.getByText("Nothing pinned yet")).toBeTruthy();
+    });
   });
 
   describe("accessibility", () => {
@@ -116,15 +227,14 @@ describe("ModelPicker", () => {
       for (const option of screen.getAllByRole("option")) {
         expect(option.querySelector("button, a, input, [tabindex]")).toBeNull();
       }
-      // The star is still a real button, beside its option.
-      expect(screen.getAllByRole("button", { name: "Add to favorites" }).length).toBeGreaterThan(0);
+      // The highlighted row's star is still a real button, beside its option.
+      expect(screen.getAllByRole("button", { name: "Pin" })).toHaveLength(1);
     });
 
     it("renders the rail as pressed toggle buttons, not tabs without panels", () => {
       renderPicker();
       expect(screen.queryByRole("tab")).toBeNull();
       expect(screen.queryByRole("tablist")).toBeNull();
-      expect(pressed()).toEqual(["Claude"]);
     });
 
     it("collapses aria-expanded and drops the active descendant when nothing matches", () => {
@@ -135,11 +245,30 @@ describe("ModelPicker", () => {
     });
   });
 
+  describe("trailing slot", () => {
+    it("shows each row's jump chord, and the star in its place only under the highlight", () => {
+      renderPicker();
+      const label = (n: number) => displayLabel(parseCombo(`cmd+${n}`)!);
+      const slot = (i: number) => {
+        const row = screen.getAllByRole("option")[i]!.parentElement!;
+        return {
+          kbd: row.querySelector("kbd")?.textContent,
+          star: !!within(row).queryByRole("button"),
+        };
+      };
+      // Row 2 (Claude Sonnet 4) is highlighted: star, no chord.
+      expect(slot(0)).toEqual({ kbd: label(1), star: false });
+      expect(slot(1)).toEqual({ kbd: undefined, star: true });
+      expect(slot(2)).toEqual({ kbd: label(3), star: false });
+    });
+  });
+
   describe("keyboard", () => {
     it("moves with the arrows and wraps at both ends", () => {
       renderPicker();
-      expect(rows()).toEqual(["Claude Opus 5", "Claude Sonnet 4", "Legacy models"]);
       expect(highlighted()).toBe("Claude Sonnet 4");
+      key("ArrowDown");
+      expect(highlighted()).toBe("GPT-5");
       key("ArrowDown");
       expect(highlighted()).toBe("Legacy models");
       key("ArrowDown");
@@ -152,7 +281,7 @@ describe("ModelPicker", () => {
       const { onPick } = renderPicker();
       key("ArrowUp");
       key("Enter");
-      expect(onPick).toHaveBeenCalledWith("claude-opus-5");
+      expect(onPick).toHaveBeenCalledWith("atlas-agent", "claude-opus-5");
     });
 
     it("ignores Enter and the arrows while an IME is composing", () => {
@@ -166,33 +295,31 @@ describe("ModelPicker", () => {
 
     it("steps through the rail with ⌘⇧↑ / ⌘⇧↓, wrapping", () => {
       renderPicker();
-      expect(pressed()).toEqual(["Claude"]);
       chord("ArrowDown", "ArrowDown", true);
-      expect(pressed()).toEqual(["OpenAI"]);
-      expect(rows()).toEqual(["GPT-5"]);
-      expect(highlighted()).toBe("GPT-5");
+      expect(pressed()).toEqual(["Claude Code"]);
+      expect(highlighted()).toBe("Default");
       chord("ArrowDown", "ArrowDown", true);
       chord("ArrowDown", "ArrowDown", true);
-      expect(pressed()).toEqual(["Favorites"]);
+      expect(pressed()).toEqual(["Pinned"]);
       chord("ArrowUp", "ArrowUp", true);
-      expect(pressed()).toEqual(["Atlas Agent"]);
+      expect(pressed()).toEqual(["Codex"]);
     });
 
     it("moves to the rail with ← on an empty query or ⇧⇥, along it with ↑/↓, and back with →", () => {
       renderPicker();
       key("ArrowLeft");
-      expect(document.activeElement?.getAttribute("aria-label")).toBe("Claude");
-      // One tab stop: only the shown provider is in the tab order.
+      expect(document.activeElement?.getAttribute("aria-label")).toBe("Atlas Agent (current)");
+      // One tab stop: only the shown entry is in the tab order.
       expect(railButtons().filter((b) => b.tabIndex === 0)).toHaveLength(1);
       key("ArrowDown");
-      expect(document.activeElement?.getAttribute("aria-label")).toBe("OpenAI");
+      expect(document.activeElement?.getAttribute("aria-label")).toBe("Claude Code");
       key("ArrowUp");
       key("ArrowUp");
-      expect(document.activeElement?.getAttribute("aria-label")).toBe("Favorites");
+      expect(document.activeElement?.getAttribute("aria-label")).toBe("Pinned");
       key("ArrowRight");
       expect(document.activeElement).toBe(input());
       key("Tab", { shiftKey: true });
-      expect(document.activeElement?.getAttribute("aria-label")).toBe("Claude");
+      expect(document.activeElement?.getAttribute("aria-label")).toBe("Atlas Agent (current)");
     });
 
     it("keeps ← for the caret once there is a query", () => {
@@ -208,53 +335,45 @@ describe("ModelPicker", () => {
       expect(useSettingsStore.getState().settings.favoriteModels).toEqual([
         "atlas-agent:claude-sonnet-4",
       ]);
-      // And again unstars it.
       chord("s", "KeyS", true);
       expect(useSettingsStore.getState().settings.favoriteModels).toEqual([]);
     });
 
-    it("shows each model row's jump chord", () => {
-      renderPicker();
-      const label = (n: number) => displayLabel(parseCombo(`cmd+${n}`)!);
-      const kbds = screen.getAllByRole("option").map((o) => o.querySelector("kbd")?.textContent);
-      // Legacy toggle has none: it is not a pick.
-      expect(kbds).toEqual([label(1), label(2), undefined]);
-    });
-
     it("picks the Nth model row by its registered chord, skipping the Legacy toggle", () => {
       const { onPick } = renderPicker();
-      // Open the fold so a model sits after the toggle.
       key("ArrowDown");
-      key("Enter");
+      key("ArrowDown");
+      key("Enter"); // open the fold
       expect(rows()).toEqual([
         "Claude Opus 5",
         "Claude Sonnet 4",
+        "GPT-5",
         "Legacy models",
         "Claude Sonnet 3.7",
         "Claude Haiku 3.5",
       ]);
       jump(2);
-      expect(onPick).toHaveBeenLastCalledWith("claude-sonnet-4");
-      // Row 4 on screen, but the THIRD model.
-      jump(3);
-      expect(onPick).toHaveBeenLastCalledWith("claude-3-7");
+      expect(onPick).toHaveBeenLastCalledWith("atlas-agent", "claude-sonnet-4");
+      // Row 5 on screen, but the FOURTH model.
+      jump(4);
+      expect(onPick).toHaveBeenLastCalledWith("atlas-agent", "claude-3-7");
       jump(9);
       expect(onPick).toHaveBeenCalledTimes(2);
     });
 
     it("answers its chords only while focus is inside it", () => {
-      const first = vi.fn();
-      const second = vi.fn();
+      const first = vi.fn<OnPick>();
+      const second = vi.fn<OnPick>();
       render(
         <>
-          {picker(first, "claude-sonnet-4", MODELS)}
-          {picker(second, "claude-sonnet-4", MODELS)}
+          {picker(first, "claude-sonnet-4", agentsWith())}
+          {picker(second, "claude-sonnet-4", agentsWith())}
         </>,
       );
       const [a] = screen.getAllByRole("combobox");
       act(() => a!.focus());
       jump(1);
-      expect(first).toHaveBeenCalledWith("claude-opus-5");
+      expect(first).toHaveBeenCalledWith("atlas-agent", "claude-opus-5");
       expect(second).not.toHaveBeenCalled();
       act(() => (document.activeElement as HTMLElement).blur());
       jump(1);
@@ -274,50 +393,51 @@ describe("ModelPicker", () => {
 
     it("stays on the same model when starring reorders the list", () => {
       renderPicker();
-      key("ArrowDown"); // Legacy toggle
-      key("ArrowUp"); // Claude Sonnet 4
-      expect(highlighted()).toBe("Claude Sonnet 4");
+      key("ArrowDown"); // GPT-5
       chord("s", "KeyS", true);
-      expect(rows()[0]).toBe("Claude Sonnet 4");
-      expect(highlighted()).toBe("Claude Sonnet 4");
-    });
-
-    it("stays on the toggle when the Legacy fold expands", () => {
-      renderPicker();
-      key("ArrowDown");
-      key("Enter");
-      expect(highlighted()).toBe("Legacy models");
-      key("ArrowDown");
-      expect(highlighted()).toBe("Claude Sonnet 3.7");
+      expect(rows()[0]).toBe("GPT-5");
+      expect(highlighted()).toBe("GPT-5");
     });
 
     it("follows its model through a refreshed list, and clamps when it leaves", () => {
       const { rerender } = renderPicker();
       key("ArrowUp"); // Claude Opus 5
-      // A refresh that puts a new model first: the highlight stays on Opus.
-      const refreshed = [{ id: "claude-x", name: "Claude X", provider: "anthropic" }, ...MODELS];
-      rerender(refreshed);
+      const refreshed = [
+        { id: "claude-x", name: "Claude X", provider: "anthropic" },
+        ...NATIVE_MODELS,
+      ];
+      rerender(agentsWith(refreshed));
       expect(highlighted()).toBe("Claude Opus 5");
-      // Opus is withdrawn: the highlight holds its slot.
-      rerender(refreshed.filter((m) => m.id !== "claude-opus-5"));
-      expect(rows()).toEqual(["Claude X", "Claude Sonnet 4", "Legacy models"]);
+      rerender(agentsWith(refreshed.filter((m) => m.id !== "claude-opus-5")));
       expect(highlighted()).toBe("Claude Sonnet 4");
     });
 
-    it("scrolls for the keyboard but not under the mouse", () => {
-      const scroll = vi.fn();
+    it("highlights the current model when its list arrives after open", () => {
+      const { rerender } = renderPicker(vi.fn(), "gpt-5", agentsWith([]));
+      expect(screen.getByText("No models")).toBeTruthy();
+      rerender(agentsWith());
+      expect(pressed()).toEqual(["Atlas Agent (current)"]);
+      expect(highlighted()).toBe("GPT-5");
+    });
+
+    it("scrolls the list for the keyboard, not under the mouse, and never an ancestor", () => {
+      const intoView = vi.fn();
       const original = Element.prototype.scrollIntoView;
-      Element.prototype.scrollIntoView = scroll;
+      Element.prototype.scrollIntoView = intoView;
       onTestFinished(() => {
         Element.prototype.scrollIntoView = original;
       });
       renderPicker();
-      scroll.mockClear();
+      const list = screen.getByRole("listbox");
+      const scrollTo = vi.fn();
+      Object.defineProperty(list, "scrollTop", { get: () => 0, set: scrollTo });
       fireEvent.mouseMove(screen.getAllByRole("option")[0]!.parentElement!);
       expect(highlighted()).toBe("Claude Opus 5");
-      expect(scroll).not.toHaveBeenCalled();
+      expect(scrollTo).not.toHaveBeenCalled();
       key("ArrowDown");
-      expect(scroll).toHaveBeenCalled();
+      expect(scrollTo).toHaveBeenCalled();
+      // `scrollIntoView` would also scroll the composer's menu surface.
+      expect(intoView).not.toHaveBeenCalled();
     });
   });
 
@@ -337,65 +457,36 @@ describe("ModelPicker", () => {
     it("opens the fold when the current model becomes a legacy one later", () => {
       const { rerender } = renderPicker();
       expect(rows()).not.toContain("Claude Haiku 3.5");
-      rerender(MODELS, "claude-3-5");
+      rerender(agentsWith(), "claude-3-5");
       expect(rows()).toContain("Claude Haiku 3.5");
-    });
-  });
-
-  describe("models arriving after open", () => {
-    it("chooses the view from the first non-empty list", () => {
-      const { rerender } = renderPicker(vi.fn(), "gpt-5", []);
-      expect(screen.getByText("No models")).toBeTruthy();
-      expect(screen.queryByRole("toolbar")).toBeNull();
-      rerender(MODELS);
-      expect(pressed()).toEqual(["OpenAI"]);
-      expect(highlighted()).toBe("GPT-5");
-      // Chosen ONCE: a later refresh keeps what the user is looking at.
-      fireEvent.click(screen.getByRole("button", { name: "Claude" }));
-      rerender([...MODELS]);
-      expect(pressed()).toEqual(["Claude"]);
-    });
-
-    it("opens a late legacy current model's fold", () => {
-      const { rerender } = renderPicker(vi.fn(), "claude-3-5", []);
-      rerender(MODELS);
-      expect(pressed()).toEqual(["Claude"]);
-      expect(rows()).toContain("Claude Haiku 3.5");
-    });
-
-    it("opens on Favorites when the late list has a starred model", () => {
-      stubSettingsWrites(["atlas-agent:gpt-5"]);
-      const { rerender } = renderPicker(vi.fn(), "claude-sonnet-4", []);
-      rerender(MODELS);
-      expect(pressed()).toEqual(["Favorites"]);
-      expect(rows()).toEqual(["GPT-5"]);
     });
   });
 
   describe("search", () => {
-    it("searches across every provider and hides the rail while it does", () => {
-      renderPicker();
-      type("gpt");
-      expect(rows()).toEqual(["GPT-5"]);
+    it("searches every agent's models, names the agent, and hides the rail while it does", () => {
+      const { onPick } = renderPicker();
+      type("opus");
+      expect(rows()).toEqual(["Opus 5.5", "Claude Opus 5"]);
       expect(screen.queryByRole("toolbar")).toBeNull();
+      // The agent's mark carries its name too; the caption ends with it.
+      expect(captions().map((c) => c.endsWith("Claude Code"))).toEqual([true, false]);
+      expect(captions()[1]).toMatch(/Atlas Agent$/);
+      key("Enter");
+      expect(onPick).toHaveBeenCalledWith("claude-code", "opus");
+    });
+
+    it("matches the agent and the stated provider", () => {
+      renderPicker();
       type("openai");
       expect(rows()).toEqual(["GPT-5"]);
+      type("claude code");
+      expect(rows()).toEqual(["Default", "Opus 5.5"]);
     });
 
     it("matches the description, below name and id matches", () => {
       renderPicker();
       type("refactors");
       expect(rows()).toEqual(["GPT-5"]);
-    });
-
-    it("never ranks a provider-label match above a name match", () => {
-      const models: SessionModeInfo[] = [
-        { id: "m1", name: "Tuned", provider: "anthropic" },
-        { id: "m2", name: "Claude Opus 5", provider: "openai" },
-      ];
-      renderPicker(vi.fn(), "m1", models);
-      type("claude");
-      expect(rows()).toEqual(["Claude Opus 5", "Tuned"]);
     });
 
     it("says so when nothing matches", () => {
@@ -405,7 +496,7 @@ describe("ModelPicker", () => {
     });
   });
 
-  it("scores name above id above description above provider", () => {
+  it("scores name above id above description above source", () => {
     const m: SessionModeInfo = {
       id: "acme-fast",
       name: "Rocket",
@@ -419,31 +510,15 @@ describe("ModelPicker", () => {
     expect(score("nope")).toBeNull();
   });
 
-  it("badges a new model", () => {
+  it("draws no NEW badge, even for a model the agent marks new", () => {
     renderPicker();
-    expect(screen.getByLabelText("New model")).toBeTruthy();
+    expect(screen.queryByText("New")).toBeNull();
   });
 
-  it("says so when the agent advertised no models", () => {
-    renderPicker(vi.fn(), "x", []);
-    expect(screen.getByText("No models")).toBeTruthy();
-    expect(input().getAttribute("aria-activedescendant")).toBeNull();
-  });
-
-  it("stars into settings, and a starred model opens the picker on Favorites", () => {
+  it("puts the description on its own line, clamped to two", () => {
     renderPicker();
-    fireEvent.click(screen.getByRole("button", { name: "OpenAI" }));
-    fireEvent.click(screen.getByRole("button", { name: "Add to favorites" }));
-    expect(useSettingsStore.getState().settings.favoriteModels).toEqual(["atlas-agent:gpt-5"]);
-    cleanup();
-    renderPicker();
-    expect(pressed()).toEqual(["Favorites"]);
-    expect(rows()).toEqual(["GPT-5"]);
-  });
-
-  it("says so when the favorites view is empty", () => {
-    renderPicker();
-    fireEvent.click(screen.getByRole("button", { name: "Favorites" }));
-    expect(screen.getByText("No favorites yet")).toBeTruthy();
+    const caption = screen.getByText("Strong at refactors").closest("p")!;
+    expect(caption.className).toContain("line-clamp-2");
+    expect(caption.previousElementSibling?.querySelector(".label")?.textContent).toBe("GPT-5");
   });
 });

@@ -31,8 +31,12 @@ import type {
   TimelineEntry,
   ToolTally,
   BoardPage,
+  ProjectFilter,
+  TracePage,
 } from "@/features/artifacts/types";
 import type { Comment, CommentThreads } from "@/features/artifacts/lib/comments-api";
+import type { SessionStreamChunk } from "@/features/artifacts/lib/read-session-detail";
+import type { ArtifactShare } from "@/features/artifacts/lib/shares-api";
 import type { CommentTarget } from "@/features/chat/components/chat-comments-controller";
 import type {
   RetrieveResult,
@@ -45,6 +49,7 @@ import type { modelchat, ModelChatEvent } from "@/lib/byok/byok-chat";
 import type { Project } from "@/features/projects/stores/project-store";
 import type { TypedHandlers, Unit } from "../types";
 import { abs, ALL_PROJECTS, MOCK_PROJECT } from "../project";
+import { NO_VOTES, withVote, type VoteValue } from "@/features/artifacts/lib/votes";
 
 const [APP, PLATFORM, DOCS] = ALL_PROJECTS;
 
@@ -114,6 +119,10 @@ function cachedOnly(read: number): Spend {
     contextSize: null,
   };
 }
+
+/** Public share links made this session, by Session id. In memory only: a
+ *  slug is a credential, and the mock has no business persisting one. */
+const mockShares = new Map<string, ArtifactShare>();
 
 interface Seed {
   id: string;
@@ -708,7 +717,16 @@ function standardTimeline(seed: Seed, index: number): TimelineEntry[] {
       kind: "response",
       at: t(6),
       turnSeq: 1,
-      text: `Done in \`${file}\`. Want me to take the same pass through the tests?`,
+      // A fence, so the response shows a code block's language and Copy corner.
+      text: [
+        `Done in \`${file}\`. The change at its heart:`,
+        "",
+        "```ts",
+        "export const ring = (focused: boolean) => (focused ? 2 : 0);",
+        "```",
+        "",
+        "Want me to take the same pass through the tests?",
+      ].join("\n"),
     }),
   ];
   // No branch means no repository — `docs` is a plain folder in the git
@@ -965,6 +983,28 @@ const threads = new Map<string, SessionChatThreadWire[]>([
               },
             ],
           },
+          {
+            id: "msg-3",
+            role: "user",
+            content: "Draw the call path",
+            timestamp: at(0, 10, 8),
+          },
+          {
+            id: "msg-4",
+            role: "assistant",
+            content: [
+              "The board command reaches the reader through two hops:",
+              "",
+              "```mermaid",
+              "flowchart TD",
+              "  A[artifacts_board] --> B[open_reader]",
+              "  B --> C{reader found?}",
+              "  C -->|yes| D[read_sessions]",
+              "  C -->|no| E[early return]",
+              "```",
+            ].join("\n"),
+            timestamp: at(0, 10, 9),
+          },
         ],
       },
       {
@@ -1095,13 +1135,20 @@ export interface ArtifactsResponses {
   chat_comment_target: CommentTarget | null;
   artifacts_cloud_refresh: boolean;
   artifacts_cloud_session: SessionDetail;
+  artifacts_cloud_session_stream: Unit;
   artifacts_cloud_payload: ArtifactPayload;
   artifacts_cloud_session_url: string | null;
+  artifacts_cloud_session_share: ArtifactShare | null;
+  artifacts_cloud_share_create: ArtifactShare;
+  artifacts_cloud_share_revoke: void;
+  artifacts_cloud_share_url: string;
   artifacts_cloud_comments: CommentThreads;
   artifacts_cloud_comment_create: Comment;
   artifacts_cloud_comment_update: Comment;
   artifacts_cloud_comment_delete: Comment;
+  artifacts_cloud_comment_vote: Comment;
   artifacts_checkpoints: BoardCheckpoint[];
+  artifacts_trace: TracePage;
   artifacts_payload: ArtifactPayload;
   session_chat_threads_list: ThreadMeta[];
   session_chat_thread_get: SessionChatThreadWire;
@@ -1144,6 +1191,8 @@ function seedComments() {
         body: "Is <@usr_priya> expecting the retry helper to keep its old signature?",
         mentions: ["usr_priya"],
         authorId: "usr_sam",
+        // A score to read, and an up you can take back or switch.
+        votes: { up: ["usr_mira", "usr_priya"], down: [] },
       }),
       mockComment({
         id: "cm_2",
@@ -1279,6 +1328,7 @@ export function mockComment(over: Partial<Comment> & { id: string }): Comment {
     deletedAt: null,
     resolvedAt: null,
     resolvedBy: null,
+    votes: { up: [], down: [] },
     ...over,
   };
 }
@@ -1310,6 +1360,29 @@ function threadsFor(sessionId: string): CommentThreads {
     else (byAnchor[row.anchorId] ??= []).push(row);
   }
   return { byAnchor, session };
+}
+
+/**
+ * Answer `artifacts_cloud_session_stream` the way Rust does when nothing is on
+ * disk: one `page` chunk per `pageSize` entries, `delayMs` apart — the server's
+ * per-page wait, scaled down — the last marked `done`.
+ */
+export async function streamDetail(
+  detail: SessionDetail,
+  channel: unknown,
+  { pageSize = 500, delayMs = 250 }: { pageSize?: number; delayMs?: number } = {},
+): Promise<null> {
+  const send = (channel as { onmessage: (chunk: SessionStreamChunk) => void }).onmessage;
+  const pages = Math.max(1, Math.ceil(detail.entries.length / pageSize));
+  for (let i = 0; i < pages; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    send({
+      kind: "page",
+      detail: { ...detail, entries: detail.entries.slice(i * pageSize, (i + 1) * pageSize) },
+      done: i === pages - 1,
+    });
+  }
+  return null;
 }
 
 export const artifactsHandlers: TypedHandlers<ArtifactsResponses> = {
@@ -1370,8 +1443,48 @@ export const artifactsHandlers: TypedHandlers<ArtifactsResponses> = {
     };
   },
 
+  artifacts_cloud_session_stream: ({ projectId, sessionId, onChunk }) =>
+    streamDetail(
+      artifactsHandlers.artifacts_cloud_session({ projectId, sessionId }) as SessionDetail,
+      onChunk,
+    ),
+
   artifacts_cloud_session_url: ({ projectId, sessionId }): string =>
     `https://app.tryatlas.cc/timeline?org=org_demo&workspace=${String(projectId)}&session=${String(sessionId)}`,
+
+  // Public shares, in memory for the life of the page: create one and the
+  // sheet shows the link; revoke it and the sheet goes back to offering the
+  // button. Enough to exercise every state the panel has.
+  artifacts_cloud_session_share: ({ sessionId }): ArtifactShare | null =>
+    mockShares.get(String(sessionId)) ?? null,
+
+  artifacts_cloud_share_create: ({ projectId, sessionId, comments }): ArtifactShare => {
+    const share: ArtifactShare = {
+      id: `shr_${String(sessionId).slice(0, 8)}`,
+      scope: "session",
+      workspaceId: String(projectId),
+      sessionId: String(sessionId),
+      slug: `mock${String(sessionId)
+        .replace(/[^a-z0-9]/gi, "")
+        .slice(0, 10)}`,
+      hasPassword: false,
+      commentsEnabled: Boolean(comments),
+      expiresAt: null,
+      revokedAt: null,
+      createdBy: "u_me",
+      createdAt: new Date().toISOString(),
+    };
+    mockShares.set(String(sessionId), share);
+    return share;
+  },
+
+  artifacts_cloud_share_revoke: ({ shareId }): void => {
+    for (const [key, share] of mockShares) {
+      if (share.id === String(shareId)) mockShares.delete(key);
+    }
+  },
+
+  artifacts_cloud_share_url: ({ slug }): string => `https://app.tryatlas.cc/s/${String(slug)}`,
 
   artifacts_cloud_payload: ({ part }): ArtifactPayload => ({
     text: `[mock] the full ${String(part)} of this entry, fetched from the server.`,
@@ -1417,6 +1530,15 @@ export const artifactsHandlers: TypedHandlers<ArtifactsResponses> = {
       resolvedBy: resolved == null ? row.resolvedBy : resolved ? "usr_priya" : null,
     })),
 
+  // A value, not a toggle, cast as you (`usr_dev`) — the server's rule, via
+  // the same `withVote` the client draws with. A deleted comment takes none.
+  artifacts_cloud_comment_vote: ({ sessionId, commentId, value }): Comment =>
+    patchComment(String(sessionId), String(commentId), (row) =>
+      row.deletedAt && value !== 0
+        ? row
+        : { ...row, votes: withVote(row.votes ?? NO_VOTES, "usr_dev", value as VoteValue) },
+    ),
+
   // The row survives with a null body so replies keep their places — which is
   // exactly what the real server does, and what the tombstone renders from.
   artifacts_cloud_comment_delete: ({ sessionId, commentId }): Comment =>
@@ -1427,12 +1549,28 @@ export const artifactsHandlers: TypedHandlers<ArtifactsResponses> = {
       deletedAt: new Date().toISOString(),
     })),
 
-  artifacts_board: ({ projects }): BoardPage => {
-    const paths = Array.isArray(projects) ? (projects as string[]) : [];
+  artifacts_board: ({ projects, filter }): BoardPage => {
+    const scope = (filter ?? null) as ProjectFilter | null;
+    const paths = !scope
+      ? Array.isArray(projects)
+        ? (projects as string[])
+        : []
+      : "local" in scope
+        ? [scope.local]
+        : [];
     const local = SEEDS.filter((seed) => paths.includes(seed.project.path)).map(boardRow);
     // The merge the real command does: local rows, plus whatever the
-    // Organisation has that this machine does not.
-    const sessions = [...local, ...teammateBoardRows()].sort((a, b) =>
+    // Organisation has that this machine does not — narrowed to the filtered
+    // Project when there is one.
+    const bound = new Set(local.map((row) => row.remoteProjectId).filter(Boolean));
+    const remote = teammateBoardRows().filter((row) =>
+      !scope
+        ? true
+        : "local" in scope
+          ? bound.has(row.remoteProjectId)
+          : row.remoteProjectId === scope.remote,
+    );
+    const sessions = [...local, ...remote].sort((a, b) =>
       b.lastActivityAt.localeCompare(a.lastActivityAt),
     );
     // The fixture answers in one tick, so the remote half is never outstanding
@@ -1447,6 +1585,69 @@ export const artifactsHandlers: TypedHandlers<ArtifactsResponses> = {
   },
   artifacts_checkpoints: ({ projects }): BoardCheckpoint[] =>
     checkpoints(Array.isArray(projects) ? (projects as string[]) : []),
+  // The local half only, as the command answers with no server reachable:
+  // this machine's Sessions active in the window, with git's subjects. The
+  // `timeline-trace` scenario answers with the server's half.
+  artifacts_trace: ({ projects, filter, from, to, cursor }): TracePage => {
+    const scope = (filter ?? null) as ProjectFilter | null;
+    const paths = !scope
+      ? Array.isArray(projects)
+        ? (projects as string[])
+        : []
+      : "local" in scope
+        ? [scope.local]
+        : [];
+    const lo = Date.parse(String(from));
+    const hi = Date.parse(String(to));
+    const sessions = cursor
+      ? []
+      : SEEDS.filter((seed) => paths.includes(seed.project.path))
+          .map((seed) => ({ seed, summary: summaryOf(seed) }))
+          .filter(
+            ({ summary }) =>
+              Date.parse(summary.startedAt) <= hi && Date.parse(summary.lastActivityAt) >= lo,
+          )
+          .map(({ seed, summary }) => ({
+            id: seed.id,
+            number: null,
+            workspaceId: SYNCED_PROJECTS.get(seed.project.path) ?? "",
+            workspaceSlug: null,
+            authorId: null,
+            participants: [],
+            title: summary.title,
+            agent: summary.agent,
+            source: summary.source,
+            startedAt: summary.startedAt,
+            lastActivityAt: summary.lastActivityAt,
+            live: seed.id === LIVE_ID,
+            incomplete: false,
+            checkpointsTruncated: false,
+            projectPath: seed.project.path,
+            checkpoints: (TIMELINES.get(seed.id) ?? [])
+              .filter((e) => e.kind === "checkpoint" && e.commitSha)
+              .map((e) => ({
+                id: e.id,
+                sessionId: seed.id,
+                at: e.at,
+                authorId: null,
+                commitSha: e.commitSha!,
+                branch: e.branch,
+                linkState: e.linkState ?? "linked",
+                insertions: e.insertions,
+                deletions: e.deletions,
+                files: e.files.length,
+                commitSubject: e.commitSubject,
+              })),
+          }));
+    return {
+      from: String(from),
+      to: String(to),
+      sessions,
+      workspaces: [],
+      nextCursor: null,
+      notes: [],
+    };
+  },
   artifacts_payload: ({ blobRef }): ArtifactPayload => {
     const blob = BLOBS.get(String(blobRef));
     // A vacuumed blob store is a real state; Rust surfaces it as a read error.

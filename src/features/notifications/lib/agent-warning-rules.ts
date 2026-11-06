@@ -12,6 +12,8 @@
  *    retry episode that is updated in place as attempts advance.
  */
 
+import { formatTime } from "@/lib/format-time";
+
 export const CONTEXT_WARN_PERCENT = 90;
 export const RATE_WARN_PERCENT = 90;
 /** The first retry attempt is silent — most blips clear on their own. */
@@ -193,7 +195,7 @@ export function formatResetTime(
   locale?: string | string[],
 ): string {
   const d = new Date(resetsAtSec * 1000);
-  const time = d.toLocaleTimeString(locale, { hour: "numeric", minute: "2-digit" });
+  const time = formatTime(d, undefined, locale);
   if (d.toDateString() === now.toDateString()) return time;
   const day = d.toLocaleDateString(locale, { weekday: "short" });
   return `${day} ${time}`;

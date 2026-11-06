@@ -1,0 +1,18 @@
+id = "cmd-shell"
+kind = "synthetic"
+vulnerable = true
+class = "injection"
+severity = 4
+title = "Show git log for a branch"
+diff = '''
+--- a/src-tauri/src/commands/git.rs
++++ b/src-tauri/src/commands/git.rs
+@@ -1,0 +1,7 @@
++#[tauri::command]
++pub async fn git_log(repo: String, branch: String) -> Result<String, String> {
++    let out = Command::new("sh").arg("-c")
++        .arg(format!("cd {} && git log --oneline {}", repo, branch))
++        .output().map_err(|e| e.to_string())?;
++    Ok(String::from_utf8_lossy(&out.stdout).into())
++}
+'''

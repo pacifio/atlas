@@ -4,9 +4,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
-/** `embedding` is memory's model; `code_embedding` is semantic code search's.
- *  Each kind has its own selected model. */
-export type ModelKind = "embedding" | "code_embedding";
+/** One kind today: `embedding`, shared memory's model. The code-search kind
+ *  went with the code index; the field stays on the wire. */
+export type ModelKind = "embedding";
 
 export interface FileSpec {
   repo: string;

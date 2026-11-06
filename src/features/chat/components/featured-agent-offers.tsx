@@ -3,7 +3,8 @@ import { Download, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { cn } from "@/lib/utils";
-import { AgentMonogram, ExternalAgentIcon } from "@/components/agent-icons";
+import { AgentMonogram, ExternalAgentMark } from "@tryatlas/design";
+import { withDeadline } from "../lib/with-deadline";
 import { acpRegistry } from "@/features/agents/lib/agent-registry-api";
 import { hydrateAgentRegistry } from "@/features/agents/stores/agent-registry-store";
 import {
@@ -42,7 +43,9 @@ export function FeaturedAgentOffers({
     if (installing) return;
     setInstalling(id);
     try {
-      await acpRegistry.install(id);
+      // A settings write plus at most one registry refresh (30 s in Rust):
+      // the row must not spin forever with every other row disabled.
+      await withDeadline(acpRegistry.install(id), 60_000, `Installing ${label} has not finished`);
       // The catalog is what knows the installed agent's display alias, so the
       // agentType can only be resolved after this lands.
       await hydrateAgentRegistry();
@@ -72,14 +75,12 @@ export function FeaturedAgentOffers({
               disabled={disabled}
               title={
                 offer.platformSupported
-                  ? `Install ${offer.label} and switch this chat to it`
+                  ? `Install ${offer.label} and switch this session to it`
                   : `${offer.label} has no published build for this platform`
               }
               className={cn(
                 "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors",
-                disabled
-                  ? "cursor-default opacity-40"
-                  : "cursor-pointer hover:bg-[var(--atlas-element-hover)]",
+                disabled ? "cursor-default opacity-40" : "cursor-pointer hover:bg-element-hover",
               )}
             >
               {/* Same tile as the marketplace's, and the same reason for the
@@ -87,7 +88,7 @@ export function FeaturedAgentOffers({
                   `currentColor` art, so the container decides legibility. */}
               <span className="flex size-4 shrink-0 items-center justify-center rounded border border-[var(--border)] bg-[var(--card,var(--background))] text-[var(--secondary-foreground)]">
                 {offer.iconDataUrl ? (
-                  <ExternalAgentIcon dataUrl={offer.iconDataUrl} size={10} />
+                  <ExternalAgentMark dataUrl={offer.iconDataUrl} size={10} />
                 ) : (
                   <AgentMonogram label={offer.label} size={10} />
                 )}

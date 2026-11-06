@@ -2181,6 +2181,7 @@ async fn subagent_activity_emits_matching_start_and_completion() {
         kind: atlas_engine_protocol::protocol::SubAgentActivityKind::Started,
         agent_thread_id: ThreadId::new(),
         agent_path: AgentPath::root(),
+        prompt: None,
     };
 
     crate::tools::handlers::multi_agents_v2::emit_sub_agent_activity(&session, &turn_context, item)

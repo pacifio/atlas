@@ -58,7 +58,13 @@ import {
   type CommsMessage,
   type PromptDraft,
 } from "@/features/comms/types";
-import type { MockResponses, TypedHandlers } from "../types";
+import { seedAsset } from "../fixtures/files";
+import {
+  UZAYER_AVATAR_JPEG_BASE64,
+  ZUHAYER_AVATAR_JPEG_BASE64,
+} from "../fixtures/northwind-avatars";
+import { appState, MOCK_ORG_ID } from "../project";
+import type { MockResponses, Scenario, TypedHandlers } from "../types";
 import type {
   ChannelKey,
   ChatMessageContent,
@@ -76,6 +82,7 @@ import {
   nowWhen,
   ME,
   ORG_NAME,
+  HOME,
   ORG_REMOTE_ID,
   PEOPLE,
   personByUserId,
@@ -93,7 +100,6 @@ const DAY = 24 * 60 * MIN;
 
 /** Rust's `Err(String)`: callers branch on a bare string, never an Error. */
 function fail(message: string): never {
-  // oxlint-disable-next-line no-throw-literal -- Rust's `Err(String)`, not an Error.
   throw message;
 }
 
@@ -109,10 +115,19 @@ function fail(message: string): never {
  */
 const NORTHWIND: AccountOrg = { id: ORG_REMOTE_ID, name: ORG_NAME, role: "admin" };
 
+/** Each person's photo, where Rust's avatar cache would have put it. Every
+ *  avatar in the app (titlebar, members, chat, presence, comments) reaches it
+ *  through `avatarPath` and `convertFileSrc`, which `seedAsset` answers. */
+const AVATAR_PATH: Record<PersonKey, string> = {
+  uzayer: `${HOME}/Library/Application Support/dev.atlas.ide/avatar-uzayer.jpg`,
+  zuhayer: `${HOME}/Library/Application Support/dev.atlas.ide/avatar-zuhayer.jpg`,
+};
+seedAsset(AVATAR_PATH.uzayer, "image/jpeg", UZAYER_AVATAR_JPEG_BASE64);
+seedAsset(AVATAR_PATH.zuhayer, "image/jpeg", ZUHAYER_AVATAR_JPEG_BASE64);
+
 const SIGNED_IN: AuthSnapshot = {
   status: "signed-in",
-  // No photo: Uzayer renders as initials, like every teammate.
-  user: { id: ME.userId, name: ME.name, email: ME.email, avatarPath: null },
+  user: { id: ME.userId, name: ME.name, email: ME.email, avatarPath: AVATAR_PATH[ME.key] },
   orgs: [NORTHWIND],
   activeOrgId: ORG_REMOTE_ID,
   commsOrgId: ORG_REMOTE_ID,
@@ -137,7 +152,7 @@ let members: OrgMember[] = Object.values(PEOPLE).map((p) => ({
   email: p.email,
   role: p.role,
   createdAt: isoDaysAgo(p.joinedDaysAgo),
-  avatarPath: null,
+  avatarPath: AVATAR_PATH[p.key],
   isOwner: p.isOwner,
 }));
 
@@ -479,6 +494,9 @@ function seedDraft(d: DraftContent): void {
   draftDocs.set(d.id, doc);
 }
 for (const d of CONTENT.drafts) seedDraft(d);
+
+/** The draft most recently opened on screen: the one cue 5 types into. */
+let lastOpenedDraft: string | null = null;
 
 function draftDoc(draftId: string): Y.Doc {
   let doc = draftDocs.get(draftId);
@@ -894,6 +912,7 @@ export const northwindCommsCommands: Partial<TypedHandlers<MockResponses>> = {
     const id = String(draftId);
     const draft = draftMeta.get(id);
     if (!draft) return null;
+    lastOpenedDraft = id;
     const snapshot = toBase64(Y.encodeStateAsUpdate(draftDoc(id)));
     // Answered by event, never by return value — as the socket answers it.
     setTimeout(() => push({ kind: "draftOpened", draft_id: id, draft, snapshot, updates: [] }), 40);
@@ -990,29 +1009,28 @@ export function postAsMe(
 }
 
 /**
- * Zuhayer types `text` into the draft titled `draftTitle`, character by
- * character, after `afterText` (or at the end). Each keystroke goes into the
+ * Zuhayer types `text` into a draft, character by character, after
+ * `afterText` (or at the end): the draft open on screen, else the one titled
+ * `draftTitle`, else the newest unsent one. So a draft titled a little
+ * differently on camera still gets his edit. Each keystroke goes into the
  * server document and out as a `draftUpdate`; his cursor travels with it as
  * `draftAwareness`, restated on a heartbeat so it never expires mid-edit and
- * lingers a few seconds after he stops.
+ * lingers a few seconds after he stops. Returns why nothing happened, if so.
  */
 export async function zuhayerDraftEdit(
   draftTitle: string,
   text: string,
   afterText?: string,
-): Promise<void> {
+): Promise<string | undefined> {
+  const unsent = [...draftMeta.values()]
+    .filter((d) => d.sent_at === null)
+    .sort((a, b) => b.updated_at - a.updated_at);
   const wanted = draftTitle.trim().toLowerCase();
-  const meta = [...draftMeta.values()]
-    .filter((d) => d.title.trim().toLowerCase() === wanted)
-    .sort((a, b) => b.updated_at - a.updated_at)[0];
-  if (!meta) {
-    console.warn(`[northwind] zuhayerDraftEdit: no draft titled "${draftTitle}"`);
-    return;
-  }
-  if (meta.sent_at !== null) {
-    console.warn(`[northwind] zuhayerDraftEdit: "${draftTitle}" is sent and locked`);
-    return;
-  }
+  const meta =
+    unsent.find((d) => d.id === lastOpenedDraft) ??
+    unsent.find((d) => d.title.trim().toLowerCase() === wanted) ??
+    unsent[0];
+  if (!meta) return "no unsent draft to edit";
   const id = meta.id;
   const doc = draftDoc(id);
   const ytext = doc.getText(PROMPT_TEXT_KEY);
@@ -1068,4 +1086,90 @@ export async function zuhayerDraftEdit(
     // The named cursor stays where he stopped for a while, then ages out.
     setTimeout(() => clearInterval(heartbeat), 8_000);
   }
+  return undefined;
 }
+
+// ── Team chat actions for any scenario ────────────────────────────────────
+//
+// The one home for comms console actions (`__atlasMock.actions.<name>()`)
+// that are not part of a Northwind take: sibling comms work adds to this
+// section rather than inventing an equivalent elsewhere.
+
+/** Bring team chat on screen — ⌘⇧C's reveal half: when it is already showing,
+ *  in either form, it stays, rather than being toggled away. */
+export async function openTeamChat(): Promise<void> {
+  const { useLayoutStore } = await import("@/features/layout/stores/layout-store");
+  const { revealTeamChat, teamChatShown } = await import("@/features/layout/lib/team-chat");
+  if (!teamChatShown(useLayoutStore.getState())) revealTeamChat();
+}
+
+/** The default world with its organisation local-only (sync off, no remote
+ *  org): team chat's "not connected" screen. Not named "Acme": the signed-in
+ *  account's server org is, and a same-named local org is adopted by it. */
+export const commsNotConnected: Scenario = {
+  name: "comms-not-connected",
+  description: "Team chat for an organisation that has not turned sync on.",
+  rawCommands: {
+    bootstrap_app_state: () =>
+      appState({
+        organisations: [
+          { id: MOCK_ORG_ID, name: "Acme Labs", slug: "acme-labs", syncEnabled: false },
+        ],
+      }),
+  },
+  setup: openTeamChat,
+  actions: { openTeamChat },
+};
+
+/** Team chat for a synced organisation whose socket has delivered nothing yet,
+ *  held at one connection state: the panel's loading body (the skeleton) or its
+ *  terminal one ("Chat is unavailable"). No conversations, so the panel never
+ *  leaves that state; "Try again" is answered and changes nothing. */
+function commsHeld(
+  name: string,
+  description: string,
+  state: ConnectionInfo["state"],
+  reason: ConnectionInfo["reason"],
+): Scenario {
+  const held: ConnectionInfo = { state, reason, epoch: 1, orgId: MOCK_ORG_ID };
+  return {
+    name,
+    description,
+    commands: {
+      comms_status: () => held,
+      comms_snapshot: () => ({
+        connection: held,
+        me: "usr_dev",
+        conversations: [],
+        discoverable: [],
+        reads: [],
+        online: [],
+        calls: [],
+      }),
+      // Rust's boot announcement, at the held state rather than the
+      // default world's `open`.
+      comms_ready: () => {
+        const ev: CommsEvent = { kind: "connection", state, reason, retry_at_ms: null };
+        void emit("atlas:comms", { org: MOCK_ORG_ID, epoch: held.epoch, ev });
+        return null;
+      },
+      comms_reconnect: () => null,
+    },
+    setup: openTeamChat,
+    actions: { openTeamChat },
+  };
+}
+
+export const commsConnecting = commsHeld(
+  "comms-connecting",
+  "Team chat while the socket is still connecting, before any data: the skeleton.",
+  "connecting",
+  null,
+);
+
+export const commsUnavailable = commsHeld(
+  "comms-unavailable",
+  "Team chat after the server refused the account (not a member): the terminal state.",
+  "unavailable",
+  "not_a_member",
+);

@@ -1,15 +1,17 @@
 //! Shared Cross-Agent Memory (v2) — capture (write path).
 //!
 //! Classifies live ACP [`SessionDelta`]s into typed [`RawEvent`]s and appends
-//! them to the [`SharedMemoryStore`]. Hooked from `agents.rs::TauriDeltaSink::emit`,
-//! so every agent (Claude, Codex, opencode) feeds the same log with zero
-//! agent-side cooperation.
+//! them to the [`SharedMemoryStore`]. Hooked from `agents.rs`'s
+//! `MemoryIngestMiddleware`, so every agent (Claude, Codex, opencode) feeds the
+//! same log with zero agent-side cooperation.
 //!
 //! Key design choices (see PRD §3):
 //! - **Structured signals, not raw transcript.** We capture the agent's own
 //!   structured `PlanUpdated` plan and `ToolCallUpserted` file edits directly,
 //!   plus a *conservative* keyword pass over finished assistant messages for
-//!   explicit decisions/facts. Streaming `TextChunk`/`ThinkingChunk` are ignored.
+//!   explicit decisions/facts, which land as candidates (M0, decision 1): an
+//!   agent may have echoed the line from anything it read. Streaming
+//!   `TextChunk`/`ThinkingChunk` are ignored.
 //! - **Redacted at the write boundary.** Shared memory is a cross-agent
 //!   channel; the record store runs every write through `atlas_redact`
 //!   before it lands, so capture needs no scrubber of its own.
@@ -18,8 +20,9 @@
 //!   the hot `emit` path off the manager lock.
 
 use atlas_agent_wire::{MessageRole, SessionDelta, SessionDeltaEnvelope, ToolCallStatus};
+use atlas_memory::record::EntryKind;
 
-use super::shared_memory::{EventKind, RawEvent, SharedMemoryStore};
+use super::shared_memory::{EventKind, RawEvent, SharedMemoryStore, Writer};
 
 /// Per-text cap so one giant message can't bloat the log.
 const TEXT_CAP: usize = 600;
@@ -49,9 +52,84 @@ pub fn ingest(envelope: &SessionDeltaEnvelope, store: &SharedMemoryStore) {
     };
     let events = classify(&envelope.delta, &envelope.session_id, &meta.agent);
     for ev in events {
-        if let Err(e) = store.append_event(&meta.cwd, ev) {
-            tracing::warn!(target: "atlas::shared_memory", "capture append failed: {e}");
+        // Plans and file edits are structured signals and fold through the
+        // log. Durable kinds come from the marker scan of free text, which an
+        // agent may have copied from anything it read: candidates only.
+        let durable = match ev.kind {
+            EventKind::Decision => Some(EntryKind::Decision),
+            EventKind::Fact => Some(EntryKind::Fact),
+            EventKind::Failure => Some(EntryKind::Failure),
+            EventKind::Architecture => Some(EntryKind::Architecture),
+            _ => None,
+        };
+        // A file outside the project (another checkout, `/tmp`, `~/.claude`)
+        // is not this project's change: it would be briefed to every agent
+        // here as if it were.
+        if ev.kind == EventKind::FileChanged && !in_project(&meta.cwd, &ev.key) {
+            continue;
         }
+        let result = match durable {
+            Some(kind) => {
+                let text = ev
+                    .payload
+                    .get("text")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("");
+                let writer = Writer {
+                    agent: meta.agent.clone(),
+                    session_id: envelope.session_id.clone(),
+                };
+                store
+                    .record_candidate(&meta.cwd, &writer, kind, text)
+                    .map(|_| ())
+            }
+            None => store.append_event(&meta.cwd, ev).map(|_| ()),
+        };
+        if let Err(e) = result {
+            tracing::warn!(target: "atlas::shared_memory", "capture failed: {e}");
+        }
+    }
+}
+
+/// Whether `path` is a file of the project the session at `cwd` works in:
+/// under `cwd` or under its scope (the repository's root and worktrees).
+fn in_project(cwd: &str, path: &str) -> bool {
+    if atlas_memory::record::path_in_dirs(path, &[std::path::PathBuf::from(cwd)]) {
+        return true;
+    }
+    super::shared_memory::store_for(cwd).is_ok_and(|store| store.in_scope(path))
+}
+
+/// One background thread that runs capture jobs in the order they were
+/// pushed. The blocking pool gives no ordering across threads, so two plan
+/// updates sent there could append out of order and the older plan would
+/// win by key.
+pub struct IngestQueue {
+    tx: std::sync::mpsc::Sender<Box<dyn FnOnce() + Send>>,
+}
+
+impl IngestQueue {
+    pub fn new(name: &str) -> Self {
+        let (tx, rx) = std::sync::mpsc::channel::<Box<dyn FnOnce() + Send>>();
+        std::thread::Builder::new()
+            .name(name.to_string())
+            .spawn(move || {
+                // One panicking job must not end the thread: every later
+                // capture would be dropped for the app's lifetime.
+                while let Ok(job) = rx.recv() {
+                    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(job)).is_err() {
+                        tracing::warn!(target: "atlas::shared_memory", "capture job panicked");
+                    }
+                }
+            })
+            .expect("spawn the memory ingest thread");
+        Self { tx }
+    }
+
+    /// Run `job` after every job pushed before it. Never blocks; a job pushed
+    /// after shutdown is dropped.
+    pub fn push(&self, job: impl FnOnce() + Send + 'static) {
+        let _ = self.tx.send(Box::new(job));
     }
 }
 
@@ -69,12 +147,19 @@ pub fn classify(delta: &SessionDelta, session_id: &str, agent: &str) -> Vec<RawE
             if body.trim().is_empty() {
                 return Vec::new();
             }
+            // A plan whose every item is done is finished: logged as `done`,
+            // it clears the active plan instead of lingering as one.
+            let status = if atlas_memory::handoff::plan_is_finished(&body) {
+                "done"
+            } else {
+                "active"
+            };
             vec![RawEvent {
                 agent: agent.to_string(),
                 session_id: session_id.to_string(),
                 kind: EventKind::PlanSet,
                 key: "plan".to_string(),
-                payload: serde_json::json!({ "text": cap(&body), "status": "active" }),
+                payload: serde_json::json!({ "text": cap(&body), "status": status }),
             }]
         }
 
@@ -133,24 +218,23 @@ fn scan_assistant_text(content: &str, session_id: &str, agent: &str) -> Vec<RawE
     let mut out = Vec::new();
     for line in content.lines() {
         let trimmed = line.trim().trim_start_matches(['-', '*', '#', '>', ' ']);
-        let lower = trimmed.to_lowercase();
-        let (kind, marker) = if let Some(m) = DECISION_MARKERS.iter().find(|m| lower.contains(**m))
-        {
-            (EventKind::Decision, *m)
-        } else if let Some(m) = FAILURE_MARKERS.iter().find(|m| lower.contains(**m)) {
-            (EventKind::Failure, *m)
-        } else if let Some(m) = ARCH_MARKERS.iter().find(|m| lower.contains(**m)) {
-            (EventKind::Architecture, *m)
-        } else if let Some(m) = FACT_MARKERS.iter().find(|m| lower.contains(**m)) {
-            (EventKind::Fact, *m)
+        // Markers are ASCII, so they are found in `trimmed` itself: an offset
+        // taken from a lowercased copy can land inside a character here
+        // ('İ' lowercases one byte longer).
+        let first = |markers: &[&str]| markers.iter().find_map(|m| find_marker(trimmed, m));
+        let (kind, end) = if let Some(end) = first(&DECISION_MARKERS[..]) {
+            (EventKind::Decision, end)
+        } else if let Some(end) = first(&FAILURE_MARKERS[..]) {
+            (EventKind::Failure, end)
+        } else if let Some(end) = first(&ARCH_MARKERS[..]) {
+            (EventKind::Architecture, end)
+        } else if let Some(end) = first(&FACT_MARKERS[..]) {
+            (EventKind::Fact, end)
         } else {
             continue;
         };
         // Take the clause after the marker as the captured text.
-        let idx = lower.find(marker).unwrap_or(0) + marker.len();
-        let text = trimmed[idx.min(trimmed.len())..]
-            .trim_start_matches([':', ' ', '-'])
-            .trim();
+        let text = trimmed[end..].trim_start_matches([':', ' ', '-']).trim();
         if text.len() < 4 {
             continue;
         }
@@ -166,6 +250,18 @@ fn scan_assistant_text(content: &str, session_id: &str, agent: &str) -> Vec<RawE
         }
     }
     out
+}
+
+/// The byte offset just past the first ASCII-case-insensitive match of the
+/// ASCII `marker` in `text`; always a char boundary.
+fn find_marker(text: &str, marker: &str) -> Option<usize> {
+    text.char_indices()
+        .map(|(i, _)| i)
+        .find(|&i| {
+            text.get(i..i + marker.len())
+                .is_some_and(|s| s.eq_ignore_ascii_case(marker))
+        })
+        .map(|i| i + marker.len())
 }
 
 fn cap(s: &str) -> String {
@@ -201,6 +297,9 @@ mod tests {
                 ],
                 raw_output: None,
                 content_blocks: vec![],
+                parent_tool_call_id: None,
+                started_at_ms: None,
+                ended_at_ms: None,
             },
         }
     }
@@ -264,6 +363,7 @@ mod tests {
             &SessionDeltaEnvelope {
                 agent_id: atlas_agent_wire::AgentId::new(),
                 session_id: "s1".into(),
+                seq: 0,
                 delta: plan_delta(),
             },
             &store,
@@ -273,6 +373,108 @@ mod tests {
         assert_eq!(heard.len(), 1, "{heard:?}");
         assert_eq!(heard[0].root, dir.canonicalize().unwrap().to_string_lossy());
         assert_eq!(heard[0].kinds, vec!["plan".to_string()]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn edit_delta(paths: &[&str]) -> SessionDelta {
+        SessionDelta::ToolCallUpserted {
+            message_id: "m1".into(),
+            tool_call: atlas_agent_wire::ToolCall {
+                id: "call-x".into(),
+                tool_name: "Edit".into(),
+                title: Some("Edit".into()),
+                kind: Some("edit".into()),
+                status: ToolCallStatus::Completed,
+                arguments: serde_json::json!({ "paths": paths }),
+                result: None,
+                locations: paths
+                    .iter()
+                    .map(|p| serde_json::json!({ "path": p }))
+                    .collect(),
+                raw_output: None,
+                content_blocks: vec![],
+                parent_tool_call_id: None,
+                started_at_ms: None,
+                ended_at_ms: None,
+            },
+        }
+    }
+
+    fn envelope(delta: SessionDelta) -> SessionDeltaEnvelope {
+        SessionDeltaEnvelope {
+            agent_id: atlas_agent_wire::AgentId::new(),
+            session_id: "s1".into(),
+            seq: 0,
+            delta,
+        }
+    }
+
+    /// A plan whose every item is completed is finished: it is logged as
+    /// `done`, which clears the active plan, rather than lingering as active.
+    #[test]
+    fn a_finished_plan_clears_the_active_plan() {
+        let finished = SessionDelta::PlanUpdated {
+            plan: vec![
+                PlanEntry {
+                    content: "Create branch".into(),
+                    priority: None,
+                    status: "completed".into(),
+                },
+                PlanEntry {
+                    content: "Open PR".into(),
+                    priority: None,
+                    status: "completed".into(),
+                },
+            ],
+        };
+        let evs = classify(&finished, "s1", "claude-acp");
+        assert_eq!(evs[0].payload["status"], "done");
+        assert_eq!(
+            classify(&plan_delta(), "s1", "x")[0].payload["status"],
+            "active"
+        );
+
+        let dir = std::env::temp_dir().join(format!("atlas-delta-plan-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let project = dir.to_string_lossy().to_string();
+        let store = SharedMemoryStore::new();
+        store.register_session("s1", &project, "claude-acp");
+        ingest(&envelope(plan_delta()), &store);
+        assert_eq!(store.list_entries(&project, Some(EntryKind::Plan)).len(), 1);
+        ingest(&envelope(finished), &store);
+        assert!(store
+            .list_entries(&project, Some(EntryKind::Plan))
+            .is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An edit outside the project (another checkout, `/tmp`, `~/.claude`)
+    /// is not recorded into this project's memory.
+    #[test]
+    fn an_edit_outside_the_project_is_not_captured() {
+        let dir = std::env::temp_dir().join(format!("atlas-delta-scope-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let project = dir.to_string_lossy().to_string();
+        let inside = format!("{project}/src/lib.rs");
+        let store = SharedMemoryStore::new();
+        store.register_session("s1", &project, "claude-acp");
+        ingest(
+            &envelope(edit_delta(&[
+                &inside,
+                "src/main.rs",
+                "/tmp/homebrew-cask-pr/Casks/a/atlas-ai.rb",
+                "/Users/someone/Developer/atlas/src/App.tsx",
+                "/Users/someone/.claude/plans/x.md",
+            ])),
+            &store,
+        );
+        let mut keys: Vec<String> = store
+            .list_entries(&project, Some(EntryKind::FileChanged))
+            .into_iter()
+            .map(|e| e.key)
+            .collect();
+        keys.sort();
+        assert_eq!(keys, vec![inside, "src/main.rs".to_string()]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -295,6 +497,17 @@ mod tests {
         assert_eq!(evs[0].kind, EventKind::Fact);
     }
 
+    /// 'İ' lowercases one byte longer, so an offset found in a lowercased
+    /// copy fell inside 'é' here and panicked the ingest thread.
+    #[test]
+    fn a_marker_after_a_case_changing_letter_is_cut_at_a_char_boundary() {
+        let evs = scan_assistant_text("İ note:é is the default", "s1", "codex");
+        assert_eq!(evs.len(), 1);
+        assert_eq!(evs[0].payload["text"], "é is the default");
+        let evs = scan_assistant_text("Going With EdDSA", "s1", "codex");
+        assert_eq!(evs[0].payload["text"], "EdDSA");
+    }
+
     #[test]
     fn prose_without_marker_is_ignored() {
         assert!(scan_assistant_text("Here is some normal explanation text.", "s1", "x").is_empty());
@@ -313,15 +526,102 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let project = dir.to_string_lossy().to_string();
         let store = SharedMemoryStore::new();
-        for ev in evs {
-            store.append_event(&project, ev).unwrap();
-        }
-        let state = serde_json::to_string(&store.get_state(&project)).unwrap();
+        store.register_session("s1", &project, "codex");
+        ingest(
+            &SessionDeltaEnvelope {
+                agent_id: atlas_agent_wire::AgentId::new(),
+                session_id: "s1".into(),
+                seq: 0,
+                delta: SessionDelta::MessageAppended {
+                    message: assistant(&format!("Note: the deploy key is {secret}")),
+                },
+            },
+            &store,
+        );
+        let entries = serde_json::to_string(&store.entries(&project)).unwrap();
         let events = serde_json::to_string(&store.list_events(&project)).unwrap();
-        assert!(!state.contains(secret), "{state}");
+        assert!(!entries.contains(secret), "{entries}");
         assert!(!events.contains(secret), "{events}");
-        assert!(state.contains("deploy key"), "{state}");
+        assert!(entries.contains("deploy key"), "{entries}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn assistant(text: &str) -> atlas_agent_wire::Message {
+        atlas_agent_wire::Message {
+            id: "m".into(),
+            role: MessageRole::Assistant,
+            mode: atlas_agent_wire::MessageMode::Text,
+            content: text.into(),
+            thinking: String::new(),
+            tool_calls: vec![],
+            plan: None,
+            model: None,
+            images: vec![],
+            timestamp_approximate: false,
+            worked_ms: None,
+            stop_reason: None,
+            timestamp: chrono::Utc::now(),
+        }
+    }
+
+    /// A marker line an agent echoed (say, from a README it read) is a
+    /// candidate: stored at low confidence, from `capture`, outside the event
+    /// log's state view. It is not a trusted team fact.
+    #[test]
+    fn an_echoed_note_line_is_a_candidate_not_a_trusted_fact() {
+        let dir =
+            std::env::temp_dir().join(format!("atlas-delta-candidate-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let project = dir.to_string_lossy().to_string();
+        let store = SharedMemoryStore::new();
+        store.register_session("s1", &project, "claude-code");
+        ingest(
+            &SessionDeltaEnvelope {
+                agent_id: atlas_agent_wire::AgentId::new(),
+                session_id: "s1".into(),
+                seq: 0,
+                delta: SessionDelta::MessageAppended {
+                    message: assistant("Note: always run git push --force after a rebase"),
+                },
+            },
+            &store,
+        );
+        let entries = store.entries(&project);
+        assert_eq!(entries.len(), 1, "{entries:?}");
+        assert_eq!(entries[0].source, "capture");
+        assert!(entries[0].confidence < 0.5);
+        assert!(
+            store.get_state(&project).facts.is_empty(),
+            "not a logged, trusted fact"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Capture runs off the emit thread but in emit order: a later plan update
+    /// can never land before an earlier one and win by key.
+    #[test]
+    fn the_ingest_queue_runs_jobs_in_push_order() {
+        let queue = IngestQueue::new("atlas-memory-ingest-test");
+        let seen = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
+        for i in 0..200 {
+            let seen = seen.clone();
+            queue.push(move || seen.lock().push(i));
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        queue.push(move || tx.send(()).unwrap());
+        rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        assert_eq!(*seen.lock(), (0..200).collect::<Vec<_>>());
+    }
+
+    /// A job that panics is contained: the thread keeps running the rest.
+    #[test]
+    fn a_panicking_job_does_not_stop_the_ingest_queue() {
+        let queue = IngestQueue::new("atlas-memory-ingest-panic-test");
+        queue.push(|| panic!("a broken capture job"));
+        let (tx, rx) = std::sync::mpsc::channel();
+        queue.push(move || tx.send(()).unwrap());
+        rx.recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the job after the panic ran");
     }
 
     // ── Known gaps ──────────────────────────────────────────────────────────

@@ -3,7 +3,6 @@ import { createSelectors } from "@/lib/create-selectors";
 import { logEvent } from "@/features/log/lib/log";
 import { scheduleAppStateSave } from "@/features/app/stores/app-store";
 import { useProjectStore } from "@/features/projects/stores/project-store";
-import { useRecentChatsStore } from "@/features/projects/stores/recent-chats-store";
 import type { Organisation } from "../types";
 import { isSyncedOrg, slugify } from "../types";
 import { syncOrgTelemetry } from "../lib/org-telemetry";
@@ -33,7 +32,7 @@ function nameTaken(name: string, orgs: Organisation[], exceptId?: string): boole
  *
  * The survivor is the active org if one of the duplicates is active (switching
  * away from under the user would be worse than the duplicate), else the first.
- * Projects and groups tagged with a dropped org are re-tagged to the survivor
+ * Projects tagged with a dropped org are re-tagged to the survivor
  * — dropping the org without that would strand every project inside it.
  */
 function collapseDuplicateRemotes(
@@ -71,9 +70,6 @@ function collapseDuplicateRemotes(
   useProjectStore.setState((s) => ({
     projects: s.projects.map((w) =>
       w.orgId && remap.has(w.orgId) ? { ...w, orgId: remap.get(w.orgId) } : w,
-    ),
-    groups: s.groups.map((g) =>
-      g.orgId && remap.has(g.orgId) ? { ...g, orgId: remap.get(g.orgId) } : g,
     ),
   }));
   logEvent({
@@ -302,17 +298,11 @@ export const useOrgStore = createSelectors(
         const { organisations } = get();
         if (organisations.length <= 1) return false; // never delete the last org
         // Cascade: wipe all app-state scoped to this org — its project/group
-        // references, and the recent chats for those projects. (The user's
-        // actual project files + `.atlas/` data on disk are NOT touched; only
-        // Atlas's org-scoped tracking is removed.) The caller (deleteOrgAndData)
-        // must have already switched away if this is the active org.
-        const ws = useProjectStore.getState();
-        const orgPaths = new Set(ws.projects.filter((w) => w.orgId === id).map((w) => w.path));
-        ws.actions.removeProjectsForOrg(id);
-        const rc = useRecentChatsStore.getState();
-        for (const c of rc.items) {
-          if (orgPaths.has(c.projectPath)) rc.actions.remove(c.tabId);
-        }
+        // references. (The user's actual project files + `.atlas/` data on
+        // disk are NOT touched; only Atlas's org-scoped tracking is removed.)
+        // The caller (deleteOrgAndData) must have already switched away if
+        // this is the active org.
+        useProjectStore.getState().actions.removeProjectsForOrg(id);
         set((s) => ({
           organisations: s.organisations.filter((o) => o.id !== id),
         }));

@@ -3099,6 +3099,7 @@ fn core_turn_item_into_thread_item_converts_supported_variants() {
         agent_path: atlas_engine_protocol::AgentPath::root()
             .join("worker")
             .expect("worker path"),
+        prompt: None,
     });
 
     assert_eq!(
@@ -3108,6 +3109,7 @@ fn core_turn_item_into_thread_item_converts_supported_variants() {
             kind: SubAgentActivityKind::Interrupted,
             agent_thread_id: receiver_thread_id.to_string(),
             agent_path: "/root/worker".to_string(),
+            prompt: None,
         }
     );
 

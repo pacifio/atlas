@@ -149,7 +149,7 @@ pub fn add_originator_header(headers: &mut HeaderMap, originator_value: &str) {
 
 pub fn is_first_party_originator(originator_value: &str) -> bool {
     // Atlas Agent is the only first-party client of this engine; the
-    // upstream's list of its own clients went with the rename (ADR-0011).
+    // the original list of its own clients went with the rename (ADR-0011).
     originator_value == DEFAULT_ORIGINATOR
 }
 

@@ -454,6 +454,43 @@ fn a_responses_native_tool_shape_is_dropped_rather_than_sent() {
     assert_eq!(tools[0]["function"]["name"], json!("shell"));
 }
 
+/// A child's task arrives as inter-agent mail: a plaintext header and the
+/// payload in the `encrypted_content` slot, which on this path is not
+/// encrypted. Dropped, the child runs on its system prompt alone.
+#[test]
+fn inter_agent_mail_rides_as_a_user_message_with_its_payload() {
+    use atlas_engine_protocol::models::AgentMessageInputContent;
+    let items = [ResponseItem::AgentMessage {
+        id: None,
+        author: "/root".to_string(),
+        recipient: "/root/greeter".to_string(),
+        content: vec![
+            AgentMessageInputContent::InputText {
+                text: "Message Type: NEW_TASK\nTask name: /root/greeter\nSender: /root\nPayload:\n"
+                    .to_string(),
+            },
+            AgentMessageInputContent::EncryptedContent {
+                encrypted_content: "Compose exactly one one-line greeting.".to_string(),
+            },
+        ],
+        internal_chat_message_metadata_passthrough: None,
+    }];
+    let built = build("glm-5.3-flash", &items, &[]);
+    let body = body_of(&built);
+    let last = body["messages"]
+        .as_array()
+        .and_then(|m| m.last())
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(last["role"], json!("user"));
+    assert_eq!(
+        last["content"][0]["text"],
+        json!(
+            "Message Type: NEW_TASK\nTask name: /root/greeter\nSender: /root\nPayload:\nCompose exactly one one-line greeting."
+        ),
+    );
+}
+
 #[test]
 fn no_tools_means_no_tool_choice_either() {
     let items = [message("user", "hi")];

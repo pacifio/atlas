@@ -631,9 +631,9 @@ export function zuhayerJoinsSpace(convId: string = CONV_ID.shop): void {
  * his replica, applied to the server doc and relayed to the canvas. Joins
  * first if he has not.
  */
-export async function zuhayerMovesNote(convId: string = CONV_ID.shop): Promise<void> {
+export async function zuhayerMovesNote(convId: string = CONV_ID.shop): Promise<string | undefined> {
   const live = spaceIsOpen(convId, "zuhayerMovesNote");
-  if (!live) return;
+  if (!live) return "the #shop Space isn't open";
   if (!zuhayer.joined || zuhayer.convId !== convId || zuhayer.pageId !== live.pageId) {
     zuhayerJoinsSpace(convId);
     await sleep(1_400);
@@ -645,10 +645,7 @@ export async function zuhayerMovesNote(convId: string = CONV_ID.shop): Promise<v
     nodes.find((n) => n.kind === "note" && n.title.trim().toLowerCase() === "pricing service") ??
     nodes.find((n) => n.kind === "note") ??
     nodes[0];
-  if (!target) {
-    console.warn("northwind: zuhayerMovesNote — the page has no node to move.");
-    return;
-  }
+  if (!target) return "the Space has nothing on it to move";
 
   const gesture = ++zuhayer.gesture;
   // Grab it by its title bar.
@@ -690,4 +687,5 @@ export async function zuhayerMovesNote(convId: string = CONV_ID.shop): Promise<v
   await sleep(500);
   setZuhayer({ selection: [] });
   await glideCursor({ x: to.x + grab.dx + 120, y: to.y + grab.dy + 80 }, 700, gesture);
+  return undefined;
 }

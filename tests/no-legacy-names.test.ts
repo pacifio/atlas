@@ -18,7 +18,7 @@ import { fileURLToPath } from "node:url";
  * - **The upstream product the engine was forked from.** Its name is also
  *   the name of a *different* product Atlas runs as a third-party ACP agent
  *   (OpenAI's Codex CLI), which the app layer may talk about by name. So in
- *   the engine's own territory — the vendored tree, the seam crate, the
+ *   the engine's own territory — the engine tree, the seam crate, the
  *   manifests, CI, the contract tests, the living docs — the word is banned
  *   outright; everywhere else only its engine-shaped spellings are: crate
  *   and module identifiers, its env vars, its dot-directory, the old vendor
@@ -91,7 +91,7 @@ const UPSTREAM_RESIDUE: [pattern: RegExp, reason: string][] = [
   ],
   [
     /^tests\/vendor-licensing\.test\.ts$/,
-    "names the path the engine was vendored under, where its git history lives",
+    "names the path the engine was first imported under, where its git history lives",
   ],
   [/^tests\/no-legacy-names\.test\.ts$/, "this file"],
   [

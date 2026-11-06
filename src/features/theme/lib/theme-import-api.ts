@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Theme } from "./theme-api";
+import type { OpenVsxExtension } from "@/lib/open-vsx";
+import type { Theme } from "@tryatlas/design/theme";
 
 /**
  * Theme import and export (decision 15).
@@ -85,6 +86,9 @@ export interface ThemeImportPreview {
   format: string;
   /** One per theme in the source; a Zed family has several. */
   themes: ThemeImportCandidate[];
+  /** A theme in the source that could not be imported, and why. Only an
+   *  Open VSX extension, which carries several files, has any. */
+  skipped: string[];
 }
 
 export interface ThemeImportInput {
@@ -92,6 +96,8 @@ export interface ThemeImportInput {
   url?: string;
   path?: string;
   format?: ThemeImportFormat;
+  /** A colour-theme extension on Open VSX; omitting `version` takes the latest. */
+  openVsx?: { namespace: string; name: string; version?: string };
 }
 
 export interface ShadcnExportReport {
@@ -108,6 +114,11 @@ export interface ShadcnExport {
   json: string;
   variants: string[];
   report: ShadcnExportReport;
+}
+
+/** Open VSX extensions that contribute a colour theme. */
+export function searchColorThemes(query: string): Promise<OpenVsxExtension[]> {
+  return invoke("search_color_themes", { query });
 }
 
 /** Convert and report. Writes nothing. */

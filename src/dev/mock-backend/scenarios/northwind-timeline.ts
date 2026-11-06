@@ -355,9 +355,10 @@ let liveTimer: ReturnType<typeof setInterval> | null = null;
  * the board each time (`atlas:capture-changed`, as the capture worker does).
  * The Session keeps its pulsing dot until the last step lands.
  */
-export function streamLiveSession(everyMs = 9_000): void {
+export function streamLiveSession(everyMs = 9_000): string | undefined {
   const live = sessions().find((s) => s.live);
-  if (!live || liveTimer) return;
+  if (!live) return "no live session to stream";
+  if (liveTimer) return "the live session is already streaming";
   const id = live.content.id;
   const tick = () => {
     const next = advanceLive(id);
@@ -369,6 +370,7 @@ export function streamLiveSession(everyMs = 9_000): void {
   };
   tick();
   liveTimer = setInterval(tick, everyMs);
+  return undefined;
 }
 
 /**
@@ -394,10 +396,13 @@ export function announcePresence(): void {
 // ── Handlers ──────────────────────────────────────────────────────────────
 
 export const northwindTimelineCommands: Partial<TypedHandlers<MockResponses>> = {
-  artifacts_board: ({ projects }): BoardPage => {
+  artifacts_board: ({ projects, filter }): BoardPage => {
     const paths = Array.isArray(projects) ? (projects as string[]) : [];
-    if (!paths.includes(PROJECT.path))
-      return artifactsHandlers.artifacts_board({ projects }) as BoardPage;
+    const scope = (filter ?? null) as { local: string } | { remote: string } | null;
+    const ours = scope
+      ? "local" in scope && scope.local === PROJECT.path
+      : paths.includes(PROJECT.path);
+    if (!ours) return artifactsHandlers.artifacts_board({ projects, filter }) as BoardPage;
     return { sessions: sessions().map(boardRow), cloudPending: false, cloudFailed: false };
   },
   // Only your own Sessions are on this disk; a teammate's is read from the server.

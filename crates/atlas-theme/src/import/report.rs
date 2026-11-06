@@ -28,8 +28,8 @@ use serde::{Deserialize, Serialize};
 pub enum Fidelity {
     /// shadcn: Atlas's base tokens *are* shadcn's, so nothing is lost.
     Native,
-    /// Zed: Atlas's theme keys were modelled on Zed's roles, so nearly every
-    /// one has a counterpart; what is missing is a shadcn layer Zed never had.
+    /// Zed: its colour roles map onto Atlas's theme keys almost one-to-one, so
+    /// nearly every key has a counterpart; what is missing is a shadcn layer Zed never had.
     NearLossless,
     /// VS Code: a workbench theme and an app theme are different things.
     Lossy,

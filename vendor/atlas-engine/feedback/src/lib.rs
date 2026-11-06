@@ -39,7 +39,7 @@ pub const ATLAS_AGENT_APP_DIRECTORY_CACHE_ATTACHMENT_FILENAME: &str =
 /// Filename used for the Windows sandbox log feedback attachment.
 pub const WINDOWS_SANDBOX_LOG_ATTACHMENT_FILENAME: &str = "windows-sandbox.log";
 const DEFAULT_MAX_BYTES: usize = 4 * 1024 * 1024; // 4 MiB
-// Upstream carried `SENTRY_DSN` and `UPLOAD_TIMEOUT_SECS` here — a hardcoded
+// The original carried `SENTRY_DSN` and `UPLOAD_TIMEOUT_SECS` here — a hardcoded
 // ingest endpoint that `upload_feedback` built a Sentry client around. Removed
 // by Atlas (#63): the fourth phone-home path, reachable through the in-process
 // app-server's `feedback/upload` request even though Atlas ships no feedback

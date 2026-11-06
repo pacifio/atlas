@@ -11,7 +11,10 @@
 use std::sync::Arc;
 
 use crate::error::{Error, Result};
-use crate::model::{Comment, EntryPayload, InboxPage, SessionBoardPage, SessionDetailPage};
+use crate::model::{
+    ArtifactShare, Comment, EntryPayload, InboxKind, InboxPage, SessionBoardPage,
+    SessionDetailPage, TracePage,
+};
 use crate::{ingest_base, AnchorKind, TokenSource};
 
 /// The board read's page size. The server clamps at 100 and silently falls back
@@ -35,6 +38,14 @@ const ENTRY_PAGE: u32 = 500;
 /// Session cannot turn one click into an unbounded crawl.
 const MAX_ENTRY_PAGES: usize = 40;
 
+/// What [`ArtifactsClient::mark_inbox_read`] marks: some entries (1–100 ids,
+/// the server's bound), or every entry in one Organisation.
+#[derive(Debug, Clone, Copy)]
+pub enum InboxRead<'a> {
+    Ids(&'a [String]),
+    All { org_id: &'a str },
+}
+
 /// The most an inbox page may hold. The server clamps at 100 and silently
 /// falls back to its default of 50 past it, so a larger ask is clamped here
 /// rather than quietly answered with fewer.
@@ -49,6 +60,18 @@ pub const ENTRY_PAGE_MAX: u32 = 500;
 /// The longest keyword the server's search accepts, in characters; a longer
 /// one is refused rather than cut, so it is cut here.
 pub const SEARCH_MAX_CHARS: usize = 256;
+
+/// What one trace read asks for: a window, and optionally one Workspace.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TraceQuery<'a> {
+    /// RFC 3339. The server allows at most 92 days between the two.
+    pub from: &'a str,
+    pub to: &'a str,
+    /// One Workspace — the per-project trace — or every one the person can see.
+    pub workspace_id: Option<&'a str>,
+    /// Where the previous page's `next_cursor` left off.
+    pub cursor: Option<&'a str>,
+}
 
 /// Which page of the board to read, and how narrowly.
 ///
@@ -235,6 +258,23 @@ impl ArtifactsClient {
         self.send(req, "board").await
     }
 
+    /// One page of the trace: the Sessions active in a window, each with its
+    /// Checkpoints. The caller walks `next_cursor`.
+    pub async fn trace_page(&self, org_id: &str, query: TraceQuery<'_>) -> Result<TracePage> {
+        let mut req = self
+            .http
+            .get(format!("{}/sessions/trace", self.base))
+            .bearer_auth(self.token().await?)
+            .query(&[("org", org_id), ("from", query.from), ("to", query.to)]);
+        if let Some(workspace) = query.workspace_id {
+            req = req.query(&[("workspace", workspace)]);
+        }
+        if let Some(cursor) = query.cursor {
+            req = req.query(&[("cursor", cursor)]);
+        }
+        self.send(req, "trace").await
+    }
+
     /// One page of a remote Session's timeline, in the server's order
     /// `(turnSeq, rank, at, id)`, continuing from `cursor`.
     ///
@@ -360,6 +400,71 @@ impl ArtifactsClient {
         Ok(wrapper.comments)
     }
 
+    /// Every public share link on a Project, live and revoked.
+    ///
+    /// The caller filters for the one it wants: the server has no "the share
+    /// for this Session" route, because a Session can carry more than one link
+    /// over its life and a revoked one is still a row.
+    pub async fn shares(&self, org_id: &str, project_id: &str) -> Result<Vec<ArtifactShare>> {
+        #[derive(serde::Deserialize)]
+        struct Wrapper {
+            #[serde(default)]
+            shares: Vec<ArtifactShare>,
+        }
+        let req = self
+            .http
+            .get(self.url(&["workspaces", project_id, "shares"])?)
+            .bearer_auth(self.token().await?)
+            .query(&[("org", org_id)]);
+        let wrapper: Wrapper = self.send(req, "shares").await?;
+        Ok(wrapper.shares)
+    }
+
+    /// Publish one Session on an unguessable link.
+    ///
+    /// Session scope only. A Project-wide link is a BULK disclosure — it
+    /// exposes every member's Sessions, and a Session title is the first line
+    /// of somebody's prompt — so the server requires a confirmation carrying
+    /// the numbers, and nothing in the desktop app asks for that yet.
+    ///
+    /// Guest commenting is off unless asked for, which is the server's default
+    /// and is restated here so the desktop cannot drift from it silently.
+    pub async fn create_session_share(
+        &self,
+        org_id: &str,
+        project_id: &str,
+        session_id: &str,
+        comments: bool,
+    ) -> Result<ArtifactShare> {
+        #[derive(serde::Deserialize)]
+        struct Wrapper {
+            share: ArtifactShare,
+        }
+        let payload = serde_json::json!({
+            "scope": "session",
+            "session_id": session_id,
+            "comments": comments,
+        });
+        let req = self
+            .http
+            .post(self.url(&["workspaces", project_id, "shares"])?)
+            .bearer_auth(self.token().await?)
+            .query(&[("org", org_id)])
+            .json(&payload);
+        let wrapper: Wrapper = self.send(req, "create share").await?;
+        Ok(wrapper.share)
+    }
+
+    /// Take a link down. Every token already issued against it stops working.
+    pub async fn revoke_share(&self, org_id: &str, project_id: &str, share_id: &str) -> Result<()> {
+        let req = self
+            .http
+            .delete(self.url(&["workspaces", project_id, "shares", share_id])?)
+            .bearer_auth(self.token().await?)
+            .query(&[("org", org_id)]);
+        self.send_discarding_body(req, "revoke share").await
+    }
+
     /// Post a comment. See [`NewComment`] for what is deliberately not sent.
     pub async fn create_comment(
         &self,
@@ -426,6 +531,39 @@ impl ArtifactsClient {
         Ok(wrapper.comment)
     }
 
+    /// One person's vote: `1` up, `-1` down, `0` takes it back. A value, not
+    /// a toggle — voting the way you already voted is a no-op on the server,
+    /// so a retried request cannot undo itself. Members only; a guest is
+    /// refused. Answers the comment as it now stands.
+    pub async fn vote_comment(
+        &self,
+        org_id: &str,
+        project_id: &str,
+        session_id: &str,
+        comment_id: &str,
+        value: i8,
+    ) -> Result<Comment> {
+        #[derive(serde::Deserialize)]
+        struct Wrapper {
+            comment: Comment,
+        }
+        if !matches!(value, -1..=1) {
+            return Err(Error::Protocol(format!(
+                "a vote is 1, -1 or 0, not {value}"
+            )));
+        }
+        let req = self
+            .http
+            .put(self.url(&[
+                "sessions", project_id, session_id, "comments", comment_id, "vote",
+            ])?)
+            .bearer_auth(self.token().await?)
+            .query(&[("org", org_id)])
+            .json(&serde_json::json!({ "value": value }));
+        let wrapper: Wrapper = self.send(req, "vote on comment").await?;
+        Ok(wrapper.comment)
+    }
+
     /// Delete a comment. The row survives with a `None` body so replies keep
     /// their places, which is why this answers with the comment rather than
     /// nothing.
@@ -452,11 +590,11 @@ impl ArtifactsClient {
     /// One page of the signed-in person's inbox in `org_id`, newest first:
     /// mentions, replies and comments on their Sessions.
     ///
-    /// **Read-only, and the only inbox call here.** The server's mark-read
-    /// route (`POST /inbox/read`) has no caller in this crate on purpose: the
-    /// unread state is the person's, and the agent tools this backs must never
-    /// be able to clear it. There is no `user` parameter either — the server
-    /// scopes both routes to the token's subject.
+    /// **Read-only.** The agent tools this backs must never be able to clear
+    /// the person's unread state, so they read through here and nothing else;
+    /// marking read is [`Self::mark_inbox_read`], which only the window's own
+    /// command calls. There is no `user` parameter either — the server scopes
+    /// both routes to the token's subject.
     ///
     /// One page rather than a walk: `cursor` continues where `next_cursor`
     /// left off, and `limit` is clamped to [`INBOX_PAGE_MAX`].
@@ -464,6 +602,19 @@ impl ArtifactsClient {
         &self,
         org_id: &str,
         unread_only: bool,
+        cursor: Option<&str>,
+        limit: Option<u32>,
+    ) -> Result<InboxPage> {
+        self.inbox_page(org_id, unread_only, None, cursor, limit)
+            .await
+    }
+
+    /// [`Self::inbox`], narrowed to one kind — the window's "Mentions" filter.
+    pub async fn inbox_page(
+        &self,
+        org_id: &str,
+        unread_only: bool,
+        kind: Option<InboxKind>,
         cursor: Option<&str>,
         limit: Option<u32>,
     ) -> Result<InboxPage> {
@@ -475,6 +626,9 @@ impl ArtifactsClient {
         if unread_only {
             req = req.query(&[("unread", "true")]);
         }
+        if let Some(kind) = kind {
+            req = req.query(&[("kind", kind.as_str())]);
+        }
         if let Some(cursor) = cursor {
             req = req.query(&[("cursor", cursor)]);
         }
@@ -482,6 +636,23 @@ impl ArtifactsClient {
             req = req.query(&[("limit", limit.clamp(1, INBOX_PAGE_MAX).to_string())]);
         }
         self.send(req, "inbox").await
+    }
+
+    /// Mark inbox entries read: these ids, or everything in `org_id`.
+    ///
+    /// The person's own act, from the window — never an agent tool's (see
+    /// [`Self::inbox`]). `POST /inbox/read` answers `204`.
+    pub async fn mark_inbox_read(&self, target: InboxRead<'_>) -> Result<()> {
+        let body = match target {
+            InboxRead::Ids(ids) => serde_json::json!({ "ids": ids }),
+            InboxRead::All { org_id } => serde_json::json!({ "all": true, "org": org_id }),
+        };
+        let req = self
+            .http
+            .post(format!("{}/inbox/read", self.base))
+            .bearer_auth(self.token().await?)
+            .json(&body);
+        self.send_discarding_body(req, "mark inbox read").await
     }
 
     async fn token(&self) -> Result<String> {
@@ -510,6 +681,32 @@ impl ArtifactsClient {
             .cached
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+    }
+
+    /// Send and classify the status, discarding the body.
+    ///
+    /// For the routes that answer `204` or an envelope nobody reads. Separate
+    /// from [`Self::send`] rather than a `T = ()`: that decodes, and decoding
+    /// an empty body as `()` fails.
+    async fn send_discarding_body(&self, req: reqwest::RequestBuilder, what: &str) -> Result<()> {
+        let response = req
+            .send()
+            .await
+            .map_err(|e| Error::Transport(format!("{what}: {e}")))?;
+
+        let status = response.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            self.forget_token();
+        }
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            return Err(Error::RateLimited {
+                retry_after: retry_after(&response),
+            });
+        }
+        if !status.is_success() {
+            return Err(Error::from_status(status.as_u16(), what));
+        }
+        Ok(())
     }
 
     /// Send, classify the status, then decode.
@@ -666,6 +863,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_trace_is_one_get_with_the_window_and_the_workspace_only_when_narrowed() {
+        const EMPTY: &str =
+            r#"{"from":"a","to":"b","sessions":[],"workspaces":[],"nextCursor":null,"notes":[]}"#;
+        let (base, seen) = loopback(EMPTY).await;
+        let client = ArtifactsClient::at(&base, Arc::new(Tok));
+        let window = TraceQuery {
+            from: "2026-10-28T00:00:00Z",
+            to: "2026-11-04T00:00:00Z",
+            ..TraceQuery::default()
+        };
+
+        client.trace_page("org_1", window).await.unwrap();
+        client
+            .trace_page(
+                "org_1",
+                TraceQuery {
+                    workspace_id: Some("ws_1"),
+                    cursor: Some("c2"),
+                    ..window
+                },
+            )
+            .await
+            .unwrap();
+
+        let seen = seen.lock().unwrap().clone();
+        let lines: Vec<&str> = seen.iter().map(|r| r.lines().next().unwrap()).collect();
+        assert_eq!(
+            lines,
+            vec![
+                "GET /sessions/trace?org=org_1&from=2026-10-28T00%3A00%3A00Z&to=2026-11-04T00%3A00%3A00Z HTTP/1.1",
+                "GET /sessions/trace?org=org_1&from=2026-10-28T00%3A00%3A00Z&to=2026-11-04T00%3A00%3A00Z&workspace=ws_1&cursor=c2 HTTP/1.1",
+            ],
+            "the whole Organisation leaves `workspace` out; one project names it"
+        );
+    }
+
+    #[tokio::test]
     async fn the_whole_inbox_omits_the_unread_filter() {
         let (base, seen) = loopback(ONE_UNREAD).await;
         let client = ArtifactsClient::at(&base, Arc::new(Tok));
@@ -678,6 +912,42 @@ mod tests {
             seen[0].lines().next().unwrap(),
             "GET /inbox?org=org_1 HTTP/1.1"
         );
+    }
+
+    #[tokio::test]
+    async fn the_mentions_filter_is_the_kind_query() {
+        let (base, seen) = loopback(ONE_UNREAD).await;
+        let client = ArtifactsClient::at(&base, Arc::new(Tok));
+
+        client
+            .inbox_page("org_1", false, Some(crate::InboxKind::Mention), None, None)
+            .await
+            .unwrap();
+
+        let seen = seen.lock().unwrap().clone();
+        assert_eq!(
+            seen[0].lines().next().unwrap(),
+            "GET /inbox?org=org_1&kind=artifact_mention HTTP/1.1"
+        );
+    }
+
+    #[tokio::test]
+    async fn marking_read_is_one_post_on_the_read_route() {
+        let (base, seen) = loopback("").await;
+        let client = ArtifactsClient::at(&base, Arc::new(Tok));
+
+        let ids = vec!["n1".to_string()];
+        client.mark_inbox_read(InboxRead::Ids(&ids)).await.unwrap();
+        client
+            .mark_inbox_read(InboxRead::All { org_id: "org_1" })
+            .await
+            .unwrap();
+
+        let seen = seen.lock().unwrap().clone();
+        assert_eq!(seen.len(), 2);
+        for request in &seen {
+            assert_eq!(request.lines().next().unwrap(), "POST /inbox/read HTTP/1.1");
+        }
     }
 
     // ── One board page and one timeline page, as the organisation tools read them ──

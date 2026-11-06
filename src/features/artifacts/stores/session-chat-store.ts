@@ -71,6 +71,12 @@ interface SessionChatState {
   sourcesByMsg: Record<string, SourceRef[]>;
   /** Thread id → the last error, cleared on the next send. */
   errors: Record<string, string | null>;
+  /**
+   * Session id → its server Project, for Sessions that are not in this
+   * machine's store. Set on `open`, never persisted: it belongs to the Session
+   * as the viewer sees it today, not to a thread saved last week.
+   */
+  remoteByAgent: Record<string, string | null>;
 
   actions: {
     /** Install the stream listener. Idempotent. */
@@ -81,6 +87,7 @@ interface SessionChatState {
       agentSessionId: string,
       projectPath: string,
       defaultScope?: string[] | null,
+      remoteProjectId?: string | null,
     ) => Promise<void>;
     select: (agentSessionId: string, threadId: string) => Promise<void>;
     /** `checkpointScope` seeds the thread's grounding — see the field's doc. */
@@ -187,6 +194,7 @@ const useSessionChatStoreBase = create<SessionChatState>()((set, get) => ({
   streamToThread: {},
   sourcesByMsg: {},
   errors: {},
+  remoteByAgent: {},
 
   actions: {
     init: async () => {
@@ -195,7 +203,10 @@ const useSessionChatStoreBase = create<SessionChatState>()((set, get) => ({
       await listenModelChat((e) => onEvent(set, get, e));
     },
 
-    open: async (agentSessionId, projectPath, defaultScope = null) => {
+    open: async (agentSessionId, projectPath, defaultScope = null, remoteProjectId = null) => {
+      set((st) => ({
+        remoteByAgent: { ...st.remoteByAgent, [agentSessionId]: remoteProjectId },
+      }));
       let metas: ThreadMeta[] = [];
       try {
         metas = await sessionChat.threadsList(agentSessionId);
@@ -350,6 +361,7 @@ const useSessionChatStoreBase = create<SessionChatState>()((set, get) => ({
           thread.agentSessionId,
           trimmed,
           thread.checkpointScope,
+          get().remoteByAgent[thread.agentSessionId] ?? null,
         );
         set((st) => ({ sourcesByMsg: { ...st.sourcesByMsg, [assistantMsg.id]: sources } }));
 

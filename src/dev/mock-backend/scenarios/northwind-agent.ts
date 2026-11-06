@@ -33,6 +33,7 @@ import {
 import { NORTHWIND_FILES } from "../fixtures/northwind-repo";
 import type { AgentKey, Beat, ScriptedRun, Step, ToolStep } from "./northwind-content-types";
 import { CONTENT } from "./northwind-content";
+import { matchRun } from "./northwind-match";
 import { NORTHWIND_NATIVE_MODELS } from "./northwind-models";
 import {
   abs,
@@ -63,11 +64,11 @@ export function agentKeyOf(pluginId: string): AgentKey | null {
 
 const MODELS: Record<AgentKey, AgentModels> = {
   "claude-code": {
-    current: "claude-opus-4",
+    current: "claude-opus-5-5",
     available: [
-      { id: "claude-opus-4", name: "Opus 4" },
-      { id: "claude-sonnet-4", name: "Sonnet 4" },
-      { id: "claude-haiku-4", name: "Haiku 4" },
+      { id: "claude-opus-5-5", name: "Opus 5.5" },
+      { id: "claude-sonnet-5-5", name: "Sonnet 5.5" },
+      { id: "claude-haiku-4-5", name: "Haiku 4.5" },
     ],
   },
   codex: {
@@ -79,7 +80,7 @@ const MODELS: Record<AgentKey, AgentModels> = {
     ],
   },
   "atlas-agent": {
-    current: "claude-sonnet-4",
+    current: "claude-sonnet-5-5",
     // The gateway's list — the same one the picker's Refresh returns.
     available: NORTHWIND_NATIVE_MODELS,
   },
@@ -134,7 +135,11 @@ function toolNameOf(agent: AgentKey, tool: ToolStep["tool"], command?: string): 
     const name = command ?? "org";
     return agent === "atlas-agent" ? `atlas_org.${name}` : `mcp__atlas_org__${name}`;
   }
-  if (tool === "memory") return command ?? tool;
+  // Atlas memory is the `atlas_memory` MCP server, named the same two ways.
+  if (tool === "memory") {
+    const name = command ?? "memory_search";
+    return agent === "atlas-agent" ? `atlas_memory.${name}` : `mcp__atlas_memory__${name}`;
+  }
   const names: Record<AgentKey, Record<string, string>> = {
     "claude-code": { read: "Read", edit: "Edit", write: "Write", bash: "Bash", grep: "Grep" },
     codex: {
@@ -418,6 +423,28 @@ async function runTool(
   await sleep(250);
 }
 
+/**
+ * The audit record Rust broadcasts for every organisation call, refusals
+ * included, so this take's calls land in the Log like the real thing's.
+ */
+function auditOrgCall(
+  sid: string,
+  agent: AgentKey,
+  tool: string,
+  args: Record<string, unknown> | undefined,
+  ok: boolean,
+  text: string,
+): void {
+  void emit("atlas:org-action", {
+    sessionId: sid,
+    agent,
+    tool,
+    arguments: args ?? {},
+    ok,
+    text,
+  });
+}
+
 async function playBeat(sid: string, agent: AgentKey, beat: Beat): Promise<"waiting" | void> {
   switch (beat.kind) {
     case "thinking":
@@ -428,9 +455,13 @@ async function playBeat(sid: string, agent: AgentKey, beat: Beat): Promise<"wait
       return;
     case "tool":
       await runTool(sid, agent, `nw:run:${++callSeq}`, beat, beat.ms ?? 700);
+      if (beat.tool === "org" && beat.command) {
+        auditOrgCall(sid, agent, beat.command, beat.args, true, beat.result ?? "");
+      }
       return;
     case "approval": {
       const effect = beat.effect;
+      const command = effect === "replyToComment" ? "org_comment_reply" : "org_send";
       await raisePermission({
         sessionId: sid,
         transcriptCall: toolCallOf(
@@ -440,7 +471,7 @@ async function playBeat(sid: string, agent: AgentKey, beat: Beat): Promise<"wait
             tool: "org",
             title: beat.title,
             args: beat.args,
-            command: effect === "replyToComment" ? "org_comment_reply" : "org_send",
+            command,
           },
           "pending",
         ),
@@ -452,6 +483,14 @@ async function playBeat(sid: string, agent: AgentKey, beat: Beat): Promise<"wait
         reply: (_decision, option) => {
           const allowed = option?.kind === "allow_once" || option?.kind === "allow_always";
           if (allowed) hooks?.effects[effect](beat.args);
+          auditOrgCall(
+            sid,
+            agent,
+            command,
+            beat.args,
+            allowed,
+            allowed ? "Done." : "Declined by user.",
+          );
           return allowed ? beat.allowed : beat.declined;
         },
       });
@@ -506,19 +545,43 @@ function pendingFrom(sessionId: string): PendingChange[] {
   return [...out.values()];
 }
 
-async function finish(run: ScriptedRun, sid: string, startedAt: number): Promise<void> {
+/**
+ * Record a Session video 1 makes on camera, if this take hasn't yet: on the
+ * Timeline, with its edits uncommitted in the git panel. The prompt that makes
+ * it does this; so do the cues that point at it (3, 6), in case that prompt
+ * went to the fallback answer.
+ */
+export function ensureVideo1Session(id: string, startedAt = Date.now()): void {
+  if (!BEFORE_VIDEO_1 || session(id)) return;
+  createSession(id, startedAt);
+  setPending(pendingFrom(id), [id]);
+  void emit("atlas:capture-changed", {});
+}
+
+async function finish(
+  run: ScriptedRun,
+  sid: string,
+  agent: AgentKey,
+  startedAt: number,
+): Promise<void> {
   if (run.afterwards === "discountSession") {
     const id = run.replay ?? "s-discount";
-    if (BEFORE_VIDEO_1 && !session(id)) {
-      createSession(id, startedAt);
-      setPending(pendingFrom(id), [id]);
-    }
+    ensureVideo1Session(id, startedAt);
     bindings.set(sid, id);
     // What the capture worker emits after a turn: the board and this chat's
     // comment target both re-read.
     void emit("atlas:capture-changed", {});
   } else if (run.afterwards === "rememberDecision") {
     hooks?.rememberDecision();
+  } else if (run.afterwards === "recordSession" && run.replay) {
+    // The capture worker's job in the real app: the turn the viewer just
+    // watched becomes a Session on the Timeline, under its agent's glyph.
+    // Only from the agent it was written for: a Codex prompt sent to Claude
+    // Code must not land on the Timeline as Codex.
+    if (sessionContent(run.replay)?.agent !== agent) return;
+    if (!session(run.replay)) createSession(run.replay, startedAt);
+    bindings.set(sid, run.replay);
+    void emit("atlas:capture-changed", {});
   }
 }
 
@@ -534,7 +597,7 @@ async function play(run: ScriptedRun, sid: string, agent: AgentKey): Promise<voi
       break;
     }
   }
-  await finish(run, sid, startedAt);
+  await finish(run, sid, agent, startedAt);
   if (!waiting) await finishTurn(sid);
 }
 
@@ -578,12 +641,7 @@ export function readablePrompt(text: string): string {
 }
 
 function findRun(text: string, agent: AgentKey): ScriptedRun | undefined {
-  const lower = readablePrompt(text).toLowerCase();
-  return (
-    CONTENT.runs.find(
-      (run) => (!run.agent || run.agent === agent) && run.match.every((m) => lower.includes(m)),
-    ) ?? CONTENT.runs.find((run) => run.match.every((m) => lower.includes(m)))
-  );
+  return matchRun(CONTENT.runs, readablePrompt(text), agent);
 }
 
 // ── Wiring ────────────────────────────────────────────────────────────────

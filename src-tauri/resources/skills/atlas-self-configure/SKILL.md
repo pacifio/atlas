@@ -28,6 +28,23 @@ If the file does not exist yet, Atlas hasn't created it (a fresh install
 before first launch, or the user deleted it). Do not create one speculatively
 — report that to the user instead of guessing at defaults.
 
+## One project only: the project's own config.toml
+
+A project can override a few keys for itself in a `config.toml` inside the
+project's `.atlas/` directory. Use it only when the user asks for a change in
+*this project* rather than everywhere. Its header says what it is; the rules:
+
+- It holds only the keys the project changes. The allowed keys are the ones
+  whose comment in the global file says a project can override it. Atlas
+  ignores any other key there.
+- Some of those a project can only turn **off** (the comment says "never
+  on"). If the user wants one on for a single project while it's off
+  everywhere else, say that Atlas won't honour it and stop.
+- Delete a key's line to go back to the global value.
+- The same care applies as below: read first, explain, change only your
+  lines, write atomically. It may not exist yet; unlike the global file,
+  creating it is fine — start it with `schemaVersion = 1` and `[settings]`.
+
 ## The schema is in the file
 
 Atlas writes a comment above every key: what it does, its default, and any
@@ -98,8 +115,8 @@ way out.
 - The user's shell profile (`~/.zshrc` and similar).
 - Atlas's own binary, packages, or update mechanism. "Self-configure" means
   preferences only, never self-update.
-- Session history, transcripts, or any per-project `.atlas/` state — none of
-  that is a "setting."
+- Session history, transcripts, or any other per-project `.atlas/` state —
+  none of that is a "setting". Only `.atlas/config.toml` is.
 
 If a request needs any of the above, say so plainly and stop — it's out of
 scope for this skill, not something to work around.

@@ -21,6 +21,7 @@ use tokio_util::sync::CancellationToken;
 use crate::sandboxing::ExecOptions;
 use crate::sandboxing::ExecRequest;
 use crate::sandboxing::SandboxPermissions;
+use crate::spawn::ProcessTree;
 use crate::spawn::SpawnChildRequest;
 use crate::spawn::StdioPolicy;
 use crate::spawn::spawn_child_async;
@@ -944,7 +945,7 @@ async fn exec(
         ))
     })?;
     let arg0_ref = arg0.as_deref();
-    let child = spawn_child_async(SpawnChildRequest {
+    let spawned = spawn_child_async(SpawnChildRequest {
         program: PathBuf::from(program),
         args: args.into(),
         arg0: arg0_ref,
@@ -961,13 +962,26 @@ async fn exec(
     if let Some(after_spawn) = after_spawn {
         after_spawn();
     }
-    consume_output(child, expiration, capture_policy, stdout_stream).await
+    consume_output(
+        spawned.child,
+        &spawned.tree,
+        expiration,
+        capture_policy,
+        stdout_stream,
+    )
+    .await
 }
 
 /// Consumes the output of a child process according to the configured capture
 /// policy.
+///
+/// Atlas: `tree` holds what the child started (see [`ProcessTree`]). Every
+/// path that kills the child kills it too; a child that exits on its own
+/// releases it. Returning early by `?` drops it, which on Windows ends the
+/// tree — the same as an abandoned call.
 async fn consume_output(
     mut child: Child,
+    tree: &ProcessTree,
     expiration: ExecExpiration,
     capture_policy: ExecCapturePolicy,
     stdout_stream: Option<StdoutStream>,
@@ -1012,11 +1026,13 @@ async fn consume_output(
     let (exit_status, timed_out) = tokio::select! {
         status_result = child.wait() => {
             let exit_status = status_result?;
+            tree.release();
             (exit_status, false)
         }
         outcome = &mut expiration_wait => {
             match outcome {
                 Some(ExecExpirationOutcome::TimedOut) => {
+                    tree.kill();
                     kill_child_process_group(&mut child)?;
                     child.start_kill()?;
                     (
@@ -1025,6 +1041,9 @@ async fn consume_output(
                     )
                 }
                 Some(ExecExpirationOutcome::Cancelled) => {
+                    // Atlas: Windows has no TERM to send first, so the tree goes
+                    // now; on Unix this is a no-op and the group logic below runs.
+                    tree.kill();
                     // Let TERM-aware processes run cleanup briefly, then kill any
                     // remaining members of the original process group.
                     let process_group_id = child.id();
@@ -1060,6 +1079,7 @@ async fn consume_output(
             }
         }
         _ = tokio::signal::ctrl_c() => {
+            tree.kill();
             kill_child_process_group(&mut child)?;
             child.start_kill()?;
             (synthetic_exit_status(EXIT_CODE_SIGNAL_BASE + SIGKILL_CODE), false)

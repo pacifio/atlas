@@ -1,0 +1,46 @@
+# Generated from crates/atlas-theme/keys.toml — do not edit.
+# Run `bun run theme:keys` after editing that file.
+#
+# token, palette, base, op, amount, dark, light; `-` where absent.
+background	-	-	-	-	#000000	#ffffff
+foreground	-	background	readable	-	-	-
+card	-	background	toward_foreground	0.05	-	-
+card-foreground	-	foreground	-	-	-	-
+popover	-	background	toward_foreground	0.12	-	-
+popover-foreground	-	foreground	-	-	-	-
+primary	-	foreground	-	-	-	-
+primary-foreground	-	primary	readable	-	-	-
+secondary	-	background	toward_foreground	0.05	-	-
+secondary-foreground	-	foreground	toward_background	0.28	-	-
+muted	-	background	toward_foreground	0.05	-	-
+muted-foreground	-	foreground	toward_background	0.32	-	-
+accent	-	muted	-	-	-	-
+accent-foreground	-	foreground	-	-	-	-
+destructive	red	-	-	-	#f44747	#c62828
+destructive-foreground	-	destructive	readable	-	-	-
+border	-	background	toward_foreground	0.16	-	-
+input	-	border	-	-	-	-
+ring	-	primary	-	-	-	-
+chart-1	-	primary	-	-	-	-
+chart-2	green	-	-	-	#9ecf8a	#3f7f2f
+chart-3	yellow	-	-	-	#e0b070	#b06000
+chart-4	purple	-	-	-	#c9a2f5	#7b3fb5
+chart-5	cyan	-	-	-	#7fd1e8	#1f7f99
+sidebar	-	background	-	-	-	-
+sidebar-foreground	-	foreground	-	-	-	-
+sidebar-primary	-	primary	-	-	-	-
+sidebar-primary-foreground	-	primary-foreground	-	-	-	-
+sidebar-accent	-	accent	-	-	-	-
+sidebar-accent-foreground	-	accent-foreground	-	-	-	-
+sidebar-border	-	background	toward_foreground	0.08	-	-
+sidebar-ring	-	ring	-	-	-	-
+radius	-	-	-	-	8px	8px
+tracking-normal	-	-	-	-	0em	0em
+spacing	-	-	-	-	0.25rem	0.25rem
+shadow-2xs	-	-	-	-	0 1px 2px rgba(0, 0, 0, 0.35)	0 1px 2px rgba(0, 0, 0, 0.04)
+shadow-xs	-	-	-	-	0 1px 2px rgba(0, 0, 0, 0.45)	0 1px 2px rgba(0, 0, 0, 0.06)
+shadow-sm	-	-	-	-	0 1px 3px rgba(0, 0, 0, 0.55)	0 1px 3px rgba(0, 0, 0, 0.08)
+shadow-md	-	-	-	-	0 4px 12px rgba(0, 0, 0, 0.65)	0 4px 12px rgba(0, 0, 0, 0.11)
+shadow-lg	-	-	-	-	0 8px 24px rgba(0, 0, 0, 0.75)	0 8px 24px rgba(0, 0, 0, 0.14)
+shadow-xl	-	-	-	-	0 12px 36px rgba(0, 0, 0, 0.82)	0 12px 36px rgba(0, 0, 0, 0.18)
+shadow-2xl	-	-	-	-	0 16px 48px rgba(0, 0, 0, 0.9)	0 16px 48px rgba(0, 0, 0, 0.22)

@@ -1,122 +1,342 @@
-import { Share2, SlidersHorizontal } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { MemoryGraphView } from "./memory-graph-view";
-import { MemoryPolicyView } from "./memory-policy-view";
+import { useTipOnMount } from "@/features/tips/lib/use-tip-on-mount";
+import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { toast } from "sonner";
+import { Download, FileOutput, FolderInput, MoreHorizontal, RefreshCw, Trash2 } from "lucide-react";
+import { FileTreeConfirmDelete } from "@/features/explorer/components/file-tree-confirm-delete";
+import { chainBroken, healthLine, useMemoryHealth } from "../lib/use-memory-health";
+import { reviewCount } from "../lib/memory-review-items";
+import { MemoryActivity } from "./memory-activity";
+import { MemoryAgentFiles } from "./memory-agent-files";
+import { MemoryEntries } from "./memory-entries";
+import { MemoryReviewQueue } from "./memory-review-queue";
 import { MemorySharingControls } from "./memory-sharing-controls";
-import { SharedMemoryView } from "./shared-memory-view";
+import { ImportClaudeMemoryModal, ImportRepoModal } from "./shared-memory-modals";
+import { Notice, PromptLine } from "./views/memory-chrome";
+import { memoryDigest, MEMORY_INSTRUCTION_PROMPT } from "../lib/memory-ask";
+import { openAskAgent } from "@/features/ask-agent/lib/ask-agent";
+import { DestinationActions } from "@/features/layout/components/destination-actions";
 import { useAppStore } from "@/features/app/stores/app-store";
 import { useMemoryStore } from "../stores/memory-store";
+import { useSharedMemoryStore } from "../stores/shared-memory-store";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+  Hint,
+  IconButton,
+  Segmented,
+} from "@tryatlas/design";
 
 // ── Panel shell ─────────────────────────────────────────────────────────────
 //
-// Three views over the project's memory: the semantic Graph, the retrieval
-// Policy, and Shared memory. Each loads its own data on mount / project change
-// and owns its own refresh, so the shell is just navigation.
+// Why a person opens Memory, in order of how often: to see what the agents
+// know about this project; to find where something came from ("why does it
+// think that?"); to fix or forget what is wrong; to clear what waits for
+// review; and, rarely, to control what is shared. The tabs follow that:
 //
-// Three things used to live here and were removed:
-//   * **Chat** (2026-08-22) — an on-device RAG chat over the memory index.
-//   * **The coding-agent dropdown** (2026-08-22) — per-agent memory browsers
-//     (Claude Code, Codex, Atlas, and every capture-backed agent). It
-//     enumerated agents from three different sources and drifted out of step
-//     with the ACP registry rework, listing duplicates. Rebuilding it belongs
-//     on the registry, not on the hand-rolled agent list it was built against.
-//   * **Timeline** (2026-09-22) — a branch-aware board of git commits, agent
-//     sessions and the memory each one touched. Never used; it also carried
-//     the module's heaviest backend call (`memory_timeline` walked every ref
-//     and re-collected the corpus on each project visit). Removed whole, down
-//     to the Rust command — the session Timeline in the center panel is a
-//     different, unrelated feature and is untouched.
+//   * **Memories**, the front door: the shared record grouped by kind, with
+//     the chosen memory's provenance and its fix-or-forget beside it.
+//   * **Activity**: how memory changed, session by session, on the history
+//     rail (it replaced the raw Events and Plans tables).
+//   * **Review**: the queue, one decision at a time.
+//   * **Agent files**: the agents' own memory files: Preferences and the Map
+//     (tree and graph). The graph used to be the front door; it is a lens.
+//
+// The destination bar (ADR-0024) carries the nav, the health line, the
+// sharing controls and the ⋯ menu (refresh, import, export, clear), so every
+// tab shares them. Under it, the prompt line: most changes to memory are
+// asked of an agent, not typed, so telling it is the first thing on every
+// tab. The panel loads the record once per project, so the
+// Review count is right before Review is opened.
+//
+// Removed earlier and not coming back: the on-device RAG chat and the
+// per-agent memory browsers (2026-08-22), and the commit/session Timeline
+// board (2026-09-22). The session Timeline in the center panel is a
+// different feature.
 
 export function MemoryPanel() {
-  const projectPath = useAppStore.use.currentProject()?.path ?? null;
+  useTipOnMount("memory");
+  const project = useAppStore.use.currentProject();
+  const projectPath = project?.path ?? null;
+  const projectName = project?.name ?? projectPath?.split("/").pop() ?? "this project";
   const sub = useMemoryStore.use.subTab();
   const { setSubTab } = useMemoryStore.use.actions();
+  const review = useSharedMemoryStore.use.review();
+  const { load, refresh, clear } = useSharedMemoryStore.use.actions();
+  const [importing, setImporting] = useState(false);
+  const [importingRepo, setImportingRepo] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [selecting, setSelecting] = useState(false);
+  const waiting = reviewCount(review);
+
+  useEffect(() => {
+    // Entry ids are per project: an export pick never follows the user into
+    // another project.
+    setSelecting(false);
+    if (projectPath) void load(projectPath);
+  }, [projectPath, load]);
+
+  const clearConfirmed = async () => {
+    setConfirmClear(false);
+    try {
+      await clear();
+    } catch (err) {
+      toast.error(
+        `Couldn't clear shared memory: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  };
+
+  /** Opens the ask box as a memory instruction, `text` after the prompt. */
+  const askMemory = (text: string, anchor: HTMLElement) => {
+    // The record as loaded, read at the ask: the most used first, capped.
+    // The agent's memory tools reach the rest.
+    const digest = memoryDigest(useSharedMemoryStore.getState().entries, projectPath);
+    openAskAgent({
+      context: digest ? [digest] : [],
+      prompt: `${MEMORY_INSTRUCTION_PROMPT}${text}`,
+      anchor,
+    });
+  };
 
   return (
-    <div className="h-full flex flex-col bg-[var(--background)]">
-      {/* Header: nav (left) · sharing controls (right) */}
-      <div className="flex items-center h-[32px] shrink-0 border-b border-[var(--border)] px-2">
-        <PillGroup>
-          <PillSeg
-            active={sub === "graph"}
-            onClick={() => setSubTab("graph")}
-            icon={<Share2 size={12} />}
-            label="Graph"
+    <div className="flex h-full flex-col bg-background">
+      <DestinationActions>
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <Segmented
+            aria-label="Memory view"
+            size="sm"
+            value={sub}
+            onValueChange={(next) => {
+              setSubTab(next);
+              if (next !== "memories") setSelecting(false);
+            }}
+            options={[
+              { value: "memories", label: "Memories" },
+              { value: "activity", label: "Activity" },
+              { value: "review", label: "Review", ...(waiting > 0 ? { count: waiting } : {}) },
+              { value: "files", label: "Agent files" },
+            ]}
           />
-          <PillSeg
-            active={sub === "policy"}
-            onClick={() => setSubTab("policy")}
-            icon={<SlidersHorizontal size={12} />}
-            label="Policy"
-          />
-          <PillSeg
-            active={sub === "shared"}
-            onClick={() => setSubTab("shared")}
-            icon={<Share2 size={12} />}
-            label="Shared"
-          />
-        </PillGroup>
 
-        <div className="ml-auto flex items-center gap-1">
-          <MemorySharingControls projectPath={projectPath} />
+          <div className="flex flex-1 items-center justify-end gap-2">
+            <MemoryHealthLine projectPath={projectPath} />
+            <MemorySharingControls projectPath={projectPath} />
+            {projectPath && (
+              <MemoryMenu
+                onRefresh={() => void refresh()}
+                onImportClaude={() => setImporting(true)}
+                onImportRepo={() => setImportingRepo(true)}
+                onExport={() => {
+                  setSubTab("memories");
+                  setSelecting(true);
+                }}
+                onClear={() => setConfirmClear(true)}
+              />
+            )}
+          </div>
         </div>
-      </div>
+      </DestinationActions>
 
-      <div className="flex-1 min-h-0">
-        {sub === "graph" ? (
-          <MemoryGraphView />
-        ) : sub === "policy" ? (
-          <MemoryPolicyView />
-        ) : projectPath ? (
-          <SharedMemoryView projectPath={projectPath} />
+      {/* Memories and Activity carry the instruction in their search field;
+          the other tabs have no list to search, so they keep the line. */}
+      {projectPath && (sub === "review" || sub === "files") && (
+        <PromptLine onOpen={(anchor) => askMemory("", anchor)} />
+      )}
+
+      {projectPath && (
+        <>
+          <ImportClaudeMemoryModal
+            open={importing}
+            onOpenChange={setImporting}
+            onImported={() => setSubTab("memories")}
+          />
+          <ImportRepoModal
+            projectPath={projectPath}
+            open={importingRepo}
+            onOpenChange={setImportingRepo}
+            onImported={() => {
+              setSubTab("review");
+              void refresh();
+            }}
+          />
+          {/* Cancel holds focus when it opens: clearing is the one action
+              here that cannot be undone, so Enter must not be it. */}
+          <AlertDialog open={confirmClear} onOpenChange={setConfirmClear}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Clear shared memory?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Every agent on this project loses every plan, decision, fact, failure and
+                  architecture note recorded here. This can&apos;t be undone.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  variant="destructive-outline"
+                  onClick={() => void clearConfirmed()}
+                >
+                  Clear
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </>
+      )}
+
+      <div className="min-h-0 flex-1">
+        {!projectPath ? (
+          <Notice title="Open a project">
+            Memory is kept per project. Open one to see what agents remember about it.
+          </Notice>
+        ) : sub === "memories" ? (
+          <MemoryEntries
+            // Starts clean in another project: the chosen memory, the picks
+            // and the filters all name this project's entries.
+            key={projectPath}
+            projectName={projectName}
+            selecting={selecting}
+            onSelectingChange={setSelecting}
+            onImportClaude={() => setImporting(true)}
+            onAsk={askMemory}
+          />
+        ) : sub === "activity" ? (
+          <MemoryActivity onAsk={askMemory} />
+        ) : sub === "review" ? (
+          <MemoryReviewQueue />
         ) : (
-          <Centered>
-            <p className="text-sm text-[var(--muted-foreground)]">
-              Open a project to view shared memory.
-            </p>
-          </Centered>
+          <MemoryAgentFiles />
         )}
       </div>
     </div>
   );
 }
 
-/** Rounded container that groups the segmented nav pills. */
-function PillGroup({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="inline-flex items-center gap-0.5 rounded-full border border-[var(--border)] bg-[var(--card,var(--card))] p-0.5">
-      {children}
-    </div>
-  );
-}
-
-function PillSeg({
-  active,
-  onClick,
-  icon,
-  label,
+/** Everything done to the record as a whole, out of the way: refresh (memory
+ *  refreshes itself; this is for a runtime that did not say so), the two
+ *  imports, the AGENTS.md export, and clearing it. */
+function MemoryMenu({
+  onRefresh,
+  onImportClaude,
+  onImportRepo,
+  onExport,
+  onClear,
 }: {
-  active: boolean;
-  onClick: () => void;
-  icon: React.ReactNode;
-  label: string;
+  onRefresh: () => void;
+  onImportClaude: () => void;
+  onImportRepo: () => void;
+  onExport: () => void;
+  onClear: () => void;
 }) {
   return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "flex items-center gap-1.5 h-control-xs px-2.5 rounded-full text-xs font-medium outline-none transition-colors cursor-pointer",
-        active
-          ? "bg-[var(--atlas-element-selected)] text-[var(--foreground)]"
-          : "text-[var(--muted-foreground)] hover:text-[var(--secondary-foreground)] hover:bg-[var(--atlas-element-hover)]",
-      )}
-    >
-      {icon}
-      {label}
-    </button>
+    <DropdownMenu>
+      <Hint label="More memory actions">
+        <DropdownMenuTrigger
+          render={
+            <IconButton
+              icon={MoreHorizontal}
+              label="More memory actions"
+              variant="hairline"
+              shape="round"
+              size="sm"
+            />
+          }
+        />
+      </Hint>
+      <DropdownMenuContent align="end" side="bottom" className="w-64">
+        <DropdownMenuItem onClick={onRefresh}>
+          <RefreshCw />
+          Refresh
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={onImportClaude}>
+          <Download />
+          Import Claude's memory…
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={onImportRepo}>
+          <FolderInput />
+          Import a memory repo…
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={onExport}>
+          <FileOutput />
+          Export to AGENTS.md…
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem variant="destructive" onClick={onClear}>
+          <Trash2 />
+          Clear shared memory…
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
-function Centered({ children }: { children: React.ReactNode }) {
-  return <div className="h-full flex items-center justify-center">{children}</div>;
+/** What the memory reconciler's last pass found, in one muted line; when the
+ *  history was edited outside Atlas, the one way to trust it again. */
+function MemoryHealthLine({ projectPath }: { projectPath: string | null }) {
+  const status = useMemoryHealth(projectPath);
+  const [confirm, setConfirm] = useState(false);
+  const line = healthLine(status);
+  if (!line || !projectPath) return null;
+  const accept = async () => {
+    setConfirm(false);
+    try {
+      await invoke<boolean>("memory_accept_history", { projectPath });
+      toast.success("Memory history accepted");
+    } catch (err) {
+      toast.error(`Couldn't accept: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+  return (
+    // It shares the destination bar with the title and the nav, so the
+    // line gives way (truncates) before anything else does. Only the text
+    // gives way: its cell has no intrinsic width (`w-0 flex-1`) and takes
+    // whatever the bar has left, so this wrapper's minimum is the (unwrapped)
+    // button, which then can't overlap the sharing controls.
+    <span className="caption flex flex-1 items-center justify-end gap-1.5">
+      <span className="flex w-0 flex-1 justify-end">
+        {/* Focusable, so the full line is reachable by keyboard once it
+            truncates; kept out of window dragging so pressing it can't move
+            the window. */}
+        <Hint label={line}>
+          <span tabIndex={0} role="note" data-no-window-drag className="truncate rounded-sm">
+            {line}
+          </span>
+        </Hint>
+      </span>
+      {chainBroken(status) && (
+        <>
+          <button
+            type="button"
+            onClick={() => setConfirm(true)}
+            className="shrink-0 cursor-pointer whitespace-nowrap underline underline-offset-2 transition-colors duration-fast hover:text-foreground"
+          >
+            I made this edit
+          </button>
+          <FileTreeConfirmDelete
+            open={confirm}
+            name="memory history"
+            isDir={false}
+            title="Trust the edited memory history?"
+            body="Memories whose history was changed outside Atlas will be trusted again and served to every agent as they now read. If you did not make this edit, restore yesterday's snapshot instead."
+            confirmLabel="Trust it"
+            onConfirm={() => void accept()}
+            onOpenChange={setConfirm}
+          />
+        </>
+      )}
+    </span>
+  );
 }

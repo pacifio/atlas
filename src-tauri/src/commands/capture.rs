@@ -376,6 +376,49 @@ type Notifier = Arc<Mutex<Option<AppHandle>>>;
 /// else to listen to.
 pub const CAPTURE_CHANGED: &str = "atlas:capture-changed";
 
+/// What a recording-worker [`CAPTURE_CHANGED`] says moved.
+///
+/// The Timeline keeps an in-memory cache of opened Sessions and paints it
+/// synchronously on the next open, so it has to know WHICH Sessions a burst
+/// touched — an empty payload left that cache unable to tell a stale entry from
+/// a fresh one. Other emitters (the sync worker, the cloud board) still send
+/// `()`: they change sync state or the remote board, not a local timeline.
+#[derive(Debug, Default, Clone, serde::Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptureChanged {
+    /// Store ids (`as-…`) of the Sessions written to since the last emit.
+    pub session_ids: Vec<String>,
+    /// A commit was linked. A link can add a Checkpoint to any Session whose
+    /// touches the commit consumed, which is not knowable from the job, so the
+    /// reader should treat every cached Session as stale.
+    pub all: bool,
+}
+
+/// Which Sessions a job can change, read off the job before it is consumed.
+enum Touches {
+    Nothing,
+    /// Keyed by the agent's native id; the store id is looked up after the job
+    /// ran, because a `Prompt` is what assigns it.
+    Session(String),
+    All,
+}
+
+fn job_touches(job: &Job) -> Touches {
+    match job {
+        Job::EndSession { .. } => Touches::Nothing,
+        Job::WalkCommits { .. } => Touches::All,
+        Job::ToolCall {
+            settled_commits, ..
+        } if !settled_commits.is_empty() => Touches::All,
+        Job::Prompt { binding, .. }
+        | Job::Turn { binding, .. }
+        | Job::ToolCall { binding, .. }
+        | Job::FinishTurn { binding }
+        | Job::RewindTurns { binding, .. }
+        | Job::Usage { binding, .. } => Touches::Session(binding.native_session_id.clone()),
+    }
+}
+
 /// Coalescing window for [`CAPTURE_CHANGED`].
 ///
 /// One streaming turn produces dozens of jobs — every tool call, every finished
@@ -434,12 +477,35 @@ type BackoffMap = Arc<Mutex<HashMap<PathBuf, DrainBackoff>>>;
 /// So: exactly one writer per root, shared. Reads do not come through here at
 /// all — they open their own connection via [`Store::open_reader`], so listing
 /// Sessions never waits behind a long import.
-type StoreRegistry = Arc<Mutex<HashMap<PathBuf, StoreHandle>>>;
+pub(crate) type StoreRegistry = Arc<Mutex<HashMap<PathBuf, StoreHandle>>>;
+
+/// A Project's shared store as this process opened it, and whether this
+/// process holds its writer lock. `None` when the Project was never opened
+/// here: the security scanner only ever scans what capture already opened,
+/// so it never creates a `.atlas/` of its own.
+pub(crate) fn registered_store(
+    stores: &StoreRegistry,
+    root: &Path,
+) -> Option<(Arc<Mutex<Store>>, bool)> {
+    lock_ok(stores)
+        .get(root)
+        .map(|h| (h.store.clone(), h.is_writer))
+}
+
+/// [`CaptureState::writer`] against a registry handed off the async runtime.
+pub(crate) fn writer_in(stores: &StoreRegistry, root: &Path) -> Result<Arc<Mutex<Store>>, String> {
+    Ok(open_in(stores, root)?.store)
+}
+
+/// Every Project root this process has a store open for.
+pub(crate) fn registered_roots(stores: &StoreRegistry) -> Vec<PathBuf> {
+    lock_ok(stores).keys().cloned().collect()
+}
 
 /// A shared store, plus the one fact about it that must be readable without
 /// waiting for whatever is currently using it.
 #[derive(Clone)]
-struct StoreHandle {
+pub(crate) struct StoreHandle {
     store: Arc<Mutex<Store>>,
     /// Whether this process took the Project's writer lock, cached at open
     /// time. A status read must be able to answer this while the worker is
@@ -462,6 +528,7 @@ impl CaptureState {
         let notify_for_worker = notify.clone();
         let stores: StoreRegistry = Arc::new(Mutex::new(HashMap::new()));
         let stores_for_worker = stores.clone();
+        super::security_scan::start(stores.clone());
         let worker_alive = Arc::new(AtomicBool::new(true));
         let alive_for_worker = worker_alive.clone();
         // Unbounded on purpose. A bounded channel would have to choose between
@@ -520,8 +587,14 @@ impl CaptureState {
     /// Every write path — binding, promotion, the worker's own jobs — must go
     /// through this. Opening a second `Store` on the same root inside this
     /// process is what produced the phantom "another Atlas window" error.
-    fn writer(&self, root: &Path) -> Result<Arc<Mutex<Store>>, String> {
-        Ok(open_in(&self.stores, root)?.store)
+    pub(crate) fn writer(&self, root: &Path) -> Result<Arc<Mutex<Store>>, String> {
+        writer_in(&self.stores, root)
+    }
+
+    /// The open stores, for a command that opens its writer inside
+    /// `spawn_blocking` (the first open migrates the database).
+    pub(crate) fn registry(&self) -> StoreRegistry {
+        self.stores.clone()
     }
 
     /// This process's claim on the Project's writer lock.
@@ -1676,6 +1749,144 @@ pub async fn capture_session_summary(
     .map_err(|e| e.to_string())?
 }
 
+/// One file a Session changed, as the record has it.
+///
+/// The chat's thread overview reads this instead of re-deriving the list from
+/// tool arguments in the renderer. The two disagree whenever an edit arrives
+/// as something other than recognisable Write/Edit arguments — a `sed -i`, a
+/// heredoc, a script — which the recorder attributes by watching the tree
+/// around the shell call (`attribute_shell_writes`) and the renderer cannot
+/// see at all. One answer, from the layer that has it.
+#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionFile {
+    /// Project-relative, NFC-normalised — git's spelling of the path.
+    pub path: String,
+    /// The Session brought the file into being: its first touch found nothing
+    /// on disk. Git will report it as `A`.
+    pub created: bool,
+    /// The Session's last word on the file was to delete it.
+    pub deleted: bool,
+    /// Written outside the project root, so it can never match a commit.
+    pub out_of_repo: bool,
+    /// Turns that touched it, and the last one — so a reader can tell "this
+    /// turn" from "earlier in the thread".
+    pub turns: i64,
+    pub last_turn_seq: i64,
+    /// Line counts summed over the patches the record holds for the path.
+    /// `None` when the record has no patch for it — a shell edit leaves a
+    /// touch and no diff, and a made-up zero would read as "no change".
+    pub added: Option<i64>,
+    pub removed: Option<i64>,
+}
+
+/// Line counts of a unified diff: `+`/`-` body lines, headers excluded.
+fn patch_line_counts(patch: &str) -> (i64, i64) {
+    let mut added = 0;
+    let mut removed = 0;
+    for line in patch.lines() {
+        if line.starts_with("+++") || line.starts_with("---") {
+            continue;
+        }
+        match line.as_bytes().first() {
+            Some(b'+') => added += 1,
+            Some(b'-') => removed += 1,
+            _ => {}
+        }
+    }
+    (added, removed)
+}
+
+/// Fold a Session's touches and patches into one row per path, in the order
+/// the Session first touched each. Pure, so the shape is testable without a
+/// store.
+pub fn session_files(
+    touches: &[atlas_checkpoint::FileTouch],
+    edits: &[atlas_checkpoint::AgentEdit],
+) -> Vec<SessionFile> {
+    let mut order: Vec<String> = Vec::new();
+    let mut by_path: HashMap<String, SessionFile> = HashMap::new();
+    for touch in touches {
+        match by_path.get_mut(&touch.path) {
+            Some(file) => {
+                file.deleted = touch.deleted;
+                if file.last_turn_seq != touch.turn_seq {
+                    file.turns += 1;
+                    file.last_turn_seq = touch.turn_seq;
+                }
+            }
+            None => {
+                order.push(touch.path.clone());
+                by_path.insert(
+                    touch.path.clone(),
+                    SessionFile {
+                        path: touch.path.clone(),
+                        created: !touch.existed_before,
+                        deleted: touch.deleted,
+                        out_of_repo: touch.out_of_repo,
+                        turns: 1,
+                        last_turn_seq: touch.turn_seq,
+                        added: None,
+                        removed: None,
+                    },
+                );
+            }
+        }
+    }
+    for edit in edits {
+        let Some(patch) = edit.patch.as_deref() else {
+            continue;
+        };
+        let Some(file) = by_path.get_mut(&edit.path) else {
+            continue;
+        };
+        let (a, r) = patch_line_counts(patch);
+        file.added = Some(file.added.unwrap_or(0) + a);
+        file.removed = Some(file.removed.unwrap_or(0) + r);
+    }
+    order
+        .into_iter()
+        .filter_map(|path| by_path.remove(&path))
+        .collect()
+}
+
+/// Every file a Session changed, looked up by the AGENT's own session id —
+/// the same lookup as [`capture_session_summary`], for the same caller. Empty
+/// when capture is off for the project or the session was never recorded.
+#[tauri::command]
+pub async fn capture_session_files(
+    project_path: String,
+    session_id: String,
+) -> Result<Vec<SessionFile>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(store) = open_reader(&project_path)? else {
+            return Ok(Vec::new());
+        };
+        let workspace_id = project_id_for(Path::new(&project_path));
+        let mut row_id = None;
+        for source in [Source::Acp, Source::Native] {
+            row_id = store
+                .session_id_for(&workspace_id, source, &session_id)
+                .map_err(|e| e.to_string())?;
+            if row_id.is_some() {
+                break;
+            }
+        }
+        let Some(row_id) = row_id else {
+            return Ok(Vec::new());
+        };
+        let touches = store
+            .file_touches_for_session(&row_id)
+            .map_err(|e| e.to_string())?;
+        let edits = store
+            .agent_edits_for_session(&row_id)
+            .map_err(|e| e.to_string())?;
+        Ok(session_files(&touches, &edits))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Where a board row was read from.
 ///
 /// `Both` is the normal state of your own work once a Project is synced: it is
@@ -1783,8 +1994,42 @@ pub(crate) fn remote_summary(
 /// every refresh to render a screenful.
 const BOARD_LIMIT: usize = 500;
 
+/// What the board is narrowed to, if anything.
+///
+/// Keyed on what the row can actually be found by. A Project with a checkout
+/// here is its folder; one the Organisation has and this machine does not has
+/// no folder at all, only its server id — and before this existed it could not
+/// be chosen, so a teammate's Project was visible on the board but not
+/// filterable to.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum BoardFilter {
+    /// A checkout on this machine, by path.
+    Local(String),
+    /// A server Project with no checkout here, by its id.
+    Remote(String),
+}
+
+/// Whether a remote row belongs on the board.
+///
+/// Unfiltered, everything the Organisation has does. Filtered, only the
+/// narrowed Project's rows: `bound` holds the server ids of the checkouts that
+/// were read, which for a local filter is that one folder's binding — and for
+/// an unbound folder is empty, because no server row can be its.
+fn keep_remote(filter: Option<&BoardFilter>, bound: &HashSet<String>, workspace_id: &str) -> bool {
+    match filter {
+        None => true,
+        Some(BoardFilter::Local(_)) => bound.contains(workspace_id),
+        Some(BoardFilter::Remote(id)) => id == workspace_id,
+    }
+}
+
 #[tauri::command]
-pub async fn artifacts_board(projects: Vec<String>, app: AppHandle) -> Result<BoardPage, String> {
+pub async fn artifacts_board(
+    projects: Vec<String>,
+    filter: Option<BoardFilter>,
+    app: AppHandle,
+) -> Result<BoardPage, String> {
     // Read the cloud cache first, on this thread: it is a lock and a clone, and
     // taking it before the blocking hop keeps the `AppHandle` out of there.
     //
@@ -1802,11 +2047,23 @@ pub async fn artifacts_board(projects: Vec<String>, app: AppHandle) -> Result<Bo
     let remote_ids: HashSet<String> = remote.keys().map(|(_, id)| id.clone()).collect();
 
     tauri::async_runtime::spawn_blocking(move || {
-        // One project means the board is filtered, and the caller wants that
-        // project's history rather than a slice of the newest across all of
-        // them — so the cap does not apply.
-        let single = projects.len() == 1;
-        let limit = if single { usize::MAX } else { BOARD_LIMIT };
+        // A filtered board wants that Project's history rather than a slice of
+        // the newest across all of them — so the cap does not apply.
+        //
+        // The filter is explicit rather than inferred from `projects.len() == 1`:
+        // a developer with exactly one folder open is NOT filtering, and must
+        // still see the rest of the Organisation's Projects.
+        let limit = if filter.is_some() {
+            usize::MAX
+        } else {
+            BOARD_LIMIT
+        };
+        let projects = match &filter {
+            None => projects,
+            Some(BoardFilter::Local(path)) => vec![path.clone()],
+            // No checkout to read; the rows are all on the server.
+            Some(BoardFilter::Remote(_)) => Vec::new(),
+        };
         let mut out: Vec<BoardSession> = Vec::new();
         // Which remote Projects this machine has a checkout of, so a teammate's
         // Session lands under the name the developer already knows it by.
@@ -1887,8 +2144,13 @@ pub async fn artifacts_board(projects: Vec<String>, app: AppHandle) -> Result<Bo
                 }
             }
         }
+        // The server Projects the checkouts read above are bound to.
+        let bound: HashSet<String> = local_projects.keys().cloned().collect();
         for (key, row) in remote {
             if seen.contains(&key) || seen_unbound.contains(&key.1) {
+                continue;
+            }
+            if !keep_remote(filter.as_ref(), &bound, &row.workspace_id) {
                 continue;
             }
             let (project_path, project_name) = local_projects
@@ -2087,6 +2349,302 @@ pub async fn artifacts_checkpoints(projects: Vec<String>) -> Result<Vec<BoardChe
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Most commit subjects one Trace read asks git for, per Project.
+///
+/// One process spawn each, for shas not already in [`trace_subjects`]. A dense
+/// week is a few hundred Checkpoints; past this the rest render by sha rather
+/// than stalling the read.
+const TRACE_SUBJECT_LIMIT: usize = 300;
+
+/// Commit subjects already read from git, by repository and sha — `None`
+/// where git had no
+/// such commit (gc'd, rewritten away), so a dead sha is not asked about again
+/// on every read and does not spend the budget the live ones need.
+///
+/// The Trace re-reads as the board refreshes, and a commit's subject never
+/// changes, so asking git again each time would be the same few hundred
+/// process spawns to learn nothing. Cleared wholesale past a size bound rather
+/// than evicted: it refills from the next read. Never held across a spawn.
+fn trace_subjects() -> &'static Mutex<HashMap<String, Option<String>>> {
+    use std::sync::OnceLock;
+    static SUBJECTS: OnceLock<Mutex<HashMap<String, Option<String>>>> = OnceLock::new();
+    SUBJECTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+const TRACE_SUBJECT_CACHE_MAX: usize = 20_000;
+
+/// Subjects for `shas` in `root`, from the cache or from git — spending at
+/// most `budget` new asks, shared across every project one read covers.
+fn trace_subjects_for(
+    root: &Path,
+    shas: &[String],
+    budget: &mut usize,
+) -> HashMap<String, Option<String>> {
+    // Keyed by repository too: two checkouts can disagree about a sha (one has
+    // fetched it, one has not), and a miss in one must not hide it in the other.
+    let key = |sha: &str| format!("{}\0{sha}", root.display());
+    let mut subjects: HashMap<String, Option<String>> = HashMap::new();
+    let mut misses: Vec<String> = Vec::new();
+    {
+        let cache = trace_subjects()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for sha in shas {
+            if subjects.contains_key(sha) {
+                continue;
+            }
+            match cache.get(&key(sha)) {
+                Some(known) => {
+                    subjects.insert(sha.clone(), known.clone());
+                }
+                None => {
+                    // Reserve the slot so a repeated sha is asked once.
+                    subjects.insert(sha.clone(), None);
+                    misses.push(sha.clone());
+                }
+            }
+        }
+    }
+    // Asked unlocked, so one slow repository does not stall another read.
+    let asks = misses.len().min(*budget);
+    *budget -= asks;
+    let found: Vec<(String, Option<String>)> = misses
+        .into_iter()
+        .take(asks)
+        .map(|sha| {
+            let subject = atlas_checkpoint::git::commit_info(root, &sha)
+                .ok()
+                .map(|info| info.subject);
+            (sha, subject)
+        })
+        .collect();
+    let mut cache = trace_subjects()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if cache.len() > TRACE_SUBJECT_CACHE_MAX {
+        cache.clear();
+    }
+    for (sha, subject) in found {
+        cache.insert(key(&sha), subject.clone());
+        subjects.insert(sha, subject);
+    }
+    subjects
+}
+
+fn parse_instant(raw: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    chrono::DateTime::parse_from_rfc3339(raw)
+        .ok()
+        .map(|t| t.with_timezone(&chrono::Utc))
+}
+
+/// This machine's half of the trace: every local Session active in the window,
+/// in the server's shape, with its Checkpoints and their git subjects.
+///
+/// Read whether or not the Project is synced, so the Trace works offline and
+/// before the server half is reachable; the renderer folds the two halves,
+/// one row per Session id. The second half of the answer names each project
+/// that could not be read, for the page's notes.
+fn local_trace(
+    projects: Vec<String>,
+    from: chrono::DateTime<chrono::Utc>,
+    to: chrono::DateTime<chrono::Utc>,
+) -> (Vec<atlas_artifacts::TraceSession>, Vec<String>) {
+    // `sessionState`'s window on the renderer: written within 90 s is live.
+    const LIVE_WINDOW: chrono::TimeDelta = chrono::TimeDelta::seconds(90);
+    let now = chrono::Utc::now();
+    let mut out = Vec::new();
+    let mut notes = Vec::new();
+    let mut budget = TRACE_SUBJECT_LIMIT;
+    for project_path in projects {
+        // One unreadable store must not blank the whole trace — but it is
+        // named, so its absence does not read as a project with no work.
+        let unreadable = || format!("This machine's sessions in {project_path} could not be read.");
+        let store = match open_reader(&project_path) {
+            // Never captured here: nothing to read, nothing to say.
+            Ok(None) => continue,
+            Ok(Some(store)) => store,
+            Err(_) => {
+                notes.push(unreadable());
+                continue;
+            }
+        };
+        let root = Path::new(&project_path).to_path_buf();
+        let workspace_id = project_id_for(&root);
+        let Ok(summaries) = atlas_checkpoint::session_summaries(&store, &workspace_id) else {
+            notes.push(unreadable());
+            continue;
+        };
+        let remote_id = store
+            .binding()
+            .ok()
+            .flatten()
+            .and_then(|b| b.remote_workspace_id)
+            .unwrap_or_default();
+
+        let mut by_session: HashMap<String, Vec<atlas_checkpoint::Checkpoint>> = HashMap::new();
+        for c in store
+            .checkpoints_for_project(&workspace_id)
+            .unwrap_or_default()
+        {
+            if c.created_at >= from && c.created_at <= to {
+                by_session.entry(c.session_id.clone()).or_default().push(c);
+            }
+        }
+        let subjects = if atlas_checkpoint::git::is_repository(&root) {
+            let mut shas: Vec<(chrono::DateTime<chrono::Utc>, String)> = by_session
+                .values()
+                .flatten()
+                .map(|c| (c.created_at, c.commit_sha.clone()))
+                .collect();
+            // Newest first, so the subject budget goes to the recent end.
+            shas.sort_by_key(|(at, _)| std::cmp::Reverse(*at));
+            let shas: Vec<String> = shas.into_iter().map(|(_, sha)| sha).collect();
+            trace_subjects_for(&root, &shas, &mut budget)
+        } else {
+            HashMap::new()
+        };
+
+        for s in summaries {
+            let (Some(started), Some(last)) = (
+                parse_instant(&s.started_at),
+                parse_instant(&s.last_activity_at),
+            ) else {
+                continue;
+            };
+            let live = s.source != "external_jsonl"
+                && parse_instant(&s.updated_at).is_some_and(|u| now - u < LIVE_WINDOW);
+            if started > to || (!live && last < from) {
+                continue;
+            }
+            let mut checkpoints = by_session.remove(&s.id).unwrap_or_default();
+            checkpoints.sort_by_key(|c| c.created_at);
+            out.push(atlas_artifacts::TraceSession {
+                workspace_id: remote_id.clone(),
+                author_id: None,
+                title: s.title,
+                agent: s.agent,
+                source: Some(s.source),
+                started_at: s.started_at,
+                last_activity_at: s.last_activity_at,
+                live,
+                checkpoints: checkpoints
+                    .into_iter()
+                    .map(|c| atlas_artifacts::TraceCheckpoint {
+                        commit_subject: subjects.get(&c.commit_sha).cloned().flatten(),
+                        id: c.id,
+                        session_id: c.session_id,
+                        at: c.created_at.to_rfc3339(),
+                        author_id: None,
+                        commit_sha: c.commit_sha,
+                        branch: c.branch,
+                        link_state: match c.link_state {
+                            atlas_checkpoint::LinkState::Orphaned => "orphaned",
+                            atlas_checkpoint::LinkState::Linked => "linked",
+                        }
+                        .to_string(),
+                        insertions: c.insertions,
+                        deletions: c.deletions,
+                        files: c.files_touched.len() as i64,
+                    })
+                    .collect(),
+                project_path: Some(project_path.clone()),
+                id: s.id,
+                ..Default::default()
+            });
+        }
+    }
+    (out, notes)
+}
+
+/// One page of the Timeline's Trace: the Sessions active between `from` and
+/// `to`, each with its Checkpoints, in the server's `GET /sessions/trace`
+/// shape.
+///
+/// Two halves, like the board. The Organisation's comes from the server, one
+/// page per call — `cursor` continues it, and `workspace` is sent only when
+/// the board is narrowed to a Project (the whole Organisation leaves it out).
+/// This machine's comes with the first page only, read from disk, and carries
+/// the commit subjects the server cannot. A server half that cannot be read
+/// says so in `notes` and the local half is still answered.
+#[tauri::command]
+pub async fn artifacts_trace(
+    projects: Vec<String>,
+    filter: Option<BoardFilter>,
+    from: String,
+    to: String,
+    cursor: Option<String>,
+    app: AppHandle,
+) -> Result<atlas_artifacts::TracePage, String> {
+    let from_at = parse_instant(&from).ok_or("bad `from`: not RFC 3339")?;
+    let to_at = parse_instant(&to).ok_or("bad `to`: not RFC 3339")?;
+    let first_page = cursor.is_none();
+
+    // Scope, as the board reads it: a remote filter has no checkout to read.
+    let local_projects = match &filter {
+        None => projects,
+        Some(BoardFilter::Local(path)) => vec![path.clone()],
+        Some(BoardFilter::Remote(_)) => Vec::new(),
+    };
+    // The server Workspace a local filter names, if its checkout is bound.
+    let bound_workspace = match &filter {
+        Some(BoardFilter::Local(path)) => {
+            let path = path.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                open_reader(&path)
+                    .ok()
+                    .flatten()
+                    .and_then(|store| store.binding().ok().flatten())
+                    .and_then(|b| b.remote_workspace_id)
+            })
+            .await
+            .map_err(|e| e.to_string())?
+        }
+        _ => None,
+    };
+    // `None` = the whole Organisation; `Some(None)` = narrowed to a Project
+    // the server has never heard of, so there is no remote half to read.
+    let workspace: Option<Option<String>> = match &filter {
+        None => None,
+        Some(BoardFilter::Remote(id)) => Some(Some(id.clone())),
+        Some(BoardFilter::Local(_)) => Some(bound_workspace),
+    };
+
+    // The local half reads disk while the server half is on the network.
+    let local = first_page.then(|| {
+        tauri::async_runtime::spawn_blocking(move || local_trace(local_projects, from_at, to_at))
+    });
+
+    let mut page = atlas_artifacts::TracePage {
+        from: from.clone(),
+        to: to.clone(),
+        ..Default::default()
+    };
+    let cloud = app
+        .try_state::<crate::commands::artifacts_cloud::ArtifactsCloudState>()
+        .and_then(|state| state.org_id().map(|org| (Arc::clone(&state.client), org)));
+    if let (Some((client, org_id)), false) = (cloud, matches!(workspace, Some(None))) {
+        let query = atlas_artifacts::TraceQuery {
+            from: &from,
+            to: &to,
+            workspace_id: workspace.as_ref().and_then(|w| w.as_deref()),
+            cursor: cursor.as_deref(),
+        };
+        match client.trace_page(&org_id, query).await {
+            Ok(remote) => page = remote,
+            Err(e) => page
+                .notes
+                .push(format!("The Organisation's trace could not be read: {e}")),
+        }
+    }
+
+    if let Some(local) = local {
+        let (sessions, notes) = local.await.map_err(|e| e.to_string())?;
+        page.sessions.extend(sessions);
+        page.notes.extend(notes);
+    }
+    Ok(page)
 }
 
 /// One Session that produced a commit.
@@ -2954,6 +3512,8 @@ fn worker(
     // would want; `last_emit` enforces the window. Starting `last_emit` a full
     // window in the past makes the very first write emit immediately.
     let mut dirty = false;
+    // What the pending notification will name — see [`CaptureChanged`].
+    let mut changed = CaptureChanged::default();
     let mut last_emit = Instant::now() - NOTIFY_DEBOUNCE;
     loop {
         // Short wait while a notification is pending, so the trailing edge of a
@@ -2979,20 +3539,44 @@ fn worker(
             // poisoned are recovered by `lock_ok` everywhere.
             //
             // Every job changes something a reader can see.
+            let touches = job_touches(&job);
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 process_job(job, &mut session_ids, &stores);
             }));
             if result.is_err() {
                 tracing::error!(target: "atlas::capture", "capture job panicked; job dropped");
             }
+            note_touches(&mut changed, touches, &session_ids);
             dirty = true;
         }
 
         if dirty && last_emit.elapsed() >= NOTIFY_DEBOUNCE {
             dirty = false;
             last_emit = Instant::now();
+            let payload = std::mem::take(&mut changed);
             if let Some(app) = lock_ok(&notify).as_ref() {
-                let _ = app.emit(CAPTURE_CHANGED, ());
+                let _ = app.emit(CAPTURE_CHANGED, payload);
+            }
+        }
+    }
+}
+
+/// Fold one job's [`Touches`] into the pending notification.
+fn note_touches(
+    changed: &mut CaptureChanged,
+    touches: Touches,
+    session_ids: &HashMap<String, String>,
+) {
+    match touches {
+        Touches::Nothing => {}
+        Touches::All => changed.all = true,
+        Touches::Session(native) => {
+            // No store id yet means no Session row yet (a delta before the
+            // first send) — nothing a reader could have cached.
+            if let Some(id) = session_ids.get(&native) {
+                if !changed.session_ids.contains(id) {
+                    changed.session_ids.push(id.clone());
+                }
             }
         }
     }
@@ -3090,12 +3674,16 @@ fn process_job(job: Job, session_ids: &mut HashMap<String, String>, stores: &Sto
         // what it already recorded.
         if capturing && !mid_rewrite {
             match atlas_checkpoint::walk_new_commits(store, workspace_id, &root, mode) {
-                Ok(outcome) if outcome.checkpoints_created > 0 => tracing::info!(
-                    target: "atlas::capture",
-                    commits = outcome.commits_seen,
-                    checkpoints = outcome.checkpoints_created,
-                    "linked commits to sessions"
-                ),
+                Ok(outcome) if outcome.checkpoints_created > 0 => {
+                    tracing::info!(
+                        target: "atlas::capture",
+                        commits = outcome.commits_seen,
+                        checkpoints = outcome.checkpoints_created,
+                        "linked commits to sessions"
+                    );
+                    super::security_scan::nudge(&root);
+                    super::tips::checkpoint_linked();
+                }
                 Ok(outcome) if outcome.cursor_recovered => tracing::warn!(
                     target: "atlas::capture",
                     project = %root.display(),
@@ -3243,12 +3831,17 @@ fn process_job(job: Job, session_ids: &mut HashMap<String, String>, stores: &Sto
 
     if !link_after.is_empty() {
         match atlas_checkpoint::link_commits(store, &key.workspace_id, &root, &link_after, mode) {
-            Ok(created) if created > 0 => tracing::info!(
-                target: "atlas::capture",
-                commits = link_after.len(),
-                created,
-                "linked the commits a shell call made itself"
-            ),
+            Ok(created) if created > 0 => {
+                tracing::info!(
+                    target: "atlas::capture",
+                    commits = link_after.len(),
+                    created,
+                    "linked the commits a shell call made itself"
+                );
+                // An agent's own `git commit` lands here, not in the walk.
+                super::security_scan::nudge(&root);
+                super::tips::checkpoint_linked();
+            }
             Ok(_) => {}
             Err(e) => tracing::warn!(
                 target: "atlas::capture",
@@ -4105,6 +4698,11 @@ impl OutboundMiddleware<SessionDeltaEnvelope> for CaptureMiddleware {
                 state.flush_session_end(&envelope.session_id, &binding);
             }
 
+            // The prompt is recorded from the send path (`note_prompt`, via the
+            // host's prompt hooks), with exactly the text the agent was sent.
+            // Its `user_message` echo would record it twice.
+            SessionDelta::UserMessage { .. } => {}
+
             _ => {}
         }
     }
@@ -4139,6 +4737,65 @@ fn diff_paths(blocks: &[ToolContentBlock]) -> Vec<String> {
 }
 
 #[cfg(test)]
+mod capture_changed_tests {
+    use super::*;
+
+    fn ids(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+        pairs
+            .iter()
+            .map(|(n, s)| ((*n).to_string(), (*s).to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn names_each_written_session_once_by_its_store_id() {
+        let map = ids(&[("native-a", "as-a"), ("native-b", "as-b")]);
+        let mut changed = CaptureChanged::default();
+        note_touches(&mut changed, Touches::Session("native-a".into()), &map);
+        note_touches(&mut changed, Touches::Session("native-b".into()), &map);
+        note_touches(&mut changed, Touches::Session("native-a".into()), &map);
+        assert_eq!(changed.session_ids, vec!["as-a", "as-b"]);
+        assert!(!changed.all);
+    }
+
+    #[test]
+    fn a_session_with_no_row_yet_is_not_named() {
+        let mut changed = CaptureChanged::default();
+        note_touches(
+            &mut changed,
+            Touches::Session("native-x".into()),
+            &HashMap::new(),
+        );
+        note_touches(&mut changed, Touches::Nothing, &HashMap::new());
+        assert_eq!(changed, CaptureChanged::default());
+    }
+
+    #[test]
+    fn a_commit_link_marks_everything_stale() {
+        let mut changed = CaptureChanged::default();
+        note_touches(&mut changed, Touches::All, &HashMap::new());
+        assert!(changed.all);
+        let walk = Job::WalkCommits {
+            project_root: PathBuf::from("/p"),
+            workspace_id: "/p".into(),
+        };
+        assert!(matches!(job_touches(&walk), Touches::All));
+    }
+
+    #[test]
+    fn the_wire_shape_is_camel_case() {
+        let payload = CaptureChanged {
+            session_ids: vec!["as-1".into()],
+            all: false,
+        };
+        assert_eq!(
+            serde_json::to_value(payload).unwrap(),
+            serde_json::json!({ "sessionIds": ["as-1"], "all": false })
+        );
+    }
+}
+
+#[cfg(test)]
 mod diff_path_tests {
     use super::*;
 
@@ -4156,6 +4813,9 @@ mod diff_path_tests {
             locations,
             raw_output: None,
             content_blocks: blocks,
+            parent_tool_call_id: None,
+            started_at_ms: None,
+            ended_at_ms: None,
         }
     }
 
@@ -4200,6 +4860,9 @@ mod diff_path_tests {
             locations: Vec::new(),
             raw_output: None,
             content_blocks: Vec::new(),
+            parent_tool_call_id: None,
+            started_at_ms: None,
+            ended_at_ms: None,
         }
     }
 
@@ -4943,5 +5606,125 @@ mod sync_worker_tests {
         }
         drop(tx);
         worker.join().unwrap();
+    }
+}
+
+#[cfg(test)]
+mod board_filter_tests {
+    use super::*;
+
+    fn ids(list: &[&str]) -> HashSet<String> {
+        list.iter().map(std::string::ToString::to_string).collect()
+    }
+
+    #[test]
+    fn unfiltered_keeps_every_remote_project() {
+        assert!(keep_remote(None, &ids(&[]), "p1"));
+        assert!(keep_remote(None, &ids(&["p2"]), "p1"));
+    }
+
+    #[test]
+    fn a_local_filter_keeps_only_its_own_binding() {
+        let filter = BoardFilter::Local("/work/app".into());
+        assert!(keep_remote(Some(&filter), &ids(&["p1"]), "p1"));
+        assert!(!keep_remote(Some(&filter), &ids(&["p1"]), "p2"));
+    }
+
+    #[test]
+    fn an_unbound_local_filter_keeps_no_remote_rows() {
+        let filter = BoardFilter::Local("/work/scratch".into());
+        assert!(!keep_remote(Some(&filter), &ids(&[]), "p1"));
+    }
+
+    #[test]
+    fn a_remote_filter_keeps_only_that_project() {
+        let filter = BoardFilter::Remote("p2".into());
+        assert!(keep_remote(Some(&filter), &ids(&[]), "p2"));
+        assert!(!keep_remote(Some(&filter), &ids(&[]), "p1"));
+    }
+
+    #[test]
+    fn the_filter_deserializes_from_the_wire_shape() {
+        let local: BoardFilter = serde_json::from_str(r#"{"local":"/a"}"#).unwrap();
+        let remote: BoardFilter = serde_json::from_str(r#"{"remote":"p1"}"#).unwrap();
+        assert_eq!(local, BoardFilter::Local("/a".into()));
+        assert_eq!(remote, BoardFilter::Remote("p1".into()));
+    }
+}
+
+#[cfg(test)]
+mod session_files_tests {
+    use super::*;
+    use atlas_checkpoint::{AgentEdit, FileTouch};
+    use chrono::Utc;
+
+    fn touch(path: &str, turn: i64, seq: i64, existed: bool, deleted: bool) -> FileTouch {
+        FileTouch {
+            id: format!("ft-{seq}"),
+            tool_call_id: format!("tc-{seq}"),
+            session_id: "as-1".into(),
+            turn_seq: turn,
+            seq,
+            path: path.into(),
+            sha256_after: None,
+            existed_before: existed,
+            deleted,
+            out_of_repo: false,
+            created_at: Utc::now(),
+            sketch_after: None,
+        }
+    }
+
+    fn edit(path: &str, patch: Option<&str>) -> AgentEdit {
+        AgentEdit {
+            id: "ae".into(),
+            tool_call_id: "tc".into(),
+            session_id: "as-1".into(),
+            turn_seq: 1,
+            path: path.into(),
+            patch: patch.map(str::to_owned),
+            patch_ref: None,
+            created_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn one_row_per_path_in_first_touch_order_with_turn_count_and_last_word() {
+        let touches = [
+            touch("b.ts", 1, 1, true, false),
+            touch("a.ts", 1, 2, false, false),
+            touch("b.ts", 2, 3, true, false),
+            touch("a.ts", 3, 4, true, true),
+        ];
+        let files = session_files(&touches, &[]);
+        assert_eq!(
+            files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(),
+            ["b.ts", "a.ts"]
+        );
+        // Created is the FIRST touch's verdict; deleted is the LAST's.
+        assert!(!files[0].created && !files[0].deleted);
+        assert!(files[1].created && files[1].deleted);
+        assert_eq!((files[0].turns, files[0].last_turn_seq), (2, 2));
+        assert_eq!((files[1].turns, files[1].last_turn_seq), (2, 3));
+    }
+
+    #[test]
+    fn counts_come_only_from_patches_and_skip_diff_headers() {
+        let touches = [
+            touch("a.ts", 1, 1, true, false),
+            touch("s.sh", 1, 2, true, false),
+        ];
+        let patch = "--- a/a.ts\n+++ b/a.ts\n@@ -1,2 +1,3 @@\n-old\n+new\n+more\n context\n";
+        let edits = [
+            edit("a.ts", Some(patch)),
+            edit("s.sh", None),
+            edit("ghost.ts", Some("+x\n")),
+        ];
+        let files = session_files(&touches, &edits);
+        assert_eq!((files[0].added, files[0].removed), (Some(2), Some(1)));
+        // A shell edit has a touch and no patch: absent, not zero.
+        assert_eq!((files[1].added, files[1].removed), (None, None));
+        // A patch for a path with no touch is not a file the Session changed.
+        assert_eq!(files.len(), 2);
     }
 }

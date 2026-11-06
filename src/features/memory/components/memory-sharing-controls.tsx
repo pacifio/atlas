@@ -1,25 +1,38 @@
 // Shared Cross-Agent Memory — Memory-panel header controls.
 //
 // Two affordances, kept to the monochrome/hairline house style (see Atlas
-// Design Principles): a Shared toggle pill (white when on) and a settings
+// Design Principles): a Shared toggle pill (selected fill when on) and a settings
 // popover holding the handoff-summarizer mode selector (Raw / Provider /
-// Local-disabled) plus the reused ProviderModelSelector when mode === provider.
+// Local-disabled), the reused ProviderModelSelector when mode === provider,
+// and the "sessions outside Atlas" switch (off by default; inert while Shared
+// is off, since nothing is extracted then).
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, type KeyboardEvent } from "react";
 import { Popover } from "@base-ui/react/popover";
 import { Share2, SlidersHorizontal, FileText, Server, Cpu, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
 import { ProviderModelSelector } from "./provider-pickers";
+import { Track, TrackSegment } from "./views/memory-chrome";
 import { useByokStore } from "@/features/settings/stores/byok-store";
 import { CHAT_PROVIDERS } from "@/features/settings/lib/providers";
 import { useMemorySharingStore } from "../stores/memory-sharing-store";
 import type { SummarizerMode } from "../lib/memory-sharing-api";
+import {
+  EXTERNAL_SESSIONS_HINT,
+  EXTERNAL_SESSIONS_LABEL,
+  EXTERNAL_SESSIONS_NEEDS_SHARING,
+  EXTRACTION_NOTE,
+  HANDOFF_HINT,
+  RAW_HINT,
+} from "../lib/memory-sharing-copy";
+import { Hint, IconButton, Switch } from "@tryatlas/design";
 
 export function MemorySharingControls({ projectPath }: { projectPath: string | null }) {
   const enabled = useMemorySharingStore.use.enabled();
   const pref = useMemorySharingStore.use.pref();
-  const { load, setEnabled, setPref } = useMemorySharingStore.use.actions();
+  const fromExternalSessions = useMemorySharingStore.use.fromExternalSessions();
+  const { load, setEnabled, setFromExternalSessions, setPref } =
+    useMemorySharingStore.use.actions();
 
   const byokKeys = useByokStore.use.keys();
   const byokLoaded = useByokStore.use.loaded();
@@ -45,9 +58,30 @@ export function MemorySharingControls({ projectPath }: { projectPath: string | n
 
   const setMode = (mode: SummarizerMode) => void setPref({ ...pref, mode });
 
+  // The mode row is a radio group: one Tab stop (the chosen mode, or Raw when
+  // the chosen one is unavailable), and the arrows move between the modes
+  // that can be chosen, choosing as they go. Local is never one yet.
+  const choosable: SummarizerMode[] = providerReady ? ["raw", "provider"] : ["raw"];
+  const modeTabStop: SummarizerMode = choosable.includes(pref.mode) ? pref.mode : "raw";
+  const onModeKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    const at = choosable.indexOf(modeTabStop);
+    let next: number | null = null;
+    if (e.key === "ArrowRight" || e.key === "ArrowDown") next = (at + 1) % choosable.length;
+    else if (e.key === "ArrowLeft" || e.key === "ArrowUp")
+      next = (at - 1 + choosable.length) % choosable.length;
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = choosable.length - 1;
+    if (next === null) return;
+    e.preventDefault();
+    const mode = choosable[next];
+    if (mode !== pref.mode) setMode(mode);
+    e.currentTarget.querySelector<HTMLElement>(`[data-mode="${mode}"]`)?.focus();
+  };
+
   return (
     <div className="flex items-center gap-1">
-      {/* Shared toggle */}
+      {/* Shared toggle — the Usage facet pill's on/off reading: a stronger
+          hairline and the selected fill when on, a quiet outline when off. */}
       <button
         type="button"
         onClick={() => void setEnabled(!enabled)}
@@ -57,10 +91,11 @@ export function MemorySharingControls({ projectPath }: { projectPath: string | n
             : "Shared memory OFF"
         }
         className={cn(
-          "flex items-center gap-1 h-6 px-2 rounded-full border text-2xs font-medium transition-colors cursor-pointer outline-none",
+          "flex h-control-sm cursor-pointer items-center gap-1 rounded-full border px-2 text-2xs font-medium",
+          "transition-colors duration-fast ease-out-strong",
           enabled
-            ? "border-[var(--border)] bg-[var(--atlas-element-hover)] text-[var(--foreground)]"
-            : "border-[var(--border)] text-[var(--muted-foreground)] hover:text-[var(--secondary-foreground)] hover:bg-[var(--atlas-element-hover)]",
+            ? "border-border-strong bg-element-selected text-foreground"
+            : "border-border text-muted-foreground hover:bg-element-hover hover:text-foreground",
         )}
       >
         <Share2 size={11} />
@@ -69,50 +104,59 @@ export function MemorySharingControls({ projectPath }: { projectPath: string | n
 
       {/* Summarizer settings popover */}
       <Popover.Root>
-        <Hint label="Handoff summarizer settings">
+        <Hint label="Memory sharing settings">
           <Popover.Trigger
             render={
-              <button
-                type="button"
-                className="flex items-center justify-center h-6 w-6 rounded-full border border-[var(--border)] text-[var(--secondary-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] outline-none transition-colors cursor-pointer"
-              >
-                <SlidersHorizontal size={12} />
-              </button>
+              <IconButton
+                icon={SlidersHorizontal}
+                label="Memory sharing settings"
+                variant="hairline"
+                shape="round"
+                size="sm"
+              />
             }
           />
         </Hint>
         <Popover.Portal>
           <Popover.Positioner className="z-popover" align="end" side="bottom" sideOffset={6}>
-            <Popover.Popup className="w-[300px] rounded-md border border-border bg-card p-3 shadow-md">
+            <Popover.Popup className="w-[300px] origin-[var(--transform-origin)] rounded-lg border border-border bg-popover p-3 shadow-md data-closed:animate-scale-out data-open:animate-scale-in">
               <div className="eyebrow mb-2">Recent-session handoff</div>
-              <p className="mb-2.5 text-xs leading-snug text-muted-foreground">
-                How the previous session's tail is summarized before it is injected into the next
-                agent.
-              </p>
+              <p className="mb-2.5 text-xs leading-snug text-muted-foreground">{HANDOFF_HINT}</p>
 
-              <div className="inline-flex items-center gap-0.5 rounded-full border border-border bg-card p-0.5">
+              <Track
+                role="radiogroup"
+                aria-label="Handoff summarizer"
+                onKeyDown={onModeKeyDown}
+                className="inline-flex w-fit"
+              >
                 <ModeSeg
+                  mode="raw"
                   active={pref.mode === "raw"}
+                  tabStop={modeTabStop === "raw"}
                   label="Raw"
                   icon={FileText}
                   enabled
                   onClick={() => setMode("raw")}
                 />
                 <ModeSeg
+                  mode="provider"
                   active={pref.mode === "provider"}
+                  tabStop={modeTabStop === "provider"}
                   label="Provider"
                   icon={Server}
                   enabled={providerReady}
                   onClick={() => setMode("provider")}
                 />
                 <ModeSeg
+                  mode="local"
                   active={pref.mode === "local"}
+                  tabStop={false}
                   label="Local"
                   icon={Cpu}
                   enabled={false}
                   onClick={() => {}}
                 />
-              </div>
+              </Track>
 
               {pref.mode === "provider" && (
                 <div className="mt-3 flex flex-wrap items-center gap-1.5">
@@ -133,10 +177,32 @@ export function MemorySharingControls({ projectPath }: { projectPath: string | n
               )}
 
               {pref.mode === "raw" && (
-                <p className="mt-2.5 text-xs text-muted-foreground">
-                  Injecting the last turns verbatim — no model call, no latency.
-                </p>
+                <p className="mt-2.5 text-xs text-muted-foreground">{RAW_HINT}</p>
               )}
+
+              <p className="mt-2.5 text-xs text-muted-foreground">{EXTRACTION_NOTE}</p>
+
+              <div className="mt-3 border-t border-border-subtle pt-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className={cn(!enabled && "opacity-50")}>
+                    <p className="label">{EXTERNAL_SESSIONS_LABEL}</p>
+                    <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
+                      {EXTERNAL_SESSIONS_HINT}
+                    </p>
+                    {!enabled && (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {EXTERNAL_SESSIONS_NEEDS_SHARING}
+                      </p>
+                    )}
+                  </div>
+                  <Switch
+                    aria-label={EXTERNAL_SESSIONS_LABEL}
+                    checked={fromExternalSessions}
+                    disabled={!enabled}
+                    onCheckedChange={(on) => void setFromExternalSessions(on)}
+                  />
+                </div>
+              </div>
             </Popover.Popup>
           </Popover.Positioner>
         </Popover.Portal>
@@ -146,35 +212,36 @@ export function MemorySharingControls({ projectPath }: { projectPath: string | n
 }
 
 function ModeSeg({
+  mode,
   active,
+  tabStop,
   label,
   icon: Icon,
   enabled,
   onClick,
 }: {
+  mode: SummarizerMode;
   active: boolean;
+  tabStop: boolean;
   label: string;
   icon: typeof Cpu;
   enabled: boolean;
   onClick: () => void;
 }) {
   return (
-    <button
-      type="button"
+    <TrackSegment
+      role="radio"
+      aria-checked={active}
+      data-mode={mode}
+      tabIndex={tabStop ? 0 : -1}
+      active={active}
       disabled={!enabled}
       onClick={() => enabled && onClick()}
       title={enabled ? label : `${label} (coming soon)`}
-      className={cn(
-        "flex items-center gap-1 h-[22px] px-2 rounded-full text-2xs font-medium transition-colors",
-        active
-          ? "bg-[var(--atlas-element-hover)] text-[var(--foreground)]"
-          : "text-[var(--muted-foreground)] hover:text-[var(--secondary-foreground)]",
-        !enabled && "opacity-40 cursor-not-allowed",
-      )}
     >
       <Icon size={11} />
       {label}
       {active && <Check size={10} className="text-foreground" />}
-    </button>
+    </TrackSegment>
   );
 }

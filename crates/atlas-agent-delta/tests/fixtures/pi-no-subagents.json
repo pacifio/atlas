@@ -1,0 +1,112 @@
+[
+ {
+  "sessionUpdate": "tool_call",
+  "toolCallId": "call_sg7aLVdeu3coWoCgxlvdpDzC|fc_092610418262e7b7016ad213575b2887d1b7c556c1375e53d1",
+  "title": "find . -type f | wc -l | tr -d ' '",
+  "kind": "execute",
+  "status": "pending",
+  "content": [
+   {
+    "type": "terminal",
+    "terminalId": "call_sg7aLVdeu3coWoCgxlvdpDzC|fc_092610418262e7b7016ad213575b2887d1b7c556c1375e53d1"
+   }
+  ],
+  "_meta": {
+   "terminal_info": {
+    "terminal_id": "call_sg7aLVdeu3coWoCgxlvdpDzC|fc_092610418262e7b7016ad213575b2887d1b7c556c1375e53d1",
+    "cwd": "/tmp/acpwork"
+   }
+  }
+ },
+ {
+  "sessionUpdate": "tool_call",
+  "toolCallId": "call_vIHp0EMi5njp7qSS0bFxoaMc|fc_092610418262e7b7016ad213575b4887d18eeec7e9d72c3b77",
+  "title": "printf 'Hello from greeter.\\n'",
+  "kind": "execute",
+  "status": "pending",
+  "content": [
+   {
+    "type": "terminal",
+    "terminalId": "call_vIHp0EMi5njp7qSS0bFxoaMc|fc_092610418262e7b7016ad213575b4887d18eeec7e9d72c3b77"
+   }
+  ],
+  "_meta": {
+   "terminal_info": {
+    "terminal_id": "call_vIHp0EMi5njp7qSS0bFxoaMc|fc_092610418262e7b7016ad213575b4887d18eeec7e9d72c3b77",
+    "cwd": "/tmp/acpwork"
+   }
+  }
+ },
+ {
+  "sessionUpdate": "tool_call_update",
+  "toolCallId": "call_sg7aLVdeu3coWoCgxlvdpDzC|fc_092610418262e7b7016ad213575b2887d1b7c556c1375e53d1",
+  "title": "find . -type f | wc -l | tr -d ' '",
+  "kind": "execute",
+  "status": "in_progress"
+ },
+ {
+  "sessionUpdate": "tool_call_update",
+  "toolCallId": "call_vIHp0EMi5njp7qSS0bFxoaMc|fc_092610418262e7b7016ad213575b4887d18eeec7e9d72c3b77",
+  "title": "printf 'Hello from greeter.\\n'",
+  "kind": "execute",
+  "status": "in_progress"
+ },
+ {
+  "sessionUpdate": "tool_call_update",
+  "toolCallId": "call_sg7aLVdeu3coWoCgxlvdpDzC|fc_092610418262e7b7016ad213575b2887d1b7c556c1375e53d1",
+  "status": "in_progress",
+  "_meta": {}
+ },
+ {
+  "sessionUpdate": "tool_call_update",
+  "toolCallId": "call_vIHp0EMi5njp7qSS0bFxoaMc|fc_092610418262e7b7016ad213575b4887d18eeec7e9d72c3b77",
+  "status": "in_progress",
+  "_meta": {}
+ },
+ {
+  "sessionUpdate": "tool_call_update",
+  "toolCallId": "call_vIHp0EMi5njp7qSS0bFxoaMc|fc_092610418262e7b7016ad213575b4887d18eeec7e9d72c3b77",
+  "status": "in_progress",
+  "_meta": {
+   "terminal_output": {
+    "terminal_id": "call_vIHp0EMi5njp7qSS0bFxoaMc|fc_092610418262e7b7016ad213575b4887d18eeec7e9d72c3b77",
+    "data": "Hello from greeter.\n"
+   }
+  }
+ },
+ {
+  "sessionUpdate": "tool_call_update",
+  "toolCallId": "call_vIHp0EMi5njp7qSS0bFxoaMc|fc_092610418262e7b7016ad213575b4887d18eeec7e9d72c3b77",
+  "status": "completed",
+  "_meta": {
+   "terminal_exit": {
+    "terminal_id": "call_vIHp0EMi5njp7qSS0bFxoaMc|fc_092610418262e7b7016ad213575b4887d18eeec7e9d72c3b77",
+    "exit_code": 0,
+    "signal": null
+   }
+  }
+ },
+ {
+  "sessionUpdate": "tool_call_update",
+  "toolCallId": "call_sg7aLVdeu3coWoCgxlvdpDzC|fc_092610418262e7b7016ad213575b2887d1b7c556c1375e53d1",
+  "status": "in_progress",
+  "_meta": {
+   "terminal_output": {
+    "terminal_id": "call_sg7aLVdeu3coWoCgxlvdpDzC|fc_092610418262e7b7016ad213575b2887d1b7c556c1375e53d1",
+    "data": "20\n"
+   }
+  }
+ },
+ {
+  "sessionUpdate": "tool_call_update",
+  "toolCallId": "call_sg7aLVdeu3coWoCgxlvdpDzC|fc_092610418262e7b7016ad213575b2887d1b7c556c1375e53d1",
+  "status": "completed",
+  "_meta": {
+   "terminal_exit": {
+    "terminal_id": "call_sg7aLVdeu3coWoCgxlvdpDzC|fc_092610418262e7b7016ad213575b2887d1b7c556c1375e53d1",
+    "exit_code": 0,
+    "signal": null
+   }
+  }
+ }
+]

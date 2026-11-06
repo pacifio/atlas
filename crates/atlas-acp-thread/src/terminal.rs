@@ -1,24 +1,20 @@
-//! Agent-created terminals — ported from
-//! `zed-ref/crates/acp_thread/src/terminal.rs` and the provider-event handling
-//! at `acp_thread.rs:4639-4715`.
+//! Agent-created terminals and the provider-event handling around them.
 //!
-//! The mechanism worth porting is the **out-of-order buffering**. A terminal's
+//! The mechanism worth knowing is the **out-of-order buffering**. A terminal's
 //! `Created` event is not guaranteed to reach the thread before its first
 //! `Output` or even its `Exit`: the agent gets the terminal id back from
 //! `terminal/create` and can reference it in a `session/update` immediately,
-//! which races the client's own bookkeeping. Zed handles this with two
+//! which races the client's own bookkeeping. This is handled with two
 //! side-tables keyed by terminal id (`pending_terminal_output`,
 //! `pending_terminal_exit`) that are drained when `Created` finally lands.
 //! Without them the first chunk of a fast command's output is silently lost —
 //! which is exactly what the agent then reads back as the command's result.
 //!
-//! Divergence from Zed: Zed's `Terminal` wraps a full `terminal::Terminal`
-//! entity (an alacritty grid it renders). Atlas runs agent commands through
+//! Atlas runs agent commands through
 //! [`atlas_terminal::command::CommandTerminal`], which already owns the PTY and
-//! keeps a bounded output buffer, so the port keeps Zed's *event and buffering*
-//! shape and delegates the running to that. Zed's OS-sandbox wrapper
-//! (`SandboxWrap`) is not ported: it depends on Zed's `sandbox` crate and is a
-//! separate feature from the thread model.
+//! keeps a bounded output buffer, so this module owns only the *event and
+//! buffering* shape and delegates the running to that. An OS-sandbox wrapper
+//! is out of scope: it is a separate feature from the thread model.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -45,8 +41,7 @@ const MAX_PENDING_TERMINALS: usize = 64;
 /// buffer by delaying its own announcement than it would get after it.
 const MAX_PENDING_OUTPUT_BYTES: usize = DEFAULT_OUTPUT_BYTE_LIMIT as usize;
 
-/// What the terminal provider tells the thread. Ported from
-/// `TerminalProviderEvent` (`acp_thread.rs:2183-2200`).
+/// What the terminal provider tells the thread.
 #[derive(Debug)]
 pub enum TerminalProviderEvent {
     Created {
@@ -190,6 +185,13 @@ impl AcpTerminal {
         self.replayed_output.push(data);
     }
 
+    /// Output for this terminal was dropped before it was announced — the
+    /// pending-side budget evicted it. Marks the capture incomplete, which is
+    /// what stops a reader reporting a gapped buffer as the whole command.
+    pub(crate) fn note_dropped_before_creation(&mut self) {
+        self.replayed_output.mark_truncated();
+    }
+
     pub(crate) fn set_exit_status(&mut self, status: acp::TerminalExitStatus) {
         self.exit_status = Some(status);
     }
@@ -235,46 +237,65 @@ impl AcpTerminal {
     /// only grew is what made a chatty command's projection quadratic in its
     /// own output (ATL-219), and the projector runs it once per chunk.
     ///
-    /// `None` means "ask [`Self::current_output`] instead", and is deliberately
-    /// returned for every case where a byte offset taken from an earlier read
-    /// is no longer trustworthy:
+    /// `from` is an offset into the command's TOTAL output — every byte it has
+    /// printed, kept or dropped — not into the retained window. That is what
+    /// lets the tail keep streaming after the buffer starts dropping its front:
+    /// in window coordinates an earlier offset names different bytes once the
+    /// front moves, and the only safe answer was to re-read the whole window,
+    /// which for a command past the byte limit meant a megabyte copied and
+    /// shipped per chunk, for the rest of its run. The caller tracks where its
+    /// last read ended in the same coordinates ([`Self::output_end`]).
     ///
-    /// * either buffer has dropped its front, so `from` names different bytes
-    ///   than it did — and `terminal_output` additionally prefixes a truncation
-    ///   marker, which changes the whole answer's shape;
+    /// `None` means "ask [`Self::current_output`] instead", for the cases where
+    /// no pure extension exists:
+    ///
+    /// * `from` is before the window — the bytes between were dropped;
     /// * `from` is past the end, so the output shrank rather than grew;
     /// * `from` lands inside the replayed half while a PTY half also has
     ///   content, where serving the tail would mean copying the PTY half too;
     /// * `from` is not on a character boundary.
     pub fn output_appended(&self, from: usize) -> Option<TerminalAppend> {
-        if self.replayed_output.truncated() {
-            return None;
-        }
+        let replayed_dropped = self.replayed_output.dropped();
         let replayed = self.replayed_output.text();
-        let build = |captured: &str| -> Option<TerminalAppend> {
-            let total = replayed.len() + captured.len();
-            if from > total {
+        // Where the PTY half's stream begins: right after everything the
+        // replayed half ever held.
+        let captured_base = replayed_dropped + replayed.len();
+        let build = |captured_dropped: usize, captured: &str| -> Option<TerminalAppend> {
+            let visible = captured_base + captured_dropped;
+            let end = visible + captured.len();
+            if from > end {
                 return None;
             }
-            if from == total {
+            if from == end {
                 return Some(TerminalAppend::Unchanged);
             }
-            if from < replayed.len() {
-                if !captured.is_empty() {
-                    return None;
-                }
-                return replayed
-                    .get(from..)
+            if from >= visible {
+                return captured
+                    .get(from - visible..)
                     .map(|tail| TerminalAppend::Grew(tail.to_string()));
             }
-            captured
-                .get(from - replayed.len()..)
+            if from < replayed_dropped || !captured.is_empty() || captured_dropped > 0 {
+                return None;
+            }
+            replayed
+                .get(from - replayed_dropped..)
                 .map(|tail| TerminalAppend::Grew(tail.to_string()))
         };
         match &self.inner {
-            Some(inner) => inner.with_untruncated_output(build)?,
-            None => build(""),
+            Some(inner) => inner.with_output_buffer(|buf| build(buf.dropped(), buf.text())),
+            None => build(0, ""),
         }
+    }
+
+    /// Where [`Self::current_output`]'s `output` ends in the command's total
+    /// output — the `from` a caller passes to [`Self::output_appended`] next
+    /// time, once it has caught up to here.
+    pub fn output_end(&self) -> usize {
+        self.replayed_output.end()
+            + self
+                .inner
+                .as_ref()
+                .map_or(0, |inner| inner.with_output_buffer(OutputBuffer::end))
     }
 
     /// Kill the command. Marks the terminal as user-stopped so the UI can tell
@@ -355,8 +376,8 @@ pub fn exit_status_from_command(exit: CommandExit) -> acp::TerminalExitStatus {
 }
 
 /// The thread's terminal side-tables, kept together so the buffering rule has
-/// one owner. Ported from `AcpThread`'s `terminals` /
-/// `pending_terminal_output` / `pending_terminal_exit` fields.
+/// one owner: the live `terminals` plus the `pending_terminal_output` and
+/// `pending_terminal_exit` maps.
 ///
 /// `terminals` itself is deliberately uncapped, unlike the two pending maps.
 /// Every entry in it cost the agent a `terminal/create` that spawned a real
@@ -374,6 +395,14 @@ pub struct TerminalRegistry {
     /// has waited longest is exactly the one least likely to ever be claimed.
     pending_output: IndexMap<acp::TerminalId, Vec<Vec<u8>>>,
     pending_exit: IndexMap<acp::TerminalId, acp::TerminalExitStatus>,
+    /// Ids whose parked output the budget evicted before they were announced.
+    ///
+    /// Eviction is a real loss of bytes, and the terminal built later has no
+    /// other way to know: it would report a gapped capture as complete, and a
+    /// reader streaming a tail against it would splice across the hole. Held
+    /// as ids only — the bytes are gone, the fact that they were is what has
+    /// to survive. Bounded by the same id ceiling as the maps it shadows.
+    lost_before_creation: indexmap::IndexSet<acp::TerminalId>,
     /// Running total of every chunk in `pending_output`, so the byte budget is
     /// enforced without walking the map on each event.
     pending_output_bytes: usize,
@@ -418,6 +447,14 @@ impl TerminalRegistry {
         Some(chunks)
     }
 
+    /// Remember that `id` lost parked bytes to the budget.
+    fn note_lost(&mut self, id: acp::TerminalId) {
+        self.lost_before_creation.insert(id);
+        while self.lost_before_creation.len() > MAX_PENDING_TERMINALS {
+            self.lost_before_creation.shift_remove_index(0);
+        }
+    }
+
     /// Park output for a terminal that has not been announced yet, then bring
     /// the side-tables back inside their budget.
     ///
@@ -438,6 +475,7 @@ impl TerminalRegistry {
                 .map(|(id, _)| id.clone())
                 .expect("non-empty above the cap");
             self.take_pending_output(&oldest);
+            self.note_lost(oldest);
         }
 
         // Over the byte budget, drop the OLDEST chunk of the OLDEST id rather
@@ -456,8 +494,15 @@ impl TerminalRegistry {
                 continue;
             }
             let dropped = chunks.remove(0).len();
+            let id_lost = id.clone();
             self.pending_output_bytes = self.pending_output_bytes.saturating_sub(dropped);
-            if chunks.is_empty() {
+            let now_empty = chunks.is_empty();
+            self.note_lost(id_lost);
+            if now_empty {
+                let (id, _) = self
+                    .pending_output
+                    .get_index(0)
+                    .expect("the entry just read is still there");
                 let id = id.clone();
                 self.pending_output.shift_remove(&id);
             }
@@ -474,8 +519,6 @@ impl TerminalRegistry {
         }
     }
 
-    /// Ported from `AcpThread::on_terminal_provider_event`
-    /// (`acp_thread.rs:4639-4715`).
     pub fn handle_event(&mut self, event: TerminalProviderEvent) {
         match event {
             TerminalProviderEvent::Created {
@@ -494,6 +537,11 @@ impl TerminalRegistry {
                     for data in chunks {
                         acp_terminal.write_output(&data);
                     }
+                }
+                // Bytes the budget evicted while this id was unannounced: the
+                // buffer is incomplete and has to say so.
+                if self.lost_before_creation.shift_remove(&terminal_id) {
+                    acp_terminal.note_dropped_before_creation();
                 }
 
                 if let Some(status) = self.pending_exit.shift_remove(&terminal_id) {

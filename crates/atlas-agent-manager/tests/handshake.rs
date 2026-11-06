@@ -205,3 +205,46 @@ async fn an_agent_omitting_http_mcp_is_reported_as_not_supporting_it() {
     };
     assert_eq!(supported, Some(false));
 }
+
+/// The agent dies after it connected, with no session open. The manager used
+/// to keep the entry as `Connected`, so the next request was handed a
+/// transport with nobody behind it and waited out a full request deadline
+/// to learn so. The process exit must evict the entry.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_agent_that_dies_after_connecting_is_dropped_from_the_table() {
+    let Some((manager, pid_file)) = spawning_manager("dies-after-connect") else {
+        eprintln!("skipping: no python3 on this machine");
+        return;
+    };
+    let key = custom("fake-agent");
+
+    manager
+        .connection(key.clone())
+        .await
+        .expect("the handshake completes");
+    assert_eq!(
+        manager.connection_status(&key),
+        AgentConnectionStatus::Connected
+    );
+    let pid = agent_pid(&pid_file)
+        .await
+        .expect("the agent reported its pid");
+
+    // The process goes away behind the manager's back.
+    let killed = std::process::Command::new("kill")
+        .args(["-9", &pid.to_string()])
+        .status()
+        .expect("kill runs");
+    assert!(killed.success(), "the fake agent was killed");
+
+    let evicted = wait_for(|| {
+        (manager.connection_status(&key) == AgentConnectionStatus::Disconnected).then_some(())
+    })
+    .await;
+    let _ = std::fs::remove_file(&pid_file);
+    evicted.expect("a dead connection must not stay listed as connected");
+    assert!(
+        manager.connections().is_empty(),
+        "nothing is up once the only agent has died"
+    );
+}

@@ -4,7 +4,7 @@
 # still used the old compiler — green here, red there, nothing changed. Bump
 # this deliberately, fixing whatever the new clippy flags in the same change.
 [toolchain]
-channel = "1.99.0"
+channel = "1.99.1"
 components = ["clippy", "rustfmt"]
 # The standard library for the other OSes CI lints for. The crates flagged
 # `cross` in .github/ci-crates.json are clippy'd for Windows in CI and for

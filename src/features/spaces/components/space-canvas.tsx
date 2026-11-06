@@ -14,7 +14,6 @@ import {
   type NodeChange,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { useComposerFileDrop } from "@/features/chat/hooks/use-composer-file-drop";
 import { filesFromClipboard, hasFiles, scratchPathForFile } from "@/lib/scratch-file";
@@ -30,14 +29,16 @@ import {
   type SpaceAnchor,
   type SpaceShapeType,
 } from "../lib/space-doc";
-import { selectionColours } from "../lib/space-wire";
+import { PEER_INK } from "@tryatlas/design";
+import { selectionHues } from "../lib/space-wire";
+import { EDGE_INK } from "@/features/canvas/lib/edge-ink";
 import { spacesApi } from "../lib/spaces-api";
 import type { SpaceDock } from "../lib/dock";
 import type { SpaceSession } from "../lib/use-space-session";
 import { useSpacesStore } from "../stores/spaces-store";
 import { SpaceCanvasContext, type SpaceCanvasCtx } from "./space-canvas-ctx";
 import { SPACE_NODE_TYPES } from "./space-nodes";
-import { SpaceActionPill, SpaceHeaderPill, type SyncState } from "./space-chrome";
+import { linkStatus, SpaceActionPill, SpaceHeaderPill } from "./space-chrome";
 import { SpaceCursors } from "./space-cursors";
 import { SpaceToolbar, type SpaceTool } from "./space-toolbar";
 
@@ -111,7 +112,7 @@ function SpaceSurface({
 
   // ---- doc → xyflow -------------------------------------------------------
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
-  const peerOutlines = useMemo(() => selectionColours(actors), [actors]);
+  const peerOutlines = useMemo(() => selectionHues(actors), [actors]);
 
   // Node objects are IDENTITY-CACHED per id: a drag changes one node's row,
   // and the other ~199 must keep their references so their memo'd components
@@ -155,8 +156,10 @@ function SpaceSurface({
         height: n.height,
         selected: selectedSet.has(n.id),
         draggable: editable,
-        style: outline
-          ? { outline: `2px solid ${outline}`, outlineOffset: 2, borderRadius: 6 }
+        // A peer's claim: an outline in their identity hue, the one their
+        // cursor and presence ring wear.
+        className: outline
+          ? `rounded-md outline-2 outline-offset-2 outline-solid ${PEER_INK[outline].outline}`
           : undefined,
         data: {
           title: n.title,
@@ -187,7 +190,8 @@ function SpaceSurface({
       sourceHandle: ANCHOR_TO_HANDLE[e.sourceAnchor],
       targetHandle: ANCHOR_TO_HANDLE[e.targetAnchor],
       type: "smoothstep",
-      style: { stroke: e.color ?? "var(--atlas-border-strong)", strokeWidth: 1.5 },
+      // No inline stroke: it would beat xyflow's selected rule. The board
+      // sets the edge ink (`EDGE_INK`): border-strong, primary when selected.
     }));
   }, [revision, session.doc]);
 
@@ -515,7 +519,8 @@ function SpaceSurface({
       }
       if (hasFiles(dt)) {
         e.preventDefault();
-        void invoke<string[]>("clipboard_file_paths")
+        void spacesApi
+          .clipboardFilePaths()
           .then((paths) => {
             if (paths.length > 0) return uploadAndPlace(paths, viewportCentre());
           })
@@ -555,12 +560,7 @@ function SpaceSurface({
   // One glyph for the socket: live, catching up, or refused. `unavailable`
   // is the only state retrying cannot fix.
   const connection = session.meta?.connection ?? "disconnected";
-  const syncState: SyncState =
-    connection === "open" && ready
-      ? "synced"
-      : connection === "unavailable"
-        ? "offline"
-        : "syncing";
+  const status = linkStatus(connection, ready);
 
   const clearSelection = useCallback(() => {
     setSelectedIds([]);
@@ -584,6 +584,7 @@ function SpaceSurface({
         <ReactFlow
           nodes={rfNodes}
           edges={rfEdges}
+          style={EDGE_INK}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
@@ -614,7 +615,7 @@ function SpaceSurface({
             // structural ramp's top rung — the same weight the dots had as a
             // fixed 18%-white, and the only one still legible on a light
             // variant.
-            color="var(--atlas-border-strong)"
+            color="var(--border-strong)"
           />
           <SpaceCursors actors={actors} />
         </ReactFlow>
@@ -628,7 +629,7 @@ function SpaceSurface({
           >
             {preview && (
               <div
-                className="pointer-events-none absolute rounded border border-[var(--primary)] bg-[var(--primary)]/10"
+                className="pointer-events-none absolute rounded border border-primary bg-primary/10"
                 style={{
                   left: preview.left,
                   top: preview.top,
@@ -641,7 +642,7 @@ function SpaceSurface({
         )}
 
         {uploading && (
-          <div className="absolute bottom-3 left-1/2 z-40 -translate-x-1/2 rounded-full border border-border-subtle bg-[var(--card)]/80 px-3 py-1 text-xs text-secondary-foreground backdrop-blur-xl">
+          <div className="absolute bottom-3 left-1/2 z-40 -translate-x-1/2 rounded-full border border-border-subtle bg-card/80 px-3 py-1 text-xs text-secondary-foreground backdrop-blur-xl">
             Uploading media…
           </div>
         )}
@@ -650,17 +651,17 @@ function SpaceSurface({
             the drop against the wrapper; opacity only. */}
         <div
           aria-hidden
-          className={`pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-[var(--primary)]/8 transition-opacity duration-150 ${
+          className={`pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-primary/8 transition-opacity duration-150 ${
             isDropTarget ? "opacity-100" : "opacity-0"
           }`}
         >
-          <span className="rounded-full border border-[var(--primary)]/40 bg-card px-3 py-1 text-xs font-medium text-secondary-foreground shadow">
+          <span className="rounded-full border border-primary/40 bg-card px-3 py-1 text-xs font-medium text-secondary-foreground shadow">
             Drop images or video to add them
           </span>
         </div>
 
         <SpaceHeaderPill
-          sync={syncState}
+          status={status}
           pages={session.meta?.pages ?? []}
           activePageId={session.pageId}
           onOpenPage={session.openPage}

@@ -24,6 +24,7 @@
 // type so `bun run typecheck` catches drift from Rust.
 
 import { emit } from "@tauri-apps/api/event";
+import * as Y from "yjs";
 import type {
   comms,
   CommsEnvelope,
@@ -52,6 +53,7 @@ import {
   type RecordingTrack,
   type SendStatus,
 } from "@/features/comms/types";
+import { encodeAwareness, PROMPT_TEXT_KEY, toBase64 } from "@/features/comms/lib/draft-sync";
 import type { TypedHandlers, Unit } from "../types";
 import { abs, MOCK_ORG_ID } from "../project";
 
@@ -278,7 +280,7 @@ const DESKTOP_SEEDS: Seed[] = [
   {
     by: SAM,
     gap: 4,
-    body: "That's `atEndRef`, isn't it. It gets re-armed from the resize observer, so any content growth counts as \"the reader is at the end\".",
+    body: "That's `atEndRef` in `src/lib/api.ts:12`, isn't it. It gets re-armed from the resize observer, so any content growth counts as \"the reader is at the end\". (Not `/Users/sam/scratch/notes.md` — that's my machine.)",
     reactions: [
       [EMOJI.eyes, [PRIYA, MIRA]],
       [EMOJI.thinking, [TOBI]],
@@ -921,6 +923,28 @@ const drafts = new Map<string, PromptDraft[]>([
   ],
 ]);
 
+/** The RFC draft's text, as the server would hold it: one Yjs update, built
+ *  once so every open (and every reconnect's re-open) replays the SAME bytes
+ *  and Yjs applies them idempotently. The other drafts are empty documents. */
+const RFC_DRAFT = "draft_anchor_rfc";
+const RFC_TEXT = [
+  "## Problem",
+  "Three things move the transcript's scroll position today: the stick-to-bottom",
+  "effect, the jump-to-message handler, and the image loader's height fix-up.",
+  "",
+  "## Proposal",
+  "One owner — `useScrollAnchor` — holds the anchor and every writer asks it.",
+].join("\n");
+let rfcUpdate: string | null = null;
+function rfcContent(): string {
+  if (rfcUpdate === null) {
+    const doc = new Y.Doc();
+    doc.getText(PROMPT_TEXT_KEY).insert(0, RFC_TEXT);
+    rfcUpdate = toBase64(Y.encodeStateAsUpdate(doc));
+  }
+  return rfcUpdate;
+}
+
 // ── connection + the event bridge ──────────────────────────────────────────
 
 let connection: ConnectionInfo = {
@@ -1002,6 +1026,7 @@ let lastTypingEcho = 0;
  * `invoke<T>`, or `Unread` where it awaits only success or failure.
  */
 export interface CommsResponses {
+  comms_ready: Unit;
   comms_status: ConnectionInfo;
   comms_snapshot: CommsSnapshot;
   comms_base_url: string;
@@ -1046,6 +1071,19 @@ export interface CommsResponses {
 }
 
 export const commsHandlers: TypedHandlers<CommsResponses> = {
+  // Rust's `announce`: the connection state, then a `resync`, which is what
+  // hydrates the store at boot with the panel closed (the footer's unread dot
+  // reads it).
+  comms_ready: (): null => {
+    push({
+      kind: "connection",
+      state: connection.state,
+      reason: connection.reason,
+      retry_at_ms: null,
+    });
+    push({ kind: "resync" });
+    return null;
+  },
   comms_status: (): ConnectionInfo => connection,
   comms_snapshot: (): CommsSnapshot => ({
     connection,
@@ -1376,7 +1414,8 @@ export const commsHandlers: TypedHandlers<CommsResponses> = {
     // handler that only resolved would leave the editor waiting forever.
     // `snapshot: null` with no updates is a legitimate empty document: the
     // server stores opaque Yjs bytes it cannot read, and has none yet.
-    push({ kind: "draftOpened", draft_id: id, draft, snapshot: null, updates: [] });
+    const updates = id === RFC_DRAFT ? [rfcContent()] : [];
+    push({ kind: "draftOpened", draft_id: id, draft, snapshot: null, updates });
     return null;
   },
   comms_draft_update: (): null => null,
@@ -1460,6 +1499,36 @@ const INCOMING = [
   "Never mind, found it.",
 ];
 let incomingAt = 0;
+
+/**
+ * Priya and Tobi join the RFC draft: each publishes a cursor, restated every
+ * 4s for a minute so the editor's 15s awareness TTL never ages them out while
+ * someone is looking. Open the draft first — awareness is per open session.
+ */
+export function commsDraftPeers(): void {
+  const peers = [
+    { user_id: PRIYA, cursor: 40 },
+    { user_id: TOBI, cursor: 120 },
+  ];
+  const beat = () => {
+    for (const p of peers) {
+      push({
+        kind: "draftAwareness",
+        draft_id: RFC_DRAFT,
+        user_id: p.user_id,
+        state: encodeAwareness({ cursor: p.cursor }),
+      });
+    }
+  };
+  // A second call restarts the minute rather than stacking heartbeats.
+  if (peersTimer !== undefined) clearInterval(peersTimer);
+  if (peersStop !== undefined) clearTimeout(peersStop);
+  beat();
+  peersTimer = setInterval(beat, 4_000);
+  peersStop = setTimeout(() => clearInterval(peersTimer), 60_000);
+}
+let peersTimer: ReturnType<typeof setInterval> | undefined;
+let peersStop: ReturnType<typeof setTimeout> | undefined;
 
 export function commsIncomingMessage(): void {
   const body = INCOMING[incomingAt++ % INCOMING.length];

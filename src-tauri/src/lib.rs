@@ -1,11 +1,17 @@
 mod app_icon;
+#[cfg(target_os = "macos")]
+mod arrow_keys;
 mod auth;
 mod commands;
+mod fs_events;
 mod keep_awake;
 mod logging;
 #[cfg(target_os = "macos")]
 mod menu;
+mod nav_guard;
 mod notifier;
+mod open_vsx;
+mod sleep_watch;
 mod state;
 mod telemetry;
 mod window_background;
@@ -32,8 +38,62 @@ use tauri::Manager;
 // that exercises the decoder rather than by a const that only proves a patch
 // still applies.
 
+/// `atlas mcp-bridge <url> <token file>`: run the stdio bridge (ADR-0019)
+/// instead of the app, the session token read from the file (ADR-0020: never
+/// on the command line, never in the environment an agent may print there).
+/// Returns whether it ran.
+pub fn run_bridge_if_asked() -> bool {
+    let mut args = std::env::args_os().skip(1);
+    if args.next().and_then(|a| a.into_string().ok()).as_deref()
+        != Some(commands::memory_server::BRIDGE_ARG)
+    {
+        return false;
+    }
+    let (Some(url), Some(token_file)) =
+        (args.next().and_then(|a| a.into_string().ok()), args.next())
+    else {
+        eprintln!("usage: atlas mcp-bridge <url> <token file>");
+        std::process::exit(2);
+    };
+    let token = match commands::memory_bridge::read_token_file(std::path::Path::new(&token_file)) {
+        Ok(token) => token,
+        Err(e) => {
+            eprintln!("mcp-bridge: {e:#}");
+            std::process::exit(1);
+        }
+    };
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(e) => {
+            eprintln!("mcp-bridge: {e}");
+            std::process::exit(1);
+        }
+    };
+    let stdin = tokio::io::BufReader::new(tokio::io::stdin());
+    if let Err(e) = runtime.block_on(commands::memory_bridge::bridge(
+        &url,
+        &token,
+        stdin,
+        tokio::io::stdout(),
+    )) {
+        eprintln!("mcp-bridge: {e:#}");
+        std::process::exit(1);
+    }
+    true
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // `--version` / `--help` print and exit before anything else runs, so a
+    // headless version check never boots a window (or, in a release build,
+    // forwards itself to a running instance). See `commands::cli`.
+    if commands::cli::handle_info_flag() {
+        return;
+    }
+
     // Whose data this process owns, fixed before ANYTHING resolves a path —
     // the log file below is the first thing that does. The profile is read
     // off the identifier this binary was built with: `dev:app` builds with
@@ -47,13 +107,18 @@ pub fn run() {
         &context.config().identifier,
     ));
 
+    // A "Clear cache" / "Reset Atlas" the previous process scheduled runs here,
+    // before logging opens its file and before the WebView opens its store.
+    // See `commands::app_data_reset`.
+    let data_reset = commands::app_data_reset::apply_pending(atlas_profile::current());
+
     // Pick the rustls crypto provider, once, before anything can open a TLS
     // connection.
     //
     // rustls 0.23 refuses to guess when more than one provider is compiled in,
-    // and this graph has two: `ring` (via sqlx, through the vendored engine
+    // and this graph has two: `ring` (via sqlx, through the engine
     // state store) and `aws-lc-rs` (via rama-tls / aws-smithy, through the
-    // vendored network proxy). Neither is removable, and cargo's feature
+    // engine's network proxy). Neither is removable, and cargo's feature
     // unification turns "two dependencies each chose one" into "rustls sees
     // both and panics at the first handshake" — on a background worker, far
     // from anything that looks related.
@@ -73,6 +138,9 @@ pub fn run() {
     // Install a tracing subscriber that prints `tracing::info!` etc. to
     // stderr. Verbosity is controlled by `RUST_LOG`; see `logging.rs`.
     logging::init();
+    if let Some(applied) = &data_reset {
+        applied.log();
+    }
 
     // Load a `.env` from the current dir (if any) so source / fork builds can
     // point telemetry at their own PostHog OSS project via POSTHOG_KEY /
@@ -86,15 +154,15 @@ pub fn run() {
 
     // Parse argv for an initial project path BEFORE tauri::Builder starts
     // so the webview boot path can read it via `cli_take_initial_project_path`.
-    // Triggered by the `atlas <path>` shell helper at ~/.local/bin/atlas.
     let initial_project = commands::cli::parse_initial_project();
 
-    let builder = tauri::Builder::default();
+    // The main window may only navigate within the app; see `nav_guard.rs`.
+    let builder = tauri::Builder::default().plugin(nav_guard::init());
 
-    // Single-instance — RELEASE ONLY. When the user runs `atlas <path>` while
-    // Atlas is already open, the shell helper's `open -n` spawns a fresh
-    // process; this plugin forwards that process's argv to the running
-    // instance (firing this callback) and the duplicate exits.
+    // Single-instance — RELEASE ONLY. When a launcher starts the binary with a
+    // project path while Atlas is already open, this plugin forwards that
+    // process's argv to the running instance (firing this callback) and the
+    // duplicate exits.
     //
     // It is intentionally NOT registered in debug builds: otherwise
     // `tauri dev` is killed the instant it starts whenever the installed
@@ -116,18 +184,18 @@ pub fn run() {
         }
     }));
 
-    // Custom menu: replaces the default Window ▸ Close (Cmd+W) with a
-    // "Close Tab" item so Cmd+W in a focused embedded browser webview closes
-    // the tab instead of tearing down the window. See `menu.rs`.
+    // The app menu bar, built from `menu.json`; every custom item hands its
+    // id to the renderer, which runs it. See `menu.rs`.
     //
-    // macOS only. Elsewhere a menu is a Win32/GTK menu bar drawn inside the
-    // window under Atlas's own titlebar, and the key-equivalent fallthrough it
-    // exists to catch is AppKit behaviour.
+    // macOS only. Elsewhere a native menu is a Win32/GTK bar drawn inside the
+    // window under Atlas's own titlebar, so the frontend draws the same model
+    // in that titlebar instead (`src/features/menu/`).
     #[cfg(target_os = "macos")]
     let builder = builder.menu(menu::build).on_menu_event(|app, event| {
-        if event.id() == menu::CLOSE_TAB_ID {
+        let id = event.id().as_ref();
+        if menu::is_custom(app, id) {
             use tauri::Emitter;
-            let _ = app.emit("atlas:close-active-tab", ());
+            let _ = app.emit(menu::MENU_EVENT, id);
         }
     });
 
@@ -135,12 +203,8 @@ pub fn run() {
         .setup(|app| {
             // Pre-load the Rust-owned `AppState` (currentProject + recents)
             // before the webview starts loading — paid in parallel with the
-            // WebView framework init, ~1ms on warm cache. `legacy_settings_raw`
-            // is the old `settings` object exactly as it appeared in a
-            // pre-#64 `state.json`, if any — `AppState` no longer has that
-            // field, so it's carried separately for the one-time migration
-            // below rather than being silently dropped by serde.
-            let (mut loaded, legacy_settings_raw) = AppState::load(app.handle());
+            // WebView framework init, ~1ms on warm cache.
+            let mut loaded = AppState::load(app.handle());
             // Device-stable telemetry identity, owned by Rust in its own file.
             // It used to live in `state.json` as `telemetry_anon_id`, where every
             // settings save wiped it (the frontend payload omitted the field and
@@ -159,26 +223,14 @@ pub fn run() {
                 loaded.telemetry_anon_id = Some(device_id.clone());
             }
 
-            // `config.toml` (issue #64): user preferences move out of
-            // `state.json.settings` into their own validated, human-editable
-            // file. `bootstrap` imports the legacy settings exactly once,
-            // guarded by `settings_config_migrated` so a user who later
-            // deletes `config.toml` on purpose never gets it silently
-            // resurrected from stale `state.json` data.
-            let migration = state::atlas_config::bootstrap(
-                loaded.settings_config_migrated,
-                legacy_settings_raw,
-            );
-            let migration_marker_changed =
-                migration.mark_migrated && !loaded.settings_config_migrated;
-            if migration_marker_changed {
-                loaded.settings_config_migrated = true;
-            }
-            let telemetry_enabled = migration.manager.effective().share_telemetry;
+            // User preferences live in their own validated, human-editable
+            // `config.toml`; a first run writes the documented defaults.
+            let config = state::atlas_config::bootstrap();
+            let telemetry_enabled = config.effective().share_telemetry;
             // The engine reads this gate on its first connect, which happens
             // after setup — so it must be in the environment before then.
             commands::atlas_config::apply_curated_plugin_sync_gate(
-                migration.manager.effective().curated_plugin_sync,
+                config.effective().curated_plugin_sync,
             );
             // Opaque window background, in the theme the user actually chose.
             // Fills the brief gap between window-shown and first React paint
@@ -200,24 +252,35 @@ pub fn run() {
             // Atlas was the focused window. An opaque window can be snapshotted
             // as a flat texture, so the OS animation stays smooth.
             if let Some(window) = app.get_webview_window("main") {
-                let settings = migration.manager.effective();
+                let settings = config.effective();
                 let system_is_light = matches!(window.theme(), Ok(tauri::Theme::Light));
                 let color = window_background::window_background(
-                    &settings.theme,
+                    &settings.theme_light,
+                    &settings.theme_dark,
                     settings.theme_mode,
                     system_is_light,
                 );
                 let _ = window.set_background_color(Some(color));
+                // tao leaves `trafficLightPosition` unapplied until the first
+                // resize; see the function.
+                commands::window::apply_traffic_light_inset(&window);
             }
+            // Arrow keys the webview leaves unhandled are not typed into the
+            // focused field; see the module.
+            #[cfg(target_os = "macos")]
+            arrow_keys::install();
             // The app icon, before the window shows. Later changes arrive
             // through `notify_settings_changed`.
-            app_icon::apply(app.handle(), &migration.manager.effective().app_icon);
+            app_icon::apply(app.handle(), &config.effective().app_icon);
             // Whether `instructionSync` is on as Atlas starts, so switching it
             // off before any project opens still takes the mirrored blocks out.
             app.state::<commands::instruction_sync::InstructionSyncState>()
-                .init(migration.manager.effective().instruction_sync);
-            let atlas_config: state::AtlasConfigHandle = Arc::new(Mutex::new(migration.manager));
+                .init(config.effective().instruction_sync);
+            // Whether agents start with their own memory off (M4).
+            atlas_agent_servers::set_atlas_only_memory(config.effective().atlas_only_memory);
+            let atlas_config: state::AtlasConfigHandle = Arc::new(Mutex::new(config));
             app.manage(atlas_config.clone());
+            app.manage(state::project_config::ProjectConfigs::default());
             let keep_awake = Arc::new(keep_awake::KeepAwakeManager::new(
                 atlas_config.lock().effective().keep_awake_while_running,
             ));
@@ -226,10 +289,10 @@ pub fn run() {
             commands::themes::start_watcher(app.handle());
             commands::git_autofetch::start(app.handle());
 
-            // Mirror the (possibly updated) telemetry id + migration marker
-            // back into `state.json` so both agree and a downgrade still
-            // finds them. `AppStatePatch` stops the frontend wiping either.
-            if telemetry_id_changed || migration_marker_changed {
+            // Mirror the (possibly updated) telemetry id back into
+            // `state.json` so both agree. `AppStatePatch` stops the frontend
+            // wiping it.
+            if telemetry_id_changed {
                 let _ = AppState::save(app.handle(), &loaded);
             }
             let app_state: AppStateHandle = Arc::new(Mutex::new(loaded));
@@ -293,39 +356,6 @@ pub fn run() {
                 }),
             );
 
-            // The code index: one SQLite index + worker per open project,
-            // fed by the file and git watchers. Managed before
-            // `install_manager`, whose code tool server reads it. The
-            // observer tells the window a job finished; the status pill
-            // re-reads `codebase_index_status` on it.
-            {
-                use tauri::Emitter;
-                let code_app = app.handle().clone();
-                let code_index = Arc::new(commands::code_index::CodeIndexRegistry::new(Some(
-                    Arc::new(
-                        move |project: &str, job: &'static str, result: &Result<bool, String>| {
-                            let _ = code_app.emit(
-                                "atlas:codebase-index:progress",
-                                serde_json::json!({
-                                    "phase": if result.is_ok() { "done" } else { "error" },
-                                    "current": 0,
-                                    "total": 0,
-                                    "project": project,
-                                    "job": job,
-                                }),
-                            );
-                        },
-                    ),
-                )));
-                app.manage(code_index);
-                // Load the selected code embedding model in the background;
-                // until it is ready, semantic search is keyword + symbol.
-                let embed_app = app.handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    commands::code_index::embed::refresh(&embed_app).await;
-                });
-            }
-
             commands::agents::install_manager(app.handle());
             // Silent background refresh of model pricing from models.dev — first
             // launch populates the cache; later launches update only on change.
@@ -349,6 +379,8 @@ pub fn run() {
                 // manager that is not yet managed would miss the first one.
                 commands::comms::install(app.handle());
                 commands::artifacts_cloud::install(app.handle());
+                // Universal RC: nothing dials until a room is started.
+                commands::rc::install(app.handle());
                 commands::auth::restore_on_launch(app.handle());
 
                 // Seed the Organisation every event is attributed to, from the
@@ -382,6 +414,8 @@ pub fn run() {
                 // it the Timeline board only ever sees them on its 15 s poll.
                 app.state::<commands::capture::CaptureState>()
                     .install_notifier(app.handle().clone());
+                commands::security_scan::attach(app.handle().clone());
+                commands::tips::attach(app.handle().clone());
 
                 let core = app.state::<commands::auth::AuthState>().core();
                 app.state::<commands::capture::CaptureState>()
@@ -415,8 +449,23 @@ pub fn run() {
             let registry = Arc::new(commands::memory_indexer::MemoryRegistry::new(job_tx));
             app.manage(registry.clone());
             let indexer_app = app.handle().clone();
+            let ticker_registry = registry.clone();
             tauri::async_runtime::spawn(async move {
                 commands::memory_indexer::MemoryIndexer::run(indexer_app, registry, job_rx).await;
+            });
+            // The memory reconciler's periodic pass (M2): every open project
+            // is checked and repaired every 30 minutes (opening one already
+            // queues a pass).
+            tauri::async_runtime::spawn(async move {
+                let mut every = tokio::time::interval(std::time::Duration::from_secs(30 * 60));
+                every.tick().await; // the first tick is immediate
+                loop {
+                    every.tick().await;
+                    for cwd in ticker_registry.open_cwds() {
+                        let _ =
+                            ticker_registry.enqueue(commands::memory_indexer::Job::Health { cwd });
+                    }
+                }
             });
             Ok(())
         })
@@ -425,6 +474,7 @@ pub fn run() {
         .plugin(tauri_plugin_window_state::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         .manage(commands::browser::BrowserState::new())
+        .manage(commands::quit_guard::QuitGuardState::default())
         .manage(TerminalState::new())
         .manage(commands::modelchat::ModelChatState::new())
         .manage(FileIndexState::new())
@@ -450,9 +500,7 @@ pub fn run() {
             match event {
                 tauri::WindowEvent::Destroyed => {
                     let label = window.label();
-                    if let Some(root) = window.state::<FileIndexState>().drop_window(label) {
-                        commands::fileindex::close_code_index(window.app_handle(), &root);
-                    }
+                    window.state::<FileIndexState>().drop_window(label);
                     window.state::<MentionCacheState>().drop_window(label);
                     window
                         .state::<commands::git_autofetch::GitAutoFetchState>()
@@ -460,6 +508,14 @@ pub fn run() {
                     window
                         .state::<commands::instruction_sync::InstructionSyncState>()
                         .drop_window(label);
+                }
+                // Closing the main window ends Atlas, so it asks the same
+                // question a quit does (`confirmQuitWhileRunning`).
+                tauri::WindowEvent::CloseRequested { api, .. }
+                    if window.label() == "main"
+                        && commands::quit_guard::hold_quit(window.app_handle()) =>
+                {
+                    api.prevent_close();
                 }
                 // Coming back to Atlas is when a stale Pull badge misleads.
                 tauri::WindowEvent::Focused(true) => {
@@ -524,6 +580,10 @@ pub fn run() {
             commands::comms::comms_reconnect,
             commands::comms::comms_disconnect,
             commands::comms::comms_base_url,
+            commands::org_agent::org_agent_status,
+            commands::org_agent::org_agent_send,
+            commands::org_agent::org_agent_reconnect,
+            commands::org_agent::org_agent_rest,
             commands::spaces::spaces_connect,
             commands::spaces::spaces_disconnect,
             commands::spaces::spaces_cycle,
@@ -545,8 +605,10 @@ pub fn run() {
             commands::auth::auth_delete_org,
             commands::window::window_zoom,
             commands::clipboard::clipboard_file_paths,
+            commands::clipboard::clipboard_paste_paths,
             commands::clipboard::clipboard_write_text,
             commands::clipboard::scratch_write_bytes,
+            commands::fonts::list_font_families,
             commands::window::set_window_title,
             commands::browser::browser_open_window,
             commands::browser::browser_embed_create,
@@ -558,18 +620,13 @@ pub fn run() {
             commands::browser::browser_embed_set_visible,
             commands::browser::browser_embed_destroy,
             commands::terminal::terminal_create,
-            commands::terminal::terminal_zsh_dir,
             commands::terminal::terminal_write,
             commands::terminal::terminal_write_text,
             commands::terminal::terminal_resize,
-            commands::terminal::terminal_kill_foreground,
             commands::terminal::terminal_close,
             commands::terminal::terminal_ack,
             commands::terminal::terminal_resolve_path,
-            commands::terminal::resolve_path,
-            commands::terminal::terminal_path_complete,
-            commands::terminal::terminal_list_commands,
-            commands::fs::read_directory,
+            commands::fs_entries::read_directories,
             commands::fs::read_file_content,
             commands::fs::read_file_base64,
             commands::fs::capture_screenshot,
@@ -586,13 +643,15 @@ pub fn run() {
             commands::fs::fs_copy,
             commands::fs::fs_duplicate,
             commands::fs::fs_open_in_terminal,
+            commands::external_editor::external_editors_detect,
+            commands::external_editor::external_editor_open,
             commands::fs::fs_add_to_gitignore,
-            commands::git::git_status_fresh,
             commands::git::git_log,
-            commands::git::git_diff_all,
             commands::git::git_workspace_summary,
+            commands::git::git_branch_compare,
             commands::usage_dashboard::usage_dashboard,
             commands::capture::capture_session_summary,
+            commands::capture::capture_session_files,
             commands::usage_dashboard::usage_export_markdown,
             commands::usage_dashboard::usage_write_file,
             commands::git::git_diff_file,
@@ -600,9 +659,49 @@ pub fn run() {
             commands::git::git_unstage,
             commands::git::git_list_branches,
             commands::git::git_checkout,
+            commands::git::git_switch_if_clean,
             commands::git::git_create_branch,
             commands::git::git_blame_file,
-            commands::git_pr::git_repo_pull_requests,
+            commands::pull_requests::pr_provider,
+            commands::pull_requests::pr_list,
+            commands::pull_requests::pr_detail,
+            commands::pull_requests::pr_activity,
+            commands::pull_requests::pr_thread_comments,
+            commands::pull_requests::pr_timeline,
+            commands::pull_requests::pr_commits,
+            commands::pull_requests::pr_diff,
+            commands::pull_requests::pr_diff_file_contents,
+            commands::pull_requests::pr_files_viewed,
+            commands::pull_requests::pr_reviewer_candidates,
+            commands::pull_requests::pr_label_candidates,
+            commands::pull_requests::pr_set_files_viewed,
+            commands::pull_requests::pr_comment,
+            commands::pull_requests::pr_reply_to_thread,
+            commands::pull_requests::pr_resolve_thread,
+            commands::pull_requests::pr_react,
+            commands::pull_requests::pr_submit_review,
+            commands::pull_requests::pr_action,
+            commands::pull_requests::pr_update,
+            commands::pull_requests::pr_request_reviewers,
+            commands::pull_requests::pr_set_labels,
+            commands::pull_requests::pr_image,
+            commands::pull_requests::list_stats::pr_list_stats,
+            commands::pull_requests::pr_edit_comment,
+            commands::pull_requests::pr_delete_comment,
+            commands::pull_requests::pr_revert,
+            commands::pull_requests::pr_check_log,
+            commands::pull_requests::create::pr_create_draft,
+            commands::pull_requests::create::pr_create,
+            commands::pull_requests::checkout::pr_prepare_checkout,
+            commands::pull_requests::guide::pr_guide_read,
+            commands::pull_requests::guide::pr_guide_write,
+            commands::pull_requests::guide::pr_guide_prepare,
+            commands::pull_requests::guide::pr_guide_finish,
+            commands::project_scripts::project_scripts_list,
+            commands::project_scripts::project_scripts_save,
+            commands::project_scripts::project_scripts_approve,
+            commands::session_context::session_environment,
+            commands::git_avatars::git_repo_avatars,
             commands::git::git_graph_signature,
             commands::git_graph::git_graph_build,
             // Extended source-control manager operations.
@@ -614,6 +713,7 @@ pub fn run() {
             commands::git_ops::git_fetch,
             commands::git_autofetch::git_autofetch_set_active,
             commands::git_ops::git_pull,
+            commands::git_ops::git_pull_preference,
             commands::git_ops::git_push,
             commands::git_ops::git_publish_branch,
             commands::git_ops::git_remotes,
@@ -660,14 +760,43 @@ pub fn run() {
             commands::artifacts_cloud::artifacts_cloud_unfollow,
             commands::artifacts_cloud::chat_comment_target,
             commands::artifacts_cloud::artifacts_cloud_session,
+            commands::artifacts_cloud::artifacts_cloud_session_stream,
             commands::artifacts_cloud::artifacts_cloud_payload,
             commands::artifacts_cloud::artifacts_cloud_session_url,
+            commands::artifacts_cloud::artifacts_cloud_inbox,
+            commands::artifacts_cloud::artifacts_cloud_inbox_unread,
+            commands::artifacts_cloud::artifacts_cloud_inbox_read,
+            commands::rc::rc_start,
+            commands::rc::rc_stop,
+            commands::rc::rc_delete,
+            commands::rc::rc_set_title,
+            commands::rc::rc_status,
+            commands::rc::rc_set_scope,
+            commands::rc::rc_set_member_tier,
+            commands::rc::rc_members,
+            commands::rc::rc_invite,
+            commands::rc::rc_revoke_invite,
+            commands::rc::rc_set_accept_requests,
+            commands::rc::rc_take_over,
+            commands::rc::rc_answer_control,
+            commands::rc::rc_grant_control,
+            commands::rc::rc_kick,
+            commands::artifacts_cloud::artifacts_cloud_session_share,
+            commands::artifacts_cloud::artifacts_cloud_share_create,
+            commands::artifacts_cloud::artifacts_cloud_share_revoke,
+            commands::artifacts_cloud::artifacts_cloud_share_url,
             commands::artifacts_cloud::artifacts_cloud_refresh,
             commands::artifacts_cloud::artifacts_cloud_comments,
             commands::artifacts_cloud::artifacts_cloud_comment_create,
             commands::artifacts_cloud::artifacts_cloud_comment_update,
             commands::artifacts_cloud::artifacts_cloud_comment_delete,
+            commands::artifacts_cloud::artifacts_cloud_comment_vote,
             commands::capture::capture_health,
+            commands::security_scan::security_project_sessions,
+            commands::security_scan::security_session_checkpoints,
+            commands::security_scan::security_ship_overview,
+            commands::security_scan::security_finding_line,
+            commands::security_scan::security_set_not_useful,
             commands::capture::capture_import_preview,
             commands::capture::capture_import_confirm,
             commands::capture::capture_slug_available,
@@ -685,6 +814,7 @@ pub fn run() {
             commands::capture::capture_commit_sessions,
             commands::capture::artifacts_board,
             commands::capture::artifacts_checkpoints,
+            commands::capture::artifacts_trace,
             commands::mention_search::mention_search,
             commands::mention_search::mention_cache_set_knowledge,
             commands::mention_search::mention_cache_clear,
@@ -704,10 +834,11 @@ pub fn run() {
             commands::github::fetch_cloned_repo_meta,
             // Legacy Claude-CLI subprocess commands (claude_run/stream/stop/check/version)
             // were replaced by ACP. Session-history readers below are still in use.
-            commands::gitdiff::git_diff_structured,
-            commands::gitdiff::diff_structured_text,
-            commands::gitdiff::git_commit_changed_files,
             commands::gitdiff::git_diff_line_status,
+            commands::diff_preview::git_diff_preview,
+            commands::diff_preview::git_diff_file_contents,
+            commands::diff_preview::git_diff_file_patch,
+            commands::diff_preview::diff_texts_patch,
             commands::code_server::code_grep,
             commands::project_session::save_project_session,
             commands::project_session::load_project_session,
@@ -720,6 +851,7 @@ pub fn run() {
             commands::knowledge::save_editor_state,
             commands::knowledge::load_editor_state,
             commands::knowledge::fetch_readable,
+            commands::markdown_preview::markdown_preview_image,
             commands::knowledge::knowledge_cover_upload,
             commands::knowledge::knowledge_cover_data_url,
             commands::knowledge_meta::knowledge_meta_load,
@@ -753,10 +885,19 @@ pub fn run() {
             commands::atlas_config::get_atlas_config_info,
             commands::atlas_config::update_atlas_settings,
             commands::atlas_config::reset_atlas_config,
+            commands::project_icon::project_icon,
+            commands::project_sources::project_sources_info,
+            commands::project_sources::project_browse,
+            commands::project_sources::project_create,
+            commands::project_sources::project_clone,
+            commands::project_settings::get_project_settings,
+            commands::project_settings::update_project_settings,
             commands::atlas_config::open_atlas_config,
             commands::themes::list_themes,
             commands::themes::get_theme,
+            commands::themes::save_theme,
             commands::theme_import::preview_theme_import,
+            commands::theme_import::search_color_themes,
             commands::theme_import::commit_theme_import,
             commands::theme_import::export_theme_shadcn,
             commands::icon_themes::list_icon_themes,
@@ -774,8 +915,6 @@ pub fn run() {
             commands::updater::update_state,
             commands::updater::update_ignore,
             commands::compose_prompt::compose_prompt,
-            commands::cli::cli_status,
-            commands::cli::cli_install_helper,
             commands::cli::cli_take_initial_project_path,
             commands::registry::acp_registry_list,
             commands::registry::acp_registry_refresh,
@@ -789,6 +928,8 @@ pub fn run() {
             // release so a stale frontend keeps working.
             commands::catalog::agents_catalog,
             commands::catalog::agents_catalog_refresh,
+            commands::agent_config::agents_configure,
+            commands::agent_config::agents_open_config_file,
             commands::agents::agents_list_running,
             commands::agents::agents_spawn,
             commands::agents::agents_kill,
@@ -806,11 +947,36 @@ pub fn run() {
             commands::agents::threads_sync_project,
             commands::agents::threads_projects,
             commands::agents::threads_history,
-            commands::agents::threads_archive,
+            commands::agents::threads_settle,
+            commands::agents::threads_unsettle,
+            commands::agents::threads_pin,
+            commands::agents::threads_unpin,
+            commands::agents::threads_reorder_pin,
+            commands::agents::threads_snooze,
+            commands::agents::threads_wake,
+            commands::agents::threads_unsnooze,
+            commands::agents::threads_rename,
+            commands::agents::threads_mark_viewed,
+            commands::session_projects::session_projects_list,
+            commands::session_projects::session_projects_attach,
+            commands::session_projects::session_projects_detach,
+            commands::session_projects::session_projects_set_access,
+            commands::session_pull_requests::session_pull_requests_link,
+            commands::session_pull_requests::session_pull_requests_unlink,
+            commands::session_pull_requests::session_pull_requests_sync,
+            commands::session_pull_requests::session_pull_requests_watch,
+            commands::agents::threads_mark_unread,
             commands::agents::agents_snapshot,
             commands::agents::agents_snapshot_meta,
             commands::agents::agents_send,
             commands::agents::agents_cancel,
+            commands::agents::agents_queue_add,
+            commands::agents::agents_queue_remove,
+            commands::agents::agents_queue_clear,
+            commands::agents::agents_queue_pause,
+            commands::agents::agents_queue_drain,
+            commands::agents::agents_queue_send_now,
+            commands::agents::agents_set_hold,
             commands::agents::agents_set_mode,
             commands::agents::agents_set_model,
             commands::agents::agents_set_effort,
@@ -847,7 +1013,14 @@ pub fn run() {
             commands::keybindings::keybindings_load,
             commands::keybindings::keybindings_save,
             commands::keybindings::keybindings_open,
-            commands::keybindings::keybindings_set_close_tab_accelerator,
+            commands::keybindings::menu_set_accelerators,
+            commands::tips::tips_load,
+            commands::tips::tips_mark_seen,
+            commands::tips::tips_reset,
+            commands::tips::tips_shown,
+            commands::tips::tips_checklist_done,
+            commands::tips::tips_checklist_dismiss,
+            commands::tips::first_run_complete,
             commands::memory_graph::memory_embed_status,
             commands::memory_graph::memory_embed_download,
             commands::memory_graph::memory_index_build,
@@ -858,6 +1031,8 @@ pub fn run() {
             commands::memory_policy::memory_policy_update,
             commands::memory_sharing::memory_sharing_get,
             commands::memory_sharing::memory_sharing_set,
+            commands::memory_sharing::memory_from_external_sessions_get,
+            commands::memory_sharing::memory_from_external_sessions_set,
             commands::memory_sharing::memory_summarizer_get,
             commands::memory_sharing::memory_summarizer_set,
             commands::shared_memory::memory_get_state,
@@ -868,16 +1043,32 @@ pub fn run() {
             commands::shared_memory::memory_list_entries,
             commands::shared_memory::memory_edit_entry,
             commands::shared_memory::memory_forget_entry,
+            commands::shared_memory::memory_purge_entry,
+            commands::shared_memory::memory_entry_provenance,
+            commands::shared_memory::memory_accept_history,
+            commands::shared_memory::memory_feedback_entry,
+            commands::shared_memory::memory_review,
+            commands::shared_memory::memory_session_writes,
+            commands::shared_memory::memory_export_preview,
+            commands::shared_memory::memory_export_apply,
+            commands::shared_memory::memory_promote,
+            commands::shared_memory::memory_archive,
+            commands::shared_memory::memory_merge,
+            commands::shared_memory::memory_resolve_conflict,
+            commands::memory_dream::memory_dream_accept,
+            commands::memory_dream::memory_dream_dismiss,
+            commands::memory_repo::memory_repo_import_preview,
+            commands::memory_repo::memory_repo_import_confirm,
+            commands::memory_repo::memory_repo_mirror_dir,
             commands::claude_memory_import::memory_claude_import_preview,
             commands::claude_memory_import::memory_claude_import_confirm,
             commands::memory_indexer::force_reindex,
+            commands::memory_indexer::memory_health_status,
             commands::memory_indexer::memory_indexer_close_project,
             commands::models::models_list,
             commands::models::model_download,
             commands::models::model_remove,
             commands::models::model_select,
-            commands::code_index::codebase_index_status,
-            commands::code_index::codebase_index_build,
             commands::session_chat::session_chat_retrieve,
             commands::session_chat_sessions::session_chat_threads_list,
             commands::session_chat_sessions::session_chat_thread_get,
@@ -910,6 +1101,9 @@ pub fn run() {
             commands::skills::pack_uninstall,
             commands::skills::pack_projections,
             commands::skills::pack_components_list,
+            commands::quit_guard::quit_guard_ready,
+            commands::quit_guard::quit_guard_answer,
+            commands::app_data_reset::app_data_reset,
         ])
         .build(context)
         .expect("error while building Atlas")
@@ -917,7 +1111,13 @@ pub fn run() {
             // Apply-on-quit: if the user chose "Later" for a staged update, swap
             // it in on the way out so the next launch is the new version.
             match event {
-                tauri::RunEvent::ExitRequested { .. } => {
+                tauri::RunEvent::ExitRequested { code, api, .. } => {
+                    // A user quit (no code) with an agent mid-turn asks first;
+                    // the frontend answers through `quit_guard_answer`.
+                    if code.is_none() && commands::quit_guard::hold_quit(app_handle) {
+                        api.prevent_exit();
+                        return;
+                    }
                     // Quit sweep (M7): stop native turns (cancel tokens kill
                     // tool process groups) and tear down every ACP subprocess
                     // (dropping each driver's shutdown channel closes the

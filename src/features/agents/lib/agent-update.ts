@@ -10,6 +10,7 @@
 // a phase means to a person.
 
 import { toast } from "sonner";
+import { isDeadlineError, withDeadline } from "@/features/chat/lib/with-deadline";
 import { notifyAgentUpdateFailed } from "@/features/notifications/lib/app-warning-notifier";
 import { acpRegistry } from "./agent-registry-api";
 import {
@@ -25,6 +26,10 @@ export function updatePhaseLabel(phase: AgentUpdatePhase["phase"], version: stri
   return phase === "waiting" ? "Waiting for the reply to finish…" : `Installing v${version}…`;
 }
 
+/** Long enough for a reply to finish and a large install to land; an
+ *  install that outlasts it continues in the backend. */
+const UPDATE_DEADLINE_MS = 30 * 60_000;
+
 /** Update `pluginId` to the registry's `version` now. Safe to call twice — a
  *  second call while one is in flight does nothing. Toasts the outcome. */
 export async function updateAgent(pluginId: string, name: string, version: string): Promise<void> {
@@ -32,13 +37,25 @@ export async function updateAgent(pluginId: string, name: string, version: strin
   // Shown until the first backend phase replaces it.
   setAgentUpdatePhase(pluginId, { phase: "installing", version });
   try {
-    await acpRegistry.update(pluginId);
+    // An update can legitimately take long — it waits for a running reply,
+    // then installs — but not forever. Past the deadline the label is
+    // released so the button comes back; the backend's `agent_update` events
+    // keep reporting the real outcome if it is still going.
+    await withDeadline(
+      acpRegistry.update(pluginId),
+      UPDATE_DEADLINE_MS,
+      `Updating ${name} has not finished`,
+    );
     // Same id as App.tsx's background-update toast: one update, one toast.
     toast.success(`${name} updated to v${version}`, {
       id: `agent-update:${pluginId}:${version}`,
     });
   } catch (e) {
-    notifyAgentUpdateFailed({ pluginId, name, version, error: String(e) });
+    if (isDeadlineError(e)) {
+      toast.message(`${name} is still updating in the background`);
+    } else {
+      notifyAgentUpdateFailed({ pluginId, name, version, error: String(e) });
+    }
   } finally {
     setAgentUpdatePhase(pluginId, null);
   }

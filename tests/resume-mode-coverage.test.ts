@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
  * simply run. The three paths that existed when it landed — the history
  * sidebar, `openAgentSession`, and `session/new` — all call it.
  *
- * `rebindDisconnectedSession` (chat-panel) was the fourth, and it did not: it
+ * `rebindDisconnectedSession` (`agent-rebind.ts`) was the fourth, and it did not: it
  * respawns the agent and re-binds, and a bind does not clear
  * `acpModeExplicit`/`acpCurrentMode`, so the pill survived the restart while
  * the fresh agent enforced its own default. Same failure, one path over —
@@ -51,7 +51,7 @@ const RESUME_MODE = "src/features/chat/lib/resume-mode.ts";
 const BIND_SITES = [
   {
     what: "session/new, at bind time",
-    file: "src/features/chat/components/chat-panel.tsx",
+    file: "src/features/chat/hooks/use-agent-bind.ts",
     // The fresh-session arm inlines `resolveEffectiveMode` + `setMode` rather
     // than calling `applyModeOnResume`: it has the `SessionInit` already and
     // seeds Claude's own permission pill, which `applyModeOnResume` only
@@ -60,8 +60,8 @@ const BIND_SITES = [
     via: "resolveEffectiveMode",
   },
   {
-    what: "history sidebar resume",
-    file: "src/features/chat/components/session-sidebar.tsx",
+    what: "sidebar resume (openThread)",
+    file: "src/features/chat/lib/open-thread.ts",
     via: "applyModeOnResume",
   },
   {
@@ -71,16 +71,16 @@ const BIND_SITES = [
   },
   {
     what: "rebind after an agent restart",
-    file: "src/features/chat/components/chat-panel.tsx",
+    file: "src/features/chat/lib/agent-rebind.ts",
     via: "applyModeOnResume",
   },
 ] as const;
 
 /** The body of the function that actually respawns and rebinds. */
 function rebindBody(): string {
-  const src = read("src/features/chat/components/chat-panel.tsx");
+  const src = read("src/features/chat/lib/agent-rebind.ts");
   const start = src.indexOf("async function respawnAndRebind");
-  expect(start, "chat-panel.tsx no longer defines respawnAndRebind").toBeGreaterThan(-1);
+  expect(start, "agent-rebind.ts no longer defines respawnAndRebind").toBeGreaterThan(-1);
   return src.slice(start, src.indexOf("\n}\n", start));
 }
 
@@ -138,7 +138,7 @@ describe("resume-mode coverage", () => {
     // queue into `handleSend`; without a per-tab guard each caller respawns
     // the agent and rebinds, and the loser can leave the tab on a session the
     // mode was never applied to.
-    const src = read("src/features/chat/components/chat-panel.tsx");
+    const src = read("src/features/chat/lib/agent-rebind.ts");
     const start = src.indexOf("function rebindDisconnectedSession");
     expect(start).toBeGreaterThan(-1);
     const guard = src.slice(start, src.indexOf("\n}\n", start));

@@ -647,7 +647,7 @@ impl OrgTools {
                 &arguments,
             )
         };
-        if !(self.gate)() {
+        if !(self.gate)(&grant.cwd) {
             return tool_error(OFF_NOTE);
         }
         let Some(scope) = grant.org.clone() else {
@@ -938,10 +938,13 @@ impl OrgTools {
     /// role the token does not state, a caller that cannot be read — is not,
     /// so an admin tool is only ever offered to someone the token names as one.
     async fn offers_admin_tools(&self, grant: Option<&Grant>) -> bool {
-        let Some(scope) = grant.and_then(|g| g.org.as_ref()) else {
+        let Some(grant) = grant else {
             return false;
         };
-        if !(self.gate)() || !self.orgs.signed_in() {
+        let Some(scope) = grant.org.as_ref() else {
+            return false;
+        };
+        if !(self.gate)(&grant.cwd) || !self.orgs.signed_in() {
             return false;
         }
         matches!(self.cloud.caller(&scope.org_id).await, Ok(caller) if caller.role == Some(Role::Admin))

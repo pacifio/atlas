@@ -1,6 +1,6 @@
 # ADR-0009: One theme format — shadcn base tokens, optional palette and keys, everything else derived
 
-**Status:** Accepted (2026-09-17). Plan and audit: `docs-atlas/content/private/theme-system.mdx`.
+**Status:** Accepted (2026-09-17). Amended by ADR-0022: no base token is required any more. Plan and audit: `docs-atlas/content/private/theme-system.mdx`.
 
 ## Context
 
@@ -18,7 +18,7 @@ That is why Rosé Pine "didn't apply everywhere": nothing guaranteed that every 
 
 1. **Base tokens** (required). These are the shadcn/ui token set, named exactly as shadcn names them, so any shadcn or tweakcn theme is a valid base.
 2. **Palette** (optional). Eight named hues: red, orange, yellow, green, cyan, blue, purple, pink.
-3. **Theme keys** (optional). Atlas-specific colours, named by role in Zed's dotted style (`element.hover`, `terminal.ansi.red`, `syntax.keyword`).
+3. **Theme keys** (optional). Atlas-specific colours, named by role in a dotted style (`element.hover`, `terminal.ansi.red`, `syntax.keyword`).
 
 **Every theme key has a derivation rule.** A missing key is resolved in this order: explicit key → palette-derived → base-derived → Atlas default for that appearance. The resolver runs in TypeScript and emits a fully resolved variable map, which is also used by non-CSS consumers such as xterm, pixi and recharts. A test asserts that every key resolves to a colour for every built-in theme.
 

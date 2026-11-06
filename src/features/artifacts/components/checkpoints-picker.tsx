@@ -20,11 +20,26 @@ import { invoke } from "@tauri-apps/api/core";
 import { GitBranch, GitCommitHorizontal, Loader2, Unlink } from "lucide-react";
 
 import { timeAgo } from "@/lib/time-ago";
-import { HintItem } from "@/ui/hint-group";
 
 import { DOCK_TRIGGER } from "./header-dock";
 
 import type { BoardCheckpoint } from "../types";
+import { HintItem } from "@tryatlas/design";
+
+/**
+ * The shas that more than one row carries. A commit two Sessions produced is
+ * one Checkpoint per Session, so it lists twice with the same subject, sha and
+ * diffstat — two rows that read as a duplicate unless each names its Session.
+ */
+export function sharedShas(rows: readonly Pick<BoardCheckpoint, "commitSha">[]): Set<string> {
+  const seen = new Set<string>();
+  const shared = new Set<string>();
+  for (const row of rows) {
+    if (seen.has(row.commitSha)) shared.add(row.commitSha);
+    else seen.add(row.commitSha);
+  }
+  return shared;
+}
 
 export function CheckpointsPicker({
   projects,
@@ -60,7 +75,7 @@ export function CheckpointsPicker({
         if (mine === seq.current) setRows([]);
       });
     // `projectsKey` stands in for `projects`: same content, stable identity.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [open, projectsKey]);
 
   const q = query.trim().toLowerCase();
@@ -73,6 +88,8 @@ export function CheckpointsPicker({
     );
   });
 
+  const shared = sharedShas(filtered);
+
   return (
     <Popover.Root
       open={open}
@@ -84,7 +101,7 @@ export function CheckpointsPicker({
       <HintItem label="Recent checkpoints">
         <Popover.Trigger
           render={
-            <button type="button" className={DOCK_TRIGGER}>
+            <button type="button" aria-label="Recent checkpoints" className={DOCK_TRIGGER}>
               <GitCommitHorizontal size={13} />
             </button>
           }
@@ -101,9 +118,7 @@ export function CheckpointsPicker({
               {rows === null ? (
                 <Loader2 size={10} className="animate-spin text-[var(--muted-foreground)]" />
               ) : (
-                <span className="text-3xs tabular-nums text-[var(--atlas-text-disabled)]">
-                  {filtered.length}
-                </span>
+                <span className="text-3xs tabular-nums text-disabled">{filtered.length}</span>
               )}
             </div>
 
@@ -135,7 +150,7 @@ export function CheckpointsPicker({
                         type="button"
                         onClick={() => onOpen(row)}
                         title={row.sessionTitle ?? undefined}
-                        className="flex w-full cursor-pointer items-start gap-2 border-b border-[var(--atlas-border-subtle)] px-3 py-1.5 text-left transition-colors last:border-b-0 hover:bg-[var(--atlas-element-hover)]"
+                        className="flex w-full cursor-pointer items-start gap-2 border-b border-border-subtle px-3 py-1.5 text-left transition-colors last:border-b-0 hover:bg-element-hover"
                       >
                         {/* Orphaned means the commit its Checkpoint pointed at is
                           gone — a rebase or an amend. Worth a different glyph,
@@ -143,10 +158,7 @@ export function CheckpointsPicker({
                           longer exists. */}
                         <span className="mt-[3px] shrink-0 text-[var(--muted-foreground)]">
                           {row.linkState === "orphaned" ? (
-                            <Unlink
-                              size={11}
-                              className="text-[var(--atlas-status-warning-foreground)]"
-                            />
+                            <Unlink size={11} className="text-warning" />
                           ) : (
                             <GitCommitHorizontal size={11} />
                           )}
@@ -160,26 +172,30 @@ export function CheckpointsPicker({
                                 </span>
                               )}
                             </span>
-                            <span className="shrink-0 text-3xs tabular-nums text-[var(--atlas-text-disabled)]">
+                            <span className="shrink-0 text-3xs tabular-nums text-disabled">
                               {timeAgo(row.at)}
                             </span>
                           </span>
                           <span className="mt-0.5 flex items-center gap-1.5 text-3xs leading-tight text-[var(--muted-foreground)]">
                             <span className="shrink-0 font-mono">{row.commitSha.slice(0, 7)}</span>
-                            {row.branch && (
-                              <>
-                                <GitBranch size={8} className="shrink-0" />
-                                <span className="min-w-0 truncate font-mono">{row.branch}</span>
-                              </>
+                            {shared.has(row.commitSha) && row.sessionTitle ? (
+                              <span className="min-w-0 truncate">{row.sessionTitle}</span>
+                            ) : (
+                              row.branch && (
+                                <>
+                                  <GitBranch size={8} className="shrink-0" />
+                                  <span className="min-w-0 truncate font-mono">{row.branch}</span>
+                                </>
+                              )
                             )}
                             <span className="ml-auto flex shrink-0 items-center gap-1 font-mono">
                               {row.insertions > 0 && (
-                                <span className="text-[var(--atlas-diff-added-text)]">
+                                <span className="text-[var(--diff-added-text)]">
                                   +{row.insertions}
                                 </span>
                               )}
                               {row.deletions > 0 && (
-                                <span className="text-[var(--atlas-diff-removed-text)]">
+                                <span className="text-[var(--diff-removed-text)]">
                                   −{row.deletions}
                                 </span>
                               )}
@@ -196,7 +212,7 @@ export function CheckpointsPicker({
             {/* The project is on its own line only when the list spans more than
                 one — inside a filtered board it is the same value on every row. */}
             {rows !== null && filtered.length > 0 && (
-              <p className="shrink-0 border-t border-[var(--border)] px-3 py-1 text-3xs text-[var(--atlas-text-disabled)]">
+              <p className="shrink-0 border-t border-[var(--border)] px-3 py-1 text-3xs text-disabled">
                 {new Set(filtered.map((r) => r.projectPath)).size > 1
                   ? `Across ${new Set(filtered.map((r) => r.projectPath)).size} projects`
                   : filtered[0].projectName}

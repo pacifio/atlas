@@ -10,6 +10,7 @@ const decision = (title: string, key: string): NotificationDecision => ({
   target: { type: "session", tabId: key },
   dedupeKey: key,
   groupKey: `session:${key}`,
+  actions: [{ id: "open", label: "Open" }],
   channels: { center: true, toast: true, native: true, badge: true, sound: false },
   toast: { variant: "success", durationMs: 5_000 },
   native: { title: "Atlas: atlas", body: `${title} — Task finished.` },

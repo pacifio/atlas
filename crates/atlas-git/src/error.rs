@@ -1,9 +1,8 @@
 //! Typed git errors: classify raw stderr/stdout into a stable code the UI
 //! can route on, plus a human message written for a person, not a parser.
 //!
-//! The pattern table is ported from dugite's `GitError` regexes and GitHub
-//! Desktop's `getDescriptionForError` (core.ts) — first match wins, so
-//! specific patterns must precede generic ones.
+//! The pattern table is matched in order — first match wins, so specific
+//! patterns must precede generic ones.
 
 use regex::Regex;
 use serde::Serialize;
@@ -22,7 +21,13 @@ pub enum GitErrorCode {
     NetworkError,
     /// Push rejected because the remote is ahead — pull first.
     NonFastForward,
-    /// `--force-with-lease` rejected (stale info).
+    /// Push rejected because local history was rewritten (rebased, amended):
+    /// every commit only the remote has has an equivalent here, so pulling
+    /// would bring the old copies back and a force-push is the fix. Never
+    /// produced by [`classify`] — the caller inspects the repository.
+    HistoryRewritten,
+    /// `--force-with-lease` rejected (stale info), or `--force-if-includes`
+    /// rejected (remote ref updated since checkout).
     ForcePushRejected,
     /// Remote-side policy: protected branch / required review / GH hooks.
     ProtectedBranch,
@@ -32,6 +37,9 @@ pub enum GitErrorCode {
     RebaseConflicts,
     /// `refusing to merge unrelated histories`.
     UnrelatedHistories,
+    /// Pull on a branch that has diverged from its upstream with no strategy
+    /// to reconcile: no `pull.rebase` config (or `pull.ff=only`) and no flag.
+    DivergentBranches,
     /// Checkout/merge/pull would clobber local edits; `files` lists them.
     LocalChangesOverwritten,
     /// Operation needs a clean tree ("commit or stash them").
@@ -119,6 +127,9 @@ fn patterns() -> &'static [Pattern] {
             p(r"GH013|push declined due to repository rule violations", GitErrorCode::PushRejected),
             p(r"exceeds GitHub's file size limit", GitErrorCode::PushRejected),
             p(r"\(stale info\)", GitErrorCode::ForcePushRejected),
+            // `--force-if-includes`: the remote tip was fetched but never part
+            // of this branch (a background fetch brought it in unseen).
+            p(r"\(remote ref updated since checkout\)", GitErrorCode::ForcePushRejected),
             p(
                 r"Updates were rejected because the (tip of your current branch is behind|remote contains work)",
                 GitErrorCode::NonFastForward,
@@ -160,6 +171,12 @@ fn patterns() -> &'static [Pattern] {
             p(
                 r"refusing to merge unrelated histories",
                 GitErrorCode::UnrelatedHistories,
+            ),
+            // No `pull.rebase` set → "need to specify"; `pull.ff=only` →
+            // "not possible to fast-forward". Same situation, two wordings.
+            p(
+                r"Need to specify how to reconcile divergent branches|fatal: Not possible to fast-forward, aborting",
+                GitErrorCode::DivergentBranches,
             ),
             p(
                 r"Your local changes to the following files would be overwritten",
@@ -268,9 +285,16 @@ pub fn friendly_message(code: GitErrorCode, files: &[String], hint: Option<&str>
         GitErrorCode::NonFastForward => {
             "The remote has commits you don't have yet. Pull before pushing.".into()
         }
+        GitErrorCode::HistoryRewritten => {
+            "Your commits were rewritten (rebased or amended) after they were pushed, so the \
+             remote still has the old copies. Pulling would bring those back; force-push to \
+             replace them."
+                .into()
+        }
         GitErrorCode::ForcePushRejected => {
-            "The force push was rejected — the remote branch moved since you last fetched. \
-             Fetch and review before forcing again."
+            "The force push was rejected — the remote branch has commits this branch never \
+             had, so forcing would discard someone else's work. Pull and review before \
+             forcing again."
                 .into()
         }
         GitErrorCode::ProtectedBranch => {
@@ -289,6 +313,11 @@ pub fn friendly_message(code: GitErrorCode, files: &[String], hint: Option<&str>
         }
         GitErrorCode::UnrelatedHistories => {
             "These branches have unrelated histories and can't be merged.".into()
+        }
+        GitErrorCode::DivergentBranches => {
+            "Your branch and the remote both have new commits. Choose whether to rebase your \
+             commits on top of the remote's or merge the two."
+                .into()
         }
         GitErrorCode::LocalChangesOverwritten => {
             let n = files.len();
@@ -406,9 +435,21 @@ mod tests {
             " ! [rejected]        main -> main (stale info)\nerror: failed to push some refs\n";
         assert_eq!(classify(stale, ""), GitErrorCode::ForcePushRejected);
 
+        let not_included = " ! [rejected]        main -> main (remote ref updated since checkout)\nerror: failed to push some refs\nhint: Updates were rejected because the tip of the remote-tracking branch has\n";
+        assert_eq!(classify(not_included, ""), GitErrorCode::ForcePushRejected);
+
         let protected =
             "remote: error: GH006: Protected branch update failed for refs/heads/main.\n";
         assert_eq!(classify(protected, ""), GitErrorCode::ProtectedBranch);
+    }
+
+    #[test]
+    fn classifies_divergent_pull_in_both_wordings() {
+        let unset = "hint: You have divergent branches and need to specify how to reconcile them.\nhint: You can do so by running one of the following commands sometime before\nhint: your next pull:\nhint:\nhint:   git config pull.rebase false  # merge\nfatal: Need to specify how to reconcile divergent branches.\n";
+        assert_eq!(classify(unset, ""), GitErrorCode::DivergentBranches);
+
+        let ff_only = "hint: Diverging branches can't be fast-forwarded, you need to either:\nhint:\nhint: \tgit merge --no-ff\nhint:\nhint: or:\nhint:\nhint: \tgit rebase\nfatal: Not possible to fast-forward, aborting.\n";
+        assert_eq!(classify(ff_only, ""), GitErrorCode::DivergentBranches);
     }
 
     #[test]

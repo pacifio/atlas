@@ -4,11 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-# Pinned to the exact version Zed pins (`zed-ref/Cargo.toml:518`). This crate is
-# a port of Zed's `acp_thread`, so it codes against the same schema revision;
-# porting the mechanism onto an older schema would mean re-deriving every place
-# the types moved between 1.4 and 2.0, which is exactly what the port exists to
-# avoid.
+# Pinned to an exact version. This crate codes against the 2.0 schema revision;
+# building it on an older schema would mean re-deriving every place the types
+# moved between 1.4 and 2.0.
 #
 # The pin's original justification — "nothing else links this crate" — expired.
 # Seven packages link it today: atlas-agent-manager, atlas-agent-servers,

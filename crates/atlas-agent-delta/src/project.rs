@@ -4,14 +4,16 @@
 //! like on the wire right now". Deciding what *changed* — and therefore which
 //! delta to send — is [`crate::projector`]'s job.
 
+use std::collections::HashMap;
+
 use agent_client_protocol::schema::v1 as acp;
 use atlas_acp_thread::{
-    AssistantMessageChunk, ContentBlock, PermissionOptions, ToolCall as ThreadToolCall,
-    ToolCallContent, ToolCallStatus as ThreadToolCallStatus,
+    AgentThreadEntry, AssistantMessageChunk, ContentBlock, PermissionOptions,
+    ToolCall as ThreadToolCall, ToolCallContent, ToolCallStatus as ThreadToolCallStatus,
 };
 use atlas_agent_wire::{
-    Message, MessageImage, MessageMode, MessageRole, PlanEntry, ToolCall, ToolCallStatus,
-    ToolContentBlock,
+    Message, MessageImage, MessageMode, MessageRole, PlanEntry, Subagent, SubagentStatus, ToolCall,
+    ToolCallStatus, ToolContentBlock,
 };
 
 /// One run of same-kind chunks inside an assistant entry.
@@ -182,6 +184,9 @@ pub fn run_message(
         model,
         images: Vec::new(),
         timestamp,
+        timestamp_approximate: false,
+        worked_ms: None,
+        stop_reason: None,
     }
 }
 
@@ -206,6 +211,9 @@ pub fn tool_message(
         model,
         images: Vec::new(),
         timestamp,
+        timestamp_approximate: false,
+        worked_ms: None,
+        stop_reason: None,
     }
 }
 
@@ -256,6 +264,12 @@ pub fn tool_call_meta(call: &ThreadToolCall) -> ToolCall {
             .collect(),
         raw_output: call.raw_output.clone(),
         content_blocks: content_blocks(&call.content),
+        parent_tool_call_id: call
+            .parent_tool_call_id
+            .as_ref()
+            .map(std::string::ToString::to_string),
+        started_at_ms: Some(call.started_at.timestamp_millis()),
+        ended_at_ms: call.ended_at.map(|at| at.timestamp_millis()),
     }
 }
 
@@ -487,10 +501,14 @@ pub fn stop_reason_token(reason: acp::StopReason) -> String {
 /// a run the stream announces and the snapshot skips is a bubble that vanishes
 /// on reload (ATL-224). Both skip empty runs.
 ///
-/// User messages DO appear here, unlike on the delta stream: a snapshot is the
-/// conversation, and one with the user's half missing is not one. The wire
-/// convention that user messages never arrive as *deltas* is about the live
-/// stream, where the frontend already added them optimistically.
+/// User messages DO appear here, every one of them: a snapshot is the
+/// conversation, and one with the user's half missing is not one. On the live
+/// stream only prompts the host sent are announced (`user_message`), not the
+/// history an agent replays.
+///
+/// The host's own snapshot reads the projection's announced view
+/// (`DeltaProjector::snapshot`) so it can say which `seq` it is as of; this
+/// thread-built list is its fallback for a session with no projection.
 pub fn snapshot_messages(
     thread: &atlas_acp_thread::AcpThread,
     model: Option<&str>,
@@ -498,7 +516,11 @@ pub fn snapshot_messages(
     use atlas_acp_thread::AgentThreadEntry;
 
     let mut out = Vec::new();
+    // The entry each message came from, so a turn's timing can find the
+    // message that ends it.
+    let mut entry_of: Vec<usize> = Vec::new();
     for (ix, entry) in thread.entries().iter().enumerate() {
+        let before = out.len();
         // The time the thread learned of the entry, not the time this snapshot
         // was taken. Reading the clock here made two snapshots of an unchanged
         // conversation disagree, and collapsed every historical pause to zero
@@ -519,6 +541,9 @@ pub fn snapshot_messages(
                     model: None,
                     images,
                     timestamp: at,
+                    timestamp_approximate: false,
+                    worked_ms: None,
+                    stop_reason: None,
                 })
             }
             AgentThreadEntry::AssistantMessage(message) => {
@@ -546,7 +571,7 @@ pub fn snapshot_messages(
             // a compaction is a status, not conversation; a completed plan is
             // carried by the snapshot's `plan` field, not as a message.
             //
-            // `CompletedPlan` has no constructor anywhere in the ported stack
+            // `CompletedPlan` has no constructor anywhere in the stack
             // today, so this arm is unreachable rather than merely unused; it
             // stays because the match must be exhaustive, and because the
             // variant is the shape a compacted plan would arrive in.
@@ -554,8 +579,262 @@ pub fn snapshot_messages(
             | AgentThreadEntry::CompletedPlan(_)
             | AgentThreadEntry::ContextCompaction(_) => {}
         }
+        // A replayed entry's time is when Atlas replayed it; say so rather
+        // than pass it off as when it was said.
+        if thread.entry_time_approximate(ix) {
+            for message in &mut out[before..] {
+                message.timestamp_approximate = true;
+            }
+        }
+        entry_of.resize(entry_of.len() + (out.len() - before), ix);
+    }
+    stamp_turns(&mut out, &entry_of, thread.turns());
+    out
+}
+
+/// Put each turn's timing on the message that ends it.
+///
+/// The message is the turn's last one, and only when that is the agent's: a
+/// turn that produced nothing has no message of its own to carry it, and
+/// stamping the one before would credit the previous turn's reply with this
+/// turn's time. This is the snapshot's counterpart of `turn_finished`, which
+/// the live client stamps onto the same message.
+///
+/// `entry_of` is ascending (messages are emitted in entry order), so each
+/// turn's last message is one binary search away rather than a scan.
+pub(crate) fn stamp_turns(
+    out: &mut [Message],
+    entry_of: &[usize],
+    turns: &[atlas_acp_thread::TurnRecord],
+) {
+    for turn in turns {
+        let after = entry_of.partition_point(|ix| *ix < turn.entries.end);
+        let Some(last) = after.checked_sub(1) else {
+            continue;
+        };
+        if entry_of[last] < turn.entries.start {
+            continue;
+        }
+        let message = &mut out[last];
+        if message.role != MessageRole::Assistant {
+            continue;
+        }
+        message.worked_ms = turn.worked_ms;
+        message.stop_reason = Some(stop_reason_token(turn.stop_reason));
+    }
+}
+
+// ── Subagents ───────────────────────────────────────────────────────────────
+
+/// Every subagent this thread has launched, in launch order.
+///
+/// Rebuilt from the thread rather than accumulated as events arrive: a child
+/// is identified by the call that launched it, and that call's own fields —
+/// its status, its result, the `rawInput` that names the child — are patched
+/// in place by later updates. Deriving keeps the answer correct whatever
+/// order those arrive in, which an incremental tally would not.
+///
+/// `message_id_at` gives the projection's message id for a thread entry, so
+/// the client can place a subagent in the transcript as well as in a panel.
+/// A subagent whose launching call has no message id yet is skipped: it has
+/// nowhere to be shown.
+pub fn subagents(
+    thread: &atlas_acp_thread::AcpThread,
+    message_id_at: impl Fn(usize) -> Option<String>,
+    started_at: impl Fn(usize) -> i64,
+) -> Vec<Subagent> {
+    subagents_timed(thread, message_id_at, started_at)
+        .into_iter()
+        .map(|(subagent, _)| subagent)
+        .collect()
+}
+
+/// [`subagents`], each paired with whether its end time is the child's own
+/// report rather than a floor — which a live projector, holding a better clock
+/// than the floor, needs to know before it overrides one.
+pub fn subagents_timed(
+    thread: &atlas_acp_thread::AcpThread,
+    message_id_at: impl Fn(usize) -> Option<String>,
+    started_at: impl Fn(usize) -> i64,
+) -> Vec<(Subagent, bool)> {
+    // One pass for the children's own work, so a launch can report how much
+    // of it there is. Codex sends several lifecycle calls per child, each
+    // with its own id, so the child's identity — its `agentPath` — is what
+    // the tally is keyed on, falling back to the launching call's id.
+    let mut counts: HashMap<String, u32> = HashMap::new();
+    // The child's latest call, for when it ended: the thread stamps an entry
+    // when it is created and never again, so a launch that is itself the
+    // whole child (Claude's `Agent`) has no time of its own for its end.
+    let mut last_call: HashMap<String, usize> = HashMap::new();
+    for (ix, entry) in thread.entries().iter().enumerate() {
+        let AgentThreadEntry::ToolCall(call) = entry else {
+            continue;
+        };
+        if let Some(parent) = &call.parent_tool_call_id {
+            *counts.entry(parent.to_string()).or_default() += 1;
+            last_call.insert(parent.to_string(), ix);
+        }
+    }
+
+    // What a child launched to run on its own ended as, if it has: nothing on
+    // the wire says so (Claude reports an async child's end only to a client
+    // that takes its draft task updates), but the agent holds the turn open
+    // until such children settle — so with no turn running, none is.
+    let async_end = (!thread.is_generating()).then(|| match thread.last_stop_reason() {
+        Some(acp::StopReason::Cancelled) => SubagentStatus::Interrupted,
+        _ => SubagentStatus::Completed,
+    });
+    let mut out: Vec<(Subagent, bool)> = Vec::new();
+    let mut seen: HashMap<String, usize> = HashMap::new();
+    for (ix, entry) in thread.entries().iter().enumerate() {
+        let AgentThreadEntry::ToolCall(call) = entry else {
+            continue;
+        };
+        let Some(launch) = &call.launched_subagent else {
+            continue;
+        };
+        let Some(message_id) = message_id_at(ix) else {
+            continue;
+        };
+        let id = call.id.to_string();
+        let key = launch.native_id.clone().unwrap_or_else(|| id.clone());
+
+        // A child the agent reports in several steps (Codex) is one row: the
+        // first step opens it, the later ones move it along.
+        if let Some(&at) = seen.get(&key) {
+            let (previous, _) = &mut out[at];
+            previous.status = subagent_status(call, previous.status, async_end);
+            if let Some(result) = child_result(call) {
+                previous.result = Some(result);
+            }
+            if previous.status != SubagentStatus::Running && previous.ended_at_ms.is_none() {
+                previous.ended_at_ms = Some(started_at(ix));
+            }
+            continue;
+        }
+
+        let status = subagent_status(call, SubagentStatus::Running, async_end);
+        let started = started_at(ix);
+        // What the child says about itself: the only clock a replayed one has
+        // (every replayed entry is created in the same instant), and the only
+        // count of work whose calls were never replayed to this session.
+        let reported = atlas_acp_thread::subagent::reported_usage(call.raw_output.as_ref());
+        let finished = status != SubagentStatus::Running;
+        let reported_end = reported
+            .duration_ms
+            .filter(|_| finished)
+            .map(|ms| started + i64::try_from(ms).unwrap_or(i64::MAX - started));
+        seen.insert(key.clone(), out.len());
+        let subagent = Subagent {
+            tool_call_id: id.clone(),
+            message_id,
+            name: launch.name.clone(),
+            status,
+            prompt: launch.prompt.clone(),
+            role: launch.role.clone(),
+            result: child_result(call),
+            tool_call_count: counts
+                .get(&id)
+                .copied()
+                .unwrap_or(0)
+                .max(reported.tool_uses.unwrap_or(0)),
+            started_at_ms: started,
+            // Otherwise a floor, not the end: the live projector stamps the
+            // moment it sees the child finish, and the floor stands only where
+            // it never did and the child reported nothing.
+            ended_at_ms: reported_end.or_else(|| {
+                finished.then(|| started_at(last_call.get(&id).copied().unwrap_or(ix).max(ix)))
+            }),
+            own_thread: launch.own_thread,
+        };
+        out.push((subagent, reported_end.is_some()));
     }
     out
+}
+
+/// The child's status — which is NOT simply the launching call's.
+///
+/// Two things observed from live agents make the call's own status the wrong
+/// answer on its own:
+///
+/// - A **lifecycle step** says what it is: a `started` call completes the
+///   instant the child is spawned. Codex's `Start subagent …` call is
+///   `completed` while the child runs for another minute.
+/// - An **async launch** does the same without saying so in the input: Claude
+///   answers an async `Agent` call with `status: "async_launched"` and the
+///   call goes `completed` at once, while the child's own tool calls keep
+///   arriving. Both would have shown every child as finished the moment it
+///   started.
+///
+/// A synchronous delegation — opencode's `task`, Claude's non-async `Agent` —
+/// has neither marker, and there the call finishing IS the child finishing.
+///
+/// `previous` is what the child already reported, so a later step cannot undo
+/// a terminal one: an `interacted` step arrives after `completed` for a child
+/// the parent talks to again.
+fn subagent_status(
+    call: &ThreadToolCall,
+    previous: SubagentStatus,
+    async_end: Option<SubagentStatus>,
+) -> SubagentStatus {
+    use atlas_acp_thread::subagent::Activity;
+
+    if previous != SubagentStatus::Running {
+        return previous;
+    }
+    let finished = match tool_status(&call.status) {
+        ToolCallStatus::Completed => SubagentStatus::Completed,
+        ToolCallStatus::Failed => SubagentStatus::Failed,
+        ToolCallStatus::Pending | ToolCallStatus::Running => return SubagentStatus::Running,
+    };
+    // A failed launch is a failed child whatever kind of step it was.
+    if finished == SubagentStatus::Failed {
+        return SubagentStatus::Failed;
+    }
+    match atlas_acp_thread::subagent::activity(call.raw_input.as_ref()) {
+        Some(Activity::Completed) => SubagentStatus::Completed,
+        Some(Activity::Interrupted) => SubagentStatus::Interrupted,
+        // Starting or talking to a child says nothing about it ending.
+        Some(Activity::Started | Activity::Interacted) => SubagentStatus::Running,
+        None => {
+            // Read once from `_meta` and kept on the call, because the
+            // marker and the `completed` status arrive in different updates.
+            if call.launched_async {
+                async_end.unwrap_or(SubagentStatus::Running)
+            } else {
+                SubagentStatus::Completed
+            }
+        }
+    }
+}
+
+/// What the child reported back — never an async launch's own result, which
+/// is the agent's receipt for starting it ("Async agent launched
+/// successfully. (This tool result is internal metadata — never quote …)"),
+/// written for the model and not the child's answer.
+fn child_result(call: &ThreadToolCall) -> Option<String> {
+    tool_call_summary(call).filter(|_| !call.launched_async)
+}
+
+/// What a finished child reported back, flattened.
+///
+/// Only the text the agent put in the call's content: `rawOutput` is the
+/// structured form the parent model reads, and showing it verbatim would put
+/// a usage block and a model-directed trailer in front of the user.
+fn tool_call_summary(call: &ThreadToolCall) -> Option<String> {
+    let mut text = String::new();
+    for content in &call.content {
+        if let ToolCallContent::ContentBlock(block) = content {
+            let chunk = block_text(block);
+            if !chunk.is_empty() {
+                if !text.is_empty() {
+                    text.push('\n');
+                }
+                text.push_str(&chunk);
+            }
+        }
+    }
+    (!text.trim().is_empty()).then_some(text)
 }
 
 #[cfg(test)]
@@ -608,5 +887,60 @@ mod permission_tests {
             wire["content"],
             serde_json::json!(["Sam Lee, on their comment", body])
         );
+    }
+}
+
+#[cfg(test)]
+mod turn_timing_tests {
+    use super::*;
+    use std::ops::Range;
+
+    fn reply(id: &str) -> Message {
+        run_message(
+            id.to_string(),
+            &Run {
+                is_thought: false,
+                text: "done".into(),
+            },
+            None,
+            chrono::Utc::now(),
+        )
+    }
+
+    fn record(entries: Range<usize>, worked_ms: u64) -> atlas_acp_thread::TurnRecord {
+        atlas_acp_thread::TurnRecord {
+            started_at: Some(chrono::Utc::now()),
+            ended_at: chrono::Utc::now(),
+            stop_reason: acp::StopReason::EndTurn,
+            entries,
+            worked_ms: Some(worked_ms),
+        }
+    }
+
+    /// The figure is the turn's monotonic run time, not its wall-clock span:
+    /// a turn the machine slept through for ten minutes worked for seconds.
+    #[test]
+    fn a_turn_is_credited_with_its_monotonic_time_not_its_wall_span() {
+        let mut turn = record(0..1, 5_000);
+        turn.started_at = Some(turn.ended_at - chrono::Duration::minutes(10));
+        let mut out = vec![reply("a")];
+        stamp_turns(&mut out, &[0], std::slice::from_ref(&turn));
+        assert_eq!(out[0].worked_ms, Some(5_000));
+        assert_eq!(out[0].stop_reason.as_deref(), Some("end_turn"));
+    }
+
+    /// Each turn lands on its own last message, found by search over the
+    /// ascending entry index, and an empty turn lands nowhere.
+    #[test]
+    fn each_turn_lands_on_its_own_last_message() {
+        // Entry 1 projects to two runs; entry 3 to one; entry 2 to none.
+        let mut out = vec![reply("a"), reply("b"), reply("c")];
+        stamp_turns(
+            &mut out,
+            &[1, 1, 3],
+            &[record(1..2, 10), record(2..3, 20), record(3..4, 30)],
+        );
+        let worked: Vec<_> = out.iter().map(|m| m.worked_ms).collect();
+        assert_eq!(worked, [None, Some(10), Some(30)]);
     }
 }

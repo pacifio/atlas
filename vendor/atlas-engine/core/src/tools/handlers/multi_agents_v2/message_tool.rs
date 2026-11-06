@@ -1,3 +1,4 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 //! Shared argument parsing and dispatch for the v2 agent messaging tools.
 //!
 //! `send_message` and `followup_task` share the same submission path and differ only in whether the
@@ -130,6 +131,7 @@ pub(crate) async fn handle_message_string_tool(
             agent_thread_id: receiver_thread_id,
             agent_path: receiver_agent_path,
             kind: SubAgentActivityKind::Interacted,
+            prompt: None,
         },
     )
     .await;

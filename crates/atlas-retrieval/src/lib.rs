@@ -1,6 +1,6 @@
-//! The retrieval core shared by Atlas memory (`atlas-memory`) and the code
-//! index (`atlas-codeindex`): one way to key cached embeddings, one vector
-//! file that heals, one fusion. See docs/superpowers/plans/2026-10-03-memory-system/00-overview.md.
+//! Atlas memory's retrieval core (`atlas-memory`): one way to key cached
+//! embeddings, one vector file that heals, one fusion. It was shared with the
+//! code index until ADR-0021 removed that; memory is its only consumer now. See docs/superpowers/plans/2026-10-03-memory-system/00-overview.md.
 
 pub mod codec;
 mod embedder;

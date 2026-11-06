@@ -36,7 +36,7 @@
 //   Ctrl+Option+2  zuhayerSessionLive   Zuhayer's live Codex Session streams its next steps
 //   Ctrl+Option+3  zuhayerComments      Zuhayer comments on your discount-code edit
 //                                       (videos 1 and 4: it lands in the agent chat)
-//   Ctrl+Option+4  zuhayerMessage       Zuhayer posts "server-side check is in" in #shop,
+//   Ctrl+Option+4  zuhayerMessage       Zuhayer posts "Server-side check is in, tests included." in #shop,
 //                                       with the checkpoint card (video 4 beat 5)
 //   Ctrl+Option+5  zuhayerDraftEdit     Zuhayer types his lines into "Move discount
 //                                       pricing to the server", named cursor and all (video 5)
@@ -49,7 +49,8 @@
 
 import type { Scenario } from "../types";
 import { CONTENT } from "./northwind-content";
-import { installNorthwindAgent } from "./northwind-agent";
+import { flashCueMiss } from "../badge";
+import { ensureVideo1Session, installNorthwindAgent } from "./northwind-agent";
 import {
   northwindCommsCommands,
   postAsMe,
@@ -58,7 +59,7 @@ import {
   zuhayerOnline,
   zuhayerTyping,
 } from "./northwind-comms";
-import { northwindGitCommands, northwindGitRawCommands } from "./northwind-git";
+import { northwindGitCommands } from "./northwind-git";
 import {
   northwindMiscCommands,
   northwindMiscInit,
@@ -79,13 +80,17 @@ const cues = CONTENT.cues;
 const actions = {
   zuhayerOnline,
   zuhayerSessionLive: () => streamLiveSession(),
-  zuhayerComments: () =>
+  // Video 1's Session is made by the prompt; if the prompt missed, the cue
+  // makes it, so the comment still has its row to land on.
+  zuhayerComments: () => {
+    ensureVideo1Session(cues.zuhayerComment.session);
     commentAs(
       "zuhayer",
       cues.zuhayerComment.session,
       cues.zuhayerComment.step,
       cues.zuhayerComment.body,
-    ),
+    );
+  },
   zuhayerMessage: () => zuhayerMessage(cues.zuhayerMessage.body, cues.zuhayerMessage.sessionRef),
   zuhayerDraftEdit: () =>
     zuhayerDraftEdit(
@@ -93,7 +98,10 @@ const actions = {
       cues.zuhayerDraftEdit.text,
       cues.zuhayerDraftEdit.afterText,
     ),
-  zuhayerShare: () => zuhayerMessage(cues.zuhayerShare.body, cues.zuhayerShare.sessionRef),
+  zuhayerShare: () => {
+    if (cues.zuhayerShare.sessionRef) ensureVideo1Session(cues.zuhayerShare.sessionRef.session);
+    zuhayerMessage(cues.zuhayerShare.body, cues.zuhayerShare.sessionRef);
+  },
   zuhayerTyping: () => zuhayerTyping("shop"),
   zuhayerMovesNote: () => zuhayerMovesNote(),
   // Clear what the last take left in browser storage, then reload: the
@@ -128,20 +136,24 @@ function installShortcuts(): void {
       event.preventDefault();
       event.stopImmediatePropagation();
       console.info(`[northwind] cue: ${cue}`);
-      void actions[cue]();
+      // A cue returns why it did nothing, if it did nothing.
+      void Promise.resolve(actions[cue]()).then((miss) => {
+        if (typeof miss !== "string") return;
+        console.warn(`[northwind] cue ${cue}: ${miss}`);
+        flashCueMiss(`cue ${event.code.replace("Digit", "")} missed: ${miss}`);
+      });
     },
     { capture: true },
   );
 }
 
 /**
- * Browser-storage keys that hold CONTENT from an earlier page load — recent
- * chats, the notification bell, pinned chat messages, another project's file
+ * Browser-storage keys that hold CONTENT from an earlier page load — the
+ * notification bell, pinned chat messages, another project's file
  * index. Layout and theme keys are left alone, so the window keeps the shape
  * it was arranged in for the take.
  */
 const CONTENT_KEYS = [
-  /^atlas-recent-chats$/,
   /^atlas-notifications$/,
   /^atlas-chat-pins$/,
   /^atlas:fileindex-cache:/,
@@ -173,7 +185,7 @@ export const northwind: Scenario = {
     ...northwindSpacesCommands,
     ...northwindTimelineCommands,
   },
-  rawCommands: { ...northwindMiscRawCommands, ...northwindGitRawCommands },
+  rawCommands: northwindMiscRawCommands,
   init: () => {
     installNorthwindAgent({
       effects: {

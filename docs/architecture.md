@@ -26,7 +26,7 @@ src/features/<feature>/components  →  stores (Zustand)  →  lib/*-api.ts (inv
 │  │  (WKWebView on macOS)       │◀──▶│  (tokio + tauri 2)              │ │
 │  │                             │ IPC│                                 │ │
 │  │  • Zustand stores           │    │  • commands/ — 365 IPC verbs    │ │
-│  │  • CodeMirror, xterm,       │    │    across 70 domain modules     │ │
+│  │  • code view, xterm,        │    │    across 70 domain modules     │ │
 │  │    Tiptap, Pixi, TanStack   │    │  • ported ACP stack (10 crates) │ │
 │  │  • Tailwind v4              │    │  • atlas-native-agent (engine)  │ │
 │  │                             │    │  • atlas-terminal (PTY)         │ │
@@ -36,7 +36,7 @@ src/features/<feature>/components  →  stores (Zustand)  →  lib/*-api.ts (inv
 │                                                                        │
 │  Persistence:                                                          │
 │  • Per-project: <project>/.atlas/ (knowledge, canvas.json,             │
-│    editor-state.json, logs.jsonl, memory index, code-index,            │
+│    editor-state.json, logs.jsonl, memory index,                        │
 │    cloned repos, skills, packs)                                        │
 │  • Global:      ~/.atlas/ (pinned log rows),                           │
 │                 <app-config-dir>/threads.db (session history)          │
@@ -49,7 +49,8 @@ Organized by **feature**, not file type:
 
 ```
 src/features/<feature>/
-  components/   — React components
+  components/   — React components; containers at the top level
+    views/      — views: render from props alone (see "Containers and views")
   stores/       — Zustand store(s) for this feature
   lib/          — pure helpers, and the invoke()/listen() wrappers (<domain>-api.ts)
 ```
@@ -57,8 +58,34 @@ src/features/<feature>/
 `src/features/` holds ~30 slices: app, chat, editor, terminal, browser, git, github, explorer, knowledge, canvas, layout, log, monitor, settings, memory, mission-control, model-chat, organisations, packs, projects, skills, telemetry, updater, and more.
 
 - **Cross-feature widgets** live in `src/components/`.
-- **UI primitives** live in `src/ui/`.
+- **UI primitives** come from the design package, `@tryatlas/design` (ADR-0027).
 - **Shared helpers** live in `src/lib/`. `@/` aliases `src/`.
+
+### The design package and themes
+
+`@tryatlas/design` is installed from a git tag, pinned exactly in `package.json`
+(ADR-0027). It owns the primitives, the scales and named utilities, `keys.toml`
+(every theme key and how it derives), the TypeScript resolver, the built-in
+themes and the ratchet's rules. Change it there and bump the pin. A theme
+reaches the screen like this:
+
+1. Rust (`crates/atlas-theme`) loads the built-in themes and the user's
+   `~/.config/atlas/themes/*.toml` (`atlas-dev` under `bun run dev:app`; an
+   absolute `XDG_CONFIG_HOME` replaces `~/.config`), against the key list and rule tables
+   `bun run theme:keys` copied from the package. A file that is not
+   `schema = 1` is skipped with a warning and the default `atlas` theme still
+   loads; there is no legacy format.
+2. `src/features/theme/apply-theme.ts` resolves the theme with the package's
+   `resolveTheme` and writes every value under `html:root` in
+   `<style id="atlas-resolved-theme">`. A key's variable is its name with `.`
+   and `_` as `-`, unprefixed: `element.hover` is `--element-hover`.
+3. `src/styles/globals.css` imports `styles-core.css`, the package stylesheet
+   without its built-in theme blocks, so the utilities read those variables.
+4. Renderers that need a concrete value (xterm, pixi, recharts, mermaid,
+   canvas) read `src/features/theme/theme-values.ts` and subscribe to theme
+   changes (`theme-subscription-contract.test.ts`).
+
+Reference: `docs/reference/design-system.md` and `docs/reference/theme-keys.md`.
 
 ### State management
 
@@ -73,10 +100,32 @@ src/features/<feature>/
 | Subsystem | Store holds (UI only) | Real state lives in |
 |---|---|---|
 | Chat | queues, draft text, scroll position (`chat/stores/chat-store.ts`) | the ported thread behind `AgentConnection` — message log, tool calls, run status, projected to the session-delta wire and streamed over `atlas:agents` |
-| Editor | open-file metadata, dirty flags (`editor/stores/editor-store.ts`) | CodeMirror owns the document text |
+| Editor | open-file metadata, dirty flags (`editor/stores/editor-store.ts`) | the file view's editor (`code-file-view.tsx`) owns the document text |
 | Terminal | split/pane layout (`terminal/stores/terminal-store.ts`) | `atlas-terminal`'s PTY session owns the byte buffer |
 
 This is a deliberate performance boundary, not an oversight to fix by moving more state into the store. Lifting chat messages, document text, or terminal bytes into Zustand degrades streaming, typing, and PTY throughput — every keystroke would touch Immer.
+
+### Containers and views
+
+A feature surface is split in two (ADR-0027's boundary rule):
+
+- **The container** (`components/<name>.tsx`) does the wiring. It reads stores, calls the feature's `*-api.ts` wrappers, listens for and dispatches `atlas:*` events, and renders a view with plain props.
+- **The view** (any file under `components/views/`, conventionally `<name>-view.tsx`) only renders. It may keep local UI state (`useState`, `useRef`, `useReducer`), run DOM-only effects, handle keys and call the callbacks it was given. It may not import a store or a `*-api` wrapper, touch `@tauri-apps/*`, call `invoke()` or `.getState()`, or use a hook that wraps a store.
+
+A view is what can move into `@tryatlas/design`, render from fixtures, and be redesigned without touching the data path. Rust still owns authoritative state: a view gets what it draws, never the chat log, document text or terminal bytes as a prop dump.
+
+```tsx
+// components/session-masthead.tsx: the container
+const prices = useModelPricingStore.use.prices();
+const cost = spent > 0 ? costOf(spend, priceForModel(prices, s.model)) : null;
+return <SessionMastheadView detail={detail} pr={pr} cost={cost} spent={spent} … />;
+
+// components/views/session-masthead-view.tsx: the view takes `cost`, never the store
+```
+
+**Agent identity.** `agentMeta(id)` (`agents/lib/agent-meta.ts`) reads the registry store, so a view does not call it. A view that shows an agent's name or mark calls `useAgentMeta(id)` from `agents/lib/agent-meta-context.ts`, or takes an `AgentMeta` or a label as a prop. The resolution is pure (`resolveAgentMeta(id, snapshot)` in `agent-identity.ts`); `AgentMetaProvider`, mounted in `main.tsx`, binds the context to the live registry. Pure libs that label agents (`artifacts/lib/board.ts`, `usage/lib/derive.ts`) take a required `resolveAgent` argument, which a container gets from `useAgentMetaResolver()` (code outside React, such as the session export, passes `agentMeta`).
+
+**The guard.** `tests/view-purity-contract.test.ts` checks every file under a `views/` directory for direct imports of stores, `agent-meta.ts`, `*-api` wrappers and `@tauri-apps`, and for store or `invoke()` calls; a view that crosses the line type-checks and renders exactly like a pure one, so nothing else sees it. Its `PURE_SHARED_MODULES` (agent identity, the agent marks, the board and usage derivations) are checked through their whole value-import graph, and a failure names the import chain.
 
 Other stores: `project/stores/project-store.ts` (current project, recents), `git/stores/git-store.ts` (branch, status, lane-assigned commit graph), `log/stores/log-store.ts` (ring-buffered event log, 500 in memory, + on-disk pinned rows), `knowledge/stores/knowledge-store.ts`, `canvas/stores/canvas-store.ts` (ReactFlow nodes/edges), `monitor/stores/usage-store.ts` (token usage per provider/model).
 
@@ -88,27 +137,27 @@ Other stores: `project/stores/project-store.ts` (current project, recents), `git
 - **Up to 3 columns** (`groupOrder`, capped at 3). Each tab carries a `groupId` naming its column.
 - A maintained `activeTabId` mirrors the focused column's active tab, so most readers don't need to know splits exist.
 
-`src/lib/constants.ts` holds `TAB_TYPES` (the tab-type registry); `src/features/layout/components/center-panel.tsx` holds the lazy-import map keyed off it. New panel type = lazy import in `center-panel.tsx` + entry in `TAB_TYPES` + entry in `NEW_TAB_OPTIONS` if it should reach the `+` menu.
+`src/lib/constants.ts` holds `TAB_TYPES` (the tab-type registry); `src/features/layout/components/tab-panels.tsx` holds the lazy-import map and render switch keyed off it (`center-panel.tsx` lays out the split columns that host them). New panel type = placement in `TAB_PLACEMENT` (ADR-0024) + entry in `TAB_TYPES` + lazy import and render branch in `tab-panels.tsx` + entry in `SURFACES` (`src/features/layout/lib/surfaces.ts`) if ⌘T should offer it + entry in `PERSISTENT_TYPES_LIST` if it stays mounted across tab switches.
 
-**Persistent module types — editor, terminal, browser, knowledge-graph, pdf — stay mounted across tab switches** via `display: contents` / `display: none` instead of unmounting. Remounting would rebuild CodeMirror instances, kill the PTY's rendered scrollback, or tear down the native embedded webview.
+**Persistent module types — editor, terminal, browser, knowledge-graph, pdf — stay mounted across tab switches** via `display: contents` / `display: none` instead of unmounting. Remounting would rebuild the file view and drop its unsaved edits, kill the PTY's rendered scrollback, or tear down the native embedded webview.
 
 ## Backend (`src-tauri/src/`)
 
-One Rust module per IPC domain under `src-tauri/src/commands/`. `commands/mod.rs` declares 70 `pub mod` domain files:
+One Rust module per IPC domain under `src-tauri/src/commands/`. `commands/mod.rs` declares one `pub mod` per domain (`ls src-tauri/src/commands` for the current set):
 
 | Domain group | Modules |
 |---|---|
 | Agents (ported ACP stack) | agents, agent_host, agent_transcript, agent_analytics, agent_memory, catalog, registry, capture, artifacts_cloud |
-| Agent tool servers | memory_server (ADR-0010), ui_server (ADR-0012) |
+| Agent tool servers | memory_server (ADR-0010), memory_bridge (ADR-0019, ADR-0020), ui_server (ADR-0012) |
 | Terminal / browser / fs | terminal, browser, fs |
-| Git | git, git_graph, git_watcher, git_autofetch, gitdiff, git_ops, git_conflicts, git_snapshot, git_stage_ops |
-| GitHub | github |
+| Git | git, git_graph, git_watcher, git_autofetch, gitdiff, git_ops, git_conflicts, git_snapshot, git_stage_ops, git_pr (a branch's PR badge, via `gh pr list`), git_avatars (author avatars, via `gh api`) |
+| GitHub | github (search and clone reference repositories), pull_requests (the pull-request surface, via `gh api`; see below) |
 | Knowledge | knowledge, knowledge_meta, knowledge_links, knowledge_export, knowledge_graph_layout |
-| Memory | memory_* — graph, pack, policy, sharing, summarize, timeline, delta, inject, compile, indexer, retrieve; plus shared_memory, instruction_sync |
+| Memory | memory_* — graph, pack, policy, sharing, summarize, timeline, delta, inject, compile, indexer, retrieve, capture (the session recorder, read-only), dream, repo (the Agent Memory Repo mirror); plus shared_memory, instruction_sync |
 | Models & usage | models, models_pricing, usage, tool_stats |
 | Session chat | session_chat, session_chat_sessions, modelchat |
 | Auth & environment | auth, byok, shell_profile, mcp |
-| Other | app_state, canvas, cli, clipboard, code_index, code_server, compose_prompt, feedback, fileindex, log, mention_search, mission_control, pdf_annotations, plans, project_session, recent_files, skills, telemetry, updater, window |
+| Other | app_state, canvas, cli, clipboard, code_server, compose_prompt, feedback, fileindex, log, mention_search, mission_control, pdf_annotations, plans, project_session, recent_files, skills, telemetry, updater, window |
 
 Adding a command is a three-edit rule:
 
@@ -119,6 +168,32 @@ Adding a command is a three-edit rule:
 Miss any of the three and the command either fails to compile or silently 404s from the frontend's `invoke()`.
 
 **Every blocking operation must run inside `tokio::task::spawn_blocking`** — `Command::output`/`Command::spawn`, file I/O over large trees, git subprocess calls, anything not already `async`. The Tauri command runtime is shared with the UI's IPC channel; a blocking call there stalls every other in-flight command and freezes the UI.
+
+### Pull requests
+
+Every GitHub read and write goes through the user's own `gh` login; Atlas never holds or reads a token. The path, top to bottom:
+
+```
+src/features/pull-requests/lib/
+  pull-requests-queries.ts   react-query keys + stale times; turn end → invalidatePullRequestQueries
+  pull-requests-api.ts       one wrapper per pr_* command, behind the gh gate (pr-errors.ts)
+        │ invoke
+src-tauri/src/commands/pull_requests/
+  mod.rs       the pr_* commands, flat args, Result<T, PrError>
+  github.rs    the GitHub driver: which requests an operation takes
+  parse.rs     GitHub's JSON → the provider-neutral types in model.rs
+  queries.rs   the GraphQL documents
+  gh.rs        one `gh api -i` process per request: timeout, permit pool,
+               rate-limit pause, ETag revalidation
+  images.rs    image proxy for bodies/comments (GitHub image hosts only)
+```
+
+- **Provider-neutral.** `model.rs` names no host; what a host can do is data (`PrCapabilities`, `PrViewerPermissions`), so a GitLab driver slots in beside `github.rs` without the UI changing.
+- **Errors say what to do.** `PrError` is `{ kind, message?, retryAt? }` — `notInstalled`, `notAuthenticated`, `rateLimited`, `network`, `notFound`, `unsupported`, `invalid`, `failed`. A missing, signed-out or rate-limited `gh` closes the frontend's gh gate, which holds every repository's reads back for a bounded time and reopens on window focus (a rate limit waits for its reset).
+- **Images.** CSP `img-src` stays closed: `pr_image` fetches an allowlisted GitHub image with the `gh` credential, caches it, and the page shows it as a `blob:` URL (`pr-image.ts`).
+- **Freshness.** Stale times per read (list 30s, detail 60s / merged 10min, checks 15s, files viewed 15s), a five-minute poll while on screen, a refetch on focus, and an invalidation when an agent's turn ends. REST reads revalidate with an ETag, and GitHub does not charge a 304.
+
+The sidebar's PR badge (`git_pr`) is older and separate: one `gh pr list` per repository, shared by every card.
 
 ### Event channels
 
@@ -139,19 +214,19 @@ Streaming from Rust to the UI runs on Tauri events, `atlas:*` channels, most pay
 | `atlas:modelchat` | model-chat streaming |
 | `atlas:browser-nav` | embedded-webview navigation state |
 | `atlas:git-changed`, `atlas:git-status-fresh`, `atlas:git:op` | git state invalidation from the fs-watcher, and long-op progress |
-| `atlas:codebase-index:progress` | a code index job finished (or build progress); the status pill re-reads `codebase_index_status` |
 | `atlas:update-checking` / `-available` / `-progress` / `-ready` / `-applied` / `-error` | auto-updater lifecycle |
 | `atlas:auth-changed` / `-signed-out` / `-error` | account/session state |
 | `atlas:byok-env-updated` | shell-profile API-key environment changed |
 | `atlas:recent-files-changed`, `atlas:models-changed`, `atlas:models-pricing-updated` | cache-invalidation broadcasts |
-| `atlas:cli-open-project`, `atlas:close-active-tab` | native menu / single-instance-relaunch plumbing |
+| `atlas:menu-command` | the id of the clicked native menu item (macOS); the window runs it. The menus are `src-tauri/menu.json`, which the Windows/Linux titlebar also draws |
+| `atlas:cli-open-project` | single-instance-relaunch plumbing |
 | `atlas:explorer:changed`, `atlas:fileindex:updated` | file-tree and file-index invalidation |
 | `atlas:knowledge:links-changed`, `atlas:knowledge:meta-changed` | knowledge-base backlink and metadata updates |
 | `atlas:model-download:*`, `atlas:memory-embed:*` | local model download and embedding progress |
 
 ## Agent runtime
 
-Atlas's agent stack is a port of Zed's, taken as a mechanism rather than rewritten. Two kinds of agent run behind one seam: the **native agent** — Atlas's own engine, a hard fork vendored under `vendor/atlas-engine` and reached through `crates/atlas-native-agent` (ADR-0003, ADR-0011), running in-process — and any number of **external ACP agents** — subprocesses speaking Agent Client Protocol (JSON-RPC over stdio). Nothing above the seam knows which it is talking to.
+Two kinds of agent run behind one seam: the **native agent** — Atlas's own engine, ported once and now living under `vendor/atlas-engine` and reached through `crates/atlas-native-agent` (ADR-0003, ADR-0011), running in-process — and any number of **external ACP agents** — subprocesses speaking Agent Client Protocol (JSON-RPC over stdio). Nothing above the seam knows which it is talking to.
 
 **A fresh install has no ACP agents at all.** Only the native agent is offered. An external agent exists exactly when the user installed it from the Marketplace, which writes the single entry in the installed-agents map; nothing else makes an agent runnable. Finding a binary on `PATH` is a *detection* — an offer the user can accept, never a spawn candidate. See [ADR-0002](adr/0002-no-default-acp-agents.md).
 
@@ -162,7 +237,7 @@ Atlas's agent stack is a port of Zed's, taken as a mechanism rather than rewritt
 | Implementation | Crate | Drives |
 |---|---|---|
 | external ACP agent | `atlas-agent-servers` | a subprocess over JSON-RPC/stdio |
-| native agent | `atlas-native-agent` | the vendored `atlas-engine`, in-process |
+| native agent | `atlas-native-agent` | the `atlas-engine`, in-process |
 
 Beyond `prompt` / `cancel` / `authenticate`, **every optional behaviour is capability-gated** — either a `supports_*` predicate (`supports_load_session`, `supports_resume_session`, `supports_close_session`, `supports_logout`, `supports_http_mcp`) or an `Option<Arc<dyn …>>` sub-trait the connection returns only when the agent advertised it (`model_selector`, `session_modes`, `session_config_options`, `session_list`, `truncate`, `retry`, `set_title`, `telemetry`). A caller asks the connection what it can do; it never asks who it is.
 
@@ -172,7 +247,7 @@ Beyond `prompt` / `cancel` / `authenticate`, **every optional behaviour is capab
 
 Three layers sit between the connection and the IPC surface:
 
-- **`AgentManager`** (`crates/atlas-agent-manager`) owns who is connected and which sessions are open on them — ported from Zed's `AgentConnectionStore`. Three behaviours worth knowing: a second connect request while the first is still connecting *joins* it rather than starting a second process; a failed connection does not stick (the entry records the error for waiters, then goes, so the next request retries instead of replaying the failure forever); and a version bump drops the connection, because the running process is on the old binary. Every eviction path also forgets that agent's sessions and cancels any connect still in flight — a session pins the connection `Arc`, so one left behind keeps a child alive that nothing, including the shutdown sweep, can reach.
+- **`AgentManager`** (`crates/atlas-agent-manager`) owns who is connected and which sessions are open on them. Three behaviours worth knowing: a second connect request while the first is still connecting *joins* it rather than starting a second process; a failed connection does not stick (the entry records the error for waiters, then goes, so the next request retries instead of replaying the failure forever); and a version bump drops the connection, because the running process is on the old binary. Every eviction path also forgets that agent's sessions and cancels any connect still in flight — a session pins the connection `Arc`, so one left behind keeps a child alive that nothing, including the shutdown sweep, can reach.
 - **`AgentHost`** (`src-tauri/src/commands/agent_host.rs`) is what `commands/agents.rs` talks to. It holds the three things the ported stack deliberately does not do: the **identity map** between the frontend's per-spawn `AgentId`/`SessionKey` and the manager's own keys, the **history** row kept current in the thread-metadata store, and cheap **session metadata** (`snapshot_meta`) on the send path.
 - **`DeltaProjector`** (`crates/atlas-agent-delta`) turns thread events into the wire the rest of Atlas consumes.
 
@@ -180,25 +255,41 @@ Three layers sit between the connection and the IPC surface:
 
 Every delta travels an ordered `OutboundPipeline` (`atlas-bus`) of independent middleware: `BroadcastMiddleware` (the `atlas:agents` window event), `CaptureMiddleware` (Timeline + the permanent checkpoint record), `AnalyticsMiddleware`, `TranscriptMiddleware`, `MemoryIngestMiddleware`.
 
+Ahead of the pipeline, the sink's `SleepWatch` (`src-tauri/src/sleep_watch.rs`) reads the clocks on every delta and on a 5 s tick: when the wall clock has run ahead of the monotonic one (which stops while the machine sleeps), every turn that was running across the gap gets a `slept_mid_turn` delta, delivered before that turn's terminal. While the turn runs the composer shows it live (`sleep-pill.tsx`); when the turn ends the store freezes it onto the turn's last message as a `TurnInterruption` record, which the transcript draws as its own row (`interruption-row.tsx`) with Retry and Continue — a record on the turn, never text in it. Agent-agnostic by construction — it watches the machine, not the agent.
+
 The `SessionDelta` shapes those consumers pattern-match live in **`crates/atlas-agent-wire`** and are **additive-only**: consumers match concrete variants and fields, so adding an optional field or variant is ordinary work (same change as its consumers, plus the contract tests), while renaming or removing one, or changing a field's meaning, is a breaking change that updates every consumer at once. `crates/atlas-agent-wire/tests/contract.rs` (Rust) and `tests/wire-shape-contract.test.ts` (TS) are the authority: they spell the contract out and fail if the wire drifts from it. (`docs/agents/delta-wire-contract.md` is a git-ignored working note; the tests do not rely on it.) The thread model and the wire disagree about what a "message" is — the thread keeps one entry per assistant message with interleaved text and thought chunks; the wire emits one message per contiguous run of a kind — and reconciling that gap is precisely `atlas-agent-delta`'s job.
 
 ### Atlas's tool servers
 
-Atlas hands agents three in-process MCP services on one loopback listener, behind one bearer token per session: the **memory tool server** (`memory_server/`, `/mcp`, ADR-0010), offered to every agent that advertises HTTP MCP, the **UI tool server** (`ui_server/`, `/ui`, ADR-0012), offered only to a connection that carries **UI control** — today the in-process native connection — and the **organisation tool server** (below). One offer (`MemorySessionOffers`) decides all three, because the token table holds one token per session. A UI tool call crosses to the window as `atlas:ui-action`; the frontend performs it through the app's own openers (`src/features/ui-actions/`) and answers through `ui_action_respond`, so Rust mirrors no layout or focus state. `tests/ui-actions-contract.test.ts` keeps the tool list and the window's dispatcher in step.
+Atlas hands agents three in-process MCP services on one loopback listener, behind one bearer token per session: the **memory tool server** (`memory_server/`, `/mcp`, ADR-0010), offered to every agent — over HTTP to the in-process native agent, and to every ACP agent, whatever it advertises, as a stdio server: the Atlas binary run as `atlas mcp-bridge <url> <token file>`, the token in a private file and never in the entry, which an adapter may put on its command line (ADR-0019, ADR-0020) — the **UI tool server** (`ui_server/`, `/ui`, ADR-0012), offered only to a connection that carries **UI control** — today the in-process native connection — and the **organisation tool server** (below). One offer (`MemorySessionOffers`) decides all three, because the token table holds one token per session. A UI tool call crosses to the window as `atlas:ui-action`; the frontend performs it through the app's own openers (`src/features/ui-actions/`) and answers through `ui_action_respond`, so Rust mirrors no layout or focus state. `tests/ui-actions-contract.test.ts` keeps the tool list and the window's dispatcher in step.
 
 ### The organisation tool server
 
 The **organisation tool server** (`org_server/`, `/org`, `atlas_org`, ADR-0014) lets Atlas Agent read the organisation a Project belongs to — members, conversations, the inbox, recorded sessions and their comments — and act in it as the signed-in user. It is offered only to a connection that carries **organisation access** (`org_access` on the session request, the same kind of connection property as UI control, never an agent id), while the setting "Let Atlas Agent act in your organisation" is on, someone is signed in, and the session's Project is bound to a Workspace. The offer resolves the Project's binding into an `OrgScope` (organisation + Workspace) stamped on the session's grant; the tools act in that organisation — in that Workspace unless a tool names another of the organisation's, whose server then decides — and nowhere else, so switching the window's active organisation cannot redirect a turn, and the setting, the sign-in and the binding are re-checked on every call. Every remote operation goes through one trait, the **organisation cloud** (`cloud.rs`, `OrganisationCloud`): the production `AppOrganisationCloud` (`adapter.rs`) wraps the artifacts client, the chat (comms) client and `AuthCore`, which already hold the bearer in Rust; the tests run the real listener against an in-memory `FakeOrganisation`. Admins get one more tool (`org_member_activity`), decided per `tools/list` from the token's role and refused at call time for anyone else. **Outward actions** — `org_comment_reply` and `org_send`, the tools that reach another person — ask first: the offer declares them in its ask-first list, the native seam projects each with a per-tool `Prompt`, the engine asks as an MCP elicitation that the seam serves only for a server Atlas offered the thread (`engine/tool_approvals.rs`), and the approval card shows the recipient and the full body from the host's `describe_call` (`OrgTools::describe`, sharing its argument parsing with the post so the card is what is sent). The seam records each approval per exact call in `OutwardConsent`, and the server posts only a call found there — so a call the engine runs unasked, in bypass mode, is refused and nothing is sent. Drawing on a Space page (`org_page_write`) needs the page codec the frontend holds, so it crosses to the window on the UI tool server's bridge as `atlas:org-window-action` and is answered through `ui_action_respond`. Every call, refusals included, is one `OrgActionRecord` emitted as `atlas:org-action` for the Logs panel. Ambiguity is the model's to resolve: names that match several members or conversations come back as candidates, and the model asks the user through the engine's `request_user_input`, which the native connection serves as a question card mid-turn in every mode (ADR-0013); tool servers themselves never elicit. A composer mention of a member, conversation or recorded session reaches the tools as an `atlas-org://` link carrying the id. `org_server/tests.rs` measures the server's fixed-prefix cost (`docs/research/org-tool-server-prefix.md`).
 
+### Attached projects
+
+A session can use folders besides its own: its **attached projects** (`CONTEXT.md`), each read-only or read and write. The store keeps them on the session's row as one JSON column (`attached_projects`, `crates/atlas-thread-metadata/src/projects.rs`; nullable, so the migration rewrote no row and kept the epoch), and `ThreadRow.attachedProjects` carries them to every surface. The `session_projects_*` commands (`commands/session_projects.rs`) attach, detach and change access, keyed by live session id; every path goes through `validate_project_path` first.
+
+How the roots reach an agent depends on what it can take:
+
+- **Atlas's own grants** (`AcpThread::readable_roots` / `writable_roots`) are what the ACP client handlers check for an agent's `fs/*` and terminal requests (`atlas-agent-servers/src/handlers.rs`). A change applies at once.
+- **ACP agents** get the read-and-write roots as `additionalDirectories` when the session is opened (`session/load` or `session/resume`, from `AgentHost::resume_thread` / `load_session`), when the agent advertises that capability (`atlas-agent-servers/src/connection.rs`). ACP has no request to change an open session's directories, so a change reaches the agent the next time the session is opened; the command's answer says so (`appliedLive: false`). Read-only roots are not sent — the protocol's list implies edit rights — and are covered by Atlas's grants and the prompt text.
+- **The native agent** takes read-and-write roots as extra writable roots in the engine's workspace-write policy (`engine/modes.rs`, `engine_policy_with_roots`), live from the next turn through `thread/settings/update` (`AgentConnection::update_session_roots`); a change during a turn waits for the turn to end. Read-only roots need nothing: the engine reads the whole disk. Plan mode stays read-only whatever is attached.
+
+The composer attaches what a message mentions: picking an `@` project or repo attaches it read-only, the chip toggles its access (`session-mention-chip.tsx`), and at send `attach-mentioned-projects.ts` attaches every mentioned project and passes its access to `compose_prompt`, whose block tells the agent what it may do there.
+
+An agent asks for a folder with `request_project_access` on the code tool server (`code_server/tools.rs`, offered where code tools are on). The host validates the path, raises an approval card through the ordinary permission flow (`AgentHost::request_project_access`: grant read and write, grant read-only, deny), and answers within 45 s (ADR-0008); an approval that comes later still attaches the folder, and the agent can ask again to learn it.
+
 ### `commands/agents.rs`
 
-37 IPC verbs. The session lifecycle (`agents_spawn`, `agents_new_session`, `agents_send`, `agents_cancel`, `agents_kill`), the capability-gated knobs (`agents_set_mode`, `agents_set_model`, `agents_set_effort`, `agents_set_config_option`), permissions and elicitation (`agents_respond_permission`, `agents_respond_elicitation`), auth (`agents_authenticate`, `agents_list_auth_methods`, `agents_run_auth_method`, `agents_logout`), and the history surface (`threads_history`, `threads_resume`, `threads_archive`, `threads_delete`, `threads_projects`, `threads_import`, `threads_import_candidates`).
+The IPC verbs. Running a session (`agents_spawn`, `agents_new_session`, `agents_send`, `agents_cancel`, `agents_kill`), the capability-gated knobs (`agents_set_mode`, `agents_set_model`, `agents_set_effort`, `agents_set_config_option`), permissions and elicitation (`agents_respond_permission`, `agents_respond_elicitation`), auth (`agents_authenticate`, `agents_list_auth_methods`, `agents_run_auth_method`, `agents_logout`), and the history surface (`threads_history`, `threads_resume`, `threads_delete`, settle/pin/snooze/read state (`threads_settle`, `threads_unsettle`, `threads_pin`, `threads_unpin`, `threads_reorder_pin`, `threads_snooze`, `threads_wake`, `threads_unsnooze`, `threads_mark_viewed`, `threads_mark_unread`), `threads_projects`, `threads_import`, `threads_import_candidates`).
 
 Deltas return over the single `atlas:agents` channel, payload-typed by `kind`.
 
 ### Three invariants
 
-- **Atlas owns its history.** The sidebar reads the app-owned thread-metadata store (`crates/atlas-thread-metadata`, `threads.db`) and nothing else. Atlas does not read any agent CLI's private storage to build history — the per-agent scrape readers were deleted and must not come back. See [ADR-0001](adr/0001-app-owned-thread-metadata-store.md), and `CONTEXT.md` for the thread/session/draft/archive vocabulary.
+- **Atlas owns its history.** The sidebar reads the app-owned thread-metadata store (`crates/atlas-thread-metadata`, `threads.db`) and nothing else. Atlas does not read any agent CLI's private storage to build history — the per-agent scrape readers were deleted and must not come back. See [ADR-0001](adr/0001-app-owned-thread-metadata-store.md), and `CONTEXT.md` for the thread/session/draft/settled vocabulary.
 - **A thread is not a session.** A *thread* is the conversation Atlas tracks, keyed by an id Atlas mints; it exists before any agent process and outlives one forgetting the session. A *session* is the agent-side conversation, keyed by an ACP session id. A thread references at most one session. Collapsing the two is the mistake the old `acpSessionId`-as-filename design made.
 - **Streams are tab-independent.** The projector owns the broadcast, not any UI component — concurrent prompts in several tabs keep streaming regardless of focus. Switching tabs resubscribes; no in-flight state is created, paused, or lost.
 
@@ -206,21 +297,21 @@ Deltas return over the single `atlas:agents` channel, payload-typed by `kind`.
 
 ## Crates (`crates/`)
 
-All wired in as `path` dependencies from `src-tauri/Cargo.toml`, and all members of the **root `[workspace]`** bar one (`atlas-kb-server`, below). The repo went without one for a long time, for a real reason: the ported stack pins `agent-client-protocol` 2.0 with its schema crate pinned exactly, and no single Cargo resolution could hold that alongside the old stack's exact `=1.4.0` pin. That collision is why the port had to land as one change rather than gradually. With the old stack gone the collision is gone, and the workspace landed (issue #38) so the vendored engine resolves against the same graph as the app. Consequences worth knowing: one `Cargo.lock` and one `target/` at the repo root, and `[patch.crates-io]` plus every `[profile.*]` live in the root `Cargo.toml` — cargo honors both only there. `crates/atlas-kb-server` is deliberately excluded (it is built on demand at runtime under its own profile).
+All wired in as `path` dependencies from `src-tauri/Cargo.toml`, and all members of the **root `[workspace]`** bar one (`atlas-kb-server`, below). The repo went without one for a long time, for a real reason: the ported stack pins `agent-client-protocol` 2.0 with its schema crate pinned exactly, and no single Cargo resolution could hold that alongside the old stack's exact `=1.4.0` pin. That collision is why the port had to land as one change rather than gradually. With the old stack gone the collision is gone, and the workspace landed (issue #38) so the engine resolves against the same graph as the app. Consequences worth knowing: one `Cargo.lock` and one `target/` at the repo root, and `[patch.crates-io]` plus every `[profile.*]` live in the root `Cargo.toml` — cargo honors both only there. `crates/atlas-kb-server` is deliberately excluded (it is built on demand at runtime under its own profile).
 
 ### The ported ACP stack
 
 | Crate | Role |
 |---|---|
-| `atlas-acp-thread` | Port of Zed's `acp_thread`: the agent session model and the `AgentConnection` seam every agent plugs into. Chunk merging by `messageId`, permission prompts surviving concurrent status changes. |
-| `atlas-agent-servers` | Port of Zed's `agent_servers`: transport to an external ACP agent and the launcher that starts one. Where the port's reliability lives — connect, initialize, cancel, retry — plus `host_env.rs`'s PATH resolution. |
-| `atlas-agent-store` | Port of Zed's agent store: where an external agent comes from and how its command line is resolved. Backs the Marketplace and the installed-agents map. |
-| `atlas-agent-manager` | Who is connected, and which sessions are open on them. Ported from Zed's `AgentConnectionStore`, with the session ownership Zed spreads across its per-agent view folded in. |
+| `atlas-acp-thread` | The agent session model and the `AgentConnection` seam every agent plugs into. Chunk merging by `messageId`, permission prompts surviving concurrent status changes. |
+| `atlas-agent-servers` | Transport to an external ACP agent and the launcher that starts one. Where the ACP path's reliability lives — connect, initialize, cancel, retry — plus `host_env.rs`'s PATH resolution. |
+| `atlas-agent-store` | Where an external agent comes from and how its command line is resolved. Backs the Marketplace and the installed-agents map. |
+| `atlas-agent-manager` | Who is connected, and which sessions are open on them. |
 | `atlas-agent-delta` | Projects ported-thread events into the `SessionDelta` wire. Reconciles the thread's one-entry-per-message model with the wire's one-message-per-contiguous-run model. |
 | `atlas-agent-wire` | The additive-only session-delta wire shapes, enforced by `tests/contract.rs`. |
-| `atlas-native-agent` | The vendored engine (`vendor/atlas-engine`) on the `AgentConnection` seam — the native agent as just another connection. Its agent id is the literal `"atlas-agent"`: a storage key every thread row resolves through, so renaming it is a data migration (ADR-0011). |
+| `atlas-native-agent` | The engine (`vendor/atlas-engine`) on the `AgentConnection` seam — the native agent as just another connection. Its agent id is the literal `"atlas-agent"`: a storage key every thread row resolves through, so renaming it is a data migration (ADR-0011). |
 | `atlas-agent-transcript` | Where an agent keeps its record of a conversation, and how to read Atlas's own text back out of one. The Claude JSONL replay it used to hold is gone. |
-| `atlas-thread-metadata` | The app-owned thread-metadata store (`threads.db`) — Atlas's only source for the sidebar and history. Metadata only, never transcript content. Ported from Zed's `ThreadMetadataStore`. See ADR-0001. |
+| `atlas-thread-metadata` | The app-owned thread-metadata store (`threads.db`) — Atlas's only source for the sidebar and history. Metadata only, never transcript content. See ADR-0001. |
 | `atlas-bus` | Event broadcaster + middleware pipeline seam: a `tokio::sync::broadcast`-backed fan-out (lagging subscribers drop rather than block the producer), plus `OutboundPipeline`. Generic — no dependency on any agent or ACP type. |
 
 ### Everything else
@@ -230,15 +321,14 @@ All wired in as `path` dependencies from `src-tauri/Cargo.toml`, and all members
 | `atlas-checkpoint` | The agent-session record: local SQLite store (`.atlas/sessions.db`), redact-on-write capture, git commit linkage, transcript import, sync outbox. Tauri-free, so the whole surface is testable against a real database and a real git repo. **Push only** — it drains the outbox to the ingest service and never reads a Session back. |
 | `atlas-artifacts` | The Timeline's cloud **read** half: remote Sessions, comments, and one WebSocket per connected cloud Project. Tauri-free, `TokenSource` as the only host seam, shaped on `atlas-comms`. Split from `atlas-checkpoint` because reads need tokio and tungstenite and that crate is deliberately synchronous. The invariant that makes a merged board possible: `rowId` on the wire **is** the local row id, so local and remote rows share one identity and a comment anchor resolves against a local row with no mapping table. |
 | `atlas-redact` | Single source of truth for secret redaction: layered scrubbing (Shannon entropy, vendored betterleaks rules, provider prefixes, credentialed URIs, connection strings) with JSON-aware traversal. String in, redacted string out — no I/O, no async. |
-| `atlas-git` | Git execution layer: one spawn chokepoint over the real `git` binary (so hooks run), a typed stderr→error taxonomy with friendly messages (ported from GitHub Desktop/dugite), porcelain-v2 status parsing, streaming output for long operations. |
+| `atlas-git` | Git execution layer: one spawn chokepoint over the real `git` binary (so hooks run), a typed stderr→error taxonomy with friendly messages, porcelain-v2 status parsing, streaming output for long operations. |
 | `atlas-gitdiff` | Structured side-by-side diff engine: parses unified diffs, computes word-level intra-line change spans (word-diff vendored from `dandavison/delta`, MIT). |
 | `atlas-terminal` | Wraps `portable-pty`, manages `TerminalSession`s, bridges PTY bytes to Tauri events. |
-| `atlas-memory` | On-device RAG/memory engine: MiniLM → usearch HNSW behind a `MemorySearchFn` seam; the shared-memory record store (`record`: SQLite per repository scope, redact-on-write, one-time legacy migration); and global promotion of Facts seen in two or more repositories to `~/.atlas/memory` (`global`). Read its `README.md` and `MIGRATION.md` before changing on-disk index formats. |
+| `atlas-memory` | On-device RAG/memory engine: MiniLM → a healing per-model vector file plus `corpus.sqlite` behind a `MemorySearchFn` seam; the shared-memory record store (`record`: SQLite per repository scope, redact-on-write, immutable hash-chained revisions as the canonical record (ADR-0017), hybrid BM25 + dense search); the reconciler (`health`); code citations checked at read time (`citation`, ADR-0018); consolidation, handoff notes, the dream pass and the Agent Memory Repo format (`consolidate`, `handoff`, `dream`, `amr`); and global promotion of Facts seen in two or more repositories to `~/.atlas/memory` (`global`). Read its `README.md` and `MIGRATION.md` before changing on-disk index formats. |
 | `atlas-instruction-sync` | Mirrors `CLAUDE.md` and `.claude/rules/` into one marked block of a project's `AGENTS.md`, for agents that read only `AGENTS.md`. Plain file I/O, no async, no Tauri; every byte outside the block is kept, and anything it cannot be sure of is skipped and logged. `commands::instruction_sync` decides when it runs. |
 | `atlas-embed` | On-device text embeddings (BERT-family sentence-transformers) and a small vector store, isolated so `candle`'s heavy dependency tree doesn't slow everything else's incremental builds. Embedding only — on-device generation was removed 2026-08-22. |
-| `atlas-codeindex` | The per-project code index: parallel tree-sitter extraction (Rust/TS/TSX/JS/Python/Go) into SQLite + FTS5 at `<project>/.atlas/code-index/index.db`, updated per file from the watchers; symbol search, outlines and symbol source for the `atlas_code` tools. |
-| `atlas-search` | In-process code search: grep on ripgrep's crates and glob/fuzzy file finding over a session root, with one compact, byte-budgeted output format for the `atlas_code` tools (ADR-0015). |
-| `atlas-retrieval` | The retrieval core memory and the code index share: content-keyed embedding cache codec, per-model usearch vector files that heal on open, RRF fusion, the `Embedder` trait. |
+| `atlas-search` | In-process code search: grep on ripgrep's crates and glob/fuzzy file finding over a session root, with one compact, byte-budgeted output format for the `atlas_code` tools (ADR-0015). On demand only — nothing is indexed, cached or watched (ADR-0021). |
+| `atlas-retrieval` | Memory's retrieval core: content-keyed embedding cache codec, per-model usearch vector files that heal on open, RRF fusion, the `Embedder` trait. |
 | `atlas-profile` | Which data this process owns: the default profile or the dev profile `bun run dev:app` runs under. Derived once from the bundle identifier; every `.atlas` and `~/.config/atlas` name goes through it. Names only — no I/O, no dependencies. |
 | `atlas-kb-server` | Standalone static-server binary produced by the knowledge base's "Export server" action. Embeds the exported HTML/CSS via `include_dir!`, serves on `localhost:4747`. |
 
@@ -250,7 +340,7 @@ Most app state is plain files, by design — but **three subsystems are SQLite**
 |---|---|---|
 | Session history (thread metadata) | `<app-config-dir>/threads.db` | `atlas-thread-metadata` |
 | Session record / Timeline (checkpoints) | `<project-root>/.atlas/sessions.db` + blob sidecar | `atlas-checkpoint` |
-| Shared memory record (events, entries, sessions) | `<scope-root>/.atlas/memory/memory.sqlite` | `atlas-memory` (`record`) |
+| Shared memory record (revisions, entries, events, sessions, handoff notes, proposals) | `<scope-root>/.atlas/memory/memory.sqlite` (+ daily `memory.snapshot.sqlite`) | `atlas-memory` (`record`) |
 
 `<app-config-dir>` is Tauri's `app_config_dir()` — `~/Library/Application Support/dev.atlas.ide/` on macOS. History is global because threads are grouped *across* projects; the checkpoint record is per-project because a Timeline is about one worktree. Shared memory is per *repository*: its scope root is the main worktree (found through the git common dir), or the launch directory outside git, so every worktree of a repository shares one record.
 
@@ -264,7 +354,6 @@ Everything else is per-project files under `<project-root>/.atlas/`:
 ├── knowledge/                markdown notes, in subdirectories
 ├── shared-memory/            legacy cross-agent event log (migrated into memory/memory.sqlite; kept one release)
 ├── memory/                   shared-memory record (memory.sqlite, at the scope root) + on-device RAG index (atlas-memory)
-├── code-index/               atlas-codeindex SQLite index (index.db)
 ├── repos/                    repos cloned via the GitHub panel
 ├── skills/, agent-skills/    SKILL.md files
 ├── packs/                    installed packs
@@ -275,6 +364,8 @@ Everything else is per-project files under `<project-root>/.atlas/`:
 ├── canvas.json               ReactFlow node/edge state (Canvas / Spaces)
 ├── editor-state.json         open tabs + split-column layout
 ├── project.json              per-project settings
+├── memory-sharing.json       shared-memory switches: enabled (default true), fromExternalSessions (default false)
+├── memory-summarizer.json    handoff summarizer / extraction model choice
 ├── recent-files.json         recent-file list
 └── git-status-cache.json     cached git status
 ```
@@ -284,7 +375,7 @@ Everything else is per-project files under `<project-root>/.atlas/`:
 └── log/pinned.jsonl          pinned activity-log rows (survive restart)
 ```
 
-**Profiles.** Every name above belongs to the default profile. `bun run dev:app` builds with `src-tauri/tauri.dev.conf.json` (identifier `dev.atlas.ide.dev`, product name "Atlas Dev"), and `crates/atlas-profile` derives the rest from that identifier at the top of `run()`: `<app-config-dir>` moves with the identifier, `.atlas/` becomes `.atlas-dev/` (in projects and in `~`), and `~/.config/atlas/` becomes `~/.config/atlas-dev/`. One switch, read from the binary rather than the environment, so it cannot half-apply and a child process cannot inherit it; a release build is always the default profile. Other programs' stores (`~/.claude`, `~/.codex`, `CLAUDE.md`, `AGENTS.md`, `.agents/skills`) are not Atlas's and are shared by both; in `~/.agents/skills` the dev profile seeds its bundled skill as `atlas-dev-self-configure`, beside the default profile's `atlas-self-configure` rather than over it. Beyond names, the dev profile changes three behaviours: it keeps `.atlas-dev/` out of git through the repository's `info/exclude` instead of the project's `.gitignore`, it never checks for or installs updates (the release would replace the installed app), and it does not refresh the `atlas` CLI helper.
+**Profiles.** Every name above belongs to the default profile. `bun run dev:app` builds with `src-tauri/tauri.dev.conf.json` (identifier `dev.atlas.ide.dev`, product name "Atlas Dev"), and `crates/atlas-profile` derives the rest from that identifier at the top of `run()`: `<app-config-dir>` moves with the identifier, `.atlas/` becomes `.atlas-dev/` (in projects and in `~`), and `~/.config/atlas/` becomes `~/.config/atlas-dev/`. One switch, read from the binary rather than the environment, so it cannot half-apply and a child process cannot inherit it; a release build is always the default profile. Other programs' stores (`~/.claude`, `~/.codex`, `CLAUDE.md`, `AGENTS.md`, `.agents/skills`) are not Atlas's and are shared by both; in `~/.agents/skills` the dev profile seeds its bundled skill as `atlas-dev-self-configure`, beside the default profile's `atlas-self-configure` rather than over it. Beyond names, the dev profile changes two behaviours: it keeps `.atlas-dev/` out of git through the repository's `info/exclude` instead of the project's `.gitignore`, and it never checks for or installs updates (the release would replace the installed app).
 
 **IPC** is Tauri's `invoke()` for request/response, `listen()` for event streams. All payloads are JSON.
 
@@ -296,10 +387,9 @@ atlas/
 │   ├── App.tsx, main.tsx         entry points
 │   ├── features/                 one folder per feature (~30 slices)
 │   ├── components/                cross-feature widgets
-│   ├── ui/                        primitives (Kbd, etc.)
 │   ├── hooks/                     shared React hooks
 │   ├── lib/                       utilities (cn, createSelectors, constants)
-│   ├── styles/                    Tailwind 4 + design tokens
+│   ├── styles/                    desktop-only CSS over @tryatlas/design's styles-core.css
 │   └── types/                     shared TS types (agent.ts, acp.ts, etc.)
 │
 ├── src-tauri/                    Tauri host (Rust)
@@ -313,7 +403,7 @@ atlas/
 │   │   └── commands/               one .rs per IPC domain (69 modules)
 │   ├── capabilities/              Tauri v2 permission manifests
 │   ├── icons/                     bundle icons
-│   ├── bin/, resources/           bundled helper scripts (atlas-cli.sh, nvm.sh)
+│   ├── resources/                 bundled helper scripts (nvm.sh)
 │   ├── build.rs                   build script
 │   ├── tauri.conf.json            bundle config, CSP, window
 │   └── Cargo.toml                 path deps (patches + profiles live at the root)
@@ -326,7 +416,7 @@ atlas/
 │   ├── atlas-agent-delta          thread events → SessionDelta wire
 │   ├── atlas-agent-wire           the session-delta wire shapes (contract-tested)
 │   ├── atlas-agent-transcript     an agent's own record of a conversation
-│   ├── atlas-native-agent         the vendored engine on the AgentConnection seam
+│   ├── atlas-native-agent         the engine on the AgentConnection seam
 │   ├── atlas-thread-metadata      app-owned session history (threads.db)
 │   ├── atlas-bus                  event bus + middleware pipeline
 │   ├── atlas-checkpoint           session record / Timeline (sessions.db)
@@ -338,14 +428,13 @@ atlas/
 │   ├── atlas-memory               on-device RAG/memory engine
 │   ├── atlas-instruction-sync     CLAUDE.md + .claude/rules → AGENTS.md block
 │   ├── atlas-embed                on-device embeddings (candle)
-│   ├── atlas-codeindex            code index (tree-sitter → SQLite + FTS5)
 │   ├── atlas-search               in-process grep / find_files
-│   ├── atlas-retrieval            shared retrieval core (vectors, RRF)
+│   ├── atlas-retrieval            memory's retrieval core (vectors, RRF)
 │   ├── atlas-profile              default vs dev data profile (directory names)
 │   └── atlas-kb-server            self-contained KB static-server binary
 │
 ├── docs/                          architecture.md (this file), ADRs, reference
-├── vendor/                        vendored source, workspace members
+├── vendor/                        engine source, workspace members
 │   └── atlas-engine                 the engine behind Atlas Agent (ADR-0004, ADR-0011)
 │
 ├── scripts/                       build/release helpers (with-posthog-env.mjs, bump.sh)
@@ -363,8 +452,8 @@ atlas/
 
 ## Gotchas
 
-- **The old SDK's patch table is gone (#54).** The two vendored-fork `[patch.crates-io]` overrides and their compile guards were deleted with the previous native path itself. The two failure classes they fixed are still guarded, by tests against the engine that replaced them rather than by a patch table: a chunk-split fixture that splits an SSE frame at every byte position, and a cancel test that asserts on the filesystem — the killed command's marker file never appears. See the root `Cargo.toml`'s `[patch.crates-io]` comment.
-- **`vite.config.ts`'s `dedupe` is load-bearing.** Lazy-loaded language packages (`lang-json`, `lang-rust`, …) each transitively import `@codemirror/{state,view,language}` and `@lezer/*`; without `dedupe`, Rollup can ship two copies in the production bundle. `EditorView.theme(...)` then registers against one copy's `StyleModule` while the `EditorView` construction uses the other, and the theme silently no-ops — text renders unstyled. Same story for `pdfjs-dist`: two copies mismatch the worker against the main-thread API version and PDF rendering fails. Dev mode does not reproduce either failure (Vite serves a single pre-bundled instance) — this only shows up in production builds.
+- **The old SDK's patch table is gone (#54).** The two forked-SDK `[patch.crates-io]` overrides and their compile guards were deleted with the previous native path itself. The two failure classes they fixed are still guarded, by tests against the engine that replaced them rather than by a patch table: a chunk-split fixture that splits an SSE frame at every byte position, and a cancel test that asserts on the filesystem — the killed command's marker file never appears. See the root `Cargo.toml`'s `[patch.crates-io]` comment.
+- **`vite.config.ts`'s `dedupe` is load-bearing.** The team-chat draft editor's `lang-markdown` and the grammars it nests each transitively import `@codemirror/{state,view,language}` and `@lezer/*`; without `dedupe`, Rollup can ship two copies in the production bundle. `EditorView.theme(...)` then registers against one copy's `StyleModule` while the `EditorView` construction uses the other, and the theme silently no-ops — text renders unstyled. Same story for `pdfjs-dist`: two copies mismatch the worker against the main-thread API version and PDF rendering fails. Dev mode does not reproduce either failure (Vite serves a single pre-bundled instance) — this only shows up in production builds.
 - **Release-profile `panic = "unwind"` is required.** The local-LLM loader (`atlas-embed`, used by memory chat) `catch_unwind`s candle's Metal kernel-compile panic to fall back to CPU. `panic = "abort"` would crash the app outright instead of degrading gracefully; the cost is a small amount of extra binary size for unwind tables.
 - **The single-instance plugin is release-only.** Registered behind `#[cfg(not(debug_assertions))]` in `src-tauri/src/lib.rs`. Registering it in debug builds kills `tauri dev` the instant it starts whenever the installed `/Applications/Atlas.app` is already running — the dev process gets treated as the "second instance," forwards its argv, and exits.
 - **Telemetry is opt-out and on by default** (`share_telemetry: true` in `state/app_state.rs`), despite `src-tauri/src/telemetry/mod.rs`'s module doc claiming zero analytics until explicit opt-in via a first-run consent prompt that doesn't exist in the code. `app_state.rs` reflects actual behavior; the doc comment is stale. Metadata is coarse and inert without a PostHog key. The auto-updater's remote-config check runs independently of the telemetry opt-in — gated only by the separate `auto_update` setting.

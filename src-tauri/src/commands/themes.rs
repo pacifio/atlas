@@ -44,6 +44,56 @@ pub async fn get_theme(id: String) -> Result<Theme, String> {
         .map_err(|error| error.to_string())
 }
 
+/// Where a saved theme went.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedTheme {
+    /// The id it was saved under, slugged; what `themeDark`/`themeLight`
+    /// must name.
+    pub id: String,
+    pub path: String,
+}
+
+/// Write a theme from the theme editor to `~/.config/atlas/themes/<id>.toml`.
+///
+/// The editor sends only what the author set (ADR-0022); everything else is
+/// derived when the theme loads. The theme goes through the TOML writer and
+/// back through the parser before it is written, so a value the loader would
+/// refuse is refused here instead of landing as a file that will not load. A
+/// built-in's id is off limits: saving under it would shadow the built-in.
+#[tauri::command]
+pub async fn save_theme(theme: Theme) -> Result<SavedTheme, String> {
+    tokio::task::spawn_blocking(move || {
+        let mut theme = theme;
+        // An id the writer already accepts is kept as it is: editing a
+        // hand-written `my_theme` must save `my_theme.toml`, not a new
+        // `my-theme.toml` beside it. Only an id it would refuse is slugged.
+        if !atlas_theme::is_writable_id(&theme.id) {
+            theme.id = atlas_theme::import::slug(&theme.id);
+        }
+        if theme.id.is_empty() {
+            return Err("a theme name needs at least one letter or digit".to_string());
+        }
+        if atlas_theme::theme_origin(&theme.id) == atlas_theme::ThemeOrigin::BuiltIn {
+            return Err(format!(
+                "\"{}\" is a built-in theme; pick another name",
+                theme.id
+            ));
+        }
+        theme.warnings.clear();
+        let rendered = atlas_theme::toml_writer::theme_to_toml(&theme);
+        atlas_theme::parse_theme(&rendered, "theme editor").map_err(|error| error.to_string())?;
+        atlas_theme::write_user_theme(&rendered)
+            .map(|path| SavedTheme {
+                id: theme.id.clone(),
+                path: path.display().to_string(),
+            })
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| format!("theme save task failed: {error}"))?
+}
+
 pub fn start_watcher(app: &AppHandle) {
     let app_for_event = app.clone();
     let watcher = atlas_theme::watch_user_themes(move || {

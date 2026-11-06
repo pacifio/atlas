@@ -147,8 +147,11 @@ pub fn states_a_choice(text: &str) -> bool {
 }
 
 /// Claude's frontmatter `type` (with the memory's text) → the record kind.
+/// `user` and `feedback` memories are how the user wants things done: the
+/// preferences every agent is briefed on first.
 pub fn map_kind(claude_type: &str, text: &str) -> EntryKind {
     match claude_type.trim().to_ascii_lowercase().as_str() {
+        "user" | "feedback" => EntryKind::Preference,
         "project" if states_a_choice(text) => EntryKind::Decision,
         _ => EntryKind::Fact,
     }
@@ -232,6 +235,27 @@ fn read_dir(dir: &Path) -> Vec<Mapped> {
     out
 }
 
+/// The `legacy_imports` name of one line an import of `dir` offered: the line
+/// is not offered from that directory again, whatever it gains later. Keyed by
+/// directory, so a line skipped in one source is still offered by another.
+fn line_source(dir: &Path, id: &str) -> String {
+    format!("{}#line:{id}", source_name(dir))
+}
+
+/// Marks a directory whose import recorded each line it offered.
+fn lines_marker(dir: &Path) -> String {
+    format!("{}#lines", source_name(dir))
+}
+
+/// When `path` was last modified, in ms (0 when unknown).
+fn modified_ms(path: &Path) -> i64 {
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_millis() as i64)
+}
+
 /// The `legacy_imports` name of one Claude memory directory.
 fn source_name(dir: &Path) -> String {
     let dir = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
@@ -275,11 +299,21 @@ impl SharedMemoryStore {
         let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
         let mut all_imported = !dirs.is_empty();
         for dir in dirs {
-            let imported = store.import_recorded(&source_name(dir)).map_err(err)?;
-            all_imported &= imported;
+            // A directory imported before still offers what Claude wrote
+            // since: a line is known when that import offered it (each is
+            // recorded), or, for an import recorded before lines were, when
+            // its file has not changed since.
+            let imported_at = store.import_recorded_at(&source_name(dir)).map_err(err)?;
+            all_imported &= imported_at.is_some();
+            // Only an import from before lines were recorded falls back to
+            // file times.
+            let by_lines = store.import_recorded(&lines_marker(dir)).map_err(err)?;
             for m in read_dir(dir) {
                 let id = line_id(m.kind, &m.content);
-                let is_new = !imported && !store.holds_content(m.kind, &m.content).map_err(err)?;
+                let offered = store.import_recorded(&line_source(dir, &id)).map_err(err)?
+                    || (!by_lines
+                        && imported_at.is_some_and(|at| modified_ms(&dir.join(&m.file)) <= at));
+                let is_new = !offered && !store.holds_content(m.kind, &m.content).map_err(err)?;
                 if let Some(&at) = seen.get(&id) {
                     // The same memory in two sources: new if either offers it.
                     lines[at].is_new |= is_new;
@@ -296,12 +330,13 @@ impl SharedMemoryStore {
                 });
             }
         }
+        let fresh = lines.iter().any(|l| l.is_new);
         Ok(ClaudeImportPreview {
             sources: dirs
                 .iter()
                 .map(|d| d.to_string_lossy().into_owned())
                 .collect(),
-            already_imported: all_imported,
+            already_imported: all_imported && !fresh,
             lines,
         })
     }
@@ -358,6 +393,12 @@ impl SharedMemoryStore {
         }
         for dir in dirs {
             store.mark_imported(&source_name(dir), now).map_err(err)?;
+            store.mark_imported(&lines_marker(dir), now).map_err(err)?;
+            for m in read_dir(dir) {
+                store
+                    .mark_imported(&line_source(dir, &line_id(m.kind, &m.content)), now)
+                    .map_err(err)?;
+            }
         }
         if !kinds.is_empty() {
             self.announce(&store, &kinds);
@@ -532,9 +573,9 @@ mod tests {
 
     #[test]
     fn claude_types_map_to_kinds() {
-        assert_eq!(map_kind("feedback", "we decided X"), EntryKind::Fact);
+        assert_eq!(map_kind("feedback", "we decided X"), EntryKind::Preference);
         assert_eq!(map_kind("reference", "chose Y"), EntryKind::Fact);
-        assert_eq!(map_kind("user", "prefers Z"), EntryKind::Fact);
+        assert_eq!(map_kind("user", "prefers Z"), EntryKind::Preference);
         assert_eq!(
             map_kind("project", "use RS256 instead of HS256"),
             EntryKind::Decision
@@ -556,15 +597,17 @@ mod tests {
             Arc::new(move |c: &MemoryChanged| heard.lock().push(c.clone()))
         });
 
-        let preview = store.claude_import_preview(&p, &[dir.clone()]).unwrap();
+        let preview = store
+            .claude_import_preview(&p, std::slice::from_ref(&dir))
+            .unwrap();
         assert_eq!(
             kinds(&preview),
             [
                 ("dash.md", "fact"),
                 ("freeze.md", "fact"),
                 ("jwt.md", "decision"),
-                ("no-mocks.md", "fact"),
-                ("prefs.md", "fact"),
+                ("no-mocks.md", "preference"),
+                ("prefs.md", "preference"),
             ]
             .map(|(f, k)| (f.to_string(), k.to_string()))
             .to_vec(),
@@ -597,7 +640,9 @@ mod tests {
             let heard = heard.clone();
             Arc::new(move |c: &MemoryChanged| heard.lock().push(c.clone()))
         });
-        let preview = store.claude_import_preview(&p, &[dir.clone()]).unwrap();
+        let preview = store
+            .claude_import_preview(&p, std::slice::from_ref(&dir))
+            .unwrap();
         // The user unticks the dashboard line.
         let ids: Vec<String> = preview
             .lines
@@ -630,7 +675,43 @@ mod tests {
         assert_eq!(heard.len(), 1, "one change for the whole import");
         let mut announced = heard[0].kinds.clone();
         announced.sort();
-        assert_eq!(announced, vec!["decision".to_string(), "fact".to_string()]);
+        assert_eq!(
+            announced,
+            vec![
+                "decision".to_string(),
+                "fact".to_string(),
+                "preference".to_string()
+            ]
+        );
+    }
+
+    /// A memory Claude writes after the first import is offered by the next
+    /// one; what that import offered is not.
+    #[test]
+    fn a_file_added_after_an_import_is_offered_again() {
+        let (store, p, dir) = (SharedMemoryStore::new(), project(), sample());
+        let first = store
+            .claude_import_preview(&p, std::slice::from_ref(&dir))
+            .unwrap();
+        let ids: Vec<String> = first.lines.iter().map(|l| l.id.clone()).collect();
+        store
+            .claude_import_confirm(&p, std::slice::from_ref(&dir), &ids[..1])
+            .unwrap();
+        std::fs::write(
+            dir.join("ci.md"),
+            "---\nname: ci.md\ndescription: CI runs on GitHub Actions\nmetadata:\n  node_type: memory\n  type: project\n---\n\nMoved off Jenkins.\n",
+        )
+        .unwrap();
+        let second = store.claude_import_preview(&p, &[dir]).unwrap();
+        assert!(!second.already_imported);
+        let fresh: Vec<&str> = second
+            .lines
+            .iter()
+            .filter(|l| l.is_new)
+            .map(|l| l.content.as_str())
+            .collect();
+        assert_eq!(fresh.len(), 1, "{fresh:?}");
+        assert!(fresh[0].contains("GitHub Actions"), "{fresh:?}");
     }
 
     /// Once per source: the second import shows nothing new and writes nothing
@@ -640,17 +721,21 @@ mod tests {
         let (store, p, dir) = (SharedMemoryStore::new(), project(), sample());
         let ids =
             |pv: &ClaudeImportPreview| pv.lines.iter().map(|l| l.id.clone()).collect::<Vec<_>>();
-        let first = store.claude_import_preview(&p, &[dir.clone()]).unwrap();
+        let first = store
+            .claude_import_preview(&p, std::slice::from_ref(&dir))
+            .unwrap();
         assert_eq!(
             store
-                .claude_import_confirm(&p, &[dir.clone()], &ids(&first))
+                .claude_import_confirm(&p, std::slice::from_ref(&dir), &ids(&first))
                 .unwrap(),
             5
         );
         let forgotten = store.entries(&p)[0].id;
         store.forget_entry(&p, forgotten).unwrap();
 
-        let second = store.claude_import_preview(&p, &[dir.clone()]).unwrap();
+        let second = store
+            .claude_import_preview(&p, std::slice::from_ref(&dir))
+            .unwrap();
         assert!(second.already_imported);
         assert!(second.lines.iter().all(|l| !l.is_new), "{:?}", second.lines);
         assert_eq!(
@@ -670,7 +755,7 @@ mod tests {
         crate::commands::shared_memory::store_for(&p)
             .unwrap()
             .upsert(NewEntry {
-                kind: EntryKind::Fact,
+                kind: EntryKind::Preference,
                 key: String::new(),
                 content: "prefers   small PRs".into(),
                 source: "claude-code".into(),
@@ -698,7 +783,9 @@ mod tests {
         // with Atlas's envelope still around the prompt.
         let dir = claude_dir(&[("recycled.md", "project", "", &injected)]);
 
-        let preview = store.claude_import_preview(&p, &[dir.clone()]).unwrap();
+        let preview = store
+            .claude_import_preview(&p, std::slice::from_ref(&dir))
+            .unwrap();
         assert_eq!(preview.lines.len(), 1);
         let line = &preview.lines[0];
         assert_eq!(line.content, "The team prefers bun over npm.");
@@ -750,7 +837,7 @@ mod tests {
         let (store, p, dir) = (SharedMemoryStore::new(), project(), sample());
         assert_eq!(
             store
-                .claude_import_confirm(&p, &[dir.clone()], &[])
+                .claude_import_confirm(&p, std::slice::from_ref(&dir), &[])
                 .unwrap(),
             0
         );
@@ -765,7 +852,7 @@ mod tests {
         let (store, p) = (SharedMemoryStore::new(), project());
         let old = claude_dir(&[("a.md", "user", "Prefers small PRs", "")]);
         store
-            .claude_import_confirm(&p, &[old.clone()], &["nothing-kept".into()])
+            .claude_import_confirm(&p, std::slice::from_ref(&old), &["nothing-kept".into()])
             .unwrap();
         let fresh = claude_dir(&[("b.md", "user", "Prefers small PRs", "")]);
         let preview = store.claude_import_preview(&p, &[old, fresh]).unwrap();

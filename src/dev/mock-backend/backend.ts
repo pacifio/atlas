@@ -14,7 +14,7 @@ import { scenarios } from "./scenarios";
 import { mountBadge } from "./badge";
 import { resetStores } from "./reset-stores";
 import { mockAssetUrl } from "./fixtures/files";
-import type { MockArgs, MockHandlers } from "./types";
+import type { MockArgs, MockHandlers, Scenario } from "./types";
 
 declare global {
   interface Window {
@@ -24,7 +24,7 @@ declare global {
       unmocked: () => string[];
       calls: () => { cmd: string; args: MockArgs | undefined }[];
       emit: typeof emit;
-      actions: Record<string, () => void | Promise<void>>;
+      actions: NonNullable<Scenario["actions"]>;
       /** Drop every Zustand store back to how it booted (decision 41). */
       resetStores: () => Promise<string[]>;
     };

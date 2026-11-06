@@ -9184,7 +9184,7 @@ async fn legacy_profile_selection_is_rejected() -> std::io::Result<()> {
     Ok(())
 }
 
-/// The default must stay `None`, and this test is upstream's own inverted.
+/// The default must stay `None`, and this test inverts the one the engine shipped with at the fork point.
 ///
 /// It asserted `Statsig` — the built-in exporter posting to a hardcoded endpoint
 /// with a hardcoded client key, on unless a user turned it off. #43 removed that
