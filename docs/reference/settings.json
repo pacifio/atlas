@@ -78,6 +78,21 @@
       "validation": "—"
     },
     {
+      "key": "logRetentionDays",
+      "type": "integer",
+      "status": "live",
+      "page": "privacy",
+      "section": "Diagnostics",
+      "title": "Keep log files for",
+      "summary": "How many days of Atlas's own log files to keep, for attaching to a bug report.",
+      "min": 1,
+      "max": 90,
+      "applies": "next launch",
+      "default": "7",
+      "doc": "How many days of Atlas's own log files to keep. A new file starts each day, and files past this count are deleted. Must be between 1 and 90.",
+      "validation": "1 ≤ n ≤ 90"
+    },
+    {
       "key": "showHiddenFiles",
       "type": "boolean",
       "status": "live",

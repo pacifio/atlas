@@ -154,6 +154,7 @@ bookkeeping).
 |---|---|---|---|---|
 | `autoAddAtlasGitignore` | boolean | `true` | General › Files › Keep .atlas out of git | — |
 | `enableAtlasLogs` | boolean | `true` | Privacy › Diagnostics › Atlas logs | — |
+| `logRetentionDays` | integer | `7` | Privacy › Diagnostics › Keep log files for | 1 ≤ n ≤ 90 |
 | `showHiddenFiles` | boolean | `true` | General › Files › Show hidden files | — |
 | `showTips` | boolean | `true` | General › Tips › Show tips | — |
 | `preferredEditor` | string | `""` | General › Files › Preferred editor | an editor id; one that isn't installed falls back to the first one found |

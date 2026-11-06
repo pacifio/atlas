@@ -19,6 +19,11 @@ export interface AppSettings {
    * Logs panel.
    */
   enableAtlasLogs: boolean;
+  /**
+   * How many days of Atlas's own log files to keep. A new file starts each day, and files past
+   * this count are deleted. Must be between 1 and 90.
+   */
+  logRetentionDays: number;
   /** Show dotfiles and dot-directories in the explorer file tree. */
   showHiddenFiles: boolean;
   /**
@@ -437,6 +442,7 @@ export type SettingKey = keyof AppSettings;
 export const DEFAULT_SETTINGS: AppSettings = {
   autoAddAtlasGitignore: true,
   enableAtlasLogs: true,
+  logRetentionDays: 7,
   showHiddenFiles: true,
   showTips: true,
   preferredEditor: "",
@@ -630,6 +636,18 @@ export const SETTINGS_REGISTRY: readonly SettingMeta[] = [
     section: "Diagnostics",
     title: "Atlas logs",
     summary: "Record sign-in, agent lifecycle, and file and browser opens into the Logs panel.",
+  },
+  {
+    key: "logRetentionDays",
+    type: "integer",
+    status: "live",
+    page: "privacy",
+    section: "Diagnostics",
+    title: "Keep log files for",
+    summary: "How many days of Atlas's own log files to keep, for attaching to a bug report.",
+    min: 1,
+    max: 90,
+    applies: "next launch",
   },
   {
     key: "showHiddenFiles",

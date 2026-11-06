@@ -14,6 +14,10 @@ const SETTINGS_DOCS: &[(&str, &str)] = &[
         "# Record Atlas-internal events (sign-in, agent lifecycle, file and browser\n# opens) into the Logs panel. (default: true)",
     ),
     (
+        "logRetentionDays",
+        "# How many days of Atlas's own log files to keep. A new file starts each day,\n# and files past this count are deleted. Must be between 1 and 90. (default:\n# 7)",
+    ),
+    (
         "showHiddenFiles",
         "# Show dotfiles and dot-directories in the explorer file tree. (default: true)",
     ),
