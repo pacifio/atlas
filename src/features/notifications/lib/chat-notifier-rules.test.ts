@@ -72,6 +72,21 @@ describe("classifyChatMessage", () => {
     expect(e?.body).toBe("ping @Mo and @Bob");
   });
 
+  it("names an integration as one, never as an unknown member", () => {
+    const e = classifyChatMessage(
+      msg({
+        author_id: "whk_1",
+        author_kind: "webhook",
+        author_name: "CI",
+        author_via: "Deploy bot",
+        body: "<@me> build 41 failed",
+      }),
+      conv({}),
+      ctx,
+    );
+    expect(e?.title).toBe("CI · via Deploy bot (app) · #general");
+  });
+
   it("counts @channel and @here as mentions", () => {
     expect(classifyChatMessage(msg({ body: "@channel standup" }), conv({}), ctx)).not.toBeNull();
     expect(classifyChatMessage(msg({ body: "@here anyone?" }), conv({}), ctx)).not.toBeNull();

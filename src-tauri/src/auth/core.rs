@@ -109,7 +109,7 @@ impl GrantError {
         match self {
             GrantError::Denied => "Connection denied in the browser.".into(),
             GrantError::Expired => "That code expired. Get a new one to try again.".into(),
-            GrantError::Cancelled => "Sign-in cancelled.".into(),
+            GrantError::Cancelled => "Sign-in canceled.".into(),
             GrantError::Start(e) => format!("Could not reach Atlas: {e}"),
         }
     }
@@ -164,13 +164,13 @@ impl AuthFailure {
     /// `reason` string — that is for logs, and only the class is user-facing.
     pub fn user_message(&self) -> String {
         match self {
-            AuthFailure::NoCredential => "Sign in to sync organisations.".into(),
+            AuthFailure::NoCredential => "Sign in to sync organizations.".into(),
             AuthFailure::Rejected => "Your Atlas session ended. Sign in again to reconnect.".into(),
             // For create, the realistic Denied is a 400 duplicate slug/name; a
             // 403 on a caller-scoped create would be a server fault. Either way
             // retrying is pointless, so the message points at the fixable cause.
             AuthFailure::Denied => {
-                "Couldn't sync — that organisation name or handle may already be taken.".into()
+                "Couldn't sync — that organization name or handle may already be taken.".into()
             }
             AuthFailure::Indeterminate { .. } => {
                 "Couldn't reach Atlas. Check your connection and try again.".into()
@@ -256,7 +256,20 @@ pub struct AuthCore {
     /// exercise the loop without sleeping through a real schedule; production
     /// always uses [`backoff::BASE`].
     backoff_base: Duration,
+    /// Told, and awaited, **before** a rejected credential is cleared — see
+    /// [`Self::on_credential_rejected`].
+    rejection_observers: Mutex<Vec<RejectionObserver>>,
 }
+
+/// What [`AuthCore::on_credential_rejected`] registers: work to finish while
+/// the rejected credential is still on disk.
+pub type RejectionObserver =
+    Arc<dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + Sync>;
+
+/// The longest a rejection observer may hold the sign-out up. Generous for
+/// what it does (ending a few rooms over REST) and still bounded: a stuck
+/// observer must not keep a dead credential on disk, or the user signed in.
+const REJECTION_OBSERVER_DEADLINE: Duration = Duration::from_secs(15);
 
 impl AuthCore {
     pub fn new(base: impl Into<String>, dir: impl Into<PathBuf>, http: reqwest::Client) -> Self {
@@ -267,6 +280,45 @@ impl AuthCore {
             pending: Mutex::new(None),
             file: Mutex::new(()),
             backoff_base: backoff::BASE,
+            rejection_observers: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Hear that the server rejected the stored credential, before it is
+    /// cleared. The observer runs and is awaited (within a deadline) with the
+    /// credential still on disk — but the server has just refused it, so a
+    /// bearer minted from it now will normally be refused too. What the hook
+    /// can rely on is local: a Universal RC room is torn down on this side at
+    /// once (CC-1: a sign-in change on the host ends the remote session,
+    /// leaving the local one running), and the room itself ends on the server
+    /// when the owner-offline grace runs out. A REST close is best effort.
+    /// This module knows nothing about rooms; `commands::rc::install`
+    /// registers the hook.
+    ///
+    /// Fired only from [`Self::validate_once`], the one path that destroys a
+    /// credential. A 401 on [`Self::mint_access_token`] from any other caller
+    /// is not a judgement on the credential here and clears nothing, so it
+    /// tells no one either.
+    pub fn on_credential_rejected(&self, observer: RejectionObserver) {
+        self.rejection_observers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(observer);
+    }
+
+    async fn credential_rejected(&self) {
+        let observers: Vec<RejectionObserver> = self
+            .rejection_observers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        for observer in observers {
+            if tokio::time::timeout(REJECTION_OBSERVER_DEADLINE, observer())
+                .await
+                .is_err()
+            {
+                tracing::warn!(target: "atlas::auth", "a credential-rejected observer did not finish in time; signing out anyway");
+            }
         }
     }
 
@@ -1039,13 +1091,17 @@ impl AuthCore {
             image: Option<String>,
         }
 
-        let res = self
-            .authed_get_query(
-                "/organization/get-full-organization",
-                &[("organizationId", org_id)],
-            )
-            .await?;
-        let full: FullOrg = res
+        // The roster rides alongside for one fact the member list lacks: who
+        // the Owner is. Best-effort — a server without the endpoint, or any
+        // failure reading it, leaves nobody marked Owner rather than costing
+        // the members list. A real 401 still surfaces through the members call.
+        let query = [("organizationId", org_id)];
+        let (res, owner_id) = futures::join!(
+            self.authed_get_query("/organization/get-full-organization", &query),
+            self.org_owner_id(org_id),
+        );
+        let owner_id = owner_id.as_deref();
+        let full: FullOrg = res?
             .json()
             .await
             .map_err(|e| AuthFailure::indeterminate(format!("unreadable members: {e}")))?;
@@ -1065,6 +1121,7 @@ impl AuthCore {
                 });
                 let avatar_path =
                     avatar::resolve_member(&self.http, &self.dir, user.image.as_deref()).await;
+                let is_owner = !user.id.is_empty() && owner_id == Some(user.id.as_str());
                 OrgMember {
                     id: m.id,
                     user_id: user.id,
@@ -1076,6 +1133,7 @@ impl AuthCore {
                     role: m.role.as_deref().and_then(Role::from_claim),
                     created_at: m.created_at,
                     avatar_path,
+                    is_owner,
                 }
             })
             .buffered(8)
@@ -1083,6 +1141,24 @@ impl AuthCore {
             .await;
 
         Ok(members)
+    }
+
+    /// `GET /organization/roster` — the user id of the Organisation's Owner
+    /// (the member who created it), or `None`: nobody owns it, the owner has
+    /// left, or the roster could not be read. Only `ownerId` is taken; the
+    /// rest of the roster is not used here.
+    async fn org_owner_id(&self, org_id: &str) -> Option<String> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Roster {
+            #[serde(default)]
+            owner_id: Option<String>,
+        }
+        let res = self
+            .authed_get_query("/organization/roster", &[("organizationId", org_id)])
+            .await
+            .ok()?;
+        res.json::<Roster>().await.ok()?.owner_id
     }
 
     /// `GET /organization/list-invitations` — pending + past invites (API §6).
@@ -1133,9 +1209,9 @@ impl AuthCore {
 
     /// `POST /organization/invite-member` (API §6.1).
     ///
-    /// Email delivery is deferred server-side, so the response's `acceptUrl` is
-    /// the ONLY way the invitee ever learns of the invite — it must reach the
-    /// UI to be shared out of band. Returning it is the point of this call.
+    /// The server emails the invitee their accept link; the response's
+    /// `acceptUrl` is that same link, returned so the UI can also offer it for
+    /// the inviter to copy and share directly.
     pub async fn invite_member(
         &self,
         org_id: &str,
@@ -1276,6 +1352,36 @@ impl AuthCore {
         Ok(())
     }
 
+    /// `POST /organization/leave` — the caller leaves the org themselves.
+    ///
+    /// Not `remove-member` addressed at oneself: that route is admin-only, so
+    /// a member could never leave through it. This one is open to every member
+    /// except the Owner, whom the server refuses (`owner_cannot_leave`); the
+    /// last admin is refused too. Both come back as a 403, i.e. `Denied`.
+    ///
+    /// Re-pulls the identity afterwards, like `remove_member`, so the account
+    /// menu stops listing the org at once. Best-effort; the leave happened.
+    pub async fn leave_org(&self, org_id: &str) -> Authed<()> {
+        #[derive(Serialize)]
+        struct LeaveBody<'a> {
+            #[serde(rename = "organizationId")]
+            organization_id: &'a str,
+        }
+
+        self.authed_post(
+            "/organization/leave",
+            &LeaveBody {
+                organization_id: org_id,
+            },
+        )
+        .await?;
+
+        self.refresh_identity(self.stored().and_then(|s| s.identity), None)
+            .await;
+
+        Ok(())
+    }
+
     /// Force a server re-pull of profile + organisations onto the stored
     /// credential, out of band from the launch path. Backs the manual "refresh"
     /// affordance; the caller broadcasts the resulting snapshot.
@@ -1331,8 +1437,11 @@ impl AuthCore {
                 Validation::Confirmed
             }
             Err(AuthFailure::NoCredential) => Validation::NoCredential,
-            // The one branch permitted to destroy a credential.
+            // The one branch permitted to destroy a credential. Whoever needs
+            // the bearer one last time (the rooms this desktop hosts) goes
+            // first; then the credential.
             Err(AuthFailure::Rejected) => {
+                self.credential_rejected().await;
                 let _ = self.clear_session();
                 Validation::Rejected
             }
@@ -1540,14 +1649,18 @@ pub struct OrgMember {
     /// Absolute path to the cached photo, or `None` — no photo, or the fetch
     /// failed. Both render as initials; the UI draws no distinction.
     pub avatar_path: Option<String>,
+    /// This member is the Organisation's **Owner** — the person who created it.
+    /// Not a role: the Owner also holds one (normally admin). The server will
+    /// not let the Owner be removed or leave. `false` when the server could
+    /// not say.
+    pub is_owner: bool,
 }
 
 /// A pending (or past) invitation to an organisation.
 ///
-/// `accept_url` is present only on the response to `/invite-member`: email
-/// delivery is deferred server-side, so that URL is the only way the invitee
-/// ever hears about it and the inviter has to be able to copy it. Listing
-/// invitations later does not re-issue one.
+/// `accept_url` is present only on the response to `/invite-member`: it is the
+/// same link the server emails the invitee, returned so the inviter can also
+/// copy it. Listing invitations later does not re-issue one.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct OrgInvitation {

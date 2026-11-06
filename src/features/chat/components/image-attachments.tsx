@@ -2,10 +2,9 @@ import { memo, useMemo, useState } from "react";
 import { Dialog } from "@base-ui/react/dialog";
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
-import { HintGroup, HintItem } from "@/ui/hint-group";
 import { ImageZoomView } from "@/features/media/components/image-zoom-view";
 import type { ImageAttachment } from "@/types/agents";
+import { Hint, HintGroup, HintItem, Icon, IconButton } from "@tryatlas/design";
 
 /*
  * The one way an agent-chat image looks: a square tile, the same in the
@@ -44,30 +43,29 @@ export const ImageAttachmentStrip = memo(function ImageAttachmentStrip({
               onClick={() => setViewer({ open: true, index: i })}
               aria-label={`View image ${i + 1}`}
               className={cn(
-                "block h-16 w-16 overflow-hidden rounded-lg border border-[var(--border)] cursor-zoom-in",
+                "block size-16 overflow-hidden rounded-lg border border-border cursor-zoom-in",
                 "transition-[border-color,transform] duration-fast ease-out-strong",
-                "hover:border-[var(--atlas-border-strong)] active:scale-[0.97]",
+                "hover:border-border-strong active:scale-[0.97]",
               )}
             >
               <img src={src} alt="" className="h-full w-full object-cover" draggable={false} />
             </button>
             {onRemove && (
-              // Right, not top: a tooltip above would sit over the tile's row.
-              <Hint label="Remove image" side="right">
-                <button
-                  type="button"
-                  onClick={() => onRemove(i)}
-                  aria-label="Remove image"
-                  className={cn(
-                    "absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full cursor-pointer",
-                    "border border-[var(--border)] bg-[var(--card)] text-[var(--secondary-foreground)] hover:text-[var(--foreground)]",
-                    // Hidden until the tile is hovered or keyboard-focused.
-                    "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
-                  )}
-                >
-                  <X size={9} />
-                </button>
-              </Hint>
+              // Pinned to the tile's corner, and hidden until the tile is
+              // hovered or keyboard-focused.
+              <span className="absolute -top-1.5 -right-1.5 flex opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">
+                {/* Right, not top: a tooltip above would sit over the tile's row. */}
+                <Hint label="Remove image" side="right">
+                  <IconButton
+                    variant="floating"
+                    size="2xs"
+                    shape="round"
+                    icon={X}
+                    label="Remove image"
+                    onClick={() => onRemove(i)}
+                  />
+                </Hint>
+              </span>
             )}
           </div>
         ))}
@@ -136,7 +134,7 @@ function ImageViewer({
             <HintGroup>
               <HintItem label="Close">
                 <Dialog.Close className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-element-hover hover:text-foreground cursor-pointer">
-                  <X size={13} />
+                  <Icon icon={X} size="md" />
                 </Dialog.Close>
               </HintItem>
             </HintGroup>
@@ -165,7 +163,7 @@ function NavButton({
   disabled: boolean;
   onClick: () => void;
 }) {
-  const Icon = side === "left" ? ChevronLeft : ChevronRight;
+  const glyph = side === "left" ? ChevronLeft : ChevronRight;
   return (
     <Hint
       label={side === "left" ? "Previous" : "Next"}
@@ -179,13 +177,13 @@ function NavButton({
         onClick={onClick}
         className={cn(
           "absolute top-1/2 z-10 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full",
-          "border border-border bg-[var(--card)]/70 text-secondary-foreground backdrop-blur-xl",
+          "border border-border bg-card/70 text-secondary-foreground backdrop-blur-xl",
           "transition-opacity hover:text-foreground cursor-pointer",
           "disabled:cursor-default disabled:opacity-0",
           side === "left" ? "left-3" : "right-3",
         )}
       >
-        <Icon size={16} />
+        <Icon icon={glyph} size="lg" />
       </button>
     </Hint>
   );

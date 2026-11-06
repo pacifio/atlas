@@ -17,12 +17,17 @@ import { createSelectors } from "@/lib/create-selectors";
  * Diffs used to live here too, and it never worked: a 460px column cannot hold
  * two code panes and a gutter, so the diff had to be reduced to a unified list
  * with clipped lines — which is what three rounds of horizontal-scrolling
- * fixes were chasing. Changes now open `GitDiffModal`, the real side-by-side
- * viewer, at full-window size.
+ * fixes were chasing. Changes now open in the review panel beside the
+ * session, in the turn's own scope (`openTurnDiff`).
  */
 export type PanelTarget =
   | { kind: "tool"; toolCallId: string }
   | { kind: "output"; toolCallId: string }
+  /** A delegated child, addressed by the call that launched it — which is its
+   *  identity (ACP has no subagent concept, so the launch IS the record). The
+   *  panel reads the child from the chat store; a transcript row carries no
+   *  more than its id, as every other target does. */
+  | { kind: "subagent"; toolCallId: string }
   | null;
 
 interface DetailPanelState {

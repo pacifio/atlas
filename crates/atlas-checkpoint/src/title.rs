@@ -1,6 +1,7 @@
 //! Session titles, derived rather than generated.
 //!
-//! The first line of the first user prompt, trimmed, bounded, and **redacted**.
+//! The first meaningful line of the first user prompt — agent wrapper markup
+//! taken out (see [`from_redacted`]) — trimmed, bounded, and **redacted**.
 //! No model call: a title has to exist the instant a turn completes, has to work
 //! offline, has to work in Local mode, and has to work for an Organisation with
 //! no AI entitlement — which is the default state. Every one of those rules out
@@ -35,17 +36,246 @@ pub fn from_prompt(prompt: &str) -> Option<String> {
 /// The redaction is the caller's job — deliberately, so the capture path can
 /// run it inside the same panic guard that protects every other stored string.
 /// Passing raw content here would put an unredacted title on the shared board.
+///
+/// Agents wrap a good deal of what lands in a "user" prompt in their own
+/// markup: Claude Code fences a paste as `<pasted_content id="8a17">…
+/// </pasted_content id="8a17">`, a slash command as `<command-name>` /
+/// `<command-args>`, injected context as `<system-reminder>`, an attached image
+/// as `[Image #1]`. Read line-literally, the first of those becomes the title
+/// and the shared board fills with Sessions called `<pasted_content
+/// id="8a17">`. So the title is, in order:
+///
+/// 1. a slash command, as `/name args`;
+/// 2. the first line of what the person typed around the markup;
+/// 3. the first line of the first paste, so a prompt that is only a pasted
+///    stack trace is titled by the trace;
+/// 4. a plain label (`Pasted text`, `Image`) rather than nothing, because the
+///    Session did have a first prompt, it just was not prose.
 pub fn from_redacted(text: &str) -> Option<String> {
-    // First *non-empty* line, not first line: prompts routinely open with a
-    // blank line or a pasted block, and titling a Session "```" helps nobody.
-    let line = text.lines().map(str::trim).find(|line| !line.is_empty())?;
+    let prompt = parse_prompt(text);
 
-    let stripped = strip_markdown_prefix(line);
-    if stripped.is_empty() {
+    let title = prompt
+        .command
+        .as_deref()
+        .and_then(first_meaningful_line)
+        .or_else(|| first_meaningful_line(&prompt.prose))
+        .or_else(|| {
+            prompt
+                .pastes
+                .iter()
+                .find_map(|paste| first_meaningful_line(paste))
+        })
+        .or_else(|| (!prompt.pastes.is_empty()).then(|| PASTED_TEXT_TITLE.to_string()))
+        .or_else(|| prompt.had_image.then(|| IMAGE_TITLE.to_string()))?;
+
+    Some(truncate(&title, MAX_TITLE_CHARS))
+}
+
+/// Title for a prompt that was nothing but pasted blocks with no usable line.
+pub const PASTED_TEXT_TITLE: &str = "Pasted text";
+/// Title for a prompt that was nothing but image attachments.
+pub const IMAGE_TITLE: &str = "Image";
+
+/// Tags whose whole block is harness machinery, never something a person
+/// said. Dropped together with their content.
+const DROPPED_BLOCKS: &[&str] = &[
+    "system-reminder",
+    "local-command-caveat",
+    "local-command-stdout",
+    "local-command-stderr",
+    "command-message",
+    "command-stdout",
+    "command-stderr",
+    "bash-stdout",
+    "bash-stderr",
+    "task-notification",
+    "user-prompt-submit-hook",
+    "ide_opened_file",
+    "ide_selection",
+    "ide_diagnostics",
+    "atlas-memory",
+];
+
+/// Tags whose content *is* the person's input, merely fenced. Unwrapped.
+const UNWRAPPED_BLOCKS: &[&str] = &["bash-input", "user_query"];
+
+/// Inline placeholders an agent leaves where an attachment was.
+const IMAGE_PLACEHOLDER: &str = "[Image #";
+const PASTE_PLACEHOLDER: &str = "[Pasted text #";
+
+/// A prompt with the agent markup taken apart.
+#[derive(Debug, Default)]
+struct ParsedPrompt {
+    /// What remains once every recognised block is removed or unwrapped.
+    prose: String,
+    /// `/name args`, when the prompt was a slash-command envelope.
+    command: Option<String>,
+    /// The bodies of `<pasted_content>` blocks, in order — plus one empty entry
+    /// per `[Pasted text #N]` placeholder, whose body the prompt does not carry.
+    pastes: Vec<String>,
+    had_image: bool,
+}
+
+fn parse_prompt(text: &str) -> ParsedPrompt {
+    let mut parsed = ParsedPrompt::default();
+    let mut command_name: Option<String> = None;
+    let mut command_args: Option<String> = None;
+    let mut prose = String::with_capacity(text.len());
+    let mut rest = text;
+
+    while let Some(lt) = rest.find('<') {
+        prose.push_str(&rest[..lt]);
+        let at = &rest[lt..];
+        let known = opening_tag(at).filter(|(name, _)| {
+            matches!(*name, "pasted_content" | "command-name" | "command-args")
+                || DROPPED_BLOCKS.contains(name)
+                || UNWRAPPED_BLOCKS.contains(name)
+        });
+        let Some((name, open_len)) = known else {
+            // Prose `<`, or a tag this module does not know: keep it verbatim.
+            prose.push('<');
+            rest = &at[1..];
+            continue;
+        };
+        let after_open = &at[open_len..];
+
+        // An unclosed paste runs to the end of the prompt — the agent fenced
+        // everything after it. Any other unclosed tag drops only the tag
+        // itself, so a stray opener cannot swallow the person's words.
+        let (inner, consumed) = match closing_tag(after_open, name) {
+            Some((start, len)) => (&after_open[..start], open_len + start + len),
+            None if name == "pasted_content" => (after_open, at.len()),
+            None => ("", open_len),
+        };
+
+        match name {
+            "pasted_content" => parsed.pastes.push(inner.to_string()),
+            "command-name" => command_name = Some(inner.trim().to_string()),
+            "command-args" => command_args = Some(inner.trim().to_string()),
+            name if UNWRAPPED_BLOCKS.contains(&name) => {
+                prose.push(' ');
+                prose.push_str(inner);
+            }
+            _ => {}
+        }
+        // A space, not a newline: an inline block's neighbours stay one line
+        // (`why does <paste> fail` → `why does fail`); a block on its own
+        // line already has its own line breaks around it.
+        prose.push(' ');
+        rest = &at[consumed..];
+    }
+    prose.push_str(rest);
+
+    parsed.prose = strip_placeholders(&prose, &mut parsed);
+    parsed.command = command_name.filter(|name| !name.is_empty()).map(|name| {
+        match command_args
+            .as_deref()
+            .and_then(|args| args.lines().map(str::trim).find(|l| !l.is_empty()))
+        {
+            Some(args) => format!("{name} {args}"),
+            None => name,
+        }
+    });
+    parsed
+}
+
+/// Remove `[Image #N]` / `[Pasted text #N +M lines]` placeholders, recording
+/// what each stood for.
+fn strip_placeholders(text: &str, parsed: &mut ParsedPrompt) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    loop {
+        let (at, is_image) = match (rest.find(IMAGE_PLACEHOLDER), rest.find(PASTE_PLACEHOLDER)) {
+            (Some(image), Some(paste)) if image < paste => (image, true),
+            (Some(image), None) => (image, true),
+            (_, Some(paste)) => (paste, false),
+            (None, None) => break,
+        };
+        let Some(end) = rest[at..].find(']') else {
+            break;
+        };
+        out.push_str(&rest[..at]);
+        if is_image {
+            parsed.had_image = true;
+        } else {
+            parsed.pastes.push(String::new());
+        }
+        rest = &rest[at + end + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// `<name …>` at the start of `text`: the tag name and the opener's length.
+fn opening_tag(text: &str) -> Option<(&str, usize)> {
+    let body = text.strip_prefix('<')?;
+    if !body.starts_with(|c: char| c.is_ascii_alphabetic()) {
         return None;
     }
+    let name_len = body
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+        .unwrap_or(body.len());
+    let after_name = &body[name_len..];
+    if !(after_name.starts_with('>') || after_name.starts_with(char::is_whitespace)) {
+        return None;
+    }
+    let gt = after_name.find('>')?;
+    // An attribute list never spans a line; refusing one that does keeps a
+    // prose `<` from reaching a `>` paragraphs later.
+    if after_name[..gt].contains('\n') {
+        return None;
+    }
+    Some((&body[..name_len], 1 + name_len + gt + 1))
+}
 
-    Some(truncate(stripped, MAX_TITLE_CHARS))
+/// The first `</name …>` in `text`: its byte offset and length. Claude Code
+/// repeats the opener's attributes on the closer (`</pasted_content
+/// id="8a17">`), so anything up to the `>` is accepted.
+fn closing_tag(text: &str, name: &str) -> Option<(usize, usize)> {
+    let needle = format!("</{name}");
+    let mut from = 0;
+    while let Some(found) = text[from..].find(&needle) {
+        let start = from + found;
+        let after = &text[start + needle.len()..];
+        if after.starts_with('>') || after.starts_with(char::is_whitespace) {
+            let gt = after.find('>')?;
+            return Some((start, needle.len() + gt + 1));
+        }
+        from = start + needle.len();
+    }
+    None
+}
+
+/// The first line that carries words: trimmed, markdown prefix dropped,
+/// whitespace collapsed. A line that is only a tag — an agent wrapper this
+/// module does not know by name — is skipped rather than becoming the title.
+fn first_meaningful_line(text: &str) -> Option<String> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !is_lone_tag(line))
+        .map(|line| {
+            strip_markdown_prefix(line)
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .find(|line| !line.is_empty())
+}
+
+/// `<tag>`, `</tag attr="x">`, `<tag/>`: a line that is markup and nothing
+/// else.
+fn is_lone_tag(line: &str) -> bool {
+    let Some(inner) = line.strip_prefix('<').and_then(|l| l.strip_suffix('>')) else {
+        return false;
+    };
+    let inner = inner.strip_prefix('/').unwrap_or(inner);
+    inner.starts_with(|c: char| c.is_ascii_alphabetic())
+        && !inner.contains(['<', '>'])
+        && inner.split_whitespace().next().is_some_and(|name| {
+            name.trim_end_matches('/')
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | ':'))
+        })
 }
 
 /// Drop leading markdown noise so a prompt that opens with a heading or bullet
@@ -157,6 +387,156 @@ mod tests {
             from_redacted("Fix the flaky auth test")
         );
         assert_eq!(from_redacted("   \n  "), None);
+    }
+
+    // ── Agent markup. The inputs below are the shapes Claude Code writes to its
+    //    transcripts, which is what an imported Session's first prompt is. ──
+
+    #[test]
+    fn a_prompt_that_is_only_a_paste_is_titled_by_the_pastes_first_line() {
+        let prompt = "\n\n<pasted_content id=\"8a17\">\n## Error Type\nConsole Error\n\n## Error Message\nBase UI: render is not a function\n</pasted_content id=\"8a17\">\n";
+        assert_eq!(from_prompt(prompt), Some("Error Type".to_string()));
+    }
+
+    #[test]
+    fn text_typed_after_a_paste_wins_over_the_paste() {
+        let prompt = "\n\n<pasted_content id=\"e223\">\n⚠ Blocked cross-origin request to Next.js dev resource\n</pasted_content id=\"e223\">\n\n fix it";
+        assert_eq!(from_prompt(prompt), Some("fix it".to_string()));
+    }
+
+    #[test]
+    fn text_typed_before_a_paste_wins_over_the_paste() {
+        let prompt = "nova's page can be rescraped \n\n<pasted_content id=\"e3a0\">\nfc-token-goes-here\n</pasted_content id=\"e3a0\">\n\n here's the token";
+        assert_eq!(
+            from_prompt(prompt),
+            Some("nova's page can be rescraped".to_string())
+        );
+    }
+
+    #[test]
+    fn an_inline_paste_leaves_the_surrounding_words_on_one_line() {
+        assert_eq!(
+            from_redacted(
+                "why does <pasted_content id=\"01\">panic at main.rs</pasted_content id=\"01\"> fail"
+            ),
+            Some("why does fail".to_string())
+        );
+    }
+
+    #[test]
+    fn a_paste_with_no_usable_line_falls_back_to_a_label() {
+        let prompt = "<pasted_content id=\"ff00\">\n\n   \n</pasted_content id=\"ff00\">";
+        assert_eq!(from_prompt(prompt), Some(PASTED_TEXT_TITLE.to_string()));
+        assert_eq!(
+            from_redacted("[Pasted text #1 +42 lines]"),
+            Some(PASTED_TEXT_TITLE.to_string())
+        );
+    }
+
+    #[test]
+    fn an_unclosed_paste_still_never_becomes_the_title() {
+        assert_eq!(
+            from_redacted("<pasted_content id=\"8a17\">\nTypeError: x is undefined\n  at foo"),
+            Some("TypeError: x is undefined".to_string())
+        );
+    }
+
+    #[test]
+    fn a_bare_opening_tag_line_is_never_a_title() {
+        // What the board actually shows today: the first line, alone.
+        assert_eq!(
+            from_redacted("<pasted_content id=\"8a17\">"),
+            Some(PASTED_TEXT_TITLE.to_string())
+        );
+        assert_eq!(
+            from_redacted("<some-new-wrapper kind=\"x\">\nthe real ask\n</some-new-wrapper>"),
+            Some("the real ask".to_string())
+        );
+    }
+
+    #[test]
+    fn a_slash_command_reads_as_the_command_and_its_args() {
+        let prompt = "<command-message>review is running…</command-message>\n<command-name>/review</command-name>\n<command-args>the auth branch\nthoroughly</command-args>";
+        assert_eq!(
+            from_prompt(prompt),
+            Some("/review the auth branch".to_string())
+        );
+        assert_eq!(
+            from_redacted("<command-name>/clear</command-name>\n<command-message>clear</command-message>\n<command-args></command-args>"),
+            Some("/clear".to_string())
+        );
+    }
+
+    #[test]
+    fn harness_blocks_are_dropped_with_their_content() {
+        let prompt = "<system-reminder>\nThe user opened the file foo.ts in the IDE.\n</system-reminder>\n<local-command-stdout>Compacted</local-command-stdout>\nRefactor the uploader";
+        assert_eq!(
+            from_prompt(prompt),
+            Some("Refactor the uploader".to_string())
+        );
+        assert_eq!(
+            from_redacted(
+                "<ide_opened_file>The user opened src/a.rs</ide_opened_file> explain this"
+            ),
+            Some("explain this".to_string())
+        );
+    }
+
+    #[test]
+    fn a_bash_input_is_the_persons_command() {
+        assert_eq!(
+            from_redacted("<bash-input>git status</bash-input>"),
+            Some("git status".to_string())
+        );
+    }
+
+    #[test]
+    fn image_placeholders_are_stripped_and_an_image_only_prompt_is_labelled() {
+        assert_eq!(
+            from_redacted("[Image #1] why is this button misaligned"),
+            Some("why is this button misaligned".to_string())
+        );
+        assert_eq!(
+            from_redacted("[Image #1]\n[Image #2]"),
+            Some(IMAGE_TITLE.to_string())
+        );
+    }
+
+    #[test]
+    fn whitespace_inside_the_line_is_collapsed() {
+        assert_eq!(
+            from_redacted("fix   the\tflaky    test"),
+            Some("fix the flaky test".to_string())
+        );
+    }
+
+    #[test]
+    fn prose_angle_brackets_survive() {
+        assert_eq!(
+            from_redacted("why is a < b but <div> renders"),
+            Some("why is a < b but <div> renders".to_string())
+        );
+        assert_eq!(
+            from_redacted("convert Vec<String> to &[&str]"),
+            Some("convert Vec<String> to &[&str]".to_string())
+        );
+    }
+
+    #[test]
+    fn a_markdown_only_line_gives_way_to_the_next() {
+        assert_eq!(
+            from_redacted("###\nreal title"),
+            Some("real title".to_string())
+        );
+    }
+
+    #[test]
+    fn a_secret_inside_a_paste_never_reaches_the_title() {
+        let title = from_prompt(
+            "<pasted_content id=\"aa11\">\nsk-ABCDEF0123456789ABCDEF failing\n</pasted_content id=\"aa11\">",
+        )
+        .expect("title");
+        assert!(!title.contains("sk-ABCDEF0123456789ABCDEF"), "{title}");
     }
 
     #[test]

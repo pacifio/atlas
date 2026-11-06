@@ -88,4 +88,20 @@ describe("terminal pane trees", () => {
     s().actions.closePane("t1", paneA);
     expect(s().tabs.t1.zoomedPaneId).toBeNull();
   });
+
+  it("reorders a pane's terminals, and only into a permutation of them", () => {
+    s().actions.initTab("t1", "ws-a");
+    const paneId = s().tabs.t1.root.id;
+    s().actions.addTerminalToPane("t1", paneId);
+    s().actions.addTerminalToPane("t1", paneId);
+    const terminals = () => (s().tabs.t1.root as { terminals: string[] }).terminals;
+    const [a, b, c] = terminals();
+    s().actions.reorderTerminalsInPane("t1", paneId, [c, a, b]);
+    expect(terminals()).toEqual([c, a, b]);
+    // A stale order (a terminal closed mid-drag) or a foreign id is refused.
+    s().actions.reorderTerminalsInPane("t1", paneId, [a, b]);
+    s().actions.reorderTerminalsInPane("t1", paneId, [a, b, "nope"]);
+    s().actions.reorderTerminalsInPane("t1", paneId, [a, a, b]);
+    expect(terminals()).toEqual([c, a, b]);
+  });
 });

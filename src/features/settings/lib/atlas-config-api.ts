@@ -63,11 +63,11 @@ interface ConfigChangedPayload {
   generation: number;
 }
 
-/** Fires whenever `config.toml` changes for any reason other than the
- *  current window's own successful `updateSettings` call, which already gets
- *  the new snapshot back as that call's return value — the frontend's own
- *  round trip, and this event, are two different delivery paths for the same
- *  kind of change. */
+/** Fires whenever `config.toml` changes — including after this window's own
+ *  successful `updateSettings`, since `update_atlas_settings` emits it too.
+ *  That call also returns the new snapshot; a listener sees the same
+ *  generation twice and should treat the echo as a no-op (the settings store
+ *  does). */
 export function onConfigChanged(cb: (payload: ConfigChangedPayload) => void): Promise<UnlistenFn> {
   return listen<ConfigChangedPayload>("atlas:config-changed", (e) => cb(e.payload));
 }

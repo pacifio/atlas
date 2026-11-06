@@ -37,7 +37,7 @@ describe("org-scoped tab persistence", () => {
     { type: "editor", closable: true },
     { type: "spaces", closable: true },
     { type: "comms-draft", closable: true },
-    { type: "settings", closable: true },
+    { type: "log", closable: true },
     { type: "chat", closable: false },
   ];
 
@@ -46,16 +46,15 @@ describe("org-scoped tab persistence", () => {
     expect(kept).not.toContain("spaces");
     expect(kept).not.toContain("comms-draft");
     // Everything else that was persisted before still is.
-    expect(kept).toEqual(["editor", "settings"]);
+    expect(kept).toEqual(["editor", "log"]);
   });
 
   it("refuses to restore them from a file written before the fix", () => {
     expect(restorable(["editor", "spaces", "comms-draft"])).toEqual(["editor"]);
   });
 
-  it("settings is projectless but NOT org-scoped — it survives a switch", () => {
-    expect(PROJECTLESS_TYPES.has("settings")).toBe(true);
-    expect(ORG_SCOPED_TYPES.has("settings")).toBe(false);
+  it("a persisted Settings tab is dropped: Settings is a screen now, not a tab", () => {
+    expect(restorable(["settings"])).toEqual([]);
   });
 
   it("usage is org-scoped: it closes on switch and never persists per project", () => {
@@ -68,7 +67,7 @@ describe("org-scoped tab persistence", () => {
   });
 
   it("an unknown persisted type is dropped, a known one comes back as itself", () => {
-    expect(restorable(["no-such-tab-type", "settings"])).toEqual(["settings"]);
+    expect(restorable(["no-such-tab-type", "log"])).toEqual(["log"]);
   });
 
   it("every org-scoped type is also projectless (they open with no project)", () => {

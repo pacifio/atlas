@@ -33,6 +33,31 @@ fn cwd_encoding_collapses_every_non_alphanumeric() {
     assert_eq!(encode_cwd("/a/b/"), encode_cwd("/a/b"));
 }
 
+/// Expected values are the SDK's own `xt()` run under node (core.mjs,
+/// 0.3.287), not derived from the Rust: a non-BMP character is two UTF-16
+/// units and so two dashes, and a slug over 200 units is cut and suffixed
+/// with a base-36 hash of the whole path.
+#[test]
+fn cwd_encoding_matches_the_sdk_for_unicode_and_long_paths() {
+    assert_eq!(encode_cwd("/tmp/\u{1F600} x"), "-tmp----x");
+    assert_eq!(encode_cwd("/Users/a/caf\u{e9}"), "-Users-a-caf-");
+
+    let long = format!(
+        "/Users/adib/{}project",
+        "very-long-directory-name/".repeat(9)
+    );
+    assert_eq!(
+        encode_cwd(&long),
+        "-Users-adib-very-long-directory-name-very-long-directory-name-very-long-directory-name-very-long-directory-name-very-long-directory-name-very-long-directory-name-very-long-directory-name-very-long-dir-dg7k6s"
+    );
+
+    let long_emoji = format!("/Users/adib/{}end", "dir\u{1F600}name/".repeat(25));
+    assert_eq!(
+        encode_cwd(&long_emoji),
+        "-Users-adib-dir--name-dir--name-dir--name-dir--name-dir--name-dir--name-dir--name-dir--name-dir--name-dir--name-dir--name-dir--name-dir--name-dir--name-dir--name-dir--name-dir--name-dir--name-dir--nam-a0477a"
+    );
+}
+
 #[test]
 fn injected_user_text_is_recognised() {
     for t in [

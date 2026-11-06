@@ -6,8 +6,7 @@
 //! rather than showing a protocol error. The tokens are additive-only: renaming
 //! one silently re-routes failures in the UI.
 //!
-//! Moved verbatim from `atlas-acp/src/error.rs` (the 1.3 stack) at Stage 3 of
-//! the Zed port; the classifier's substring tables are unchanged, because a
+//! The classifier's substring tables are stable, because a
 //! message that routed to sign-in yesterday must still route there today.
 
 /// The shared failure taxonomy. Used to annotate `TurnFailed` and to give

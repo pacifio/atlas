@@ -3,7 +3,6 @@ import { createSelectors } from "@/lib/create-selectors";
 import { logEvent } from "@/features/log/lib/log";
 import { scheduleAppStateSave } from "@/features/app/stores/app-store";
 import { useProjectStore } from "@/features/projects/stores/project-store";
-import { useRecentChatsStore } from "@/features/projects/stores/recent-chats-store";
 import type { Organisation } from "../types";
 import { isSyncedOrg, slugify } from "../types";
 import { syncOrgTelemetry } from "../lib/org-telemetry";
@@ -33,7 +32,7 @@ function nameTaken(name: string, orgs: Organisation[], exceptId?: string): boole
  *
  * The survivor is the active org if one of the duplicates is active (switching
  * away from under the user would be worse than the duplicate), else the first.
- * Projects and groups tagged with a dropped org are re-tagged to the survivor
+ * Projects tagged with a dropped org are re-tagged to the survivor
  * — dropping the org without that would strand every project inside it.
  */
 function collapseDuplicateRemotes(
@@ -71,9 +70,6 @@ function collapseDuplicateRemotes(
   useProjectStore.setState((s) => ({
     projects: s.projects.map((w) =>
       w.orgId && remap.has(w.orgId) ? { ...w, orgId: remap.get(w.orgId) } : w,
-    ),
-    groups: s.groups.map((g) =>
-      g.orgId && remap.has(g.orgId) ? { ...g, orgId: remap.get(g.orgId) } : g,
     ),
   }));
   logEvent({
@@ -144,6 +140,10 @@ interface OrgState {
     /** Remove an org. Refuses if it's the last org or still owns projects
      *  (the caller must reassign/close those first). Returns whether removed. */
     deleteOrg: (id: string) => boolean;
+    /** Cut an org loose from the server — drop its `remoteId` and turn sync
+     *  off — keeping its projects as a local-only org. For an org the user has
+     *  left but cannot delete locally (it is their only one). */
+    unlinkOrg: (id: string) => void;
     /** Record the per-org last-active project (restore target on switch). */
     setActiveProjectForOrg: (orgId: string, projectId: string | null) => void;
     /** Low-level setter used by the org-switch orchestration + overlay gate. */
@@ -186,7 +186,7 @@ export const useOrgStore = createSelectors(
       },
 
       createOrg: (name, slug) => {
-        const trimmed = name.trim() || "New organisation";
+        const trimmed = name.trim() || "New organization";
         const handle = slugify(slug || trimmed);
         // GitHub-style: names are globally unique (case-insensitive). The slug
         // is what the SERVER enforces globally; locally we only stop obvious
@@ -214,13 +214,13 @@ export const useOrgStore = createSelectors(
       createOrgSynced: async (name, slug, cloud) => {
         const trimmed = name.trim();
         const handle = slugify(slug || trimmed);
-        if (!trimmed) throw "Enter a name for the organisation.";
-        if (!handle) throw "Enter a handle for the organisation.";
+        if (!trimmed) throw "Enter a name for the organization.";
+        if (!handle) throw "Enter a handle for the organization.";
         if (nameTaken(trimmed, get().organisations)) {
-          throw `An organisation named “${trimmed}” already exists.`;
+          throw `An organization named “${trimmed}” already exists.`;
         }
         if (get().organisations.some((o) => o.slug === handle)) {
-          throw `The handle “${handle}” is already used by another organisation.`;
+          throw `The handle “${handle}” is already used by another organization.`;
         }
 
         // Server FIRST for a cloud org: the unique index on `organization.slug`
@@ -298,22 +298,28 @@ export const useOrgStore = createSelectors(
         const { organisations } = get();
         if (organisations.length <= 1) return false; // never delete the last org
         // Cascade: wipe all app-state scoped to this org — its project/group
-        // references, and the recent chats for those projects. (The user's
-        // actual project files + `.atlas/` data on disk are NOT touched; only
-        // Atlas's org-scoped tracking is removed.) The caller (deleteOrgAndData)
-        // must have already switched away if this is the active org.
-        const ws = useProjectStore.getState();
-        const orgPaths = new Set(ws.projects.filter((w) => w.orgId === id).map((w) => w.path));
-        ws.actions.removeProjectsForOrg(id);
-        const rc = useRecentChatsStore.getState();
-        for (const c of rc.items) {
-          if (orgPaths.has(c.projectPath)) rc.actions.remove(c.tabId);
-        }
+        // references. (The user's actual project files + `.atlas/` data on
+        // disk are NOT touched; only Atlas's org-scoped tracking is removed.)
+        // The caller (deleteOrgAndData) must have already switched away if
+        // this is the active org.
+        useProjectStore.getState().actions.removeProjectsForOrg(id);
         set((s) => ({
           organisations: s.organisations.filter((o) => o.id !== id),
         }));
         scheduleAppStateSave();
         return true;
+      },
+
+      unlinkOrg: (id) => {
+        if (!get().organisations.some((o) => o.id === id && (o.remoteId || o.syncEnabled))) return;
+        set((s) => ({
+          organisations: s.organisations.map((o) => {
+            if (o.id !== id) return o;
+            const { remoteId: _remoteId, ...rest } = o;
+            return { ...rest, syncEnabled: false };
+          }),
+        }));
+        scheduleAppStateSave();
       },
 
       setActiveProjectForOrg: (orgId, projectId) => {
@@ -452,7 +458,7 @@ export const useOrgStore = createSelectors(
             payload: { orgId: id, remoteId },
           });
         } catch (e) {
-          toast.error(typeof e === "string" ? e : "Couldn't sync organisation.");
+          toast.error(typeof e === "string" ? e : "Couldn't sync organization.");
         }
       },
 

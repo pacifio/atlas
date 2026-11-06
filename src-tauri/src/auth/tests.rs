@@ -820,6 +820,55 @@ async fn a_rejected_session_is_cleared_and_signs_the_user_out() {
     );
 }
 
+/// The hosted-rooms hook (CC-1): a rejection tells its observers **while the
+/// credential is still on disk** — the close door needs a bearer — and only
+/// then clears it. A verdict that costs nothing (a 500, a 403) tells no one.
+#[tokio::test]
+async fn a_rejection_tells_its_observers_before_the_credential_goes() {
+    let stub = Stub::start().await;
+    let dir = TempDir::new();
+    scripted_grant(&stub);
+
+    let auth = core(&stub, &dir);
+    sign_in(&auth).await;
+
+    // A second view of the same credential file, for the observer to read.
+    let on_disk = Arc::new(AuthCore::new(
+        stub.base(),
+        dir.path(),
+        reqwest::Client::new(),
+    ));
+    let seen: Arc<Mutex<Vec<bool>>> = Arc::default();
+    {
+        let seen = seen.clone();
+        let on_disk = on_disk.clone();
+        auth.on_credential_rejected(Arc::new(move || {
+            let seen = seen.clone();
+            let on_disk = on_disk.clone();
+            Box::pin(async move {
+                seen.lock().unwrap().push(on_disk.stored().is_some());
+            })
+        }));
+    }
+
+    // A server error is not a verdict: nothing is cleared, no one is told.
+    stub.on("/token", vec![Reply::err(500, "down")]);
+    assert!(matches!(
+        auth.validate_once().await,
+        Validation::Indeterminate { .. }
+    ));
+    assert!(seen.lock().unwrap().is_empty());
+
+    stub.on("/token", vec![Reply::err(401, "unauthorized")]);
+    assert_eq!(auth.validate_once().await, Validation::Rejected);
+    assert_eq!(
+        seen.lock().unwrap().clone(),
+        [true],
+        "told once, with the credential still there"
+    );
+    assert!(auth.stored().is_none(), "and then it went");
+}
+
 #[tokio::test]
 async fn a_server_error_never_costs_the_credential() {
     let stub = Stub::start().await;
@@ -2160,4 +2209,69 @@ async fn a_refresh_in_flight_cannot_resurrect_a_signed_out_credential() {
         "nor may it leave a face behind in the config directory"
     );
     drop(ticket);
+}
+
+// ------------------------------------------------------------------- leave
+
+#[tokio::test]
+async fn leaving_an_organisation_drops_it_from_the_snapshot_at_once() {
+    let stub = Stub::start().await;
+    let dir = TempDir::new();
+    scripted_grant_with_roles(&stub, &[("org_1", "admin"), ("org_2", "member")]);
+    stub.profile("Ada Lovelace", None);
+    stub.org_list(&[("org_1", "Atlas"), ("org_2", "Side Project")]);
+    let auth = core(&stub, &dir);
+    sign_in(&auth).await;
+
+    stub.on("/organization/leave", vec![Reply::ok(r#"{"id":"mem_1"}"#)]);
+    // What the server lists once the membership is gone.
+    stub.org_list(&[("org_1", "Atlas")]);
+    stub.on("/token", vec![jwt_reply(&[("org_1", "admin")])]);
+
+    auth.leave_org("org_2").await.expect("a member may leave");
+
+    let seen = stub.seen("/organization/leave");
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0].method, "POST");
+    assert_eq!(
+        seen[0].bearer.as_deref(),
+        Some("session-tok"),
+        "the desktop has no cookie: the leave rides the session token"
+    );
+    assert_eq!(
+        orgs_of(&auth.snapshot()),
+        Some(vec![org("org_1", "Atlas", Some(Role::Admin))]),
+        "the account menu must stop listing the org without waiting for a revalidate"
+    );
+}
+
+#[tokio::test]
+async fn a_refused_leave_is_denied_and_changes_nothing() {
+    // The Owner, or the last admin: the server answers 403, and the user is
+    // still a member of everything they were in.
+    let stub = Stub::start().await;
+    let dir = TempDir::new();
+    scripted_grant_with_roles(&stub, &[("org_1", "admin")]);
+    stub.profile("Ada Lovelace", None);
+    stub.org_list(&[("org_1", "Atlas")]);
+    let auth = core(&stub, &dir);
+    sign_in(&auth).await;
+
+    stub.on(
+        "/organization/leave",
+        vec![Reply::err(
+            403,
+            r#"{"code":"owner_cannot_leave","message":"The organization's owner cannot leave it."}"#,
+        )],
+    );
+
+    assert_eq!(auth.leave_org("org_1").await, Err(AuthFailure::Denied));
+    assert!(
+        auth.stored().is_some(),
+        "a refusal never costs the credential"
+    );
+    assert_eq!(
+        orgs_of(&auth.snapshot()),
+        Some(vec![org("org_1", "Atlas", Some(Role::Admin))])
+    );
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bump Atlas's version in every file that has to stay in sync.
+# Set Atlas's version in every file that has to stay in sync.
 #
 # Usage:
 #   ./scripts/bump.sh             # bumps the patch number: 0.1.2 -> 0.1.3
@@ -10,15 +10,20 @@
 #   - src-tauri/Cargo.toml          (version = "...")
 #   - Cargo.lock                    (the atlas package's entry)
 #   - src-tauri/tauri.conf.json     ("version": "...")
-#   - src/features/settings/components/settings-panel.tsx  (About label)
+#
+# Idempotent: every file is set to the new version whatever it held before. The
+# release workflow relies on that — release-please has already moved
+# package.json when `.github/workflows/release.yml` runs this on the release PR
+# to bring the other three along. Portable (perl, not BSD or GNU sed), and needs
+# no cargo, so it runs the same on a Mac and on a Linux runner.
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PKG="$ROOT/package.json"
 CARGO="$ROOT/src-tauri/Cargo.toml"
+LOCK="$ROOT/Cargo.lock"
 TAURI_CONF="$ROOT/src-tauri/tauri.conf.json"
-SETTINGS="$ROOT/src/features/settings/components/settings-panel.tsx"
 
 # Source of truth = package.json. Pull the first `"version": "..."` line.
 current=$(grep -m1 '"version":' "$PKG" | sed -E 's/.*"version" *: *"([^"]+)".*/\1/')
@@ -42,44 +47,37 @@ else
   new="$major.$minor.$((patch + 1))"
 fi
 
-if [ "$current" = "$new" ]; then
-  echo "version is already $new — nothing to do"
-  exit 0
-fi
+echo "setting version to $new (package.json had $current)"
 
-echo "bumping $current -> $new"
+# JSON files: the first `"version": "…"` is the top-level one (no deps in
+# tauri.conf.json; package.json's other version fields like `"packageManager"`
+# aren't quoted this way). Only the first is replaced.
+NEW="$new" perl -0pi -e 's/"version": "[^"]*"/"version": "$ENV{NEW}"/' "$PKG" "$TAURI_CONF"
 
-# Escape the dots in the current version so they're treated as literal in
-# sed (the only special character that appears in a semver string).
-escaped=$(printf '%s' "$current" | sed 's/\./\\./g')
-
-# BSD/macOS sed wants `-i ''`. Atlas is mac-targeted so we lean into that.
-in_place() {
-  sed -i '' "$@"
-}
-
-# JSON files: the only `"version": "X.Y.Z"` literal in either file is the
-# top-level one (no deps in tauri.conf.json; package.json's other version
-# fields like `"packageManager"` aren't quoted this way).
-in_place "s/\"version\": \"$escaped\"/\"version\": \"$new\"/g" "$PKG"
-in_place "s/\"version\": \"$escaped\"/\"version\": \"$new\"/g" "$TAURI_CONF"
-
-# Cargo.toml: anchor with `^` so we don't replace a dep's pinned version
-# elsewhere in the file.
-in_place "s/^version = \"$escaped\"/version = \"$new\"/" "$CARGO"
-
-# Settings panel About label.
-in_place "s/v$escaped — The second brain IDE/v$new — The second brain IDE/g" "$SETTINGS"
+# Cargo.toml: the `[package]` table's `version = "…"` is the only one at the
+# start of a line (dependencies pin theirs inline), and it comes first.
+NEW="$new" perl -0pi -e 's/^version = "[^"]*"/version = "$ENV{NEW}"/m' "$CARGO"
 
 # Cargo.lock records the app's own version too. Left stale, every CI job's
 # `cargo test --locked` refuses to run (one "v bump" commit failed 63 jobs).
-# `--workspace` touches only workspace members' entries; `--offline` because
-# no dependency changes.
-(cd "$ROOT" && cargo update --workspace --offline --quiet)
+# Only the `atlas` package's entry follows the app version.
+NEW="$new" perl -0pi -e 's/(\[\[package\]\]\nname = "atlas"\nversion = )"[^"]*"/$1"$ENV{NEW}"/' "$LOCK"
+
+for f in "$PKG" "$TAURI_CONF"; do
+  got="$(grep -m1 '"version":' "$f" | sed -E 's/.*"version" *: *"([^"]+)".*/\1/')"
+  [ "$got" = "$new" ] || { echo "error: $f still says $got" >&2; exit 1; }
+done
+grep -m1 '^version = ' "$CARGO" | grep -qx "version = \"$new\"" || {
+  echo "error: $CARGO was not updated" >&2
+  exit 1
+}
+grep -A1 '^name = "atlas"$' "$LOCK" | grep -q "^version = \"$new\"$" || {
+  echo "error: Cargo.lock's atlas entry was not updated" >&2
+  exit 1
+}
 
 echo "done. updated:"
 echo "  $PKG"
 echo "  $CARGO"
-echo "  $ROOT/Cargo.lock"
+echo "  $LOCK"
 echo "  $TAURI_CONF"
-echo "  $SETTINGS"

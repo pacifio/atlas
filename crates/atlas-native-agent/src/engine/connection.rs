@@ -1,4 +1,4 @@
-//! The `AgentConnection` the app plugs into, over the ported engine.
+//! The `AgentConnection` the app plugs into, over the engine.
 //!
 //! This was the counterpart of the previous native connection, now deleted (#54), and it
 //! implements the same trait, because that is the whole point of the seam: the
@@ -16,7 +16,7 @@
 //! # Why a turn needs both a response and a notification
 //!
 //! `turn/start` returns as soon as the turn is *accepted*, carrying a turn id
-//! and `status: InProgress` — the permission-request test upstream proves it,
+//! and `status: InProgress` — the engine's permission-request test proves it,
 //! since it reads a server request only after the response has landed. The
 //! turn's outcome arrives later, as a `TurnCompleted` notification.
 //!
@@ -45,6 +45,7 @@ use anyhow::Result;
 use atlas_acp_thread::{
     AcpThread, AcpThreadHandle, AgentConnection, AgentId, AgentModelId, AgentModelInfo,
     AgentModelList, AgentModelSelector, AgentSessionModes, AgentSessionRewind, AuthorizationKind,
+    SessionRoots,
 };
 use atlas_agent_servers::{SessionMcpOffer, SessionMcpRequest, SessionMcpServers, ThreadEventSink};
 use atlas_engine_app_server_client::InProcessAppServerClient;
@@ -315,6 +316,8 @@ impl LiveCatalogue {
                 is_latest: false,
                 cost: None,
                 disabled: None,
+                provider: None,
+                legacy: false,
             }],
             default_model: model,
             fingerprint: 0,
@@ -366,6 +369,10 @@ pub struct EngineConnection {
     /// in principle produce the same pair. The mode the user picked is Atlas's
     /// fact to remember.
     session_modes: Arc<Mutex<HashMap<acp::SessionId, acp::SessionModeId>>>,
+    /// Sessions whose roots changed while a turn was running, so the change
+    /// could not be applied then. The next prompt applies it before its turn
+    /// starts (see [`EngineConnection::update_session_roots`]).
+    roots_pending: Arc<Mutex<std::collections::HashSet<acp::SessionId>>>,
     default_mode: Option<acp::SessionModeId>,
     /// Decides the MCP servers each thread is handed (the memory tool
     /// server), projected into the thread's config overrides.
@@ -430,7 +437,7 @@ impl EngineConnection {
             WireDialect::Chat => {
                 let Some(fetcher) = catalogue else {
                     return Err(anyhow!(
-                        "the gateway dialect needs a catalogue fetcher and none was supplied"
+                        "the gateway dialect needs a catalog fetcher and none was supplied"
                     ));
                 };
                 let resolved = catalog_cache::resolve(
@@ -509,6 +516,7 @@ impl EngineConnection {
             _pump: Arc::new(PumpHandle(pump)),
             runtime: Arc::new(runtime),
             session_modes: Arc::new(Mutex::new(HashMap::new())),
+            roots_pending: Arc::default(),
             default_mode,
             session_mcp,
         }))
@@ -581,7 +589,8 @@ impl EngineConnection {
         session_id: &acp::SessionId,
         mode: &acp::SessionModeId,
     ) -> Result<()> {
-        let (approval_policy, sandbox_policy) = modes::engine_policy(&mode.0);
+        let writable = extra_writable_roots(&self.sessions, session_id);
+        let (approval_policy, sandbox_policy) = modes::engine_policy_with_roots(&mode.0, &writable);
         let _: v2::ThreadSettingsUpdateResponse = self
             .call(|request_id| ClientRequest::ThreadSettingsUpdate {
                 request_id,
@@ -643,7 +652,7 @@ impl EngineConnection {
     /// Discover the cwd's skills and re-publish the command list with them.
     ///
     /// User- and repo-scope only: the engine's bundled system skills lean on
-    /// upstream services the gateway does not serve, and a row that errors on
+    /// OpenAI services the gateway does not serve, and a row that errors on
     /// click is worse than no row. Best-effort by design — a session without
     /// skills is a session with the static commands, not a failed session.
     async fn discover_skills(&self, session_id: &acp::SessionId, cwd: &std::path::Path) {
@@ -719,6 +728,9 @@ impl EngineConnection {
                 // And, for the same reason, organisation access: it may be
                 // handed the organisation tool server (ADR-0014).
                 org_access: true,
+                // The engine runs in this process and reads the entries from
+                // memory: a header never reaches a command line (ADR-0020).
+                in_process: true,
                 cwd: cwd.to_path_buf(),
                 session_id: session_id.cloned(),
             },
@@ -1000,8 +1012,58 @@ fn handle_server_request(
         }
     };
 
-    let session_id = acp::SessionId::new(thread_id.as_str());
-    let Some(thread) = sessions.thread(&session_id) else {
+    // A subagent asks under its own engine thread, which is never a session
+    // here: the card goes to the session that spawned it. A child that asks
+    // the instant it starts can do so before its parent's `Started` activity
+    // has placed it, so an unknown thread is waited for briefly rather than
+    // refused — refusing failed the child's command outright.
+    if let Some(owner) = sessions.owning_session(&thread_id) {
+        raise_approval(
+            sessions, &owner, request, request_id, prompt, surface, item_id, answers,
+        );
+        return;
+    }
+    let sessions = sessions.clone();
+    let answers = answers.clone();
+    tokio::spawn(async move {
+        match sessions
+            .wait_for_owner(&thread_id, CHILD_PLACEMENT_WAIT)
+            .await
+        {
+            Some(owner) => raise_approval(
+                &sessions, &owner, request, request_id, prompt, surface, item_id, &answers,
+            ),
+            None => {
+                let _ = answers.send(ServerAnswer {
+                    request_id,
+                    result: Err("no open thread for this approval".to_string()),
+                });
+            }
+        }
+    });
+}
+
+/// How long a request from an engine thread nobody here knows waits for its
+/// parent's `Started` activity to place it. That activity follows the spawn by
+/// milliseconds; past this the thread is genuinely no session's.
+const CHILD_PLACEMENT_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Puts a tool approval to the user on `session_id`'s line and answers the
+/// engine with their decision, shaped for the request's kind.
+#[allow(clippy::too_many_arguments)]
+fn raise_approval(
+    sessions: &Arc<EngineSessions>,
+    session_id: &acp::SessionId,
+    request: ServerRequest,
+    request_id: RequestId,
+    prompt: acp::ToolCallUpdate,
+    surface: &'static str,
+    item_id: String,
+    answers: &tokio::sync::mpsc::UnboundedSender<ServerAnswer>,
+) {
+    use atlas_engine_app_server_protocol::ServerRequest as Req;
+
+    let Some(thread) = sessions.thread(session_id) else {
         let _ = answers.send(ServerAnswer {
             request_id,
             result: Err("no open thread for this approval".to_string()),
@@ -1009,7 +1071,7 @@ fn handle_server_request(
         return;
     };
 
-    let answered = raise_in_turn(sessions.join_prompt_line(&session_id), thread, |thread| {
+    let answered = raise_in_turn(sessions.join_prompt_line(session_id), thread, |thread| {
         thread.request_tool_call_authorization(
             prompt,
             approvals::options(),
@@ -1099,8 +1161,11 @@ fn ask_tool_approval(
     params: v2::McpServerElicitationRequestParams,
     answers: &tokio::sync::mpsc::UnboundedSender<ServerAnswer>,
 ) {
-    let session_id = acp::SessionId::new(params.thread_id.as_str());
-    let Some(thread) = sessions.thread(&session_id) else {
+    // A child's ask goes to the session that spawned it, as a command's does.
+    let Some((session_id, thread)) = sessions
+        .owning_session(params.thread_id.as_str())
+        .and_then(|owner| Some((owner.clone(), sessions.thread(&owner)?)))
+    else {
         let _ = answers.send(ServerAnswer {
             request_id,
             result: Err("no open thread for this approval".to_string()),
@@ -1477,7 +1542,7 @@ impl AgentConnection for EngineConnection {
     }
 
     fn agent_version(&self) -> Option<Arc<str>> {
-        Some(env!("CARGO_PKG_VERSION").into())
+        Some(self.settings.client_version.as_str().into())
     }
 
     fn new_session(
@@ -1575,6 +1640,50 @@ impl AgentConnection for EngineConnection {
     /// which each thread's start and resume carry (`engine::mcp`).
     fn supports_http_mcp(&self) -> bool {
         true
+    }
+
+    /// The engine's sandbox is a per-thread setting (`thread/settings/update`),
+    /// so an open session's writable roots can change; the engine applies it
+    /// from the next turn.
+    fn supports_live_session_roots(&self) -> bool {
+        true
+    }
+
+    /// Record the roots on the session's thread, then re-send its sandbox:
+    /// its current mode, with the read-write attached projects as extra
+    /// writable roots. Read-only projects need no sandbox change — the
+    /// engine reads the whole disk in every mode — and stay out of the
+    /// writable set.
+    ///
+    /// A running turn keeps the sandbox it started with, so a change that
+    /// lands mid-turn is applied before the next turn starts instead
+    /// ([`ConnectionHandle::apply_pending_roots`]).
+    fn update_session_roots(
+        &self,
+        session_id: &acp::SessionId,
+        roots: SessionRoots,
+    ) -> BoxFuture<'static, Result<()>> {
+        let Some(thread) = self.sessions.thread(session_id) else {
+            return async { Err(anyhow!("no such session")) }.boxed();
+        };
+        thread
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .set_attached_roots(roots);
+        let handle = self.clone_handle();
+        let session_id = session_id.clone();
+        async move {
+            if handle.turns.is_busy(&session_id.to_string()) {
+                handle
+                    .roots_pending
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .insert(session_id);
+                return Ok(());
+            }
+            handle.apply_roots(&session_id).await
+        }
+        .boxed()
     }
 
     fn supports_session_history(&self) -> bool {
@@ -1794,7 +1903,7 @@ impl AgentConnection for EngineConnection {
                 text = crate::engine::commands::INIT_PROMPT.to_string();
             }
             // `/diff` and `/status` are answered from this side, exactly as the
-            // upstream TUI answered them — they were always frontend features.
+            // original TUI answered them — they were always frontend features.
             // The reply is pushed into the thread as an assistant message and
             // the turn ends; no model is consulted and nothing is billed.
             Some(crate::engine::commands::Command::Diff) => {
@@ -2042,7 +2151,13 @@ impl AgentConnection for EngineConnection {
 
         let request_ids = self.request_ids.clone();
         let sessions = self.sessions.clone();
+        let roots = self.clone_handle();
         async move {
+            // Attached projects changed during the last turn: the sandbox
+            // this turn starts with has to carry them.
+            roots
+                .apply_pending_roots(&acp::SessionId::new(thread_id.as_str()))
+                .await;
             // A turn lists whichever MCP servers are up when it starts, so a
             // first prompt sent before the host's servers finish starting
             // went out without their tools — and the memory tools are the
@@ -2165,6 +2280,33 @@ impl AgentConnection for EngineConnection {
 
     fn cancel(&self, session_id: &acp::SessionId) {
         let thread_id = session_id.to_string();
+        // Stop reaches the subagents too. Each child is a thread of its own,
+        // which the parent's interrupt never touches: a stopped parent left
+        // them working, and their rows still closed as "Complete" afterwards.
+        // Sent whether or not the parent has a turn — a child can outlive the
+        // turn that spawned it — and with no turn id, which the server reads
+        // as "interrupt whatever is running": the child's turn ids are never
+        // ours to know, and an idle child takes it as a no-op.
+        let descendants = self.sessions.descendants_of(&thread_id);
+        if !descendants.is_empty() {
+            let requests = self.requests.clone();
+            let request_ids = self.request_ids.clone();
+            self.runtime.handle().spawn(async move {
+                let send = |request: ClientRequest| {
+                    let requests = requests.clone();
+                    async move {
+                        requests
+                            .request_typed::<serde_json::Value>(request)
+                            .await
+                            .map(|_| ())
+                            .map_err(|e| e.to_string())
+                    }
+                };
+                for child in descendants {
+                    interrupt_child(&send, &request_ids, child).await;
+                }
+            });
+        }
         let Some(turn_id) = self.turns.active_turn(&thread_id) else {
             // No turn is registered — but one may be mid-`turn/start`, with
             // no id to interrupt yet. That stop used to be silently dropped,
@@ -2226,6 +2368,72 @@ async fn send_interrupt(
     }
 }
 
+/// Interrupt whatever a spawned child is running, then kill what it left
+/// running. An empty turn id is the server's "no particular turn" form: it
+/// skips the active-turn check and answers at once. A child the engine has
+/// already closed is not an error worth more than a debug line — there is
+/// nothing left to stop.
+///
+/// `send` is the request handle in production. It is a parameter because the
+/// handle cannot be built outside its crate, and the one thing worth pinning
+/// here — that the clean follows the interrupt, for the same thread, whether
+/// or not the interrupt succeeded — is a question about the requests, not
+/// about the engine.
+async fn interrupt_child<F, Fut>(send: &F, request_ids: &RequestIds, thread_id: String)
+where
+    F: Fn(ClientRequest) -> Fut,
+    Fut: std::future::Future<Output = Result<(), String>>,
+{
+    let result = send(ClientRequest::TurnInterrupt {
+        request_id: request_ids.next(),
+        params: v2::TurnInterruptParams {
+            thread_id: thread_id.clone(),
+            turn_id: String::new(),
+        },
+    })
+    .await;
+    match result {
+        Ok(()) => tracing::info!(
+            target: "atlas_native_agent::engine",
+            "stop cascaded to subagent thread {thread_id}",
+        ),
+        Err(e) => tracing::debug!(
+            target: "atlas_native_agent::engine",
+            "interrupting subagent thread {thread_id} failed: {e}",
+        ),
+    }
+
+    // The interrupt aborts the child's TURN; it does not touch the commands
+    // the turn started. A shell call the child was mid-way through
+    // (`exec_command`, unified exec) lives in the engine's process table and
+    // keeps running under the app after the row says "stopped" — a `sleep 60`
+    // outlived the Stop that was supposed to end it by the full minute. The
+    // engine kills those only on an explicit clean, so send it. The parent's
+    // own terminals are deliberately left alone: a user's Stop ends the
+    // agent's work, not a dev server they asked it to leave running — but a
+    // child that was stopped has no further claim on anything it spawned.
+    //
+    // Sent even when the interrupt failed: an already-idle child answers the
+    // interrupt with an error and still holds its processes.
+    let cleaned = send(ClientRequest::ThreadBackgroundTerminalsClean {
+        request_id: request_ids.next(),
+        params: v2::ThreadBackgroundTerminalsCleanParams {
+            thread_id: thread_id.clone(),
+        },
+    })
+    .await;
+    match cleaned {
+        Ok(()) => tracing::info!(
+            target: "atlas_native_agent::engine",
+            "stop terminated the background commands of subagent thread {thread_id}",
+        ),
+        Err(e) => tracing::warn!(
+            target: "atlas_native_agent::engine",
+            "terminating the background commands of subagent thread {thread_id} failed: {e}",
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2235,6 +2443,71 @@ mod tests {
     // The integration test presses Stop once against a real engine; these pin
     // the interleavings deterministically, because which side of `register`
     // the press lands on cannot be scripted from outside.
+
+    /// Stop reached the child's turn but not the command the turn had started:
+    /// a `sleep 60` ran its full minute under the app after the row read
+    /// "stopped". The interrupt must be followed by the engine's background-
+    /// terminal clean, for the same thread — and the clean must go out even
+    /// when the interrupt is refused, because an idle child refuses it and
+    /// still holds its processes.
+    #[tokio::test]
+    async fn stopping_a_child_also_kills_the_commands_it_left_running() {
+        use std::sync::Mutex;
+        let seen: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
+        let refuse_interrupt = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let send = {
+            let seen = seen.clone();
+            let refuse = refuse_interrupt.clone();
+            move |request: ClientRequest| {
+                let seen = seen.clone();
+                let refuse = refuse.clone();
+                async move {
+                    let thread = match &request {
+                        ClientRequest::TurnInterrupt { params, .. } => params.thread_id.clone(),
+                        ClientRequest::ThreadBackgroundTerminalsClean { params, .. } => {
+                            params.thread_id.clone()
+                        }
+                        other => panic!("unexpected request {}", other.method_name()),
+                    };
+                    seen.lock()
+                        .unwrap()
+                        .push((request.method_name().to_string(), thread));
+                    if refuse.load(std::sync::atomic::Ordering::Relaxed)
+                        && matches!(request, ClientRequest::TurnInterrupt { .. })
+                    {
+                        return Err("no turn in flight".to_string());
+                    }
+                    Ok(())
+                }
+            }
+        };
+        let ids = RequestIds::default();
+
+        interrupt_child(&send, &ids, "child-1".to_string()).await;
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![
+                ("turn/interrupt".to_string(), "child-1".to_string()),
+                (
+                    "thread/backgroundTerminals/clean".to_string(),
+                    "child-1".to_string()
+                ),
+            ],
+            "the clean follows the interrupt, for the same thread"
+        );
+
+        seen.lock().unwrap().clear();
+        refuse_interrupt.store(true, std::sync::atomic::Ordering::Relaxed);
+        interrupt_child(&send, &ids, "child-2".to_string()).await;
+        assert_eq!(
+            seen.lock()
+                .unwrap()
+                .last()
+                .map(|(m, t)| (m.as_str(), t.as_str())),
+            Some(("thread/backgroundTerminals/clean", "child-2")),
+            "an idle child refuses the interrupt and still gets its processes killed"
+        );
+    }
 
     #[test]
     fn a_cancel_during_the_starting_window_is_recorded_and_handed_to_the_prompt() {
@@ -3505,6 +3778,29 @@ struct ConnectionHandle {
     session_modes: Arc<Mutex<HashMap<acp::SessionId, acp::SessionModeId>>>,
     /// For the in-flight-turn check in `set_mode` (#61).
     turns: Arc<TurnWaiters>,
+    /// To read a session's writable roots off its thread, so a mode switch
+    /// keeps the session's read-write attached projects writable.
+    sessions: Arc<EngineSessions>,
+    roots_pending: Arc<Mutex<std::collections::HashSet<acp::SessionId>>>,
+}
+
+/// The writable roots a session has beyond its cwd (which the engine always
+/// treats as writable under workspace-write): the further folders it was
+/// opened with and its read-write attached projects, as its thread grants
+/// them (`AcpThread::writable_roots`). Empty for a session with no thread.
+fn extra_writable_roots(sessions: &EngineSessions, session_id: &acp::SessionId) -> Vec<PathBuf> {
+    sessions
+        .thread(session_id)
+        .map(|thread| {
+            thread
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .writable_roots()
+                .into_iter()
+                .skip(1)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// What a rewind needs, and no more: the request channel to reach the engine
@@ -3554,12 +3850,13 @@ impl RewindHandle {
     /// rollback ran lands here too. Everything past a rollback known to have
     /// succeeded is an `Err`, so the only ambiguity left is this one.
     ///
-    /// Only the FLATTENED text survives. `ContentBlock::to_text` returns a
-    /// resource link as a bare URI and joins mixed blocks without the newlines
-    /// the original input carried (`thread.rs:99` vs `sink.rs:351`), so a turn
-    /// whose prompt mixed prose and `@`-mentions does not round-trip verbatim.
-    /// Attachments are not reconstructed at all — the thread stores what was
-    /// sent, not the composer state that produced it.
+    /// Only the FLATTENED text survives: the blocks the turn sent, a blank line
+    /// between each (`UserMessage::prompt_text`). A resource link comes back as
+    /// its bare URI, so a turn whose prompt mixed prose and `@`-mentions does
+    /// not round-trip verbatim; a large paste rode as a text block and comes
+    /// back whole, set apart from the prose. Attachments are not reconstructed
+    /// at all — the thread stores what was sent, not the composer state that
+    /// produced it.
     async fn rewind_last_turn(&self, session_id: &acp::SessionId) -> Result<Option<String>> {
         // Ask before trimming. The engine refusing (nothing to drop) has to
         // leave the transcript exactly as it was, so nothing local moves until
@@ -3593,7 +3890,7 @@ impl RewindHandle {
         let Some(thread) = self.sessions.thread(session_id) else {
             return Err(anyhow!(
                 "rewound the engine's history but the session's thread is gone; \
-                 reopen the conversation to resynchronise"
+                 reopen the conversation to resynchronize"
             ));
         };
         let mut locked = thread
@@ -3607,14 +3904,14 @@ impl RewindHandle {
                 .rev()
                 .find_map(|(ix, entry)| match entry {
                     atlas_acp_thread::AgentThreadEntry::UserMessage(msg) => {
-                        Some((ix, msg.content.to_text().to_string()))
+                        Some((ix, msg.prompt_text()))
                     }
                     _ => None,
                 });
         let Some((from, text)) = last_user else {
             return Err(anyhow!(
                 "rewound the engine's history but the transcript holds no prompt to \
-                 replay; reopen the conversation to resynchronise"
+                 replay; reopen the conversation to resynchronize"
             ));
         };
         // `EntriesRemoved` is what the delta projector turns into
@@ -3640,11 +3937,57 @@ impl EngineConnection {
             request_ids: self.request_ids.clone(),
             session_modes: self.session_modes.clone(),
             turns: self.turns.clone(),
+            sessions: self.sessions.clone(),
+            roots_pending: self.roots_pending.clone(),
         }
     }
 }
 
 impl ConnectionHandle {
+    /// The mode the session is in, or the default.
+    fn mode_of(&self, session_id: &acp::SessionId) -> acp::SessionModeId {
+        self.session_modes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(session_id)
+            .cloned()
+            .unwrap_or_else(|| acp::SessionModeId::new(modes::DEFAULT_MODE_ID))
+    }
+
+    /// Re-send the session's sandbox for its current mode and current
+    /// writable roots. The engine applies thread settings from the next turn
+    /// on; a running turn keeps the context it started with.
+    async fn apply_roots(&self, session_id: &acp::SessionId) -> Result<()> {
+        let mode = self.mode_of(session_id);
+        let writable = extra_writable_roots(&self.sessions, session_id);
+        let (approval_policy, sandbox_policy) = modes::engine_policy_with_roots(&mode.0, &writable);
+        self.update_settings(session_id, |params| {
+            params.approval_policy = Some(approval_policy);
+            params.sandbox_policy = Some(sandbox_policy);
+        })
+        .await
+    }
+
+    /// Apply a roots change that arrived while a turn was running, if there
+    /// is one for this session. Called before a turn starts. A failure is
+    /// logged and the turn goes ahead on the roots it had: refusing the turn
+    /// over a widening that did not land would punish the user for nothing.
+    async fn apply_pending_roots(&self, session_id: &acp::SessionId) {
+        let pending = self
+            .roots_pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(session_id);
+        if pending {
+            if let Err(e) = self.apply_roots(session_id).await {
+                tracing::warn!(
+                    target: "atlas_native_agent::engine",
+                    session = %session_id,
+                    "attached project roots not applied before the turn: {e}"
+                );
+            }
+        }
+    }
     async fn update_settings(
         &self,
         session_id: &acp::SessionId,
@@ -3706,7 +4049,9 @@ impl AgentSessionModes for EngineSessionModes {
                      the permissions it started with. Stop the turn first."
                 ));
             }
-            let (approval_policy, sandbox_policy) = modes::engine_policy(&mode.0);
+            let writable = extra_writable_roots(&connection.sessions, &session_id);
+            let (approval_policy, sandbox_policy) =
+                modes::engine_policy_with_roots(&mode.0, &writable);
             connection
                 .update_settings(&session_id, |params| {
                     params.approval_policy = Some(approval_policy);
@@ -3815,7 +4160,7 @@ impl AgentModelSelector for EngineModelSelector {
             .map(|m| AgentModelId::new(m.as_str()))
             .unwrap_or_else(|| AgentModelId::new(self.default_model().as_str()));
         let found = self.catalogue().into_iter().find(|m| m.id == selected);
-        async move { found.ok_or_else(|| anyhow!("the selected model is not in the catalogue")) }
+        async move { found.ok_or_else(|| anyhow!("the selected model is not in the catalog")) }
             .boxed()
     }
 }

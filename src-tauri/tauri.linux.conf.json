@@ -21,8 +21,6 @@
   },
   "bundle": {
     "targets": [
-      "deb",
-      "rpm",
       "appimage"
     ],
     "icon": [
@@ -33,32 +31,6 @@
       "icons/icon.png"
     ],
     "linux": {
-      "deb": {
-        "depends": [
-          "libwebkit2gtk-4.1-0",
-          "libgtk-3-0",
-          "libayatana-appindicator3-1",
-          "bubblewrap",
-          "libglib2.0-0"
-        ],
-        "provides": [
-          "tryatlas",
-          "atl"
-        ]
-      },
-      "rpm": {
-        "depends": [
-          "webkit2gtk4.1",
-          "gtk3",
-          "libayatana-appindicator-gtk3",
-          "bubblewrap",
-          "glib2"
-        ],
-        "provides": [
-          "tryatlas",
-          "atl"
-        ]
-      },
       "appimage": {
         "bundleMediaFramework": false
       }

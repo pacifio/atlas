@@ -157,7 +157,10 @@ export function projectOrgScope(projectPath: string | null): Promise<ProjectOrgS
 
 function projectBoard(projectPath: string): Promise<BoardSession[]> {
   return cached(boards, projectPath, async () => {
-    const page = await invoke<BoardPage>("artifacts_board", { projects: [projectPath] });
+    const page = await invoke<BoardPage>("artifacts_board", {
+      projects: [projectPath],
+      filter: { local: projectPath },
+    });
     return page.sessions;
   }).catch(() => []);
 }

@@ -1,0 +1,13 @@
+id = "dep-bump"
+kind = "synthetic"
+vulnerable = false
+class = "none"
+severity = 0
+title = "Bump serde to 1.0.219"
+diff = '''
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -1,1 +1,1 @@
+-serde = { version = "1.0.210", features = ["derive"] }
++serde = { version = "1.0.219", features = ["derive"] }
+'''

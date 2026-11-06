@@ -9,9 +9,15 @@
  * focused column → its active tab → a terminal tab → its active pane → the
  * pane's active terminal. The layout mirror always represents the active
  * project, so project visibility is implicit.
+ *
+ * A session's terminal drawer is the one terminal surface that is not a
+ * layout tab. It answers for itself: while DOM focus is inside a drawer, that
+ * drawer's tab stands in for the layout half (`session-drawer-store`). The
+ * layout half still wins when it has an answer.
  */
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { collectPanes, useTerminalStore, type TerminalTabState } from "../stores/terminal-store";
+import { useSessionDrawerStore } from "../stores/session-drawer-store";
 
 interface LayoutSlice {
   tabs: ReadonlyArray<{ id: string; type: string; groupId?: string }>;
@@ -49,7 +55,7 @@ function activeTerminalOf(t: TerminalTabState | undefined): string | null {
  *  changes. */
 export function useIsFocusedTerminal(terminalId: string): boolean {
   const layoutHit = useLayoutStore(focusedTerminalTabId);
-  return useTerminalStore(
-    (s) => layoutHit !== null && activeTerminalOf(s.tabs[layoutHit]) === terminalId,
-  );
+  const drawerHit = useSessionDrawerStore((s) => s.focusedTab);
+  const hit = layoutHit ?? drawerHit;
+  return useTerminalStore((s) => hit !== null && activeTerminalOf(s.tabs[hit]) === terminalId);
 }

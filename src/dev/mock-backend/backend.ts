@@ -14,7 +14,7 @@ import { scenarios } from "./scenarios";
 import { mountBadge } from "./badge";
 import { resetStores } from "./reset-stores";
 import { mockAssetUrl } from "./fixtures/files";
-import type { MockArgs, MockHandlers } from "./types";
+import type { MockArgs, MockHandlers, Scenario } from "./types";
 
 declare global {
   interface Window {
@@ -24,11 +24,21 @@ declare global {
       unmocked: () => string[];
       calls: () => { cmd: string; args: MockArgs | undefined }[];
       emit: typeof emit;
-      actions: Record<string, () => void | Promise<void>>;
+      actions: NonNullable<Scenario["actions"]>;
       /** Drop every Zustand store back to how it booted (decision 41). */
       resetStores: () => Promise<string[]>;
     };
   }
+}
+
+/**
+ * `?record=1` (or `&record=1`): the page is being screen-recorded, so the mock
+ * draws none of its own chrome. Read from the URL rather than the scenario,
+ * because any scenario can be recorded.
+ */
+export function recordingMode(search: string = location.search): boolean {
+  const value = new URLSearchParams(search).get("record");
+  return value !== null && value !== "0" && value !== "false";
 }
 
 /** What `install.ts` needs back from a started backend. */
@@ -54,11 +64,13 @@ export function startMockBackend(name: string): MockBackend {
   }
   // Indexed by any command name the frontend sends, so read through the
   // untyped view; each map is typed where it is written.
-  const overrides: MockHandlers = scenario?.commands ?? {};
+  const overrides: MockHandlers = { ...scenario?.rawCommands, ...scenario?.commands };
 
   const unmocked = new Map<string, number>();
   const calls: { cmd: string; args: MockArgs | undefined }[] = [];
-  const onUnmocked = mountBadge(name, () => [...unmocked.keys()]);
+  // `&record=1`: screen-recording mode — no badge, nothing on screen that the
+  // real app would not draw. Unmocked commands still log to the console.
+  const onUnmocked = recordingMode() ? () => {} : mountBadge(name, () => [...unmocked.keys()]);
 
   scenario?.init?.();
 

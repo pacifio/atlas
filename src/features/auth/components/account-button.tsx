@@ -1,12 +1,9 @@
-import { CircleUser, Loader2 } from "lucide-react";
+import type { ReactNode } from "react";
 
-import type { ComponentProps } from "react";
-
-import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
 import { useAuthStore } from "../stores/auth-store";
 import { AccountAvatar } from "./account-avatar";
 import { AccountMenu } from "./account-menu";
+import { AccountButtonView, type AccountButtonState } from "./views/account-button-view";
 
 /**
  * The account control at the right of the title bar.
@@ -16,10 +13,21 @@ import { AccountMenu } from "./account-menu";
  * empty state rather than having to open a folder first.
  *
  * Signed in, it is the user's face and the trigger for the account menu.
- * Signed out or mid-grant it is a plain button that starts (or reopens)
- * sign-in — the menu has nothing to say in either state.
+ * Signed out it opens the same menu, with Sign in first. Mid-grant it is a
+ * plain button that reopens the connect dialog.
  */
-export function AccountButton({ compact = false }: { compact?: boolean } = {}) {
+export function AccountButton({
+  compact = false,
+  menuSide = "bottom",
+  menuExtra,
+}: {
+  compact?: boolean;
+  /** Which way the account menu opens: down from the window bar, up from the
+   *  sidebar footer. */
+  menuSide?: "top" | "bottom";
+  /** Rows folded into the account menu after Privacy. */
+  menuExtra?: ReactNode;
+} = {}) {
   const snapshot = useAuthStore.use.snapshot();
   const starting = useAuthStore.use.starting();
   const { beginSignIn, closeDialog } = useAuthStore.use.actions();
@@ -37,7 +45,7 @@ export function AccountButton({ compact = false }: { compact?: boolean } = {}) {
     else void beginSignIn();
   };
 
-  const title = user
+  const label = user
     ? `${user.name} (${user.email})`
     : signedIn
       ? "Atlas account — connected"
@@ -45,44 +53,24 @@ export function AccountButton({ compact = false }: { compact?: boolean } = {}) {
         ? "Waiting for approval in your browser…"
         : "Account and settings";
 
-  // In the dock the pill's sliding label already names this control, so only
-  // the standalone button carries a tooltip of its own.
-  const Button = compact ? "button" : HintedButton;
+  const state: AccountButtonState =
+    starting || connecting ? "busy" : signedIn ? "signed-in" : "signed-out";
 
   const button = (
     // Only the connecting state keeps a click of its own. In the other two the
-    // click is Radix's to handle, and one that also ran would fight the trigger
-    // it is wrapped in.
-    <Button
+    // click is the menu trigger's to handle, and one that also ran would fight
+    // the trigger it is wrapped in.
+    <AccountButtonView
+      state={state}
+      label={label}
+      compact={compact}
+      avatar={user ? <AccountAvatar user={user} size={18} /> : null}
       onClick={connecting ? toggleDialog : undefined}
-      aria-label={title}
-      className={cn(
-        "relative flex items-center justify-center transition-all duration-150",
-        // Inside the titlebar dock the avatar is one of a row of 20px controls
-        // and the pill supplies the surrounding shape, so it loses two pixels
-        // and its own square corners.
-        compact ? "size-5 rounded-full" : "w-6 h-6 rounded",
-        // A `<button>` still gets the arrow by default, and this one carries no
-        // label or border — the pointer is most of what says it is pressable.
-        // Matches the title bar's project-name button beside it.
-        "cursor-pointer hover:bg-element-hover outline-none focus:outline-none",
-        signedIn || connecting
-          ? "text-secondary-foreground"
-          : "text-disabled hover:text-muted-foreground",
-      )}
-    >
-      {starting || connecting ? (
-        <Loader2 size={compact ? 12 : 14} className="animate-spin" />
-      ) : user ? (
-        <AccountAvatar user={user} size={compact ? 16 : 18} />
-      ) : (
-        <CircleUser size={compact ? 12 : 14} />
-      )}
-    </Button>
+    />
   );
 
-  // The menu opens signed out as well as signed in. Settings, Keybindings,
-  // Themes, Skills and Layouts live behind this avatar and are not account
+  // The menu opens signed out as well as signed in. Settings, Privacy, the
+  // theme and the interface size live behind this avatar and are not account
   // features — gating them on having an account contradicts the rule that
   // authentication is additive and nothing becomes gated. Signing in is simply
   // the first item when there is no account yet.
@@ -91,19 +79,9 @@ export function AccountButton({ compact = false }: { compact?: boolean } = {}) {
   // running, the only thing the user wants is the dialog they closed, and
   // putting that behind a menu adds a step to a state that lasts seconds.
   if (snapshot.status === "connecting") return button;
-  return <AccountMenu account={snapshot}>{button}</AccountMenu>;
-}
-
-/**
- * The button with its tooltip inside. It has to be a component that forwards
- * its props: as the element `DropdownMenu.Trigger`'s `render` clones, the trigger's
- * props and ref land here and must reach the same `<button>` the tooltip
- * trigger merges onto.
- */
-function HintedButton(props: ComponentProps<"button">) {
   return (
-    <Hint label={props["aria-label"] ?? ""}>
-      <button {...props} />
-    </Hint>
+    <AccountMenu account={snapshot} side={menuSide} extra={menuExtra}>
+      {button}
+    </AccountMenu>
   );
 }

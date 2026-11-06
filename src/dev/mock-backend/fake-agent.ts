@@ -11,16 +11,20 @@ import type {
   SessionMessage,
   SessionModeInfo,
   SessionSnapshot,
+  QueuedPrompt,
   ToolCall,
 } from "@/types/agents";
+import type { Subagent } from "@/types/agent";
 import type { TypedHandlers, Unit } from "./types";
 import { text, tool, tools } from "./fixtures/chat";
+import { pasteAsText } from "@/features/chat/lib/pasted-text";
 import {
   askUserQuestionMulti,
   askUserQuestionSingle,
   exitPlanOptions,
   LONG_COMMAND,
   LONG_COMMAND_RESULT,
+  outwardOptions,
   PLAN_MARKDOWN,
   permissionToolCall,
   standardOptions,
@@ -31,9 +35,28 @@ interface FakeSession {
   cwd: string;
   pluginId: string;
   messages: SessionMessage[];
+  /** Children this session delegated to, keyed by launch in the real wire and
+   *  held as a list here because that is the shape the snapshot carries. */
+  subagents?: Subagent[];
 }
 
 const sessions = new Map<string, FakeSession>();
+
+/** The fake agents advertise no `promptCapabilities.embeddedContext` — the
+ *  case every agent must be served in, so it is the one a browser review
+ *  sees. A large paste therefore reaches them the way Rust sends it to such
+ *  an agent: as a fenced text block after the prose. */
+export const FAKE_AGENT_EMBEDDED_CONTEXT = false;
+
+/** What a fake agent receives for one send: the prose, then each paste in
+ *  the form its capabilities allow. */
+export function receivedText(prose: string, pastes: { id: string; text: string }[]): string {
+  if (pastes.length === 0) return prose;
+  const blocks = pastes.map((p) =>
+    FAKE_AGENT_EMBEDDED_CONTEXT ? `[embedded atlas://paste/${p.id}]` : pasteAsText(p),
+  );
+  return [prose, ...blocks].join("\n\n");
+}
 let seq = 0;
 
 /** What a new session replays once it is bound. Set by a scenario. */
@@ -42,7 +65,60 @@ export function setSeedTranscript(messages: SessionMessage[]): void {
   seedTranscript = messages;
 }
 
-function latest(): FakeSession | undefined {
+/** What a scenario knows about one new session, to decide its seed. */
+export interface NewSessionInfo {
+  sessionId: string;
+  pluginId: string;
+  cwd: string;
+}
+
+/**
+ * Per-session seeding, for a scenario that wants ONE chat to open on a
+ * recorded transcript and every later one empty. Wins over
+ * `setSeedTranscript` when set; return `null` to seed nothing.
+ */
+let sessionSeeder: ((info: NewSessionInfo) => SessionMessage[] | null) | null = null;
+export function setSessionSeeder(seeder: typeof sessionSeeder): void {
+  sessionSeeder = seeder;
+}
+
+/**
+ * A scenario's answer to a prompt. Return `true` when it has handled the turn
+ * (streamed its own reply), and the default echo is skipped.
+ */
+export type PromptHandler = (info: NewSessionInfo & { text: string }) => boolean;
+let promptHandler: PromptHandler | null = null;
+export function setPromptHandler(handler: PromptHandler | null): void {
+  promptHandler = handler;
+}
+
+/** The model a session reports, per agent — so a scenario's composer never
+ *  says "Mock model". */
+export interface AgentModels {
+  current: string;
+  available: SessionModeInfo[];
+}
+let modelsFor: ((pluginId: string) => AgentModels | null) | null = null;
+export function setAgentModels(lookup: typeof modelsFor): void {
+  modelsFor = lookup;
+}
+
+/** The slash commands a session advertises, per agent (ACP
+ *  `available_commands`: `{ name, description, input? }`). */
+let commandsFor: ((pluginId: string) => unknown[] | null) | null = null;
+export function setAgentCommands(lookup: typeof commandsFor): void {
+  commandsFor = lookup;
+}
+
+/** The name `agents_spawn` reports, per agent. */
+let displayNameFor: ((pluginId: string) => string | null) | null = null;
+export function setAgentDisplayNames(lookup: typeof displayNameFor): void {
+  displayNameFor = lookup;
+}
+
+/** The session `sessionId` names, or the most recent one. */
+function latest(sessionId?: string): FakeSession | undefined {
+  if (sessionId) return sessions.get(sessionId);
   const all = [...sessions.values()];
   return all[all.length - 1];
 }
@@ -51,6 +127,42 @@ const at = (s: FakeSession) => ({ agent_id: s.key.agent_id, session_id: s.key.se
 
 export function sendDelta(delta: AgentDelta): Promise<void> {
   return emit("atlas:agents", delta);
+}
+
+/** Send a delta to the most recent session, built from its ids, for deltas no
+ *  helper here covers (`plan_updated`, `context_usage`, `rate_limits`, …). */
+export async function emitForLatest(
+  make: (ids: ReturnType<typeof at>) => AgentDelta,
+): Promise<void> {
+  const s = latest();
+  if (!s) {
+    console.warn("[mock-backend] emitForLatest: no session bound yet");
+    return;
+  }
+  await sendDelta(make(at(s)));
+}
+
+/** Name a session as the agent would (`title_updated`): a seeded chat opens titled, not "New chat". */
+export function sendTitle(sessionId: string, title: string): Promise<void> {
+  const s = latest(sessionId);
+  if (!s) return Promise.resolve();
+  return sendDelta({ kind: "title_updated", ...at(s), title });
+}
+
+/**
+ * Load a session the agent did not start in this run — what `threads_resume`
+ * does in Rust before the frontend asks for a snapshot. A history row opened
+ * from the sidebar arrives here; without it, `agents_snapshot` answers "not
+ * found" and the resume fails. A session already loaded is left as it is.
+ */
+export function adoptSession(
+  key: SessionKey,
+  pluginId: string,
+  cwd: string,
+  messages: SessionMessage[] = [],
+): void {
+  if (sessions.has(key.session_id)) return;
+  sessions.set(key.session_id, { key, cwd, pluginId, messages });
 }
 
 function sessionOrThrow(key: SessionKey): FakeSession {
@@ -82,29 +194,38 @@ const DEFAULT_MODE = "auto";
 
 function snapshot(s: FakeSession, withMessages: boolean): SessionSnapshot {
   const now = new Date().toISOString();
+  const models = modelsFor?.(s.pluginId) ?? null;
   return {
     ...at(s),
     cwd: s.cwd,
     plugin_id: s.pluginId,
     status: "idle",
     current_mode: DEFAULT_MODE,
-    current_model: "mock-model",
+    current_model: models?.current ?? "mock-model",
     available_modes: MODES,
-    available_models: [{ id: "mock-model", name: "Mock model" }],
-    available_commands: [],
+    available_models: models?.available ?? [{ id: "mock-model", name: "Mock model" }],
+    available_commands: commandsFor?.(s.pluginId) ?? [],
     config_options: [],
     prompt_image_supported: true,
     plan: [],
     messages: withMessages ? s.messages : [],
+    // Carried with the transcript, like `messages`: a resumed session's
+    // children are re-seeded from here (`hydrateSessionSnapshot`), so the
+    // metadata-only read omits them exactly as it omits messages.
+    subagents: withMessages ? s.subagents : undefined,
     usage: { input_tokens: 0, output_tokens: 0, cache_creation_tokens: 0, cache_read_tokens: 0 },
     created_at: now,
     updated_at: now,
   };
 }
 
-/** Stream `messages` into the first live session, in order. */
-export async function playTranscript(messages: SessionMessage[], gapMs = 0): Promise<void> {
-  const s = latest();
+/** Stream `messages` into a session (the most recent one by default), in order. */
+export async function playTranscript(
+  messages: SessionMessage[],
+  gapMs = 0,
+  sessionId?: string,
+): Promise<void> {
+  const s = latest(sessionId);
   if (!s) {
     console.warn("[mock-backend] playTranscript: no session bound yet");
     return;
@@ -116,10 +237,162 @@ export async function playTranscript(messages: SessionMessage[], gapMs = 0): Pro
   }
 }
 
+/**
+ * Play whole turns the way a live session delivers them, so each one ends
+ * with what only a live turn leaves behind: its files summary, frozen at
+ * `turn_finished` from the tool calls the turn upserted.
+ *
+ * `playTranscript` appends messages and nothing else, which is right for a
+ * seed but leaves every turn without its changed-files card. Each turn here
+ * opens with a `running` status carrying its own `turn_seq`, upserts every
+ * tool call it holds, and closes with `turn_finished` for the same seq. A
+ * turn is a user message and the assistant messages that answer it.
+ */
+export async function playTurns(turns: SessionMessage[][], sessionId?: string): Promise<void> {
+  if (!latest(sessionId)) {
+    console.warn("[mock-backend] playTurns: no session bound yet");
+    return;
+  }
+  for (const turn of turns) {
+    const answer = turn.findIndex((m) => m.role === "assistant");
+    const prompt = turn.find((m) => m.role === "user");
+    const last = turn[turn.length - 1];
+    await appendWithTools(answer < 0 ? turn : turn.slice(0, answer), sessionId);
+    const seqOfTurn = await openTurn(sessionId);
+    if (answer >= 0) await appendWithTools(turn.slice(answer), sessionId);
+    const endedAt = Date.parse(last.timestamp);
+    await closeTurn(
+      seqOfTurn,
+      {
+        startedAt: prompt ? Date.parse(prompt.timestamp) : endedAt,
+        endedAt,
+        workedMs: last.worked_ms,
+        stopReason: last.stop_reason,
+      },
+      sessionId,
+    );
+  }
+}
+
+let turnSeq = 0;
+
+/** Open a live turn: `running` with a fresh `turn_seq`, which is what starts
+ *  the store's per-turn files scratch. Returns the seq to close it with. */
+export async function openTurn(sessionId?: string): Promise<number> {
+  const s = latest(sessionId);
+  const seqOfTurn = ++turnSeq;
+  if (s) await sendDelta({ kind: "status", ...at(s), status: "running", turn_seq: seqOfTurn });
+  return seqOfTurn;
+}
+
+/** Close the turn `openTurn` opened, timed from `startedAt` to `endedAt`. */
+export async function closeTurn(
+  seqOfTurn: number,
+  timing: { startedAt: number; endedAt: number; workedMs?: number; stopReason?: string },
+  sessionId?: string,
+): Promise<void> {
+  const s = latest(sessionId);
+  if (!s) return;
+  await sendDelta({
+    kind: "turn_finished",
+    ...at(s),
+    stop_reason: timing.stopReason ?? "end_turn",
+    turn_seq: seqOfTurn,
+    started_at_ms: timing.startedAt,
+    ended_at_ms: timing.endedAt,
+    worked_ms: timing.workedMs ?? Math.max(0, timing.endedAt - timing.startedAt),
+  });
+  await sendDelta({ kind: "status", ...at(s), status: "idle", turn_seq: seqOfTurn });
+}
+
+/** Append messages and upsert every tool call they carry: what a live turn
+ *  sends, and what the store counts a turn's files from. */
+export async function appendWithTools(
+  messages: SessionMessage[],
+  sessionId?: string,
+): Promise<void> {
+  const s = latest(sessionId);
+  if (!s) return;
+  for (const message of messages) {
+    s.messages.push(message);
+    await sendDelta({ kind: "message_appended", ...at(s), message });
+    for (const toolCall of message.tool_calls) {
+      await sendDelta({
+        kind: "tool_call_upserted",
+        ...at(s),
+        message_id: message.id,
+        tool_call: toolCall,
+      });
+    }
+  }
+}
+
+/**
+ * Stream one assistant message into a session word by word, the way a real
+ * turn arrives: an empty message, then `text_chunk` (or `thinking_chunk`)
+ * deltas. The held copy is kept whole so a snapshot re-read agrees.
+ */
+export async function streamText(
+  body: string,
+  opts: { sessionId?: string; mode?: "text" | "thinking"; chunkMs?: number; id?: string } = {},
+): Promise<void> {
+  const s = latest(opts.sessionId);
+  if (!s) return;
+  const mode = opts.mode ?? "text";
+  const message: SessionMessage = {
+    id: opts.id ?? `m-${++seq}`,
+    role: "assistant",
+    mode,
+    content: "",
+    ...(mode === "thinking" ? { thinking: "" } : {}),
+    tool_calls: [],
+    timestamp: new Date().toISOString(),
+  };
+  s.messages.push(message);
+  await sendDelta({ kind: "message_appended", ...at(s), message: { ...message } });
+  for (const chunk of body.match(/\S+\s*/g) ?? []) {
+    if (mode === "thinking") message.thinking = (message.thinking ?? "") + chunk;
+    else message.content += chunk;
+    await sendDelta({
+      kind: mode === "thinking" ? "thinking_chunk" : "text_chunk",
+      ...at(s),
+      message_id: message.id,
+      delta: chunk,
+    });
+    await new Promise((r) => setTimeout(r, opts.chunkMs ?? 28));
+  }
+}
+
+/**
+ * Announce a delegated child, or update one.
+ *
+ * Whole-record upserts keyed on the launching call, which is what the real
+ * projector sends — so a scenario drives the same path a live agent does, and
+ * the snapshot stays in step for a re-read.
+ */
+export async function upsertSubagent(subagent: Subagent, sessionId?: string): Promise<void> {
+  const s = latest(sessionId);
+  if (!s) return;
+  s.subagents = [
+    ...(s.subagents ?? []).filter((held) => held.toolCallId !== subagent.toolCallId),
+    subagent,
+  ];
+  await sendDelta({ kind: "subagent_upserted", ...at(s), subagent });
+}
+
 /** Update one tool call in place (status, output) — for live-turn scenarios. */
-export function upsertToolCall(messageId: string, toolCall: ToolCall): Promise<void> {
-  const s = latest();
+export function upsertToolCall(
+  messageId: string,
+  toolCall: ToolCall,
+  sessionId?: string,
+): Promise<void> {
+  const s = latest(sessionId);
   if (!s) return Promise.resolve();
+  // Keep the snapshot in step with the stream, so a re-read agrees.
+  const held = s.messages.find((m) => m.id === messageId);
+  if (held) {
+    held.tool_calls = held.tool_calls.map((call) => (call.id === toolCall.id ? toolCall : call));
+  }
   return sendDelta({
     kind: "tool_call_upserted",
     ...at(s),
@@ -133,8 +406,9 @@ export function appendToolOutput(
   messageId: string,
   toolCallId: string,
   delta: string,
+  sessionId?: string,
 ): Promise<void> {
-  const s = latest();
+  const s = latest(sessionId);
   if (!s) return Promise.resolve();
   return sendDelta({
     kind: "tool_call_output_chunk",
@@ -145,8 +419,11 @@ export function appendToolOutput(
   });
 }
 
-export function setStatus(status: "idle" | "running" | "waiting" | "error"): Promise<void> {
-  const s = latest();
+export function setStatus(
+  status: "idle" | "running" | "waiting" | "error",
+  sessionId?: string,
+): Promise<void> {
+  const s = latest(sessionId);
   if (!s) return Promise.resolve();
   return sendDelta({ kind: "status", ...at(s), status });
 }
@@ -154,11 +431,125 @@ export function setStatus(status: "idle" | "running" | "waiting" | "error"): Pro
 /** End the turn the way the real projector does — a `turn_finished` terminal,
  *  not a bare status flip. The store only freezes turn-end state (the turn's
  *  "Worked for" time, its files footer, next-step chips) on the terminal, so a
- *  mock that just went idle never showed any of it. */
-export function finishTurn(): Promise<void> {
-  const s = latest();
+ *  mock that just went idle never showed any of it.
+ *
+ *  Timed from the turn's prompt to now, which is the span Rust reports; the
+ *  held snapshot gets the same figure on its last message, so a re-read says
+ *  what the live turn said. */
+export function finishTurn(sessionId?: string, stopReason = "end_turn"): Promise<void> {
+  const s = latest(sessionId);
   if (!s) return Promise.resolve();
-  return sendDelta({ kind: "turn_finished", ...at(s), stop_reason: "end_turn", turn_seq: 0 });
+  const prompt = [...s.messages].reverse().find((m) => m.role === "user");
+  const started = prompt ? Date.parse(prompt.timestamp) : Number.NaN;
+  const ended = Date.now();
+  const worked = Math.max(0, ended - started);
+  const timing = Number.isFinite(started)
+    ? { started_at_ms: started, ended_at_ms: ended, worked_ms: worked }
+    : {};
+  const last = s.messages[s.messages.length - 1];
+  if (last?.role === "assistant") {
+    if (Number.isFinite(started)) last.worked_ms = worked;
+    last.stop_reason = stopReason;
+  }
+  return sendDelta({
+    kind: "turn_finished",
+    ...at(s),
+    stop_reason: stopReason,
+    turn_seq: 0,
+    ...timing,
+  });
+}
+
+/** The user stopped the turn: `turn_finished` with `stop_reason: "cancelled"`.
+ *  The store sweeps the turn's live calls to failed. */
+export function cancelTurn(sessionId?: string): Promise<void> {
+  failLiveCalls(sessionId);
+  return finishTurn(sessionId, "cancelled");
+}
+
+/** The held snapshot's running and pending calls, failed as the store fails
+ *  them on a cancel or a failure, so a re-read agrees with the live turn. */
+function failLiveCalls(sessionId?: string): void {
+  for (const m of latest(sessionId)?.messages ?? []) {
+    m.tool_calls = m.tool_calls.map((call) =>
+      call.status === "running" || call.status === "pending" ? { ...call, status: "failed" } : call,
+    );
+  }
+}
+
+/** The turn failed (`turn_failed`), in the projector's order: the error
+ *  status, then the failure. The store fails the live calls and adds an
+ *  `Error: <error>` message. */
+export async function failTurn(
+  error: string,
+  errorKind: "auth" | "transient" | "fatal" | "process_dead" | "unknown",
+  sessionId?: string,
+): Promise<void> {
+  const s = latest(sessionId);
+  if (!s) return;
+  failLiveCalls(sessionId);
+  await setStatus("error", sessionId);
+  await sendDelta({ kind: "turn_failed", ...at(s), error, turn_seq: 0, error_kind: errorKind });
+}
+
+// ── The computer sleeping mid-turn ───────────────────────────────────────
+//
+// Rust's `sleep_watch.rs` notices the machine slept under a running turn and
+// sends `slept_mid_turn` before the turn's terminal. A browser cannot sleep on
+// cue, so these replay that sequence: half a reply, the notice, a few seconds
+// of the turn still going after the wake (the composer's "Woke after" pill is
+// only on screen then), then the turn ending — cleanly, or with the transport
+// error a dropped stream reports.
+
+/** How long the turn keeps going after the wake, so the pill can be seen. */
+const AFTER_WAKE_MS = 3_000;
+
+/** A reply cut off by sleep that the agent still finished
+ *  (`__atlasMock.actions.sleepMidTurn`). */
+export async function sleepMidTurn(): Promise<void> {
+  const s = latest();
+  if (!s) return;
+  await setStatus("running");
+  await streamText("Here is the migration plan. First, add the new column with a default of ");
+  await sendDelta({ kind: "slept_mid_turn", ...at(s), turn_seq: 0, slept_secs: 1260 });
+  await new Promise((r) => setTimeout(r, AFTER_WAKE_MS));
+  await streamText("null, then backfill it in batches.");
+  await finishTurn();
+  await setStatus("idle");
+}
+
+/** A rate-limited provider being retried after a backoff: the retry notice
+ *  over the composer (`__atlasMock.actions.showRetry`). */
+export async function showRetry(): Promise<void> {
+  const s = latest();
+  if (!s) return;
+  await sendDelta({
+    kind: "retry_status",
+    ...at(s),
+    attempt: 2,
+    max_attempts: 5,
+    delay_ms: 8000,
+    last_error: '429 Too Many Requests\n{"error":"rate_limited"}',
+  });
+}
+
+/** The agent process exiting under the session: the disconnected notice
+ *  with its Restart action (`__atlasMock.actions.disconnectAgent`). */
+export async function disconnectAgent(): Promise<void> {
+  const s = latest();
+  if (!s) return;
+  await sendDelta({ kind: "agent_disconnected", ...at(s), reason: "process exited" });
+}
+
+/** A turn that failed on waking (`__atlasMock.actions.sleepMidTurnFailed`). */
+export async function sleepMidTurnFailed(): Promise<void> {
+  const s = latest();
+  if (!s) return;
+  await setStatus("running");
+  await streamText("Reading the test suite to see which fixtures depend on the old");
+  await sendDelta({ kind: "slept_mid_turn", ...at(s), turn_seq: 0, slept_secs: 3400 });
+  await new Promise((r) => setTimeout(r, AFTER_WAKE_MS));
+  await failTurn("error decoding response body", "transient");
 }
 
 // ── Permission requests ──────────────────────────────────────────────────
@@ -178,7 +569,7 @@ function isAllowKind(kind: string): boolean {
   return kind === "allow_once" || kind === "allow_always";
 }
 
-interface OpenPermission {
+export interface OpenPermission {
   agentId: string;
   sessionId: string;
   messageId: string;
@@ -194,24 +585,31 @@ interface OpenPermission {
 
 const openPermissions = new Map<string, OpenPermission>();
 
-async function raisePermission(opts: {
+export async function raisePermission(opts: {
+  /** The session to raise it in; the most recent one by default. */
+  sessionId?: string;
   transcriptCall: ToolCall;
   title: string;
   kind: string;
   rawInput: unknown;
+  /** An organisation tool's own name — makes it an outward action's card. */
+  toolName?: string;
+  /** The call's text blocks: an outward card's recipient, then its body. */
+  content?: string[];
   options: PermissionOptionRef[];
   result: OpenPermission["result"];
   reply: OpenPermission["reply"];
 }): Promise<void> {
-  const s = latest();
+  const s = latest(opts.sessionId);
   if (!s) {
     console.warn("[mock-backend] requestPermission: no session bound yet");
     return;
   }
-  await setStatus("running");
-  const message = tools([opts.transcriptCall]);
-  await playTranscript([message]);
-  await setStatus("waiting");
+  const sid = s.key.session_id;
+  await setStatus("running", sid);
+  const message = tools([opts.transcriptCall], new Date().toISOString());
+  await playTranscript([message], 0, sid);
+  await setStatus("waiting", sid);
 
   const requestId = `perm-req-${++seq}`;
   openPermissions.set(requestId, {
@@ -232,6 +630,8 @@ async function raisePermission(opts: {
       title: opts.title,
       kind: opts.kind,
       rawInput: opts.rawInput,
+      toolName: opts.toolName,
+      content: opts.content,
     }),
     options: opts.options,
   });
@@ -262,15 +662,19 @@ async function resolvePermission(
       : null;
   const allowed = !!option && isAllowKind(option.kind);
 
-  await upsertToolCall(open.messageId, {
-    ...open.toolCall,
-    status: allowed ? "completed" : "failed",
-    result: open.result(allowed),
-  });
+  await upsertToolCall(
+    open.messageId,
+    {
+      ...open.toolCall,
+      status: allowed ? "completed" : "failed",
+      result: open.result(allowed),
+    },
+    sessionId,
+  );
 
   const line = open.reply(decision, option);
-  if (line) await playTranscript([text(line, new Date().toISOString())]);
-  await finishTurn();
+  if (line) await playTranscript([text(line, new Date().toISOString())], 0, sessionId);
+  await finishTurn(sessionId);
 }
 
 let permSeq = 0;
@@ -376,6 +780,199 @@ export function requestPermissionQuestionMulti(): Promise<void> {
   });
 }
 
+const OUTWARD_REPLY_BODY = [
+  "Thanks Sam, good catch. The retry loop only covers the first request,",
+  "so a dropped connection on the second one still surfaces as an error.",
+  "I'll move the retry into the client wrapper and add a test for it.",
+].join("\n");
+
+/** An outward action (ADR-0014): a reply on a teammate's comment, posted in
+ *  the user's name. Enter and the Allow digits do nothing on this card
+ *  (`__atlasMock.actions.requestPermissionOutward`). */
+export function requestPermissionOutward(): Promise<void> {
+  const id = permId();
+  const input = { thread_id: "thr_42", body: OUTWARD_REPLY_BODY };
+  return raisePermission({
+    transcriptCall: tool.other("atlas_org.org_comment_reply", input, { id, status: "pending" }),
+    title: "Reply on Sam Lee's comment",
+    kind: "other",
+    rawInput: input,
+    toolName: "atlas_org.org_comment_reply",
+    content: ["Sam Lee · on src/features/sync/client.ts:118", OUTWARD_REPLY_BODY],
+    options: outwardOptions(),
+    result: (allowed) => (allowed ? "Reply posted." : "Declined."),
+    reply: (decision, option) =>
+      decision.kind === "cancelled" || !option || !isAllowKind(option.kind)
+        ? "Okay, I won't post that."
+        : "Posted the reply.",
+  });
+}
+
+/** An outward message with only Allow and Decline — no primary, no ↵
+ *  (`__atlasMock.actions.requestPermissionOutwardMessage`). */
+export function requestPermissionOutwardMessage(): Promise<void> {
+  const id = permId();
+  const body =
+    "The staging deploy is green. I'll start the migration at 3pm unless anyone objects.";
+  const input = { channel: "eng-platform", body };
+  return raisePermission({
+    transcriptCall: tool.other("atlas_org.org_send", input, { id, status: "pending" }),
+    title: "Send a message to #eng-platform",
+    kind: "other",
+    rawInput: input,
+    toolName: "atlas_org.org_send",
+    content: ["#eng-platform · 14 members", body],
+    options: [
+      { optionId: "allow_once", name: "Send", kind: "allow_once" },
+      { optionId: "reject_once", name: "Decline", kind: "reject_once" },
+    ],
+    result: (allowed) => (allowed ? "Message sent." : "Declined."),
+    reply: (decision, option) =>
+      decision.kind === "cancelled" || !option || !isAllowKind(option.kind)
+        ? "Okay, I won't send it."
+        : "Sent.",
+  });
+}
+
+/** An outward action's card while the host is still describing it: only
+ *  Decline, no body (`__atlasMock.actions.requestPermissionOutwardPreparing`). */
+export function requestPermissionOutwardPreparing(): Promise<void> {
+  const id = permId();
+  const input = { thread_id: "thr_42" };
+  return raisePermission({
+    transcriptCall: tool.other("atlas_org.org_comment_reply", input, { id, status: "pending" }),
+    title: "Preparing the approval…",
+    kind: "other",
+    rawInput: input,
+    toolName: "atlas_org.org_comment_reply",
+    options: [{ optionId: "reject_once", name: "Decline", kind: "reject_once" }],
+    result: () => "Declined.",
+    reply: () => "Okay, I won't post anything.",
+  });
+}
+
+/** Raise a session elicitation (`elicitation_requested`) on the latest
+ *  session, the way the agent host does for ACP `elicitation/create`. */
+function raiseElicitation(
+  fields: Pick<
+    Extract<AgentDelta, { kind: "elicitation_requested" }>,
+    "mode" | "message" | "requested_schema" | "url"
+  >,
+): Promise<void> {
+  const s = latest();
+  if (!s) {
+    console.warn("[mock-backend] requestElicitation: no session bound yet");
+    return Promise.resolve();
+  }
+  return sendDelta({
+    kind: "elicitation_requested",
+    ...at(s),
+    request_id: `elicit-${++seq}`,
+    ...fields,
+  });
+}
+
+/** A form elicitation with every field kind the dialog renders: text,
+ *  number, boolean, enum and multi-enum, one required
+ *  (`__atlasMock.actions.requestElicitationForm`). */
+export function requestElicitationForm(): Promise<void> {
+  return raiseElicitation({
+    mode: "form",
+    message: "I need a few details before I open the release branch.",
+    requested_schema: {
+      type: "object",
+      required: ["branch"],
+      properties: {
+        branch: {
+          type: "string",
+          title: "Branch name",
+          description: "Created from the current HEAD.",
+        },
+        reviewers: { type: "number", title: "Reviewers needed", default: 2 },
+        draft: { type: "boolean", title: "Open as a draft" },
+        environment: {
+          type: "string",
+          title: "Deploy preview to",
+          enum: ["staging", "production"],
+          enumNames: ["Staging", "Production"],
+        },
+        labels: {
+          type: "array",
+          title: "Labels",
+          items: { type: "string", enum: ["release", "infra", "docs"] },
+        },
+      },
+    },
+  });
+}
+
+/** A URL elicitation: open a page, then say when done
+ *  (`__atlasMock.actions.requestElicitationUrl`). */
+export function requestElicitationUrl(): Promise<void> {
+  return raiseElicitation({
+    mode: "url",
+    message: "Approve the deploy in the dashboard, then come back here.",
+    url: "https://example.invalid/deploys/approve",
+  });
+}
+
+/** AskUserQuestion bridged as an elicitation (a titled `oneOf` per question
+ *  with its `_custom` companion), which renders the question card with
+ *  Decline (`__atlasMock.actions.requestElicitationQuestion`). */
+export function requestElicitationQuestion(): Promise<void> {
+  return raiseElicitation({
+    mode: "form",
+    message: "Where should the socket client live?",
+    requested_schema: {
+      type: "object",
+      properties: {
+        question_0: {
+          type: "string",
+          title: "Client layer",
+          oneOf: [
+            { const: "Rust", title: "Rust", description: "Socket in Rust" },
+            { const: "TypeScript", title: "TypeScript" },
+          ],
+        },
+        question_0_custom: {
+          type: "string",
+          title: "Other",
+          description: "Type your own answer instead of choosing an option above (optional).",
+          _meta: {
+            _askUserQuestionCustomAnswer: { questionId: "question_0", isCustomAnswer: true },
+          },
+        },
+      },
+    },
+  });
+}
+
+/** A question asked during sign-in, outside any session — the device-code
+ *  page on the existing `atlas:agent-elicitation` channel
+ *  (`__atlasMock.actions.requestSignInElicitation`). */
+export function requestSignInElicitation(): Promise<void> {
+  return emit("atlas:agent-elicitation", {
+    agentId: "agent-atlas-agent",
+    requestId: `signin-elicit-${++seq}`,
+    mode: "url",
+    message: "Finish signing in in your browser. Your code is WDJB-MJHT.",
+    url: "https://example.invalid/device",
+  });
+}
+
+/** The native agent's no-grant state on the composer
+ *  (`__atlasMock.actions.aiGrantNoGrant`). */
+export async function aiGrantNoGrant(): Promise<void> {
+  const { useAiGrantStore } = await import("@/features/chat/stores/ai-grant-store");
+  useAiGrantStore.setState({
+    entitlement: {
+      state: "noGrant",
+      message: "Organisation 01JC9Z3Q6V8K2M4N5P7R9T1W3Y has no AI grant.",
+    },
+    dismissed: false,
+  });
+}
+
 /**
  * What the frontend reads from each command below — the type argument of its
  * `invoke<T>`, or `Unread` where it awaits only success or failure.
@@ -391,13 +988,97 @@ export interface AgentResponses {
   agents_cancel: Unit;
   agents_respond_permission: Unit;
   agents_send: Unit;
+  agents_queue_add: string;
+  agents_queue_remove: boolean;
+  agents_queue_clear: Unit;
+  agents_queue_pause: Unit;
+  agents_queue_drain: number | null;
+  agents_queue_send_now: Unit;
+  agents_set_hold: Unit;
+}
+
+// ── The turn queue ────────────────────────────────────────────────────────
+//
+// Rust's turn controller owns each session's queue (`agent_host/steering.rs`)
+// and drains it when a turn ends; the window only mirrors `queue_changed`. The
+// mock keeps the same contract so `bun run dev` still shows the queued strip
+// draining.
+
+interface FakeQueue {
+  items: QueuedPrompt[];
+  paused: boolean;
+  running: boolean;
+}
+const queues = new Map<string, FakeQueue>();
+const queueOf = (sessionId: string): FakeQueue => {
+  let q = queues.get(sessionId);
+  if (!q) {
+    q = { items: [], paused: false, running: false };
+    queues.set(sessionId, q);
+  }
+  return q;
+};
+
+function announceQueue(s: FakeSession): Promise<void> {
+  return sendDelta({
+    kind: "queue_changed",
+    ...at(s),
+    queue: [...queueOf(s.key.session_id).items],
+  });
+}
+
+function drainQueue(s: FakeSession): number | null {
+  const q = queueOf(s.key.session_id);
+  if (q.running || q.paused) return null;
+  const head = q.items.shift();
+  if (!head) return null;
+  void announceQueue(s);
+  void runTurn(s, head.text);
+  return 0;
+}
+
+/** One mock turn: the prompt on the wire, then a canned echo, then the queue. */
+async function runTurn(s: FakeSession, text: string, clientMessageId?: string): Promise<void> {
+  const now = () => new Date().toISOString();
+  queueOf(s.key.session_id).running = true;
+  await sendDelta({
+    kind: "user_message",
+    ...at(s),
+    message: {
+      id: `m-${++seq}`,
+      role: "user",
+      mode: "text",
+      content: text,
+      tool_calls: [],
+      timestamp: now(),
+    },
+    origin: { kind: "local" },
+    ...(clientMessageId ? { client_message_id: clientMessageId } : {}),
+  });
+  await setStatus("running", s.key.session_id);
+  const reply: SessionMessage = {
+    id: `m-${++seq}`,
+    role: "assistant",
+    mode: "text",
+    content: `(mock) You said: ${text}`,
+    tool_calls: [],
+    timestamp: now(),
+  };
+  setTimeout(() => {
+    void playTranscript([reply], 0, s.key.session_id)
+      .then(() => finishTurn(s.key.session_id))
+      .then(() => {
+        queueOf(s.key.session_id).running = false;
+        drainQueue(s);
+      });
+  }, 400);
 }
 
 export const agentHandlers: TypedHandlers<AgentResponses> = {
   agents_spawn: ({ pluginId }): AgentInfo => ({
     agent_id: `agent-${pluginId}`,
     spec_id: pluginId,
-    display_name: "Atlas Agent",
+    display_name: displayNameFor?.(String(pluginId)) ?? "Atlas Agent",
   }),
   agents_new_session: ({ agentId, cwd }): SessionInit => {
     const key = { agent_id: agentId, session_id: `sess-${++seq}` };
@@ -408,9 +1089,12 @@ export const agentHandlers: TypedHandlers<AgentResponses> = {
       messages: [],
     };
     sessions.set(key.session_id, s);
-    if (seedTranscript.length) {
+    const seed = sessionSeeder
+      ? (sessionSeeder({ sessionId: key.session_id, pluginId: s.pluginId, cwd: String(cwd) }) ?? [])
+      : seedTranscript;
+    if (seed.length) {
       // After the frontend has stored the binding.
-      setTimeout(() => void playTranscript(seedTranscript), 50);
+      setTimeout(() => void playTranscript(seed, 0, key.session_id), 50);
     }
     return { key, current_mode: DEFAULT_MODE, available_modes: MODES };
   },
@@ -420,28 +1104,75 @@ export const agentHandlers: TypedHandlers<AgentResponses> = {
   agents_list_running: () => [],
   agents_replay_transcript: () => [],
   agents_drop_session: () => null,
-  agents_cancel: () => setStatus("idle"),
+  agents_cancel: ({ key }) => {
+    const s = sessions.get(key.session_id);
+    if (s) {
+      queueOf(s.key.session_id).items = [];
+      void announceQueue(s);
+    }
+    return setStatus("idle");
+  },
+  agents_queue_add: ({ key, text }) => {
+    const s = sessionOrThrow(key);
+    const id = `q-${++seq}`;
+    queueOf(s.key.session_id).items.push({ id, text: String(text), origin: { kind: "local" } });
+    void announceQueue(s);
+    return id;
+  },
+  agents_queue_remove: ({ key, itemId }) => {
+    const s = sessionOrThrow(key);
+    const q = queueOf(s.key.session_id);
+    const before = q.items.length;
+    q.items = q.items.filter((i) => i.id !== itemId);
+    void announceQueue(s);
+    return q.items.length !== before;
+  },
+  agents_queue_clear: ({ key }) => {
+    const s = sessionOrThrow(key);
+    queueOf(s.key.session_id).items = [];
+    void announceQueue(s);
+    return null;
+  },
+  agents_queue_pause: ({ key, paused }) => {
+    const s = sessionOrThrow(key);
+    queueOf(s.key.session_id).paused = !!paused;
+    if (!paused) drainQueue(s);
+    return null;
+  },
+  agents_queue_drain: ({ key }) => drainQueue(sessionOrThrow(key)),
+  agents_queue_send_now: ({ key, itemId }) => {
+    const s = sessionOrThrow(key);
+    const q = queueOf(s.key.session_id);
+    const at_ = q.items.findIndex((i) => i.id === itemId);
+    if (at_ > 0) q.items.unshift(...q.items.splice(at_, 1));
+    void announceQueue(s);
+    drainQueue(s);
+    return null;
+  },
+  // The developer hold: Rust keeps the session past its tab and says so.
+  agents_set_hold: ({ sessionId, held }) => {
+    const s = sessions.get(String(sessionId));
+    if (s) void sendDelta({ kind: "hold_changed", ...at(s), held: !!held });
+    return null;
+  },
   agents_respond_permission: ({ agentId, sessionId, requestId, decision }) => {
     void resolvePermission(agentId, sessionId, requestId, decision);
     return null;
   },
-  // Echo the prompt back so the composer loop is exercisable.
-  agents_send: async ({ key, text }) => {
+  // Echo the prompt back so the composer loop is exercisable — the prompt as
+  // the agent would receive it, large pastes included.
+  agents_send: async ({ key, text: sent, pastedTexts, clientMessageId }) => {
     const s = sessions.get(key.session_id);
     if (!s) return null;
-    const now = () => new Date().toISOString();
-    await setStatus("running");
-    const reply: SessionMessage = {
-      id: `m-${++seq}`,
-      role: "assistant",
-      mode: "text",
-      content: `(mock) You said: ${text}`,
-      tool_calls: [],
-      timestamp: now(),
-    };
-    setTimeout(() => {
-      void playTranscript([reply]).then(() => finishTurn());
-    }, 400);
+    const text = receivedText(String(sent), (pastedTexts ?? []) as { id: string; text: string }[]);
+    const handled = promptHandler?.({
+      sessionId: s.key.session_id,
+      pluginId: s.pluginId,
+      cwd: s.cwd,
+      text,
+    });
+    if (handled) return null;
+    await runTurn(s, String(text), clientMessageId ? String(clientMessageId) : undefined);
     return null;
   },
 };

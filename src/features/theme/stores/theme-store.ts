@@ -1,16 +1,8 @@
 import { create } from "zustand";
 import { createSelectors } from "@/lib/create-selectors";
-import { applyTheme } from "../apply-theme";
-import {
-  getTheme,
-  listThemes,
-  onThemesChanged,
-  type Theme,
-  type ThemeMode,
-  type ThemeSummary,
-  type ThemeWarning,
-} from "../lib/theme-api";
-import type { ThemeOverride } from "../resolve-theme";
+import { appearanceForMode, applyTheme } from "../apply-theme";
+import { getTheme, listThemes, onThemesChanged, type ThemeSummary } from "../lib/theme-api";
+import type { Theme, ThemeMode, ThemeWarning, ThemeOverride } from "@tryatlas/design/theme";
 
 /** The id every install ships with, and the last thing `apply` tries. */
 const FALLBACK_THEME = "atlas";
@@ -124,8 +116,10 @@ const baseStore = create<ThemeState>()((set, get) => ({
         // backend, a catalog that would not build — threw a SECOND time out of
         // the handler that existed to survive the first, rejecting the promise
         // no caller awaits. Failing to theme is not a reason to fail: the app
-        // stays on what `index.html` replayed from the launch cache, or on
-        // `tokens.css`'s Atlas-dark fallback on a first run.
+        // stays on what `index.html` replayed from the launch cache. On a
+        // first run there is no cache, and it stays on the package's
+        // `styles-core.css` floor instead: the Atlas theme at `:root`, dark
+        // unless the OS prefers light.
         const loaded =
           (await loadTheme(id)) ?? (id === FALLBACK_THEME ? null : await loadTheme(FALLBACK_THEME));
         // A newer `apply` started while this one was loading. It owns the
@@ -163,7 +157,9 @@ let systemQuery: MediaQueryList | null = null;
  *  the file did not change, only which of its variants is wanted. */
 function onSystemAppearanceChange(): void {
   if (!lastRequest || lastRequest.mode !== "system") return;
-  const { id, mode, themeOverrides } = lastRequest;
+  const { mode, themeOverrides } = lastRequest;
+  // The OS flipping can change which theme is wanted, not just its variant.
+  const id = configured ? themeIdFor(configured, mode) : lastRequest.id;
   void baseStore.getState().actions.apply(id, mode, themeOverrides);
 }
 
@@ -212,11 +208,35 @@ export function startThemeCatalogListener(): void {
   });
 }
 
+/** The two themes `config.toml` names: one for light, one for dark. */
+export interface ThemePair {
+  light: string;
+  dark: string;
+}
+
+/** The pair the settings last asked for, so an OS appearance change can swap
+ *  to the other theme of it, not only to the other variant of this one. */
+let configured: ThemePair | null = null;
+
+/** Which of the pair `mode` shows right now. */
+export function themeIdFor(pair: ThemePair, mode: ThemeMode): string {
+  return appearanceForMode(mode) === "light" ? pair.light : pair.dark;
+}
+
 export function applyConfiguredTheme(
-  id: string,
+  pair: ThemePair,
   mode: ThemeMode,
   themeOverrides: ThemeOverride,
 ): void {
+  configured = pair;
   startThemeCatalogListener();
+  void baseStore.getState().actions.apply(themeIdFor(pair, mode), mode, themeOverrides);
+}
+
+/** Paint the last applied theme again from the cache — for a setting that
+ *  changes how it resolves (contrast), not which file it is. */
+export function repaintTheme(): void {
+  if (!lastRequest) return;
+  const { id, mode, themeOverrides } = lastRequest;
   void baseStore.getState().actions.apply(id, mode, themeOverrides);
 }

@@ -7,7 +7,6 @@ import {
   matchesCombo,
   parseCombo,
   serializeCombo,
-  splitGlyphCombo,
 } from "./combo";
 
 function key(init: Partial<KeyboardEvent> & { code: string; key?: string }): KeyboardEvent {
@@ -140,10 +139,5 @@ describe("display", () => {
     expect(displayKeys(parseCombo("shift+tab")!)).toEqual(["⇧", "⇥"]);
     expect(displayKeys(parseCombo("cmd+shift+=")!)).toEqual(["⇧", "⌘", "+"]);
     expect(displayLabel(parseCombo("cmd+,")!)).toBe("⌘,");
-  });
-  it("splits legacy glyph strings into caps", () => {
-    expect(splitGlyphCombo("⌘⇧F")).toEqual(["⌘", "⇧", "F"]);
-    expect(splitGlyphCombo("⌥Space")).toEqual(["⌥", "Space"]);
-    expect(splitGlyphCombo("↵")).toEqual(["↵"]);
   });
 });

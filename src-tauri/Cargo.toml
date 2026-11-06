@@ -1,6 +1,6 @@
 [package]
 name = "atlas"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 
 [lib]
@@ -25,10 +25,14 @@ tauri-build = { version = "2", features = [] }
 [features]
 default = []
 # The `ported-engine` switch is gone with the path it switched away from (#54).
-# The ported engine is now the only implementation of the native agent, so
+# The engine is now the only implementation of the native agent, so
 # there is nothing left to select and every build contains it.
 
 [dependencies]
+# The OS credential store for agent variables marked sensitive
+# (`crate::commands::agent_secrets`): the API only. The store itself is installed by
+# `atlas_native_agent::ensure_credential_store`, the engine's own installer.
+keyring-core = { workspace = true }
 atlas-process = { path = "../crates/atlas-process" }
 # Whose data this process owns — the released app's or the dev profile's.
 # Fixed from the bundle identifier at the top of `run()`.
@@ -46,7 +50,7 @@ tauri = { version = "2", features = ["protocol-asset", "macos-private-api", "uns
 # Used to embed KB cover images as `data:` URLs (covers live under the
 # hidden `.atlas/` dir, which the asset protocol won't serve). Pinned to the
 # version already in the lockfile so no new resolution is pulled in.
-base64 = "0.21"
+base64 = "0.23"
 # Allowlist HTML sanitizer (html5ever-based) for the browser reader. Replaces
 # a hand-rolled string-level denylist whose bypass list kept growing —
 # <meta refresh>, <base>, unquoted javascript: hrefs, `</script >` variants.
@@ -73,7 +77,7 @@ serde_json = "1"
 # Bundled so the Memory panel's reader of a third-party CLI's history database (in-process, WAL-concurrent) is
 # self-contained and doesn't shell out to the `sqlite3` CLI.
 # Pinned to rusqlite 0.39 because its `libsqlite3-sys` is 0.37, the major the
-# vendored engine pins; `links = "sqlite3"` admits exactly one. Full
+# engine pins; `links = "sqlite3"` admits exactly one. Full
 # rationale — and the reason 0.38 and 0.40 are both wrong — lives on the same
 # declaration in `crates/atlas-thread-metadata/Cargo.toml`. Issue #39.
 rusqlite = { version = "0.39", features = ["bundled"] }
@@ -87,6 +91,7 @@ tokio = { version = "1", features = [
   "time",
   "fs",
   "io-util",
+  "io-std",
   "process",
   "net",
   "signal",
@@ -100,13 +105,13 @@ chrono = { version = "0.4", features = ["serde"] }
 # Step 7 session-extraction BYOK closure can return `anyhow::Result` into
 # `atlas_memory::extract::extract_and_store` (which is generic over the LLM seam).
 anyhow = "1"
-# The ported ACP stack (Zed port). It is the only one now: `atlas-agents`,
+# The ACP stack. It is the only one now: `atlas-agents`,
 # `atlas-acp`, `atlas-registry` and `atlas-agentkit` are deleted.
 #
 # They could never have coexisted with these crates anyway, which is why the
 # move had to be one change rather than a gradual one: the old stack pinned
 # `agent-client-protocol` 1.3 with its schema crate pinned EXACTLY (`=1.4.0`),
-# the ported one pins 2.0 / `=1.5.0`, and no single Cargo resolution can
+# the current one pins 2.0 / `=1.5.0`, and no single Cargo resolution can
 # contain two exact 1.x pins of the same crate. That collision is also why this
 # repo had no `[workspace]` for so long; with the old stack gone it is gone too,
 # and the root `Cargo.toml` now owns the workspace (issue #38).
@@ -122,9 +127,10 @@ atlas-native-agent = { path = "../crates/atlas-native-agent" }
 atlas-thread-metadata = { path = "../crates/atlas-thread-metadata" }
 atlas-bus = { path = "../crates/atlas-bus" }
 atlas-artifacts = { path = "../crates/atlas-artifacts" }
+atlas-remote-control = { path = "../crates/atlas-remote-control" }
 atlas-comms = { path = "../crates/atlas-comms" }
 # Only to name a crypto provider at startup — see `run()`. Both `ring` and
-# `aws-lc-rs` are already in the graph via the vendored engine tree, which is
+# `aws-lc-rs` are already in the graph via the engine tree, which is
 # exactly why rustls cannot pick one on its own.
 rustls = { version = "0.23", features = ["aws-lc-rs"] }
 agent-client-protocol = { version = "=2.0.0", features = ["unstable"] }
@@ -138,9 +144,6 @@ atlas-embed = { path = "../crates/atlas-embed" }
 atlas-memory = { path = "../crates/atlas-memory" }
 # CLAUDE.md + .claude/rules mirrored into AGENTS.md (commands::instruction_sync).
 atlas-instruction-sync = { path = "../crates/atlas-instruction-sync" }
-# Deterministic codebase scanner (tree-sitter). Feeds the Memory-Chat RAG
-# with up-to-date source structure. Drives `commands::codebase_index`.
-atlas-codeindex = { path = "../crates/atlas-codeindex" }
 # Structured side-by-side git diff engine (vendors delta's word-diff). Drives
 # `commands::gitdiff` (diff viewer + editor gutter).
 atlas-gitdiff = { path = "../crates/atlas-gitdiff" }
@@ -156,29 +159,38 @@ atlas-git = { path = "../crates/atlas-git" }
 # (from ATL-83 on) commit linkage. Tauri-free, so its whole surface is
 # testable against a real database and a real git repository.
 atlas-checkpoint = { path = "../crates/atlas-checkpoint" }
-dirs = "6"
+atlas-redact = { path = "../crates/atlas-redact" }
+atlas-security = { path = "../crates/atlas-security" }
+# In-process code search (ripgrep engine): the `atlas_code` tool server and
+# the project search overlay (`commands::code_server`). Tauri-free.
+atlas-search = { path = "../crates/atlas-search" }
+dirs = "7"
 # `canonicalize` without Windows' `\\?\` verbatim prefix, which would otherwise
 # leak into workspace paths, capture ids and asset scopes. Already in the
-# lockfile via the vendored engine tree, so no new resolution.
+# lockfile via the engine tree, so no new resolution.
 dunce = "1"
 sha2 = "0.10"
 # URL parsing for the embedded browser (`commands::browser`). Already in the
 # lockfile transitively via tauri/reqwest; declared here to name the type.
 url = "2"
-# `rustls-tls` (not `native-tls`) + bundled `webpki-roots`. The macOS
-# Security.framework / Keychain code path that `native-tls` uses can fail
+# `rustls` (not `native-tls`): TLS is rustls on aws-lc-rs, with certificates
+# verified by rustls-platform-verifier (reqwest 0.13's default; 0.12's
+# `rustls-tls` used bundled webpki roots). The platform verifier asks the OS to
+# validate the chain (Security.framework trust evaluation on macOS), which is
+# not the keychain handshake path `native-tls` used. That path could fail
 # silently in sandboxed Hardened-Runtime release builds even with
-# `com.apple.security.network.client` set — symptom: every reqwest call
-# returns a TLS handshake error in `.app` form while working fine under
-# `tauri dev`. rustls is self-contained: no OS keychain, no surprises.
+# `com.apple.security.network.client` set: every reqwest call returned a TLS
+# handshake error in `.app` form while working under `tauri dev`. If that
+# symptom ever returns, test a release `.app` first.
 #
 # `gzip` + `brotli` so arXiv / Semantic Scholar responses (often
 # gzip-encoded) decode transparently.
-reqwest = { version = "0.12", default-features = false, features = [
+reqwest = { version = "0.13", default-features = false, features = [
     "json",
     "charset",
     "http2",
-    "rustls-tls",
+    "rustls",
+    "query",
     "gzip",
     "brotli",
     "stream",
@@ -191,7 +203,7 @@ notify-debouncer-full = "0.6"
 # key-by-key so a UI/skill patch preserves comments, ordering and unknown
 # keys instead of reserializing the whole file; `toml` (serde-based) does
 # the typed parse/validate pass. Both pinned versions already exist in the
-# workspace lockfile via vendored deps, so this adds no new resolution.
+# workspace lockfile via the engine tree, so this adds no new resolution.
 toml_edit = "0.24.0"
 toml = "0.9.5"
 # Per-cwd engine registry map for the background memory indexer
@@ -209,7 +221,10 @@ mimalloc = { version = "0.1", default-features = false }
 # notes to HTML (single-note export, workspace export, and the standalone
 # server crate template).
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
-rig-core = "0.38.1"
+# 0.45 ships no HTTP transport unless `reqwest` is on (rustls via default features);
+# the agent runtime moved to the separate `rig-agent` crate, which Atlas does not
+# use — modelchat / memory_summarize drive `Model::stream` directly.
+rig-core = { version = "0.45.0", features = ["reqwest"] }
 # Loads a `.env` (cwd) at startup so source / fork builds can point telemetry at
 # their own PostHog OSS project via `POSTHOG_KEY`/`POSTHOG_HOST` without a
 # rebuild. Tiny, zero transitive deps. See `crate::telemetry`.
@@ -218,13 +233,21 @@ dotenvy = "0.15"
 # remote-config value vs the running `CARGO_PKG_VERSION`). See
 # `crate::commands::updater`.
 semver = "1"
-posthog-rs = "0.14"
+posthog-rs = "0.30"
 # The memory tool server (`commands::memory_server`): MCP over streamable HTTP
 # on loopback. Both crates are already linked into this binary through the
-# vendored engine (`atlas-engine-rmcp-client` enables exactly these rmcp
+# engine (`atlas-engine-rmcp-client` enables exactly these rmcp
 # features; `atlas-engine-app-server` these axum ones), so this adds no resolution.
 rmcp = { workspace = true, features = ["server", "transport-streamable-http-server"] }
 axum = { workspace = true, features = ["http1", "tokio"] }
+# NFC-folding names for a case-only rename (`commands::fs`): macOS hands back
+# NFD, a typed name is NFC. 0.1.25 is already in the lockfile transitively, so
+# this adds no resolution.
+unicode-normalization = "0.1"
+# A rename that refuses to replace its target (`renamex_np(RENAME_EXCL)`,
+# `renameat2(RENAME_NOREPLACE)`) in `commands::fs`. The workspace's libc,
+# already linked through the engine.
+libc = { workspace = true }
 
 [dev-dependencies]
 # An in-process MCP client for the memory tool server's loopback tests.
@@ -240,9 +263,9 @@ tempfile = "3"
 # relaunches from (and only upgrades) the MSI's `InstallLocation`. See
 # `crate::commands::updater`. Already in the tree transitively.
 winreg = "0.55"
-# Native toasts (`crate::notifier::toast`). 0.61 is the version
+# Native toasts (`crate::notifier::toast`). 0.62 is the version
 # `tauri-winrt-notification` already resolves, so no second `windows` major.
-windows = { version = "0.61", features = [
+windows = { version = "0.62", features = [
   "Data_Xml_Dom",
   "Foundation",
   "Foundation_Collections",
@@ -255,6 +278,11 @@ windows = { version = "0.61", features = [
 # resolves (the lockfile also holds a 4.x for other crates), default features
 # (async-io), so no new resolution.
 zbus = "5"
+# GTK's clipboard (`commands::clipboard`): WebKitGTK's paste event carries no
+# image and no readable file list, so a pasted screenshot or a copied file is
+# read off the clipboard GTK holds. 0.18 is the gtk tao and wry already
+# resolve; pinned here for the direct calls, so nothing new compiles.
+gtk = "0.18"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # Native NSWindow access for the titlebar double-click "zoom" (AppKit
@@ -294,6 +322,22 @@ objc2-user-notifications = { version = "0.3", default-features = false, features
   "UNUserNotificationCenter",
 ] }
 block2 = "0.6"
+# Installed font families for the font pickers (`commands::fonts`): CoreText's
+# collection of available fonts. Both are already in the lockfile through
+# objc2-app-kit, at these versions; no new resolution.
+objc2-core-text = { version = "0.3", default-features = false, features = [
+  "std",
+  "CTFontCollection",
+  "CTFontDescriptor",
+  "CTFontTraits",
+] }
+objc2-core-foundation = { version = "0.3", default-features = false, features = [
+  "std",
+  "CFArray",
+  "CFDictionary",
+  "CFNumber",
+  "CFString",
+] }
 # Turn on atlas-embed's Metal backend so the on-device embedder runs on the
 # Apple-Silicon GPU. Feature is additive over the base path dep in `[dependencies]`.
 atlas-embed = { path = "../crates/atlas-embed", features = ["metal"] }

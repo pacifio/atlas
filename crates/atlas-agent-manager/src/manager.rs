@@ -1,4 +1,4 @@
-//! Ported from `agent_connection_store.rs`, function for function.
+//! The connection table and session registry behind [`AgentManager`].
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -57,7 +57,7 @@ impl Default for Deadlines {
 
 /// Which agent a connection is to.
 ///
-/// Ported from Zed's `Agent` (`agent_ui.rs:425-436`). The native agent is a
+/// The native agent is a
 /// variant rather than an id because it is always present: it is the one agent
 /// a fresh install has, and no installed map can remove it (research §D12-3).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -156,7 +156,7 @@ impl AgentConnectionEntry {
     }
 }
 
-/// What Zed emits with `cx.emit` on the entry and on the store.
+/// What the manager announces about an entry or about itself.
 #[derive(Clone, Debug)]
 pub enum AgentManagerEvent {
     NewVersionAvailable {
@@ -176,6 +176,13 @@ pub enum AgentManagerEvent {
     },
     /// The set of connections changed — one was added, dropped, or uninstalled.
     ConnectionsChanged,
+    /// A connected agent's process exited and its connection was dropped
+    /// (`evict_when_exited`). The manager has forgotten its sessions; whoever
+    /// holds them above it has to tell their chats, or each one's next message
+    /// goes to a session id the respawned agent has never heard of.
+    ConnectionExited {
+        agent: Agent,
+    },
 }
 
 /// How a stored session came back.
@@ -220,7 +227,7 @@ pub struct AgentManager {
 
 impl AgentManager {
     /// Must be built inside a tokio runtime: it starts the task that watches the
-    /// installed map, which is Zed's `cx.subscribe(&agent_server_store, …)`.
+    /// installed map.
     pub fn new(
         catalog: Arc<dyn AgentCatalog>,
         native: Arc<dyn AgentServer>,
@@ -338,8 +345,6 @@ impl AgentManager {
             .map(|(_, connection)| connection)
     }
 
-    /// Ported from `restart_connection` (`:127-141`).
-    ///
     /// A restart while a young connect is already in flight is a no-op: that
     /// attempt *is* the restart. One older than [`RESTART_STALE_AFTER`] is
     /// cancelled and replaced — see `open_entry`.
@@ -349,9 +354,8 @@ impl AgentManager {
 
     /// Connect to `key`, resolving which server backs it.
     ///
-    /// Zed resolves the server in its UI layer and passes it to
-    /// `request_connection`; Atlas has no such layer, so this is where the two
-    /// halves meet. An agent nobody installed produces an `Error` entry that is
+    /// Atlas has no UI layer that resolves the server and passes it to
+    /// `request_connection`, so this is where the two halves meet. An agent nobody installed produces an `Error` entry that is
     /// never stored — installing it and asking again starts a real attempt.
     pub fn connect_to(self: &Arc<Self>, key: Agent) -> Entry {
         // A fast path, not a guard. Two callers arriving together both fall
@@ -368,8 +372,7 @@ impl AgentManager {
 
     /// Drop `key`'s connection and forget its sessions.
     ///
-    /// Zed does this implicitly — the entry goes when the last view holding it
-    /// does. Atlas's UI can close an agent explicitly (`agents_kill`), and the
+    /// Atlas's UI can close an agent explicitly (`agents_kill`), and the
     /// next request has to start a fresh process rather than hand back a
     /// connection to one that is gone.
     pub fn drop_connection(&self, key: &Agent) {
@@ -434,7 +437,6 @@ impl AgentManager {
         }
     }
 
-    /// Ported from `request_connection` (`:143-266`).
     pub fn request_connection(self: &Arc<Self>, key: Agent, server: Arc<dyn AgentServer>) -> Entry {
         self.open_entry(key, server, Reuse::Existing)
     }
@@ -443,11 +445,9 @@ impl AgentManager {
     ///
     /// The check and the insert are a single decision — "is anyone already
     /// connecting to this agent, and if not, start" — so they happen under one
-    /// `entries` guard. Zed's original could split them because its store is
-    /// `Rc`-based and confined to the GPUI main thread, where the whole body is
-    /// one uninterruptible borrow. The port kept the shape and moved it onto a
-    /// multi-threaded runtime, which is what let two callers each start a
-    /// process 11–30% of the time (ATL-226).
+    /// `entries` guard. Split across two lock acquisitions on the multi-threaded
+    /// runtime, two callers each started a process 11–30% of the time
+    /// (ATL-226).
     ///
     /// `start_connection` is safe to call under the guard: both `AgentServer`
     /// implementations build a boxed future and perform no I/O synchronously,
@@ -555,8 +555,6 @@ impl AgentManager {
         }
     }
 
-    /// Ported from `start_connection` (`:284-312`).
-    ///
     /// The attempt is spawned rather than left for the first poller, so that
     /// the returned [`ConnectHandle`] can actually stop it. See that type for
     /// why dropping the future is not enough.
@@ -648,15 +646,12 @@ impl AgentManager {
             // Anything it says now is about a connection nobody asked for.
             match result {
                 Ok(state) => {
-                    if !this.is_current(&key, &entry) {
+                    let connection = state.connection.clone();
+                    if !this.mark_connected(&key, &entry, state) {
                         return;
                     }
-                    let mut slot = lock(&entry);
-                    if matches!(&*slot, AgentConnectionEntry::Connecting { .. }) {
-                        *slot = AgentConnectionEntry::Connected(state);
-                    }
-                    drop(slot);
-                    this.emit(AgentManagerEvent::Connected { agent: key });
+                    this.emit(AgentManagerEvent::Connected { agent: key.clone() });
+                    this.evict_when_exited(key, entry, connection);
                 }
                 Err(error) => {
                     // Checked, marked and dropped under one `entries` guard.
@@ -685,9 +680,51 @@ impl AgentManager {
         });
     }
 
-    /// Ported from the version watcher (`:209-238`), minus the eviction.
+    /// Drop the entry the moment its process exits.
     ///
-    /// Zed drops the entry the moment the version moves. Here that stranded
+    /// A connection's child dying used to reach only the sessions open on it
+    /// (`emit_load_error`); the manager kept the entry as `Connected`, so the
+    /// next request — a new tab, a prewarm, the sidebar sync — was handed a
+    /// transport with nobody behind it and waited out `REQUEST_TIMEOUT` to
+    /// learn so. With zero sessions open nothing ever told the manager at
+    /// all. Now the exit evicts, and the next request starts fresh.
+    fn evict_when_exited(
+        self: &Arc<Self>,
+        key: Agent,
+        entry: Entry,
+        connection: Arc<dyn AgentConnection>,
+    ) {
+        let this = Arc::downgrade(self);
+        let entry = Arc::downgrade(&entry);
+        tokio::spawn(async move {
+            connection.exited().await;
+            let Some(this) = this.upgrade() else {
+                return;
+            };
+            let Some(entry) = entry.upgrade() else {
+                return;
+            };
+            {
+                let mut entries = this.lock_entries();
+                let current = entries
+                    .get(&key)
+                    .is_some_and(|current| Arc::ptr_eq(current, &entry));
+                // Replaced already (a restart, an uninstall): not ours to drop.
+                if !current || !matches!(&*lock(&entry), AgentConnectionEntry::Connected(_)) {
+                    return;
+                }
+                entries.remove(&key);
+            }
+            tracing::warn!(agent = ?key, "the agent process exited; its connection was dropped");
+            this.forget_sessions_for(&key);
+            this.emit(AgentManagerEvent::ConnectionExited { agent: key });
+            this.emit(AgentManagerEvent::ConnectionsChanged);
+        });
+    }
+
+    /// Watches for version bumps, without evicting the entry.
+    ///
+    /// Dropping the entry the moment the version moves stranded
     /// every open chat on the agent: the manager forgot their sessions while
     /// the host and the tab still held them, so the next message failed with
     /// "unknown session id" and nothing recovered it. So this only announces
@@ -741,7 +778,6 @@ impl AgentManager {
         self.catalog.watch_loading_status(id)
     }
 
-    /// Ported from the loading-status watcher (`:240-263`).
     fn watch_loading_status(
         self: &Arc<Self>,
         key: Agent,
@@ -782,8 +818,6 @@ impl AgentManager {
         });
     }
 
-    /// Ported from `handle_agent_servers_updated` (`:268-282`).
-    ///
     /// The native agent always survives; an external one survives only while the
     /// installed map still lists it, which is how an uninstall closes its
     /// connection.
@@ -814,6 +848,22 @@ impl AgentManager {
             self.forget_sessions_for(key);
         }
         self.emit(AgentManagerEvent::ConnectionsChanged);
+    }
+
+    /// Moves a current `Connecting` entry to `Connected`; false when the entry
+    /// was replaced while it connected. Both the waiter in `connection` and the
+    /// watcher in `watch_connect_result` call this, whichever the runtime
+    /// polls first: with only the watcher doing it, `connection` could return
+    /// a live transport while the table still read `Connecting`.
+    fn mark_connected(&self, key: &Agent, entry: &Entry, state: AgentConnectedState) -> bool {
+        if !self.is_current(key, entry) {
+            return false;
+        }
+        let mut slot = lock(entry);
+        if matches!(&*slot, AgentConnectionEntry::Connecting { .. }) {
+            *slot = AgentConnectionEntry::Connected(state);
+        }
+        true
     }
 
     fn is_current(&self, key: &Agent, entry: &Entry) -> bool {
@@ -888,8 +938,7 @@ impl AgentManager {
 
     /// Bring a stored session back to life, by whatever the agent advertised.
     ///
-    /// Ported from Zed's resume ladder (`conversation_view.rs:1109-1143`):
-    /// `session/load` when the agent advertises `loadSession`, else
+    /// The ladder is: `session/load` when the agent advertises `loadSession`, else
     /// `session/resume` when it advertises `sessionCapabilities.resume`, else
     /// an error naming the limitation. The connection is obtained the usual
     /// way, so an agent that is not running is started first — resume is one
@@ -953,14 +1002,13 @@ impl AgentManager {
     /// Ask the agent to forget a stored session — only if it advertised that it
     /// can. Answers whether it was asked.
     ///
-    /// Zed's archive-view delete (`threads_archive_view.rs:807-851`): the local
-    /// row is removed by the caller first and unconditionally, and this is the
+    /// The local row is removed by the caller first and unconditionally, and this is the
     /// best-effort second half. `session/delete` rides on the session-list
     /// object, which exists only when the agent advertised
     /// `sessionCapabilities.list` — so an agent with no listable history is
     /// never sent one, whatever else it claims.
     ///
-    /// Like Zed, this connects if the agent is not running: a conversation the
+    /// This connects if the agent is not running: a conversation the
     /// user deleted should not stay on the agent's disk until they happen to
     /// start it again.
     pub async fn delete_stored_session(
@@ -1006,7 +1054,7 @@ impl AgentManager {
 
     /// Every open session id.
     ///
-    /// Ids can repeat across agents: they come from the agent verbatim, and the
+    /// Ids can repeat across agents: they come from the agent unmodified, and the
     /// protocol scopes them to one client/agent pair rather than to the app.
     /// Whether any agent has a session by this id.
     ///
@@ -1026,8 +1074,7 @@ impl AgentManager {
 
     /// Run one turn.
     ///
-    /// This is Zed's `AcpThread::send` (`acp_thread.rs`): the user's message is
-    /// added optimistically so it renders before the agent answers, the turn is
+    /// The user's message is added optimistically so it renders before the agent answers, the turn is
     /// opened, and the turn is closed with whatever the agent stopped for. A
     /// failed prompt marks the thread rather than silently leaving it
     /// generating.
@@ -1124,10 +1171,12 @@ impl AgentManager {
 
     /// The connection for `agent`, connecting first if it is not up.
     pub async fn connection(self: &Arc<Self>, agent: Agent) -> Result<Arc<dyn AgentConnection>> {
-        let entry = self.connect_to(agent);
+        let entry = self.connect_to(agent.clone());
         let task = lock(&entry).wait_for_connection();
         let state = task.await.map_err(anyhow::Error::from)?;
-        Ok(state.connection)
+        let connection = state.connection.clone();
+        self.mark_connected(&agent, &entry, state);
+        Ok(connection)
     }
 
     /// Every session-opening path ends here, so this is where the one

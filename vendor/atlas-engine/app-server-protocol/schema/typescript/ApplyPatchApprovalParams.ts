@@ -9,7 +9,7 @@ export type ApplyPatchApprovalParams = { conversationId: ThreadId,
  * Use to correlate this with [atlas_engine_protocol::protocol::PatchApplyBeginEvent]
  * and [atlas_engine_protocol::protocol::PatchApplyEndEvent].
  */
-callId: string, fileChanges: { [key in string]?: FileChange },
+callId: string, fileChanges: { [key in string]: FileChange },
 /**
  * Optional explanatory reason (e.g. request for extra write access).
  */

@@ -64,11 +64,11 @@ pub enum WireApi {
     Responses,
     /// The OpenAI Chat Completions API, as the Atlas gateway serves it (D3).
     ///
-    /// **Reinstated by Atlas, not inherited.** Upstream removed this variant
+    /// **Reinstated by Atlas, not inherited.** The original removed this variant
     /// and made the string `"chat"` a deliberate deserialization error. Atlas
     /// needs it back because its gateway speaks exactly this dialect — and the
     /// dialect is authored fresh (`atlas_engine_api::atlas_chat`) rather than
-    /// recovered, since upstream deleted the code along with the variant.
+    /// recovered, since the original deleted the code along with the variant.
     ///
     /// Reusing the same spelling is intentional: a provider written for any
     /// OpenAI-compatible endpoint says `wire_api = "chat"`, and inventing a

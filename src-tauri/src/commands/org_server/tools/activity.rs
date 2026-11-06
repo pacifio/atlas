@@ -37,8 +37,8 @@ pub(in crate::commands::org_server) const RECORDED_NOTE: &str = "Activity record
 
 /// What a caller who is not an organisation admin is told.
 const NOT_ADMIN_NOTE: &str =
-    "Only an organisation admin can read a member's recorded activity; this account is not \
-     an admin in this organisation. Nothing was read.";
+    "Only an organization admin can read a member's recorded activity; this account is not \
+     an admin in this organization. Nothing was read.";
 
 /// What `org_member_activity` was asked.
 pub(super) struct ActivityArgs<'a> {
@@ -137,8 +137,8 @@ impl OrgTools {
             Ok(walked) => walked,
             Err(CloudError::Forbidden(reason)) => {
                 return tool_error(format!(
-                    "the organisation refused this account a member's recorded activity ({reason}); only an \
-                     organisation admin can read it — ask an admin, or check this account's role"
+                    "the organization refused this account a member's recorded activity ({reason}); only an \
+                     organization admin can read it — ask an admin, or check this account's role"
                 ))
             }
             Err(e) => return tool_error(e.to_string()),

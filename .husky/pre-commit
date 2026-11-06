@@ -1,4 +1,10 @@
 bun x lint-staged
+# lint-staged lints only the staged files, so a change to the lint config itself
+# (a rule turned on, a name dropped from the @shadcn/lint allowlist) would land
+# without the rest of src/ ever being checked against it. Lint everything then.
+if git diff --cached --name-only | grep -qx '.oxlintrc.json'; then
+  bun run lint
+fi
 bun run typecheck
 # The contract suites in tests/ (repo invariants: IPC/event wiring, the
 # ratchets, CI coverage, the engine quarantine). About a second, and the thing

@@ -12,4 +12,4 @@ rateLimits: RateLimitSnapshot,
 /**
  * Multi-bucket view keyed by metered `limit_id` (for example, `atlas_engine`).
  */
-rateLimitsByLimitId: { [key in string]?: RateLimitSnapshot } | null, rateLimitResetCredits: RateLimitResetCreditsSummary | null, };
+rateLimitsByLimitId: { [key in string]: RateLimitSnapshot } | null, rateLimitResetCredits: RateLimitResetCreditsSummary | null, };

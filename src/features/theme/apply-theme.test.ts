@@ -3,9 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import builtinThemes from "@/dev/mock-backend/fixtures/builtin-themes.json";
+import { BUILTIN_THEMES } from "@/dev/mock-backend/fixtures/builtin-themes";
 import { applyTheme, appearanceForMode, resolvedThemeCss } from "./apply-theme";
-import type { Theme } from "./lib/theme-api";
 
 /** Pretend the OS is asking for a light appearance. */
 function osPrefersLight(light: boolean): void {
@@ -69,7 +68,7 @@ describe("appearanceForMode", () => {
  * appearance the user had already switched away from.
  */
 describe("applyTheme and the boot variables", () => {
-  const themes = builtinThemes as Theme[];
+  const themes = BUILTIN_THEMES;
   const rosePine = themes.find((t) => t.id === "rose-pine")!;
   const boot = () => document.documentElement.style;
 
@@ -104,13 +103,13 @@ describe("applyTheme and the boot variables", () => {
 
 /**
  * The cold-start replay. The app's first render lands three IPC round trips
- * before the first `applyTheme`, and it used to find no `--atlas-*` variable at
+ * before the first `applyTheme`, and it used to find no theme-key variable at
  * all — transparent surfaces, and a dark flash for anyone on a light theme.
  * `index.html` now replays the whole cached map into the same `<style>`; these
  * run that inline script for real, against what `applyTheme` cached.
  */
 describe("the launch replay in index.html", () => {
-  const themes = builtinThemes as Theme[];
+  const themes = BUILTIN_THEMES;
   const rosePine = themes.find((t) => t.id === "rose-pine")!;
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
   const html = readFileSync(path.join(repoRoot, "index.html"), "utf8");
@@ -139,7 +138,7 @@ describe("the launch replay in index.html", () => {
 
     const style = document.getElementById("atlas-resolved-theme");
     expect(style?.textContent).toBe(resolvedThemeCss(resolved.cssVars));
-    expect(style?.textContent).toContain("--atlas-");
+    expect(style?.textContent).toContain("--element-hover:");
     expect(document.documentElement.classList.contains("dark")).toBe(false);
     expect(document.documentElement.dataset.themeAppearance).toBe("light");
   });
@@ -164,7 +163,28 @@ describe("the launch replay in index.html", () => {
 
     const blocks = document.querySelectorAll("#atlas-resolved-theme");
     expect(blocks).toHaveLength(1);
-    expect(blocks[0].textContent).toBe(resolvedThemeCss(dark.cssVars));
+    // The page's own block first, then the inverted scope — one element
+    // carrying both, so a surface asking for the other appearance cannot be
+    // served by a stylesheet the last `applyTheme` left behind.
+    expect(blocks[0].textContent).toContain(resolvedThemeCss(dark.cssVars));
+    expect(blocks[0].textContent?.startsWith(resolvedThemeCss(dark.cssVars))).toBe(true);
+  });
+
+  it("carries the other appearance under `[data-theme-invert]`", () => {
+    // A panel over the record reads as a layer rather than as more of the
+    // page when it is the opposite colour — the reader's share sheet and its
+    // comments both ask for it.
+    const dark = applyTheme(rosePine, "dark");
+    const css = document.getElementById("atlas-resolved-theme")?.textContent ?? "";
+    const inverted = css.slice(css.indexOf("[data-theme-invert]"));
+
+    expect(inverted).toContain("[data-theme-invert]{");
+    // The light variant's background, not the dark page's.
+    expect(inverted).toContain(`--background:${rosePine.light?.base.background}`);
+    expect(dark.cssVars["--background"]).not.toBe(rosePine.light?.base.background);
+    // Every variable is re-declared, not only the ones that differ: a
+    // half-declared scope inherits the page's already-resolved answers.
+    for (const name of Object.keys(dark.cssVars)) expect(inverted).toContain(`${name}:`);
   });
 
   it("skips an entry that could close the block", () => {

@@ -12,10 +12,16 @@
 import { loadCachedAcpModels } from "./acp-models-cache";
 import type { SessionModeInfo } from "@/types/agents";
 
+/** Some agents advertise bare lowercase names ("opus"), and an unlisted
+ *  model falls back to its raw id; a name on screen starts with a capital. */
+export function capitalizeModelName(name: string): string {
+  return name.charAt(0).toUpperCase() + name.slice(1);
+}
+
 /** Claude Code advertises its default model as "Recommended"; show "Default". */
 export function modelLabel(m: { id: string; name: string }): string {
   if (m.name.trim().toLowerCase() === "recommended" || m.id === "default") return "Default";
-  return m.name;
+  return capitalizeModelName(m.name);
 }
 
 /**
@@ -37,5 +43,5 @@ export function resolveModelLabel(
       ? available
       : (loadCachedAcpModels(agentType ?? "atlas-agent")?.availableModels ?? []);
   const hit = list.find((m) => m.id === modelId);
-  return hit ? modelLabel(hit) : modelId;
+  return hit ? modelLabel(hit) : capitalizeModelName(modelId);
 }

@@ -23,11 +23,19 @@
 //! This module deliberately fixes none of the underlying failures; each has its
 //! own criteria in its own ticket. It makes them visible.
 
+use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
 use crate::model::{DrainGate, ProjectMode, SyncState};
 use crate::store::Store;
+
+/// How far back a flagged Session still counts toward the Project's health.
+///
+/// The banner reports what needs attention *now*. The flag itself is permanent
+/// and stays on the Session, so a gap from weeks ago is still visible where the
+/// history is read; it just stops degrading the Project.
+const FLAG_WINDOW: Duration = Duration::days(7);
 
 /// How capture is doing for one Project.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -218,7 +226,7 @@ pub fn evaluate(store: &Store, workspace_id: &str, host: HostSignals) -> Result<
     if binding.mode == ProjectMode::Cloud && binding.drain_state == DrainGate::NotAuthorized {
         issues.push(HealthIssue {
             state: HealthState::Degraded,
-            reason: "No longer authorized to sync with your Organisation — new work stays on \
+            reason: "No longer authorized to sync with your Organization — new work stays on \
                      this machine."
                 .into(),
             next_step: "Reconnect or re-register this Project to resume syncing. Capture \
@@ -227,7 +235,7 @@ pub fn evaluate(store: &Store, workspace_id: &str, host: HostSignals) -> Result<
         });
     }
 
-    let flagged_sessions = store.flagged_session_count(workspace_id)?;
+    let flagged_sessions = store.flagged_session_count(workspace_id, Utc::now() - FLAG_WINDOW)?;
     if flagged_sessions > 0 {
         issues.push(HealthIssue {
             state: HealthState::Degraded,
@@ -235,8 +243,11 @@ pub fn evaluate(store: &Store, workspace_id: &str, host: HostSignals) -> Result<
                 "{flagged_sessions} Session{} could not be fully recorded.",
                 plural(flagged_sessions)
             ),
-            next_step: "Open the Session to see what was flagged. Content that could not be \
-                        scrubbed was not stored."
+            // Not "could not be scrubbed": a storage error (a lock timeout, a
+            // full disk) flags a Session too. What holds for every cause is
+            // that the content was left out, never stored unscrubbed.
+            next_step: "Open the Session to see what is missing. Nothing unscrubbed was \
+                        stored."
                 .into(),
         });
     }
@@ -246,7 +257,7 @@ pub fn evaluate(store: &Store, workspace_id: &str, host: HostSignals) -> Result<
         issues.push(HealthIssue {
             state: HealthState::Degraded,
             reason: format!(
-                "{failed_rows} record{} could not be sent to your Organisation.",
+                "{failed_rows} record{} could not be sent to your Organization.",
                 plural(failed_rows)
             ),
             next_step: "They are skipped so the rest keep syncing. Retry from the sync status."
@@ -347,7 +358,7 @@ fn off(store: &Store, workspace_id: &str, summary: &str) -> Result<CaptureHealth
         state: HealthState::Off,
         summary: summary.into(),
         issues: Vec::new(),
-        flagged_sessions: store.flagged_session_count(workspace_id)?,
+        flagged_sessions: store.flagged_session_count(workspace_id, Utc::now() - FLAG_WINDOW)?,
         failed_rows: store.row_count_in_state(workspace_id, SyncState::Failed)?,
         pending_rows: store.row_count_in_state(workspace_id, SyncState::Pending)?,
     })

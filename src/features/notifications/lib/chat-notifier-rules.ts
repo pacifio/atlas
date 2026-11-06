@@ -9,6 +9,7 @@
  * so there is no mute rule to honour yet.
  */
 import { conversationTitle } from "@/features/comms/lib/derive";
+import { authorLabel } from "@/features/comms/lib/message-author";
 import {
   parseMentions,
   type ChatConversation,
@@ -63,7 +64,8 @@ export function classifyChatMessage(
   const isDirect = conversation.kind !== "channel";
   if (!isDirect && !mentionsUser(message.body, ctx.me)) return null;
 
-  const sender = ctx.members.get(message.author_id)?.name ?? UNKNOWN_NAME;
+  // An integration is named as one ("CI (app)"), never looked up as a member.
+  const sender = authorLabel(message, (id) => ctx.members.get(id)?.name ?? UNKNOWN_NAME);
   const where = conversationTitle(conversation, ctx.members, ctx.me);
   const title =
     conversation.kind === "dm"

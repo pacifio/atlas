@@ -71,30 +71,23 @@ pub const MAX_UI_SCALE: f32 = 2.0;
 // AppSettings
 // ---------------------------------------------------------------------------
 
-/// Adaptive next-step suggestion chips in the agent chat's per-turn card.
-/// Strict on the live config file (`agent` | `off` only) — the legacy
-/// `"parse"`/`"llm"` values only ever existed in old `state.json` payloads
-/// and are normalized to `Agent` once, during migration
-/// (see [`adaptive_suggestions_from_legacy`]), not accepted ongoing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Adaptive next-step suggestion chips in the agent chat's per-turn card:
+/// exactly `agent` or `off`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AdaptiveSuggestions {
+    #[default]
     Agent,
     Off,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ThemeMode {
+    #[default]
     System,
     Dark,
     Light,
-}
-
-impl Default for ThemeMode {
-    fn default() -> Self {
-        Self::System
-    }
 }
 
 /// Deserialized by hand (below), not derived: `config.toml` is a file people
@@ -222,17 +215,11 @@ fn flatten_override_keys(
     }
 }
 
-impl Default for AdaptiveSuggestions {
-    fn default() -> Self {
-        Self::Agent
-    }
-}
-
 /// What picking another agent does to a chat that already has a conversation.
 /// A session is paired to one agent, so every option starts a new session; they
 /// differ in what happens to the one on screen. An empty chat always just
 /// switches in place, and a running one always gets a new tab.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum AgentSwitchBehavior {
     /// Keep the conversation and open the new agent in a new tab.
@@ -242,13 +229,89 @@ pub enum AgentSwitchBehavior {
     Handoff,
     /// Switch in the same tab and start over; the conversation stays in history.
     /// The default, and how switching always worked before this setting existed.
+    #[default]
     Reset,
 }
 
-impl Default for AgentSwitchBehavior {
-    fn default() -> Self {
-        Self::Reset
-    }
+/// How wide the chat transcript and composer column may grow.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ChatWidth {
+    #[default]
+    Normal,
+    Wide,
+    Full,
+}
+
+/// Clock style for every time of day Atlas shows. `System` follows the OS
+/// locale.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TimeFormat {
+    #[default]
+    #[serde(rename = "system")]
+    System,
+    #[serde(rename = "12h")]
+    TwelveHour,
+    #[serde(rename = "24h")]
+    TwentyFourHour,
+}
+
+/// Colours for added and removed lines in every diff. `Theme` uses the
+/// theme's green and red; `BlueOrange` swaps them for blue and orange, which
+/// stay apart under red-green colour blindness.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DiffPalette {
+    #[default]
+    Theme,
+    BlueOrange,
+}
+
+/// What sits behind a new, empty session: a radial glow, or the plain
+/// background.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum WelcomeBackground {
+    #[default]
+    Glow,
+    Plain,
+}
+
+/// The new-session glow's colour: a fresh pick each time, or one fixed
+/// palette entry. The colours themselves are the frontend's (`globals.css`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum WelcomeGlowColor {
+    #[default]
+    Random,
+    Ember,
+    Plum,
+    Ocean,
+    Moss,
+    Amber,
+    Teal,
+}
+
+/// The order of chats in the session sidebar.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SidebarSort {
+    #[default]
+    Recent,
+    Created,
+}
+
+/// The merge method a pull request's Merge button starts on. `Last` reuses
+/// whatever was picked most recently on this device; the others name one.
+/// A method the repository does not allow falls back to one it does.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PullRequestMergeMethod {
+    #[default]
+    Last,
+    Merge,
+    Squash,
+    Rebase,
 }
 
 /// User-facing toggles surfaced in Settings → General. Moved out of
@@ -280,6 +343,16 @@ pub struct AppSettings {
     /// users who want a cleaner tree can turn it off.
     #[serde(default = "default_true")]
     pub show_hidden_files: bool,
+    /// Show a Tip the first time the user meets a feature. Off silences
+    /// every tip; which ones were already seen lives in `tips.json`.
+    #[serde(default = "default_true")]
+    pub show_tips: bool,
+    /// The external editor "Open in <editor>" uses: an editor id from
+    /// `commands::external_editor`, `"system"` for the OS's own app, or empty
+    /// for the first editor detected. Files outside the project go to the
+    /// system app unless this names an editor.
+    #[serde(default)]
+    pub preferred_editor: String,
     /// Global interface zoom (1.0 == 100%). Applied via the native WebView zoom
     /// on the frontend (⌘+/⌘-/⌘0); persisted so it survives relaunch.
     #[serde(default = "default_ui_scale")]
@@ -302,9 +375,13 @@ pub struct AppSettings {
     /// consumer via the shared provider. See `crate::commands::models`.
     #[serde(default = "default_embedding_model")]
     pub embedding_model_id: String,
-    /// One theme covers Atlas chrome, editor, terminal, diffs and syntax.
+    /// The theme used while Atlas is light. One theme covers Atlas chrome,
+    /// editor, terminal, diffs and syntax.
     #[serde(default = "default_theme")]
-    pub theme: String,
+    pub theme_light: String,
+    /// The theme used while Atlas is dark.
+    #[serde(default = "default_theme")]
+    pub theme_dark: String,
     /// Whether to follow the OS appearance or request one variant explicitly.
     #[serde(default)]
     pub theme_mode: ThemeMode,
@@ -322,11 +399,6 @@ pub struct AppSettings {
     /// platforms. See `crate::app_icon`.
     #[serde(default = "default_app_icon")]
     pub app_icon: String,
-    /// Pre-theme-core config fields. Read once, never serialized again.
-    #[serde(default, rename = "codeEditorTheme", skip_serializing)]
-    legacy_code_editor_theme: Option<String>,
-    #[serde(default, rename = "atlasTheme", skip_serializing)]
-    legacy_atlas_theme: Option<String>,
     /// "agent" (default) asks the coding agent to end each reply with a hidden
     /// `<next_steps>` block; "off" disables it.
     #[serde(default)]
@@ -390,27 +462,30 @@ pub struct AppSettings {
     /// Default ON.
     #[serde(default = "default_true")]
     pub agent_org_access: bool,
-    /// "Command finished": a successful command longer than
-    /// `terminal_notify_min_duration_ms` notifies. (Once the terminal master
-    /// switch; `notifications_enabled` is the master now.)
+    /// Let agents search code through the code tool server (ADR-0015):
+    /// `grep` and `find_files` over the session's directory. Off: sessions
+    /// are not offered the server and every call in a running one is
+    /// refused. Default ON.
     #[serde(default = "default_true")]
-    pub terminal_notifications: bool,
+    pub agent_code_tools: bool,
+    /// Once a day, with new sessions to read, ask the memory model (the same
+    /// route and consent as extraction) to propose memory changes. Proposals
+    /// wait in the Memory panel's Review tab; nothing is applied without the
+    /// user. Default OFF.
+    #[serde(default)]
+    pub memory_dreams: bool,
+    /// Keep a read-only Agent Memory Repo mirror of each project's active
+    /// memory in a local git repository outside the project. Default OFF.
+    #[serde(default)]
+    pub memory_repo_mirror: bool,
+    /// Atlas's shared memory is the only memory in Atlas sessions: Claude
+    /// Code starts with its auto memory off and Codex with its memories off.
+    /// Off: each agent also keeps its own. Default ON.
+    #[serde(default = "default_true")]
+    pub atlas_only_memory: bool,
     /// A successful command shorter than this never notifies (milliseconds).
     #[serde(default = "default_terminal_notify_min_duration_ms")]
     pub terminal_notify_min_duration_ms: u32,
-    /// Notify on a non-zero exit code regardless of duration.
-    #[serde(default = "default_true")]
-    pub terminal_notify_on_failure: bool,
-    /// Notify when a command wants input (password prompt, bell, OSC 9/777).
-    #[serde(default = "default_true")]
-    pub terminal_notify_on_attention: bool,
-    /// Legacy terminal OS-banner switch; folded into the `notify_*_native`
-    /// tier keys once (`notificationsMigrated`), unused afterwards.
-    #[serde(default = "default_true")]
-    pub terminal_notify_native: bool,
-    /// Legacy terminal sound switch — migrated like the one above.
-    #[serde(default)]
-    pub terminal_notify_sound: bool,
     /// Notifications master switch: off silences every kind except sign-in problems.
     #[serde(default = "default_true")]
     pub notifications_enabled: bool,
@@ -441,18 +516,149 @@ pub struct AppSettings {
     /// Show Allow once / Deny on permission banners.
     #[serde(default = "default_true")]
     pub notify_permission_actions: bool,
-    /// Set once the legacy terminal and agent notification choices have been folded into the keys above. Not user-facing.
-    #[serde(default)]
-    pub notifications_migrated: bool,
     /// Notification kinds the user switched off in Settings (kind ids from the frontend catalog). Unknown ids are ignored; a kind that cannot be silenced ignores its entry.
     #[serde(default)]
     pub notify_disabled_kinds: Vec<String>,
-    /// Set once the per-kind switches that predate `notifyDisabledKinds` have been folded into it. Not user-facing.
-    #[serde(default)]
-    pub notify_kinds_migrated: bool,
     /// An agent turn that finished faster than this stays quiet (milliseconds); 0 = off.
     #[serde(default)]
     pub notify_agent_min_duration_ms: u32,
+    /// Models starred in the composer's model picker, as `agentType:modelId`. Unknown entries are ignored.
+    #[serde(default)]
+    pub favorite_models: Vec<String>,
+    /// Ask before deleting a session from the sidebar or history. Settling
+    /// never asks: it can be undone. Default ON.
+    #[serde(default = "default_true")]
+    pub confirm_delete_chat: bool,
+    /// Ask before quitting while an agent is mid-turn. A second Quit while
+    /// the question is open quits anyway. Default ON. See `commands::quit_guard`.
+    #[serde(default = "default_true")]
+    pub confirm_quit_while_running: bool,
+    /// Continue a turn a quit, crash or update cut short at the next launch.
+    /// Default ON. See `commands::restart_continuation`.
+    #[serde(default = "default_true")]
+    pub continue_sessions_after_restart: bool,
+    /// New sessions start on the agent last picked in a composer (the
+    /// frontend keeps it). Default ON; `default_agent` is the fallback.
+    #[serde(default = "default_true")]
+    pub new_session_uses_last_agent: bool,
+    /// The agent a new chat starts with: `atlas-agent` or an installed ACP
+    /// agent's id. One that isn't installed falls back to Atlas Agent.
+    #[serde(default = "default_agent")]
+    pub default_agent: String,
+    /// Chat column width.
+    #[serde(default)]
+    pub chat_width: ChatWidth,
+    /// Wrap long lines in file views and diffs; off scrolls them sideways.
+    #[serde(default = "default_true")]
+    pub word_wrap: bool,
+    /// Session sidebar order.
+    #[serde(default)]
+    pub sidebar_sort: SidebarSort,
+    /// Days a session may sit idle before it is settled on its own; 0 turns
+    /// auto-settling off.
+    #[serde(default = "default_auto_settle_after_days")]
+    pub auto_settle_after_days: u32,
+    /// 12- or 24-hour clock, or the system's.
+    #[serde(default)]
+    pub time_format: TimeFormat,
+    /// Interface font family (a CSS font-family list); empty uses the system font.
+    #[serde(default)]
+    pub ui_font_family: String,
+    /// Code font family for the editor, diffs and chat code (and the terminal,
+    /// unless `terminal_font_family` is set); empty uses the default.
+    #[serde(default)]
+    pub code_font_family: String,
+    /// The chat composer's font, as a CSS font-family list. Empty follows
+    /// `ui_font_family`.
+    #[serde(default)]
+    pub composer_font_family: String,
+    /// The terminal's font, as a CSS font-family list. Empty follows
+    /// `code_font_family`.
+    #[serde(default)]
+    pub terminal_font_family: String,
+    /// Editor font size in pixels.
+    #[serde(default = "default_font_size")]
+    pub editor_font_size: u32,
+    /// Terminal font size in pixels.
+    #[serde(default = "default_font_size")]
+    pub terminal_font_size: u32,
+    /// Hide whitespace-only changes in read-only diffs. Never applied where a
+    /// diff can be staged, since a patch without whitespace no longer applies.
+    #[serde(default)]
+    pub diff_ignore_whitespace: bool,
+    /// Diffs open with every file collapsed to its header. Default ON: the
+    /// review diff opens as a list of its files, each expanded on a click.
+    #[serde(default = "default_true")]
+    pub diff_files_collapsed: bool,
+    /// Diff colours.
+    #[serde(default)]
+    pub diff_palette: DiffPalette,
+    /// Contrast of borders and secondary text, in percent of the theme's own.
+    #[serde(default = "default_interface_contrast")]
+    pub interface_contrast: u32,
+    /// The turn rail: one tick per turn down the left edge of a session's
+    /// transcript, with a preview on hover and a jump on click. Purely visual,
+    /// so default ON.
+    #[serde(default = "default_true")]
+    pub show_turn_rail: bool,
+    /// What sits behind a new, empty session. Purely visual.
+    #[serde(default)]
+    pub welcome_background: WelcomeBackground,
+    /// The new-session glow's colour. Purely visual.
+    #[serde(default)]
+    pub welcome_glow_color: WelcomeGlowColor,
+    /// A session whose linked pull request merges is settled, when the merge
+    /// came after the user's last interaction with it; a closed pull request
+    /// always settles its session. Read by the pull request watch (Rust).
+    #[serde(default = "default_true")]
+    pub auto_settle_on_merge: bool,
+    /// Idle auto-settling (`auto_settle_after_days`) leaves a session with a
+    /// linked pull request alone.
+    #[serde(default = "default_true")]
+    pub auto_settle_keep_pull_requests: bool,
+    /// A watched pull request may wake its session's agent with an update
+    /// (checks, reviews, conflicts). Off: watches still track, never prompt.
+    #[serde(default = "default_true")]
+    pub pull_request_watch_wakes: bool,
+    /// A pull request link in a session opens in Atlas's pull request tab
+    /// when it belongs to the session's repository; off opens the browser.
+    #[serde(default = "default_true")]
+    pub pull_request_links_open_in_app: bool,
+    /// The merge method a pull request starts on. Per project.
+    #[serde(default)]
+    pub pull_request_merge_method: PullRequestMergeMethod,
+    /// Strip agent credit trailers (`Co-Authored-By: Claude …`, "Generated
+    /// with …") from merge and squash messages. Per project. Default OFF.
+    #[serde(default)]
+    pub remove_agent_credits_on_merge: bool,
+    /// The pull request Guide tab and its agent-written review tours.
+    #[serde(default = "default_true")]
+    pub pull_request_guide_enabled: bool,
+    /// The agent that writes guides; empty uses `default_agent`.
+    #[serde(default)]
+    pub pull_request_guide_agent: String,
+    /// The model the guide's agent runs on; empty is the agent's own default.
+    #[serde(default)]
+    pub pull_request_guide_model: String,
+    /// The user's preferences for guides, appended to the guide prompt.
+    #[serde(default)]
+    pub pull_request_guide_instructions: String,
+    /// Scan each new Checkpoint's commit with the local security layers
+    /// (`commands::security_scan`), storing results without showing them:
+    /// shadow mode for ATL-985. Default **OFF** in released builds; the
+    /// worker treats an absent key as ON in development builds.
+    #[serde(default)]
+    pub security_scan: bool,
+}
+
+/// The longest `pullRequestGuideInstructions` accepted, in bytes.
+pub const MAX_GUIDE_INSTRUCTIONS: usize = 4_000;
+
+pub const MIN_INTERFACE_CONTRAST: u32 = 50;
+pub const MAX_INTERFACE_CONTRAST: u32 = 200;
+
+fn default_interface_contrast() -> u32 {
+    100
 }
 
 fn default_true() -> bool {
@@ -475,8 +681,29 @@ pub fn default_embedding_model() -> String {
     "all-MiniLM-L6-v2".to_string()
 }
 
+pub fn default_agent() -> String {
+    "atlas-agent".to_string()
+}
+
+pub const DEFAULT_FONT_SIZE: u32 = 13;
+pub const MIN_FONT_SIZE: u32 = 8;
+pub const MAX_FONT_SIZE: u32 = 32;
+
+pub fn default_font_size() -> u32 {
+    DEFAULT_FONT_SIZE
+}
+
 pub fn default_ui_scale() -> f32 {
     1.0
+}
+
+pub const DEFAULT_AUTO_SETTLE_AFTER_DAYS: u32 = 3;
+/// 0 is "off": the idle sweep skips its pass.
+pub const MIN_AUTO_SETTLE_AFTER_DAYS: u32 = 0;
+pub const MAX_AUTO_SETTLE_AFTER_DAYS: u32 = 90;
+
+pub fn default_auto_settle_after_days() -> u32 {
+    DEFAULT_AUTO_SETTLE_AFTER_DAYS
 }
 
 pub fn default_terminal_notify_min_duration_ms() -> u32 {
@@ -489,17 +716,18 @@ impl Default for AppSettings {
             auto_add_atlas_gitignore: true,
             enable_atlas_logs: true,
             show_hidden_files: true,
+            show_tips: true,
+            preferred_editor: String::new(),
             ui_scale: default_ui_scale(),
             share_telemetry: true,
             link_telemetry_to_account: true,
             embedding_model_id: default_embedding_model(),
-            theme: default_theme(),
+            theme_light: default_theme(),
+            theme_dark: default_theme(),
             theme_mode: ThemeMode::default(),
             theme_overrides: ThemeOverride::default(),
             icon_theme: default_icon_theme(),
             app_icon: default_app_icon(),
-            legacy_code_editor_theme: None,
-            legacy_atlas_theme: None,
             adaptive_suggestions: AdaptiveSuggestions::default(),
             agent_switch_behavior: AgentSwitchBehavior::default(),
             remember_before_switch: false,
@@ -513,12 +741,11 @@ impl Default for AppSettings {
             enter_to_send: true,
             agent_ui_navigation: true,
             agent_org_access: true,
-            terminal_notifications: true,
+            agent_code_tools: true,
+            memory_dreams: false,
+            memory_repo_mirror: false,
+            atlas_only_memory: true,
             terminal_notify_min_duration_ms: default_terminal_notify_min_duration_ms(),
-            terminal_notify_on_failure: true,
-            terminal_notify_on_attention: true,
-            terminal_notify_native: true,
-            terminal_notify_sound: false,
             notifications_enabled: true,
             notify_needs_you_native: true,
             notify_needs_you_sound: true,
@@ -529,10 +756,43 @@ impl Default for AppSettings {
             notify_team_native: true,
             notify_team_sound: true,
             notify_permission_actions: true,
-            notifications_migrated: false,
             notify_disabled_kinds: Vec::new(),
-            notify_kinds_migrated: false,
             notify_agent_min_duration_ms: 0,
+            favorite_models: Vec::new(),
+            confirm_delete_chat: true,
+            confirm_quit_while_running: true,
+            continue_sessions_after_restart: true,
+            new_session_uses_last_agent: true,
+            default_agent: default_agent(),
+            chat_width: ChatWidth::default(),
+            word_wrap: true,
+            sidebar_sort: SidebarSort::default(),
+            auto_settle_after_days: DEFAULT_AUTO_SETTLE_AFTER_DAYS,
+            time_format: TimeFormat::default(),
+            ui_font_family: String::new(),
+            code_font_family: String::new(),
+            composer_font_family: String::new(),
+            terminal_font_family: String::new(),
+            editor_font_size: DEFAULT_FONT_SIZE,
+            terminal_font_size: DEFAULT_FONT_SIZE,
+            diff_ignore_whitespace: false,
+            diff_files_collapsed: true,
+            diff_palette: DiffPalette::default(),
+            interface_contrast: default_interface_contrast(),
+            show_turn_rail: true,
+            welcome_background: WelcomeBackground::default(),
+            welcome_glow_color: WelcomeGlowColor::default(),
+            auto_settle_on_merge: true,
+            auto_settle_keep_pull_requests: true,
+            pull_request_watch_wakes: true,
+            pull_request_links_open_in_app: true,
+            pull_request_merge_method: PullRequestMergeMethod::default(),
+            remove_agent_credits_on_merge: false,
+            pull_request_guide_enabled: true,
+            pull_request_guide_agent: String::new(),
+            pull_request_guide_model: String::new(),
+            pull_request_guide_instructions: String::new(),
+            security_scan: false,
         }
     }
 }
@@ -546,8 +806,8 @@ const CONFIG_HEADER: &str = "\
 # Atlas configuration.
 #
 # Every user-facing Atlas preference lives here. Edit this file by hand or use
-# Settings — both write to it, and Atlas picks up external edits live, with no
-# restart needed for any key below.
+# Settings — both write to it, and Atlas picks up external edits live. A change
+# takes effect at once unless the key's comment says otherwise.
 #
 # Your comments, formatting, and any keys Atlas doesn't recognize survive its
 # own writes. An invalid value is rejected whole: Atlas keeps running on the
@@ -559,270 +819,21 @@ const SCHEMA_VERSION_DOC: &str = "
 # Format version of this file. Atlas manages it; leave it alone.
 ";
 
-/// camelCase key → the comment written directly above it in a generated
-/// `config.toml`.
-///
-/// This is the schema documentation. The `atlas-self-configure` skill
-/// deliberately carries no copy of it: the agent reads the real file, which
-/// explains itself, rather than a table that can drift from the code. A key
-/// missing an entry here therefore ships undocumented —
-/// `settings_docs_cover_every_setting` fails the build if that happens.
-///
-/// Order matches `AppSettings`' field order, and so the generated file's. That
-/// matters for a key that serializes to nothing (`updaterIgnoredVersion` when
-/// unset): its comment is carried down onto the next key that IS present,
-/// rather than dropped.
-const SETTINGS_DOCS: &[(&str, &str)] = &[
-    (
-        "autoAddAtlasGitignore",
-        "# Keep Atlas's directory in each opened git project out of version\n\
-         # control: `.atlas/` goes into the project's .gitignore (created if\n\
-         # needed); a dev build's `.atlas-dev/` goes into .git/info/exclude.\n\
-         # No-op on non-git projects. (default: true)",
-    ),
-    (
-        "enableAtlasLogs",
-        "# Record Atlas-internal events (sign-in, agent lifecycle, file and\n\
-         # browser opens) into the Logs panel. (default: true)",
-    ),
-    (
-        "showHiddenFiles",
-        "# Show dotfiles and dot-directories in the explorer file tree.\n\
-         # (default: true)",
-    ),
-    (
-        "uiScale",
-        "# Interface zoom, where 1.0 is 100%. Also driven by Cmd +/-/0.\n\
-         # Must be a number between 0.5 and 2.0. (default: 1.0)",
-    ),
-    (
-        "shareTelemetry",
-        "# Anonymous product telemetry. Opt-OUT: on by default, coarse metadata\n\
-         # only, never file contents or prompts. See TELEMETRY.md.\n\
-         # (default: true)",
-    ),
-    (
-        "linkTelemetryToAccount",
-        "# Attribute telemetry to your signed-in Atlas account instead of the\n\
-         # anonymous per-device id. Irrelevant while signed out, or while\n\
-         # shareTelemetry is false — both gate it. (default: true)",
-    ),
-    (
-        "embeddingModelId",
-        "# On-device embedding model, named by its directory. Normally managed\n\
-         # for you by the Local Model Manager. Must not be empty.\n\
-         # (default: \"all-MiniLM-L6-v2\")",
-    ),
-    (
-        "theme",
-        "# Theme id for the whole app: chrome, editor, terminal, diffs and syntax.\n\
-         # Unknown ids fall back to \"atlas\" with a warning. (default: \"atlas\")",
-    ),
-    (
-        "themeMode",
-        "# Variant selection: exactly \"system\", \"dark\" or \"light\".\n\
-         # A missing requested variant falls back to the theme's other one.\n\
-         # (default: \"system\")",
-    ),
-    (
-        "themeOverrides",
-        "# Optional user-local patch with base, palette and keys tables, applied\n\
-         # after the active theme variant. Omitted when empty.",
-    ),
-    (
-        "iconTheme",
-        "# File and folder icons, on their own track from the colour theme.\n\
-         # \"minimal\" keeps Atlas's own lucide icons; anything else names a VS\n\
-         # Code icon theme, bundled or installed from Open VSX.\n\
-         # (default: \"material-icon-theme\")",
-    ),
-    (
-        "appIcon",
-        "# macOS app icon, by id: \"dark\" (the icon Atlas ships with) or\n\
-         # \"light\". Any other than dark replaces the Dock and Finder icon.\n\
-         # An id this Atlas does not know shows the default. (default: \"dark\")",
-    ),
-    (
-        "adaptiveSuggestions",
-        "# Next-step suggestion chips in the agent chat's per-turn card.\n\
-         # Exactly \"agent\" or \"off\", nothing else. (default: \"agent\")",
-    ),
-    (
-        "agentSwitchBehavior",
-        "# What picking another agent does to a chat that has a conversation:\n\
-         # \"new-tab\" keeps it and opens the new agent in a new tab, \"handoff\"\n\
-         # switches in place and attaches it to the next message, \"reset\"\n\
-         # switches in place and starts over. (default: \"reset\")",
-    ),
-    (
-        "rememberBeforeSwitch",
-        "# Before switching agents on a chat with a conversation, send the agent\n\
-         # being left /remember (when it offers that command) and wait for it\n\
-         # to save what it learned to shared memory. Costs one turn per switch.\n\
-         # (default: false)",
-    ),
-    (
-        "gitBlameInline",
-        "# Inline git blame — a dim author/age/summary annotation trailing the\n\
-         # active line in the editor. (default: true)",
-    ),
-    (
-        "gitAutoFetch",
-        "# Quietly `git fetch` the open project when it opens, when Atlas\n\
-         # regains focus, and every few minutes, so the Pull badge shows what\n\
-         # the remote has. Never pulls or touches your files. (default: true)",
-    ),
-    (
-        "keepAwakeWhileRunning",
-        "# Keep the computer awake while an Atlas agent is actively running.\n\
-         # Prevents idle system sleep; display can still turn off. No effect on\n\
-         # Windows. (default: false)",
-    ),
-    (
-        "autoUpdate",
-        "# Check for a newer signed Atlas release on startup and prompt when one\n\
-         # is available. (default: true)",
-    ),
-    (
-        "curatedPluginSync",
-        "# Let the Atlas Agent's engine fetch OpenAI's curated plugin catalogue\n\
-         # (github.com/openai/plugins) when it starts — a network request at\n\
-         # every launch. Applies the next time the agent starts. (default: false)",
-    ),
-    (
-        "instructionSync",
-        "# Mirror CLAUDE.md and .claude/rules/ into a marked block of the active\n\
-         # project's AGENTS.md, kept current as they change, for any agent that\n\
-         # reads AGENTS.md. Writes into the repository; text outside the block\n\
-         # is never changed. Off: the block is taken back out. (default: false)",
-    ),
-    (
-        "updaterIgnoredVersion",
-        "# updaterIgnoredVersion: a release you chose to skip in the update\n\
-         # prompt. Absent unless one was ignored — TOML has no null, so \"unset\"\n\
-         # means the key simply isn't here. Delete the line to clear it; never\n\
-         # write an empty string.",
-    ),
-    (
-        "enterToSend",
-        "# Chat composer send gesture. true = Enter sends and Shift+Enter\n\
-         # inserts a newline; false = only Cmd/Ctrl+Enter sends. Cmd/Ctrl+Enter\n\
-         # sends either way. (default: true)",
-    ),
-    (
-        "agentUiNavigation",
-        "# Let Atlas Agent act on the window: open files at a line, switch tabs\n\
-         # and panels, fill in a chat message, type a command for you to run.\n\
-         # It never switches projects, sends for you or presses Enter. Off: its\n\
-         # UI tools are withdrawn and every call is refused. (default: true)",
-    ),
-    (
-        "agentOrgAccess",
-        "# Let Atlas Agent act in your organisation, as you: read the recorded\n\
-         # sessions, comments, members and conversations of the organisation a\n\
-         # cloud-bound Project belongs to. Anything that reaches another person\n\
-         # asks you first. Off: its organisation tools are withdrawn and every\n\
-         # call is refused. (default: true)",
-    ),
-    (
-        "terminalNotifications",
-        "# Notify when a command succeeds after running longer than\n\
-         # terminalNotifyMinDurationMs. (The master switch for all notifications\n\
-         # is notificationsEnabled.) (default: true)",
-    ),
-    (
-        "terminalNotifyMinDurationMs",
-        "# A successful command shorter than this many milliseconds never\n\
-         # notifies. Must be between 0 and 3600000. (default: 10000)",
-    ),
-    (
-        "terminalNotifyOnFailure",
-        "# Notify on a non-zero exit code regardless of duration. (default: true)",
-    ),
-    (
-        "terminalNotifyOnAttention",
-        "# Notify when a command wants input — a password prompt, a bell, or an\n\
-         # OSC 9 / OSC 777 notification from the program. (default: true)",
-    ),
-    (
-        "terminalNotifyNative",
-        "# Also raise a macOS notification when the Atlas window is not focused.\n\
-         # (default: true)",
-    ),
-    (
-        "terminalNotifySound",
-        "# Play a short chime with terminal notifications. (default: false)",
-    ),
-    (
-        "notificationsEnabled",
-        "# Notifications master switch. Off silences every notification except\n\
-         # sign-in problems, which always show. (default: true)",
-    ),
-    (
-        "notifyNeedsYouNative",
-        "# OS banner for notifications that need you — a permission request, a\n\
-         # question, a terminal asking for input. Shown only when you are away.\n\
-         # (default: true)",
-    ),
-    (
-        "notifyNeedsYouSound",
-        "# Sound for notifications that need you. (default: true)",
-    ),
-    (
-        "notifyOutcomeNative",
-        "# OS banner when an agent turn or terminal command finishes or fails.\n\
-         # Shown only when you are away. (default: true)",
-    ),
-    (
-        "notifyOutcomeSound",
-        "# Sound for finished / failed notifications. (default: true)",
-    ),
-    (
-        "notifyWarningNative",
-        "# OS banner for warnings — context nearly full, rate limited, retrying,\n\
-         # agent stopped. (default: false)",
-    ),
-    (
-        "notifyWarningSound",
-        "# Sound for warnings. (default: false)",
-    ),
-    (
-        "notifyTeamNative",
-        "# OS banner for Chat direct messages and @mentions. Shown only when you\n\
-         # are away. (default: true)",
-    ),
-    (
-        "notifyTeamSound",
-        "# Sound for Chat notifications. (default: true)",
-    ),
-    (
-        "notifyPermissionActions",
-        "# Show Allow once / Deny buttons on permission banners. Off: the banner\n\
-         # only opens the session. (default: true)",
-    ),
-    (
-        "notificationsMigrated",
-        "# Set once Atlas has folded your earlier terminal and agent notification\n\
-         # choices into the keys above. Leave it alone. (default: false)",
-    ),
-    (
-        "notifyDisabledKinds",
-        "# Notification kinds you switched off in Settings > Notifications, by id,\n\
-         # e.g. [\"terminal-done\", \"git-behind\"]. Unknown ids are ignored; a kind\n\
-         # that must always show (sign-in lost) cannot be silenced. (default: [])",
-    ),
-    (
-        "notifyKindsMigrated",
-        "# Set once Atlas has folded your earlier per-kind notification switches\n\
-         # into notifyDisabledKinds. Leave it alone. (default: false)",
-    ),
-    (
-        "notifyAgentMinDurationMs",
-        "# An agent turn that finished faster than this many milliseconds stays\n\
-         # quiet; failures and requests for you are never held back. 0 turns it\n\
-         # off. Must be between 0 and 3600000. (default: 0)",
-    ),
-];
+// `SETTINGS_DOCS`: camelCase key → the comment written directly above it in a
+// generated `config.toml`. Generated from `src-tauri/settings-registry.toml` by
+// `bun run settings:gen`; edit that file, never the `.gen.rs`.
+//
+// This is the schema documentation. The `atlas-self-configure` skill
+// deliberately carries no copy of it: the agent reads the real file, which
+// explains itself, rather than a table that can drift from the code.
+// `the_settings_registry_matches_app_settings` fails the build if a field has
+// no entry, so nothing ships undocumented.
+//
+// Order matches `AppSettings`' field order, and so the generated file's. That
+// matters for a key that serializes to nothing (`updaterIgnoredVersion` when
+// unset): its comment is carried down onto the next key that IS present,
+// rather than dropped.
+include!("settings_docs.gen.rs");
 
 /// Every key Atlas recognizes under `[settings]`, in file order.
 fn known_settings_keys() -> impl Iterator<Item = &'static str> {
@@ -876,11 +887,16 @@ pub fn validate(settings: &AppSettings) -> Result<(), ValidationIssue> {
             message: "must not be empty".to_string(),
         });
     }
-    if settings.theme.trim().is_empty() {
-        return Err(ValidationIssue {
-            key: "theme",
-            message: "must not be empty".to_string(),
-        });
+    for (key, value) in [
+        ("themeLight", &settings.theme_light),
+        ("themeDark", &settings.theme_dark),
+    ] {
+        if value.trim().is_empty() {
+            return Err(ValidationIssue {
+                key,
+                message: "must not be empty".to_string(),
+            });
+        }
     }
     // An icon theme id is used as a directory name under
     // `~/.config/atlas/icon-themes/`, so a value with a separator or a `..` in
@@ -892,11 +908,103 @@ pub fn validate(settings: &AppSettings) -> Result<(), ValidationIssue> {
             message: "must be a plain id: letters, digits, dot, dash or underscore".to_string(),
         });
     }
+    for (key, size) in [
+        ("editorFontSize", settings.editor_font_size),
+        ("terminalFontSize", settings.terminal_font_size),
+    ] {
+        if !(MIN_FONT_SIZE..=MAX_FONT_SIZE).contains(&size) {
+            return Err(ValidationIssue {
+                key,
+                message: format!("must be between {MIN_FONT_SIZE} and {MAX_FONT_SIZE}, got {size}"),
+            });
+        }
+    }
+    if !(MIN_AUTO_SETTLE_AFTER_DAYS..=MAX_AUTO_SETTLE_AFTER_DAYS)
+        .contains(&settings.auto_settle_after_days)
+    {
+        return Err(ValidationIssue {
+            key: "autoSettleAfterDays",
+            message: format!(
+                "must be between {MIN_AUTO_SETTLE_AFTER_DAYS} and {MAX_AUTO_SETTLE_AFTER_DAYS}, got {}",
+                settings.auto_settle_after_days
+            ),
+        });
+    }
+    if !(MIN_INTERFACE_CONTRAST..=MAX_INTERFACE_CONTRAST).contains(&settings.interface_contrast) {
+        return Err(ValidationIssue {
+            key: "interfaceContrast",
+            message: format!(
+                "must be between {MIN_INTERFACE_CONTRAST} and {MAX_INTERFACE_CONTRAST}, got {}",
+                settings.interface_contrast
+            ),
+        });
+    }
+    // A font family is written into a CSS custom property; a brace or a
+    // semicolon is never part of one and would end the declaration.
+    for (key, family) in [
+        ("uiFontFamily", &settings.ui_font_family),
+        ("codeFontFamily", &settings.code_font_family),
+        ("composerFontFamily", &settings.composer_font_family),
+        ("terminalFontFamily", &settings.terminal_font_family),
+    ] {
+        if family.contains(['{', '}', ';', '<', '>']) || family.len() > 200 {
+            return Err(ValidationIssue {
+                key,
+                message: "must be a CSS font-family list, such as \"Inter\", sans-serif"
+                    .to_string(),
+            });
+        }
+    }
+    if settings.default_agent.trim().is_empty() {
+        return Err(ValidationIssue {
+            key: "defaultAgent",
+            message: "must not be empty; use \"atlas-agent\" for Atlas Agent".to_string(),
+        });
+    }
+    // An editor id is matched against the detected list, never run; anything
+    // but a plain id cannot match one, so it is a typo worth reporting.
+    if settings.preferred_editor.len() > 64
+        || !settings
+            .preferred_editor
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-')
+    {
+        return Err(ValidationIssue {
+            key: "preferredEditor",
+            message: "must be an editor id such as \"vscode\", \"system\", or empty".to_string(),
+        });
+    }
     // Names a file (`icons/app-icons/<id>.icns`); same reasoning as `iconTheme`.
     if !crate::app_icon::is_valid_id(&settings.app_icon) {
         return Err(ValidationIssue {
             key: "appIcon",
             message: "must be a plain id: letters, digits, dash or underscore".to_string(),
+        });
+    }
+    // Compared against installed agent ids, never run.
+    if settings.pull_request_guide_agent.len() > 64
+        || settings
+            .pull_request_guide_agent
+            .chars()
+            .any(|c| !(c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')))
+    {
+        return Err(ValidationIssue {
+            key: "pullRequestGuideAgent",
+            message: "must be an agent id such as \"claude-code\", or empty".to_string(),
+        });
+    }
+    if settings.pull_request_guide_model.len() > 200
+        || settings.pull_request_guide_model.contains(char::is_control)
+    {
+        return Err(ValidationIssue {
+            key: "pullRequestGuideModel",
+            message: "must be a model id on one line, at most 200 characters, or empty".to_string(),
+        });
+    }
+    if settings.pull_request_guide_instructions.len() > MAX_GUIDE_INSTRUCTIONS {
+        return Err(ValidationIssue {
+            key: "pullRequestGuideInstructions",
+            message: format!("must be at most {MAX_GUIDE_INSTRUCTIONS} bytes"),
         });
     }
     Ok(())
@@ -928,6 +1036,42 @@ fn unknown_keys_in(document: &toml_edit::DocumentMut) -> Vec<String> {
         .map(|(k, _)| k.to_string())
         .filter(|k| !known_settings_keys().any(|known| known == k.as_str()))
         .collect()
+}
+
+/// The keys under `[settings]` right now, to tell which a patch then adds.
+pub(crate) fn settings_keys_in(document: &toml_edit::DocumentMut) -> Vec<String> {
+    document
+        .get("settings")
+        .and_then(|i| i.as_table())
+        .map(|table| table.iter().map(|(k, _)| k.to_string()).collect())
+        .unwrap_or_default()
+}
+
+/// Give each key a patch just added to an existing file the comment a fresh
+/// file would have had above it.
+///
+/// Comments are otherwise only written when Atlas generates the whole file,
+/// so a long-lived `config.toml` used to grow keys added in later releases
+/// with nothing explaining them — the file stopped documenting itself the
+/// first time a new setting was touched. Keys that were already present keep
+/// whatever decor they have: a user's own comment is never replaced.
+pub(crate) fn document_added_keys(document: &mut toml_edit::DocumentMut, present: &[String]) {
+    let Some(table) = document.get_mut("settings").and_then(|i| i.as_table_mut()) else {
+        return;
+    };
+    let added: Vec<String> = table
+        .iter()
+        .map(|(k, _)| k.to_string())
+        .filter(|k| !present.contains(k))
+        .collect();
+    for key in added {
+        let Some((_, comment)) = SETTINGS_DOCS.iter().find(|(known, _)| *known == key) else {
+            continue;
+        };
+        if let Some(mut handle) = table.key_mut(&key) {
+            handle.leaf_decor_mut().set_prefix(format!("\n{comment}\n"));
+        }
+    }
 }
 
 fn document_for(settings: &AppSettings) -> toml_edit::DocumentMut {
@@ -1092,11 +1236,14 @@ pub struct SettingsPatch {
     pub auto_add_atlas_gitignore: Option<bool>,
     pub enable_atlas_logs: Option<bool>,
     pub show_hidden_files: Option<bool>,
+    pub show_tips: Option<bool>,
+    pub preferred_editor: Option<String>,
     pub ui_scale: Option<f32>,
     pub share_telemetry: Option<bool>,
     pub link_telemetry_to_account: Option<bool>,
     pub embedding_model_id: Option<String>,
-    pub theme: Option<String>,
+    pub theme_light: Option<String>,
+    pub theme_dark: Option<String>,
     pub theme_mode: Option<ThemeMode>,
     pub theme_overrides: Option<ThemeOverride>,
     pub icon_theme: Option<String>,
@@ -1115,12 +1262,11 @@ pub struct SettingsPatch {
     pub enter_to_send: Option<bool>,
     pub agent_ui_navigation: Option<bool>,
     pub agent_org_access: Option<bool>,
-    pub terminal_notifications: Option<bool>,
+    pub agent_code_tools: Option<bool>,
+    pub memory_dreams: Option<bool>,
+    pub memory_repo_mirror: Option<bool>,
+    pub atlas_only_memory: Option<bool>,
     pub terminal_notify_min_duration_ms: Option<u32>,
-    pub terminal_notify_on_failure: Option<bool>,
-    pub terminal_notify_on_attention: Option<bool>,
-    pub terminal_notify_native: Option<bool>,
-    pub terminal_notify_sound: Option<bool>,
     pub notifications_enabled: Option<bool>,
     pub notify_needs_you_native: Option<bool>,
     pub notify_needs_you_sound: Option<bool>,
@@ -1131,10 +1277,43 @@ pub struct SettingsPatch {
     pub notify_team_native: Option<bool>,
     pub notify_team_sound: Option<bool>,
     pub notify_permission_actions: Option<bool>,
-    pub notifications_migrated: Option<bool>,
     pub notify_disabled_kinds: Option<Vec<String>>,
-    pub notify_kinds_migrated: Option<bool>,
     pub notify_agent_min_duration_ms: Option<u32>,
+    pub favorite_models: Option<Vec<String>>,
+    pub confirm_delete_chat: Option<bool>,
+    pub confirm_quit_while_running: Option<bool>,
+    pub continue_sessions_after_restart: Option<bool>,
+    pub new_session_uses_last_agent: Option<bool>,
+    pub default_agent: Option<String>,
+    pub chat_width: Option<ChatWidth>,
+    pub word_wrap: Option<bool>,
+    pub sidebar_sort: Option<SidebarSort>,
+    pub auto_settle_after_days: Option<u32>,
+    pub time_format: Option<TimeFormat>,
+    pub ui_font_family: Option<String>,
+    pub code_font_family: Option<String>,
+    pub composer_font_family: Option<String>,
+    pub terminal_font_family: Option<String>,
+    pub editor_font_size: Option<u32>,
+    pub terminal_font_size: Option<u32>,
+    pub diff_ignore_whitespace: Option<bool>,
+    pub diff_files_collapsed: Option<bool>,
+    pub diff_palette: Option<DiffPalette>,
+    pub interface_contrast: Option<u32>,
+    pub show_turn_rail: Option<bool>,
+    pub welcome_background: Option<WelcomeBackground>,
+    pub welcome_glow_color: Option<WelcomeGlowColor>,
+    pub auto_settle_on_merge: Option<bool>,
+    pub auto_settle_keep_pull_requests: Option<bool>,
+    pub pull_request_watch_wakes: Option<bool>,
+    pub pull_request_links_open_in_app: Option<bool>,
+    pub pull_request_merge_method: Option<PullRequestMergeMethod>,
+    pub remove_agent_credits_on_merge: Option<bool>,
+    pub pull_request_guide_enabled: Option<bool>,
+    pub pull_request_guide_agent: Option<String>,
+    pub pull_request_guide_model: Option<String>,
+    pub pull_request_guide_instructions: Option<String>,
+    pub security_scan: Option<bool>,
 }
 
 impl SettingsPatch {
@@ -1148,6 +1327,12 @@ impl SettingsPatch {
         if let Some(v) = self.show_hidden_files {
             settings.show_hidden_files = v;
         }
+        if let Some(v) = self.show_tips {
+            settings.show_tips = v;
+        }
+        if let Some(v) = &self.preferred_editor {
+            settings.preferred_editor = v.clone();
+        }
         if let Some(v) = self.ui_scale {
             settings.ui_scale = v;
         }
@@ -1160,8 +1345,11 @@ impl SettingsPatch {
         if let Some(v) = &self.embedding_model_id {
             settings.embedding_model_id = v.clone();
         }
-        if let Some(v) = &self.theme {
-            settings.theme = v.clone();
+        if let Some(v) = &self.theme_light {
+            settings.theme_light = v.clone();
+        }
+        if let Some(v) = &self.theme_dark {
+            settings.theme_dark = v.clone();
         }
         if let Some(v) = self.theme_mode {
             settings.theme_mode = v;
@@ -1214,23 +1402,20 @@ impl SettingsPatch {
         if let Some(v) = self.agent_org_access {
             settings.agent_org_access = v;
         }
-        if let Some(v) = self.terminal_notifications {
-            settings.terminal_notifications = v;
+        if let Some(v) = self.agent_code_tools {
+            settings.agent_code_tools = v;
+        }
+        if let Some(v) = self.memory_dreams {
+            settings.memory_dreams = v;
+        }
+        if let Some(v) = self.memory_repo_mirror {
+            settings.memory_repo_mirror = v;
+        }
+        if let Some(v) = self.atlas_only_memory {
+            settings.atlas_only_memory = v;
         }
         if let Some(v) = self.terminal_notify_min_duration_ms {
             settings.terminal_notify_min_duration_ms = v;
-        }
-        if let Some(v) = self.terminal_notify_on_failure {
-            settings.terminal_notify_on_failure = v;
-        }
-        if let Some(v) = self.terminal_notify_on_attention {
-            settings.terminal_notify_on_attention = v;
-        }
-        if let Some(v) = self.terminal_notify_native {
-            settings.terminal_notify_native = v;
-        }
-        if let Some(v) = self.terminal_notify_sound {
-            settings.terminal_notify_sound = v;
         }
         if let Some(v) = self.notifications_enabled {
             settings.notifications_enabled = v;
@@ -1262,18 +1447,58 @@ impl SettingsPatch {
         if let Some(v) = self.notify_permission_actions {
             settings.notify_permission_actions = v;
         }
-        if let Some(v) = self.notifications_migrated {
-            settings.notifications_migrated = v;
-        }
         if let Some(v) = &self.notify_disabled_kinds {
             settings.notify_disabled_kinds = v.clone();
         }
-        if let Some(v) = self.notify_kinds_migrated {
-            settings.notify_kinds_migrated = v;
+        if let Some(v) = &self.favorite_models {
+            settings.favorite_models = v.clone();
         }
         if let Some(v) = self.notify_agent_min_duration_ms {
             settings.notify_agent_min_duration_ms = v;
         }
+        macro_rules! copy {
+            ($($field:ident),* $(,)?) => {
+                $(if let Some(v) = &self.$field {
+                    settings.$field = v.clone();
+                })*
+            };
+        }
+        copy!(
+            confirm_delete_chat,
+            confirm_quit_while_running,
+            continue_sessions_after_restart,
+            new_session_uses_last_agent,
+            default_agent,
+            chat_width,
+            word_wrap,
+            sidebar_sort,
+            auto_settle_after_days,
+            time_format,
+            ui_font_family,
+            code_font_family,
+            composer_font_family,
+            terminal_font_family,
+            editor_font_size,
+            terminal_font_size,
+            diff_ignore_whitespace,
+            diff_files_collapsed,
+            diff_palette,
+            interface_contrast,
+            show_turn_rail,
+            welcome_background,
+            welcome_glow_color,
+            auto_settle_on_merge,
+            auto_settle_keep_pull_requests,
+            pull_request_watch_wakes,
+            pull_request_links_open_in_app,
+            pull_request_merge_method,
+            remove_agent_credits_on_merge,
+            pull_request_guide_enabled,
+            pull_request_guide_agent,
+            pull_request_guide_model,
+            pull_request_guide_instructions,
+            security_scan,
+        );
     }
 
     /// Mutate only the touched keys of `doc["settings"]` — everything else
@@ -1297,6 +1522,7 @@ impl SettingsPatch {
         set_bool!(auto_add_atlas_gitignore, "autoAddAtlasGitignore");
         set_bool!(enable_atlas_logs, "enableAtlasLogs");
         set_bool!(show_hidden_files, "showHiddenFiles");
+        set_bool!(show_tips, "showTips");
         set_bool!(share_telemetry, "shareTelemetry");
         set_bool!(link_telemetry_to_account, "linkTelemetryToAccount");
         set_bool!(git_blame_inline, "gitBlameInline");
@@ -1309,11 +1535,10 @@ impl SettingsPatch {
         set_bool!(enter_to_send, "enterToSend");
         set_bool!(agent_ui_navigation, "agentUiNavigation");
         set_bool!(agent_org_access, "agentOrgAccess");
-        set_bool!(terminal_notifications, "terminalNotifications");
-        set_bool!(terminal_notify_on_failure, "terminalNotifyOnFailure");
-        set_bool!(terminal_notify_on_attention, "terminalNotifyOnAttention");
-        set_bool!(terminal_notify_native, "terminalNotifyNative");
-        set_bool!(terminal_notify_sound, "terminalNotifySound");
+        set_bool!(agent_code_tools, "agentCodeTools");
+        set_bool!(memory_dreams, "memoryDreams");
+        set_bool!(memory_repo_mirror, "memoryRepoMirror");
+        set_bool!(atlas_only_memory, "atlasOnlyMemory");
         set_bool!(notifications_enabled, "notificationsEnabled");
         set_bool!(notify_needs_you_native, "notifyNeedsYouNative");
         set_bool!(notify_needs_you_sound, "notifyNeedsYouSound");
@@ -1324,8 +1549,70 @@ impl SettingsPatch {
         set_bool!(notify_team_native, "notifyTeamNative");
         set_bool!(notify_team_sound, "notifyTeamSound");
         set_bool!(notify_permission_actions, "notifyPermissionActions");
-        set_bool!(notifications_migrated, "notificationsMigrated");
-        set_bool!(notify_kinds_migrated, "notifyKindsMigrated");
+        set_bool!(confirm_delete_chat, "confirmDeleteChat");
+        set_bool!(confirm_quit_while_running, "confirmQuitWhileRunning");
+        set_bool!(
+            continue_sessions_after_restart,
+            "continueSessionsAfterRestart"
+        );
+        set_bool!(new_session_uses_last_agent, "newSessionUsesLastAgent");
+        set_bool!(word_wrap, "wordWrap");
+        set_bool!(diff_ignore_whitespace, "diffIgnoreWhitespace");
+        set_bool!(diff_files_collapsed, "diffFilesCollapsed");
+        set_bool!(show_turn_rail, "showTurnRail");
+        set_bool!(auto_settle_on_merge, "autoSettleOnMerge");
+        set_bool!(auto_settle_keep_pull_requests, "autoSettleKeepPullRequests");
+        set_bool!(pull_request_watch_wakes, "pullRequestWatchWakes");
+        set_bool!(pull_request_links_open_in_app, "pullRequestLinksOpenInApp");
+        set_bool!(remove_agent_credits_on_merge, "removeAgentCreditsOnMerge");
+        set_bool!(security_scan, "securityScan");
+        set_bool!(pull_request_guide_enabled, "pullRequestGuideEnabled");
+        macro_rules! set_str {
+            ($field:ident, $key:literal) => {
+                if let Some(v) = &self.$field {
+                    table[$key] = toml_edit::value(v.as_str());
+                }
+            };
+        }
+        set_str!(preferred_editor, "preferredEditor");
+        set_str!(default_agent, "defaultAgent");
+        set_str!(ui_font_family, "uiFontFamily");
+        set_str!(code_font_family, "codeFontFamily");
+        set_str!(composer_font_family, "composerFontFamily");
+        set_str!(terminal_font_family, "terminalFontFamily");
+        set_str!(pull_request_guide_agent, "pullRequestGuideAgent");
+        set_str!(pull_request_guide_model, "pullRequestGuideModel");
+        set_str!(
+            pull_request_guide_instructions,
+            "pullRequestGuideInstructions"
+        );
+        // Enums are written as the exact string serde reads back.
+        macro_rules! set_enum {
+            ($field:ident, $key:literal) => {
+                if let Some(v) = &self.$field {
+                    table[$key] = toml_edit::value(enum_str(v));
+                }
+            };
+        }
+        set_enum!(chat_width, "chatWidth");
+        set_enum!(sidebar_sort, "sidebarSort");
+        set_enum!(time_format, "timeFormat");
+        set_enum!(diff_palette, "diffPalette");
+        set_enum!(welcome_background, "welcomeBackground");
+        set_enum!(welcome_glow_color, "welcomeGlowColor");
+        set_enum!(pull_request_merge_method, "pullRequestMergeMethod");
+        if let Some(v) = self.interface_contrast {
+            table["interfaceContrast"] = toml_edit::value(i64::from(v));
+        }
+        if let Some(v) = self.editor_font_size {
+            table["editorFontSize"] = toml_edit::value(i64::from(v));
+        }
+        if let Some(v) = self.auto_settle_after_days {
+            table["autoSettleAfterDays"] = toml_edit::value(i64::from(v));
+        }
+        if let Some(v) = self.terminal_font_size {
+            table["terminalFontSize"] = toml_edit::value(i64::from(v));
+        }
         if let Some(v) = &self.notify_disabled_kinds {
             let mut arr = toml_edit::Array::new();
             for kind in v {
@@ -1335,6 +1622,13 @@ impl SettingsPatch {
         }
         if let Some(v) = self.notify_agent_min_duration_ms {
             table["notifyAgentMinDurationMs"] = toml_edit::value(i64::from(v));
+        }
+        if let Some(v) = &self.favorite_models {
+            let mut arr = toml_edit::Array::new();
+            for model in v {
+                arr.push(model.as_str());
+            }
+            table["favoriteModels"] = toml_edit::value(arr);
         }
         if let Some(v) = self.terminal_notify_min_duration_ms {
             table["terminalNotifyMinDurationMs"] = toml_edit::value(i64::from(v));
@@ -1346,8 +1640,11 @@ impl SettingsPatch {
         if let Some(v) = &self.embedding_model_id {
             table["embeddingModelId"] = toml_edit::value(v.as_str());
         }
-        if let Some(v) = &self.theme {
-            table["theme"] = toml_edit::value(v.as_str());
+        if let Some(v) = &self.theme_light {
+            table["themeLight"] = toml_edit::value(v.as_str());
+        }
+        if let Some(v) = &self.theme_dark {
+            table["themeDark"] = toml_edit::value(v.as_str());
         }
         if let Some(v) = self.theme_mode {
             table["themeMode"] = toml_edit::value(match v {
@@ -1392,149 +1689,11 @@ impl SettingsPatch {
 }
 
 // ---------------------------------------------------------------------------
-// Legacy migration (state.json.settings -> config.toml, one time)
+// Theme fallback
 // ---------------------------------------------------------------------------
 
-/// Legacy `state.json` carried `adaptiveSuggestions` values from before it was
-/// a closed enum (`"parse"`, `"llm"`) — both meant "on" under the old
-/// free-form implementation. Anything except an exact `"off"` normalizes to
-/// `Agent`, matching that prior behavior; a missing/absent value also
-/// defaults to `Agent`, same as [`AppSettings::default`].
-fn adaptive_suggestions_from_legacy(raw: Option<&serde_json::Value>) -> AdaptiveSuggestions {
-    match raw.and_then(|v| v.as_str()) {
-        Some("off") => AdaptiveSuggestions::Off,
-        _ => AdaptiveSuggestions::Agent,
-    }
-}
-
-/// Extract an `AppSettings` from the raw JSON `settings` object of a legacy
-/// `state.json` (i.e. `AppState.settings` before it was removed). Field-by-
-/// field with a default fallback, deliberately not a single
-/// `serde_json::from_value::<AppSettings>` — that would hard-fail the whole
-/// struct the moment it hit the old free-form `adaptiveSuggestions` string,
-/// discarding every other perfectly-good legacy value along with it.
-pub fn settings_from_legacy_json(raw: Option<&serde_json::Value>) -> AppSettings {
-    let mut settings = AppSettings::default();
-    let Some(raw) = raw else {
-        return settings;
-    };
-
-    macro_rules! take_bool {
-        ($field:ident, $key:literal) => {
-            if let Some(v) = raw.get($key).and_then(serde_json::Value::as_bool) {
-                settings.$field = v;
-            }
-        };
-    }
-    take_bool!(auto_add_atlas_gitignore, "autoAddAtlasGitignore");
-    take_bool!(enable_atlas_logs, "enableAtlasLogs");
-    take_bool!(show_hidden_files, "showHiddenFiles");
-    take_bool!(share_telemetry, "shareTelemetry");
-    take_bool!(link_telemetry_to_account, "linkTelemetryToAccount");
-    take_bool!(git_blame_inline, "gitBlameInline");
-    take_bool!(git_auto_fetch, "gitAutoFetch");
-    take_bool!(keep_awake_while_running, "keepAwakeWhileRunning");
-    take_bool!(auto_update, "autoUpdate");
-    take_bool!(curated_plugin_sync, "curatedPluginSync");
-    take_bool!(enter_to_send, "enterToSend");
-    take_bool!(agent_ui_navigation, "agentUiNavigation");
-    take_bool!(agent_org_access, "agentOrgAccess");
-
-    if let Some(v) = raw.get("uiScale").and_then(serde_json::Value::as_f64) {
-        let v = v as f32;
-        if v.is_finite() && (MIN_UI_SCALE..=MAX_UI_SCALE).contains(&v) {
-            settings.ui_scale = v;
-        }
-    }
-    if let Some(v) = raw
-        .get("embeddingModelId")
-        .and_then(serde_json::Value::as_str)
-    {
-        if !v.trim().is_empty() {
-            settings.embedding_model_id = v.to_string();
-        }
-    }
-    let old_editor = raw
-        .get("codeEditorTheme")
-        .and_then(serde_json::Value::as_str);
-    let old_atlas = raw.get("atlasTheme").and_then(serde_json::Value::as_str);
-    let (theme, theme_overrides) = migrate_legacy_theme(old_atlas, old_editor);
-    settings.theme = theme;
-    settings.theme_overrides = theme_overrides;
-    if let Some(v) = raw
-        .get("updaterIgnoredVersion")
-        .and_then(serde_json::Value::as_str)
-    {
-        settings.updater_ignored_version = Some(v.to_string());
-    }
-    settings.adaptive_suggestions =
-        adaptive_suggestions_from_legacy(raw.get("adaptiveSuggestions"));
-
-    settings
-}
-
-/// What the OLD editor-theme picker wrote when nobody had touched it.
-///
-/// `default_code_editor_theme()` returned `"atlas"` unconditionally — the same
-/// answer for every chrome theme — and it was serialized into every fresh
-/// `config.toml`. So the value sitting on disk says nothing about what its
-/// owner chose, and reading it as a deliberate choice forced Atlas's
-/// black/white/yellow `editor.*` / `syntax.*` / `diff.*` keys into the
-/// `themeOverrides` of every chyral / mirage / rosé-pine / phosphor user who
-/// had simply never opened the editor picker. One theme means one theme
-/// (decision 7): an untouched editor picker migrates to nothing.
-const LEGACY_EDITOR_DEFAULT: &str = "atlas";
-
-/// Fold the two old pickers (`atlasTheme` + `codeEditorTheme`) into one theme
-/// id plus, where the user really did diverge, a `themeOverrides` block.
-fn migrate_legacy_theme(
-    old_atlas: Option<&str>,
-    old_editor: Option<&str>,
-) -> (String, ThemeOverride) {
-    let mapped_theme = match old_atlas.map(str::trim).filter(|id| !id.is_empty()) {
-        Some("atlas-black") | None => default_theme(),
-        Some(id) => id.to_string(),
-    };
-    // Not checked against the catalog: a lookup that fails (a transient read
-    // error, a theme this build does not ship) is not a reason to write a
-    // different theme into the file. `fallback_unknown_theme` covers the
-    // in-memory side.
-    let theme = mapped_theme;
-    // Overrides are written only for an editor theme that was GENUINELY
-    // CHOSEN and that DIFFERS from the theme the chrome picker migrated to:
-    // absent, blank, the picker's untouched default, or simply the same theme
-    // under both pickers all mean "nothing to preserve".
-    let Some(editor_id) = old_editor
-        .map(str::trim)
-        .filter(|id| !id.is_empty() && *id != LEGACY_EDITOR_DEFAULT && *id != theme.as_str())
-    else {
-        return (theme, ThemeOverride::default());
-    };
-    let Ok(editor_theme) = atlas_theme::get_theme(editor_id) else {
-        tracing::warn!(target: "atlas::themes", theme = %editor_id, "unknown legacy editor theme; syntax override was not migrated");
-        return (theme, ThemeOverride::default());
-    };
-    let Some(variant) = editor_theme.dark.or(editor_theme.light) else {
-        return (theme, ThemeOverride::default());
-    };
-    let keys = variant
-        .keys
-        .into_iter()
-        .filter(|(key, _)| {
-            key.starts_with("editor.") || key.starts_with("syntax.") || key.starts_with("diff.")
-        })
-        .collect();
-    (
-        theme,
-        ThemeOverride {
-            keys,
-            ..ThemeOverride::default()
-        },
-    )
-}
-
-/// Serve the default theme for this session when `settings.theme` does not
-/// resolve — **in memory only**.
+/// Serve the default theme for this session when `themeLight` or `themeDark`
+/// does not resolve — **in memory only**.
 ///
 /// This used to write `theme = "atlas"` back to `config.toml`, which turned
 /// anything that made one lookup fail — a user theme mid-edit that briefly did
@@ -1542,52 +1701,20 @@ fn migrate_legacy_theme(
 /// into the permanent loss of the user's choice. The file keeps what the user
 /// wrote; the next load, once the theme resolves again, uses it.
 fn fallback_unknown_theme(settings: &mut AppSettings) {
-    if let Err(error) = atlas_theme::get_theme(&settings.theme) {
-        tracing::warn!(target: "atlas::themes", theme = %settings.theme, "theme in config.toml does not resolve ({error}); using atlas for this session");
-        settings.theme = default_theme();
+    for theme in [&mut settings.theme_light, &mut settings.theme_dark] {
+        if let Err(error) = atlas_theme::get_theme(theme) {
+            tracing::warn!(target: "atlas::themes", theme = %theme, "theme in config.toml does not resolve ({error}); using atlas for this session");
+            *theme = default_theme();
+        }
     }
 }
 
-/// Fold the legacy `atlasTheme` / `codeEditorTheme` keys into `theme` and
-/// `themeOverrides`, returning whether `document` changed. That migration is
-/// the only thing this writes; an unresolvable `theme` is handled in memory.
-fn migrate_theme_fields(document: &mut toml_edit::DocumentMut, settings: &mut AppSettings) -> bool {
-    let old_atlas = settings.legacy_atlas_theme.take();
-    let old_editor = settings.legacy_code_editor_theme.take();
-    let migrating = old_atlas.is_some() || old_editor.is_some();
-    if !migrating {
-        fallback_unknown_theme(settings);
-        return false;
+/// A unit enum's serde string, e.g. `ChatWidth::Wide` → `"wide"`.
+fn enum_str<T: Serialize>(value: &T) -> String {
+    match serde_json::to_value(value) {
+        Ok(serde_json::Value::String(s)) => s,
+        _ => unreachable!("a settings enum serializes to a string"),
     }
-    let (theme, theme_overrides) =
-        migrate_legacy_theme(old_atlas.as_deref(), old_editor.as_deref());
-    settings.theme = theme;
-    settings.theme_overrides = theme_overrides;
-    if document
-        .get("settings")
-        .and_then(toml_edit::Item::as_table)
-        .is_none()
-    {
-        document["settings"] = toml_edit::Item::Table(toml_edit::Table::new());
-    }
-    let table = document["settings"]
-        .as_table_mut()
-        .expect("settings table was ensured");
-    table.remove("atlasTheme");
-    table.remove("codeEditorTheme");
-    table["theme"] = toml_edit::value(settings.theme.as_str());
-    table["themeMode"] = toml_edit::value(match settings.theme_mode {
-        ThemeMode::System => "system",
-        ThemeMode::Dark => "dark",
-        ThemeMode::Light => "light",
-    });
-    if settings.theme_overrides.is_empty() {
-        table.remove("themeOverrides");
-    } else {
-        table["themeOverrides"] = theme_override_item(&settings.theme_overrides);
-    }
-    fallback_unknown_theme(settings);
-    true
 }
 
 fn theme_override_item(theme_override: &ThemeOverride) -> toml_edit::Item {
@@ -1729,7 +1856,7 @@ impl ConfigManager {
     }
 
     fn from_raw(path: PathBuf, raw: &str) -> Result<Self, ConfigError> {
-        let mut document: toml_edit::DocumentMut = raw
+        let document: toml_edit::DocumentMut = raw
             .parse()
             .map_err(|e: toml_edit::TomlError| ConfigError::Parse(e.to_string()))?;
         let text = document.to_string();
@@ -1738,15 +1865,14 @@ impl ConfigManager {
         if file.schema_version > CONFIG_SCHEMA_VERSION {
             return Err(ConfigError::UnsupportedVersion(file.schema_version));
         }
-        migrate_theme_fields(&mut document, &mut file.settings);
+        fallback_unknown_theme(&mut file.settings);
         validate(&file.settings).map_err(ConfigError::Invalid)?;
         let unknown_keys = unknown_keys_in(&document);
-        let migrated_raw = document.to_string();
         Ok(Self {
             path,
             document,
             effective: file.settings,
-            last_raw: migrated_raw,
+            last_raw: text,
             generation: 0,
             status: ConfigStatus::Ok,
             unknown_keys,
@@ -1770,14 +1896,7 @@ impl ConfigManager {
     fn load_at(path: PathBuf) -> Self {
         match fs::read_to_string(&path) {
             Ok(raw) => match Self::from_raw(path.clone(), &raw) {
-                Ok(manager) => {
-                    if manager.last_raw != raw {
-                        if let Err(error) = write_atomic(&path, &manager.last_raw) {
-                            tracing::warn!(target: "atlas::config", "failed to persist theme settings migration: {error}");
-                        }
-                    }
-                    manager
-                }
+                Ok(manager) => manager,
                 Err(e) => {
                     tracing::warn!(
                         target: "atlas::config",
@@ -1791,17 +1910,14 @@ impl ConfigManager {
                 }
             },
             // File genuinely absent — the normal pre-first-write state, not
-            // an error. `bootstrap` below is what decides whether that's
-            // "needs migration" or "already migrated, stay on defaults".
+            // an error. `bootstrap` below writes the documented defaults.
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Self::in_memory_defaults(path),
             // Anything else (permissions, a transient I/O fault, a directory
             // where the file should be) is a *failure to read*, not an
             // absence. Serving defaults is still right at runtime — boot must
-            // never block on this — but the status MUST say so, because
-            // `bootstrap_at` keys the "the legacy state.json settings are
-            // now redundant" decision off it. Reporting `Ok` here is what let
-            // an unreadable config silently retire the user's only surviving
-            // copy of their preferences.
+            // never block on this — but the status MUST say so, or the
+            // Settings banner shows a healthy file while every preference
+            // reads back as a default.
             Err(e) => {
                 tracing::warn!(
                     target: "atlas::config",
@@ -1915,7 +2031,9 @@ impl ConfigManager {
         validate(&candidate).map_err(ConfigError::Invalid)?;
 
         let mut doc = self.document.clone();
+        let present = settings_keys_in(&doc);
         patch.write_into(&mut doc);
+        document_added_keys(&mut doc, &present);
         doc["schemaVersion"] = toml_edit::value(i64::from(CONFIG_SCHEMA_VERSION));
 
         let text = doc.to_string();
@@ -1987,8 +2105,8 @@ impl ConfigManager {
         })
     }
 
-    /// Write a specific `AppSettings` as a brand-new file (migration's entry
-    /// point — there is no existing document to preserve yet).
+    /// Write a specific `AppSettings` as a brand-new file (first run — there
+    /// is no existing document to preserve yet).
     fn create_fresh_with(path: PathBuf, mut settings: AppSettings) -> Result<Self, ConfigError> {
         let document = document_for(&settings);
         let text = document.to_string();
@@ -2007,9 +2125,9 @@ impl ConfigManager {
 }
 
 /// Atomic write: a unique temp file in the same directory (so distinct UI
-/// writes, migration, and any external tooling can never collide on one
+/// writes, a first-run create, and any external tooling can never collide on one
 /// fixed `.tmp` name), flushed then renamed over the target.
-fn write_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
+pub(crate) fn write_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
     use std::io::Write;
 
     if let Some(dir) = path.parent() {
@@ -2144,30 +2262,8 @@ pub fn update(app: &AppHandle, patch: SettingsPatch) -> Result<ConfigSnapshot, C
     }
 }
 
-/// Startup orchestration: decide whether `config.toml` needs to be created
-/// from a legacy `state.json.settings`, and return the manager either way.
-///
-/// `marker_already_set` is `AppState`'s `settings_config_migrated` flag (v4).
-/// It exists because "does `config.toml` exist" is NOT the same question as
-/// "has migration already happened" — a user can delete `config.toml` on
-/// purpose after migrating, and this must never resurrect the old
-/// `state.json` settings when that happens. The marker is what tells those
-/// two cases apart.
-pub struct MigrationOutcome {
-    pub manager: ConfigManager,
-    /// Whether the caller should persist `settings_config_migrated = true`
-    /// into `state.json` (v4) after this call. `true` once `config.toml`
-    /// demonstrably holds the settings — it either loaded cleanly or was
-    /// just created. Deliberately `false` when the file exists but could not
-    /// be read or parsed: the legacy `state.json.settings` is still the only
-    /// copy in that case and must survive until a real config does.
-    pub mark_migrated: bool,
-}
-
-pub fn bootstrap(
-    marker_already_set: bool,
-    legacy_settings_raw: Option<serde_json::Value>,
-) -> MigrationOutcome {
+/// Startup: load `config.toml`, writing the documented defaults on first run.
+pub fn bootstrap() -> ConfigManager {
     let Some(path) = ConfigManager::config_path() else {
         // No resolvable config dir at all (no $HOME / no %APPDATA%). Defaults
         // keep the app usable, but this is a failure and must reach the
@@ -2176,83 +2272,27 @@ pub fn bootstrap(
         manager.status = ConfigStatus::UsingDefaults {
             error: "could not resolve the Atlas config directory".to_string(),
         };
-        return MigrationOutcome {
-            manager,
-            mark_migrated: false,
-        };
+        return manager;
     };
-    bootstrap_at(path, marker_already_set, legacy_settings_raw)
+    bootstrap_at(path)
 }
 
-/// The actual migration decision, split out from `bootstrap` so it's
-/// testable against a real temp-dir path rather than whatever
-/// `config_root()` resolves to on the machine running the tests.
-fn bootstrap_at(
-    path: PathBuf,
-    marker_already_set: bool,
-    legacy_settings_raw: Option<serde_json::Value>,
-) -> MigrationOutcome {
+/// The path half of [`bootstrap`], testable against a temp dir.
+fn bootstrap_at(path: PathBuf) -> ConfigManager {
     if path.exists() {
-        // Config already exists — never merge stale `state.json` settings
-        // into it, whether this is the first time we've seen it (a v3->v4
-        // upgrade that lands after a user hand-authored config.toml, or a
-        // manual restore) or the Nth.
-        let mut manager = ConfigManager::load_at(path);
-        // ...but only report migration as done if that file could actually be
-        // READ. While it is malformed or unreadable, `state.json.settings` is
-        // still the only surviving copy of the user's preferences; setting
-        // the marker here would let `AppState::save` drop it (the typed
-        // `AppState` has no `settings` field any more), turning a recoverable
-        // bad file into permanent data loss.
-        let mark_migrated = matches!(manager.status(), ConfigStatus::Ok);
-        if !mark_migrated && !marker_already_set {
-            // The file is present but unusable, so migration never ran and
-            // `state.json.settings` is still the user's real configuration.
-            // Serve THAT rather than compiled defaults: keeping the legacy
-            // copy alive (see `AppState::save`) is only half the guarantee —
-            // the other half is honouring it while the file is broken, or the
-            // user still spends the whole session on defaults with, say,
-            // telemetry back on. The broken file itself is left untouched.
-            manager.effective = settings_from_legacy_json(legacy_settings_raw.as_ref());
-            manager.document = document_for(&manager.effective);
-            fallback_unknown_theme(&mut manager.effective);
-        }
-        return MigrationOutcome {
-            manager,
-            mark_migrated,
-        };
+        return ConfigManager::load_at(path);
     }
-
-    // No file yet. Import from legacy state exactly once, ever.
-    let settings = if marker_already_set {
-        AppSettings::default()
-    } else {
-        settings_from_legacy_json(legacy_settings_raw.as_ref())
-    };
-
-    match ConfigManager::create_fresh_with(path.clone(), settings.clone()) {
-        Ok(manager) => MigrationOutcome {
-            manager,
-            mark_migrated: true,
-        },
+    match ConfigManager::create_fresh_with(path.clone(), AppSettings::default()) {
+        Ok(manager) => manager,
         Err(e) => {
-            tracing::warn!(target: "atlas::config", "failed to write migrated config.toml: {e}");
-            // The file was never created, so `load_at` will take its
-            // "genuinely absent" branch and report `Ok` — which would hide a
-            // real failure behind a healthy status and drop the legacy
-            // settings we just computed. Serve those settings in memory and
-            // flag the write failure instead.
+            tracing::warn!(target: "atlas::config", "failed to write a fresh config.toml: {e}");
+            // `load_at` would take its "genuinely absent" branch and report
+            // `Ok`, hiding a real failure behind a healthy status.
             let mut manager = ConfigManager::load_at(path);
-            manager.effective = settings;
-            manager.document = document_for(&manager.effective);
-            fallback_unknown_theme(&mut manager.effective);
             manager.status = ConfigStatus::UsingDefaults {
                 error: format!("could not write config.toml: {e}"),
             };
-            MigrationOutcome {
-                manager,
-                mark_migrated: false,
-            }
+            manager
         }
     }
 }
@@ -2326,6 +2366,72 @@ mod tests {
         assert!(validate(&AppSettings::default()).is_ok());
     }
 
+    /// 0 is "off", not out of range; past 90 is.
+    #[test]
+    fn auto_settle_after_days_takes_zero_for_off() {
+        let off = AppSettings {
+            auto_settle_after_days: 0,
+            ..AppSettings::default()
+        };
+        assert!(validate(&off).is_ok());
+        let too_long = AppSettings {
+            auto_settle_after_days: MAX_AUTO_SETTLE_AFTER_DAYS + 1,
+            ..AppSettings::default()
+        };
+        assert_eq!(validate(&too_long).unwrap_err().key, "autoSettleAfterDays");
+    }
+
+    #[test]
+    fn pull_request_guide_settings_are_bounded() {
+        let ok = AppSettings {
+            pull_request_guide_agent: "claude-code".to_string(),
+            pull_request_guide_model: "claude-opus-4".to_string(),
+            pull_request_guide_instructions: "Contracts first.\nSkip tests.".to_string(),
+            ..AppSettings::default()
+        };
+        assert!(validate(&ok).is_ok());
+        let bad_agent = AppSettings {
+            pull_request_guide_agent: "../claude".to_string(),
+            ..AppSettings::default()
+        };
+        assert_eq!(
+            validate(&bad_agent).unwrap_err().key,
+            "pullRequestGuideAgent"
+        );
+        let two_lines = AppSettings {
+            pull_request_guide_model: "opus\nsonnet".to_string(),
+            ..AppSettings::default()
+        };
+        assert_eq!(
+            validate(&two_lines).unwrap_err().key,
+            "pullRequestGuideModel"
+        );
+        let long = AppSettings {
+            pull_request_guide_instructions: "x".repeat(MAX_GUIDE_INSTRUCTIONS + 1),
+            ..AppSettings::default()
+        };
+        assert_eq!(
+            validate(&long).unwrap_err().key,
+            "pullRequestGuideInstructions"
+        );
+    }
+
+    /// The pull request keys C1's watch reads default to on, and a file
+    /// written before they existed reads as on.
+    #[test]
+    fn pull_request_watch_keys_default_on_for_an_old_file() {
+        let (_dir, path) = tmp_config_path();
+        let mgr =
+            ConfigManager::from_raw(path, "schemaVersion = 1\n[settings]\nenterToSend = false\n")
+                .expect("loads");
+        let s = mgr.effective();
+        assert!(s.auto_settle_on_merge);
+        assert!(s.auto_settle_keep_pull_requests);
+        assert!(s.pull_request_watch_wakes);
+        assert!(!s.remove_agent_credits_on_merge);
+        assert_eq!(s.pull_request_merge_method, PullRequestMergeMethod::Last);
+    }
+
     /// ADR-0012: on unless the user switched it off, and a file that predates
     /// the key reads as on.
     #[test]
@@ -2368,6 +2474,55 @@ mod tests {
         assert!(!mgr.effective().agent_org_access);
     }
 
+    /// ADR-0015: on unless the user switched it off, and a file that predates
+    /// the key reads as on.
+    #[test]
+    fn agent_code_tools_is_on_by_default_and_read_from_the_file() {
+        assert!(AppSettings::default().agent_code_tools);
+        let (_dir, path) = tmp_config_path();
+        let mgr = ConfigManager::from_raw(
+            path,
+            "schemaVersion = 1\n\n[settings]\nenterToSend = false\n",
+        )
+        .unwrap();
+        assert!(mgr.effective().agent_code_tools);
+        let (_dir, path) = tmp_config_path();
+        let mgr = ConfigManager::from_raw(
+            path,
+            "schemaVersion = 1\n\n[settings]\nagentCodeTools = false\n",
+        )
+        .unwrap();
+        assert!(!mgr.effective().agent_code_tools);
+    }
+
+    /// Files and diffs wrap unless the user switched it off; a file that
+    /// predates the key reads as on, and the wrap buttons' patch turns it off.
+    #[test]
+    fn word_wrap_is_on_by_default_and_patched_off() {
+        assert!(AppSettings::default().word_wrap);
+        let (_dir, path) = tmp_config_path();
+        let mgr = ConfigManager::from_raw(
+            path,
+            "schemaVersion = 1\n\n[settings]\nenterToSend = false\n",
+        )
+        .unwrap();
+        assert!(mgr.effective().word_wrap);
+
+        let (_dir, path) = tmp_config_path();
+        let mgr =
+            ConfigManager::from_raw(path, "schemaVersion = 1\n\n[settings]\nwordWrap = false\n")
+                .unwrap();
+        assert!(!mgr.effective().word_wrap);
+
+        let patch: SettingsPatch = serde_json::from_str(r#"{ "wordWrap": false }"#).unwrap();
+        let mut settings = AppSettings::default();
+        patch.apply_to(&mut settings);
+        assert!(!settings.word_wrap);
+        let mut document = document_for(&AppSettings::default());
+        patch.write_into(&mut document);
+        assert_eq!(document["settings"]["wordWrap"].as_bool(), Some(false));
+    }
+
     #[test]
     fn missing_keys_fall_back_to_defaults() {
         let (_dir, path) = tmp_config_path();
@@ -2375,7 +2530,8 @@ mod tests {
         let mgr = ConfigManager::from_raw(path, raw).expect("partial file parses");
         assert!(!mgr.effective().enter_to_send);
         // Every other field is absent from the file — must be the compiled default.
-        assert_eq!(mgr.effective().theme, default_theme());
+        assert_eq!(mgr.effective().theme_light, default_theme());
+        assert_eq!(mgr.effective().theme_dark, default_theme());
         assert_eq!(mgr.effective().ui_scale, default_ui_scale());
         assert!(mgr.effective().auto_update);
     }
@@ -2533,7 +2689,7 @@ someFutureKey = \"left alone\"
         fs::write(&path, raw).unwrap();
         let mut mgr = ConfigManager::from_raw(path, raw).unwrap();
         let gen_before = mgr.generation();
-        assert_eq!(mgr.reload_from_disk().unwrap(), false);
+        assert!(!mgr.reload_from_disk().unwrap());
         assert_eq!(mgr.generation(), gen_before);
     }
 
@@ -2562,155 +2718,19 @@ someFutureKey = \"left alone\"
     }
 
     #[test]
-    fn legacy_migration_extracts_known_fields() {
-        let legacy = serde_json::json!({
-            "enterToSend": false,
-            "atlasTheme": "rose-pine",
-            "uiScale": 1.5,
-        });
-        let settings = settings_from_legacy_json(Some(&legacy));
-        assert!(!settings.enter_to_send);
-        assert_eq!(settings.theme, "rose-pine");
-        assert_eq!(settings.ui_scale, 1.5);
-        // Untouched fields keep their compiled defaults.
-        assert!(settings.auto_update);
-    }
-
-    #[test]
-    fn config_theme_migration_merges_the_two_legacy_pickers_once() {
-        let (_dir, path) = tmp_config_path();
-        let raw = "schemaVersion = 1\n\n[settings]\natlasTheme = \"one-dark\"\ncodeEditorTheme = \"dracula\"\n";
-        let manager = ConfigManager::from_raw(path, raw).expect("legacy theme settings parse");
-
-        assert_eq!(manager.effective().theme, "one-dark");
-        assert!(manager
-            .effective()
-            .theme_overrides
-            .keys
-            .contains_key("syntax.keyword"));
-        assert!(!manager.last_raw.contains("atlasTheme"));
-        assert!(!manager.last_raw.contains("codeEditorTheme"));
-        assert!(manager.last_raw.contains("themeOverrides"));
-    }
-
-    /// The six themes the OLD `atlasTheme` picker could hold, and the schema-1
-    /// theme each one migrates to. `atlas-black` is the only rename.
-    const LEGACY_CHROME_THEMES: [(&str, &str); 6] = [
-        ("atlas-black", "atlas"),
-        ("chyral", "chyral"),
-        ("mirage", "mirage"),
-        ("rose-pine", "rose-pine"),
-        ("one-dark", "one-dark"),
-        ("phosphor", "phosphor"),
-    ];
-
-    /// The regression this guards: `default_code_editor_theme()` returned
-    /// `"atlas"` for everyone, so `codeEditorTheme = "atlas"` is what an
-    /// UNTOUCHED editor picker left on disk — for all six chrome themes, not
-    /// just the two that happened to share a name with an editor theme.
-    /// Reading it as "deliberately diverging" pinned Atlas's black/white/yellow
-    /// editor colours onto chyral, mirage, rosé-pine and phosphor users who had
-    /// never opened that picker.
-    #[test]
-    fn untouched_legacy_editor_picker_migrates_to_no_overrides() {
-        for (old_chrome, expected) in LEGACY_CHROME_THEMES {
-            for old_editor in [None, Some(""), Some("  "), Some(LEGACY_EDITOR_DEFAULT)] {
-                let (theme, overrides) = migrate_legacy_theme(Some(old_chrome), old_editor);
-                assert_eq!(theme, expected, "chrome {old_chrome}");
-                assert!(
-                    overrides.is_empty(),
-                    "chrome {old_chrome} with editor {old_editor:?} must not diverge, got {overrides:?}"
-                );
-            }
-        }
-    }
-
-    /// The other half of the same rule: an editor theme that really was picked,
-    /// and really is a different theme, still carries its colours over.
-    #[test]
-    fn chosen_legacy_editor_theme_migrates_its_syntax_keys() {
-        for (old_chrome, expected) in LEGACY_CHROME_THEMES {
-            let (theme, overrides) = migrate_legacy_theme(Some(old_chrome), Some("dracula"));
-            assert_eq!(theme, expected, "chrome {old_chrome}");
-            assert!(
-                overrides.keys.contains_key("syntax.keyword"),
-                "chrome {old_chrome} lost its chosen editor theme"
-            );
-            assert!(overrides.base.is_empty() && overrides.palette.is_empty());
-            assert!(
-                overrides.keys.keys().all(|key| key.starts_with("editor.")
-                    || key.starts_with("syntax.")
-                    || key.starts_with("diff.")),
-                "only editor-facing keys migrate: {:?}",
-                overrides.keys.keys().collect::<Vec<_>>()
-            );
-        }
-    }
-
-    /// Both pickers naming the same theme is not a divergence either.
-    #[test]
-    fn legacy_editor_theme_equal_to_the_chrome_theme_writes_no_overrides() {
-        for id in ["one-dark", "phosphor", "rose-pine"] {
-            let (theme, overrides) = migrate_legacy_theme(Some(id), Some(id));
-            assert_eq!(theme, id);
-            assert!(
-                overrides.is_empty(),
-                "{id} diverged from itself: {overrides:?}"
-            );
-        }
-    }
-
-    /// End to end through `config.toml`: the untouched default leaves no
-    /// `themeOverrides` table behind at all.
-    #[test]
-    fn config_theme_migration_writes_no_overrides_for_the_untouched_editor_default() {
-        let (_dir, path) = tmp_config_path();
-        let raw =
-            "schemaVersion = 1\n\n[settings]\natlasTheme = \"chyral\"\ncodeEditorTheme = \"atlas\"\n";
-        let manager = ConfigManager::from_raw(path, raw).expect("legacy theme settings parse");
-
-        assert_eq!(manager.effective().theme, "chyral");
-        assert!(manager.effective().theme_overrides.is_empty());
-        assert!(!manager.last_raw.contains("themeOverrides"));
-        assert!(!manager.last_raw.contains("atlasTheme"));
-        assert!(!manager.last_raw.contains("codeEditorTheme"));
-    }
-
-    #[test]
     fn unknown_config_theme_falls_back_in_memory_and_is_never_rewritten() {
         let (_dir, path) = tmp_config_path();
-        let raw = "schemaVersion = 1\n\n[settings]\ntheme = \"from-a-newer-atlas\"\n";
+        let raw = "schemaVersion = 1\n\n[settings]\nthemeDark = \"from-a-newer-atlas\"\n";
         let manager = ConfigManager::from_raw(path.clone(), raw).expect("unknown id falls back");
 
-        assert_eq!(manager.effective().theme, default_theme());
-        assert_eq!(manager.last_raw, raw, "a failed lookup is not a migration");
+        assert_eq!(manager.effective().theme_dark, default_theme());
+        assert_eq!(manager.last_raw, raw, "a failed lookup rewrites nothing");
 
-        // And through the cold-start path, which is the one that writes.
+        // And through the cold-start path.
         fs::write(&path, raw).unwrap();
         let manager = ConfigManager::load_at(path.clone());
-        assert_eq!(manager.effective().theme, default_theme());
+        assert_eq!(manager.effective().theme_dark, default_theme());
         assert_eq!(fs::read_to_string(&path).unwrap(), raw);
-    }
-
-    /// The legacy keys still migrate — and the theme they name is written as
-    /// named, even when this build cannot resolve it.
-    #[test]
-    fn legacy_theme_keys_migrate_without_rewriting_an_unresolvable_theme() {
-        let (_dir, path) = tmp_config_path();
-        let raw = "schemaVersion = 1\n\n[settings]\natlasTheme = \"not-shipped-here\"\n";
-        let manager = ConfigManager::from_raw(path, raw).expect("legacy settings parse");
-
-        assert_eq!(
-            manager.effective().theme,
-            default_theme(),
-            "served in memory"
-        );
-        assert!(
-            manager.last_raw.contains("theme = \"not-shipped-here\""),
-            "{}",
-            manager.last_raw
-        );
-        assert!(!manager.last_raw.contains("atlasTheme"));
     }
 
     /// `write_into` is hand-written per field, and a field it forgets is saved
@@ -2726,11 +2746,14 @@ someFutureKey = \"left alone\"
             auto_add_atlas_gitignore: Some(!defaults.auto_add_atlas_gitignore),
             enable_atlas_logs: Some(!defaults.enable_atlas_logs),
             show_hidden_files: Some(!defaults.show_hidden_files),
+            show_tips: Some(!defaults.show_tips),
+            preferred_editor: Some("zed".to_string()),
             ui_scale: Some(1.5),
             share_telemetry: Some(!defaults.share_telemetry),
             link_telemetry_to_account: Some(!defaults.link_telemetry_to_account),
             embedding_model_id: Some("another-model".to_string()),
-            theme: Some("dracula".to_string()),
+            theme_light: Some("dracula".to_string()),
+            theme_dark: Some("vesper".to_string()),
             theme_mode: Some(ThemeMode::Light),
             theme_overrides: Some(ThemeOverride {
                 base: BTreeMap::from([("radius".to_string(), "0.5rem".to_string())]),
@@ -2755,12 +2778,11 @@ someFutureKey = \"left alone\"
             enter_to_send: Some(!defaults.enter_to_send),
             agent_ui_navigation: Some(!defaults.agent_ui_navigation),
             agent_org_access: Some(!defaults.agent_org_access),
-            terminal_notifications: Some(!defaults.terminal_notifications),
+            agent_code_tools: Some(!defaults.agent_code_tools),
+            memory_dreams: Some(!defaults.memory_dreams),
+            memory_repo_mirror: Some(!defaults.memory_repo_mirror),
+            atlas_only_memory: Some(!defaults.atlas_only_memory),
             terminal_notify_min_duration_ms: Some(defaults.terminal_notify_min_duration_ms + 1),
-            terminal_notify_on_failure: Some(!defaults.terminal_notify_on_failure),
-            terminal_notify_on_attention: Some(!defaults.terminal_notify_on_attention),
-            terminal_notify_native: Some(!defaults.terminal_notify_native),
-            terminal_notify_sound: Some(!defaults.terminal_notify_sound),
             notifications_enabled: Some(!defaults.notifications_enabled),
             notify_needs_you_native: Some(!defaults.notify_needs_you_native),
             notify_needs_you_sound: Some(!defaults.notify_needs_you_sound),
@@ -2771,13 +2793,46 @@ someFutureKey = \"left alone\"
             notify_team_native: Some(!defaults.notify_team_native),
             notify_team_sound: Some(!defaults.notify_team_sound),
             notify_permission_actions: Some(!defaults.notify_permission_actions),
-            notifications_migrated: Some(!defaults.notifications_migrated),
             notify_disabled_kinds: Some(vec![
                 "terminal-done".to_string(),
                 "git-behind".to_string(),
             ]),
-            notify_kinds_migrated: Some(!defaults.notify_kinds_migrated),
             notify_agent_min_duration_ms: Some(defaults.notify_agent_min_duration_ms + 1),
+            favorite_models: Some(vec!["claude-code:opus".to_string()]),
+            confirm_delete_chat: Some(!defaults.confirm_delete_chat),
+            confirm_quit_while_running: Some(!defaults.confirm_quit_while_running),
+            continue_sessions_after_restart: Some(!defaults.continue_sessions_after_restart),
+            new_session_uses_last_agent: Some(!defaults.new_session_uses_last_agent),
+            default_agent: Some("claude-code".to_string()),
+            chat_width: Some(ChatWidth::Wide),
+            word_wrap: Some(!defaults.word_wrap),
+            sidebar_sort: Some(SidebarSort::Created),
+            auto_settle_after_days: Some(7),
+            time_format: Some(TimeFormat::TwentyFourHour),
+            ui_font_family: Some("Inter, sans-serif".to_string()),
+            code_font_family: Some("JetBrains Mono".to_string()),
+            composer_font_family: Some("Georgia".to_string()),
+            terminal_font_family: Some("Menlo".to_string()),
+            editor_font_size: Some(15),
+            terminal_font_size: Some(14),
+            diff_ignore_whitespace: Some(!defaults.diff_ignore_whitespace),
+            diff_files_collapsed: Some(!defaults.diff_files_collapsed),
+            diff_palette: Some(DiffPalette::BlueOrange),
+            interface_contrast: Some(150),
+            show_turn_rail: Some(!defaults.show_turn_rail),
+            welcome_background: Some(WelcomeBackground::Plain),
+            welcome_glow_color: Some(WelcomeGlowColor::Plum),
+            auto_settle_on_merge: Some(!defaults.auto_settle_on_merge),
+            auto_settle_keep_pull_requests: Some(!defaults.auto_settle_keep_pull_requests),
+            pull_request_watch_wakes: Some(!defaults.pull_request_watch_wakes),
+            pull_request_links_open_in_app: Some(!defaults.pull_request_links_open_in_app),
+            pull_request_merge_method: Some(PullRequestMergeMethod::Squash),
+            remove_agent_credits_on_merge: Some(!defaults.remove_agent_credits_on_merge),
+            pull_request_guide_enabled: Some(!defaults.pull_request_guide_enabled),
+            pull_request_guide_agent: Some("claude-code".to_string()),
+            pull_request_guide_model: Some("opus".to_string()),
+            pull_request_guide_instructions: Some("Show contracts first.\nSkip tests.".to_string()),
+            security_scan: Some(!defaults.security_scan),
         };
         let mut expected = defaults.clone();
         patch.apply_to(&mut expected);
@@ -2852,110 +2907,41 @@ red = "#ee0000"
         );
     }
 
+    // ── bootstrap_at (first run) ──────────────────────────
+
     #[test]
-    fn legacy_migration_normalizes_parse_and_llm_to_agent() {
-        for legacy_value in ["parse", "llm", "agent", "anything-else"] {
-            let legacy = serde_json::json!({ "adaptiveSuggestions": legacy_value });
-            let settings = settings_from_legacy_json(Some(&legacy));
-            assert_eq!(
-                settings.adaptive_suggestions,
-                AdaptiveSuggestions::Agent,
-                "value: {legacy_value}"
-            );
-        }
-        let legacy = serde_json::json!({ "adaptiveSuggestions": "off" });
+    fn bootstrap_writes_a_documented_file_on_first_run() {
+        let (_dir, path) = tmp_config_path();
+        let manager = bootstrap_at(path.clone());
+        assert_eq!(manager.status(), &ConfigStatus::Ok);
+        assert_eq!(manager.effective(), &AppSettings::default());
         assert_eq!(
-            settings_from_legacy_json(Some(&legacy)).adaptive_suggestions,
-            AdaptiveSuggestions::Off
+            fs::read_to_string(&path).unwrap(),
+            document_for(&AppSettings::default()).to_string()
         );
     }
 
     #[test]
-    fn legacy_migration_defaults_missing_adaptive_to_agent() {
-        let settings = settings_from_legacy_json(None);
-        assert_eq!(settings.adaptive_suggestions, AdaptiveSuggestions::Agent);
-    }
-
-    #[test]
-    fn legacy_migration_ignores_out_of_range_ui_scale() {
-        let legacy = serde_json::json!({ "uiScale": 99.0 });
-        let settings = settings_from_legacy_json(Some(&legacy));
-        assert_eq!(settings.ui_scale, default_ui_scale());
-    }
-
-    // ── bootstrap_at (migration orchestration) ──────────────────────────
-
-    #[test]
-    fn bootstrap_first_run_imports_legacy_settings_and_marks_migrated() {
-        let (_dir, path) = tmp_config_path();
-        let legacy = serde_json::json!({ "enterToSend": false, "atlasTheme": "rose-pine" });
-
-        let outcome = bootstrap_at(path.clone(), false, Some(legacy));
-
-        assert!(outcome.mark_migrated);
-        assert!(!outcome.manager.effective().enter_to_send);
-        assert_eq!(outcome.manager.effective().theme, "rose-pine");
-        assert!(
-            path.exists(),
-            "bootstrap must actually write config.toml on first run"
-        );
-    }
-
-    #[test]
-    fn bootstrap_never_reimports_after_marker_is_set() {
-        let (_dir, path) = tmp_config_path();
-        let legacy = serde_json::json!({ "enterToSend": false });
-
-        // marker_already_set = true: even though config.toml doesn't exist
-        // yet, this must NOT be treated as a first run — the user deleted
-        // their config on purpose after already migrating once.
-        let outcome = bootstrap_at(path, true, Some(legacy));
-
-        assert!(outcome.mark_migrated);
-        assert_eq!(outcome.manager.effective(), &AppSettings::default());
-    }
-
-    #[test]
-    fn bootstrap_leaves_an_existing_config_untouched_regardless_of_legacy_data() {
+    fn bootstrap_leaves_an_existing_config_untouched() {
         let (_dir, path) = tmp_config_path();
         let raw = "schemaVersion = 1\n\n[settings]\nenterToSend = false\n";
         fs::write(&path, raw).unwrap();
-        let legacy =
-            serde_json::json!({ "enterToSend": true, "atlasTheme": "should-never-appear" });
-
-        let outcome = bootstrap_at(path.clone(), false, Some(legacy));
-
-        assert!(outcome.mark_migrated);
-        // The existing file wins outright — legacy data is never merged in,
-        // not even for keys the existing file didn't set.
-        assert!(!outcome.manager.effective().enter_to_send);
-        assert_eq!(outcome.manager.effective().theme, default_theme());
-        assert_eq!(
-            fs::read_to_string(&path).unwrap(),
-            raw,
-            "must not rewrite an existing config.toml"
-        );
+        let manager = bootstrap_at(path.clone());
+        assert!(!manager.effective().enter_to_send);
+        assert_eq!(fs::read_to_string(&path).unwrap(), raw);
     }
 
+    /// A directory sitting where the file should be cannot be read; that is
+    /// flagged rather than reported as a healthy, absent file.
     #[test]
-    fn bootstrap_is_idempotent_across_repeated_calls() {
+    fn bootstrap_flags_an_unreadable_config() {
         let (_dir, path) = tmp_config_path();
-        let legacy = serde_json::json!({ "enterToSend": false });
-
-        let first = bootstrap_at(path.clone(), false, Some(legacy.clone()));
-        assert!(first.mark_migrated);
-        let after_first = fs::read_to_string(&path).unwrap();
-
-        // Simulates the caller persisting `mark_migrated` and the process
-        // restarting: same call, but now with the marker set.
-        let second = bootstrap_at(path.clone(), true, Some(legacy));
-        assert!(second.mark_migrated);
-        assert_eq!(
-            fs::read_to_string(&path).unwrap(),
-            after_first,
-            "a second bootstrap must not rewrite the file"
-        );
-        assert!(!second.manager.effective().enter_to_send);
+        fs::create_dir_all(&path).unwrap();
+        let manager = bootstrap_at(path);
+        assert!(matches!(
+            manager.status(),
+            ConfigStatus::UsingDefaults { .. }
+        ));
     }
 
     // ── Cross-artifact key coverage ──────────────────────────────────────
@@ -3020,115 +3006,6 @@ red = "#ee0000"
             .unwrap(),
             serde_json::json!({ "status": "usingLastKnownGood", "error": "boom" })
         );
-    }
-
-    /// A file that exists but cannot be PARSED must not be reported as a
-    /// completed migration: `state.json.settings` is still the only surviving
-    /// copy of the user's preferences at that point, and the marker is what
-    /// authorizes `AppState::save` to drop it.
-    #[test]
-    fn a_malformed_existing_config_does_not_report_migration_done() {
-        let (_dir, path) = tmp_config_path();
-        fs::write(&path, "this is not { valid toml").unwrap();
-        let legacy = serde_json::json!({ "enterToSend": false, "gitBlameInline": false });
-
-        let outcome = bootstrap_at(path, false, Some(legacy));
-
-        assert!(
-            !outcome.mark_migrated,
-            "a malformed config.toml must not retire the legacy settings"
-        );
-        assert!(matches!(
-            outcome.manager.status(),
-            ConfigStatus::UsingDefaults { .. }
-        ));
-        // Boot never blocks: something usable is always effective. Which
-        // settings those are is the subject of
-        // `a_broken_config_falls_back_to_the_legacy_settings_not_compiled_defaults`.
-        assert!(!outcome.manager.effective().enter_to_send);
-    }
-
-    /// The same guarantee for a file that cannot be READ at all (here: a
-    /// directory sitting where the config should be — deterministic on every
-    /// platform and every uid, unlike a chmod-based test). This is the case
-    /// `load_at` used to fold into "file absent" and report as healthy.
-    #[test]
-    fn an_unreadable_existing_config_does_not_report_migration_done() {
-        let (_dir, path) = tmp_config_path();
-        fs::create_dir_all(&path).unwrap();
-
-        let outcome = bootstrap_at(
-            path,
-            false,
-            Some(serde_json::json!({ "enterToSend": false })),
-        );
-
-        assert!(
-            !outcome.mark_migrated,
-            "an unreadable config.toml must not retire the legacy settings"
-        );
-        assert!(
-            matches!(outcome.manager.status(), ConfigStatus::UsingDefaults { .. }),
-            "an unreadable file must be flagged, not reported as Ok"
-        );
-    }
-
-    /// Preserving `state.json.settings` is only half the guarantee — while the
-    /// file is broken those settings must actually be in EFFECT, or the user
-    /// spends the session on compiled defaults (telemetry back on) with their
-    /// real preferences sitting unused on disk.
-    #[test]
-    fn a_broken_config_falls_back_to_the_legacy_settings_not_compiled_defaults() {
-        let (_dir, path) = tmp_config_path();
-        fs::write(&path, "this is not { valid toml").unwrap();
-        let legacy = serde_json::json!({ "shareTelemetry": false, "uiScale": 1.25 });
-
-        let outcome = bootstrap_at(path, false, Some(legacy));
-
-        assert!(!outcome.mark_migrated);
-        assert!(
-            !outcome.manager.effective().share_telemetry,
-            "the user's opt-out must survive"
-        );
-        assert_eq!(outcome.manager.effective().ui_scale, 1.25);
-        assert!(matches!(
-            outcome.manager.status(),
-            ConfigStatus::UsingDefaults { .. }
-        ));
-    }
-
-    /// ...but only before migration is recorded. Once the marker is set, the
-    /// legacy object is stale by definition and must not be resurrected.
-    #[test]
-    fn a_broken_config_after_migration_does_not_resurrect_legacy_settings() {
-        let (_dir, path) = tmp_config_path();
-        fs::write(&path, "this is not { valid toml").unwrap();
-        let legacy = serde_json::json!({ "shareTelemetry": false });
-
-        let outcome = bootstrap_at(path, true, Some(legacy));
-
-        assert!(
-            outcome.manager.effective().share_telemetry,
-            "a post-migration boot must not read state.json.settings again"
-        );
-    }
-
-    /// The healthy path still marks migration done, so the two tests above
-    /// can't be satisfied by simply never setting the marker.
-    #[test]
-    fn a_readable_existing_config_reports_migration_done() {
-        let (_dir, path) = tmp_config_path();
-        fs::write(
-            &path,
-            "schemaVersion = 1\n\n[settings]\nenterToSend = false\n",
-        )
-        .unwrap();
-
-        let outcome = bootstrap_at(path, false, None);
-
-        assert!(outcome.mark_migrated);
-        assert_eq!(outcome.manager.status(), &ConfigStatus::Ok);
-        assert!(!outcome.manager.effective().enter_to_send);
     }
 
     /// The external-edit half of the round trip: a valid edit made outside
@@ -3336,5 +3213,243 @@ red = "#ee0000"
             mgr.unknown_keys().is_empty(),
             "comments must not read as unknown keys"
         );
+    }
+
+    // ── The settings registry ────────────────────────────────────────────
+    //
+    // `src-tauri/settings-registry.toml` is the one hand-edited description of every
+    // key. The comments in a generated file, the TS `AppSettings` type and its
+    // defaults, and the docs tables are all generated from it
+    // (`bun run settings:gen`). The one copy that cannot be generated is the
+    // struct above, so these hold the struct to the registry instead: a field
+    // added here without an entry there (or the reverse), a default changed on
+    // one side, a bound or an enum value that disagrees — each one compiles,
+    // ships, and shows the user a Settings row or a comment that lies.
+
+    const SETTINGS_REGISTRY_TOML: &str = include_str!("../../settings-registry.toml");
+
+    #[derive(Deserialize)]
+    struct Registry {
+        setting: Vec<RegistryEntry>,
+    }
+
+    #[derive(Deserialize)]
+    struct RegistryEntry {
+        key: String,
+        #[serde(rename = "type")]
+        kind: String,
+        default: Option<toml::Value>,
+        values: Option<Vec<String>>,
+        min: Option<toml::Value>,
+        max: Option<toml::Value>,
+    }
+
+    fn registry() -> Vec<RegistryEntry> {
+        let parsed: Registry = toml::from_str(SETTINGS_REGISTRY_TOML)
+            .expect("src-tauri/settings-registry.toml parses");
+        assert!(
+            parsed.setting.len() > 40,
+            "floor guard: an empty registry makes every check below vacuous"
+        );
+        parsed.setting
+    }
+
+    /// The keys a default `AppSettings` writes, in the order it writes them.
+    fn default_key_order() -> Vec<String> {
+        let text = toml::to_string(&AppSettings::default()).expect("serializes");
+        text.lines()
+            .take_while(|line| !line.starts_with('['))
+            .filter_map(|line| line.split_once(" = ").map(|(key, _)| key.to_string()))
+            .collect()
+    }
+
+    fn parse_settings(body: &str) -> Result<AppSettings, toml::de::Error> {
+        toml::from_str::<AtlasConfigFile>(&format!("schemaVersion = 1\n\n[settings]\n{body}\n"))
+            .map(|file| file.settings)
+    }
+
+    #[test]
+    fn the_settings_registry_matches_app_settings() {
+        let entries = registry();
+
+        // Same keys, same order. Absent-by-default keys (an unset Option, an
+        // empty table) don't serialize, so they are checked below instead.
+        let expected: Vec<String> = entries
+            .iter()
+            .filter(|entry| entry.default.is_some())
+            .map(|entry| entry.key.clone())
+            .collect();
+        assert_eq!(
+            default_key_order(),
+            expected,
+            "AppSettings and src-tauri/settings-registry.toml disagree on the keys or their order"
+        );
+
+        // Every field the frontend receives has an entry, and nothing extra.
+        let wire = serde_json::to_value(AppSettings::default()).expect("serializes");
+        let wire_keys: Vec<&String> = wire.as_object().expect("an object").keys().collect();
+        for key in &wire_keys {
+            assert!(
+                entries.iter().any(|entry| &&entry.key == key),
+                "`{key}` is an AppSettings field with no entry in src-tauri/settings-registry.toml"
+            );
+        }
+        for entry in &entries {
+            assert!(
+                entry.default.is_some() || !default_key_order().contains(&entry.key),
+                "`{}` has no registry default but serializes by default",
+                entry.key
+            );
+        }
+
+        // Same defaults.
+        let defaults = toml::Value::try_from(AppSettings::default()).expect("serializes");
+        for entry in &entries {
+            let Some(default) = &entry.default else {
+                continue;
+            };
+            assert_eq!(
+                defaults.get(&entry.key),
+                Some(default),
+                "`{}`: the registry default differs from AppSettings::default()",
+                entry.key
+            );
+        }
+
+        // And SETTINGS_DOCS, generated from the registry, is in step with it.
+        let documented: Vec<&str> = known_settings_keys().collect();
+        let registered: Vec<&str> = entries.iter().map(|entry| entry.key.as_str()).collect();
+        assert_eq!(documented, registered, "run `bun run settings:gen`");
+    }
+
+    /// An enum the UI offers a value for that serde then rejects is a
+    /// Settings row that fails on click; the reverse is a value only
+    /// hand-editing can reach.
+    #[test]
+    fn every_registry_enum_value_is_accepted_and_nothing_else_is() {
+        for entry in registry().iter().filter(|entry| entry.kind == "enum") {
+            let values = entry.values.as_ref().expect("an enum lists its values");
+            for value in values {
+                assert!(
+                    parse_settings(&format!("{} = \"{value}\"", entry.key)).is_ok(),
+                    "`{}` = \"{value}\" is in the registry but rejected",
+                    entry.key
+                );
+            }
+            assert!(
+                parse_settings(&format!("{} = \"not-a-real-value\"", entry.key)).is_err(),
+                "`{}` accepts a value the registry doesn't list",
+                entry.key
+            );
+        }
+    }
+
+    /// The registry's bounds are what the UI clamps to and the docs print;
+    /// `validate()` is what actually enforces them.
+    #[test]
+    fn registry_bounds_are_the_ones_validate_enforces() {
+        let number = |value: &toml::Value| {
+            value
+                .as_float()
+                .or_else(|| value.as_integer().map(|n| n as f64))
+                .expect("a numeric bound")
+        };
+        let accepts = |key: &str, value: f64, integer: bool| {
+            let literal = if integer {
+                format!("{}", value as i64)
+            } else {
+                format!("{value:.3}")
+            };
+            parse_settings(&format!("{key} = {literal}"))
+                .ok()
+                .is_some_and(|settings| validate(&settings).is_ok())
+        };
+        for entry in registry() {
+            let integer = entry.kind == "integer";
+            let step = if integer { 1.0 } else { 0.01 };
+            if let Some(max) = &entry.max {
+                let max = number(max);
+                assert!(
+                    accepts(&entry.key, max, integer),
+                    "`{}` rejects its max",
+                    entry.key
+                );
+                assert!(
+                    !accepts(&entry.key, max + step, integer),
+                    "`{}` accepts more than its registry max",
+                    entry.key
+                );
+            }
+            if let Some(min) = &entry.min {
+                let min = number(min);
+                assert!(
+                    accepts(&entry.key, min, integer),
+                    "`{}` rejects its min",
+                    entry.key
+                );
+                assert!(
+                    !accepts(&entry.key, min - step, integer),
+                    "`{}` accepts less than its registry min",
+                    entry.key
+                );
+            }
+        }
+    }
+
+    /// The whole file a fresh install gets, committed, so a change to what
+    /// users see is a reviewable diff rather than something only a new user
+    /// discovers. `ATLAS_BLESS=1 cargo test -p atlas config_default` rewrites
+    /// it.
+    #[test]
+    fn config_default_file_matches_the_committed_copy() {
+        let path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/reference/config.default.toml");
+        let rendered = document_for(&AppSettings::default()).to_string();
+        if std::env::var_os("ATLAS_BLESS").is_some() {
+            fs::write(&path, &rendered).expect("writes the committed copy");
+            return;
+        }
+        let committed = fs::read_to_string(&path).unwrap_or_default();
+        assert!(
+            committed == rendered,
+            "docs/reference/config.default.toml is stale: run \
+             `ATLAS_BLESS=1 cargo test -p atlas config_default` and review the diff"
+        );
+    }
+
+    /// A key Atlas adds to a file it didn't generate — a setting introduced
+    /// after the file was created, touched for the first time — arrives with
+    /// the same comment a fresh file gives it, and the user's own comments on
+    /// the keys already there are left exactly as they were.
+    #[test]
+    fn a_key_added_to_an_existing_file_arrives_documented() {
+        let (_dir, path) = tmp_config_path();
+        let raw = "schemaVersion = 1\n\n[settings]\n# mine, untouched\nenterToSend = true\n";
+        fs::write(&path, raw).unwrap();
+        let mut mgr = ConfigManager::from_raw(path.clone(), raw).unwrap();
+
+        let patch = SettingsPatch {
+            enter_to_send: Some(false),
+            git_auto_fetch: Some(false),
+            ..Default::default()
+        };
+        mgr.apply_patch(&patch, None).expect("patch applies");
+
+        let on_disk = fs::read_to_string(&path).unwrap();
+        assert!(on_disk.contains("# mine, untouched\nenterToSend = false"));
+        let (_, comment) = SETTINGS_DOCS
+            .iter()
+            .find(|(key, _)| *key == "gitAutoFetch")
+            .unwrap();
+        assert!(
+            on_disk.contains(&format!("{comment}\ngitAutoFetch = false")),
+            "the new key has no comment:\n{on_disk}"
+        );
+        assert_eq!(
+            on_disk.matches("# mine, untouched").count(),
+            1,
+            "an existing key's decor must not be rewritten"
+        );
+        ConfigManager::from_raw(path, &on_disk).expect("still a valid config");
     }
 }

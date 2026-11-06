@@ -38,6 +38,18 @@ describe("openFileAs", () => {
     });
   });
 
+  it("opens read-only unless asked to edit, and an edit open marks an open tab too", () => {
+    const editing = (id: string) =>
+      useLayoutStore.getState().tabs.find((t) => t.id === id)?.data.editing;
+    const id = openFileAs("/p/src/a.ts", "text");
+    expect(editing(id)).toBeUndefined();
+    openFileAs("/p/src/a.ts", "text", { edit: true });
+    expect(editing(id)).toBe(true);
+    // A later plain open leaves the choice the tab already has.
+    openFileAs("/p/src/a.ts", "text");
+    expect(editing(id)).toBe(true);
+  });
+
   it("ignores a reveal for a file that does not open in the editor", () => {
     openFileAs("/p/logo.png", "image", { reveal: { line: 2 } });
     expect(useEditorStore.getState().pendingReveals["/p/logo.png"]).toBeUndefined();

@@ -17,6 +17,12 @@ describe("resolveProfile", () => {
     expect(r.byAction.get("panels.left")![0]!.source).toBe("default");
     expect(r.unknownActionIds).toEqual([]);
   });
+  it("⌘B keeps the id it always had, so a user's rebinding of it still applies", () => {
+    expect(ACTIONS.find((a) => a.id === "panels.left")?.title).toBe("Toggle Files");
+    const r = resolveProfile(profile({ "panels.left": ["cmd+shift+l"] }));
+    expect(r.byAction.get("panels.left")!.map((b) => b.serialized)).toEqual(["cmd+shift+l"]);
+    expect(r.unknownActionIds).toEqual([]);
+  });
   it("override replaces, null unbinds, missing keeps default", () => {
     const r = resolveProfile(profile({ "panels.left": ["cmd+shift+l"], "panels.right": null }));
     expect(r.byAction.get("panels.left")!.map((b) => b.serialized)).toEqual(["cmd+shift+l"]);
@@ -33,6 +39,27 @@ describe("resolveProfile", () => {
     expect(r.unknownActionIds).toEqual(["nope.action"]);
     expect(r.perAction.get("tabs.close")!.invalid).toEqual(["garbage+"]);
     expect(r.byAction.get("tabs.close")!.map((b) => b.serialized)).toEqual(["cmd+w"]);
+  });
+  it("a profile's when replaces the action's own; a broken one is reported", () => {
+    const r = resolveProfile({
+      ...profile({}),
+      when: { "nav.commandPalette": "!terminalFocus", "tabs.close": "a &&" },
+    });
+    expect(r.byAction.get("nav.commandPalette")![0]!.whenExpr).toBe("!terminalFocus");
+    expect(r.perAction.get("nav.commandPalette")!.whenOverridden).toBe(true);
+    expect(r.perAction.get("tabs.close")).toMatchObject({ invalidWhen: "a &&", whenExpr: "" });
+    expect(r.perAction.get("terminal.find")!.whenExpr).toBe("terminalFocus");
+  });
+  it("same chord under different conditions is soft, the same condition hard", () => {
+    const soft = resolveProfile({
+      ...profile({ "panels.left": ["cmd+alt+shift+f12"], "panels.right": ["cmd+alt+shift+f12"] }),
+      when: { "panels.left": "chatFocus" },
+    });
+    expect([...findConflicts(soft.list).values()][0]!.kind).toBe("soft");
+    const hard = resolveProfile(
+      profile({ "panels.left": ["cmd+alt+shift+f12"], "panels.right": ["cmd+alt+shift+f12"] }),
+    );
+    expect([...findConflicts(hard.list).values()][0]!.kind).toBe("hard");
   });
   it("every default combo in the registry parses", () => {
     for (const a of ACTIONS)
@@ -81,8 +108,10 @@ describe("presets in resolution", () => {
   });
 
   it("an override beats the preset, and a preset null unbinds", () => {
-    const r = resolveProfile(based("jetbrains", { "nav.commandPalette": ["cmd+k"] }));
-    expect(r.byAction.get("nav.commandPalette")!.map((b) => b.serialized)).toEqual(["cmd+k"]);
+    const r = resolveProfile(based("jetbrains", { "nav.commandPalette": ["cmd+alt+shift+f12"] }));
+    expect(r.byAction.get("nav.commandPalette")!.map((b) => b.serialized)).toEqual([
+      "cmd+alt+shift+f12",
+    ]);
     expect(r.byAction.get("nav.commandPalette")![0]!.source).toBe("user");
     expect(r.byAction.get("tabs.focus1")).toEqual([]);
   });
@@ -104,5 +133,32 @@ describe("findConflicts across platforms", () => {
   it("one action bound twice to the same effective chord is not a conflict", () => {
     const r = resolveProfile(profile({ "panels.left": ["cmd+b", "ctrl+b"] }));
     expect(findConflicts(r.list, false).get("cmd+b")).toBeUndefined();
+  });
+});
+
+describe("findConflicts — the model picker's chords", () => {
+  // The open picker's ⌘1–⌘9 deliberately shadow the global tab chords; the
+  // two live in different `when` contexts, so the overlap is soft (by design,
+  // quiet in the editor), never a hard "this can never fire".
+  it("reads modelPicker.jumpN vs tabs.focusN as a soft, cross-context overlap", () => {
+    const conflicts = findConflicts(resolveProfile(undefined).list, true);
+    for (let n = 1; n <= 9; n++) {
+      const c = conflicts.get(`cmd+${n}`)!;
+      expect(c.kind).toBe("soft");
+      expect(c.bindings.map((b) => b.actionId).sort()).toEqual([
+        `modelPicker.jump${n}`,
+        `tabs.focus${n}`,
+      ]);
+    }
+  });
+
+  it("is hard once two picker actions share a chord", () => {
+    const r = resolveProfile(profile({ "modelPicker.toggleFavorite": ["cmd+1"] }));
+    expect(findConflicts(r.list, true).get("cmd+1")!.kind).toBe("hard");
+  });
+
+  it("gives the favorite toggle a chord nothing else uses", () => {
+    const conflicts = findConflicts(resolveProfile(undefined).list, true);
+    expect(conflicts.get("cmd+shift+s")).toBeUndefined();
   });
 });

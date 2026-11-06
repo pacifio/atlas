@@ -117,6 +117,9 @@ async fn handle_spawn_agent(
         .session_source
         .get_agent_path()
         .unwrap_or_else(AgentPath::root);
+    // ATLAS: kept for the `Started` activity, which is the only item a client
+    // sees for a spawn.
+    let task = message.clone();
     let communication = communication_from_tool_message(
         author,
         new_agent_path.clone(),
@@ -188,6 +191,7 @@ async fn handle_spawn_agent(
             agent_thread_id: new_thread_id,
             agent_path: new_agent_path.clone(),
             kind: SubAgentActivityKind::Started,
+            prompt: Some(task),
         },
     )
     .await;

@@ -95,12 +95,20 @@ pub struct RetrieveResult {
 ///
 /// `checkpoints` holds commit SHAs to scope the answer to; `None` or empty
 /// grounds on the whole Session.
+///
+/// `remote_project_id` is the server Project of a shared Session. It is read
+/// the same way the viewer reads it (`read-session-detail.ts`): this machine's
+/// store first, then the server. Without the second step every Session that is
+/// not on this machine — a teammate's, or one recorded on another device —
+/// opened fine in the viewer and then answered "session not found" here.
 #[tauri::command]
 pub async fn session_chat_retrieve(
     project_path: String,
     session_id: String,
     query: String,
     checkpoints: Option<Vec<String>>,
+    remote_project_id: Option<String>,
+    app: tauri::AppHandle,
 ) -> Result<RetrieveResult, String> {
     if query.trim().is_empty() {
         return Err("empty query".into());
@@ -109,9 +117,18 @@ pub async fn session_chat_retrieve(
     // Reuse the viewer's own read model rather than querying the store here.
     // The detail is what the user is looking at, so grounding on anything else
     // would let the answer and the screen disagree.
-    let mut detail = super::capture::artifacts_session(project_path.clone(), session_id)
-        .await?
-        .ok_or("session not found")?;
+    let local = if project_path.is_empty() {
+        None
+    } else {
+        super::capture::artifacts_session(project_path.clone(), session_id.clone()).await?
+    };
+    let mut detail = match (local, remote_project_id) {
+        (Some(detail), _) => detail,
+        (None, Some(project_id)) if !project_id.is_empty() => {
+            super::artifacts_cloud::artifacts_cloud_session(project_id, session_id, app).await?
+        }
+        _ => return Err("session not found".into()),
+    };
 
     // Scope BEFORE building. Every layer below (the brief, exact hits, ranked
     // entries, the character budget) reads `detail.entries`, so filtering here

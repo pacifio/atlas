@@ -14,7 +14,8 @@ import type { Scenario } from "../types";
  */
 export const designSystem: Scenario = {
   name: "design-system",
-  description: "Every Foundations token and every src/ui primitive, in the active theme.",
+  description:
+    "The active theme's colour roles and desktop's own utilities; primitives are in Storybook.",
   setup: async () => {
     const [{ createRoot }, { DesignSystemGallery }] = await Promise.all([
       import("react-dom/client"),

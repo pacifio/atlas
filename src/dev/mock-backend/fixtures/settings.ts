@@ -9,11 +9,11 @@
 // it, and `reveal` is the only call that ever returns a full value (Rust holds
 // the secret and ships `last4` in the list, so the fake does the same).
 
-import type { CliStatus } from "@/features/settings/components/settings-panel";
 import type { EnvEntry, EnvKeyMeta, ProfileInfo } from "@/features/settings/lib/byok-api";
 import type { ModelPrice } from "@/features/settings/stores/model-pricing-store";
 import type { KeybindingsLoadResult } from "@/features/keybindings/lib/keybindings-api";
 import { DEFAULT_KEYBINDINGS_FILE, type KeybindingsFile } from "@/features/keybindings/lib/types";
+import type { TipsState } from "@/features/tips/lib/tips-api";
 import type { TypedHandlers, Unit, Unread } from "../types";
 
 const price = (input: number, output: number, cacheRead = 0, cacheWrite = 0): ModelPrice => ({
@@ -132,8 +132,6 @@ function providerOf(envVar: string): string {
 export interface SettingsResponses {
   models_pricing_get: Record<string, ModelPrice>;
   models_pricing_refresh: Unread;
-  cli_status: CliStatus;
-  cli_install_helper: CliStatus;
   byok_env_list: EnvKeyMeta[];
   byok_env_entries: EnvEntry[];
   byok_profile_info: ProfileInfo;
@@ -143,14 +141,54 @@ export interface SettingsResponses {
   keybindings_load: KeybindingsLoadResult;
   keybindings_save: KeybindingsFile;
   keybindings_open: Unit;
-  keybindings_set_close_tab_accelerator: Unit;
+  menu_set_accelerators: Unit;
+  tips_load: TipsState;
+  tips_shown: Unit;
+  tips_mark_seen: TipsState;
+  tips_reset: TipsState;
+  tips_checklist_done: TipsState;
+  tips_checklist_dismiss: TipsState;
+  first_run_complete: Unit;
+}
+
+type TipsResponses = Pick<
+  SettingsResponses,
+  | "tips_load"
+  | "tips_shown"
+  | "tips_mark_seen"
+  | "tips_reset"
+  | "tips_checklist_done"
+  | "tips_checklist_dismiss"
+  | "first_run_complete"
+>;
+
+/** `tips.json`, kept in memory until the page reloads: what Rust's
+ *  `commands/tips.rs` does, minus the telemetry. */
+export function tipsHandlers(initial: Omit<TipsState, "version">): TypedHandlers<TipsResponses> {
+  let tips: TipsState = { version: 1, ...initial };
+  const once = (list: string[], item: string) => (list.includes(item) ? list : [...list, item]);
+  return {
+    tips_load: () => tips,
+    tips_shown: () => null,
+    tips_mark_seen: ({ id }) => (tips = { ...tips, seen: once(tips.seen, id) }),
+    tips_reset: ({ keep }) =>
+      (tips = {
+        ...tips,
+        cohort: "fresh",
+        checklistDismissed: false,
+        seen: tips.seen.filter((id) => (keep as string[]).includes(id)),
+      }),
+    tips_checklist_done: ({ item }) => (tips = { ...tips, checklist: once(tips.checklist, item) }),
+    tips_checklist_dismiss: () => (tips = { ...tips, checklistDismissed: true }),
+    first_run_complete: () => null,
+  };
 }
 
 export const settingsHandlers: TypedHandlers<SettingsResponses> = {
   keybindings_load: (): KeybindingsLoadResult => ({
     file: DEFAULT_KEYBINDINGS_FILE,
     path: "~/.config/atlas/keybindings.json",
-    // A returning user; `?scenario=keymap-first-run` shows the first launch.
+    // A returning user; `?scenario=fresh-install` shows the first launch.
     exists: true,
     warnings: [],
   }),
@@ -159,24 +197,20 @@ export const settingsHandlers: TypedHandlers<SettingsResponses> = {
   keybindings_save: ({ file }): KeybindingsFile =>
     (file as KeybindingsFile) ?? DEFAULT_KEYBINDINGS_FILE,
   keybindings_open: () => null,
-  keybindings_set_close_tab_accelerator: () => null,
+  menu_set_accelerators: () => null,
+  // Someone who upgraded, with projects: moment tips only and no Get
+  // started, so the populated scenarios stay quiet. `?scenario=fresh-install`
+  // gets everything.
+  ...tipsHandlers({
+    cohort: "upgrade",
+    seen: [],
+    checklist: [],
+    checklistDismissed: false,
+    activeDays: [],
+  }),
 
   models_pricing_get: (): Record<string, ModelPrice> => PRICING,
   models_pricing_refresh: () => null,
-
-  cli_status: (): CliStatus => ({
-    installed: true,
-    path: "/Users/dev/.local/bin/atlas",
-    // Older than the running build — the "update available" line in General.
-    installedVersion: "0.3.1",
-    currentVersion: "0.0.0-mock",
-  }),
-  cli_install_helper: (): CliStatus => ({
-    installed: true,
-    path: "/Users/dev/.local/bin/atlas",
-    installedVersion: "0.0.0-mock",
-    currentVersion: "0.0.0-mock",
-  }),
 
   byok_env_list: (): EnvKeyMeta[] =>
     entries.map(({ provider, envVar, last4 }) => ({ provider, envVar, last4 })),

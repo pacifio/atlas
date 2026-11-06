@@ -35,6 +35,7 @@ use atlas_engine_protocol::models::ResponseItem;
 use atlas_engine_protocol::protocol::EventMsg;
 use atlas_engine_protocol::protocol::ImageGenerationBeginEvent;
 use atlas_engine_protocol::protocol::ImageGenerationEndEvent;
+use atlas_engine_protocol::schema_compat::Compat08;
 use atlas_engine_tools::ResponsesApiNamespace;
 use atlas_engine_tools::ResponsesApiNamespaceTool;
 use atlas_engine_tools::ResponsesApiTool;
@@ -47,7 +48,7 @@ use atlas_engine_utils_path_uri::PathUri;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use schemars::JsonSchema;
-use schemars::r#gen::SchemaSettings;
+use schemars::generate::SchemaSettings;
 use serde::Deserialize;
 use serde_json::Map;
 use serde_json::Value;
@@ -512,7 +513,10 @@ fn parse_args(call: &ToolCall) -> Result<ImagegenArgs, FunctionCallError> {
 fn imagegen_tool_spec() -> ToolSpec {
     let mut schema_value = serde_json::to_value(
         SchemaSettings::draft2019_09()
-            .with(|settings| settings.inline_subschemas = true)
+            .with(|settings| {
+                settings.inline_subschemas = true;
+                settings.transforms.push(Box::new(Compat08::with_null()));
+            })
             .into_generator()
             .into_root_schema_for::<ImagegenArgs>(),
     )

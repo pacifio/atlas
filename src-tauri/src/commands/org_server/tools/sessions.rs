@@ -253,7 +253,7 @@ pub(super) fn workspace_of<'a>(
     }
     asked.or(scope.workspace_id.as_deref()).ok_or_else(|| {
         tool_error(
-            "this session's project is bound to the organisation but its Workspace id is not recorded yet; \
+            "this session's project is bound to the organization but its Workspace id is not recorded yet; \
              ask the user to reopen the project's cloud settings and start a new chat",
         )
     })

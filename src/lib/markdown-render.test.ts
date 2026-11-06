@@ -36,6 +36,17 @@ describe("mention chips in rendered markdown", () => {
     expect(html).toContain("first");
   });
 
+  // A sent message keeps the `@paste:<id>` / `@cite:<id>` tokens its chips
+  // wrote; the id means nothing to a reader, so the chip says what it is.
+  it("draws a paste and a cite by what they are, not their ids", () => {
+    const html = parseMarkdown("why @cite:k3x9q2 given @paste:p7d1aa?");
+    expect(chipLabels(html)).toEqual(["Cited passage", "Pasted text"]);
+    expect(html).toContain('data-mention-kind="cited_text"');
+    expect(html).toContain('data-mention-kind="pasted_text"');
+    expect(html).not.toContain(">k3x9q2<");
+    expect(html).toContain("?");
+  });
+
   it("peels trailing punctuation off a bare value", () => {
     const html = parseMarkdown("see @file:a.ts, then run");
     expect(chipLabels(html)).toEqual(["a.ts"]);

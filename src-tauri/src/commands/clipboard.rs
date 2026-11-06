@@ -85,6 +85,22 @@ fn default_command_runner(program: &str, args: &[&str], input: &str) -> bool {
     let write_timeout = Duration::from_millis(1500);
     match rx.recv_timeout(write_timeout) {
         Ok(Ok(())) => {}
+        // The helper closed stdin before taking all of it, usually by exiting:
+        // its exit status is the answer, not the broken pipe. A fast runner
+        // hit this with `true`, which exits without reading.
+        Ok(Err(e)) if e.kind() == std::io::ErrorKind::BrokenPipe => {
+            let deadline = Instant::now() + Duration::from_millis(500);
+            while Instant::now() < deadline {
+                match child.try_wait() {
+                    Ok(Some(status)) => return status.success(),
+                    Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+                    Err(_) => break,
+                }
+            }
+            let _ = child.kill();
+            let _ = child.wait();
+            return false;
+        }
         _ => {
             let _ = child.kill();
             let _ = child.wait();
@@ -209,6 +225,38 @@ pub fn clipboard_file_paths() -> Vec<String> {
     }
 }
 
+/// Linux: the paths a paste should attach, as GTK's clipboard sees them —
+/// the copied files, else the clipboard's image spooled to the scratch
+/// directory as a file. Empty when it holds neither.
+///
+/// WebKitGTK's `paste` event carries nothing a renderer could attach: for a
+/// clipboard image no `File`, no `items`, an empty `types`; for a copied
+/// file `text/uri-list` listed as a type with an empty string behind it and
+/// no `Files`. So neither the `scratch_write_bytes` route a screenshot takes
+/// under WKWebView nor the `clipboard_file_paths` one is reachable there.
+/// GTK's own clipboard sees both; this reads it there, keeping the image's
+/// bytes as offered when the format is one the attach route knows. The
+/// other platforms answer empty: their paste event carries what they need,
+/// and the renderer asks only on Linux.
+#[tauri::command]
+pub async fn clipboard_paste_paths(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    #[cfg(target_os = "linux")]
+    {
+        match linux::with_clipboard(&app, linux::pasted).await? {
+            linux::Pasted::Files(paths) => Ok(paths),
+            linux::Pasted::Image { ext, bytes } => {
+                spool_scratch(&app, &format!("pasted.{ext}"), &bytes).map(|path| vec![path])
+            }
+            linux::Pasted::Nothing => Ok(Vec::new()),
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = app;
+        Ok(Vec::new())
+    }
+}
+
 #[cfg(target_os = "macos")]
 fn macos_file_paths() -> Vec<String> {
     use objc2::msg_send;
@@ -288,8 +336,6 @@ pub fn scratch_write_bytes(
     app: tauri::AppHandle,
     request: tauri::ipc::Request<'_>,
 ) -> Result<String, String> {
-    use tauri::Manager;
-
     let bytes: &[u8] = match request.body() {
         tauri::ipc::InvokeBody::Raw(b) => b.as_slice(),
         tauri::ipc::InvokeBody::Json(_) => return Err("expected a raw body".to_string()),
@@ -309,8 +355,17 @@ pub fn scratch_write_bytes(
         .filter(|s| !s.is_empty())
         .map(percent_decode)
         .unwrap_or_else(|| "pasted.png".to_string());
+    spool_scratch(&app, &requested, bytes)
+}
+
+/// Write `bytes` to `<app_cache_dir>/pasted/<stem>-<uuid>.<ext>`, the stem
+/// and extension taken from `requested` once it has been reduced to a safe
+/// basename, and return the path.
+fn spool_scratch(app: &tauri::AppHandle, requested: &str, bytes: &[u8]) -> Result<String, String> {
+    use tauri::Manager;
+
     // Basename only: a header is untrusted input and must never pick a directory.
-    let base = std::path::Path::new(requested.as_str())
+    let base = std::path::Path::new(requested)
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("pasted.png");
@@ -397,9 +452,159 @@ fn sweep_scratch(dir: &std::path::Path) {
     }
 }
 
+/// Image flavours the attach route takes as they are, most preferred first,
+/// each with the extension its scratch file gets.
+#[cfg(any(target_os = "linux", test))]
+const IMAGE_TARGETS: &[(&str, &str)] = &[
+    ("image/png", "png"),
+    ("image/jpeg", "jpg"),
+    ("image/webp", "webp"),
+    ("image/gif", "gif"),
+    ("image/bmp", "bmp"),
+];
+
+/// The first of `IMAGE_TARGETS` the clipboard offers.
+#[cfg(any(target_os = "linux", test))]
+fn pick_image_target(offered: &[String]) -> Option<(&'static str, &'static str)> {
+    IMAGE_TARGETS
+        .iter()
+        .copied()
+        .find(|(mime, _)| offered.iter().any(|o| o == mime))
+}
+
+/// Local `file://` URIs as absolute, percent-decoded paths. Anything else — a
+/// remote `sftp://`, the `http://` link a browser puts beside a copied
+/// address — is skipped.
+#[cfg(any(target_os = "linux", test))]
+fn paths_from_file_uris<'a>(uris: impl Iterator<Item = &'a str>) -> Vec<String> {
+    uris.filter_map(|uri| {
+        let rest = uri.trim().strip_prefix("file://")?;
+        // `file:///x` has an empty host, `file://localhost/x` names this
+        // machine; any other host is a remote file.
+        let path = match rest.find('/') {
+            Some(0) => rest,
+            Some(i) if &rest[..i] == "localhost" => &rest[i..],
+            _ => return None,
+        };
+        let path = percent_decode(path);
+        (!path.is_empty()).then_some(path)
+    })
+    .collect()
+}
+
+// ── Linux: GTK's clipboard ───────────────────────────────────────────────────
+//
+// WebKitGTK gives the renderer's `paste` event nothing a file or an image
+// could be taken from (see `clipboard_paste_paths`), so Atlas reads the
+// clipboard through GTK itself. GTK objects live on the main thread, where tao runs the GTK loop,
+// so every read hops there; the `wait_for_*` calls iterate that loop until
+// the clipboard's owner has answered, which keeps the window painting.
+#[cfg(target_os = "linux")]
+mod linux {
+    use gtk::gdk;
+
+    /// Run `read` against the system clipboard on the GTK main thread and
+    /// hand its answer back.
+    pub async fn with_clipboard<T, F>(app: &tauri::AppHandle, read: F) -> Result<T, String>
+    where
+        T: Send + 'static,
+        F: FnOnce(&gtk::Clipboard) -> T + Send + 'static,
+    {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        app.run_on_main_thread(move || {
+            let clipboard = gtk::Clipboard::get(&gdk::SELECTION_CLIPBOARD);
+            let _ = tx.send(read(&clipboard));
+        })
+        .map_err(|e| e.to_string())?;
+        rx.await
+            .map_err(|_| "the clipboard read never answered".to_string())
+    }
+
+    /// What a paste should attach.
+    pub enum Pasted {
+        Files(Vec<String>),
+        Image { ext: String, bytes: Vec<u8> },
+        Nothing,
+    }
+
+    /// The copied files, else the image, else nothing — one read, so the
+    /// hop to the main thread happens once per paste.
+    pub fn pasted(clipboard: &gtk::Clipboard) -> Pasted {
+        let files = file_paths(clipboard);
+        if !files.is_empty() {
+            return Pasted::Files(files);
+        }
+        match image(clipboard) {
+            Some((ext, bytes)) => Pasted::Image { ext, bytes },
+            None => Pasted::Nothing,
+        }
+    }
+
+    /// The `file://` URIs on the clipboard, as paths.
+    fn file_paths(clipboard: &gtk::Clipboard) -> Vec<String> {
+        let uris = clipboard.wait_for_uris();
+        super::paths_from_file_uris(uris.iter().map(gtk::glib::GString::as_str))
+    }
+
+    /// The clipboard's image as `(extension, bytes)`: the bytes as offered
+    /// when the format is one the attach route knows, otherwise decoded by
+    /// GdkPixbuf and re-encoded as PNG. `None` when no image is offered.
+    fn image(clipboard: &gtk::Clipboard) -> Option<(String, Vec<u8>)> {
+        let targets = clipboard.wait_for_targets().unwrap_or_default();
+        let names: Vec<String> = targets.into_iter().map(|a| a.name().to_string()).collect();
+        if let Some((mime, ext)) = super::pick_image_target(&names) {
+            if let Some(data) = clipboard.wait_for_contents(&gdk::Atom::intern(mime)) {
+                let bytes = data.data();
+                if !bytes.is_empty() {
+                    return Some((ext.to_string(), bytes));
+                }
+            }
+        }
+        if !names.iter().any(|n| n.starts_with("image/")) {
+            return None;
+        }
+        let pixbuf = clipboard.wait_for_image()?;
+        pixbuf
+            .save_to_bufferv("png", &[])
+            .ok()
+            .map(|bytes| ("png".to_string(), bytes))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_uris_become_local_paths_only() {
+        let uris = [
+            "file:///home/u/Pictures/a%20b.png",
+            "file://localhost/tmp/x.png",
+            "file://nas/share/y.png",
+            "http://example.com/z.png",
+            "  file:///tmp/c.png\r",
+            "file://",
+        ];
+        assert_eq!(
+            paths_from_file_uris(uris.into_iter()),
+            vec!["/home/u/Pictures/a b.png", "/tmp/x.png", "/tmp/c.png"]
+        );
+    }
+
+    #[test]
+    fn image_target_prefers_the_bytes_as_offered() {
+        let offered = |s: &[&str]| s.iter().map(ToString::to_string).collect::<Vec<_>>();
+        assert_eq!(
+            pick_image_target(&offered(&["text/plain", "image/jpeg", "image/png"])),
+            Some(("image/png", "png"))
+        );
+        assert_eq!(
+            pick_image_target(&offered(&["image/jpeg"])),
+            Some(("image/jpeg", "jpg"))
+        );
+        assert_eq!(pick_image_target(&offered(&["image/tiff"])), None);
+        assert_eq!(pick_image_target(&[]), None);
+    }
 
     #[test]
     fn test_linux_clipboard_wayland_success_first_helper() {

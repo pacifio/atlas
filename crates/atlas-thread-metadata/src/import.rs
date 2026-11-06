@@ -1,16 +1,15 @@
 //! Importing an agent's own sessions — the only way external history reaches
 //! Atlas.
 //!
-//! Ported from Zed's `thread_import.rs` (`collect_all_sessions` `:794-820`,
-//! `collect_importable_threads` `:855-889`). Two properties carry it:
+//! Two properties carry it:
 //!
 //! * **Metadata only.** A `SessionInfo` is an id, a directory, a title and a
 //!   timestamp. No transcript is fetched, here or ever — the conversation
 //!   arrives when the user opens the row, replayed by the agent through
 //!   `session/load`.
-//! * **Imports land archived.** They go to the history view, not the active
-//!   sidebar, so pulling in a year of sessions never buries the work in front
-//!   of you (`thread_import.rs:884`).
+//! * **Old imports land settled.** They go to the sidebar's Settled shelf, not
+//!   the active list, so pulling in a year of sessions never buries the work
+//!   in front of you (`thread_import.rs:884`).
 //!
 //! Nothing in this file knows an agent's name. Whether an agent can be imported
 //! from at all is decided by whether its connection hands back a session list,
@@ -23,7 +22,7 @@ use agent_client_protocol::schema::v1 as acp;
 use anyhow::Result;
 use atlas_acp_thread::connection::AgentId;
 use atlas_acp_thread::{AgentSessionInfo, AgentSessionList, AgentSessionListRequest};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 
 use crate::model::{ThreadId, ThreadMetadata};
 use crate::paths::{PathList, WorktreePaths};
@@ -83,19 +82,27 @@ pub async fn collect_all_sessions(
 /// Skips two kinds of session, both for the same reason — a row nobody could
 /// ever see is worse than no row:
 ///
-/// * one Atlas already knows, by session id (`thread_import.rs:867-869`), which
+/// * one Atlas already knows, by session id, which
 ///   is what makes importing twice a no-op;
-/// * one with no working directory (`:870-872`), which would belong to no
+/// * one with no working directory, which would belong to no
 ///   project and so appear under none.
 ///
-/// The known-ids set grows as it goes, exactly as Zed's does (`:867-869`
-/// inserts into it). That is not a detail: an agent that ignores the pagination
+/// The known-ids set grows as it goes. That is not a detail: an agent that ignores the pagination
 /// cursor lists the same session on every page, so a fixed set would let one
 /// conversation through as several rows.
+///
+/// Rows land settled — on the Settled shelf, not in the active list, settled
+/// at their own `updated_at` — unless `active_since` is given and the
+/// session's `updated_at` is at or after it. The manual import and the
+/// one-time backfill pass `None`: dumping an agent's whole past into the
+/// active list would bury what the user is doing now. The per-project sync
+/// (ADR-0001 amendment, ATL-422) passes a recency cutoff, so a session started
+/// in a terminal an hour ago lands active and one from last spring does not.
 pub fn importable_threads(
     sessions: Vec<AgentSessionInfo>,
     agent_id: &AgentId,
     known: &HashSet<acp::SessionId>,
+    active_since: Option<DateTime<Utc>>,
 ) -> Vec<ThreadMetadata> {
     let now = Utc::now();
     let mut seen = known.clone();
@@ -108,25 +115,36 @@ pub fn importable_threads(
             // The agent's own last-activity time, so an import sorts into
             // history where it belongs rather than all at "now".
             let updated_at = session.updated_at.unwrap_or(now);
+            let mut row =
+                ThreadMetadata::new(ThreadId::new(), agent_id.clone(), PathList::default());
+            row.session_id = Some(session.session_id);
+            row.title = session.title;
+            row.updated_at = updated_at;
             Some(ThreadMetadata {
-                thread_id: ThreadId::new(),
-                session_id: Some(session.session_id),
-                agent_id: agent_id.clone(),
-                title: session.title,
-                title_override: None,
-                updated_at,
-                // Verbatim, and so always `None` today: schema v1's
-                // `SessionInfo` has no `createdAt`. Filling it in with
-                // `updated_at` would be Atlas claiming to know when a
-                // conversation started; the history view already falls back to
-                // `updated_at` when it needs an ordering.
-                created_at: session.created_at,
+                // The agent's own start time when it reports one; otherwise
+                // the activity time it reported at import. Schema v1's
+                // `SessionInfo` has no `createdAt`, and this used to stay
+                // `None`, leaving History (which orders by "started") to fall
+                // back to `updated_at` — which, since discovery is ongoing
+                // (ADR-0001 amendment), keeps moving, so imported rows jumped
+                // about. A fixed instant no later than the true last activity
+                // is the honest stand-in, and it never moves again.
+                created_at: session.created_at.or(Some(updated_at)),
                 // Atlas was not there. Claiming the user interacted at some
                 // moment it did not observe would be an invention.
                 interacted_at: None,
                 worktree_paths: WorktreePaths::from_folder_paths(&folder_paths),
                 remote_connection: None,
-                archived: true,
+                // Atlas was not there to see which branch it ran on.
+                branch: None,
+                // Nor which model.
+                model: None,
+                settled_at: active_since
+                    .is_none_or(|cutoff| updated_at < cutoff)
+                    .then_some(updated_at),
+                // Never viewed, never pinned or snoozed, and no turn Atlas saw
+                // complete: an import is never unread.
+                ..row
             })
         })
         .collect()

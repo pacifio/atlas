@@ -1,10 +1,5 @@
-//! Thread-model tests, adapted from Zed's `acp_thread` suite
-//! (`~/Codes/zed-ref/crates/acp_thread/src/acp_thread.rs`, the `mod tests` at
-//! the end of the file). Zed's versions are GPUI tests driving a `StubAgentConnection`
-//! through a `TestAppContext`; these drive the same mechanism through plain
-//! method calls, so the assertions are about behaviour rather than rendering.
-//!
-//! Each test names the Zed test it is adapted from.
+//! Thread-model tests. They drive a `StubAgentConnection` through plain method
+//! calls, so the assertions are about behaviour rather than rendering.
 
 use std::any::Any;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -17,7 +12,7 @@ use futures::future::BoxFuture;
 
 // ---------------------------------------------------------------- stub agent
 
-/// Adapted from Zed's `StubAgentConnection` (`connection.rs`, `test_support`).
+/// A scriptable in-memory connection that counts the cancels it receives.
 struct StubAgentConnection {
     auth_methods: Vec<acp::AuthMethod>,
     cancel_count: AtomicUsize,
@@ -161,8 +156,6 @@ fn status_of(thread: &AcpThread, id: &str) -> String {
 }
 
 // ------------------------------------------------------------- message chunks
-
-/// Adapted from `test_user_message_chunks_use_protocol_message_id_boundaries`.
 #[tokio::test]
 async fn user_chunks_split_on_a_changed_protocol_message_id() {
     let (mut thread, _events, _conn) = new_thread();
@@ -180,7 +173,7 @@ async fn user_chunks_split_on_a_changed_protocol_message_id() {
     assert_eq!(user_messages(&thread), vec!["one two", "three"]);
 }
 
-/// Adapted from the same test's "no ids at all" case: an agent that never sends
+/// The "no ids at all" case: an agent that never sends
 /// `messageId` must keep the pre-`messageId` behaviour of merging everything.
 #[tokio::test]
 async fn user_chunks_without_ids_all_merge() {
@@ -192,8 +185,6 @@ async fn user_chunks_without_ids_all_merge() {
     assert_eq!(user_messages(&thread), vec!["ab"]);
 }
 
-/// Adapted from `test_protocol_user_chunk_does_not_merge_into_optimistic_prompt`.
-///
 /// The optimistic message is what the user typed; a protocol chunk that arrives
 /// carrying its own id is a different message being announced, and merging the
 /// two would silently rewrite the user's own prompt in the transcript.
@@ -208,8 +199,35 @@ async fn a_protocol_chunk_does_not_merge_into_the_optimistic_prompt() {
 
     assert_eq!(user_messages(&thread), vec!["typed", "from agent"]);
 }
+/// A retry re-sends the last user message's prompt text. A turn that carried a
+/// large paste as a text block must give it back whole and set apart from the
+/// prose, in the form the composer's queue reads back (`withPastesInline`).
+#[tokio::test]
+async fn a_prompt_with_a_paste_comes_back_whole_for_a_retry() {
+    let (mut thread, _events, _conn) = new_thread();
+    let paste = prompt::PastedText {
+        id: "p1".into(),
+        text: "log line 1\nlog line 2".into(),
+    };
+    let blocks = prompt::with_pasted_texts(
+        vec![text_block("summarise @paste:p1")],
+        vec![paste.clone()],
+        false,
+    );
+    let id = Some(ClientUserMessageId::new());
+    for block in blocks {
+        thread.push_user_content_block(id.clone(), block);
+    }
 
-/// Adapted from `test_ignore_echoed_user_message_chunks_during_active_turn`.
+    let Some(AgentThreadEntry::UserMessage(msg)) = thread.entries().last() else {
+        panic!("expected the user message");
+    };
+    assert_eq!(
+        msg.prompt_text(),
+        format!("summarise @paste:p1\n\n{}", prompt::paste_as_text(&paste))
+    );
+}
+
 #[tokio::test]
 async fn an_echoed_user_chunk_is_not_rendered_twice() {
     let (mut thread, _events, _conn) = new_thread();
@@ -249,8 +267,6 @@ async fn the_fallback_title_is_taken_after_the_hosts_cleaning() {
     // Cleaning that leaves nothing is no title, not an empty one.
     assert_eq!(thread.fallback_title(|_| String::new()), None);
 }
-
-/// Adapted from `test_assistant_chunks_use_protocol_message_id_boundaries`.
 #[tokio::test]
 async fn assistant_chunks_split_on_a_changed_protocol_message_id() {
     let (mut thread, _events, _conn) = new_thread();
@@ -271,8 +287,6 @@ async fn assistant_chunks_split_on_a_changed_protocol_message_id() {
     );
 }
 
-/// Adapted from `test_thinking_concatenation`.
-///
 /// Thought and message chunks never merge into each other even when they carry
 /// no ids, or the reasoning would be rendered as the answer.
 #[tokio::test]
@@ -299,8 +313,6 @@ async fn thoughts_concatenate_but_never_merge_into_the_message() {
 }
 
 // ----------------------------------------------------------------- tool calls
-
-/// Adapted from `test_tool_call_not_found_creates_failed_entry`.
 #[tokio::test]
 async fn an_update_for_an_unknown_tool_call_becomes_a_failed_entry() {
     let (mut thread, _events, _conn) = new_thread();
@@ -314,8 +326,6 @@ async fn an_update_for_an_unknown_tool_call_becomes_a_failed_entry() {
 
     assert_eq!(status_of(&thread, "ghost"), "Failed");
 }
-
-/// Adapted from `test_permission_request_sets_waiting_status_on_existing_tool_call`.
 #[tokio::test]
 async fn requesting_permission_puts_an_existing_call_into_waiting() {
     let (mut thread, _events, _conn) = new_thread();
@@ -334,10 +344,6 @@ async fn requesting_permission_puts_an_existing_call_into_waiting() {
     assert_eq!(status_of(&thread, "t1"), "Waiting for confirmation");
 }
 
-/// Adapted from
-/// `test_duplicate_tool_call_update_preserves_open_permission_request_until_authorized`
-/// and `test_permission_request_tracks_agent_status_until_resolved`.
-///
 /// This is the regression that matters most in this file: while the user is
 /// being asked, the agent keeps streaming status updates for the same call.
 /// Applying one directly would drop the `respond_tx` and strand the agent
@@ -445,8 +451,6 @@ async fn reraising_a_card_resolves_the_one_showing_and_announces_the_new_one() {
         "the status it had before the first card"
     );
 }
-
-/// Adapted from `test_cancel_tool_call_authorization_resolves_permission_request`.
 #[tokio::test]
 async fn cancelling_an_authorization_resolves_the_waiter() {
     let (mut thread, _events, _conn) = new_thread();
@@ -523,7 +527,7 @@ async fn an_action_choice_proceeds_even_when_the_option_reads_as_a_rejection() {
     assert_eq!(status_of(&thread, "t1"), "In Progress");
 }
 
-/// Adapted from `test_succeeding_canceled_toolcall`: a completion that arrives
+/// A completion that arrives
 /// after cancellation still wins, because the tool really did finish.
 #[tokio::test]
 async fn a_completion_arriving_after_cancel_is_recorded() {
@@ -544,7 +548,6 @@ async fn a_completion_arriving_after_cancel_is_recorded() {
 
 // --------------------------------------------------------------------- cancel
 
-/// Adapted from `AcpThread::cancel` + `mark_pending_entries_as_canceled`.
 #[tokio::test]
 async fn cancel_resolves_every_pending_permission_and_tells_the_connection() {
     let (mut thread, _events, connection) = new_thread();
@@ -696,7 +699,7 @@ async fn a_cancelled_turn_still_announces_its_own_stop() {
 
     let mut stopped = None;
     while let Ok(event) = events.try_recv() {
-        if let AcpThreadEvent::Stopped(reason) = event {
+        if let AcpThreadEvent::Stopped(reason, _) = event {
             stopped = Some(reason);
         }
     }
@@ -705,6 +708,58 @@ async fn a_cancelled_turn_still_announces_its_own_stop() {
         Some(acp::StopReason::Cancelled),
         "the stop is announced, with the reason the agent gave"
     );
+}
+
+/// A cancelled turn is still timed: `cancel()` clears the running turn, but
+/// not the start the stop is measured from.
+#[tokio::test]
+async fn a_cancelled_turn_keeps_its_start_for_its_record() {
+    let (mut thread, _events, _conn) = new_thread();
+
+    let turn = thread.begin_turn();
+    thread.cancel();
+    thread.end_turn_unless_superseded(turn, acp::StopReason::Cancelled);
+
+    let [record] = thread.turns() else {
+        panic!("one turn recorded, got {:?}", thread.turns());
+    };
+    assert_eq!(record.stop_reason, acp::StopReason::Cancelled);
+    let started = record.started_at.expect("the start survived the cancel");
+    assert!(started <= record.ended_at);
+}
+
+/// A rewind takes back the turns whose output it removed; their timing would
+/// otherwise land on whatever message ends up at those positions next.
+#[tokio::test]
+async fn a_rewind_drops_the_turns_it_took_back() {
+    let (mut thread, _events, _conn) = new_thread();
+
+    thread
+        .handle_session_update(user_chunk("one", Some("m1")))
+        .unwrap();
+    thread.begin_turn();
+    thread.end_turn(acp::StopReason::EndTurn);
+    thread
+        .handle_session_update(acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new(acp::ContentBlock::Text(acp::TextContent::new(
+                "hi".to_string(),
+            ))),
+        ))
+        .unwrap();
+    thread.begin_turn();
+    thread
+        .handle_session_update(acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new(acp::ContentBlock::Text(acp::TextContent::new(
+                "hi".to_string(),
+            ))),
+        ))
+        .unwrap();
+    thread.end_turn(acp::StopReason::EndTurn);
+    assert_eq!(thread.turns().len(), 2);
+
+    thread.remove_entries_from(1);
+    assert_eq!(thread.turns().len(), 1, "{:?}", thread.turns());
+    assert_eq!(thread.turns()[0].entries, 1..1);
 }
 
 /// The unguarded `end_turn` stays as it is: `atlas-agent-delta` and this
@@ -719,7 +774,7 @@ async fn end_turn_still_announces_a_stop_with_no_turn_open() {
 
     let mut stopped = false;
     while let Ok(event) = events.try_recv() {
-        if matches!(event, AcpThreadEvent::Stopped(_)) {
+        if matches!(event, AcpThreadEvent::Stopped(..)) {
             stopped = true;
         }
     }
@@ -747,7 +802,7 @@ async fn cancelling_an_idle_thread_resolves_entries_without_notifying_the_agent(
     assert_eq!(connection.cancel_count.load(Ordering::SeqCst), 0);
 }
 
-/// Adapted from `run_turn` (`acp_thread.rs:3743`): a follow-up send cancels the
+/// A follow-up send cancels the
 /// previous turn with `InterruptedByFollowUp`, which is a different outcome from
 /// the user pressing stop and is visible to whoever was awaiting permission.
 #[tokio::test]
@@ -774,8 +829,8 @@ async fn a_follow_up_turn_cancels_the_previous_one_as_interrupted() {
     ));
 }
 
-/// Cancelling with no turn running must not fire `session/cancel` — Zed returns
-/// early on `running_turn.take()` being `None`.
+/// Cancelling with no turn running must not fire `session/cancel`: `cancel`
+/// returns early when there is no running turn.
 #[tokio::test]
 async fn cancelling_an_idle_thread_does_not_notify_the_agent() {
     let (mut thread, _events, connection) = new_thread();
@@ -1057,4 +1112,79 @@ fn the_machinery_predicate_is_narrow_enough_to_keep_real_titles() {
     ] {
         assert!(!is_host_machinery_title(title), "should be kept: {title}");
     }
+}
+
+// ------------------------------------------------------- attached projects
+
+/// A session opened with a read-write attached project carries it in its
+/// working directories (that is how it reaches the agent). Making it
+/// read-only, or detaching it, must take it out of the writable set the
+/// `fs/*` handlers use — and history must never count it as the session's
+/// own folder.
+#[test]
+fn an_attached_root_widens_reads_and_writes_at_its_access_and_never_joins_the_own_folders() {
+    use std::path::PathBuf;
+    let (tx, _rx) = event_channel();
+    let app = PathBuf::from("/work/app");
+    let server = PathBuf::from("/work/server");
+    let docs = PathBuf::from("/work/docs");
+    let mut thread = AcpThread::new(
+        acp::SessionId::new("test-session"),
+        StubAgentConnection::new(),
+        vec![app.clone(), server.clone()],
+        None,
+        tx,
+    );
+    thread.set_attached_roots(SessionRoots {
+        read_only: vec![docs.clone()],
+        read_write: vec![server.clone()],
+    });
+    assert_eq!(thread.own_work_dirs(), vec![app.clone()]);
+    assert_eq!(thread.writable_roots(), vec![app.clone(), server.clone()]);
+    assert_eq!(
+        thread.readable_roots(),
+        vec![app.clone(), server.clone(), docs.clone()]
+    );
+
+    // Server made read-only: still readable, no longer writable, even though
+    // the session was opened with it as a working directory.
+    thread.set_attached_roots(SessionRoots {
+        read_only: vec![docs, server.clone()],
+        read_write: Vec::new(),
+    });
+    assert_eq!(thread.writable_roots(), vec![app.clone()]);
+    assert!(thread.readable_roots().contains(&server));
+
+    // Everything detached: back to the session's own folder alone.
+    thread.set_attached_roots(SessionRoots::default());
+    assert_eq!(thread.readable_roots(), vec![app.clone()]);
+    assert_eq!(thread.writable_roots(), vec![app]);
+}
+
+#[test]
+fn a_replay_ends_when_told_and_live_entries_after_it_are_timed() {
+    let (mut thread, _rx, _conn) = new_thread();
+    thread.begin_replay();
+    thread
+        .handle_session_update(user_chunk("earlier question", Some("m1")))
+        .unwrap();
+    thread
+        .handle_session_update(agent_chunk("earlier answer", Some("a1")))
+        .unwrap();
+    assert!(thread.entry_time_approximate(0));
+    assert!(thread.entry_time_approximate(1));
+
+    // The load answered and its queued frames drained: no prompt yet, but
+    // what the agent says now is live.
+    thread.end_replay();
+    thread
+        .handle_session_update(acp::SessionUpdate::ToolCall(tool_call(
+            "t-live",
+            "Read file",
+            acp::ToolCallStatus::Completed,
+        )))
+        .unwrap();
+    assert_eq!(thread.entries().len(), 3);
+    assert!(thread.entry_time_approximate(1));
+    assert!(!thread.entry_time_approximate(2));
 }

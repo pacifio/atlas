@@ -2,11 +2,20 @@
 //! in its own crate so the heavy `candle` dependency tree doesn't slow the main
 //! app's incremental builds.
 //!
-//! The embedder loads a BERT-style sentence-transformer (default target:
-//! `all-MiniLM-L6-v2`, 384-dim) from a local directory of three files —
-//! `config.json`, `tokenizer.json`, `model.safetensors` — and produces
-//! L2-normalized mean-pooled sentence vectors. Because vectors are unit-length,
-//! cosine similarity is just a dot product.
+//! The embedder loads a sentence-embedding model from a local directory —
+//! `config.json`, `tokenizer.json`, `model.safetensors`, and optionally an
+//! `atlas-embed.json` [`ModelSpec`] — and produces L2-normalized sentence
+//! vectors, so cosine similarity is just a dot product. Three architectures,
+//! chosen by `config.json`'s `model_type`: BERT (`all-MiniLM-L6-v2`, memory's
+//! model), ModernBERT (Granite Embedding Small R2, the default code model) and
+//! NomicBERT (CodeRankEmbed). Texts run as real padded, attention-masked
+//! batches; the spec picks the pooling (mean or CLS), the query/document
+//! prefixes and the token limit.
+
+mod pool;
+mod spec;
+
+pub use spec::{ModelSpec, Pooling, SPEC_FILE};
 
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
@@ -14,11 +23,13 @@ use std::sync::RwLock;
 use anyhow::{anyhow, Context, Result};
 use candle_core::{Device, Tensor};
 use candle_nn::VarBuilder;
-use candle_transformers::models::bert::{BertModel, Config, DTYPE};
-use tokenizers::{Tokenizer, TruncationDirection, TruncationParams, TruncationStrategy};
-
-/// BERT position embeddings cap; MiniLM/BERT support up to 512 tokens.
-const MAX_TOKENS: usize = 512;
+use candle_transformers::models::bert::{BertModel, Config as BertConfig, DTYPE};
+use candle_transformers::models::modernbert::{Config as ModernConfig, ModernBert};
+use candle_transformers::models::nomic_bert::{Config as NomicConfig, NomicBertModel};
+use tokenizers::{
+    PaddingDirection, PaddingParams, PaddingStrategy, Tokenizer, TruncationDirection,
+    TruncationParams, TruncationStrategy,
+};
 
 /// Marker file written next to a model when its GPU backend failed on this
 /// machine — subsequent loads skip the GPU attempt and go straight to CPU.
@@ -30,17 +41,26 @@ pub const GPU_INCOMPATIBLE_MARKER: &str = ".metal_incompatible";
 /// about the kernels a real 300-token document needs — models loaded "fine" on
 /// Metal and then died mid-retrieval with "Failed to create pipeline". Warming
 /// a short and a long shape catches the incompatibility at load time, where the
-/// fallback is clean. (The request-time fallback in `embed_one` covers whatever
-/// this still misses.)
+/// fallback is clean. (The request-time fallback in `embed_documents` covers
+/// whatever this still misses.)
 const WARMUP_LONG: &str = "atlas warm-up text exercising the longer attention and pooling kernel \
     shapes that a realistic memory document produces during retrieval indexing \
     so lazy metal pipeline compilation happens here under the load guard and \
     not in the middle of a user visible query answering pass across the app";
 
+/// The network behind an embedder, by `config.json`'s `model_type`.
+enum Net {
+    Bert(BertModel),
+    /// Granite Embedding Small R2, the default code model.
+    Modern(ModernBert),
+    /// CodeRankEmbed.
+    Nomic(NomicBertModel),
+}
+
 /// The mutable half of the embedder: swapped wholesale when a GPU backend
 /// fails at request time and the model is rebuilt on CPU.
 struct EmbedderCore {
-    model: BertModel,
+    net: Net,
     device: Device,
     /// True when `device` is a GPU (Metal/CUDA) — drives the fallback decision
     /// without matching on cfg-dependent `Device` variants.
@@ -60,6 +80,8 @@ pub struct Embedder {
     tokenizer: Tokenizer,
     model_dir: PathBuf,
     dim: usize,
+    spec: ModelSpec,
+    model_type: String,
 }
 
 /// The platform's GPU device, per Atlas policy:
@@ -104,6 +126,30 @@ pub(crate) fn gpu_compiled() -> bool {
     ))
 }
 
+/// `config.json`'s `model_type`; a config without one is a BERT checkpoint
+/// (the sentence-transformers exports every pre-spec model used).
+fn model_type(config: &serde_json::Value) -> String {
+    config
+        .get("model_type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("bert")
+        .to_string()
+}
+
+/// The output dimension, read the way each architecture names it.
+fn hidden_size(config: &serde_json::Value, kind: &str) -> Result<usize> {
+    let key = if kind == "nomic_bert" {
+        "n_embd"
+    } else {
+        "hidden_size"
+    };
+    config
+        .get(key)
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|n| usize::try_from(n).ok())
+        .ok_or_else(|| anyhow!("config.json has no `{key}` for model_type `{kind}`"))
+}
+
 impl Embedder {
     /// Load from a directory containing `config.json`, `tokenizer.json` and
     /// `model.safetensors`, preferring the platform GPU but resiliently falling
@@ -145,52 +191,73 @@ impl Embedder {
     }
 
     /// Build the embedder on an explicit device, ending with warm-up forwards
-    /// (short + long shape) so candle's lazy GPU kernel compilation surfaces
-    /// here (inside the caller's panic guard) rather than on the first real
-    /// embed. Warm-up failures PROPAGATE — swallowing them was the original
-    /// bug: a broken-on-GPU embedder got cached and every later call failed.
+    /// (a short shape, then a padded batch with a long one) so candle's lazy
+    /// GPU kernel compilation surfaces here (inside the caller's panic guard)
+    /// rather than on the first real embed. Warm-up failures PROPAGATE —
+    /// swallowing them was the original bug: a broken-on-GPU embedder got
+    /// cached and every later call failed.
     fn load_on(model_dir: &Path, device: Device, on_gpu: bool) -> Result<Self> {
         let config_path = model_dir.join("config.json");
         let tokenizer_path = model_dir.join("tokenizer.json");
 
         let config_str = std::fs::read_to_string(&config_path)
             .with_context(|| format!("read {}", config_path.display()))?;
-        let config: Config = serde_json::from_str(&config_str).context("parse config.json")?;
-        let dim = config.hidden_size;
+        let config: serde_json::Value =
+            serde_json::from_str(&config_str).context("parse config.json")?;
+        let spec = ModelSpec::load(model_dir);
+        let kind = model_type(&config);
+        let dim = hidden_size(&config, &kind)?;
 
         let mut tokenizer =
             Tokenizer::from_file(&tokenizer_path).map_err(|e| anyhow!("load tokenizer: {e}"))?;
-        // Cap sequence length so long memory bodies don't blow past the model's
+        // Cap sequence length so long texts don't blow past the model's
         // position-embedding range.
         tokenizer
             .with_truncation(Some(TruncationParams {
-                max_length: MAX_TOKENS,
+                max_length: spec.max_tokens,
                 strategy: TruncationStrategy::LongestFirst,
                 stride: 0,
                 direction: TruncationDirection::Right,
             }))
             .map_err(|e| anyhow!("set truncation: {e}"))?;
+        // Pad a batch to its longest text, on the right, so the last real
+        // token of a row sits at `sum(mask) - 1` (last-token pooling).
+        let pad_id = tokenizer.get_padding().map_or(0, |p| p.pad_id);
+        let pad_token = tokenizer
+            .get_padding()
+            .map(|p| p.pad_token.clone())
+            .unwrap_or_else(|| PaddingParams::default().pad_token);
+        tokenizer.with_padding(Some(PaddingParams {
+            strategy: PaddingStrategy::BatchLongest,
+            direction: PaddingDirection::Right,
+            pad_id,
+            pad_token,
+            ..Default::default()
+        }));
 
-        let core = Self::build_core(model_dir, &config, device, on_gpu)?;
+        let core = Self::build_core(model_dir, &config, &kind, device, on_gpu)?;
 
         let embedder = Self {
             core: RwLock::new(core),
             tokenizer,
             model_dir: model_dir.to_path_buf(),
             dim,
+            spec,
+            model_type: kind,
         };
         // Warm-up on two shapes; `?` so a GPU pipeline failure lands in the
         // caller's guarded fallback instead of poisoning the cached embedder.
-        embedder.forward_current("warm")?;
-        embedder.forward_current(WARMUP_LONG)?;
+        embedder.forward_batch(&["warm"])?;
+        embedder.forward_batch(&["warm", WARMUP_LONG])?;
 
         Ok(embedder)
     }
 
-    /// Load the BERT weights onto `device`.
+    /// Load the weights onto `device` as the network `kind` names.
     fn build_core(
         model_dir: &Path,
-        config: &Config,
+        config: &serde_json::Value,
+        kind: &str,
         device: Device,
         on_gpu: bool,
     ) -> Result<EmbedderCore> {
@@ -201,9 +268,30 @@ impl Embedder {
             VarBuilder::from_mmaped_safetensors(std::slice::from_ref(&weights_path), DTYPE, &device)
                 .with_context(|| format!("mmap {}", weights_path.display()))?
         };
-        let model = BertModel::load(vb, config).context("load BERT weights")?;
+        let net = match kind {
+            "bert" => {
+                let c: BertConfig =
+                    serde_json::from_value(config.clone()).context("parse BERT config")?;
+                Net::Bert(BertModel::load(vb, &c).context("load BERT weights")?)
+            }
+            "modernbert" => {
+                let c: ModernConfig =
+                    serde_json::from_value(config.clone()).context("parse ModernBERT config")?;
+                // Embedding checkpoints store `layers.*`; candle reads `model.layers.*`.
+                let vb = vb.rename_f(|n: &str| n.strip_prefix("model.").unwrap_or(n).to_string());
+                Net::Modern(ModernBert::load(vb, &c).context("load ModernBERT weights")?)
+            }
+            "nomic_bert" => {
+                let c: NomicConfig =
+                    serde_json::from_value(config.clone()).context("parse NomicBERT config")?;
+                Net::Nomic(NomicBertModel::load(vb, &c).context("load NomicBERT weights")?)
+            }
+            other => anyhow::bail!(
+                "unsupported embedding model_type `{other}` (bert, modernbert, nomic_bert)"
+            ),
+        };
         Ok(EmbedderCore {
-            model,
+            net,
             device,
             on_gpu,
         })
@@ -211,6 +299,16 @@ impl Embedder {
 
     pub fn dim(&self) -> usize {
         self.dim
+    }
+
+    /// How this model is driven (pooling, prefixes, limits).
+    pub fn spec(&self) -> &ModelSpec {
+        &self.spec
+    }
+
+    /// `config.json`'s `model_type` (`bert`, `modernbert`, `nomic_bert`).
+    pub fn model_type(&self) -> &str {
+        &self.model_type
     }
 
     /// The compute backend currently in use ("gpu" covers Metal/CUDA — the
@@ -223,20 +321,52 @@ impl Embedder {
         }
     }
 
-    /// Embed a batch of texts, one forward pass each (no padding needed).
+    /// Documents in batches of `spec.batch_size`, with the document prefix.
     /// Returns L2-normalized vectors of length `self.dim`.
-    pub fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        texts.iter().map(|t| self.embed_one(t)).collect()
+    pub fn embed_documents(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+        let prefixed: Vec<String> = texts
+            .iter()
+            .map(|t| format!("{}{t}", self.spec.document_prefix))
+            .collect();
+        let mut out = Vec::with_capacity(texts.len());
+        for chunk in prefixed.chunks(self.spec.batch_size.max(1)) {
+            let refs: Vec<&str> = chunk.iter().map(String::as_str).collect();
+            out.extend(self.forward_with_fallback(&refs)?);
+        }
+        Ok(out)
     }
 
-    /// Embed one text, transparently falling back to CPU if the GPU backend
-    /// fails at request time (lazy pipeline compilation means a new input shape
-    /// can fail long after a clean load — the "Failed to create pipeline" bug).
-    /// The rebuilt CPU model replaces the GPU one in place, so the shared
-    /// `Arc<Embedder>` every memory subsystem holds heals for all of them, and
-    /// the per-model marker prevents re-poisoning on the next app start.
+    /// A search query, with the query prefix (some models are trained with
+    /// an instruction on the query side only).
+    pub fn embed_query(&self, text: &str) -> Result<Vec<f32>> {
+        let q = format!("{}{text}", self.spec.query_prefix);
+        self.forward_with_fallback(&[q.as_str()])?
+            .pop()
+            .ok_or_else(|| anyhow!("the model returned no vector"))
+    }
+
+    /// Embed a batch of documents (memory's contract: no prefix for a spec
+    /// without one, which is every BERT model).
+    pub fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
+        self.embed_documents(&refs)
+    }
+
+    /// Embed one document.
     pub fn embed_one(&self, text: &str) -> Result<Vec<f32>> {
-        match self.forward_current(text) {
+        self.embed_documents(&[text])?
+            .pop()
+            .ok_or_else(|| anyhow!("the model returned no vector"))
+    }
+
+    /// One batch, transparently falling back to CPU if the GPU backend fails
+    /// at request time (lazy pipeline compilation means a new input shape can
+    /// fail long after a clean load — the "Failed to create pipeline" bug).
+    /// The rebuilt CPU model replaces the GPU one in place, so the shared
+    /// `Arc<Embedder>` every subsystem holds heals for all of them, and the
+    /// per-model marker prevents re-poisoning on the next app start.
+    fn forward_with_fallback(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+        match self.forward_batch(texts) {
             Ok(v) => Ok(v),
             Err(e) => {
                 let on_gpu = self.core.read().map(|c| c.on_gpu).unwrap_or(false);
@@ -248,7 +378,7 @@ impl Embedder {
                      rebuilding on CPU and retrying"
                 );
                 self.rebuild_on_cpu()?;
-                self.forward_current(text)
+                self.forward_batch(texts)
             }
         }
     }
@@ -256,15 +386,7 @@ impl Embedder {
     /// One guarded forward pass on whatever device the core currently holds.
     /// Panics inside candle's GPU kernels (metallib mismatches `.unwrap()`
     /// internally) are converted to `Err` so the fallback path sees them too.
-    fn forward_current(&self, text: &str) -> Result<Vec<f32>> {
-        let encoding = self
-            .tokenizer
-            .encode(text, true)
-            .map_err(|e| anyhow!("tokenize: {e}"))?;
-        let ids = encoding.get_ids().to_vec();
-        if ids.is_empty() {
-            return Ok(vec![0.0; self.dim]);
-        }
+    fn forward_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
         let core = self
             .core
             .read()
@@ -272,7 +394,14 @@ impl Embedder {
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             #[cfg(test)]
             test_seam::fault(core.on_gpu, test_seam::Fault::PanicInForward);
-            Self::forward_raw(&core.model, &core.device, &ids)
+            forward_raw(
+                &core.net,
+                &core.device,
+                &self.tokenizer,
+                &self.spec,
+                texts,
+                self.dim,
+            )
         }))
         .unwrap_or_else(|_| Err(anyhow!("embedding kernel panicked on {}", self.backend())))
     }
@@ -290,31 +419,58 @@ impl Embedder {
         }
         let config_str = std::fs::read_to_string(self.model_dir.join("config.json"))
             .context("re-read config.json for CPU fallback")?;
-        let config: Config = serde_json::from_str(&config_str).context("parse config.json")?;
-        *core = Self::build_core(&self.model_dir, &config, Device::Cpu, false)?;
+        let config: serde_json::Value =
+            serde_json::from_str(&config_str).context("parse config.json")?;
+        *core = Self::build_core(
+            &self.model_dir,
+            &config,
+            &self.model_type,
+            Device::Cpu,
+            false,
+        )?;
         write_gpu_marker(&self.model_dir, "embedder gpu failed at request time");
         Ok(())
     }
+}
 
-    fn forward_raw(model: &BertModel, device: &Device, ids: &[u32]) -> Result<Vec<f32>> {
-        let input_ids = Tensor::new(ids, device)?.unsqueeze(0)?; // [1, n]
-        let token_type_ids = input_ids.zeros_like()?;
-        let attention_mask = Tensor::ones_like(&input_ids)?;
-
-        // [1, n, hidden]
-        let ys = model.forward(&input_ids, &token_type_ids, Some(&attention_mask))?;
-
-        // Mean-pool over the token dimension → [1, hidden].
-        let (_b, n_tokens, _h) = ys.dims3()?;
-        let summed = ys.sum(1)?;
-        let mean = (summed / n_tokens as f64)?;
-
-        // L2-normalize so cosine == dot.
-        let norm = mean.sqr()?.sum_keepdim(1)?.sqrt()?;
-        let normed = mean.broadcast_div(&norm)?;
-
-        Ok(normed.squeeze(0)?.to_vec1::<f32>()?)
+/// Embed `texts` as one padded, attention-masked batch and pool each row per
+/// the spec. Rows are L2-normalized. A batch whose texts all tokenize to
+/// nothing comes back as zero vectors.
+fn forward_raw(
+    net: &Net,
+    device: &Device,
+    tokenizer: &Tokenizer,
+    spec: &ModelSpec,
+    texts: &[&str],
+    dim: usize,
+) -> Result<Vec<Vec<f32>>> {
+    if texts.is_empty() {
+        return Ok(Vec::new());
     }
+    let encs = tokenizer
+        .encode_batch(texts.to_vec(), true)
+        .map_err(|e| anyhow!("tokenize: {e}"))?;
+    let n = encs.iter().map(|e| e.get_ids().len()).max().unwrap_or(0);
+    if n == 0 {
+        return Ok(vec![vec![0.0; dim]; texts.len()]);
+    }
+    let ids: Vec<u32> = encs
+        .iter()
+        .flat_map(|e| e.get_ids().iter().copied())
+        .collect();
+    let mask: Vec<u32> = encs
+        .iter()
+        .flat_map(|e| e.get_attention_mask().iter().copied())
+        .collect();
+    let ids = Tensor::from_vec(ids, (texts.len(), n), device)?;
+    let mask = Tensor::from_vec(mask, (texts.len(), n), device)?;
+    let hidden = match net {
+        Net::Bert(m) => m.forward(&ids, &ids.zeros_like()?, Some(&mask))?,
+        Net::Modern(m) => m.forward(&ids, &mask)?,
+        Net::Nomic(m) => m.forward(&ids, None, Some(&mask))?,
+    };
+    let pooled = pool::l2_normalize(&pool::pool(&hidden, &mask, spec.pooling)?)?;
+    Ok(pooled.to_dtype(candle_core::DType::F32)?.to_vec2::<f32>()?)
 }
 
 /// Best-effort marker write — losing it only costs a retry on next launch.

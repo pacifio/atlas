@@ -51,3 +51,29 @@ export function mountBadge(scenario: string, unmocked: () => string[]): () => vo
     });
   };
 }
+
+/**
+ * A cue that found nothing to act on (`northwind`'s Ctrl+Option keys). Shown
+ * even in `&record=1`: the take is already lost, and knowing now beats finding
+ * out in the edit. Small, top-left, gone after a few seconds.
+ */
+export function flashCueMiss(message: string): void {
+  if (!document.body) return;
+  const el = document.createElement("div");
+  el.setAttribute("data-mock-cue-miss", "");
+  el.textContent = message;
+  Object.assign(el.style, {
+    position: "fixed",
+    left: "8px",
+    top: "8px",
+    zIndex: "100000",
+    font: "11px ui-monospace, SFMono-Regular, Menlo, monospace",
+    color: "#fff",
+    background: "rgba(190, 70, 40, 0.9)",
+    borderRadius: "6px",
+    padding: "4px 8px",
+    pointerEvents: "none",
+  } satisfies Partial<CSSStyleDeclaration>);
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 4_000);
+}

@@ -1,7 +1,6 @@
 //! Unified-diff parsing + patch synthesis for hunk/line-level staging.
 //!
-//! Ported from GitHub Desktop's `patch-formatter.ts` / `diff-parser.ts`:
-//! given a file's fresh `git diff` output and a selection (whole hunk, or a
+//! Given a file's fresh `git diff` output and a selection (whole hunk, or a
 //! subset of its changed lines), synthesize a minimal patch that `git apply
 //! --cached` (stage), `--cached --reverse` (unstage) or `--reverse`
 //! (discard) accepts.

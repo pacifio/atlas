@@ -16,7 +16,7 @@
 //! itself and hands it to the engine through `model_catalog_json`, the
 //! engine's first-class static path.
 //!
-//! # Where these rows differ from an upstream row, and why
+//! # Where these rows differ from an original row, and why
 //!
 //! Every difference is the gateway's allowlist showing through. Reasoning
 //! effort, reasoning summaries, verbosity and service tiers all ride request
@@ -72,9 +72,9 @@ const ENGINE_MODALITIES: [&str; 3] = ["text", "image", "audio"];
 ///
 /// Authored as JSON and parsed rather than built as a struct literal, for two
 /// reasons: it is the same document the engine loads from disk, so this is the
-/// shape being asserted on; and the upstream record has forty-odd fields, most
+/// shape being asserted on; and the original record has forty-odd fields, most
 /// of them defaulted, so a struct literal would have to restate every default
-/// and would break on every upstream field addition.
+/// and would break on every field the original adds.
 ///
 /// `description`, `context_window` and `input_modalities` are `Option`
 /// because the gateway serves `null` for an unannotated model. `description`
@@ -158,13 +158,13 @@ pub fn row(
 
         // The engine's own bundled prompt, unedited.
         //
-        // It opens by naming the upstream product and the model family, which
+        // It opens by naming the original product and the model family, which
         // is wrong on every row here — the trademark scrub that fixes it is its
         // own gated piece of work, and doing it inside the catalogue would put
         // a rewritten system prompt in a commit about model metadata.
         "model_messages": { "instructions_template": atlas_engine_models_manager::model_info::BASE_INSTRUCTIONS.as_str() },
         "include_skills_usage_instructions": true,
-        // Both name surfaces that belong to the upstream product, not to Atlas.
+        // Both name surfaces that belong to the original product, not to Atlas.
         "include_plugin_usage_instructions": false,
         "include_apps_usage_instructions": false,
 
@@ -191,16 +191,13 @@ pub async fn write_models_json(home: &Path, catalogue: &ModelsResponse) -> Resul
         .with_context(|| format!("creating the engine home at {}", home.display()))?;
     let path = home.join(CATALOG_FILE);
     let tmp = home.join(format!("{CATALOG_FILE}.{}.tmp", std::process::id()));
-    let body = serde_json::to_vec_pretty(catalogue).context("serialising the model catalogue")?;
+    let body = serde_json::to_vec_pretty(catalogue).context("serializing the model catalog")?;
     tokio::fs::write(&tmp, body)
         .await
-        .with_context(|| format!("writing the model catalogue to {}", tmp.display()))?;
-    tokio::fs::rename(&tmp, &path).await.with_context(|| {
-        format!(
-            "moving the model catalogue into place at {}",
-            path.display()
-        )
-    })?;
+        .with_context(|| format!("writing the model catalog to {}", tmp.display()))?;
+    tokio::fs::rename(&tmp, &path)
+        .await
+        .with_context(|| format!("moving the model catalog into place at {}", path.display()))?;
     Ok(path)
 }
 
@@ -309,6 +306,36 @@ mod tests {
             "no usable system prompt ({} bytes)",
             instructions.len()
         );
+    }
+
+    /// ADR-0015: every bundled prompt sends code search to the `atlas_code`
+    /// tools first and keeps shell `rg` as the fallback, and the two copies of
+    /// the base prompt (the gateway rows' and the protocol default) agree.
+    #[test]
+    fn every_prompt_sends_code_search_to_the_atlas_code_tools_first() {
+        let base = atlas_engine_models_manager::model_info::BASE_INSTRUCTIONS.as_str();
+        for needle in ["`atlas_code`", "`grep`", "`find_files`", "`rg`"] {
+            assert!(base.contains(needle), "base prompt lacks {needle}");
+        }
+        assert_eq!(
+            base,
+            atlas_engine_protocol::models::BASE_INSTRUCTIONS_DEFAULT.as_str(),
+            "models-manager/prompt.md and protocol's default.md drifted apart"
+        );
+        let bundled = atlas_engine_models_manager::bundled_models_response()
+            .expect("the bundled catalogue parses");
+        for model in &bundled.models {
+            let template = model
+                .model_messages
+                .as_ref()
+                .and_then(|m| m.instructions_template.as_deref())
+                .unwrap_or_default();
+            assert!(
+                template.contains("`atlas_code`") && template.contains("`rg`"),
+                "{}: search guidance not reworded",
+                model.slug
+            );
+        }
     }
 
     #[test]

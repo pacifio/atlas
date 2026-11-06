@@ -1,6 +1,6 @@
 //! Extended git operations for the unified Source-Control manager.
 //!
-//! Mirrors the dugite-shaped CLI calls GitHub Desktop uses, executed through
+//! Thin wrappers over the git CLI, executed through
 //! the `atlas-git` chokepoint (real git binary, so hooks run; failures come
 //! back as typed [`GitErrorPayload`]s with friendly messages instead of raw
 //! stderr). `GIT_TERMINAL_PROMPT=0` is set by the executor so a missing
@@ -10,7 +10,7 @@
 //! stream their output as `atlas:git:op` events (see [`git_commit_v2`]).
 
 use atlas_git::{GitCommand, GitErrorCode, GitErrorPayload};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -228,8 +228,8 @@ pub struct MergePreview {
     ///   - uptodate:    nothing to merge (0 commits)
     ///   - invalid:     unrelated histories (no merge base)
     ///   - unsupported: git too old for `merge-tree --write-tree` preview;
-    ///                  the merge can still be attempted, we just can't
-    ///                  predict conflicts ahead of time
+    ///     the merge can still be attempted, we just can't predict
+    ///     conflicts ahead of time
     pub kind: String,
     /// Commits on `branch` not yet on the current branch (what merging brings in).
     pub commit_count: u32,
@@ -342,7 +342,7 @@ pub async fn git_merge_preview(
 //
 // Network ops run `--progress` and stream through `atlas:git:op` when the
 // caller supplies an `op_id` (percent parsed by `atlas_git::progress` with
-// GitHub Desktop's weighted step tables); without one they run buffered,
+// weighted step tables); without one they run buffered,
 // keeping older call sites working.
 
 fn run_remote_op(
@@ -415,22 +415,120 @@ pub async fn git_fetch(
     .map_err(join_err)?
 }
 
+/// How `git pull` reconciles a branch that has diverged from its upstream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PullStrategy {
+    /// No flag — git's config decides (`pull.rebase` / `pull.ff`). Fails with
+    /// `DivergentBranches` when the branch diverged and nothing is configured.
+    #[default]
+    Default,
+    /// `--rebase`: replay local commits on top of the upstream's.
+    Rebase,
+    /// `--no-rebase`: merge the upstream in. Overrides `pull.ff=only` too.
+    Merge,
+}
+
+fn pull_args(strategy: PullStrategy, remote: Option<&str>) -> Vec<&str> {
+    let mut args = vec!["pull", "--progress"];
+    match strategy {
+        PullStrategy::Default => {}
+        PullStrategy::Rebase => args.push("--rebase"),
+        PullStrategy::Merge => args.push("--no-rebase"),
+    }
+    if let Some(r) = remote {
+        args.push(r);
+    }
+    args
+}
+
+/// What a plain `git pull` would do on a diverged branch, given git config.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PullPreference {
+    /// Config says rebase: a plain pull reconciles on its own.
+    Rebase,
+    /// Config says merge: a plain pull reconciles on its own.
+    Merge,
+    /// Nothing configured, or `pull.ff=only`: a plain pull would refuse, so
+    /// the user has to choose.
+    Ask,
+}
+
+/// git's own precedence, checked against git 2.54: `pull.ff=only` refuses
+/// a diverged pull even when a rebase setting exists; otherwise
+/// `branch.<name>.rebase` beats `pull.rebase` (false merges, any other value
+/// — true, merges, interactive — rebases); otherwise any other `pull.ff`
+/// value merges; otherwise git refuses.
+fn resolve_pull_preference(
+    branch_rebase: Option<&str>,
+    pull_rebase: Option<&str>,
+    pull_ff: Option<&str>,
+) -> PullPreference {
+    let ff = pull_ff.map(str::to_ascii_lowercase);
+    if ff.as_deref() == Some("only") {
+        return PullPreference::Ask;
+    }
+    if let Some(rebase) = branch_rebase.or(pull_rebase) {
+        return match rebase.to_ascii_lowercase().as_str() {
+            "false" | "no" | "off" | "0" | "" => PullPreference::Merge,
+            _ => PullPreference::Rebase,
+        };
+    }
+    if ff.is_some() {
+        return PullPreference::Merge;
+    }
+    PullPreference::Ask
+}
+
+/// `git <args>` with `envs` applied, keeping stdout when it exits 0. Exit 1
+/// is "unset" for `config --get` and "detached" for `symbolic-ref --quiet`.
+fn read_value(path: &str, args: &[&str], envs: &[(&str, &str)]) -> Option<String> {
+    let mut cmd = GitCommand::new(path, args)
+        .read_only()
+        .success_codes(&[0, 1]);
+    for (k, v) in envs {
+        cmd = cmd.env(k, v);
+    }
+    cmd.run()
+        .ok()
+        .filter(|o| o.exit_code == 0)
+        .map(|o| o.stdout.trim().to_string())
+}
+
+/// The effective (repo → global → system) config behind a plain pull.
+/// `envs` exists for the tests, which must not read the developer's config.
+fn pull_preference(path: &str, envs: &[(&str, &str)]) -> PullPreference {
+    let get = |key: &str| read_value(path, &["config", "--get", key], envs);
+    let branch_rebase = read_value(path, &["symbolic-ref", "--quiet", "--short", "HEAD"], envs)
+        .filter(|b| !b.is_empty())
+        .and_then(|b| get(&format!("branch.{b}.rebase")));
+    resolve_pull_preference(
+        branch_rebase.as_deref(),
+        get("pull.rebase").as_deref(),
+        get("pull.ff").as_deref(),
+    )
+}
+
+/// Read before pulling a diverged branch, so Atlas only asks "rebase or
+/// merge?" when git itself would refuse — never over a saved preference.
+#[tauri::command]
+pub async fn git_pull_preference(path: String) -> Result<PullPreference, GitErrorPayload> {
+    tokio::task::spawn_blocking(move || Ok(pull_preference(&path, &[])))
+        .await
+        .map_err(join_err)?
+}
+
 #[tauri::command]
 pub async fn git_pull(
     path: String,
-    rebase: bool,
+    strategy: Option<PullStrategy>,
     remote: Option<String>,
     op_id: Option<String>,
     app: AppHandle,
 ) -> Result<String, GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
-        let mut args = vec!["pull", "--progress"];
-        if rebase {
-            args.push("--rebase");
-        }
-        if let Some(r) = remote.as_deref() {
-            args.push(r);
-        }
+        let args = pull_args(strategy.unwrap_or_default(), remote.as_deref());
         run_remote_op(&app, &path, "pull", op_id, &args)
     })
     .await
@@ -449,9 +547,47 @@ pub async fn git_push(
     tokio::task::spawn_blocking(move || {
         let args = push_args(force_with_lease, follow_tags, remote.as_deref());
         run_remote_op(&app, &path, "push", op_id, &args)
+            .map_err(|e| explain_rejection(&path, e, &[]))
     })
     .await
     .map_err(join_err)?
+}
+
+/// A non-fast-forward rejection is one of two things, and they want opposite
+/// fixes: the remote has work you don't (pull), or you rewrote commits you
+/// had already pushed (force-push — pulling would merge the old copies back
+/// in). Recode the second as `HistoryRewritten`. `envs` is for the tests.
+fn explain_rejection(path: &str, e: GitErrorPayload, envs: &[(&str, &str)]) -> GitErrorPayload {
+    // "(fetch first)" means the remote tip is not even here: unknown work.
+    if e.code != GitErrorCode::NonFastForward
+        || !e.raw_stderr.contains("(non-fast-forward)")
+        || !history_rewritten(path, envs)
+    {
+        return e;
+    }
+    GitErrorPayload {
+        code: GitErrorCode::HistoryRewritten,
+        message: atlas_git::error::friendly_message(GitErrorCode::HistoryRewritten, &[], None),
+        ..e
+    }
+}
+
+/// The upstream has commits HEAD lacks, and every one of them has a
+/// patch-equivalent commit on HEAD (`--cherry-pick`): the divergence is our
+/// own commits, rewritten. A stale `@{upstream}` can only make this say yes
+/// wrongly when the remote moved since — and `--force-with-lease` then
+/// refuses, so the force-push it leads to stays safe.
+fn history_rewritten(path: &str, envs: &[(&str, &str)]) -> bool {
+    let count = |extra: &[&str]| {
+        let mut args = vec!["rev-list", "--count", "--right-only"];
+        args.extend_from_slice(extra);
+        args.push("HEAD...@{upstream}");
+        read_value(path, &args, envs).and_then(|n| n.parse::<u32>().ok())
+    };
+    matches!(
+        (count(&[]), count(&["--cherry-pick"])),
+        (Some(behind), Some(0)) if behind > 0
+    )
 }
 
 /// `git push` arguments for [`git_push`]. No refspec: git pushes the current
@@ -460,7 +596,11 @@ pub async fn git_push(
 fn push_args(force_with_lease: bool, follow_tags: bool, remote: Option<&str>) -> Vec<&str> {
     let mut args = vec!["push", "--progress"];
     if force_with_lease {
-        args.push("--force-with-lease");
+        // The lease alone compares against the remote-tracking ref, which
+        // background auto-fetch moves without the user seeing it — so a
+        // teammate's commit fetched a minute ago would pass. `--force-if-includes`
+        // also requires that tip to have been part of this branch (its reflog).
+        args.extend(["--force-with-lease", "--force-if-includes"]);
     }
     if follow_tags {
         args.push("--follow-tags");
@@ -764,15 +904,13 @@ pub async fn git_discard(
     app: AppHandle,
 ) -> Result<(), GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
-        let mut args = vec![
-            "restore".to_string(),
-            "--staged".to_string(),
-            "--worktree".to_string(),
-            "--".to_string(),
-        ];
-        args.extend(files);
-        let argv: Vec<&str> = args.iter().map(std::string::String::as_str).collect();
-        git_mut(&app, &path, &argv)?;
+        if files.is_empty() {
+            return Ok(());
+        }
+        GitCommand::new(&path, &["restore", "--staged", "--worktree"])
+            .pathspecs(&files)
+            .run()?;
+        emit_synthetic_change(&app, Path::new(&path));
         Ok(())
     })
     .await
@@ -793,16 +931,12 @@ pub async fn git_delete_added(
 ) -> Result<(), GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
         // Remove from the index if it was staged-new; ignore untracked ones.
-        let mut args = vec![
-            "rm".to_string(),
-            "-f".to_string(),
-            "--cached".to_string(),
-            "--ignore-unmatch".to_string(),
-            "--".to_string(),
-        ];
-        args.extend(files.clone());
-        let argv: Vec<&str> = args.iter().map(std::string::String::as_str).collect();
-        let _ = git_mut(&app, &path, &argv);
+        if !files.is_empty() {
+            let _ = GitCommand::new(&path, &["rm", "-f", "--cached", "--ignore-unmatch"])
+                .pathspecs(&files)
+                .run();
+            emit_synthetic_change(&app, Path::new(&path));
+        }
         // Delete the working-tree copies.
         for f in &files {
             let abs = Path::new(&path).join(f);
@@ -947,7 +1081,11 @@ pub async fn git_delete_tag(
 // ── Commit detail (history view) ─────────────────────────────────────────
 
 #[tauri::command]
-pub async fn git_show(path: String, sha: String) -> Result<CommitDetail, GitErrorPayload> {
+pub async fn git_show(
+    path: String,
+    sha: String,
+    ignore_whitespace: Option<bool>,
+) -> Result<CommitDetail, GitErrorPayload> {
     tokio::task::spawn_blocking(move || {
         let fmt = format!("%H{US}%h{US}%an{US}%ae{US}%ad{US}%s{US}%b");
         let meta = git_out(
@@ -961,8 +1099,17 @@ pub async fn git_show(path: String, sha: String) -> Result<CommitDetail, GitErro
             ],
         )?;
         let p: Vec<&str> = meta.trim_end().split(US).collect();
-        // Diff only (empty --format suppresses the header).
-        let diff = git_out(&path, &["show", "--no-color", "--format=", &sha])?;
+        // Diff only (empty --format suppresses the header). `-m --first-parent`
+        // shows a merge as what it brought into its branch — the default is a
+        // combined `diff --cc`, which is empty for a clean merge and not a
+        // unified diff the viewer can read. No effect on ordinary commits.
+        // `-w`: `diffIgnoreWhitespace`. A commit is only ever read here.
+        let mut args = vec!["show", "--no-color", "--format=", "-m", "--first-parent"];
+        if ignore_whitespace.unwrap_or(false) {
+            args.push("-w");
+        }
+        args.push(&sha);
+        let diff = git_out(&path, &args)?;
         Ok(CommitDetail {
             hash: p.first().copied().unwrap_or("").to_string(),
             short_hash: p.get(1).copied().unwrap_or("").to_string(),
@@ -1000,11 +1147,30 @@ pub async fn git_inprogress(path: String) -> Result<InProgress, GitErrorPayload>
 
 // ── Streaming operations (`atlas:git:op`) ────────────────────────────────
 //
-// Long-running git commands (commit with hooks today; push/pull/clone with
-// progress in later phases) stream their output live so the UI can show a
-// busy state with real feedback instead of appearing hung. One event name,
-// discriminated by `phase`:
-//   started → output* → done{ok, error?}
+// Long-running git commands (commit, push, pull, fetch — and the hooks they
+// run) stream their output live so the UI can show a busy state with real
+// feedback instead of appearing hung. One event name, discriminated by
+// `phase`:
+//   started → (output | progress)* → done{ok, error?}
+//
+// Output is BATCHED. Every Tauri event is a `webview.eval` that runs on the
+// macOS main thread, and the webview then parses and runs a handler for it;
+// one event per line turned a pre-push hook's test run or a big pull's
+// per-file stat (thousands of lines) into thousands of main-thread hops and
+// store updates back to back, which froze the whole app. Lines collect here
+// and a flusher thread sends them every `OP_FLUSH_INTERVAL` as one `output`
+// event carrying `lines`, followed by the latest `progress` — the bar only
+// ever shows the newest one, so intermediate ones are dropped.
+
+/// How often buffered output goes to the frontend: ~12 events a second at
+/// most, whatever the child prints.
+const OP_FLUSH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(80);
+
+/// Lines kept per batch; older ones in the same batch are dropped. The output
+/// strip keeps 500 (`OP_LINES_CAP` in git-store.ts), so a batch past that
+/// could never be shown in full anyway, and this bounds the event's size when
+/// a hook floods.
+const OP_BATCH_MAX_LINES: usize = 500;
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1014,9 +1180,7 @@ struct GitOpEventPayload<'a> {
     kind: &'a str,
     phase: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    stream: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    line: Option<&'a str>,
+    lines: Option<&'a [OpLine]>,
     #[serde(skip_serializing_if = "Option::is_none")]
     ok: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1027,36 +1191,47 @@ struct GitOpEventPayload<'a> {
     title: Option<&'a str>,
 }
 
-/// Emits `atlas:git:op` events for one operation; also the `OpSink` handed
-/// to the streaming executor, so child output forwards line by line.
-pub(crate) struct OpEmitter {
+/// One line of child output in an `output` batch.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+struct OpLine {
+    stream: &'static str,
+    line: String,
+}
+
+/// What has arrived since the last flush.
+#[derive(Debug, Default)]
+struct OpBatch {
+    lines: std::collections::VecDeque<OpLine>,
+    /// Latest progress, as a percent and its step title.
+    progress: Option<(f32, String)>,
+}
+
+impl OpBatch {
+    fn push_line(&mut self, stream: &'static str, line: &str) {
+        if self.lines.len() == OP_BATCH_MAX_LINES {
+            self.lines.pop_front();
+        }
+        self.lines.push_back(OpLine {
+            stream,
+            line: line.to_string(),
+        });
+    }
+
+    fn take(&mut self) -> (Vec<OpLine>, Option<(f32, String)>) {
+        (self.lines.drain(..).collect(), self.progress.take())
+    }
+}
+
+struct OpEmitterInner {
     app: AppHandle,
     op_id: String,
     repo: String,
     kind: &'static str,
+    batch: std::sync::Mutex<OpBatch>,
 }
 
-impl OpEmitter {
-    pub(crate) fn new(app: AppHandle, op_id: String, repo: String, kind: &'static str) -> Self {
-        OpEmitter {
-            app,
-            op_id,
-            repo,
-            kind,
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn emit(
-        &self,
-        phase: &str,
-        stream: Option<&str>,
-        line: Option<&str>,
-        ok: Option<bool>,
-        error: Option<&GitErrorPayload>,
-        percent: Option<f32>,
-        title: Option<&str>,
-    ) {
+impl OpEmitterInner {
+    fn emit(&self, phase: &str, fields: GitOpFields<'_>) {
         let _ = self.app.emit(
             "atlas:git:op",
             GitOpEventPayload {
@@ -1064,39 +1239,154 @@ impl OpEmitter {
                 repo: &self.repo,
                 kind: self.kind,
                 phase,
-                stream,
-                line,
-                ok,
-                error,
-                percent,
-                title,
+                lines: fields.lines,
+                ok: fields.ok,
+                error: fields.error,
+                percent: fields.percent,
+                title: fields.title,
             },
         );
     }
 
+    /// Send what has collected: the lines as one event, then the newest
+    /// progress. Only the flusher thread and `done` (after stopping the
+    /// flusher) call this, so batches can never overtake each other.
+    fn flush(&self) {
+        let (lines, progress) = match self.batch.lock() {
+            Ok(mut batch) => batch.take(),
+            Err(_) => return,
+        };
+        if !lines.is_empty() {
+            self.emit(
+                "output",
+                GitOpFields {
+                    lines: Some(&lines),
+                    ..GitOpFields::default()
+                },
+            );
+        }
+        if let Some((percent, title)) = progress {
+            self.emit(
+                "progress",
+                GitOpFields {
+                    percent: Some(percent),
+                    title: Some(&title),
+                    ..GitOpFields::default()
+                },
+            );
+        }
+    }
+}
+
+#[derive(Default)]
+struct GitOpFields<'a> {
+    lines: Option<&'a [OpLine]>,
+    ok: Option<bool>,
+    error: Option<&'a GitErrorPayload>,
+    percent: Option<f32>,
+    title: Option<&'a str>,
+}
+
+/// Emits `atlas:git:op` events for one operation; also the `OpSink` handed
+/// to the streaming executor. Output is buffered and flushed on a timer from
+/// `started` until `done` (see the section note above).
+pub(crate) struct OpEmitter {
+    inner: std::sync::Arc<OpEmitterInner>,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    flusher: std::sync::Mutex<Option<std::thread::JoinHandle<()>>>,
+    /// `started` was sent and `done` not yet: see `Drop`.
+    open: std::sync::atomic::AtomicBool,
+}
+
+impl OpEmitter {
+    pub(crate) fn new(app: AppHandle, op_id: String, repo: String, kind: &'static str) -> Self {
+        OpEmitter {
+            inner: std::sync::Arc::new(OpEmitterInner {
+                app,
+                op_id,
+                repo,
+                kind,
+                batch: std::sync::Mutex::new(OpBatch::default()),
+            }),
+            stop: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            flusher: std::sync::Mutex::new(None),
+            open: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
     pub(crate) fn started(&self) {
-        self.emit("started", None, None, None, None, None, None);
+        self.open.store(true, std::sync::atomic::Ordering::Release);
+        self.inner.emit("started", GitOpFields::default());
+        let inner = self.inner.clone();
+        let stop = self.stop.clone();
+        let handle = std::thread::Builder::new()
+            .name("git-op-flush".into())
+            .spawn(move || {
+                while !stop.load(std::sync::atomic::Ordering::Acquire) {
+                    std::thread::park_timeout(OP_FLUSH_INTERVAL);
+                    if stop.load(std::sync::atomic::Ordering::Acquire) {
+                        break;
+                    }
+                    inner.flush();
+                }
+            })
+            .ok();
+        if let Ok(mut slot) = self.flusher.lock() {
+            *slot = handle;
+        }
+    }
+
+    /// Stop the flusher (waking it rather than waiting out its sleep) and
+    /// join it, so nothing it sends can land after what follows.
+    fn stop_flusher(&self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Release);
+        let handle = self.flusher.lock().ok().and_then(|mut slot| slot.take());
+        if let Some(handle) = handle {
+            handle.thread().unpark();
+            let _ = handle.join();
+        }
     }
 
     pub(crate) fn done(&self, error: Option<&GitErrorPayload>) {
-        self.emit("done", None, None, Some(error.is_none()), error, None, None);
+        self.open.store(false, std::sync::atomic::Ordering::Release);
+        self.stop_flusher();
+        // Whatever arrived since the last tick goes out before `done`, so the
+        // strip holds git's last words when the operation fails.
+        self.inner.flush();
+        self.inner.emit(
+            "done",
+            GitOpFields {
+                ok: Some(error.is_none()),
+                error,
+                ..GitOpFields::default()
+            },
+        );
     }
 
     pub(crate) fn progress(&self, fraction: f32, title: &str) {
-        self.emit(
-            "progress",
-            None,
-            None,
-            None,
-            None,
-            Some(fraction * 100.0),
-            Some(title),
-        );
+        if let Ok(mut batch) = self.inner.batch.lock() {
+            batch.progress = Some((fraction * 100.0, title.to_string()));
+        }
+    }
+}
+
+impl Drop for OpEmitter {
+    /// A path that returns without `done` must not leave the thread running,
+    /// nor the UI waiting: an `?` early return or a panic unwinding through
+    /// the operation still ends it, as a failure, instead of leaving the
+    /// commit button spinning until the app is restarted.
+    fn drop(&mut self) {
+        if self.open.load(std::sync::atomic::Ordering::Acquire) {
+            let error = GitErrorPayload::internal("The git operation ended unexpectedly.");
+            self.done(Some(&error));
+        } else {
+            self.stop_flusher();
+        }
     }
 }
 
 /// Sink that forwards output lines AND feeds them through a weighted
-/// progress parser, emitting `progress` phases as percent advances.
+/// progress parser, recording `progress` as percent advances.
 struct ProgressSink<'a> {
     emitter: &'a OpEmitter,
     parser: std::sync::Mutex<atlas_git::progress::ProgressParser>,
@@ -1119,7 +1409,9 @@ impl atlas_git::OpSink for OpEmitter {
             atlas_git::Stream::Stdout => "stdout",
             atlas_git::Stream::Stderr => "stderr",
         };
-        self.emit("output", Some(name), Some(line), None, None, None, None);
+        if let Ok(mut batch) = self.inner.batch.lock() {
+            batch.push_line(name, line);
+        }
     }
 }
 
@@ -1185,8 +1477,8 @@ fn commit_hooks_present(path: &str) -> bool {
 /// their stdout/stderr streams to the UI instead of being swallowed.
 ///
 /// `co_authors` ("Name <email>" strings) are merged as `Co-authored-by`
-/// trailers via `git interpret-trailers`, matching GitHub Desktop's
-/// attribution format. Amending with an EMPTY summary keeps the original
+/// trailers via `git interpret-trailers`, in the
+/// conventional attribution format. Amending with an EMPTY summary keeps the original
 /// message (`--amend --no-edit`) — previously amend always demanded a new
 /// one.
 #[tauri::command]
@@ -1603,6 +1895,50 @@ mod tests {
     // ── push ──────────────────────────────────────────────────────────────
 
     #[test]
+    fn op_batch_keeps_lines_in_order_and_only_the_latest_progress() {
+        let mut batch = OpBatch::default();
+        batch.push_line("stderr", "Counting objects: 50%");
+        batch.progress = Some((10.0, "Counting objects".into()));
+        batch.push_line("stdout", "done");
+        batch.progress = Some((30.0, "Compressing objects".into()));
+
+        let (lines, progress) = batch.take();
+        assert_eq!(
+            lines,
+            [
+                OpLine {
+                    stream: "stderr",
+                    line: "Counting objects: 50%".into()
+                },
+                OpLine {
+                    stream: "stdout",
+                    line: "done".into()
+                },
+            ]
+        );
+        assert_eq!(progress, Some((30.0, "Compressing objects".into())));
+
+        // Taking empties it: the next tick sends nothing.
+        let (lines, progress) = batch.take();
+        assert!(lines.is_empty() && progress.is_none());
+    }
+
+    #[test]
+    fn op_batch_drops_its_oldest_lines_past_the_cap() {
+        let mut batch = OpBatch::default();
+        for i in 0..OP_BATCH_MAX_LINES + 25 {
+            batch.push_line("stdout", &format!("line {i}"));
+        }
+        let (lines, _) = batch.take();
+        assert_eq!(lines.len(), OP_BATCH_MAX_LINES);
+        assert_eq!(lines[0].line, "line 25");
+        assert_eq!(
+            lines.last().unwrap().line,
+            format!("line {}", OP_BATCH_MAX_LINES + 24)
+        );
+    }
+
+    #[test]
     fn push_args_map_each_option_to_its_flag() {
         assert_eq!(push_args(false, false, None), ["push", "--progress"]);
         assert_eq!(
@@ -1611,6 +1947,7 @@ mod tests {
                 "push",
                 "--progress",
                 "--force-with-lease",
+                "--force-if-includes",
                 "--follow-tags",
                 "upstream"
             ]
@@ -1676,10 +2013,11 @@ mod tests {
     }
 
     /// The remote moved on: a plain push is rejected as non-fast-forward, a
-    /// lease against the stale remote-tracking ref is rejected as stale, and
-    /// the lease succeeds once the tracking ref has been fetched.
+    /// lease against the stale remote-tracking ref is rejected as stale, a
+    /// fetch alone does not make forcing safe, and forcing succeeds once
+    /// their commit has been part of this branch.
     #[test]
-    fn a_diverged_push_is_rejected_until_forced_with_a_fresh_lease() {
+    fn a_diverged_push_is_forced_only_over_commits_this_branch_has_seen() {
         let dir = Scratch::new();
         let (repo, remote) = published(&dir.0);
 
@@ -1708,8 +2046,193 @@ mod tests {
             "a stale lease must not overwrite"
         );
 
+        // Fetched but never integrated — what background auto-fetch leaves
+        // behind. The lease alone would now pass; `--force-if-includes` holds.
         repo.git(&["fetch", "-q", "origin"]);
+        let err = hermetic(&repo.path, &push_args(true, false, None)).unwrap_err();
+        assert_eq!(
+            err.code,
+            GitErrorCode::ForcePushRejected,
+            "{}",
+            err.raw_stderr
+        );
+        assert_eq!(
+            remote_main(&remote),
+            theirs,
+            "an unseen fetch must not overwrite"
+        );
+
+        // Once their commit has been part of this branch, forcing is a choice.
+        repo.git(&["merge", "-q", "-X", "ours", "origin/main", "-m", "merge"]);
+        repo.git(&["reset", "-q", "--hard", &ours]);
         hermetic(&repo.path, &push_args(true, false, None)).unwrap();
         assert_eq!(remote_main(&remote), ours);
+    }
+
+    // ── pull ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn pull_args_map_each_strategy_to_its_flag() {
+        assert_eq!(
+            pull_args(PullStrategy::Default, None),
+            ["pull", "--progress"]
+        );
+        assert_eq!(
+            pull_args(PullStrategy::Rebase, None),
+            ["pull", "--progress", "--rebase"]
+        );
+        assert_eq!(
+            pull_args(PullStrategy::Merge, Some("upstream")),
+            ["pull", "--progress", "--no-rebase", "upstream"]
+        );
+    }
+
+    #[test]
+    fn pull_preference_follows_gits_precedence() {
+        use PullPreference::*;
+        // (branch.<name>.rebase, pull.rebase, pull.ff) → what a plain pull does.
+        type Case<'a> = (
+            Option<&'a str>,
+            Option<&'a str>,
+            Option<&'a str>,
+            PullPreference,
+        );
+        let cases: &[Case] = &[
+            (None, None, None, Ask),
+            (None, Some("true"), None, Rebase),
+            (None, Some("merges"), None, Rebase),
+            (None, Some("interactive"), None, Rebase),
+            (None, Some("false"), None, Merge),
+            (None, Some("no"), None, Merge),
+            (Some("true"), Some("false"), None, Rebase),
+            (Some("false"), Some("true"), None, Merge),
+            (None, None, Some("true"), Merge),
+            (None, None, Some("false"), Merge),
+            (None, None, Some("only"), Ask),
+            (None, Some("true"), Some("only"), Ask),
+            (Some("true"), None, Some("only"), Ask),
+        ];
+        for &(branch, pull, ff, want) in cases {
+            assert_eq!(
+                resolve_pull_preference(branch, pull, ff),
+                want,
+                "branch.rebase={branch:?} pull.rebase={pull:?} pull.ff={ff:?}"
+            );
+        }
+    }
+
+    /// `repo` and the remote each gain a commit on `main` (different files,
+    /// so reconciling never conflicts). Returns the remote's new commit.
+    fn diverged(dir: &Path) -> (Repo, String) {
+        let (repo, remote) = published(dir);
+        let other = Repo::init(&dir.join("other"));
+        other.git(&["remote", "add", "origin", &remote]);
+        other.git(&["fetch", "-q", "origin"]);
+        other.git(&["reset", "-q", "--hard", "origin/main"]);
+        let theirs = other.commit("theirs.txt", "theirs\n", "theirs");
+        other.git(&["push", "-q", "origin", "HEAD:main"]);
+        repo.commit("ours.txt", "ours\n", "ours");
+        (repo, theirs)
+    }
+
+    /// A push after amending a pushed commit is `HistoryRewritten`; a push
+    /// behind someone else's new commit stays `NonFastForward`; and the
+    /// force-push the first one offers then goes through.
+    #[test]
+    fn a_rejected_push_tells_a_rewrite_from_new_remote_work() {
+        let dir = Scratch::new();
+        let (repo, _) = published(&dir.0);
+        repo.commit("b.txt", "b\n", "second");
+        repo.git(&["push", "-q"]);
+        repo.git(&["commit", "-q", "--amend", "-m", "second, reworded"]);
+        let push = |repo: &Repo, force| {
+            hermetic(&repo.path, &push_args(force, false, None))
+                .map_err(|e| explain_rejection(&repo.path, e, HERMETIC_ENV))
+        };
+        let rewritten = push(&repo, false).unwrap_err();
+        assert_eq!(
+            rewritten.code,
+            GitErrorCode::HistoryRewritten,
+            "{}",
+            rewritten.raw_stderr
+        );
+        push(&repo, true).expect("force-with-lease after a rewrite");
+
+        let dir = Scratch::new();
+        let (repo, _) = diverged(&dir.0);
+        repo.git(&["fetch", "-q"]);
+        assert_eq!(
+            push(&repo, false).unwrap_err().code,
+            GitErrorCode::NonFastForward
+        );
+
+        // Not fetched: the remote's tip is unknown here ("fetch first").
+        let dir = Scratch::new();
+        let (repo, _) = diverged(&dir.0);
+        assert_eq!(
+            push(&repo, false).unwrap_err().code,
+            GitErrorCode::NonFastForward
+        );
+    }
+
+    fn contains(repo: &Repo, commit: &str) -> bool {
+        hermetic(&repo.path, &["merge-base", "--is-ancestor", commit, "HEAD"]).is_ok()
+    }
+
+    /// The preference Atlas reads agrees with what a plain pull then does:
+    /// `ask` exactly when git refuses, a strategy exactly when it reconciles.
+    #[test]
+    fn pull_preference_predicts_a_plain_pull() {
+        let configs: &[&[(&str, &str)]] = &[
+            &[],
+            &[("pull.rebase", "true")],
+            &[("pull.rebase", "false")],
+            &[("pull.ff", "only")],
+            &[("pull.ff", "only"), ("pull.rebase", "true")],
+            &[("pull.rebase", "false"), ("branch.main.rebase", "true")],
+        ];
+        for config in configs {
+            let dir = Scratch::new();
+            let (repo, _) = diverged(&dir.0);
+            for (k, v) in *config {
+                repo.git(&["config", k, v]);
+            }
+            let preference = pull_preference(&repo.path, HERMETIC_ENV);
+            let pulled = hermetic(&repo.path, &pull_args(PullStrategy::Default, None));
+            assert_eq!(
+                preference == PullPreference::Ask,
+                pulled.is_err(),
+                "{config:?}: preference {preference:?}, pull {:?}",
+                pulled.err().map(|e| e.raw_stderr)
+            );
+        }
+    }
+
+    /// Both of git's wordings — no `pull.rebase` set, and `pull.ff=only` —
+    /// classify as `DivergentBranches`, and both strategies then succeed.
+    #[test]
+    fn a_diverged_pull_needs_a_strategy_and_either_one_reconciles() {
+        for ff_only in [false, true] {
+            for strategy in [PullStrategy::Rebase, PullStrategy::Merge] {
+                let dir = Scratch::new();
+                let (repo, theirs) = diverged(&dir.0);
+                if ff_only {
+                    repo.git(&["config", "pull.ff", "only"]);
+                }
+
+                let err =
+                    hermetic(&repo.path, &pull_args(PullStrategy::Default, None)).unwrap_err();
+                assert_eq!(
+                    err.code,
+                    GitErrorCode::DivergentBranches,
+                    "ff_only={ff_only}: {}",
+                    err.raw_stderr
+                );
+
+                hermetic(&repo.path, &pull_args(strategy, None))
+                    .unwrap_or_else(|e| panic!("{strategy:?} ff_only={ff_only}: {}", e.raw_stderr));
+                assert!(contains(&repo, &theirs), "{strategy:?} ff_only={ff_only}");
+            }
+        }
     }
 }

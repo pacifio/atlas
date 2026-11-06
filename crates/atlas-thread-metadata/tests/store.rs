@@ -9,8 +9,8 @@ use std::path::PathBuf;
 
 use agent_client_protocol::schema::v1 as acp;
 use atlas_thread_metadata::{
-    LiveThreadUpdate, PathList, ThreadFilter, ThreadId, ThreadMetadata, ThreadMetadataStore,
-    ThreadStoreEvent, WorktreePaths,
+    LiveThreadUpdate, PathList, ThreadId, ThreadMetadata, ThreadMetadataStore, ThreadStoreEvent,
+    WorktreePaths,
 };
 use chrono::{TimeZone, Utc};
 
@@ -238,27 +238,7 @@ fn a_thread_in_a_linked_worktree_is_findable_under_its_main_project() {
 }
 
 #[test]
-fn archiving_takes_a_thread_out_of_the_project_list_but_keeps_it_in_history() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = open(&dir);
-    let saved = thread("atlas-agent", &["/tmp/atlas"]);
-    store.save_one(saved.clone());
-    let atlas = PathList::new(&[PathBuf::from("/tmp/atlas")]);
-
-    store.archive(saved.thread_id);
-    store.flush().unwrap();
-    assert!(store.threads_for_path(&atlas).is_empty());
-    assert_eq!(store.history(ThreadFilter::ArchivedOnly).len(), 1);
-    assert_eq!(store.threads().len(), 1, "history keeps it");
-
-    store.unarchive(saved.thread_id);
-    store.flush().unwrap();
-    assert_eq!(store.threads_for_path(&atlas).len(), 1);
-    assert!(store.history(ThreadFilter::ArchivedOnly).is_empty());
-}
-
-#[test]
-fn a_thread_with_no_project_is_archived_so_it_is_never_lost() {
+fn a_thread_with_no_project_is_kept_in_history_and_listed_under_none() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir);
     let orphan = ThreadId::new();
@@ -273,51 +253,41 @@ fn a_thread_with_no_project_is_archived_so_it_is_never_lost() {
     });
     store.flush().unwrap();
 
+    assert_eq!(store.history().len(), 1, "the history view still shows it");
     assert!(
-        store.thread(orphan).unwrap().archived,
-        "it belongs to no project, so only the history view could ever show it"
+        store.projects().is_empty(),
+        "it belongs to no project, so no project lists it"
     );
 }
 
 #[test]
-fn a_live_update_never_re_archives_a_thread_the_user_unarchived() {
+fn a_live_update_keeps_the_sessions_lifecycle() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir);
-    let saved = thread("atlas-agent", &["/tmp/atlas"]);
+    let mut saved = thread("atlas-agent", &["/tmp/atlas"]);
+    let at = Utc.with_ymd_and_hms(2026, 10, 20, 9, 0, 0).unwrap();
+    saved.settled_at = Some(at);
+    saved.pinned_at = Some(at);
+    saved.pin_order = Some("m".into());
+    saved.snoozed_until = Some(at + chrono::Duration::days(30));
+    saved.snoozed_at = Some(at);
+    saved.last_snooze_wake_at = Some(at);
+    saved.last_viewed_at = Some(at);
+    saved.last_turn_completed_at = Some(at);
     store.save_one(saved.clone());
-    store.archive(saved.thread_id);
-    store.unarchive(saved.thread_id);
 
     store.record_live_update(live(&saved, Some("Still here")));
     store.flush().unwrap();
 
-    assert!(!store.thread(saved.thread_id).unwrap().archived);
-}
-
-#[test]
-fn a_live_update_keeps_the_paths_an_archived_thread_was_archived_with() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = open(&dir);
-    let saved = thread("atlas-agent", &["/tmp/atlas"]);
-    store.save_one(saved.clone());
-    store.archive(saved.thread_id);
-
-    // The project no longer has the worktree — an update carrying no paths
-    // must not erase the record of where the thread lived.
-    store.record_live_update(LiveThreadUpdate {
-        worktree_paths: WorktreePaths::default(),
-        ..live(&saved, Some("Archived"))
-    });
-    store.flush().unwrap();
-
-    assert_eq!(
-        store
-            .thread(saved.thread_id)
-            .unwrap()
-            .folder_paths()
-            .paths(),
-        &[PathBuf::from("/tmp/atlas")]
-    );
+    let after = open(&dir).thread(saved.thread_id).unwrap();
+    assert_eq!(after.settled_at, saved.settled_at);
+    assert_eq!(after.pinned_at, saved.pinned_at);
+    assert_eq!(after.pin_order, saved.pin_order);
+    assert_eq!(after.snoozed_until, saved.snoozed_until);
+    assert_eq!(after.snoozed_at, saved.snoozed_at);
+    assert_eq!(after.last_snooze_wake_at, saved.last_snooze_wake_at);
+    assert_eq!(after.last_viewed_at, saved.last_viewed_at);
+    assert_eq!(after.last_turn_completed_at, saved.last_turn_completed_at);
 }
 
 #[test]
@@ -442,18 +412,18 @@ fn every_mutation_announces_itself_so_the_sidebar_can_refresh() {
     store.save_one(saved.clone());
     assert_eq!(changes.try_recv().unwrap(), ThreadStoreEvent::Changed);
 
-    store.archive(saved.thread_id);
-    assert_eq!(
-        changes.try_recv().unwrap(),
-        ThreadStoreEvent::ThreadArchived(saved.thread_id)
-    );
+    store.pin(saved.thread_id, Some("m".into()));
     assert_eq!(changes.try_recv().unwrap(), ThreadStoreEvent::Changed);
+
+    // A no-op mutation is not a change.
+    store.pin(saved.thread_id, Some("n".into()));
+    assert!(changes.try_recv().is_err());
 
     store.delete(saved.thread_id);
     assert_eq!(changes.try_recv().unwrap(), ThreadStoreEvent::Changed);
 
-    // A no-op mutation is not a change.
-    store.unarchive(saved.thread_id);
+    // Nor is a mutation of a row that no longer exists.
+    store.unpin(saved.thread_id);
     assert!(changes.try_recv().is_err());
 }
 
@@ -530,7 +500,7 @@ fn the_history_view_orders_by_when_a_thread_started() {
 
     assert_eq!(
         store
-            .history(ThreadFilter::All)
+            .history()
             .into_iter()
             .map(|t| t.thread_id)
             .collect::<Vec<_>>(),
@@ -582,13 +552,13 @@ fn interacted_at_records_the_users_last_send_without_moving_created_at() {
 }
 
 #[test]
-fn a_project_that_gains_a_worktree_moves_its_threads_but_not_its_archived_ones() {
+fn a_project_that_gains_a_worktree_moves_its_threads_settled_ones_included() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir);
     let active = thread("atlas-agent", &["/tmp/atlas"]);
     let shelved = thread("atlas-agent", &["/tmp/atlas"]);
     store.save_all(vec![active.clone(), shelved.clone()]);
-    store.archive(shelved.thread_id);
+    store.settle(shelved.thread_id);
 
     let widened = WorktreePaths::from_folder_paths(&PathList::new(&[
         PathBuf::from("/tmp/atlas"),
@@ -603,47 +573,9 @@ fn a_project_that_gains_a_worktree_moves_its_threads_but_not_its_archived_ones()
         widened
     );
     assert_eq!(
-        reopened
-            .thread(shelved.thread_id)
-            .unwrap()
-            .folder_paths()
-            .paths(),
-        &[PathBuf::from("/tmp/atlas")],
-        "an archived thread keeps the paths it was archived with"
-    );
-    assert_eq!(
-        reopened
-            .threads_for_path(&PathList::new(&[
-                PathBuf::from("/tmp/atlas"),
-                PathBuf::from("/tmp/atlas-docs"),
-            ]))
-            .len(),
-        1,
-        "and the moved thread is findable under its new project"
-    );
-}
-
-#[test]
-fn working_directories_are_not_rewritten_under_an_archived_thread() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = open(&dir);
-    let shelved = thread("atlas-agent", &["/tmp/atlas"]);
-    store.save_one(shelved.clone());
-    store.archive(shelved.thread_id);
-
-    store.update_working_directories(
-        shelved.thread_id,
-        PathList::new(&[PathBuf::from("/tmp/somewhere-else")]),
-    );
-    store.flush().unwrap();
-
-    assert_eq!(
-        store
-            .thread(shelved.thread_id)
-            .unwrap()
-            .folder_paths()
-            .paths(),
-        &[PathBuf::from("/tmp/atlas")]
+        reopened.thread(shelved.thread_id).unwrap().worktree_paths,
+        widened,
+        "a settled session is still listed under its project, so it moves too"
     );
 }
 
@@ -654,14 +586,9 @@ fn clearing_the_history_view_deletes_every_thread_it_showed() {
     let one = thread("atlas-agent", &["/tmp/atlas"]);
     let two = thread("claude-code", &["/tmp/other"]);
     store.save_all(vec![one, two.clone()]);
-    store.archive(two.thread_id);
+    store.settle(two.thread_id);
 
-    store.delete_all(
-        store
-            .history(ThreadFilter::All)
-            .into_iter()
-            .map(|t| t.thread_id),
-    );
+    store.delete_all(store.history().into_iter().map(|t| t.thread_id));
     store.flush().unwrap();
 
     assert!(open(&dir).threads().is_empty());
@@ -683,14 +610,17 @@ fn the_sidebar_sees_every_project_at_once_newest_first() {
         updated_at: Utc.with_ymd_and_hms(2026, 8, 22, 0, 0, 0).unwrap(),
         ..thread("claude-code", &["/tmp/atlas"])
     };
-    let shelved = thread("atlas-agent", &["/tmp/atlas"]);
+    let shelved = ThreadMetadata {
+        updated_at: Utc.with_ymd_and_hms(2026, 7, 1, 0, 0, 0).unwrap(),
+        settled_at: Some(Utc.with_ymd_and_hms(2026, 7, 1, 0, 0, 0).unwrap()),
+        ..thread("atlas-agent", &["/tmp/atlas"])
+    };
     store.save_all(vec![
         older_project,
         this_project_old.clone(),
         this_project_new.clone(),
         shelved.clone(),
     ]);
-    store.archive(shelved.thread_id);
     store.flush().unwrap();
 
     let projects = store.projects();
@@ -707,8 +637,12 @@ fn the_sidebar_sees_every_project_at_once_newest_first() {
             .iter()
             .map(|t| t.thread_id)
             .collect::<Vec<_>>(),
-        vec![this_project_new.thread_id, this_project_old.thread_id],
-        "and its threads are newest first, with the archived one absent"
+        vec![
+            this_project_new.thread_id,
+            this_project_old.thread_id,
+            shelved.thread_id
+        ],
+        "and its threads are newest first, the settled one included"
     );
     assert_eq!(projects[1].paths.paths(), &[PathBuf::from("/tmp/other")]);
 }
@@ -751,5 +685,177 @@ fn the_chat_you_are_looking_at_is_not_also_listed_beneath_itself() {
             .collect::<Vec<_>>(),
         vec![sent.thread_id],
         "a draft is the open tab, not a history row"
+    );
+}
+
+/// A conversation still open in Atlas whose row was deleted comes back on its
+/// next message — and with it, the session stops counting as deleted, durably.
+#[test]
+fn a_live_update_for_a_deleted_session_undeletes_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let saved = thread("some-agent", &["/tmp/atlas"]);
+    let session = saved.session_id.clone().unwrap();
+    {
+        let store = open(&dir);
+        store.save_one(saved.clone());
+        store.delete(saved.thread_id);
+        assert!(store.is_session_deleted(&session));
+
+        store.record_live_update(live(&saved, Some("Carried on")));
+        assert!(!store.is_session_deleted(&session));
+        store.flush().unwrap();
+    }
+    let store = open(&dir);
+    assert!(!store.is_session_deleted(&session));
+    assert!(store.thread(saved.thread_id).is_some());
+}
+
+/// The review finding: `touch_sessions` copied a row under a read lock and
+/// wrote the copy back, so a delete landing in between was undone — on disk
+/// too, since the queue keeps the last write. Racing the two many times must
+/// never leave a row behind, in memory or after a reopen.
+#[test]
+fn a_touch_racing_a_delete_never_resurrects_the_row() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let mut ids = Vec::new();
+    for _ in 0..2000 {
+        let row = thread("some-agent", &["/tmp/atlas"]);
+        ids.push((row.thread_id, row.session_id.clone().unwrap()));
+        store.save_one(row);
+    }
+
+    let start = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let toucher = {
+        let (store, start, done) = (store.clone(), start.clone(), done.clone());
+        let sessions: Vec<_> = ids.iter().map(|(_, s)| s.clone()).collect();
+        std::thread::spawn(move || {
+            start.wait();
+            let mut round = 0;
+            while !done.load(std::sync::atomic::Ordering::Acquire) {
+                round += 1;
+                let at = Utc::now() + chrono::Duration::seconds(round);
+                // Back to front, so it meets the deleter mid-list.
+                for s in sessions.iter().rev() {
+                    store.touch_sessions(&[(s.clone(), at)]);
+                }
+            }
+        })
+    };
+    start.wait();
+    for (thread_id, _) in &ids {
+        store.delete(*thread_id);
+    }
+    done.store(true, std::sync::atomic::Ordering::Release);
+    toucher.join().unwrap();
+    store.flush().unwrap();
+
+    assert!(store.threads().is_empty(), "no deleted row came back");
+    drop(store);
+    assert!(open(&dir).threads().is_empty(), "nor on disk");
+}
+
+/// Same race against a rename: a touch must never write back the name the
+/// row had before.
+#[test]
+fn a_touch_never_undoes_a_concurrent_rename() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let row = thread("some-agent", &["/tmp/atlas"]);
+    let (thread_id, session) = (row.thread_id, row.session_id.clone().unwrap());
+    store.save_one(row);
+
+    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let toucher = {
+        let (store, done) = (store.clone(), done.clone());
+        std::thread::spawn(move || {
+            let mut round = 0;
+            while !done.load(std::sync::atomic::Ordering::Acquire) {
+                round += 1;
+                let at = Utc::now() + chrono::Duration::seconds(round);
+                store.touch_sessions(&[(session.clone(), at)]);
+            }
+        })
+    };
+    for n in 0..5000 {
+        let name = format!("Mine {n}");
+        store.set_title_override(thread_id, name.as_str());
+        assert_eq!(
+            store.thread(thread_id).unwrap().title_override.as_deref(),
+            Some(name.as_str()),
+            "a touch wrote back an older name"
+        );
+    }
+    done.store(true, std::sync::atomic::Ordering::Release);
+    toucher.join().unwrap();
+}
+
+#[test]
+fn a_recorded_branch_survives_a_reopen_and_later_live_updates() {
+    let dir = tempfile::tempdir().unwrap();
+    let saved = thread("atlas-agent", &["/tmp/atlas"]);
+    {
+        let store = open(&dir);
+        store.save_one(saved.clone());
+        assert_eq!(
+            store.thread(saved.thread_id).unwrap().branch,
+            None,
+            "a new thread's branch is unknown until the host reads it"
+        );
+        let mut changes = store.subscribe();
+
+        store.update_branch(saved.thread_id, Some("discount-codes".into()));
+        assert_eq!(changes.try_recv().unwrap(), ThreadStoreEvent::Changed);
+
+        // The same branch again is not a change.
+        store.update_branch(saved.thread_id, Some("discount-codes".into()));
+        assert!(changes.try_recv().is_err());
+
+        // A conversation event does not own the branch and must not drop it.
+        store.record_live_update(live(&saved, Some("Discount codes")));
+        store.flush().unwrap();
+    }
+
+    let store = open(&dir);
+    assert_eq!(
+        store.thread(saved.thread_id).unwrap().branch.as_deref(),
+        Some("discount-codes")
+    );
+
+    // Clearing goes back to unknown, durably; an empty name is not a name.
+    store.update_branch(saved.thread_id, Some("  ".into()));
+    store.flush().unwrap();
+    drop(store);
+    let store = open(&dir);
+    assert_eq!(store.thread(saved.thread_id).unwrap().branch, None);
+}
+
+#[test]
+fn a_recorded_model_survives_a_reopen_and_later_live_updates() {
+    let dir = tempfile::tempdir().unwrap();
+    let saved = thread("atlas-agent", &["/tmp/atlas"]);
+    {
+        let store = open(&dir);
+        store.save_one(saved.clone());
+        assert_eq!(store.thread(saved.thread_id).unwrap().model, None);
+        let mut changes = store.subscribe();
+
+        store.update_model(saved.thread_id, Some("Claude Sonnet 4.5".into()));
+        assert_eq!(changes.try_recv().unwrap(), ThreadStoreEvent::Changed);
+
+        // The same model again is not a change.
+        store.update_model(saved.thread_id, Some("Claude Sonnet 4.5".into()));
+        assert!(changes.try_recv().is_err());
+
+        // A conversation event does not own the model and must not drop it.
+        store.record_live_update(live(&saved, Some("Discount codes")));
+        store.flush().unwrap();
+    }
+
+    let store = open(&dir);
+    assert_eq!(
+        store.thread(saved.thread_id).unwrap().model.as_deref(),
+        Some("Claude Sonnet 4.5")
     );
 }

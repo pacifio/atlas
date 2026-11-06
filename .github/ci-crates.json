@@ -53,14 +53,12 @@
     "clippy": true
   },
   {
-    "crate": "atlas-codeindex"
-  },
-  {
     "crate": "atlas-comms",
     "clippy": true
   },
   {
-    "crate": "atlas-embed"
+    "crate": "atlas-embed",
+    "clippy": true
   },
   {
     "crate": "atlas-git",
@@ -97,6 +95,22 @@
     "crate": "atlas-redact",
     "clippy": true,
     "cross": true
+  },
+  {
+    "crate": "atlas-remote-control",
+    "clippy": true
+  },
+  {
+    "crate": "atlas-retrieval",
+    "clippy": true
+  },
+  {
+    "crate": "atlas-security",
+    "clippy": true
+  },
+  {
+    "crate": "atlas-search",
+    "clippy": true
   },
   {
     "crate": "atlas-terminal",

@@ -1,0 +1,13 @@
+id = "log-auth-header"
+kind = "synthetic"
+vulnerable = true
+class = "secrets"
+severity = 2
+title = "Debug logging for API client"
+diff = '''
+--- a/crates/atlas-gateway/src/client.rs
++++ b/crates/atlas-gateway/src/client.rs
+@@ -1,1 +1,2 @@
++    log::info!("sending request {} headers={:?}", req.url(), req.headers());
+     let resp = self.http.execute(req).await?;
+'''

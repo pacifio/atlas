@@ -1,0 +1,126 @@
+[
+ {
+  "sessionUpdate": "tool_call",
+  "toolCallId": "call_22564ee9d6a4464aabb81dc5",
+  "title": "task",
+  "kind": "think",
+  "status": "pending",
+  "locations": [],
+  "rawInput": {}
+ },
+ {
+  "sessionUpdate": "tool_call_update",
+  "toolCallId": "call_22564ee9d6a4464aabb81dc5",
+  "status": "in_progress",
+  "kind": "think",
+  "title": "counter",
+  "locations": [],
+  "rawInput": {
+   "description": "counter",
+   "prompt": "Count the files in the working directory /private/tmp/acpwork (top-level entries only, or use your judgment \u2014 report the count of files, not directories). Use the Bash tool with `ls -p` or similar. Report back only: the exact number of files found.",
+   "subagent_type": "general"
+  }
+ },
+ {
+  "sessionUpdate": "tool_call_update",
+  "toolCallId": "call_22564ee9d6a4464aabb81dc5",
+  "status": "in_progress",
+  "kind": "think",
+  "title": "counter",
+  "locations": [],
+  "rawInput": {
+   "description": "counter",
+   "prompt": "Count the files in the working directory /private/tmp/acpwork (top-level entries only, or use your judgment \u2014 report the count of files, not directories). Use the Bash tool with `ls -p` or similar. Report back only: the exact number of files found.",
+   "subagent_type": "general"
+  }
+ },
+ {
+  "sessionUpdate": "tool_call",
+  "toolCallId": "call_85ff91333071452f8849f349",
+  "title": "task",
+  "kind": "think",
+  "status": "pending",
+  "locations": [],
+  "rawInput": {}
+ },
+ {
+  "sessionUpdate": "tool_call_update",
+  "toolCallId": "call_85ff91333071452f8849f349",
+  "status": "in_progress",
+  "kind": "think",
+  "title": "greeter",
+  "locations": [],
+  "rawInput": {
+   "description": "greeter",
+   "prompt": "Write a one-line greeting (e.g. using the Bash tool to echo it, or simply compose it). Report back exactly one line of greeting text and nothing else.",
+   "subagent_type": "general"
+  }
+ },
+ {
+  "sessionUpdate": "tool_call_update",
+  "toolCallId": "call_85ff91333071452f8849f349",
+  "status": "in_progress",
+  "kind": "think",
+  "title": "greeter",
+  "locations": [],
+  "rawInput": {
+   "description": "greeter",
+   "prompt": "Write a one-line greeting (e.g. using the Bash tool to echo it, or simply compose it). Report back exactly one line of greeting text and nothing else.",
+   "subagent_type": "general"
+  }
+ },
+ {
+  "sessionUpdate": "tool_call_update",
+  "toolCallId": "call_85ff91333071452f8849f349",
+  "status": "completed",
+  "title": "greeter",
+  "content": [
+   {
+    "type": "content",
+    "content": {
+     "type": "text",
+     "text": "<task id=\"ses_ebb6e78f3ffeOAI5xx1MLJtYoe\" state=\"completed\">\n<task_result>\nHello! Hope you're having a great day.\n</task_result>\n</task>"
+    }
+   }
+  ],
+  "rawOutput": {
+   "output": "<task id=\"ses_ebb6e78f3ffeOAI5xx1MLJtYoe\" state=\"completed\">\n<task_result>\nHello! Hope you're having a great day.\n</task_result>\n</task>",
+   "metadata": {
+    "parentSessionId": "ses_ebb6e9b84ffe85bazRuB52IznI",
+    "sessionId": "ses_ebb6e78f3ffeOAI5xx1MLJtYoe",
+    "model": {
+     "modelID": "big-pickle",
+     "providerID": "opencode"
+    },
+    "truncated": false
+   }
+  }
+ },
+ {
+  "sessionUpdate": "tool_call_update",
+  "toolCallId": "call_22564ee9d6a4464aabb81dc5",
+  "status": "completed",
+  "title": "counter",
+  "content": [
+   {
+    "type": "content",
+    "content": {
+     "type": "text",
+     "text": "<task id=\"ses_ebb6e7bf4ffelS1rl5oQ4Ll9Ke\" state=\"completed\">\n<task_result>\n2\n</task_result>\n</task>"
+    }
+   }
+  ],
+  "rawOutput": {
+   "output": "<task id=\"ses_ebb6e7bf4ffelS1rl5oQ4Ll9Ke\" state=\"completed\">\n<task_result>\n2\n</task_result>\n</task>",
+   "metadata": {
+    "parentSessionId": "ses_ebb6e9b84ffe85bazRuB52IznI",
+    "sessionId": "ses_ebb6e7bf4ffelS1rl5oQ4Ll9Ke",
+    "model": {
+     "modelID": "big-pickle",
+     "providerID": "opencode"
+    },
+    "truncated": false
+   }
+  }
+ }
+]

@@ -9,21 +9,30 @@
  * the same scope share a chord (first wins — allowed, but flagged as a
  * conflict in the editor).
  *
- * NOT in the registry (fixed, not user-rebindable): the CodeMirror keymap
- * (`editor-panel.tsx`), Tiptap's editing shortcuts, xterm's copy/paste handler,
- * the terminal readline keys (`terminal-keymap.ts`), the native menu bar
- * (`src-tauri/src/menu.rs`), arrow-key navigation inside palettes/lists, and
- * the Escape-to-close handlers.
+ * NOT in the registry (fixed, not user-rebindable): the file view editor's
+ * own keymap (undo, indent, find next…; `@pierre/diffs`), Tiptap's editing
+ * shortcuts, xterm's copy/paste handler,
+ * the terminal readline keys (`terminal-keymap.ts`), the native menu bar's
+ * AppKit items (Copy, Paste, Hide, Quit…), arrow-key navigation inside
+ * palettes/lists, and the Escape-to-close handlers.
+ *
+ * The menu bar's other items ARE these actions (`src-tauri/menu.json`): they
+ * run through `runAction` and show the chord bound here, so renaming an id
+ * used there fails `tests/menu-model.test.ts`.
  */
 
 export type When =
   | "global"
   | "terminalFocus"
   | "chatFocus"
+  | "editorFocus"
   | "knowledgePanel"
   | "knowledgeFocus"
   | "pdfFocus"
-  | "canvasFocus";
+  | "canvasFocus"
+  | "diffFocus"
+  | "pullRequestFocus"
+  | "modelPicker";
 
 export type ActionCategory =
   | "Project"
@@ -32,11 +41,13 @@ export type ActionCategory =
   | "Tabs"
   | "Splits"
   | "View"
-  | "Chat"
+  | "Session"
+  | "File"
   | "Terminal"
   | "Knowledge"
   | "PDF"
-  | "Canvas";
+  | "Canvas"
+  | "Review";
 
 export interface ActionDef {
   id: string;
@@ -52,11 +63,25 @@ export const WHEN_LABELS: Record<When, string> = {
   global: "",
   terminalFocus: "terminalFocus",
   chatFocus: "chatFocus",
+  editorFocus: "editorFocus",
   knowledgePanel: "knowledgeOpen",
   knowledgeFocus: "knowledgeFocus",
   pdfFocus: "pdfFocus",
   canvasFocus: "canvasFocus",
+  diffFocus: "diffFocus",
+  pullRequestFocus: "pullRequestFocus",
+  modelPicker: "modelPickerOpen",
 };
+
+/** ⌘N picks the Nth visible row while the composer's model picker is open —
+ *  the same chord as focusing tab N, which the open picker shadows. */
+const modelPickerJump = (n: number): ActionDef => ({
+  id: `modelPicker.jump${n}`,
+  title: `Pick model ${n}`,
+  category: "Session",
+  when: "modelPicker",
+  defaults: [`cmd+${n}`],
+});
 
 const focusTab = (n: number): ActionDef => ({
   id: `tabs.focus${n}`,
@@ -80,10 +105,11 @@ export const ACTIONS = [
   },
   {
     id: "workspace.toggleSidebar",
-    title: "Toggle project sidebar",
+    title: "Toggle sidebar",
     category: "Project",
     when: "global",
-    defaults: ["cmd+shift+."],
+    // ⌘⌥J was the session sidebar's; the sessions live in this one now.
+    defaults: ["cmd+shift+.", "cmd+alt+j"],
   },
   {
     id: "app.settings",
@@ -91,6 +117,13 @@ export const ACTIONS = [
     category: "Project",
     when: "global",
     defaults: ["cmd+,"],
+  },
+  {
+    id: "app.openInEditor",
+    title: "Open Session in Preferred Editor",
+    category: "Project",
+    when: "global",
+    defaults: ["cmd+o"],
   },
   {
     id: "app.capture",
@@ -145,18 +178,27 @@ export const ACTIONS = [
   },
   // ── Panels ──
   {
+    // The id predates the Files surface (it toggled the left file panel); it
+    // is kept so a user's rebinding of ⌘B still applies. Same as `panels.right`.
     id: "panels.left",
-    title: "Toggle left panel",
+    title: "Toggle Files",
     category: "Panels",
     when: "global",
     defaults: ["cmd+b"],
   },
   {
     id: "panels.right",
-    title: "Toggle right panel (Source Control)",
+    title: "Toggle source control",
     category: "Panels",
     when: "global",
     defaults: ["cmd+shift+b"],
+  },
+  {
+    id: "panels.sessionDetails",
+    title: "Toggle session details",
+    category: "Panels",
+    when: "global",
+    defaults: ["cmd+alt+b"],
   },
   {
     id: "panels.teamChat",
@@ -166,25 +208,19 @@ export const ACTIONS = [
     defaults: ["cmd+shift+c"],
   },
   {
+    // The Organisation agent in the side panel, its home.
+    id: "panels.agent",
+    title: "Toggle Ask Atlas",
+    category: "Panels",
+    when: "global",
+    defaults: ["cmd+alt+a"],
+  },
+  {
     id: "panels.terminal",
     title: "Toggle terminal",
     category: "Panels",
     when: "global",
     defaults: ["cmd+j"],
-  },
-  {
-    id: "panels.agentSidebar",
-    title: "Toggle agent sidebar",
-    category: "Panels",
-    when: "global",
-    defaults: ["cmd+alt+j"],
-  },
-  {
-    id: "panels.tabBar",
-    title: "Toggle tab bar",
-    category: "Panels",
-    when: "global",
-    defaults: ["cmd+alt+t"],
   },
   {
     id: "panels.knowledge",
@@ -195,12 +231,31 @@ export const ACTIONS = [
   },
   { id: "panels.zen", title: "Zen mode", category: "Panels", when: "global", defaults: ["alt+z"] },
   // ── Tabs ──
+  // ⌘T opens a surface rather than one fixed kind of tab —
+  // a pane beside a single column, or the focused column's `+` menu once the
+  // window is split — and a bare letter then picks (⌘T A is a new agent).
   {
-    id: "tabs.newChat",
-    title: "New agent chat",
+    id: "tabs.openSurface",
+    title: "Open a surface",
     category: "Tabs",
     when: "global",
     defaults: ["cmd+t"],
+  },
+  {
+    id: "tabs.newChat",
+    title: "New session",
+    category: "Tabs",
+    when: "global",
+    defaults: [],
+  },
+  {
+    // Opens the palette onto the project list, each row ⌘1–⌘9; with one
+    // project there is nothing to pick, and it is a new session there.
+    id: "tabs.newChatIn",
+    title: "New session in project…",
+    category: "Tabs",
+    when: "global",
+    defaults: ["cmd+shift+o"],
   },
   {
     id: "tabs.newTerminal",
@@ -281,24 +336,71 @@ export const ACTIONS = [
   {
     id: "chat.cycleAgent",
     title: "Cycle coding agent",
-    category: "Chat",
+    category: "Session",
     when: "global",
     defaults: ["alt+/"],
   },
   {
+    // ⌘⌥S: ⌘⇧S is the model picker's pin, and while the picker is open it
+    // would shadow this one.
+    id: "chat.settleSession",
+    title: "Settle or un-settle the open session",
+    category: "Session",
+    when: "global",
+    defaults: ["cmd+alt+s"],
+  },
+  {
     id: "chat.cyclePermissionMode",
     title: "Cycle permission mode",
-    category: "Chat",
+    category: "Session",
     when: "chatFocus",
     defaults: ["shift+tab"],
   },
   {
     id: "chat.find",
-    title: "Find in chat",
-    category: "Chat",
+    title: "Find in session",
+    category: "Session",
     when: "chatFocus",
     defaults: ["cmd+f"],
   },
+  {
+    id: "chat.toggleModelPicker",
+    title: "Open model picker",
+    category: "Session",
+    when: "chatFocus",
+    defaults: ["cmd+shift+m"],
+  },
+  {
+    id: "modelPicker.previousProvider",
+    title: "Previous agent in model picker",
+    category: "Session",
+    when: "modelPicker",
+    defaults: ["cmd+shift+up"],
+  },
+  {
+    id: "modelPicker.nextProvider",
+    title: "Next agent in model picker",
+    category: "Session",
+    when: "modelPicker",
+    defaults: ["cmd+shift+down"],
+  },
+  {
+    // ⌘⇧S: "stick" (pin). Unbound anywhere else, and the reference ships no default.
+    id: "modelPicker.toggleFavorite",
+    title: "Pin or unpin the highlighted model",
+    category: "Session",
+    when: "modelPicker",
+    defaults: ["cmd+shift+s"],
+  },
+  modelPickerJump(1),
+  modelPickerJump(2),
+  modelPickerJump(3),
+  modelPickerJump(4),
+  modelPickerJump(5),
+  modelPickerJump(6),
+  modelPickerJump(7),
+  modelPickerJump(8),
+  modelPickerJump(9),
   // ── Terminal ──
   {
     id: "terminal.prevTab",
@@ -322,18 +424,13 @@ export const ACTIONS = [
     defaults: ["cmd+w"],
   },
   {
-    id: "terminal.splitRight",
-    title: "Split terminal right",
-    category: "Terminal",
-    when: "terminalFocus",
-    defaults: ["cmd+d"],
-  },
-  {
     id: "terminal.splitDown",
     title: "Split terminal down",
     category: "Terminal",
     when: "terminalFocus",
-    defaults: ["cmd+shift+d"],
+    // Terminals split down only; ⌘D, the split key everywhere else, splits
+    // down too rather than doing nothing.
+    defaults: ["cmd+d", "cmd+shift+d"],
   },
   {
     id: "terminal.closePane",
@@ -397,6 +494,58 @@ export const ACTIONS = [
     category: "Terminal",
     when: "terminalFocus",
     defaults: ["cmd+f"],
+  },
+  // ── File ──
+  {
+    id: "editor.save",
+    title: "Save file",
+    category: "File",
+    when: "editorFocus",
+    defaults: ["cmd+s"],
+  },
+  {
+    // A file opens read-only, to be read and asked about; this is the
+    // deliberate switch into editing it by hand, and back out.
+    id: "editor.toggleEdit",
+    title: "Edit file / stop editing",
+    category: "File",
+    when: "editorFocus",
+    defaults: ["cmd+e"],
+  },
+  {
+    // The file's own find and replace: the editor's panel, over the whole
+    // document rather than the rows on screen.
+    id: "editor.find",
+    title: "Find in file",
+    category: "File",
+    when: "editorFocus",
+    defaults: ["cmd+f"],
+  },
+  // ── Review ──
+  {
+    // The review diff's own find: matches across every changed file, folded
+    // ones included. Its tab, not the session beside it, owns ⌘F.
+    id: "diff.find",
+    title: "Find in diff",
+    category: "Review",
+    when: "diffFocus",
+    defaults: ["cmd+f"],
+  },
+  {
+    // A pull request tab's ⋯ menu shows both. ⇧⌘C is team chat everywhere
+    // else; a pull request tab shadows it while it is the active tab.
+    id: "pullRequest.copyLink",
+    title: "Copy pull request link",
+    category: "Review",
+    when: "pullRequestFocus",
+    defaults: ["cmd+shift+c"],
+  },
+  {
+    id: "pullRequest.copyNumber",
+    title: "Copy pull request number",
+    category: "Review",
+    when: "pullRequestFocus",
+    defaults: ["cmd+shift+k"],
   },
   // ── Knowledge ──
   {
@@ -470,9 +619,11 @@ export const CATEGORY_ORDER: readonly ActionCategory[] = [
   "Tabs",
   "Splits",
   "View",
-  "Chat",
+  "Session",
+  "File",
   "Terminal",
   "Knowledge",
   "PDF",
   "Canvas",
+  "Review",
 ];

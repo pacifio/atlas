@@ -2,7 +2,7 @@ pub mod command;
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -12,7 +12,14 @@ pub struct TerminalSession {
     /// the pair and resize was a silent no-op, leaving columns clipped after
     /// a pane resize.
     master: Arc<Mutex<Box<dyn MasterPty + Send>>>,
-    writer: Arc<Mutex<Box<dyn Write + Send>>>,
+    /// Input queue for the session's writer thread. A write to the PTY master
+    /// BLOCKS once the slave's input queue is full (a raw-mode app that stops
+    /// reading fills it after ~1 KiB on macOS), so writes never happen on the
+    /// caller's thread: one thread per session owns the writer and drains this
+    /// queue in order. A stuck app then parks only that thread — never a tokio
+    /// worker, and never while the manager lock is held, which would wedge
+    /// every other terminal's resize and close behind it.
+    input: std::sync::mpsc::Sender<Vec<u8>>,
     /// PID of the spawned login shell. Used by `cwd` to resolve relative file
     /// paths clicked in the terminal against the shell's live directory.
     pid: Option<u32>,
@@ -92,9 +99,9 @@ impl TerminalManager {
 
         // Shell integration: for zsh (the macOS default) point ZDOTDIR at a
         // generated dir whose rc files chain to the user's config and add
-        // OSC 133 / OSC 7 / command hooks. That lets the frontend segment
-        // output into command "blocks" with exit codes + cwd.
-        // Non-zsh shells run plain (the UI degrades to a single stream).
+        // OSC 133 / OSC 7 / command hooks. That lets the frontend tell when
+        // a command runs and how it ended (busy state, notifications) + cwd.
+        // Non-zsh shells run plain (no busy state or command notifications).
         if shell.ends_with("zsh") {
             if let Some(dir) = ensure_zsh_integration_dir() {
                 let user_zdotdir = std::env::var("ZDOTDIR")
@@ -111,7 +118,7 @@ impl TerminalManager {
         let pid = child.process_id();
         drop(pair.slave); // drop slave so reads on master detect EOF
 
-        let writer = pair.master.take_writer()?;
+        let mut writer = pair.master.take_writer()?;
         let mut reader = pair.master.try_clone_reader()?;
         // Retain the master so resize works for the session's lifetime.
         let master = Arc::new(Mutex::new(pair.master));
@@ -150,11 +157,22 @@ impl TerminalManager {
             let _ = child.wait();
         });
 
+        // Ends when the session drops its sender (close), or when a write
+        // fails because the shell is gone.
+        let (input, input_rx) = std::sync::mpsc::channel::<Vec<u8>>();
+        std::thread::spawn(move || {
+            for data in input_rx {
+                if writer.write_all(&data).is_err() || writer.flush().is_err() {
+                    break;
+                }
+            }
+        });
+
         self.sessions.insert(
             id.clone(),
             TerminalSession {
                 master,
-                writer: Arc::new(Mutex::new(writer)),
+                input,
                 pid,
                 size: Mutex::new((cols, rows)),
                 _reader_handle: reader_handle,
@@ -169,9 +187,12 @@ impl TerminalManager {
             .sessions
             .get(id)
             .ok_or_else(|| anyhow::anyhow!("Terminal session not found: {id}"))?;
-        let mut writer = session.writer.lock().unwrap();
-        writer.write_all(data)?;
-        writer.flush()?;
+        // Queued, not written: see `TerminalSession::input`. Order is kept —
+        // one queue, one writer thread.
+        session
+            .input
+            .send(data.to_vec())
+            .map_err(|_| anyhow::anyhow!("Terminal session input closed: {id}"))?;
         Ok(())
     }
 
@@ -208,43 +229,6 @@ impl TerminalManager {
         Ok(())
     }
 
-    /// Kill the PTY's foreground job without killing the login shell. Returns
-    /// false when the shell already owns the foreground (the job exited, or the
-    /// terminal is idle), which also makes a late force-stop click race-safe.
-    pub fn kill_foreground(&self, id: &str) -> anyhow::Result<bool> {
-        let session = self
-            .sessions
-            .get(id)
-            .ok_or_else(|| anyhow::anyhow!("Terminal session not found: {id}"))?;
-
-        #[cfg(unix)]
-        {
-            let foreground = session
-                .master
-                .lock()
-                .map_err(|_| anyhow::anyhow!("terminal master mutex poisoned"))?
-                .process_group_leader();
-            let Some(pgid) = foreground_job_pgid(session.pid, foreground) else {
-                return Ok(false);
-            };
-            let result = unsafe { libc::kill(-pgid, libc::SIGKILL) };
-            if result == 0 {
-                return Ok(true);
-            }
-            let error = std::io::Error::last_os_error();
-            if error.raw_os_error() == Some(libc::ESRCH) {
-                return Ok(false);
-            }
-            Err(error.into())
-        }
-
-        #[cfg(not(unix))]
-        {
-            let _ = session;
-            anyhow::bail!("Force stopping foreground terminal jobs is unsupported on this platform")
-        }
-    }
-
     pub fn close(&mut self, id: &str) {
         self.sessions.remove(id);
     }
@@ -252,75 +236,6 @@ impl TerminalManager {
     /// PID of the session's login shell (for `cwd_of_pid`).
     pub fn pid(&self, id: &str) -> Option<u32> {
         self.sessions.get(id)?.pid
-    }
-
-    /// A handle for sampling this session's tty line discipline. See
-    /// [`TtyModeProbe`].
-    pub fn mode_probe(&self, id: &str) -> Option<TtyModeProbe> {
-        Some(TtyModeProbe {
-            master: Arc::downgrade(&self.sessions.get(id)?.master),
-        })
-    }
-}
-
-/// Samples whether the pty is in raw mode, so the UI can tell a full-screen /
-/// inline TUI apart from a program reading lines.
-///
-/// Reads the termios of the MASTER fd: on both macOS and Linux the master
-/// reports the slave's line discipline, so this sees an app's `tcsetattr` in
-/// the child without any cooperation from it.
-///
-/// Holds a `Weak` deliberately — the master must stay droppable by
-/// `TerminalManager::close` or the shell never gets its HUP, and a probe that
-/// outlived the session would otherwise ioctl a recycled fd.
-pub struct TtyModeProbe {
-    master: Weak<Mutex<Box<dyn MasterPty + Send>>>,
-}
-
-impl TtyModeProbe {
-    /// `Some(true)` when the tty is in raw mode (ICANON cleared); `None` once
-    /// the session is gone or the ioctl fails.
-    ///
-    /// Raw mode ALONE does not mean an interactive app is running: zsh's line
-    /// editor puts the tty in raw mode at every prompt, and a TUI that exits
-    /// without restoring leaves it raw. Callers must pair this with "a command
-    /// is currently running" — zsh restores cooked mode before it execs.
-    pub fn is_raw(&self) -> Option<bool> {
-        #[cfg(unix)]
-        {
-            let master = self.master.upgrade()?;
-            let guard = master.lock().ok()?;
-            let fd = guard.as_raw_fd()?;
-            let mut attrs: libc::termios = unsafe { std::mem::zeroed() };
-            if unsafe { libc::tcgetattr(fd, &mut attrs) } != 0 {
-                return None;
-            }
-            Some(attrs.c_lflag & libc::ICANON == 0)
-        }
-        #[cfg(not(unix))]
-        {
-            let _ = &self.master;
-            None
-        }
-    }
-}
-
-#[cfg(unix)]
-fn foreground_job_pgid(shell_pid: Option<u32>, foreground_pgid: Option<i32>) -> Option<i32> {
-    let pgid = foreground_pgid.filter(|pid| *pid > 0)?;
-    (shell_pid != Some(pgid as u32)).then_some(pgid)
-}
-
-#[cfg(all(test, unix))]
-mod tests {
-    use super::foreground_job_pgid;
-
-    #[test]
-    fn foreground_job_excludes_the_login_shell() {
-        assert_eq!(foreground_job_pgid(Some(42), Some(42)), None);
-        assert_eq!(foreground_job_pgid(Some(42), Some(84)), Some(84));
-        assert_eq!(foreground_job_pgid(Some(42), None), None);
-        assert_eq!(foreground_job_pgid(Some(42), Some(0)), None);
     }
 }
 
@@ -406,10 +321,6 @@ ZDOTDIR="$ATLAS_USER_ZDOTDIR"
 [ -f "$ATLAS_USER_ZDOTDIR/.zshrc" ] && source "$ATLAS_USER_ZDOTDIR/.zshrc"
 
 # Atlas shell integration (OSC 133 prompt markers + cwd + command text).
-# Suppress zsh's partial-line indicator (the reverse `%` shown at the end of
-# output without a trailing newline) — in the block UI it just looks like junk.
-unsetopt PROMPT_SP 2>/dev/null
-PROMPT_EOL_MARK=''
 autoload -Uz add-zsh-hook 2>/dev/null
 _atlas_precmd() {
   local _atlas_exit=$?
@@ -430,21 +341,6 @@ add-zsh-hook preexec _atlas_preexec 2>/dev/null
 # Hand the interactive session the user's ZDOTDIR.
 ZDOTDIR="$ATLAS_USER_ZDOTDIR"
 "#;
-
-/// Public accessor for the zsh integration ZDOTDIR — used to relaunch an
-/// interactive root shell (`sudo -s` / `-i` / `su`) WITH Atlas's shell
-/// integration so command blocks / prompt markers keep working as root.
-pub fn zsh_integration_dir() -> Option<std::path::PathBuf> {
-    let shell = detect_shell();
-    let is_zsh = std::path::Path::new(&shell)
-        .file_name()
-        .and_then(|f| f.to_str())
-        .is_some_and(|name| name == "zsh" || name.starts_with("zsh"));
-    if !is_zsh {
-        return None;
-    }
-    ensure_zsh_integration_dir()
-}
 
 /// Create (idempotently) the temp ZDOTDIR holding the zsh integration rc files
 /// and return its path. `None` if the files can't be written.

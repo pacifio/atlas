@@ -79,6 +79,13 @@ interface IconThemeState {
   resolved: Record<string, ResolvedIcon | null>;
   /** Asset bytes, keyed by definition id. Shared across every path using it. */
   prepared: Record<string, PreparedIcon>;
+  /**
+   * Definitions whose asset will never arrive under this theme: it failed to
+   * load, came back absent, or `sanitizeSvg` stripped it to nothing. Without
+   * this a caller could not tell "still in flight" from "never", and would
+   * wait forever (`icon-markup.ts`). Callers keep their fallback.
+   */
+  missing: Record<string, true>;
   /** Font faces, fetched only once a glyph icon has actually been resolved. */
   fonts: IconFontFace[];
   loading: boolean;
@@ -94,8 +101,8 @@ interface IconThemeState {
 }
 
 /** Everything that was true only of the previous theme. */
-function emptyCaches(): Pick<IconThemeState, "resolved" | "prepared" | "fonts"> {
-  return { resolved: {}, prepared: {}, fonts: [] };
+function emptyCaches(): Pick<IconThemeState, "resolved" | "prepared" | "missing" | "fonts"> {
+  return { resolved: {}, prepared: {}, missing: {}, fonts: [] };
 }
 
 let generation = 0;
@@ -215,7 +222,15 @@ async function flush(): Promise<void> {
   batch.forEach(([key], index) => {
     resolved[key] = answers[index] ?? null;
   });
-  baseStore.setState((state) => ({ resolved: { ...state.resolved, ...resolved } }));
+  // Written into the existing cache, not spread into a copy. The cache is
+  // keyed by path and only grows: scrolling a 50,000-file tree fills it with
+  // tens of thousands of keys, and copying all of them for every batch (one
+  // per rendered frame while scrolling) made each frame's cost grow with
+  // everything ever shown. Rows select `resolved[key]`, a value, so a fresh
+  // top-level state is all they need to see the new answers; nothing reads
+  // the record's identity. `emptyCaches()` still swaps in a new one on a
+  // theme change.
+  baseStore.setState((state) => ({ resolved: Object.assign(state.resolved, resolved) }));
 
   const state = baseStore.getState();
   const wantedImages = new Set<string>();
@@ -250,6 +265,7 @@ async function loadAssets(themeId: string, at: number, definitions: string[]): P
     assets = await getIconThemeAssets(themeId, definitions);
   } catch (error) {
     console.warn("Icon assets failed to load", error);
+    markMissing(themeId, at, definitions);
     return;
   }
   if (isStale(themeId, at)) return;
@@ -264,8 +280,21 @@ async function loadAssets(themeId: string, at: number, definitions: string[]): P
       prepared[definition] = { svg: null, url: asset.url };
     }
   }
+  markMissing(
+    themeId,
+    at,
+    definitions.filter((d) => !(d in prepared)),
+  );
   if (Object.keys(prepared).length === 0) return;
   baseStore.setState((state) => ({ prepared: { ...state.prepared, ...prepared } }));
+}
+
+/** Record that `definitions` will not arrive under this theme generation. */
+function markMissing(themeId: string, at: number, definitions: string[]): void {
+  if (definitions.length === 0 || isStale(themeId, at)) return;
+  const missing: Record<string, true> = {};
+  for (const definition of definitions) missing[definition] = true;
+  baseStore.setState((state) => ({ missing: { ...state.missing, ...missing } }));
 }
 
 async function loadFonts(themeId: string, at: number): Promise<void> {

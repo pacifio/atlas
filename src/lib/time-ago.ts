@@ -4,6 +4,9 @@
 //   - `suffix`        → append " ago" to the m/h/d units (and seconds).
 //   - `seconds`       → add a sub-minute "Ns" bucket (used by the log).
 //   - `noDateFallback`→ keep showing "Nd[ ago]" past a week instead of a date.
+
+import { formatWith } from "./format-time";
+
 export interface TimeAgoOptions {
   suffix?: boolean;
   seconds?: boolean;
@@ -35,10 +38,11 @@ export function timeAgo(iso: string | null | undefined, opts: TimeAgoOptions = {
   // ("20 May"), include it otherwise ("20 May 2025"). Nicer than DD/MM/YYYY.
   const date = new Date(iso);
   const sameYear = date.getFullYear() === new Date().getFullYear();
-  return date.toLocaleDateString(
-    undefined,
+  return formatWith(
+    date,
     sameYear
       ? { day: "numeric", month: "short" }
       : { day: "numeric", month: "short", year: "numeric" },
+    "date",
   );
 }

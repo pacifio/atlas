@@ -1,3 +1,4 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 use crate::ClientNotification;
 use crate::ClientRequest;
 use crate::ServerNotification;
@@ -358,7 +359,8 @@ fn collect_typescript_fixture_file<T: TS + 'static + ?Sized>(
         return Ok(());
     }
 
-    let contents = T::export_to_string().context("export TypeScript fixture content")?;
+    let contents = T::export_to_string(&crate::export::ts_config(Path::new(".")))
+        .context("export TypeScript fixture content")?;
     let output_path = normalize_relative_fixture_path(&output_path);
     files.insert(
         output_path,

@@ -24,6 +24,7 @@
 // type so `bun run typecheck` catches drift from Rust.
 
 import { emit } from "@tauri-apps/api/event";
+import * as Y from "yjs";
 import type {
   comms,
   CommsEnvelope,
@@ -41,6 +42,7 @@ import {
   type ChatCall,
   type ChatCodeRef,
   type ChatConversation,
+  type ChatFeatures,
   type ChatPin,
   type ChatReaction,
   type ChatReadState,
@@ -51,6 +53,7 @@ import {
   type RecordingTrack,
   type SendStatus,
 } from "@/features/comms/types";
+import { encodeAwareness, PROMPT_TEXT_KEY, toBase64 } from "@/features/comms/lib/draft-sync";
 import type { TypedHandlers, Unit } from "../types";
 import { abs, MOCK_ORG_ID } from "../project";
 
@@ -223,6 +226,10 @@ interface Seed {
   reactions?: [emoji: string, users: string[]][];
   pinned?: boolean;
   draftId?: string;
+  /** Posted by an incoming webhook, not a person: `by` is then the webhook's
+   *  `whk_…` id, `name` the frozen `author_name`, and `via` the webhook's own
+   *  name when the post overrode it. */
+  webhook?: { name: string; via?: string };
 }
 
 const IMAGE_ATTACHMENT: ChatAttachment = {
@@ -273,7 +280,7 @@ const DESKTOP_SEEDS: Seed[] = [
   {
     by: SAM,
     gap: 4,
-    body: "That's `atEndRef`, isn't it. It gets re-armed from the resize observer, so any content growth counts as \"the reader is at the end\".",
+    body: "That's `atEndRef` in `src/lib/api.ts:12`, isn't it. It gets re-armed from the resize observer, so any content growth counts as \"the reader is at the end\". (Not `/Users/sam/scratch/notes.md` — that's my machine.)",
     reactions: [
       [EMOJI.eyes, [PRIYA, MIRA]],
       [EMOJI.thinking, [TOBI]],
@@ -541,6 +548,22 @@ const DESKTOP_SEEDS: Seed[] = [
     ],
   },
   {
+    // An incoming webhook (ADR-0020 on the server): the id is the webhook's,
+    // never a member's, so without `author_kind` this rendered as "Unknown".
+    by: "whk_ci",
+    gap: 2,
+    webhook: { name: "GitHub Actions" },
+    body: "Build #412 passed on `feature/auth-v2` in 3m 12s.",
+  },
+  {
+    // The same webhook posting under a per-message username: drawn as
+    // "Release · via GitHub Actions", so the override can never stand alone.
+    by: "whk_ci",
+    gap: 1,
+    webhook: { name: "Release", via: "GitHub Actions" },
+    body: "Draft release **v0.4.0** created from `feature/auth-v2`.",
+  },
+  {
     by: ME,
     gap: 5,
     // A send that failed and STAYED in the transcript. Rust keeps the row and
@@ -682,6 +705,14 @@ function build(convId: string, startAt: number, seeds: Seed[]): CommsMessage[] {
       code_refs: seed.codeRefs ?? [],
       ...(seed.sessionRefs ? { artifact_refs: seed.sessionRefs } : {}),
       draft_id: seed.draftId ?? null,
+      ...(seed.webhook
+        ? {
+            author_kind: "webhook" as const,
+            author_name: seed.webhook.name,
+            author_via: seed.webhook.via ?? seed.webhook.name,
+            author_avatar_hash: null,
+          }
+        : {}),
       ...(seed.deleted ? { deleted: true } : {}),
       ...(seed.status ? { status: seed.status } : {}),
     } satisfies CommsMessage;
@@ -803,6 +834,18 @@ const calls = new Map<string, ChatCall>([
   ],
 ]);
 
+/**
+ * The org's plan, as `GET /features` answers it. The catalogue defaults —
+ * free Voice Calls on, paid Meetings off — because that is what nearly every
+ * Organisation has, and it is the plan the header has to get right: the
+ * phone starts a Voice Call and the camera is disabled with its reason.
+ * Flip `calls.paid` to see the Meeting rows.
+ */
+const MOCK_FEATURES: ChatFeatures = {
+  features: { "calls.mesh": true, "calls.paid": false, "chat.webhooks": true },
+  mesh_call_max: 20,
+};
+
 const RECORDINGS = new Map<string, RecordingsResponse>([
   [
     "call_desktop_sync",
@@ -879,6 +922,28 @@ const drafts = new Map<string, PromptDraft[]>([
     ],
   ],
 ]);
+
+/** The RFC draft's text, as the server would hold it: one Yjs update, built
+ *  once so every open (and every reconnect's re-open) replays the SAME bytes
+ *  and Yjs applies them idempotently. The other drafts are empty documents. */
+const RFC_DRAFT = "draft_anchor_rfc";
+const RFC_TEXT = [
+  "## Problem",
+  "Three things move the transcript's scroll position today: the stick-to-bottom",
+  "effect, the jump-to-message handler, and the image loader's height fix-up.",
+  "",
+  "## Proposal",
+  "One owner — `useScrollAnchor` — holds the anchor and every writer asks it.",
+].join("\n");
+let rfcUpdate: string | null = null;
+function rfcContent(): string {
+  if (rfcUpdate === null) {
+    const doc = new Y.Doc();
+    doc.getText(PROMPT_TEXT_KEY).insert(0, RFC_TEXT);
+    rfcUpdate = toBase64(Y.encodeStateAsUpdate(doc));
+  }
+  return rfcUpdate;
+}
 
 // ── connection + the event bridge ──────────────────────────────────────────
 
@@ -961,6 +1026,7 @@ let lastTypingEcho = 0;
  * `invoke<T>`, or `Unread` where it awaits only success or failure.
  */
 export interface CommsResponses {
+  comms_ready: Unit;
   comms_status: ConnectionInfo;
   comms_snapshot: CommsSnapshot;
   comms_base_url: string;
@@ -997,6 +1063,7 @@ export interface CommsResponses {
   comms_draft_update: Unit;
   comms_draft_awareness: Unit;
   comms_start_call: ChatCall;
+  comms_features: ChatFeatures;
   comms_call_recordings: RecordingsResponse;
   comms_fetch_recording: string;
   comms_save_recording: Unit;
@@ -1004,6 +1071,19 @@ export interface CommsResponses {
 }
 
 export const commsHandlers: TypedHandlers<CommsResponses> = {
+  // Rust's `announce`: the connection state, then a `resync`, which is what
+  // hydrates the store at boot with the panel closed (the footer's unread dot
+  // reads it).
+  comms_ready: (): null => {
+    push({
+      kind: "connection",
+      state: connection.state,
+      reason: connection.reason,
+      retry_at_ms: null,
+    });
+    push({ kind: "resync" });
+    return null;
+  },
   comms_status: (): ConnectionInfo => connection,
   comms_snapshot: (): CommsSnapshot => ({
     connection,
@@ -1334,14 +1414,30 @@ export const commsHandlers: TypedHandlers<CommsResponses> = {
     // handler that only resolved would leave the editor waiting forever.
     // `snapshot: null` with no updates is a legitimate empty document: the
     // server stores opaque Yjs bytes it cannot read, and has none yet.
-    push({ kind: "draftOpened", draft_id: id, draft, snapshot: null, updates: [] });
+    const updates = id === RFC_DRAFT ? [rfcContent()] : [];
+    push({ kind: "draftOpened", draft_id: id, draft, snapshot: null, updates });
     return null;
   },
   comms_draft_update: (): null => null,
   comms_draft_awareness: (): null => null,
 
   // ── calls ───────────────────────────────────────────────────────────────
-  comms_start_call: ({ convId, mode, public: isPublic }): ChatCall => {
+  // The server's rules, as far as the header can see them: no provider means
+  // a Meeting, a Meeting needs `calls.paid` (off here, per MOCK_FEATURES),
+  // and a Voice Call is audio-only, guest-less, one live per conversation.
+  comms_start_call: ({ convId, mode, public: isPublic, provider }): ChatCall => {
+    // Thrown as the Rust bridge rejects: the refusal envelope as a string.
+    const refuse = (code: string, message: string) => JSON.stringify({ code, message });
+    if (provider === "mesh") {
+      if (mode !== "audio" || isPublic) {
+        throw refuse("bad_request", "A voice call is audio only and has no guest link.");
+      }
+      for (const live of calls.values()) {
+        if (live.conv_id === String(convId) && live.ended_at === null) return live;
+      }
+    } else if (!MOCK_FEATURES.features["calls.paid"]) {
+      throw refuse("feature_disabled", "Meetings are not available on this Organization's plan.");
+    }
     const call: ChatCall = {
       id: `call_${Date.now()}`,
       conv_id: String(convId),
@@ -1358,6 +1454,7 @@ export const commsHandlers: TypedHandlers<CommsResponses> = {
     push({ kind: "callChanged", call });
     return call;
   },
+  comms_features: (): ChatFeatures => MOCK_FEATURES,
   // Links are minted per read and die in ~60s, so this is asked at open time
   // and never cached. A call with nothing kept answers with an empty list.
   comms_call_recordings: ({ callId }): RecordingsResponse =>
@@ -1402,6 +1499,36 @@ const INCOMING = [
   "Never mind, found it.",
 ];
 let incomingAt = 0;
+
+/**
+ * Priya and Tobi join the RFC draft: each publishes a cursor, restated every
+ * 4s for a minute so the editor's 15s awareness TTL never ages them out while
+ * someone is looking. Open the draft first — awareness is per open session.
+ */
+export function commsDraftPeers(): void {
+  const peers = [
+    { user_id: PRIYA, cursor: 40 },
+    { user_id: TOBI, cursor: 120 },
+  ];
+  const beat = () => {
+    for (const p of peers) {
+      push({
+        kind: "draftAwareness",
+        draft_id: RFC_DRAFT,
+        user_id: p.user_id,
+        state: encodeAwareness({ cursor: p.cursor }),
+      });
+    }
+  };
+  // A second call restarts the minute rather than stacking heartbeats.
+  if (peersTimer !== undefined) clearInterval(peersTimer);
+  if (peersStop !== undefined) clearTimeout(peersStop);
+  beat();
+  peersTimer = setInterval(beat, 4_000);
+  peersStop = setTimeout(() => clearInterval(peersTimer), 60_000);
+}
+let peersTimer: ReturnType<typeof setInterval> | undefined;
+let peersStop: ReturnType<typeof setTimeout> | undefined;
 
 export function commsIncomingMessage(): void {
   const body = INCOMING[incomingAt++ % INCOMING.length];

@@ -5,19 +5,18 @@
 //! loaded) is a MANUAL runtime step — see `crates/atlas-memory/MIGRATION.md`.
 //!
 //! ## Parity (agent-agnostic retrieval)
-//! Every agent reaches retrieval through ONE callback: the native agent through
-//! the `search_memory` tool registered with
-//! `atlas_native_agent::engine::memory::register_search`, ACP agents through
-//! the pushed `--- RELEVANT PROJECT MEMORY ---` block. Both call
-//! `memory_retrieve::retrieve` (`src-tauri`) with **no agent-type parameter**,
-//! which calls [`MemoryEngine::retrieve`] and gets
-//! [`RetrievedDoc { id, title, source, text }`](crate::RetrievedDoc); the Tauri
-//! layer maps each onto `MemDoc { title, source, text }`, dropping only `id`. So
-//! "parity" reduces to two checkable claims, both asserted below:
+//! Every agent reaches retrieval through ONE path: the `memory_search` tool on
+//! the memory tool server, offered to the native agent and to every ACP agent
+//! that speaks HTTP MCP (ADR-0010; nothing is pushed into prompts). Its
+//! `IndexSearch` closure calls `memory_retrieve::retrieve` (`src-tauri`) with
+//! **no agent-type parameter**, which calls [`MemoryEngine::retrieve`] and gets
+//! [`RetrievedDoc { id, title, source, text }`](crate::RetrievedDoc); the tool
+//! renders each hit's `title`, `source` and `text`. So "parity" reduces to two
+//! checkable claims, both asserted below:
 //!   1. the engine's retrieve path takes no agent discriminator, so the same
 //!      (cwd, query, limit) yields identical results no matter which agent asks; and
 //!   2. every [`RetrievedDoc`] maps cleanly (total, lossless except `id`) onto the
-//!      `MemDoc` shape the `search_memory` tool expects.
+//!      three display fields `memory_search` returns.
 //!
 //! ## Benchmark
 //! [`bench_hnsw_vs_brute_force`] builds a synthetic corpus of random L2-normalized
@@ -150,23 +149,26 @@ fn retrieve_is_agent_agnostic_and_well_formed_when_model_available() {
     let root = tmp.path().to_path_buf();
 
     let mut engine = MemoryEngine::open(root);
+    // Indexed text is `title\n\nbody` (`docstore::split_embedded`); a doc
+    // with no body is returned with empty `text`, by design.
     let corpus = vec![
         CorpusDoc {
             id: "d1".into(),
-            text: "Auth: the project uses Better Auth with database-backed sessions.".into(),
+            text: "Auth\n\nThe project uses Better Auth with database-backed sessions.".into(),
             content_hash: "h1".into(),
             corpus: "claude".into(),
         },
         CorpusDoc {
             id: "d2".into(),
-            text: "Indexing: a background MemoryIndexer rebuilds the HNSW off the chat turn."
+            text: "Indexing\n\nA background MemoryIndexer rebuilds the HNSW off the chat turn."
                 .into(),
             content_hash: "h2".into(),
             corpus: "codebase".into(),
         },
         CorpusDoc {
             id: "d3".into(),
-            text: "Retrieval searches usearch HNSW and blends global memory via RRF.".into(),
+            text: "Retrieval\n\nRetrieval searches usearch HNSW and blends global memory via RRF."
+                .into(),
             content_hash: "h3".into(),
             corpus: "codebase".into(),
         },

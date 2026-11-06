@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 atlas-process = { path = "../atlas-process" }
-# Same exact pin as `atlas-acp-thread` and as Zed (`zed-ref/Cargo.toml:518`).
+# Same exact pin as `atlas-acp-thread`.
 agent-client-protocol = { version = "=2.0.0", features = ["unstable"] }
 atlas-acp-thread = { path = "../atlas-acp-thread" }
 atlas-terminal = { path = "../atlas-terminal" }
@@ -16,7 +16,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["sync", "rt", "process", "io-util", "macros", "time"] }
 # Bridges tokio's AsyncRead/AsyncWrite to the futures traits the SDK transport
-# expects. Zed is already on futures-io end to end and needs no equivalent.
+# expects.
 tokio-util = { version = "0.7", features = ["compat"] }
 tracing = "0.1"
 uuid = { version = "1", features = ["v4"] }

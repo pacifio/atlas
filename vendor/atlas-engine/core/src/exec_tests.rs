@@ -1342,3 +1342,245 @@ fn long_running_command() -> Vec<String> {
         "Start-Sleep -Seconds 30".to_string(),
     ]
 }
+
+// Atlas: a Windows shell call's descendants die with it.
+//
+// The shell tool runs `powershell.exe -Command …`, and the command an agent
+// asks for is very often another program that PowerShell starts and waits on.
+// Unix kills the whole process group on cancel and timeout; on Windows that
+// helper is a no-op and `TerminateProcess` reaches only the direct child, so
+// Stop used to leave the inner program running — a `Start-Sleep -Seconds 60`
+// outlived the press by the full minute. These pin the Windows half.
+
+/// A tree shaped like the real one: an outer PowerShell (the shell tool) that
+/// runs an inner PowerShell, which records its own pid and then sleeps.
+#[cfg(windows)]
+struct WindowsTree {
+    _dir: tempfile::TempDir,
+    pid_file: std::path::PathBuf,
+    inner_script: std::path::PathBuf,
+}
+
+#[cfg(windows)]
+impl WindowsTree {
+    fn new() -> Result<Self> {
+        let dir = tempfile::tempdir()?;
+        let pid_file = dir.path().join("grandchild.pid");
+        let inner_script = dir.path().join("inner.ps1");
+        std::fs::write(
+            &inner_script,
+            "$PID | Set-Content -LiteralPath $args[0]\nStart-Sleep -Seconds 60\n",
+        )?;
+        Ok(Self {
+            _dir: dir,
+            pid_file,
+            inner_script,
+        })
+    }
+
+    /// The outer shell waits on the inner program, as `powershell -Command
+    /// "powershell -Command Start-Sleep …"` does.
+    fn waiting_command(&self) -> Vec<String> {
+        Self::outer(format!(
+            "& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '{}' '{}'",
+            self.inner_script.display(),
+            self.pid_file.display()
+        ))
+    }
+
+    /// The outer shell starts the inner program on purpose and returns once
+    /// it is running.
+    fn detaching_command(&self) -> Vec<String> {
+        Self::outer(format!(
+            "Start-Process powershell.exe -WindowStyle Hidden -ArgumentList \
+             '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File','\"{script}\"','\"{pid}\"'; \
+             while (-not (Test-Path -LiteralPath '{pid}')) {{ Start-Sleep -Milliseconds 50 }}",
+            script = self.inner_script.display(),
+            pid = self.pid_file.display(),
+        ))
+    }
+
+    fn outer(script: String) -> Vec<String> {
+        vec![
+            "powershell.exe".to_string(),
+            "-NoProfile".to_string(),
+            "-NonInteractive".to_string(),
+            "-Command".to_string(),
+            script,
+        ]
+    }
+
+    /// The grandchild's pid, once it has written it.
+    async fn grandchild_pid(&self) -> Result<u32> {
+        for _ in 0..400 {
+            if let Ok(text) = std::fs::read_to_string(&self.pid_file)
+                && let Ok(pid) = text.trim().parse()
+            {
+                return Ok(pid);
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        Err(io::Error::other("the grandchild never wrote its pid").into())
+    }
+}
+
+#[cfg(windows)]
+fn windows_pid_alive(pid: u32) -> bool {
+    let output = std::process::Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
+        .output()
+        .expect("tasklist runs");
+    String::from_utf8_lossy(&output.stdout).contains(&format!("\"{pid}\""))
+}
+
+#[cfg(windows)]
+async fn windows_pid_dies_within(pid: u32, limit: Duration) -> bool {
+    let deadline = tokio::time::Instant::now() + limit;
+    while tokio::time::Instant::now() < deadline {
+        if !windows_pid_alive(pid) {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    !windows_pid_alive(pid)
+}
+
+/// Clean up after a failing assertion so a red run does not leak a sleeper.
+#[cfg(windows)]
+fn windows_kill(pid: u32) {
+    let _ = std::process::Command::new("taskkill")
+        .args(["/F", "/PID", &pid.to_string()])
+        .output();
+}
+
+#[cfg(windows)]
+fn windows_exec_params(command: Vec<String>, expiration: ExecExpiration) -> Result<ExecParams> {
+    Ok(ExecParams {
+        command,
+        cwd: atlas_engine_utils_absolute_path::AbsolutePathBuf::current_dir()?,
+        expiration,
+        capture_policy: ExecCapturePolicy::ShellTool,
+        env: std::env::vars().collect(),
+        network: None,
+        network_environment_id: None,
+        sandbox_permissions: SandboxPermissions::UseDefault,
+        windows_sandbox_level: atlas_engine_protocol::config_types::WindowsSandboxLevel::Disabled,
+        windows_sandbox_private_desktop: false,
+        justification: None,
+        arg0: None,
+    })
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn windows_cancelling_a_shell_call_kills_the_program_it_is_waiting_on() -> Result<()> {
+    let tree = WindowsTree::new()?;
+    let cancel = CancellationToken::new();
+    let params = windows_exec_params(
+        tree.waiting_command(),
+        ExecExpiration::Cancellation(cancel.clone()),
+    )?;
+    let run = tokio::spawn(exec(
+        params,
+        NetworkSandboxPolicy::Restricted,
+        /*stdout_stream*/ None,
+        /*after_spawn*/ None,
+    ));
+
+    let pid = tree.grandchild_pid().await?;
+    cancel.cancel();
+    let output = timeout(Duration::from_secs(20), run)
+        .await
+        .expect("a cancelled call returns")??;
+    assert!(!output.timed_out);
+
+    let died = windows_pid_dies_within(pid, Duration::from_secs(5)).await;
+    if !died {
+        windows_kill(pid);
+    }
+    assert!(died, "grandchild {pid} outlived the cancelled shell call");
+    Ok(())
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn windows_a_timed_out_shell_call_kills_the_program_it_is_waiting_on() -> Result<()> {
+    let tree = WindowsTree::new()?;
+    // Long enough for two PowerShell start-ups on a slow machine.
+    let params = windows_exec_params(tree.waiting_command(), 8_000.into())?;
+    let run = tokio::spawn(exec(
+        params,
+        NetworkSandboxPolicy::Restricted,
+        /*stdout_stream*/ None,
+        /*after_spawn*/ None,
+    ));
+
+    let pid = tree.grandchild_pid().await?;
+    let output = timeout(Duration::from_secs(30), run)
+        .await
+        .expect("a timed-out call returns")??;
+    assert!(output.timed_out);
+
+    let died = windows_pid_dies_within(pid, Duration::from_secs(5)).await;
+    if !died {
+        windows_kill(pid);
+    }
+    assert!(died, "grandchild {pid} outlived the timed-out shell call");
+    Ok(())
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn windows_abandoning_a_shell_call_kills_the_program_it_is_waiting_on() -> Result<()> {
+    // An interrupted turn drops the tool future rather than cancelling it.
+    let tree = WindowsTree::new()?;
+    let params = windows_exec_params(tree.waiting_command(), ExecExpiration::DefaultTimeout)?;
+    let run = tokio::spawn(exec(
+        params,
+        NetworkSandboxPolicy::Restricted,
+        /*stdout_stream*/ None,
+        /*after_spawn*/ None,
+    ));
+
+    let pid = tree.grandchild_pid().await?;
+    run.abort();
+    let _ = run.await;
+
+    let died = windows_pid_dies_within(pid, Duration::from_secs(5)).await;
+    if !died {
+        windows_kill(pid);
+    }
+    assert!(died, "grandchild {pid} outlived the abandoned shell call");
+    Ok(())
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn windows_a_shell_call_that_finishes_leaves_what_it_started_running() -> Result<()> {
+    // Unix kills the group only on cancel and timeout, so a dev server an
+    // agent starts with `Start-Process` must survive the call that started it.
+    let tree = WindowsTree::new()?;
+    let params = windows_exec_params(tree.detaching_command(), 30_000.into())?;
+    let output = exec(
+        params,
+        NetworkSandboxPolicy::Restricted,
+        /*stdout_stream*/ None,
+        /*after_spawn*/ None,
+    )
+    .await?;
+    assert!(
+        output.exit_status.success(),
+        "{}",
+        output.stderr.from_utf8_lossy().text
+    );
+
+    let pid = tree.grandchild_pid().await?;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let alive = windows_pid_alive(pid);
+    windows_kill(pid);
+    assert!(
+        alive,
+        "the call's normal exit killed {pid}, which it started on purpose"
+    );
+    Ok(())
+}

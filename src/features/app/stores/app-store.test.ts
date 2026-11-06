@@ -11,23 +11,72 @@ vi.mock("@/features/projects/lib/project-snapshot", () => ({ persistHashOf: () =
 vi.mock("@/features/layout/stores/layout-store", () => ({
   useLayoutStore: { getState: () => ({ actions: {} }) },
 }));
+// The project and org stores are plain objects so `hydrate` can be driven:
+// the boot-restore test reads what the org store was handed and watches
+// which project the project store is told to switch to.
+const switchTo = vi.fn(async (_id: string) => {});
+const projectState = { projects: [], activeProjectId: null, actions: { switchTo } };
 vi.mock("@/features/projects/stores/project-store", () => ({
   useProjectStore: {
-    getState: () => ({ projects: [], groups: [], activeProjectId: null, actions: {} }),
+    getState: () => ({
+      ...projectState,
+      actions: { ...projectState.actions, hydrate: () => {} },
+    }),
   },
 }));
+const orgState = {
+  organisations: [] as unknown[],
+  activeOrganisationId: null as string | null,
+  actions: {
+    hydrate: (p: { organisations: unknown[]; activeOrganisationId: string | null }) => {
+      orgState.organisations = p.organisations;
+      orgState.activeOrganisationId = p.activeOrganisationId;
+    },
+  },
+};
 vi.mock("@/features/organisations/stores/org-store", () => ({
-  useOrgStore: { getState: () => ({ organisations: [], activeOrganisationId: null }) },
+  useOrgStore: { getState: () => orgState },
 }));
 vi.mock("@/features/settings/stores/settings-store", () => ({
-  useSettingsStore: { getState: () => ({ actions: { hydrate: () => {} } }) },
+  useSettingsStore: { getState: () => ({ settings: {}, actions: { hydrate: () => {} } }) },
 }));
 
-const { flushAppStateSave, setAppStateWritable } = await import("./app-store");
+const { flushAppStateSave, setAppStateWritable, useAppStore } = await import("./app-store");
+type AppStateWire = Parameters<ReturnType<typeof useAppStore.getState>["actions"]["hydrate"]>[0];
 
 beforeEach(() => {
   invoke.mockClear();
+  switchTo.mockClear();
   setAppStateWritable(true);
+});
+
+/** The saved active project is restored only when it belongs to the saved
+ *  active org. Closing an org's last project used to fall back to ANOTHER
+ *  org's project and persist that pairing, so every launch reopened a
+ *  project the current org's switcher did not show. */
+describe("restoring the active project at boot", () => {
+  const boot = (activeWorkspaceId: string) =>
+    useAppStore.getState().actions.hydrate({
+      organisations: [],
+      activeOrganisationId: "personal",
+      workspaces: [
+        { id: "mlbb", name: "mlbb", path: "/p/mlbb", groupId: null, orgId: "personal" },
+        { id: "atlas", name: "atlas", path: "/p/atlas", groupId: null, orgId: "team" },
+      ],
+      activeWorkspaceId,
+    } as unknown as AppStateWire);
+
+  it("reopens the saved project when it is in the active org", () => {
+    boot("mlbb");
+
+    expect(switchTo).toHaveBeenCalledWith("mlbb");
+  });
+
+  it("does not reopen another org's project", () => {
+    boot("atlas");
+
+    expect(switchTo).not.toHaveBeenCalled();
+  });
 });
 
 /** The guard exists for one reason: `AppState::apply_patch` REPLACES

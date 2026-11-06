@@ -12,11 +12,11 @@ separately in Settings.
 
 ## Where themes come from
 
-| Source | Location | Removable |
-|---|---|---|
-| **Minimal** | built in — no document at all | no |
-| **Material Icon Theme** | bundled, `crates/atlas-icon-theme/vendor/material-icon-theme/` | no |
-| Installed themes | `~/.config/atlas/icon-themes/<publisher>.<name>/` | yes |
+| Source                  | Location                                                       | Removable |
+| ----------------------- | -------------------------------------------------------------- | --------- |
+| **Minimal**             | built in — no document at all                                  | no        |
+| **Material Icon Theme** | bundled, `crates/atlas-icon-theme/vendor/material-icon-theme/` | no        |
+| Installed themes        | `~/.config/atlas/icon-themes/<publisher>.<name>/`              | yes       |
 
 The selection lives in `~/.config/atlas/config.toml` as `iconTheme`:
 
@@ -55,7 +55,8 @@ A few properties worth knowing:
   person asked for by clicking.
 - The search is filtered on each candidate's real `package.json` — a result
   appears only if it declares `contributes.iconThemes`, so colour themes do not
-  clutter an icon-theme picker.
+  clutter an icon-theme picker. (Colour themes are searched the same way, from
+  the theme import dialog; the client both use is `src-tauri/src/open_vsx.rs`.)
 - Being offline costs a search, not a launch: the failure is reported in place,
   with a retry, and the installed list is untouched.
 - The `.vsix` is a zip. Only its `extension/` subtree is unpacked, every entry
@@ -78,9 +79,13 @@ A map of id to icon. An icon is either an image or a font glyph:
 {
   "iconDefinitions": {
     "typescript": { "iconPath": "./../icons/typescript.svg" },
-    "_seti_ts":   { "fontCharacter": "\\E001", "fontColor": "#519aba",
-                    "fontSize": "150%", "fontId": "seti" }
-  }
+    "_seti_ts": {
+      "fontCharacter": "\\E001",
+      "fontColor": "#519aba",
+      "fontSize": "150%",
+      "fontId": "seti",
+    },
+  },
 }
 ```
 
@@ -93,11 +98,15 @@ Glyph themes (Seti and its descendants) declare their web fonts:
 
 ```jsonc
 {
-  "fonts": [{
-    "id": "seti",
-    "src": [{ "path": "./seti.woff", "format": "woff" }],
-    "weight": "normal", "style": "normal", "size": "115%"
-  }]
+  "fonts": [
+    {
+      "id": "seti",
+      "src": [{ "path": "./seti.woff", "format": "woff" }],
+      "weight": "normal",
+      "style": "normal",
+      "size": "115%",
+    },
+  ],
 }
 ```
 
@@ -111,16 +120,16 @@ SVG theme never loads one.
 
 ### Associations
 
-| Key | Matches |
-|---|---|
-| `file` | any file with no better answer |
-| `folder` / `folderExpanded` | any folder, closed / open |
-| `rootFolder` / `rootFolderExpanded` | the project root |
-| `fileNames` | a whole file name, optionally parent-path-prefixed |
-| `fileExtensions` | an extension, case-insensitively |
-| `languageIds` | the editor's language id for the file |
-| `folderNames` / `folderNamesExpanded` | a folder name, optionally prefixed |
-| `rootFolderNames` / `rootFolderNamesExpanded` | the root folder by name |
+| Key                                           | Matches                                            |
+| --------------------------------------------- | -------------------------------------------------- |
+| `file`                                        | any file with no better answer                     |
+| `folder` / `folderExpanded`                   | any folder, closed / open                          |
+| `rootFolder` / `rootFolderExpanded`           | the project root                                   |
+| `fileNames`                                   | a whole file name, optionally parent-path-prefixed |
+| `fileExtensions`                              | an extension, case-insensitively                   |
+| `languageIds`                                 | the editor's language id for the file              |
+| `folderNames` / `folderNamesExpanded`         | a folder name, optionally prefixed                 |
+| `rootFolderNames` / `rootFolderNamesExpanded` | the root folder by name                            |
 
 ### `light` and `highContrast`
 
@@ -169,7 +178,7 @@ above for every theme whose light section is partial. They all are.
 ### Language ids
 
 `languageIds` is matched against the **editor's own** language id for the path
-(`src/features/editor/lib/languages.ts`). There is deliberately no second
+(`src/features/icon-theme/lib/language-id.ts`). There is deliberately no second
 language table: a file the editor calls `rust` is the file an icon theme's
 `"rust"` entry matches. A path the editor cannot identify sends no language id
 at all rather than sending `plaintext`.
@@ -180,15 +189,15 @@ Material is a 444 KB document naming 1,251 SVGs, about 1 MB of icons. None of
 that reaches the webview at startup. The IPC surface is split so that only what
 is on screen is ever transferred:
 
-| Command | Answers |
-|---|---|
-| `list_icon_themes` | the picker's rows |
-| `resolve_icons` | one definition id per path, for a batch of paths |
-| `get_icon_theme_assets` | SVG/PNG bytes, for a batch of definition ids |
-| `get_icon_theme_fonts` | a glyph theme's fonts, inlined |
-| `search_icon_themes` | Open VSX search |
-| `install_icon_theme` | download + unpack |
-| `remove_icon_theme` | delete an installed theme |
+| Command                 | Answers                                          |
+| ----------------------- | ------------------------------------------------ |
+| `list_icon_themes`      | the picker's rows                                |
+| `resolve_icons`         | one definition id per path, for a batch of paths |
+| `get_icon_theme_assets` | SVG/PNG bytes, for a batch of definition ids     |
+| `get_icon_theme_fonts`  | a glyph theme's fonts, inlined                   |
+| `search_icon_themes`    | Open VSX search                                  |
+| `install_icon_theme`    | download + unpack                                |
+| `remove_icon_theme`     | delete an installed theme                        |
 
 A row does not fetch; it registers a want, and one flush per render turns a
 whole screen of rows into a single `resolve_icons`. Assets are cached by

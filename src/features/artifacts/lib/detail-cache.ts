@@ -65,6 +65,26 @@ export function writeCachedDetail(ref: DetailRef, detail: SessionDetail): void {
 }
 
 /**
+ * Forget one Session, wherever it is held.
+ *
+ * The Timeline is live: a Session can grow while it is closed — its own agent
+ * is still working, or a teammate's realtime frame says their copy changed.
+ * A cache entry is a snapshot, and a snapshot of a session that has since
+ * moved is exactly the thing this cache must not serve synchronously on the
+ * next open.
+ *
+ * By Session id across every Project rather than by the full row key: a
+ * realtime frame names the Session, not the checkout it is filed under here,
+ * and the same id can be held by two Projects (`board-key.ts`).
+ */
+export function invalidateCachedDetail(sessionId: string): void {
+  for (const k of cache.keys()) {
+    // The row key is `project\0path\0id`, so the id is the last field.
+    if (k.slice(k.lastIndexOf("\u0000") + 1) === sessionId) cache.delete(k);
+  }
+}
+
+/**
  * Drop everything.
  *
  * Called on a Project or Organisation switch: the board is rebuilt from a

@@ -65,9 +65,22 @@ const EMPTY_TAB: TabComments = {
   directory: null,
 };
 
+/** "Open this thread": the captured row whose popover should open, and a
+ *  number that moves on every request so asking twice opens twice. */
+export interface ThreadFocus {
+  rowId: string;
+  n: number;
+}
+
 interface ChatCommentsState {
   byTab: Record<string, TabComments>;
+  /** Per tab, the thread the comments popup last asked to open — the chat's
+   *  half of the Timeline's `FocusThreadContext`. */
+  focus: Record<string, ThreadFocus | undefined>;
   actions: {
+    /** Ask the row carrying `rowId`'s thread to open its popover. */
+    focusThread: (tabId: string, rowId: string) => void;
+    clearFocus: (tabId: string) => void;
     setTarget: (tabId: string, target: CommentTargetIds | null, entries: AnchorEntry[]) => void;
     setAnchors: (tabId: string, anchors: AnchorMap) => void;
     setComments: (tabId: string, comments: RowComments | null) => void;
@@ -97,7 +110,19 @@ function commentCountOf(byAnchor: Record<string, Comment[]>, session: Comment[])
 export const useChatCommentsStore = createSelectors(
   create<ChatCommentsState>()((set) => ({
     byTab: {},
+    focus: {},
     actions: {
+      focusThread: (tabId, rowId) =>
+        set((s) => ({
+          focus: { ...s.focus, [tabId]: { rowId, n: (s.focus[tabId]?.n ?? 0) + 1 } },
+        })),
+      clearFocus: (tabId) =>
+        set((s) => {
+          if (!s.focus[tabId]) return s;
+          const focus = { ...s.focus };
+          delete focus[tabId];
+          return { focus };
+        }),
       setTarget: (tabId, target, entries) =>
         set((s) => {
           const tab = s.byTab[tabId] ?? EMPTY_TAB;
@@ -169,9 +194,27 @@ export function useAnchorHit(tabId: string, chatKey: string): AnchorHit | undefi
   return useChatCommentsStore((s) => s.byTab[tabId]?.anchors.rowIdByChatKey.get(chatKey));
 }
 
+/**
+ * The open signal for one row's thread: a number while the comments popup has
+ * asked for THIS row, `undefined` otherwise. `CommentButton` opens its popover
+ * when it changes — what the Timeline's `useOpenSignal` does for its rows.
+ */
+export function useThreadOpenSignal(tabId: string, rowId: string | undefined): number | undefined {
+  return useChatCommentsStore((s) => {
+    const f = s.focus[tabId];
+    return rowId && f?.rowId === rowId ? f.n : undefined;
+  });
+}
+
 /** The thread on this chat key, by reference. */
 export function useCommentBucket(tabId: string, chatKey: string): Comment[] | undefined {
   return useChatCommentsStore((s) => s.byTab[tabId]?.byChatKey[chatKey]);
+}
+
+/** Whether the tab's session is in the cloud — the only kind that takes
+ *  comments. What decides whether a cite may "Share with team". */
+export function useHasCloudTarget(tabId: string): boolean {
+  return useChatCommentsStore((s) => s.byTab[tabId]?.target !== null && !!s.byTab[tabId]?.target);
 }
 
 /**

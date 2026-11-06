@@ -5,6 +5,7 @@ import type { OrgDirectory } from "@/features/organisations/lib/use-org-director
 
 import type { Comment } from "../lib/comments-api";
 import { facesOf, MAX_FACES } from "./comment-thread";
+import { commenterName } from "@/components/commenter-avatar";
 
 function member(userId: string, name: string): OrgMember {
   return {
@@ -49,6 +50,9 @@ const ROSTER = directory(
   member("u4", "Katherine Johnson"),
 );
 
+/** What a face prints beside it, so the cases read as names. */
+const name = (c: { authorId: string; guestName: string | null }) => commenterName(c, ROSTER);
+
 describe("facesOf", () => {
   it("shows one face per person, not one per comment", () => {
     // A thread where one person wrote five times is not five people.
@@ -61,7 +65,7 @@ describe("facesOf", () => {
       ROSTER,
     );
     expect(faces).toHaveLength(1);
-    expect(faces[0].name).toBe("Ada Lovelace");
+    expect(name(faces[0]!)).toBe("Ada Lovelace");
   });
 
   it("caps at three and prefers the most recent speakers", () => {
@@ -77,14 +81,14 @@ describe("facesOf", () => {
       ROSTER,
     );
     expect(faces).toHaveLength(MAX_FACES);
-    expect(faces.map((f) => f.name)).toEqual(["Katherine Johnson", "Alan Turing", "Grace Hopper"]);
+    expect(faces.map(name)).toEqual(["Katherine Johnson", "Alan Turing", "Grace Hopper"]);
   });
 
   it("keys the avatar on the human, not the membership", () => {
     // The avatar's colour derives from the id it is given: the membership id
     // would recolour the same person in every Organisation they belong to.
     const [face] = facesOf([comment({ id: "c1", authorId: "u1" })], ROSTER);
-    expect(face.id).toBe("u1");
+    expect(face!.authorId).toBe("u1");
   });
 
   it("leaves out anyone the roster cannot name", () => {
@@ -93,13 +97,18 @@ describe("facesOf", () => {
     expect(facesOf([comment({ id: "c1", authorId: "u_gone" })], ROSTER)).toHaveLength(0);
   });
 
-  it("never draws a guest as a member", () => {
-    // Even if a guest id collides with a member's, a guest is not that person.
-    const faces = facesOf(
+  it("shows a guest as a guest, never as the member whose id they share", () => {
+    // A guest IS a face — they have generated art rather than a photo, which
+    // is why they are in the stack at all now. What must never happen is one
+    // being drawn as the member whose id theirs collides with.
+    const [face] = facesOf(
       [comment({ id: "c1", authorId: "u1", guestName: "Someone outside" })],
       ROSTER,
     );
-    expect(faces).toHaveLength(0);
+    expect(face).toBeDefined();
+    expect(face!.guestName).toBe("Someone outside");
+    expect(name(face!)).toBe("Someone outside");
+    expect(name(face!)).not.toBe("Ada Lovelace");
   });
 
   it("ignores deleted comments", () => {
@@ -112,6 +121,6 @@ describe("facesOf", () => {
       ],
       ROSTER,
     );
-    expect(faces.map((f) => f.name)).toEqual(["Grace Hopper"]);
+    expect(faces.map(name)).toEqual(["Grace Hopper"]);
   });
 });

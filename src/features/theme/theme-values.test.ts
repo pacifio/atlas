@@ -11,16 +11,15 @@
 // check and still ship the bug.
 
 import { beforeEach, describe, expect, it } from "vitest";
-import builtinThemes from "@/dev/mock-backend/fixtures/builtin-themes.json";
+import { BUILTIN_THEMES } from "@/dev/mock-backend/fixtures/builtin-themes";
 import { applyTheme } from "./apply-theme";
-import type { Theme } from "./lib/theme-api";
 import { act, renderHook } from "@testing-library/react";
 import { useSeriesPalette } from "@/features/usage/lib/palette";
 import { terminalTheme } from "@/features/terminal/lib/terminal-theme";
 import { graphPalette } from "@/components/graph-palette";
 import { onThemeApplied, themeBase, themeColor } from "./theme-values";
 
-const themes = builtinThemes as Theme[];
+const themes = BUILTIN_THEMES;
 const rosePine = themes.find((theme) => theme.id === "rose-pine")!;
 const atlas = themes.find((theme) => theme.id === "atlas")!;
 

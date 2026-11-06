@@ -108,7 +108,9 @@ pub const ORG_WINDOW_ACTION_EVENT: &str = "atlas:org-window-action";
 /// General → "Let Atlas Agent act in your organisation"). Checked when a
 /// session is offered the server and on every call, so switching it off stops
 /// the agent at once.
-pub type OrgAccessGate = Arc<dyn Fn() -> bool + Send + Sync>;
+/// Given the session's launch directory: the setting can be overridden per
+/// project.
+pub type OrgAccessGate = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 
 /// Where a session's organisation tools act: the organisation its Project is
 /// bound to, and the Workspace the binding registered. Resolved once, from the

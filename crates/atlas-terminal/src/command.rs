@@ -63,6 +63,23 @@ pub struct OutputBuffer {
     /// every output chunk, and decoding the whole buffer each time is what made
     /// that cost quadratic in what the command had printed (ATL-219).
     text: String,
+    /// Bytes of `text` that have been dropped from the window but not yet from
+    /// the allocation. Always on a character boundary.
+    ///
+    /// Truncation used to `drain(..cut)` on every overflowing push, which moves
+    /// the whole retained window — up to the limit, a megabyte by default —
+    /// for the sake of the few bytes that overflowed. A command that printed
+    /// past the limit then paid a megabyte-sized memmove per chunk for the rest
+    /// of its life. Advancing an offset instead costs nothing, and the real
+    /// compaction happens once the dead prefix has grown past the live window,
+    /// so its cost is paid once per `limit` bytes rather than once per chunk.
+    head: usize,
+    /// Bytes dropped from the front over the buffer's whole life. With `len`
+    /// this places the window in the command's total output: a reader that
+    /// remembers how far into that stream it last read can be served the bytes
+    /// since, even after the front has gone — see `end` and
+    /// `AcpTerminal::output_appended`.
+    dropped: usize,
     /// Trailing bytes that may be the start of a character whose remaining
     /// bytes have not arrived yet. Decoding them now would put a replacement
     /// char in the window that the next chunk would have completed.
@@ -75,6 +92,8 @@ impl OutputBuffer {
     pub fn new(limit: u64) -> Self {
         Self {
             text: String::new(),
+            head: 0,
+            dropped: 0,
             pending: Vec::new(),
             // Saturating: `u64::MAX` from a careless agent must clamp, not wrap
             // to a tiny buffer on 32-bit.
@@ -92,7 +111,8 @@ impl OutputBuffer {
                 .push_str(&String::from_utf8_lossy(&self.pending[..split]));
             self.pending.drain(..split);
         }
-        if self.text.len() <= self.limit {
+        let live = self.text.len() - self.head;
+        if live <= self.limit {
             return;
         }
         self.truncated = true;
@@ -100,11 +120,25 @@ impl OutputBuffer {
         // boundary. Slicing on a raw byte offset would cut a multi-byte
         // character in half and every later read would show a replacement char
         // at the head of the window.
-        let mut cut = self.text.len() - self.limit;
+        let mut cut = self.head + (live - self.limit);
         while cut < self.text.len() && !self.text.is_char_boundary(cut) {
             cut += 1;
         }
-        self.text.drain(..cut);
+        self.dropped += cut - self.head;
+        self.head = cut;
+        // Reclaim once the dead prefix outweighs what it is keeping alive. The
+        // window this leaves is byte-for-byte the one an immediate drain would
+        // have left — only the allocation behind it differs — so the buffer
+        // still holds exactly the last `limit` bytes however the writes were
+        // chunked.
+        if self.head > self.limit {
+            self.text.drain(..self.head);
+            self.head = 0;
+            // `drain` keeps the capacity, which had grown to hold the dead
+            // prefix too — up to twice the limit, per terminal, for the life of
+            // the thread. Hand the excess back; the window itself is unchanged.
+            self.text.shrink_to(self.limit.saturating_mul(2));
+        }
     }
 
     /// The retained window.
@@ -120,7 +154,8 @@ impl OutputBuffer {
     /// than a replacement char that later vanishes, and it is why the window
     /// can be decoded once on write instead of on every read.
     pub fn text(&self) -> &str {
-        &self.text
+        // `head` is advanced only to a character boundary.
+        &self.text[self.head..]
     }
 
     /// Whether anything has been dropped from the front. Sticky: once a buffer
@@ -130,12 +165,31 @@ impl OutputBuffer {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.text.is_empty()
+        self.text.len() == self.head
     }
 
     /// Retained bytes. Used to account for a buffer's cost from outside.
     pub fn len(&self) -> usize {
-        self.text.len()
+        self.text.len() - self.head
+    }
+
+    /// Bytes dropped from the front so far — where the window starts in the
+    /// command's total output.
+    pub fn dropped(&self) -> usize {
+        self.dropped
+    }
+
+    /// Record that output was lost before it reached this buffer, so a reader
+    /// cannot mistake what it holds for a complete capture. Sticky, as
+    /// truncation by the limit is.
+    pub fn mark_truncated(&mut self) {
+        self.truncated = true;
+    }
+
+    /// Where the window ends in the command's total output: every byte ever
+    /// pushed, dropped or retained.
+    pub fn end(&self) -> usize {
+        self.dropped + self.len()
     }
 }
 
@@ -285,6 +339,19 @@ impl CommandTerminal {
             Ok(out) => (out.text().to_string(), out.truncated),
             Err(_) => (String::new(), false),
         }
+    }
+
+    /// Run `f` over the output buffer itself, without copying it. The buffer
+    /// knows how much it has dropped, so `f` can serve a tail against an
+    /// offset into the command's total output whether or not the front is
+    /// gone.
+    pub fn with_output_buffer<R>(&self, f: impl FnOnce(&OutputBuffer) -> R) -> R {
+        let out = self
+            .inner
+            .output
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        f(&out)
     }
 
     /// Run `f` over the retained output without copying it.
@@ -668,6 +735,29 @@ mod tests {
             buf.text()
         );
         assert_eq!(buf.text().chars().count(), 3);
+    }
+
+    /// The window is still exactly the last `limit` bytes once the buffer has
+    /// been truncating for a long time — the deferred compaction must not let
+    /// the dead prefix leak into a read, or shorten what a read returns.
+    #[test]
+    fn a_long_running_buffer_still_holds_exactly_the_last_window() {
+        let limit = 64;
+        let mut buf = OutputBuffer::new(limit as u64);
+        let mut all = String::new();
+        // Far past the point where the dead prefix is compacted away.
+        for i in 0..2_000 {
+            let chunk = format!("{i:04}");
+            buf.push(chunk.as_bytes());
+            all.push_str(&chunk);
+        }
+        assert_eq!(buf.len(), limit, "the window stays at the limit");
+        assert_eq!(
+            buf.text(),
+            &all[all.len() - limit..],
+            "and is the tail of everything written",
+        );
+        assert!(buf.truncated());
     }
 
     #[test]

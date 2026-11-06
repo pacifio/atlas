@@ -7,6 +7,12 @@ description = "Atlas's on-device RAG/memory engine: MiniLM → usearch HNSW behi
 [lib]
 name = "atlas_memory"
 
+[features]
+# Read-only introspection the record store's own integration tests need
+# (`RecordStore::explain`, `drop_index_for_test`). Off for the app: one of them
+# drops an index, and nothing that ships should be able to reach it.
+test-util = []
+
 [dependencies]
 # `.atlas` vs `.atlas-dev`: whose data this process owns (see that crate).
 atlas-profile = { path = "../atlas-profile" }
@@ -15,7 +21,12 @@ chrono = { version = "0.4", features = ["serde"] }
 # `embedding::EmbeddingError`.
 thiserror = "2"
 # The persistent HNSW vector index — has native save/load/remove (hard deletes).
-usearch = "2.25.3"
+# Without its default `numkong` SIMD backend here; it's turned back on for every
+# target but Windows below. numkong 7.x does not build with MSVC on Windows
+# ARM64 (its headers pull in x86-only `<immintrin.h>` and include
+# `<processthreadsapi.h>` without `<windows.h>`), and usearch falls back to its
+# own distance kernels (`USEARCH_USE_NUMKONG=0`) with the same Rust API.
+usearch = { version = "2.25.3", default-features = false }
 # On-device MiniLM embedder (384-d, CPU). The `MiniLmProvider` wraps this.
 atlas-embed = { path = "../atlas-embed" }
 
@@ -27,6 +38,11 @@ rusqlite = { version = "0.39", features = ["bundled"] }
 atlas-redact = { path = "../atlas-redact" }
 # Normalised content hash of an entry (its identity when no key is given).
 sha2 = "0.10"
+# The retrieval core shared with the code index: content-keyed embedding
+# cache codec, healing vector files, RRF fusion.
+atlas-retrieval = { path = "../atlas-retrieval" }
+# The revision hash chain and corpus document keys.
+blake3 = { workspace = true }
 
 async-trait = "0.1"
 anyhow = "1"
@@ -35,7 +51,15 @@ serde_json = "1"
 tokio = { version = "1", features = ["rt", "sync"] }
 tracing = "0.1"
 
+# usearch's numkong SIMD backend everywhere it builds (see `usearch` above).
+[target.'cfg(not(windows))'.dependencies]
+usearch = { version = "2.25.3", features = ["numkong"] }
+
 [dev-dependencies]
+# The crate's own integration tests, with the test-only helpers turned on. A
+# self dev-dependency is how a crate enables one of its features for `tests/`
+# without the app inheriting it.
+atlas-memory = { path = ".", features = ["test-util"] }
 # Unique temp dirs in the record-store tests.
 uuid = { version = "1", features = ["v4"] }
 # `#[tokio::test]` and `Runtime::new` in the tests (grafeo used to pull these

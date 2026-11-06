@@ -10,14 +10,24 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  EMPTY_AGENT_REGISTRY,
+  resolveAgentMeta,
+  type AgentMetaResolver,
+} from "@/features/agents/lib/agent-identity";
+import {
+  agentLabel,
   bucketByDay,
+  facets,
   formatDuration,
   groupSessions,
   prettyModel,
+  sessionTitle,
   startOfDay,
   startOfMonth,
   startOfWeek,
   tokenLabel,
+  dayHeading,
+  shortSessionId,
 } from "./board";
 import type { BoardSession } from "../types";
 
@@ -181,5 +191,135 @@ describe("grouping grain", () => {
     const [week] = groupSessions(rows, "week");
     expect(week.sessions).toHaveLength(3);
     expect(week.label).toBe("This week");
+  });
+});
+
+describe("sessionTitle", () => {
+  // Titles stored before capture learned to derive past agent markup are the
+  // prompt's first line verbatim — these are the shapes that reached the board.
+  it("reads a stored paste opener as Pasted text", () => {
+    expect(sessionTitle('<pasted_content id="8a17">')).toBe("Pasted text");
+    expect(sessionTitle('</pasted_content id="8a17">')).toBe("Pasted text");
+  });
+
+  it("is null for a title that is any other lone wrapper tag", () => {
+    expect(sessionTitle("<system-reminder>")).toBeNull();
+    expect(sessionTitle('<some-new-wrapper kind="x">')).toBeNull();
+  });
+
+  it("keeps the words around inline markup", () => {
+    expect(
+      sessionTitle('fix <pasted_content id="01">TypeError</pasted_content id="01"> please'),
+    ).toBe("fix TypeError please");
+    expect(sessionTitle("[Image #1] why is this button misaligned")).toBe(
+      "why is this button misaligned",
+    );
+    expect(
+      sessionTitle("<command-name>/review</command-name> <command-args>auth</command-args>"),
+    ).toBe("/review auth");
+    expect(sessionTitle("<system-reminder>opened foo.ts</system-reminder> explain this")).toBe(
+      "explain this",
+    );
+  });
+
+  it("labels a title that was only an attachment placeholder", () => {
+    expect(sessionTitle("[Pasted text #1 +42 lines]")).toBe("Pasted text");
+    expect(sessionTitle("[Image #1] [Image #2]")).toBe("Image");
+  });
+
+  it("leaves ordinary titles, angle brackets included, alone", () => {
+    expect(sessionTitle("Fix the drain")).toBe("Fix the drain");
+    expect(sessionTitle("convert Vec<String> to a slice")).toBe("convert Vec<String> to a slice");
+    expect(sessionTitle("why is a < b but <div> renders")).toBe("why is a < b but <div> renders");
+    expect(sessionTitle(null)).toBeNull();
+  });
+});
+
+describe("dayHeading", () => {
+  const at = (iso: string) => new Date(iso);
+  const now = at("2026-10-14T12:00:00");
+
+  it("splits the heading into a date and the word for it", () => {
+    expect(dayHeading(at("2026-10-14T09:00:00"), now)).toEqual({
+      date: "October 14",
+      day: "Today",
+    });
+    expect(dayHeading(at("2026-10-13T09:00:00"), now).day).toBe("Yesterday");
+    // Further back the weekday is what orients you, not "11 days ago".
+    expect(dayHeading(at("2026-10-03T09:00:00"), now).day).toBe("Saturday");
+  });
+
+  it("spends the year only once it is ambiguous", () => {
+    expect(dayHeading(at("2026-03-02T09:00:00"), now).date).toBe("March 2");
+    expect(dayHeading(at("2025-03-02T09:00:00"), now).date).toBe("March 2, 2025");
+  });
+});
+
+describe("shortSessionId", () => {
+  it("keeps the prefix and shortens the digits, like a commit sha", () => {
+    expect(shortSessionId("as-5db94a5afb7c4caead736ba8df2ca0f2")).toBe("as-5db94a5a");
+  });
+
+  it("shortens a bare uuid without mistaking its first dash for a prefix", () => {
+    expect(shortSessionId("5db94a5a-fb7c-4cae-ad73-6ba8df2ca0f2")).toBe("5db94a5a");
+  });
+
+  it("leaves an already-short id alone", () => {
+    // A server Session is `ses-983`; shortening that would be vandalism.
+    expect(shortSessionId("ses-983")).toBe("ses-983");
+    expect(shortSessionId("abc")).toBe("abc");
+  });
+});
+
+/** Agent identity over an empty registry: first-party names, prettified ids. */
+const resolve: AgentMetaResolver = (id) => resolveAgentMeta(id, EMPTY_AGENT_REGISTRY);
+
+describe("agentLabel", () => {
+  it("names first-party agents, and the native agent Atlas", () => {
+    expect(agentLabel("claude-code", resolve)).toBe("Claude Code");
+    expect(agentLabel("claude-acp", resolve)).toBe("Claude Code");
+    expect(agentLabel("opencode", resolve)).toBe("OpenCode");
+    expect(agentLabel("atlas-agent", resolve)).toBe("Atlas");
+  });
+
+  it("does not name an id after a first-party agent it merely contains", () => {
+    // ADR-0002: identity, not a substring of the id.
+    const registry: AgentMetaResolver = (id) =>
+      resolveAgentMeta(id, {
+        catalogById: {},
+        registryEntries: [
+          { id: "claude-foo", name: "Foo for Claude", iconDataUrl: null },
+          { id: "codex-acp", name: "Codex", iconDataUrl: null },
+        ],
+      });
+    expect(agentLabel("claude-foo", registry)).toBe("Foo for Claude");
+    expect(agentLabel("claude-bar", resolve)).toBe("Claude Bar");
+    expect(agentLabel("codex-acp", registry)).toBe("Codex");
+    expect(agentLabel("my-kilo-fork", resolve)).toBe("My Kilo Fork");
+  });
+
+  it("names any other agent through the resolver it is handed", () => {
+    const registry: AgentMetaResolver = (id) =>
+      resolveAgentMeta(id, {
+        catalogById: {},
+        registryEntries: [{ id: "gemini", name: "Gemini CLI", iconDataUrl: null }],
+      });
+    expect(agentLabel("gemini", registry)).toBe("Gemini CLI");
+    expect(agentLabel("some-agent", resolve)).toBe("Some Agent");
+  });
+});
+
+describe("facets", () => {
+  it("labels the agent options with the resolver", () => {
+    const registry: AgentMetaResolver = (id) =>
+      resolveAgentMeta(id, {
+        catalogById: {},
+        registryEntries: [{ id: "gemini", name: "Gemini CLI", iconDataUrl: null }],
+      });
+    const agent = facets(
+      [session({ agent: "gemini" }), session({ id: "as-2", agent: "codex" })],
+      registry,
+    ).find((f) => f.key === "agent");
+    expect(agent?.options.map((o) => o.label)).toEqual(["All agents", "Codex", "Gemini CLI"]);
   });
 });

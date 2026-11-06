@@ -1121,7 +1121,7 @@ async fn the_picked_model_is_what_the_next_turn_requests() {
 
 #[tokio::test]
 async fn status_and_diff_answer_from_this_side_without_spending_a_turn() {
-    // `/status` and `/diff` were the upstream TUI's own features — no engine
+    // `/status` and `/diff` were the original TUI's own features — no engine
     // call, no model, nothing billed. The seam is Atlas's frontend to the same
     // engine, so they answer here: an assistant message appears, the turn
     // ends, and the gateway never hears about it.

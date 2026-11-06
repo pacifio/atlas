@@ -1,5 +1,4 @@
-//! Per-session state on a live connection — ported from
-//! `zed-ref/crates/agent_servers/src/acp.rs:492-640`.
+//! Per-session state on a live connection.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -162,7 +161,7 @@ impl ConfigOptions {
 
 /// What the agent gets told about where the session lives.
 ///
-/// Ported from `SessionDirectories` (`acp.rs:1440-1492`). The split matters:
+/// The split matters:
 /// `cwd` is the one directory the agent runs in, and everything else is an
 /// explicitly granted extra root. An agent that does not advertise support for
 /// additional directories gets only the first.
@@ -198,8 +197,13 @@ impl SessionDirectories {
     pub fn into_new_session_request(
         self,
         mcp_servers: Vec<acp::McpServer>,
+        ask_first: &crate::session_mcp::AskFirst,
     ) -> acp::NewSessionRequest {
         let mut request = acp::NewSessionRequest::new(self.cwd);
+        request.meta = Some(crate::session_mcp::claude_code_meta(
+            &mcp_servers,
+            ask_first,
+        ));
         request.mcp_servers = mcp_servers;
         if !self.additional_directories.is_empty() {
             request.additional_directories = self.additional_directories;
@@ -210,9 +214,9 @@ impl SessionDirectories {
 
 /// The session table shared between the connection and the inbound handlers.
 ///
-/// Zed reaches this through a foreground dispatch queue because its threads are
-/// GPUI entities and therefore `!Send`; see the note in [`crate`]. Here the
-/// handlers run directly on tokio workers, so the table is a plain mutex.
+/// The handlers run directly on tokio workers (state mutations are ordered by
+/// the dispatch queue; see the note in [`crate`]), so the table is a plain
+/// mutex.
 #[derive(Default)]
 pub struct SessionRegistry {
     sessions: Mutex<HashMap<acp::SessionId, AcpSession>>,

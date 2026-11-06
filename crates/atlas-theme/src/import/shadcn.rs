@@ -33,7 +33,7 @@ use crate::color;
 use crate::import::draft::VariantDraft;
 use crate::import::report::{Fidelity, ImportReport};
 use crate::import::{css, finish_theme, ImportOptions, ImportedTheme};
-use crate::{ThemeError, BASE_TOKENS};
+use crate::{ThemeError, BASE_TOKENS, FONT_TOKENS};
 
 /// tweakcn emits the ingredients of its shadow ramp alongside the ramp itself.
 /// Atlas takes the composed `shadow-*` values; the parts have nowhere to go.
@@ -189,7 +189,7 @@ fn build(
             continue;
         }
         let mut draft = VariantDraft::new(appearance);
-        for token in BASE_TOKENS {
+        for token in BASE_TOKENS.iter().chain(FONT_TOKENS) {
             let found = vars
                 .get(*token)
                 .map(|value| (format!("--{token} ({appearance})"), value))
@@ -221,21 +221,21 @@ fn build(
             }
         }
         draft.fill_palette();
-        draft.fill_required_base();
+        draft.fill_base();
         drafts.push(draft);
     }
     if drafts.is_empty() {
-        return Err(crate::validation(
-            &options.origin,
-            "no usable colours found",
-        ));
+        return Err(crate::validation(&options.origin, "no usable colors found"));
     }
 
     // Everything the source said that did not land anywhere.
     let mut reported = std::collections::BTreeSet::new();
     for (where_, vars) in [("@theme", theme_vars), ("light", light), ("dark", dark)] {
         for (name, value) in vars {
-            if BASE_TOKENS.contains(&name.as_str()) || name == "letter-spacing" {
+            if BASE_TOKENS.contains(&name.as_str())
+                || FONT_TOKENS.contains(&name.as_str())
+                || name == "letter-spacing"
+            {
                 continue;
             }
             if css::is_alias(value) {

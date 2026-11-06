@@ -1,8 +1,5 @@
-//! Terminal buffering tests, adapted from Zed's
-//! `test_terminal_output_buffered_before_created_renders`,
-//! `test_terminal_output_and_exit_buffered_before_created`, and
-//! `test_terminal_kill_allows_wait_for_exit_to_complete`
-//! (`~/Codes/zed-ref/crates/acp_thread/src/acp_thread.rs`).
+//! Terminal buffering tests: output and exit arriving before `Created`, and a
+//! killed terminal still resolving its exit waiter.
 //!
 //! The race these cover is real and not hypothetical: the agent is handed a
 //! terminal id by `terminal/create` and can reference it in a `session/update`
@@ -53,8 +50,6 @@ fn exit_status(code: u32) -> acp::TerminalExitStatus {
     status.exit_code = Some(code);
     status
 }
-
-/// Adapted from `test_terminal_output_buffered_before_created_renders`.
 #[test]
 fn output_arriving_before_created_is_replayed_not_dropped() {
     let mut registry = TerminalRegistry::new();
@@ -89,8 +84,6 @@ fn output_arriving_before_created_is_replayed_not_dropped() {
         output.output
     );
 }
-
-/// Adapted from `test_terminal_output_and_exit_buffered_before_created`.
 #[test]
 fn an_exit_arriving_before_created_is_applied_on_creation() {
     let mut registry = TerminalRegistry::new();
@@ -184,7 +177,7 @@ fn a_title_change_renames_the_command_label() {
     );
 }
 
-/// Adapted from `test_terminal_kill_allows_wait_for_exit_to_complete`: a killed
+/// A killed
 /// terminal must still resolve its exit waiter, or `terminal/wait_for_exit`
 /// hangs forever.
 #[tokio::test]
@@ -536,4 +529,74 @@ async fn dropping_the_registry_kills_a_running_command() {
         exit.signal.is_some() || exit.exit_code != Some(0),
         "sleep(1) should have died by signal, got {exit:?}"
     );
+}
+
+/// Parked output the budget evicts is a real loss of bytes, and the terminal
+/// built afterwards is the only thing that can admit it.
+///
+/// Without the mark, that terminal reports a gapped capture as the whole
+/// command — and a reader streaming a tail against it splices straight across
+/// the hole, so the output on screen is missing a stretch in the middle with
+/// nothing to say so.
+#[test]
+fn output_evicted_before_creation_marks_the_terminal_truncated() {
+    let mut registry = TerminalRegistry::new();
+    let victim = terminal_id("evicted");
+
+    registry.handle_event(TerminalProviderEvent::Output {
+        terminal_id: victim.clone(),
+        data: b"the bytes that are about to be lost".to_vec(),
+    });
+
+    // Push the id count past its ceiling, which evicts oldest-first — the
+    // victim above, parked before any of these.
+    for i in 0..70 {
+        registry.handle_event(TerminalProviderEvent::Output {
+            terminal_id: terminal_id(&format!("other-{i}")),
+            data: b"x".to_vec(),
+        });
+    }
+    assert_eq!(
+        registry.pending_output_len(&victim),
+        0,
+        "the ceiling should have evicted the oldest id's parked output"
+    );
+
+    registry.handle_event(created(&victim));
+    registry.handle_event(TerminalProviderEvent::Output {
+        terminal_id: victim.clone(),
+        data: b"what arrived after".to_vec(),
+    });
+
+    let output = registry
+        .get(&victim)
+        .expect("terminal missing")
+        .current_output();
+    assert!(
+        output.truncated,
+        "a terminal whose parked bytes were evicted must not claim a complete capture"
+    );
+    assert_eq!(output.output, "what arrived after");
+}
+
+/// An id that never lost anything is unaffected — the mark is not sticky
+/// across ids, and a later terminal reusing an evicted id's slot does not
+/// inherit its loss.
+#[test]
+fn an_unevicted_terminal_still_reports_a_complete_capture() {
+    let mut registry = TerminalRegistry::new();
+    let id = terminal_id("clean");
+
+    registry.handle_event(TerminalProviderEvent::Output {
+        terminal_id: id.clone(),
+        data: b"all of it".to_vec(),
+    });
+    registry.handle_event(created(&id));
+
+    let output = registry
+        .get(&id)
+        .expect("terminal missing")
+        .current_output();
+    assert!(!output.truncated);
+    assert_eq!(output.output, "all of it");
 }

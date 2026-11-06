@@ -53,7 +53,7 @@ const NODE_MODULES = path.join(REPO_ROOT, "node_modules");
 const VITE_CONFIG = path.join(REPO_ROOT, "vite.config.ts");
 
 /**
- * The nine CodeMirror/Lezer entries `vite.config.ts` dedupes, as declared
+ * The CodeMirror/Lezer (and pdfjs) entries `vite.config.ts` dedupes, as declared
  * there. Read rather than copied: the list and this guard must not drift, and
  * the assertion below is what says so.
  */
@@ -68,6 +68,9 @@ const EXPECTED_DEDUPE = [
   "@lezer/highlight",
   "@lezer/lr",
   "pdfjs-dist",
+  "@tryatlas/design",
+  "@base-ui/react",
+  "motion",
 ];
 
 /**
@@ -87,6 +90,10 @@ const EXTRA_SINGLETONS = [
   "@tiptap/core",
   "@tiptap/pm",
   "immer",
+  // The package's `ResizableSplit` renders its own copy's `Group`, and desktop's
+  // `usePanelRef` / `useDefaultLayout` come from desktop's: two copies don't
+  // share context, and nothing errors.
+  "react-resizable-panels",
 ];
 
 /** The `resolve.dedupe: [...]` array in `vite.config.ts`. */

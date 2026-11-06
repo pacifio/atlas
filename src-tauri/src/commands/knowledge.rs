@@ -501,47 +501,53 @@ fn ip_is_public(ip: &std::net::IpAddr) -> bool {
     }
 }
 
-#[tauri::command]
-pub async fn fetch_readable(url: String) -> Result<ReadableContent, String> {
-    assert_public_http_url(&url).await?;
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
-        // No automatic redirects: each hop is re-checked, or a public host
-        // could 302 straight into 169.254.169.254.
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .unwrap_or_default();
-
-    let mut current = url.clone();
-    let mut response = None;
+/// GET a public http(s) URL, following up to ten redirects and holding every
+/// hop to `assert_public_http_url`. `client` must be built with
+/// `redirect::Policy::none()` — an automatic redirect would let a public host
+/// 302 straight into 169.254.169.254 past the check.
+pub(crate) async fn get_public_url(
+    client: &reqwest::Client,
+    url: &str,
+) -> Result<reqwest::Response, String> {
+    assert_public_http_url(url).await?;
+    let mut current = url.to_string();
     for _ in 0..10 {
         let resp = client
             .get(&current)
             .send()
             .await
             .map_err(|e| format!("Fetch failed: {e}"))?;
-        if resp.status().is_redirection() {
-            let Some(loc) = resp
-                .headers()
-                .get(reqwest::header::LOCATION)
-                .and_then(|v| v.to_str().ok())
-            else {
-                return Err("redirect with no destination".into());
-            };
-            // Relative redirects resolve against the current URL.
-            let next = reqwest::Url::parse(&current)
-                .and_then(|b| b.join(loc))
-                .map_err(|e| format!("Bad redirect: {e}"))?
-                .to_string();
-            assert_public_http_url(&next).await?;
-            current = next;
-            continue;
+        if !resp.status().is_redirection() {
+            return Ok(resp);
         }
-        response = Some(resp);
-        break;
+        let Some(loc) = resp
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|v| v.to_str().ok())
+        else {
+            return Err("redirect with no destination".into());
+        };
+        // Relative redirects resolve against the current URL.
+        let next = reqwest::Url::parse(&current)
+            .and_then(|b| b.join(loc))
+            .map_err(|e| format!("Bad redirect: {e}"))?
+            .to_string();
+        assert_public_http_url(&next).await?;
+        current = next;
     }
-    let response = response.ok_or_else(|| "too many redirects".to_string())?;
+    Err("too many redirects".to_string())
+}
+
+#[tauri::command]
+pub async fn fetch_readable(url: String) -> Result<ReadableContent, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
+        // No automatic redirects: `get_public_url` re-checks each hop.
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap_or_default();
+    let response = get_public_url(&client, &url).await?;
 
     let final_url = response.url().to_string();
     let html = response

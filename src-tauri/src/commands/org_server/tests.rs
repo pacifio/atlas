@@ -333,6 +333,7 @@ impl OrganisationCloud for FakeOrganisation {
                 deleted_at: None,
                 resolved_at: None,
                 resolved_by: None,
+                votes: Default::default(),
             };
             list.push(posted.clone());
             let mut owed: Vec<(String, &'static str)> = mentions
@@ -661,6 +662,7 @@ fn comment(id: &str, parent: Option<&str>) -> Comment {
         deleted_at: None,
         resolved_at: None,
         resolved_by: None,
+        votes: Default::default(),
     }
 }
 
@@ -751,20 +753,20 @@ fn sharing(on: bool) -> SharingGate {
 }
 
 fn setting(on: bool) -> OrgAccessGate {
-    Arc::new(move || on)
+    Arc::new(move |_: &str| on)
 }
 
 /// A setting the test can flip while a session runs.
 fn switchable(on: bool) -> (OrgAccessGate, Arc<AtomicBool>) {
     let flag = Arc::new(AtomicBool::new(on));
     let read = flag.clone();
-    (Arc::new(move || read.load(Ordering::SeqCst)), flag)
+    (Arc::new(move |_: &str| read.load(Ordering::SeqCst)), flag)
 }
 
 /// A window that is never asked anything in these tests.
 fn quiet_ui() -> axum::Router {
     let bridge = Arc::new(UiBridge::new(Arc::new(|_| Err("no window".into()))));
-    ui_server::router(ui_server::UiTools::new(bridge, Arc::new(|| true)))
+    ui_server::router(ui_server::UiTools::new(bridge, Arc::new(|_: &str| true)))
 }
 
 async fn serve(
@@ -3496,7 +3498,7 @@ async fn org_send_refuses_while_chat_is_on_another_organisation_and_nothing_is_s
     assert!(err);
     let text = answer.as_str().unwrap_or_default();
     assert!(
-        text.contains("chat is connected to organisation org-other") && text.contains("org-acme"),
+        text.contains("chat is connected to organization org-other") && text.contains("org-acme"),
         "{text}"
     );
     assert!(nothing_sent(&org));
@@ -3863,7 +3865,7 @@ async fn a_restricted_workspace_drops_the_reference_appends_the_timeline_link_an
     assert!(
         said["note"]
             .as_str()
-            .is_some_and(|n| n.contains("not visible to the whole organisation")),
+            .is_some_and(|n| n.contains("not visible to the whole organization")),
         "{answer}"
     );
     assert_eq!(answer["body"], json!(format!("Report.\n\n{link}")));
@@ -4527,7 +4529,7 @@ async fn a_non_admin_calling_org_member_activity_anyway_is_refused_and_nothing_i
         )
         .await;
         assert!(err, "{role:?}: {text}");
-        assert!(text.contains("Only an organisation admin"), "{text}");
+        assert!(text.contains("Only an organization admin"), "{text}");
         assert_eq!(org.board_reads(), 0, "{role:?}");
         assert!(
             !org.asked().iter().any(|(_, what)| what == "members"),
@@ -4730,7 +4732,7 @@ async fn a_403_from_the_organisation_is_a_readable_tool_error() {
         "{text}"
     );
     assert!(
-        text.contains("only an organisation admin can read it"),
+        text.contains("only an organization admin can read it"),
         "{text}"
     );
     client.cancel().await.ok();
@@ -5130,7 +5132,7 @@ async fn a_token_that_names_no_organisation_is_refused_and_nothing_is_asked() {
     let (err, text) = call(&client, "org_whoami", json!({})).await;
     assert!(err);
     assert!(
-        text.contains("not given access to an organisation"),
+        text.contains("not given access to an organization"),
         "{text}"
     );
     assert!(org.asked().is_empty());
@@ -5200,10 +5202,7 @@ fn the_tool_list_carries_the_cache_fields_the_2026_07_28_spec_requires() {
 fn the_instructions_state_the_protocol_in_three_sentences_or_fewer() {
     assert!(INSTRUCTIONS.contains("Call org_whoami first"));
     assert!(INSTRUCTIONS.contains("ask the user which one"));
-    assert!(
-        INSTRUCTIONS.matches(". ").count() + 1 <= 3,
-        "{INSTRUCTIONS}"
-    );
+    assert!(INSTRUCTIONS.matches(". ").count() < 3, "{INSTRUCTIONS}");
 }
 
 /// The Chat Completions wire drops a server's instructions (`reshape_tools`
@@ -5450,7 +5449,7 @@ async fn a_refused_call_is_one_audit_record_that_says_why() {
     assert!(
         records[1]
             .text
-            .contains("not given access to an organisation"),
+            .contains("not given access to an organization"),
         "{}",
         records[1].text
     );
@@ -5555,7 +5554,7 @@ fn offers(
     orgs: Arc<FakeSessionOrgs>,
 ) -> MemorySessionOffers {
     MemorySessionOffers::new(host, sharing(true))
-        .with_ui(UiOffer::new(Arc::new(|| true)))
+        .with_ui(UiOffer::new(Arc::new(|_: &str| true)))
         .with_org(OrgOffer::new(setting(setting_on), orgs))
 }
 
@@ -5567,6 +5566,7 @@ fn session_request(in_process: bool) -> SessionMcpRequest {
         http_mcp: true,
         ui_control: in_process,
         org_access: in_process,
+        in_process,
         cwd: std::path::PathBuf::from("/p"),
         session_id: None,
     }
@@ -5574,23 +5574,7 @@ fn session_request(in_process: bool) -> SessionMcpRequest {
 
 /// Every entry an offer carries, as `(name, url, bearer token)`.
 fn entries(offer: &SessionMcpOffer) -> Vec<(String, String, String)> {
-    offer
-        .servers()
-        .iter()
-        .map(|server| {
-            let acp::McpServer::Http(http) = server else {
-                panic!("HTTP entries only")
-            };
-            let token = http
-                .headers
-                .iter()
-                .find(|h| h.name == "Authorization")
-                .and_then(|h| h.value.strip_prefix("Bearer "))
-                .expect("a bearer token")
-                .to_string();
-            (http.name.clone(), http.url.clone(), token)
-        })
-        .collect()
+    crate::commands::memory_server::offers::offered_entries(offer)
 }
 
 fn names(offer: &SessionMcpOffer) -> Vec<String> {
@@ -5759,8 +5743,8 @@ async fn a_signed_out_user_is_not_offered_the_org_server() {
 #[tokio::test(flavor = "multi_thread")]
 async fn without_the_org_third_the_offer_is_as_before() {
     let host = running_host(Arc::new(FakeOrganisation::default())).await;
-    let offers =
-        MemorySessionOffers::new(host, sharing(true)).with_ui(UiOffer::new(Arc::new(|| true)));
+    let offers = MemorySessionOffers::new(host, sharing(true))
+        .with_ui(UiOffer::new(Arc::new(|_: &str| true)));
     assert_eq!(
         names(&offers.offer(&session_request(true))),
         ["atlas_memory", UI_SERVER_NAME]
@@ -5819,7 +5803,7 @@ fn the_setting_is_not_read_for_a_connection_that_cannot_use_the_server() {
     let counted = reads.clone();
     let orgs = FakeSessionOrgs::new(true, Some(acme()));
     let offer = OrgOffer::new(
-        Arc::new(move || {
+        Arc::new(move |_: &str| {
             counted.fetch_add(1, Ordering::SeqCst);
             true
         }),
@@ -6510,7 +6494,7 @@ async fn a_demoted_admin_is_refused_org_member_activity_on_the_next_call() {
         json!({ "member": "Grace Hopper" }),
     )
     .await;
-    assert!(err && text.contains("Only an organisation admin"), "{text}");
+    assert!(err && text.contains("Only an organization admin"), "{text}");
     assert_eq!(org.board_reads(), reads, "nothing more was read");
     client.cancel().await.ok();
 }

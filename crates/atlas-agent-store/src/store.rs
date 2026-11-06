@@ -1,8 +1,7 @@
 //! The store: the installed map, turned into agents.
 //!
-//! Ported from `AgentServerStore` (`agent_server_store.rs:176-489`), and in
-//! particular from `reregister_agents`, which is the whole design in one
-//! function: drain the table, rebuild it from the settings map, notify.
+//! `reregister` is the whole design in one function: drain the table, rebuild
+//! it from the settings map, notify.
 //!
 //! What makes it the *only* source is the shape of that loop — it iterates the
 //! settings map, not the registry. A registry agent nobody installed is looked
@@ -23,6 +22,7 @@ use tokio::sync::watch;
 use crate::http::HttpClient;
 use crate::node::NodeRuntime;
 use crate::registry::{AgentRegistryStore, RegistryAgent};
+use crate::secrets::{SecretEnv, SecretSource};
 use crate::servers::{
     npx_install_dir, LocalCustomAgent, LocalRegistryArchiveAgent, LocalRegistryNpxAgent,
     ProjectEnvironment,
@@ -73,6 +73,7 @@ impl Default for AgentChannels {
 struct State {
     settings: AllAgentServersSettings,
     byok_env: HashMap<String, String>,
+    secret_source: Option<Arc<dyn SecretSource>>,
     external_agents: HashMap<AgentId, ExternalAgentEntry>,
     channels: HashMap<AgentId, AgentChannels>,
     generation: u64,
@@ -153,7 +154,7 @@ impl AgentServerStore {
     }
 
     /// The catalogue changed — rebuild, because a registry entry's version,
-    /// distribution or icon may have moved. This is the path Zed's version-bump
+    /// distribution or icon may have moved. This is the path the version-bump
     /// notification runs through.
     ///
     /// Unconditional, unlike [`AgentServerStore::set_settings`] and
@@ -180,6 +181,13 @@ impl AgentServerStore {
             }
             state.byok_env = env;
         }
+        self.reregister();
+    }
+
+    /// Where sensitive variables are read from at launch: the OS keychain.
+    /// Without one, a variable marked sensitive is simply absent.
+    pub fn set_secret_source(&self, source: Arc<dyn SecretSource>) {
+        self.state.lock().unwrap().secret_source = Some(source);
         self.reregister();
     }
 
@@ -311,16 +319,13 @@ impl AgentServerStore {
             .map(|channels| channels.loading_status.subscribe())
     }
 
-    /// Bumps on every rebuild. Stands in for Zed's `cx.emit(AgentServersUpdated)`
-    /// — a `watch` rather than a broadcast because a listener that missed two
+    /// Bumps on every rebuild. A `watch` rather than a broadcast because a listener that missed two
     /// rebuilds only needs to know the table changed, not how often.
     pub fn updates(&self) -> watch::Receiver<u64> {
         self.updates.subscribe()
     }
 
     /// Rebuild `external_agents` from the installed map.
-    ///
-    /// Ported from `reregister_agents` (`agent_server_store.rs:294-489`).
     fn reregister(&self) {
         let registry_agents = self
             .registry
@@ -339,6 +344,7 @@ impl AgentServerStore {
             let State {
                 settings,
                 byok_env,
+                secret_source,
                 external_agents,
                 channels,
                 generation,
@@ -367,6 +373,11 @@ impl AgentServerStore {
                                 command,
                                 project_env: self.project_env.clone(),
                                 byok_env: byok_env.clone(),
+                                secret_env: SecretEnv::new(
+                                    name,
+                                    entry_settings.secret_env(),
+                                    secret_source.clone(),
+                                ),
                             }),
                             source: ExternalAgentSource::Custom,
                             icon_path: None,
@@ -375,7 +386,7 @@ impl AgentServerStore {
                             default_mode: entry_settings.default_mode().map(str::to_owned),
                         }
                     }
-                    AgentServerSettings::Registry { env, .. } => {
+                    AgentServerSettings::Registry { .. } => {
                         let Some(agent) = registry_agents.get(name) else {
                             // Installed, but the catalogue has not loaded or no
                             // longer lists it. Not an error: a refresh may
@@ -390,9 +401,9 @@ impl AgentServerStore {
                         match self.registry_entry(
                             name,
                             agent,
-                            env,
+                            entry_settings,
                             byok_env,
-                            entry_settings.default_mode(),
+                            secret_source.clone(),
                             agent_channels,
                         ) {
                             Some(entry) => entry,
@@ -405,9 +416,8 @@ impl AgentServerStore {
             }
 
             // A version that moved *forward* means the running connection is
-            // on the wrong binary. Ported from
-            // `agent_server_store.rs:441-467`, which compares for inequality —
-            // the direction is Atlas's own, and `is_upgrade` says why.
+            // on the wrong binary. Only the forward direction
+            // counts, and `is_upgrade` says why.
             for (id, entry) in external_agents.iter() {
                 let (Some(previous), Some(current)) = (
                     previous_versions.get(id).cloned().flatten(),
@@ -440,9 +450,9 @@ impl AgentServerStore {
         &self,
         name: &str,
         agent: &RegistryAgent,
-        settings_env: &HashMap<String, String>,
+        settings: &AgentServerSettings,
         byok_env: &HashMap<String, String>,
-        default_mode: Option<&str>,
+        secret_source: Option<Arc<dyn SecretSource>>,
         channels: &AgentChannels,
     ) -> Option<ExternalAgentEntry> {
         let metadata = agent.metadata();
@@ -465,7 +475,9 @@ impl AgentServerStore {
                         .join(sanitize_path_component(name)),
                     version: version.clone(),
                     targets: binary.targets.clone(),
-                    settings_env: settings_env.clone(),
+                    settings_args: settings.args().to_vec(),
+                    settings_env: settings.launch_env(),
+                    secret_env: SecretEnv::new(name, settings.secret_env(), secret_source.clone()),
                     byok_env: byok_env.clone(),
                     loading_status: Some(channels.loading_status.clone()),
                 })
@@ -478,7 +490,9 @@ impl AgentServerStore {
                 package: npx.package.clone(),
                 args: npx.args.clone(),
                 distribution_env: npx.env.clone(),
-                settings_env: settings_env.clone(),
+                settings_args: settings.args().to_vec(),
+                settings_env: settings.launch_env(),
+                secret_env: SecretEnv::new(name, settings.secret_env(), secret_source),
                 byok_env: byok_env.clone(),
                 loading_status: Some(channels.loading_status.clone()),
             }),
@@ -490,7 +504,7 @@ impl AgentServerStore {
             icon_path: metadata.icon_path.clone(),
             display_name: Some(metadata.name.clone()),
             version: Some(version),
-            default_mode: default_mode.map(str::to_owned),
+            default_mode: settings.default_mode().map(str::to_owned),
         })
     }
 }
@@ -504,7 +518,7 @@ impl AgentServerStore {
 /// whatever the registry now calls current. There is no confirmation step
 /// between a registry publish and that reinstall.
 ///
-/// So a plain `previous != current` — which is what Zed does, and what this
+/// So a plain `previous != current` — which is what this
 /// was — hands a third-party registry two things it should not have:
 ///
 /// - **A downgrade.** Republishing an older version reads as an upgrade, and

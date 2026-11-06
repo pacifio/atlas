@@ -8,7 +8,7 @@ ADR-0003 replaced the native agent's experimental SDK with a one-time hard fork 
 Codex and named the product "Atlas Agent", but it deliberately left two names in the tree. The
 stored agent id stayed the experimental SDK's name, `"cersei"`, as a storage key every recorded
 thread resolved through (spec D7). The fork itself stayed `vendor/codex`: 110 crates named
-`codex-*`, and inside them the upstream's name in identifiers, env vars, the default home
+`codex-*`, and inside them the original's name in identifiers, env vars, the default home
 directory, the project-local `.codex/` config directory it read from user repos, keychain
 entries, the MCP client identity, OTel metric names and the wire schema.
 
@@ -50,8 +50,8 @@ Rename both, completely, in one sweep, and keep them out with a test.
 ### What keeps the word, and why (the residue)
 
 `tests/no-legacy-names.test.ts` keeps both names out, in two regimes. The retired SDK's name is
-banned everywhere but the rows below that mention it. The upstream's name is banned outright in
-the engine's own territory (the vendored tree, the seam crate, the manifests, CI, the contract
+banned everywhere but the rows below that mention it. The original's name is banned outright in
+the engine's own territory (the engine tree, the seam crate, the manifests, CI, the contract
 tests, the living docs) and, everywhere else, only in the spellings the engine used — its crate
 and module identifiers, `vendor/codex`, its home field, its error and auth types, and prose that
 calls the engine by it — because the app layer legitimately names the third-party Codex CLI.
@@ -59,11 +59,11 @@ calls the engine by it — because the app layer legitimately names the third-pa
 | Where | Why |
 | --- | --- |
 | `vendor/atlas-engine/LICENSE`, `NOTICE`; `src-tauri/licenses/OpenAI-Codex-*.txt` | Apache-2.0 §4(a)/(d): verbatim, and the bundled copies' filenames name the upstream work |
-| The §4(b) notice line `Modified by Atlas from upstream OpenAI Codex …` | It names the upstream work |
+| The §4(b) notice line `Modified by Atlas from upstream OpenAI Codex …` | It names the original work |
 | URLs (`github.com/openai/codex`, `chatgpt.com/…`, `openai.com/…`) | URLs are never renamed |
 | OpenAI model ids (`gpt-5-codex`, `codex-auto-review`, …) and the model-keyed prompt files under `core/` | Wire values that belong to the model's vendor; no Atlas turn reaches those files |
 | OpenAI's Codex CLI as a third-party ACP agent (`codex`, `codex-acp`, `@openai/codex-*`, its `CODEX_API_KEY` pass-through, the Memory panel's `~/.codex` reader, its icon and brand colour) | A different product that users install from the Marketplace |
-| `tests/vendor-licensing.test.ts` | Names the path the engine was vendored under, where its git history lives |
+| `tests/vendor-licensing.test.ts` | Names the path the engine was first imported under, where its git history lives |
 | `crates/atlas-thread-metadata/src/schema.rs` | The V3 migration deletes the rows under the retired id |
 | `docs/adr/*`, `docs/archive/*` | The historical record |
 
@@ -82,7 +82,7 @@ blobs, `config.schema.json` and the insta snapshots were regenerated afterwards.
 
 ## Consequences
 
-- Nearly every vendored source file now carries the §4(b) change notice. Files with no comment
+- Nearly every engine source file now carries the §4(b) change notice. Files with no comment
   syntax are listed in `vendor/atlas-engine/ATLAS-CHANGES.md`, the tree-level notice the
   licensing test holds them to.
 - `.atlas-agent/` is now read from repos the way `.codex/` was: the behaviour is unchanged,

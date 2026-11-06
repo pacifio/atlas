@@ -17,6 +17,7 @@
 import { Children, type ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
+import { Separator } from "@tryatlas/design";
 
 export function ActionCluster({
   pinned,
@@ -34,22 +35,32 @@ export function ActionCluster({
   return (
     <span
       className={cn(
-        "-my-1 flex shrink-0 items-center gap-0.5 self-center rounded-full border border-border bg-card px-0.5 py-0.5",
-        reveal === "fade" && "transition-opacity duration-150",
+        "-my-1 flex shrink-0 items-center gap-0.5 self-center rounded-full border border-border bg-card p-0.5",
+        reveal === "fade" && "transition-opacity duration-fast",
         pinned
           ? reveal === "fade"
             ? "opacity-100"
             : "visible"
           : reveal === "fade"
             ? "opacity-0 focus-within:opacity-100 group-hover/row:opacity-100"
-            : "invisible focus-within:visible group-hover/row:visible",
+            : // Opacity, not `visibility`: a `visibility: hidden` control
+              // cannot take focus, so Tab skipped copy and comment entirely.
+              // Hidden here stays focusable and inert to the pointer, and any
+              // focus in the row brings it back. Still a snap — no transition.
+              [
+                "pointer-events-none opacity-0",
+                "group-hover/row:pointer-events-auto group-hover/row:opacity-100",
+                "focus-within:pointer-events-auto focus-within:opacity-100",
+                "group-focus-within/row:pointer-events-auto group-focus-within/row:opacity-100",
+                "has-aria-expanded:pointer-events-auto has-aria-expanded:opacity-100",
+                "pointer-coarse:pointer-events-auto pointer-coarse:opacity-100",
+              ],
         className,
       )}
     >
       {shown.map((child, i) => (
-        // eslint-disable-next-line react/no-array-index-key
         <span key={i} className="flex items-center">
-          {i > 0 && <span aria-hidden className="mr-0.5 h-3 w-px bg-[var(--border)]" />}
+          {i > 0 && <Separator orientation="vertical" strong aria-hidden className="mr-0.5 h-3" />}
           {child}
         </span>
       ))}

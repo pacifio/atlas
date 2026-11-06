@@ -1,25 +1,23 @@
-//! The agent→client handler set — ported from
-//! `zed-ref/crates/agent_servers/src/acp.rs:4551-5138`.
+//! The agent→client handler set.
 //!
 //! These are the requests an agent makes *of us* mid-turn: ask the user for
 //! permission, read and write files, run commands, elicit input.
 //!
-//! **The dispatch queue is load-bearing, and an earlier port learned that the
-//! hard way.** The RPC crate dispatches inbound messages SERIALLY and awaits
+//! **The dispatch queue is load-bearing, and awaiting handlers inline was tried
+//! and failed.** The RPC crate dispatches inbound messages SERIALLY and awaits
 //! each registered handler INLINE — the next message is not even parsed until
-//! the previous handler's future resolves. Zed's registered closures therefore
+//! the previous handler's future resolves. The registered closures therefore
 //! enqueue a work item and return immediately; the queue drains in wire order,
 //! each item does its state mutation synchronously and defers any long await
-//! (a permission prompt, a command's exit) to a spawned task. This port first
-//! dismissed that queue as "a GPUI artifact" and awaited handlers inline — so
-//! an open permission prompt blocked EVERY message behind it: no tool results,
-//! no text, no other session's work, and no way for a cancellation to ever
-//! arrive (`$/cancel` is itself an inbound message). The queue is Zed's shape
-//! again now: [`enqueue_request`]/[`enqueue_notification`] from the registered
+//! (a permission prompt, a command's exit) to a spawned task. Awaiting handlers
+//! inline meant an open permission prompt blocked EVERY message behind it: no
+//! tool results, no text, no other session's work, and no way for a
+//! cancellation to ever arrive (`$/cancel` is itself an inbound message). The
+//! shape is: [`enqueue_request`]/[`enqueue_notification`] from the registered
 //! closures, [`spawn_dispatch_queue`]'s drain running each handler's
 //! synchronous phase in order, and `tokio::spawn` for the awaits (#28).
 //!
-//! Two rules hold throughout, both ported:
+//! Two rules hold throughout:
 //!
 //! - **Every request gets exactly one response.** An unknown session is an
 //!   error response, not a dropped request — an agent blocked on a request we
@@ -63,9 +61,8 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 /// One inbound message's handling, queued for the ordered drain.
 ///
-/// Ported from Zed's `ForegroundWorkItem` (`acp.rs:296-360`), minus GPUI: the
-/// drain is a tokio task rather than the foreground thread, and the deferred
-/// awaits go through `tokio::spawn` rather than `cx.spawn`.
+/// The drain is a tokio task, and the deferred awaits go through
+/// `tokio::spawn`.
 pub trait DispatchWorkItem: Send {
     fn run(self: Box<Self>, ctx: &ClientContext);
     /// The queue is gone (connection closed). A request must still be
@@ -175,6 +172,31 @@ pub fn enqueue_notification<Notif>(
     }
 }
 
+struct BarrierWork<F: FnOnce() + Send + 'static> {
+    then: F,
+}
+
+impl<F: FnOnce() + Send + 'static> DispatchWorkItem for BarrierWork<F> {
+    fn run(self: Box<Self>, _ctx: &ClientContext) {
+        (self.then)();
+    }
+
+    fn reject(self: Box<Self>) {
+        // Nothing left to wait behind: the queue is gone.
+        (self.then)();
+    }
+}
+
+/// Run `then` on the drain once every message queued before it has been
+/// handled: the end of a `session/load` replay is ordered behind the replay's
+/// own frames this way. Runs at once if the queue is gone.
+pub fn enqueue_barrier(dispatch_tx: &DispatchTx, then: impl FnOnce() + Send + 'static) {
+    let work: DispatchWork = Box::new(BarrierWork { then });
+    if let Err(err) = dispatch_tx.send(work) {
+        err.0.reject();
+    }
+}
+
 /// Start one connection's ordered drain and hand back its sender.
 ///
 /// The drain runs each work item's SYNCHRONOUS phase to completion, in wire
@@ -188,8 +210,7 @@ pub fn spawn_dispatch_queue(ctx: ClientContext) -> DispatchTx {
         while let Some(work) = rx.recv().await {
             // A panicking handler must not take the drain down with it: the
             // connection would look alive while every later request got
-            // "queue closed" and every update was dropped. Zed cannot reach
-            // this state (a foreground panic crashes the app); a tokio task
+            // "queue closed" and every update was dropped. A tokio task
             // dying silently is a lobotomy, so the panic is contained and the
             // queue keeps draining.
             let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -350,7 +371,9 @@ pub fn handle_complete_elicitation(
 //
 // Bound to the session's granted directories (`AcpThread::work_dirs` — cwd
 // plus any `additionalDirectories`), the same set advertised to the agent in
-// `session/new`. Without this an agent that merely knows a session id can
+// `session/new` — widened by the projects attached to the session at their
+// access: reads may reach every attached project, writes only the read-write
+// ones (`AcpThread::readable_roots` / `writable_roots`). Without this an agent that merely knows a session id can
 // hand back an absolute path or a `../` climb and read or overwrite anything
 // the OS user can touch, not just the project the user granted.
 
@@ -363,7 +386,9 @@ pub fn handle_write_text_file(
         Ok(thread) => thread,
         Err(err) => return respond_err(responder, err),
     };
-    let roots = lock(&thread).work_dirs().to_vec();
+    // The session's own folders and its read-write attached projects; a
+    // read-only attached project is never written through here.
+    let roots = lock(&thread).writable_roots();
 
     // Disk IO off the queue: a write to a slow volume must not stall the
     // messages behind it.
@@ -404,7 +429,9 @@ pub fn handle_read_text_file(
         Ok(thread) => thread,
         Err(err) => return respond_err(responder, err),
     };
-    let roots = lock(&thread).work_dirs().to_vec();
+    // The session's own folders and every attached project, read-only ones
+    // included.
+    let roots = lock(&thread).readable_roots();
 
     let cancellation = responder.cancellation();
     let path = args.path.clone();
@@ -665,7 +692,7 @@ mod fs_bound_tests {
 
     #[test]
     fn a_path_under_any_granted_directory_resolves() {
-        // Mirrors `AcpThread::work_dirs()`: cwd plus `additionalDirectories`.
+        // Granted directories are cwd plus `additionalDirectories`.
         let cwd = test_root();
         let extra_dir = test_root();
         let target = extra_dir.join("readme.txt");
@@ -874,9 +901,9 @@ pub fn handle_session_notification(notification: acp::SessionNotification, ctx: 
     // Pre-handle: a `ToolCall` whose meta carries `terminal_info` announces a
     // terminal the AGENT is running itself. Registered before the update is
     // applied, so the call's own `Terminal` content resolves on first render.
-    // Ported from zed-ref `acp.rs:4869-4904`; gated purely on the meta key —
-    // the same key we advertise in `client_capabilities_for_agent`. Unlike in
-    // Zed the order is a nicety, not load-bearing: the registry parks
+    // Gated purely on the meta key — the same key we advertise in
+    // `client_capabilities_for_agent`. The order is a nicety, not
+    // load-bearing: the registry parks
     // out-of-order events and unknown terminal references, so no test pins it.
     if let acp::SessionUpdate::ToolCall(tool_call) = &notification.update {
         if let Some(info) = tool_call
@@ -906,7 +933,7 @@ pub fn handle_session_notification(notification: acp::SessionNotification, ctx: 
     // meta stream into that terminal. After the update, so a first update that
     // both names the call and carries output renders the call before the
     // output lands. Out-of-order arrivals park in the registry's side-tables,
-    // exactly as for client-created terminals. Ported from `acp.rs:4919-4969`.
+    // exactly as for client-created terminals.
     if let acp::SessionUpdate::ToolCallUpdate(update) = &notification.update {
         let meta = update.meta.as_ref();
         if let Some(output) = meta.and_then(|meta| meta.get("terminal_output")) {
@@ -993,8 +1020,10 @@ pub fn handle_create_terminal(
 
     // The cwd is held to the same rule as fs reads/writes: inside a granted
     // root or nowhere. Without this, "run `git status` in /Users/x/.ssh" was
-    // a legal request.
-    let roots = lock(&thread).work_dirs().to_vec();
+    // a legal request. Writable roots, not readable ones: a command can
+    // write wherever it runs, so a read-only attached project is no place to
+    // start one.
+    let roots = lock(&thread).writable_roots();
     if let Some(dir) = cwd.as_deref() {
         if let Err(err) = resolve_within_roots(dir, &roots) {
             return respond_err(
@@ -1105,11 +1134,9 @@ pub fn handle_create_terminal(
 /// output pane would show only what happened to be buffered when some unrelated
 /// event last touched the entry.
 ///
-/// Zed needs no such pump: its terminal is an entity the inline terminal view
-/// holds, so `write_output` → `cx.notify()` re-renders the tool call directly
-/// (`acp_thread.rs:4679-4687`). Atlas has no inline terminal view — output
-/// reaches the UI through the tool call's own projection — so the link that
-/// GPUI gives Zed for free is made here instead.
+/// Atlas has no inline terminal view that observes the terminal — output
+/// reaches the UI only through the tool call's own projection — so the link
+/// between the two is made here explicitly.
 ///
 /// # What keeps this from leaking
 ///
@@ -1170,10 +1197,10 @@ pub fn handle_kill_terminal(
     ctx: &ClientContext,
 ) {
     match with_terminal(ctx, &args.session_id, &args.terminal_id, |terminal| {
-        // A display-only terminal has no process of ours to kill; Zed answers
-        // this with a soft no-op rather than an error, and error-for-error
-        // parity matters less than an agent not seeing a failure for a kill
-        // that is, in effect, already done from the client's side.
+        // A display-only terminal has no process of ours to kill; this is
+        // a soft no-op rather than an error, because an agent should not see a
+        // failure for a kill that is, in effect, already done from the
+        // client's side.
         if terminal.inner().is_none() {
             return Ok(());
         }
@@ -1284,6 +1311,62 @@ fn with_terminal<R>(
         .terminal(terminal_id)
         .ok_or_else(|| unknown_terminal(terminal_id))?;
     Ok(f(terminal))
+}
+
+#[cfg(test)]
+mod dispatch_barrier_tests {
+    use super::*;
+
+    struct Push(Arc<Mutex<Vec<&'static str>>>, &'static str);
+
+    impl DispatchWorkItem for Push {
+        fn run(self: Box<Self>, _ctx: &ClientContext) {
+            lock(&self.0).push(self.1);
+        }
+
+        fn reject(self: Box<Self>) {}
+    }
+
+    fn ctx() -> ClientContext {
+        ClientContext {
+            sessions: Arc::new(SessionRegistry::default()),
+            request_elicitations: Arc::new(Mutex::new(
+                atlas_acp_thread::elicitation::ElicitationStore::new(
+                    atlas_acp_thread::event_channel().0,
+                ),
+            )),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_barrier_runs_after_everything_queued_before_it() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let tx = spawn_dispatch_queue(ctx());
+        for frame in ["replay 1", "replay 2", "replay 3"] {
+            tx.send(Box::new(Push(seen.clone(), frame))).unwrap();
+        }
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+        let order = seen.clone();
+        enqueue_barrier(&tx, move || {
+            lock(&order).push("end replay");
+            let _ = done_tx.send(());
+        });
+        done_rx.await.unwrap();
+        assert_eq!(
+            *lock(&seen),
+            ["replay 1", "replay 2", "replay 3", "end replay"]
+        );
+    }
+
+    #[test]
+    fn a_barrier_on_a_closed_queue_runs_at_once() {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<DispatchWork>();
+        drop(rx);
+        let ran = Arc::new(Mutex::new(false));
+        let flag = ran.clone();
+        enqueue_barrier(&tx, move || *lock(&flag) = true);
+        assert!(*lock(&ran));
+    }
 }
 
 #[cfg(test)]

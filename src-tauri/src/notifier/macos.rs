@@ -1,5 +1,4 @@
-//! `UNUserNotificationCenter` backend, modelled on Zed's
-//! `gpui_macos/src/system_notifications.rs`.
+//! `UNUserNotificationCenter` backend.
 //!
 //! Threading: the center and its delegate live in a main-thread thread-local;
 //! every operation hops there with `run_on_main_thread`, so no non-`Send`
@@ -54,13 +53,16 @@ impl From<&NotificationAction> for ActionKey {
     }
 }
 
+/// Each registered action set, with its category identifier and object.
+type Categories = HashMap<Vec<ActionKey>, (String, Retained<UNNotificationCategory>)>;
+
 struct MainThreadState {
     center: Retained<UNUserNotificationCenter>,
     /// The center's `delegate` property is weak; this keeps it alive.
     _delegate: Retained<ResponseDelegate>,
     /// Every action set registered so far. macOS replaces the whole registered
     /// category set on each call, so the union is re-sent every time.
-    categories: RefCell<HashMap<Vec<ActionKey>, (String, Retained<UNNotificationCategory>)>>,
+    categories: RefCell<Categories>,
 }
 
 thread_local! {

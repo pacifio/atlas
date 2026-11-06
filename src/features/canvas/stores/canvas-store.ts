@@ -215,7 +215,6 @@ function scheduleSave() {
       await saveCanvas(s.projectPath, JSON.stringify(payload));
     } catch (err) {
       // Silent — UI continues to function from in-memory state.
-      // eslint-disable-next-line no-console
       console.error("save canvas failed", err);
     }
   }, SAVE_DEBOUNCE_MS);

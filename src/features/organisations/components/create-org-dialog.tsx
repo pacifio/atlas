@@ -1,63 +1,23 @@
 import { useEffect, useRef, useState } from "react";
-import { Dialog } from "@base-ui/react/dialog";
-import { Building2, Check, Loader2, X } from "lucide-react";
 import { toast } from "sonner";
-import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
 import { auth } from "@/features/auth/lib/auth-api";
 import { useAuthStore } from "@/features/auth/stores/auth-store";
 import { useOrgStore } from "../stores/org-store";
 import { switchOrg } from "../lib/org-switch";
-
-/** The web origin an org handle lives under — shown as the static prefix. */
-const HANDLE_PREFIX = "app.tryatlas.cc/";
-
-/** Don't probe the server until the handle is at least this long. Keeps the
- *  first keystroke or two from spending the shared 100-req/60s auth budget. */
-const MIN_HANDLE_FOR_CHECK = 2;
-
-/** `disabled` regions render but can't be picked — EU isn't hosted yet, and
- *  showing it greyed is clearer than pretending US is the only place. */
-const REGIONS = [
-  { id: "us", label: "United States", disabled: false },
-  { id: "eu", label: "European Union", disabled: true },
-] as const;
-type RegionId = (typeof REGIONS)[number]["id"];
-
-/** Where the org lives. `local` is a real choice — private, offline, free —
- *  not a degraded mode; "Turn on sync" promotes it later. */
-type OrgMode = "cloud" | "local";
-
-/** Availability of the typed handle. `idle` also covers "signed out", where
- *  there is no server to ask and the handle is only locally validated. */
-type SlugState =
-  | { kind: "idle" }
-  | { kind: "checking" }
-  | { kind: "available" }
-  | { kind: "taken" }
-  | { kind: "error"; message: string };
+import {
+  MIN_HANDLE_FOR_CHECK,
+  canSubmitCreate,
+  finalHandle,
+  toHandle,
+  type OrgMode,
+  type RegionId,
+  type SlugState,
+} from "../lib/org-switcher-model";
+import { CreateOrgDialogView } from "./views/create-org-dialog-view";
 
 /**
- * Handle transform. Deliberately NOT `slugify` from `../types`: that falls back
- * to the literal `"org"` for empty input, which pre-filled the field and fired
- * an availability probe before the user had typed anything.
- */
-function toHandle(raw: string): string {
-  return raw
-    .toLowerCase()
-    .replace(/[^a-z0-9-]+/g, "-")
-    .replace(/-{2,}/g, "-")
-    .replace(/^-+/, "");
-}
-
-/** Same, but also trims a trailing "-" — for the value actually submitted. */
-function finalHandle(raw: string): string {
-  return toHandle(raw).replace(/-+$/, "");
-}
-
-/**
- * Create-organisation modal: a display name (anything) plus a globally-unique
- * handle, pre-checked against the server before submit (Linear-style).
+ * Create-organisation modal's container: the form state, the debounced
+ * handle-availability probe, and the create-then-switch.
  *
  * The pre-check is advisory — the unique index on `organization.slug` is the
  * real guard — so submit still handles a rejection and surfaces it as a toast.
@@ -134,12 +94,7 @@ export function CreateOrgDialog({
     return () => clearTimeout(t);
   }, [open, cloud, submitHandle]);
 
-  const canSubmit =
-    !submitting &&
-    name.trim().length > 0 &&
-    submitHandle.length > 0 &&
-    slug.kind !== "taken" &&
-    slug.kind !== "checking";
+  const canSubmit = canSubmitCreate({ submitting, name, handle: submitHandle, slug });
 
   const submit = async () => {
     if (!canSubmit) return;
@@ -150,220 +105,32 @@ export function CreateOrgDialog({
       await switchOrg(id); // land the user in the org they just made
     } catch (e) {
       // Rust hands back a user-facing string (duplicate handle, offline, …).
-      toast.error(typeof e === "string" ? e : "Couldn't create the organisation.");
+      toast.error(typeof e === "string" ? e : "Couldn't create the organization.");
     } finally {
       setSubmitting(false);
     }
   };
 
-  const fieldBase =
-    "h-8 w-full rounded-lg border border-input bg-panel-input px-2.5 text-sm text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] outline-none transition-colors focus:border-border-strong";
-  /** The app's pill-button language (matches "Save to KB" / "Commit changes"). */
-  const pillButton =
-    "inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] px-3 py-1.5 text-xs font-medium leading-none cursor-pointer transition-colors";
-
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
-        {/* Strong dim + blur, same language as the unpinned project scrim —
-            the frosted panel above it needs a hidden, low-contrast backdrop to
-            read as a focus transition rather than a floating card. */}
-        <Dialog.Backdrop className="fixed inset-0 z-overlay scrim backdrop-blur-xl" />
-        <Dialog.Popup
-          aria-describedby={undefined}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && canSubmit) {
-              e.preventDefault();
-              void submit();
-            }
-          }}
-          className={cn(
-            "fixed left-1/2 top-1/2 z-modal -translate-x-1/2 -translate-y-1/2",
-            "w-[400px] max-w-[92vw] overflow-hidden rounded-xl border border-[var(--border)]",
-            // Frosted, same language as the notification overlay.
-            "bg-[var(--card)]/60 backdrop-blur-2xl",
-            "shadow-lg animate-scale-in",
-          )}
-        >
-          <Hint label="Close">
-            <Dialog.Close className="absolute right-2.5 top-2.5 flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--atlas-element-active)] hover:text-[var(--foreground)]">
-              <X size={13} />
-            </Dialog.Close>
-          </Hint>
-
-          <div className="px-4 pt-3.5 pb-4">
-            <Dialog.Title className="flex items-center gap-2 text-base font-semibold tracking-[-0.01em] text-[var(--foreground)]">
-              <Building2 size={13} className="text-[var(--muted-foreground)]" />
-              Create organisation
-            </Dialog.Title>
-
-            <div className="mt-3.5 space-y-3">
-              {/* Display name — anything the user wants. */}
-              <label className="block">
-                <span className="text-xs font-medium text-[var(--secondary-foreground)]">Name</span>
-                <input
-                  autoFocus
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="Acme Inc."
-                  className={cn(fieldBase, "mt-1")}
-                />
-              </label>
-
-              {/* Handle — prefix + input, with live availability. */}
-              <div>
-                <span className="text-xs font-medium text-[var(--secondary-foreground)]">
-                  Handle
-                </span>
-                <div
-                  className={cn(
-                    "mt-1 flex h-8 items-center overflow-hidden rounded-lg border bg-panel-input transition-colors focus-within:border-border-strong",
-                    slug.kind === "taken" ? "border-error" : "border-input",
-                  )}
-                >
-                  <span className="flex h-full shrink-0 select-none items-center border-r border-input px-2.5 text-xs text-[var(--muted-foreground)]">
-                    {HANDLE_PREFIX}
-                  </span>
-                  <input
-                    value={effectiveHandle}
-                    onChange={(e) => {
-                      setHandleDirty(true);
-                      setHandle(e.target.value);
-                    }}
-                    placeholder="acme"
-                    className="h-full min-w-0 flex-1 bg-transparent px-2.5 text-sm text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] outline-none"
-                  />
-                  <span className="flex w-7 shrink-0 items-center justify-center text-[var(--muted-foreground)]">
-                    {slug.kind === "checking" && <Loader2 size={11} className="animate-spin" />}
-                    {slug.kind === "available" && <Check size={11} className="text-success" />}
-                  </span>
-                </div>
-                {/* Fixed-height hint row so the modal never jumps as you type. */}
-                <p
-                  className={cn(
-                    "mt-1 h-[13px] text-2xs leading-[13px]",
-                    slug.kind === "taken" ? "text-error" : "text-[var(--muted-foreground)]",
-                  )}
-                >
-                  {slug.kind === "taken"
-                    ? "That handle is already taken."
-                    : slug.kind === "error"
-                      ? slug.message
-                      : slug.kind === "available"
-                        ? "That handle is available."
-                        : "Lowercase letters, numbers and hyphens."}
-                </p>
-              </div>
-
-              {/* Cloud vs local. Signed out there is nothing to sync to, so
-                  cloud is unavailable rather than merely unselected. */}
-              <div>
-                <span className="text-xs font-medium text-[var(--secondary-foreground)]">Type</span>
-                <div className="mt-1 flex gap-1.5">
-                  {(
-                    [
-                      ["cloud", "Cloud", !signedIn],
-                      ["local", "Local", false],
-                    ] as const
-                  ).map(([id, label, isDisabled]) => {
-                    const on = mode === id;
-                    return (
-                      <button
-                        key={id}
-                        disabled={isDisabled}
-                        title={isDisabled ? "Sign in to create a cloud organisation" : undefined}
-                        onClick={() => setMode(id)}
-                        className={cn(
-                          "rounded-full border px-2.5 py-1 text-xs transition-colors",
-                          isDisabled
-                            ? "cursor-not-allowed border-border bg-panel-input text-[var(--muted-foreground)] opacity-40"
-                            : on
-                              ? "cursor-pointer border-border-strong bg-[var(--atlas-element-selected)] text-[var(--foreground)]"
-                              : "cursor-pointer border-border bg-panel-input text-[var(--muted-foreground)] hover:text-[var(--secondary-foreground)]",
-                        )}
-                      >
-                        {label}
-                      </button>
-                    );
-                  })}
-                </div>
-                <p className="mt-1 text-2xs text-[var(--muted-foreground)]">
-                  {cloud
-                    ? "Synced across your devices and shareable with your team."
-                    : "Private and offline. Turn on sync later to share it."}
-                </p>
-              </div>
-
-              {/* Region — pill selector. Meaningless for a local org, which
-                  never leaves this machine. */}
-              <div className={cn(!cloud && "opacity-40")}>
-                <span className="text-xs font-medium text-[var(--secondary-foreground)]">
-                  Region
-                </span>
-                <div className="mt-1 flex gap-1.5">
-                  {REGIONS.map((r) => {
-                    const on = region === r.id;
-                    const isDisabled = r.disabled || !cloud;
-                    return (
-                      <button
-                        key={r.id}
-                        disabled={isDisabled}
-                        title={
-                          !cloud
-                            ? "A local organisation isn't hosted anywhere"
-                            : r.disabled
-                              ? "Not available yet"
-                              : undefined
-                        }
-                        onClick={() => setRegion(r.id)}
-                        className={cn(
-                          "rounded-full border px-2.5 py-1 text-xs transition-colors",
-                          isDisabled
-                            ? "cursor-not-allowed border-border bg-panel-input text-[var(--muted-foreground)] opacity-40"
-                            : on
-                              ? "cursor-pointer border-border-strong bg-[var(--atlas-element-selected)] text-[var(--foreground)]"
-                              : "cursor-pointer border-border bg-panel-input text-[var(--muted-foreground)] hover:text-[var(--secondary-foreground)]",
-                        )}
-                      >
-                        {r.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-
-            {/* Footer — the app's pill buttons. */}
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                onClick={() => onOpenChange(false)}
-                className={cn(
-                  pillButton,
-                  "bg-[var(--card)] text-[var(--secondary-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]",
-                )}
-              >
-                Cancel
-              </button>
-              <button
-                disabled={!canSubmit}
-                onClick={() => void submit()}
-                className={cn(
-                  pillButton,
-                  "bg-[var(--card)] text-[var(--foreground)] hover:bg-[var(--atlas-element-hover)]",
-                  "disabled:cursor-not-allowed disabled:opacity-40",
-                )}
-              >
-                {submitting ? (
-                  <Loader2 size={12} className="animate-spin" />
-                ) : (
-                  <Building2 size={12} />
-                )}
-                Create organisation
-              </button>
-            </div>
-          </div>
-        </Dialog.Popup>
-      </Dialog.Portal>
-    </Dialog.Root>
+    <CreateOrgDialogView
+      open={open}
+      onOpenChange={onOpenChange}
+      signedIn={signedIn}
+      name={name}
+      onNameChange={setName}
+      handle={effectiveHandle}
+      onHandleChange={(next) => {
+        setHandleDirty(true);
+        setHandle(next);
+      }}
+      mode={mode}
+      onModeChange={setMode}
+      region={region}
+      onRegionChange={setRegion}
+      slug={slug}
+      canSubmit={canSubmit}
+      submitting={submitting}
+      onSubmit={() => void submit()}
+    />
   );
 }

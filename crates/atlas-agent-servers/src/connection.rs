@@ -1,5 +1,4 @@
-//! The live connection to one external ACP agent — ported from
-//! `zed-ref/crates/agent_servers/src/acp.rs`.
+//! The live connection to one external ACP agent.
 //!
 //! This is where the reliability mechanics live. Each one exists because of a
 //! specific failure, and the reason is recorded at the code rather than here.
@@ -34,7 +33,7 @@ use crate::session::{
 use crate::session_list::AcpSessionList;
 use crate::session_mcp::{self, SessionMcpRequest, SessionMcpServers};
 
-/// Zed rejects anything below v1 outright rather than trying to degrade.
+/// Anything below v1 is rejected outright rather than degraded to.
 const MINIMUM_SUPPORTED_VERSION: ProtocolVersion = ProtocolVersion::V1;
 
 /// How long to wait for the child's exit status after `initialize` fails.
@@ -66,7 +65,7 @@ const STDERR_DRAIN_GRACE: Duration = Duration::from_secs(1);
 /// Longer than [`INITIALIZE_TIMEOUT`] because `session/load` replays history
 /// and `session/new` may set a mode round-trip behind it. `session/prompt`
 /// deliberately has no deadline — see [`CANCEL_GRACE`].
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
+pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// How long an agent gets to answer its own cancellation before the turn is
 /// resolved locally.
@@ -105,8 +104,7 @@ impl Default for ConnectionDeadlines {
 
 /// What a session's `AcpThread` events are sent to.
 ///
-/// Zed's threads are GPUI entities that the UI subscribes to directly. Here the
-/// host supplies a sink per session, so routing deltas onto the outbound
+/// The host supplies a sink per session, so routing deltas onto the outbound
 /// pipeline stays the host's business and this crate stays leaf-level.
 pub type ThreadEventSink = Arc<dyn Fn(&acp::SessionId) -> EventSink<AcpThreadEvent> + Send + Sync>;
 
@@ -117,9 +115,8 @@ pub type RequestElicitationSink =
 
 /// Defaults applied to every new session on this connection.
 ///
-/// Zed reads these from its `SettingsStore` and re-reads them on every settings
-/// change. Atlas's settings live above this crate, so they are passed in at
-/// connect time instead.
+/// Atlas's settings live above this crate, so they are passed in at connect
+/// time.
 #[derive(Clone, Default)]
 pub struct AcpConnectionDefaults {
     pub mode: Option<acp::SessionModeId>,
@@ -149,12 +146,18 @@ pub struct AcpConnection {
     /// Decides the MCP servers each session request carries. `None` sends
     /// every session an empty list.
     session_mcp: Option<Arc<dyn SessionMcpServers>>,
+    /// `true` once the child has exited; see [`AgentConnection::exited`].
+    exited: tokio::sync::watch::Receiver<bool>,
+    /// The inbound dispatch queue, held weakly so the connection does not
+    /// keep the drain alive: a `session/load` replay ends on it, behind the
+    /// replay's own frames (`handlers::enqueue_barrier`).
+    dispatch_tx: tokio::sync::mpsc::WeakUnboundedSender<handlers::DispatchWork>,
     _io_task: tokio::task::JoinHandle<()>,
     _stderr_task: tokio::task::JoinHandle<()>,
     _wait_task: tokio::task::JoinHandle<()>,
 }
 
-/// What to run, and how. Ported from Zed's `AgentServerCommand`.
+/// What to run, and how.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentServerCommand {
     pub path: PathBuf,
@@ -256,7 +259,10 @@ impl AcpConnection {
             request_elicitations: request_elicitations.clone(),
         };
         let (connection_tx, connection_rx) = futures::channel::oneshot::channel();
-        let connection_future = connect_client_future(client_name, transport, ctx, connection_tx);
+        let dispatch_tx = handlers::spawn_dispatch_queue(ctx);
+        let weak_dispatch_tx = dispatch_tx.downgrade();
+        let connection_future =
+            connect_client_future(client_name, transport, dispatch_tx, connection_tx);
         let io_task = tokio::spawn(async move {
             if let Err(err) = connection_future.await {
                 tracing::error!("ACP connection error: {err}");
@@ -353,6 +359,7 @@ impl AcpConnection {
         // From here on the child's death is a live-session event, not a
         // connect failure: every thread is told, so an agent that dies
         // mid-turn surfaces in the conversation instead of going quiet.
+        let (exited_tx, exited) = tokio::sync::watch::channel(false);
         let wait_task = tokio::spawn({
             let sessions = sessions.clone();
             async move {
@@ -363,6 +370,10 @@ impl AcpConnection {
                         .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .emit_load_error(load_error.clone());
                 }
+                // After the threads, so a thread that reacts by asking the
+                // manager for a connection does not find the old one gone a
+                // moment before it hears why.
+                exited_tx.send_replace(true);
             }
         });
 
@@ -400,6 +411,8 @@ impl AcpConnection {
             thread_events,
             debug_log,
             session_mcp: None,
+            exited,
+            dispatch_tx: weak_dispatch_tx,
             _io_task: io_task,
             _stderr_task: stderr_task,
             _wait_task: wait_task,
@@ -483,6 +496,9 @@ impl AcpConnection {
                 // Likewise for the organisation: a binary Atlas does not own
                 // is never handed the user's organisation (ADR-0014).
                 org_access: false,
+                // A separate program, free to put its MCP configuration on a
+                // command line: no credential may ride an entry (ADR-0020).
+                in_process: false,
                 cwd: cwd.to_path_buf(),
                 session_id: session_id.cloned(),
             },
@@ -510,8 +526,7 @@ impl AcpConnection {
         Arc::new(Mutex::new(thread))
     }
 
-    /// The load/resume path. Ported from `open_or_create_session`
-    /// (`acp.rs:1166-1294`).
+    /// The load/resume path.
     ///
     /// Two things here are load-bearing:
     ///
@@ -527,11 +542,16 @@ impl AcpConnection {
         session_id: acp::SessionId,
         work_dirs: Vec<PathBuf>,
         title: Option<Arc<str>>,
+        // `session/load` replays the stored conversation as updates;
+        // `session/resume` does not. What a replay appends carries no real
+        // time (ACP has none per message), so the thread marks it.
+        replays_history: bool,
         rpc_call: impl FnOnce(
             ConnectionTo<Agent>,
             acp::SessionId,
             SessionDirectories,
             Vec<acp::McpServer>,
+            Option<acp::Meta>,
         ) -> BoxFuture<'static, Result<SessionConfigResponse>>,
     ) -> Result<AcpThreadHandle> {
         if self.sessions.pending_acquire(&session_id) {
@@ -548,7 +568,21 @@ impl AcpConnection {
         // is already open was acquired above and keeps the servers (and the
         // token) it was opened with. Dropped unbound on any failure below.
         let (mcp_offer, mcp_servers) = self.mcp_offer(&directories.cwd, Some(&session_id));
+        let meta = Some(session_mcp::claude_code_meta(
+            &mcp_servers,
+            mcp_offer.ask_first(),
+        ));
         let thread = self.new_thread(session_id.clone(), work_dirs, title);
+        // The replay ends once the load has answered AND the frames the agent
+        // sent before that answer have been applied: they can still be queued
+        // on the dispatch task when the answer resolves, so the end is queued
+        // behind them (below). A prompt or a new turn also ends it.
+        if replays_history {
+            thread
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .begin_replay();
+        }
 
         self.sessions.pending_begin(session_id.clone());
         self.sessions.insert(
@@ -567,6 +601,7 @@ impl AcpConnection {
             session_id.clone(),
             directories,
             mcp_servers,
+            meta,
         )
         .await
         {
@@ -596,6 +631,25 @@ impl AcpConnection {
         }
         mcp_offer.bind(&session_id);
 
+        if replays_history {
+            // Every frame the agent sent before its answer was parsed, and so
+            // queued, before the answer resolved: a barrier queued now runs
+            // after the last of them.
+            let weak = Arc::downgrade(&thread);
+            let end = move || {
+                if let Some(thread) = weak.upgrade() {
+                    thread
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .end_replay();
+                }
+            };
+            match self.dispatch_tx.upgrade() {
+                Some(dispatch_tx) => handlers::enqueue_barrier(&dispatch_tx, end),
+                None => end(),
+            }
+        }
+
         Ok(thread)
     }
 }
@@ -607,8 +661,7 @@ struct SessionConfigResponse {
 
 /// The agent process, owned so that dropping it kills the whole tree.
 ///
-/// Ported from the shape of Zed's `util::process::Child`
-/// (`crates/util/src/process.rs`). The child is started in a session of its
+/// The child is started in a session of its
 /// own (`setsid` in `pre_exec`), so its pid is also its process-group id, and
 /// the kill is `killpg(SIGKILL)` rather than `kill`: `codex-acp` is `node` →
 /// `codex.js app-server` → a native `codex app-server`, and killing only
@@ -695,6 +748,25 @@ fn timed_out(
 
 /// Runs a one-shot RPC on the connect/bind path under [`REQUEST_TIMEOUT`].
 /// Free-standing so [`AcpSessionList`] can use it without a connection.
+/// [`REQUEST_TIMEOUT`] on a session RPC the bind path awaits BEFORE the
+/// session is handed to the user: `session/set_mode` and
+/// `session/set_config_option`. These ran with no deadline, after the ones
+/// that had one — an agent that answered `session/new` and then wedged on
+/// `set_mode` parked the bind forever with every clock already satisfied.
+/// Never used for `session/prompt`.
+async fn bounded<T, E>(
+    phase: &'static str,
+    request: impl Future<Output = std::result::Result<T, E>>,
+) -> Result<std::result::Result<T, E>> {
+    match tokio::time::timeout(REQUEST_TIMEOUT, request).await {
+        Ok(result) => Ok(result),
+        Err(_elapsed) => Err(anyhow!(
+            "the agent did not answer `{phase}` within {}s",
+            REQUEST_TIMEOUT.as_secs()
+        )),
+    }
+}
+
 pub(crate) async fn with_request_deadline<T>(
     agent: &AgentId,
     phase: &str,
@@ -737,17 +809,16 @@ async fn wait_for_exit(
 /// The registered closures ENQUEUE AND RETURN — they never await handler work.
 /// The RPC crate dispatches inbound messages serially and awaits each
 /// registered closure inline, so anything a closure waits on blocks every
-/// message behind it: Zed's dispatch queue is not a GPUI artifact but the
+/// message behind it: the dispatch queue is the
 /// mechanism that keeps an open permission prompt (or a running command's
 /// `wait_for_exit`) from freezing the whole inbound side of the connection.
 /// See the module docs on [`handlers`] and #28.
 fn connect_client_future(
     name: &'static str,
     transport: impl agent_client_protocol::ConnectTo<Client> + 'static,
-    ctx: ClientContext,
+    dispatch_tx: handlers::DispatchTx,
     connection_tx: futures::channel::oneshot::Sender<ConnectionTo<Agent>>,
 ) -> impl std::future::Future<Output = std::result::Result<(), acp::Error>> {
-    let dispatch_tx = handlers::spawn_dispatch_queue(ctx);
     macro_rules! on_request {
         ($handler:path) => {{
             let dispatch_tx = dispatch_tx.clone();
@@ -826,14 +897,24 @@ fn connect_client_future(
         )
 }
 
-/// Ported from `client_capabilities_for_agent` (`acp.rs:767-795`).
-///
 /// Only what we actually serve is advertised — an agent that is told we can do
 /// something we cannot will call it and get an error mid-turn.
 pub fn client_capabilities_for_agent(_agent_id: &AgentId) -> acp::ClientCapabilities {
     let meta = acp::Meta::from_iter([
         ("terminal_output".into(), true.into()),
         ("terminal-auth".into(), true.into()),
+        // Ask for a subagent's own narration, which an adapter otherwise keeps
+        // inside the launching tool call — a row that runs for minutes saying
+        // nothing. The text arrives on this session, each chunk stamped with
+        // the launching call's id, which is how `atlas_acp_thread::subagent`
+        // attributes it. Deliberately not the RFD's
+        // `clientCapabilities.subagents`: that moves children onto their own
+        // ACP sessions and reports them with `subagent_update` session
+        // updates, which the v1 `SessionUpdate` enum cannot represent.
+        (
+            atlas_acp_thread::subagent::SUBAGENT_TRANSCRIPT_META_KEY.into(),
+            true.into(),
+        ),
     ]);
 
     acp::ClientCapabilities::new()
@@ -856,8 +937,6 @@ pub fn client_capabilities_for_agent(_agent_id: &AgentId) -> acp::ClientCapabili
         .meta(meta)
 }
 
-/// Ported from `map_acp_error` (`acp.rs:2074-2086`).
-///
 /// `AuthRequired` has to survive as a typed error: the host matches on it to
 /// route the user into sign-in, and a stringified version would just be another
 /// failed turn.
@@ -874,7 +953,7 @@ pub fn map_acp_error(err: acp::Error) -> anyhow::Error {
 }
 
 /// The `data` the TypeScript ACP SDK attaches to an `InternalError`: a thrown
-/// `Error`'s message, verbatim. Shared by `prompt` and `authenticate`, which
+/// `Error`'s message, unmodified. Shared by `prompt` and `authenticate`, which
 /// both want the words rather than `Internal error: { "details": … }`.
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -929,7 +1008,7 @@ pub fn authenticate_outcome(err: acp::Error, method_is_terminal: bool) -> Result
 
 impl Drop for AcpConnection {
     fn drop(&mut self) {
-        // Zed kills the child here (`acp.rs:1528-1534`). The child is owned by
+        // Kill the child here. The child is owned by
         // the wait task, so aborting that task drops it — and `AgentChild`'s
         // `Drop` kills its process group, with `kill_on_drop` as the backstop.
         // Without this the agent outlives the connection that started it:
@@ -944,6 +1023,16 @@ impl Drop for AcpConnection {
 impl AgentConnection for AcpConnection {
     fn agent_id(&self) -> AgentId {
         self.id.clone()
+    }
+
+    fn exited(self: Arc<Self>) -> BoxFuture<'static, ()> {
+        let mut exited = self.exited.clone();
+        Box::pin(async move {
+            // `wait_for` answers at once when already true, and when the
+            // sender is gone (the connection dropped) — either way there is
+            // no live process behind this connection.
+            let _ = exited.wait_for(|done| *done).await;
+        })
     }
 
     fn telemetry_id(&self) -> Arc<str> {
@@ -963,10 +1052,13 @@ impl AgentConnection for AcpConnection {
             // Offered before the id exists; bound to it once the agent answers,
             // and released (dropped unbound) if it never does.
             let (mcp_offer, mcp_servers) = self.mcp_offer(&directories.cwd, None);
+            // Built here: the offer holds a non-`Sync` settle callback, so the
+            // request future must not borrow it across the await.
+            let request = directories.into_new_session_request(mcp_servers, mcp_offer.ask_first());
             let response = self
                 .request_deadline("session/new", async {
                     self.connection
-                        .send_request(directories.into_new_session_request(mcp_servers))
+                        .send_request(request)
                         .block_task()
                         .await
                         .map_err(map_acp_error)
@@ -1021,9 +1113,11 @@ impl AgentConnection for AcpConnection {
                     session_id,
                     work_dirs,
                     title,
-                    |conn, id, dirs, mcp_servers| {
+                    true,
+                    |conn, id, dirs, mcp_servers, meta| {
                         async move {
                             let mut request = acp::LoadSessionRequest::new(id, dirs.cwd);
+                            request.meta = meta;
                             request.mcp_servers = mcp_servers;
                             if !dirs.additional_directories.is_empty() {
                                 request.additional_directories = dirs.additional_directories;
@@ -1068,9 +1162,11 @@ impl AgentConnection for AcpConnection {
                     session_id,
                     work_dirs,
                     title,
-                    |conn, id, dirs, mcp_servers| {
+                    false,
+                    |conn, id, dirs, mcp_servers, meta| {
                         async move {
                             let mut request = acp::ResumeSessionRequest::new(id, dirs.cwd);
+                            request.meta = meta;
                             request.mcp_servers = mcp_servers;
                             if !dirs.additional_directories.is_empty() {
                                 request.additional_directories = dirs.additional_directories;
@@ -1105,8 +1201,6 @@ impl AgentConnection for AcpConnection {
         self.agent_capabilities.session_capabilities.close.is_some()
     }
 
-    /// Ported from `close_session` (`acp.rs:1817-1881`).
-    ///
     /// Ref-counted, and the pending table is consulted first: during a load the
     /// pending entry is the source of truth for how many handles exist, because
     /// the `sessions` entry was pre-registered to catch history replay and would
@@ -1157,7 +1251,7 @@ impl AgentConnection for AcpConnection {
 
     /// The login command to run for an auth method, if the agent named one.
     ///
-    /// Both of Zed's shapes — see [`terminal_auth_command_for`].
+    /// Both shapes (typed and `_meta`) — see [`terminal_auth_command_for`].
     fn terminal_auth_command(
         &self,
         method_id: &acp::AuthMethodId,
@@ -1174,7 +1268,8 @@ impl AgentConnection for AcpConnection {
         let conn = self.connection.clone();
         let agent_id = self.id.clone();
         let debug_log = self.debug_log.clone();
-        // Both of Zed's terminal shapes count — see `terminal_auth_command_for`.
+        // Both terminal shapes (typed and `_meta`) count — see
+        // `terminal_auth_command_for`.
         let method_is_terminal = self
             .auth_methods
             .iter()
@@ -1214,7 +1309,6 @@ impl AgentConnection for AcpConnection {
         .boxed()
     }
 
-    /// Ported from `prompt` (`acp.rs:1952-2010`).
     fn prompt(
         &self,
         params: acp::PromptRequest,
@@ -1467,18 +1561,23 @@ impl AgentSessionModes for AcpSessionModes {
             .current_mode_id = mode.clone();
 
         async move {
-            match conn
-                .send_request(acp::SetSessionModeRequest::new(session_id, mode))
-                .block_task()
-                .await
-            {
+            // Flattened: a refusal from the agent and an expiry both roll the
+            // local mode back.
+            let result = bounded(
+                "session/set_mode",
+                conn.send_request(acp::SetSessionModeRequest::new(session_id, mode))
+                    .block_task(),
+            )
+            .await
+            .and_then(|answer| answer.map_err(|err| anyhow!(err)));
+            match result {
                 Ok(_) => Ok(()),
                 Err(err) => {
                     modes
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .current_mode_id = previous;
-                    Err(anyhow!(err))
+                    Err(err)
                 }
             }
         }
@@ -1560,11 +1659,11 @@ pub(crate) fn mode_select_of(
 /// a model says so with a `category: "model"` SELECT among its session config
 /// options (schema 1.5.0, `SessionConfigOptionCategory::Model`). Atlas gives
 /// that one option its own composer pill instead of rendering it as a generic
-/// knob, which is why it is lifted out here into the port's model-selector
+/// knob, which is why it is lifted out here into the model-selector
 /// shape rather than left to `session_config_options`.
 ///
-/// The old stack normalised this during `session/new`; the port dropped that
-/// step, and with the frontend still filtering `category: "model"` out of the
+/// The old stack normalised this during `session/new`; that step is gone, and
+/// with the frontend still filtering `category: "model"` out of the
 /// generic knobs as "owned elsewhere", model selection disappeared from both
 /// surfaces at once.
 struct ModelSelect {
@@ -1585,13 +1684,20 @@ fn model_select_of(options: &[acp::SessionConfigOption]) -> Option<ModelSelect> 
             return None;
         };
         // Groups flatten, exactly as `build_snapshot` flattens a grouped
-        // `AgentModelList`: the composer's picker is one list, and a nested
-        // menu would be a new visual pattern.
-        let choices: Vec<&acp::SessionConfigSelectOption> = match &select.options {
-            acp::SessionConfigSelectOptions::Ungrouped(choices) => choices.iter().collect(),
+        // `AgentModelList`: the composer's picker is one list. The group's
+        // name survives on each model as its provider — an agent that lists
+        // models by maker (OpenCode's "Anthropic", "OpenAI") is the one place
+        // ACP says who makes a model, and the picker's rail is built on it.
+        let choices: Vec<(&acp::SessionConfigSelectOption, Option<&str>)> = match &select.options {
+            acp::SessionConfigSelectOptions::Ungrouped(choices) => {
+                choices.iter().map(|choice| (choice, None)).collect()
+            }
             acp::SessionConfigSelectOptions::Grouped(groups) => groups
                 .iter()
-                .flat_map(|group| group.options.iter())
+                .flat_map(|group| {
+                    let name = Some(group.name.as_str()).filter(|n| !n.is_empty());
+                    group.options.iter().map(move |choice| (choice, name))
+                })
                 .collect(),
             // `#[non_exhaustive]`: a shape this build does not know is not a
             // list we can render.
@@ -1606,7 +1712,7 @@ fn model_select_of(options: &[acp::SessionConfigOption]) -> Option<ModelSelect> 
             current: select.current_value.clone(),
             models: choices
                 .into_iter()
-                .map(|choice| AgentModelInfo {
+                .map(|(choice, group)| AgentModelInfo {
                     id: AgentModelId::new(choice.value.0.as_ref()),
                     // An unnamed choice shows its id rather than a blank row —
                     // the same fallback the frontend's parser makes, so a list
@@ -1621,6 +1727,8 @@ fn model_select_of(options: &[acp::SessionConfigOption]) -> Option<ModelSelect> 
                     is_latest: false,
                     cost: None,
                     disabled: None,
+                    provider: group.map(Into::into),
+                    legacy: false,
                 })
                 .collect(),
         })
@@ -1677,17 +1785,19 @@ impl AgentModelSelector for AcpModelSelector {
         let config_id = self.select().map(|select| select.config_id);
 
         async move {
-            let response = conn
-                .send_request(acp::SetSessionConfigOptionRequest::new(
+            let response = bounded(
+                "session/set_config_option (model)",
+                conn.send_request(acp::SetSessionConfigOptionRequest::new(
                     session_id,
                     config_id?,
                     acp::SessionConfigOptionValue::ValueId {
                         value: acp::SessionConfigValueId::new(model_id.as_str()),
                     },
                 ))
-                .block_task()
-                .await
-                .map_err(map_acp_error)?;
+                .block_task(),
+            )
+            .await?
+            .map_err(map_acp_error)?;
 
             // The response carries the authoritative list, so the local view
             // does not have to guess that the pick took.
@@ -1731,13 +1841,15 @@ impl AgentSessionConfigOptions for AcpSessionConfigOptions {
         let options = self.options.clone();
 
         async move {
-            let response = conn
-                .send_request(acp::SetSessionConfigOptionRequest::new(
+            let response = bounded(
+                "session/set_config_option",
+                conn.send_request(acp::SetSessionConfigOptionRequest::new(
                     session_id, config_id, value,
                 ))
-                .block_task()
-                .await
-                .map_err(map_acp_error)?;
+                .block_task(),
+            )
+            .await?
+            .map_err(map_acp_error)?;
 
             *options
                 .config_options
@@ -1756,9 +1868,9 @@ impl AgentSessionConfigOptions for AcpSessionConfigOptions {
 }
 
 /// The login command for an auth method, from whichever of the two shapes the
-/// agent used. Ported from Zed's `terminal_auth_task` (`acp.rs:1887-1921`).
+/// agent used.
 ///
-/// A typed `Terminal` method first, as Zed orders it: it names only the
+/// A typed `Terminal` method is tried first: it names only the
 /// ARGUMENTS that sign this agent in, because the program is the agent's own.
 /// Atlas re-runs the binary it already spawned — same path, launch args then
 /// auth args, and the SAME ENVIRONMENT with the method's own vars layered on
@@ -1812,8 +1924,7 @@ fn terminal_auth_id(agent_id: &AgentId, method_id: &acp::AuthMethodId) -> String
 }
 
 /// `_meta["terminal-auth"]` — the pre-stabilization way an adapter says how to
-/// run its login CLI. Ported from Zed's `meta_terminal_auth_task`
-/// (`acp.rs:1555-1586`).
+/// run its login CLI.
 fn meta_terminal_auth_command(
     agent_id: &AgentId,
     method_id: &acp::AuthMethodId,
@@ -1917,7 +2028,7 @@ mod terminal_auth_tests {
         }
     }
 
-    /// Zed's other branch (`acp.rs:1897-1918`): a typed `Terminal` method says
+    /// The typed branch: a typed `Terminal` method says
     /// only WHICH ARGUMENTS sign this agent in. The binary is the agent's own,
     /// so the host runs the same program it already launched — the agent never
     /// has to know or repeat its own path.
@@ -1945,7 +2056,7 @@ mod terminal_auth_tests {
         assert_eq!(cmd.env, [("NO_COLOR".to_string(), "1".to_string())]);
     }
 
-    /// The typed variant wins, as it does in Zed (`acp.rs:1897-1920`): an
+    /// The typed variant wins: an
     /// agent that advertises the stabilized shape should not be pinned to the
     /// pre-stabilization one forever just because it also ships `_meta` for
     /// older clients.
@@ -2171,6 +2282,14 @@ mod model_select_tests {
             .map(|model| model.id.as_str().to_string())
             .collect();
         assert_eq!(ids, vec!["gpt-5".to_string(), "qwen".to_string()]);
+        // The group's name rides each model as its provider: the picker's
+        // rail is built on it.
+        let providers: Vec<_> = select
+            .models
+            .iter()
+            .map(|model| model.provider.as_deref())
+            .collect();
+        assert_eq!(providers, vec![Some("OpenAI"), Some("Local")]);
     }
 
     /// Gating is on the advertised category, never on who the agent is. An

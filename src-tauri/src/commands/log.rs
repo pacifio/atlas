@@ -13,7 +13,7 @@
 
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Directory holding one org's log files.
 fn org_log_dir(org: &str) -> Result<PathBuf, String> {
@@ -23,7 +23,7 @@ fn org_log_dir(org: &str) -> Result<PathBuf, String> {
     // treat it as untrusted and refuse anything that could climb out of the log
     // directory rather than trusting the caller.
     if org.is_empty() || org.contains(['/', '\\']) || org.contains("..") {
-        return Err("invalid organisation id".into());
+        return Err("invalid organization id".into());
     }
     Ok(root.join("orgs").join(org))
 }
@@ -59,7 +59,7 @@ fn pinned_path(org: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-fn ensure_dir(path: &PathBuf) -> Result<(), String> {
+fn ensure_dir(path: &Path) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }

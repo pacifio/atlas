@@ -11,6 +11,11 @@
 //!  - [`export_theme_shadcn`] goes the other way, for pasting an Atlas theme
 //!    into a shadcn project.
 //!
+//! A preview's source is pasted text, a URL, a file, or a colour-theme
+//! extension on Open VSX, found with [`search_color_themes`]. An extension is
+//! downloaded and unpacked into a temporary directory that the preview
+//! deletes, so its `include`s resolve as a file's do and nothing is kept.
+//!
 //! The conversion itself lives in `atlas-theme` next to the parser and the
 //! writer. Nothing here knows what a shadcn token is.
 
@@ -22,6 +27,8 @@ use atlas_theme::import::report::ImportReport;
 use atlas_theme::import::{ImportFormat, ImportOptions};
 use atlas_theme::{Theme, ThemeOrigin};
 use serde::{Deserialize, Serialize};
+
+use crate::open_vsx::{self, Contributes, OpenVsxExtension};
 
 /// A fetch is a courtesy, not a feature: a theme URL that does not answer
 /// promptly is a worse experience than "paste it instead".
@@ -47,6 +54,20 @@ pub struct ThemeImportInput {
     /// Forces a format instead of sniffing one.
     #[serde(default)]
     pub format: Option<ImportFormat>,
+    /// A colour-theme extension on Open VSX. Every theme it contributes
+    /// becomes a candidate.
+    #[serde(default)]
+    pub open_vsx: Option<OpenVsxSource>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenVsxSource {
+    pub namespace: String,
+    pub name: String,
+    /// Omitted takes the latest published version.
+    #[serde(default)]
+    pub version: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -74,11 +95,104 @@ pub struct ThemeImportPreview {
     pub format: String,
     /// One per theme in the source; a Zed family has several.
     pub themes: Vec<ThemeImportCandidate>,
+    /// Themes in the source that could not be imported, one line each with
+    /// the reason. Only an extension, which carries several files, has any.
+    pub skipped: Vec<String>,
+}
+
+fn candidate(entry: atlas_theme::import::ImportedTheme) -> ThemeImportCandidate {
+    ThemeImportCandidate {
+        existing: atlas_theme::theme_origin(&entry.theme.id),
+        id: entry.theme.id.clone(),
+        name: entry.theme.name.clone(),
+        author: entry.theme.author.clone(),
+        license: entry.theme.license.clone(),
+        variants: entry.report.variants.clone(),
+        toml: entry.toml,
+        theme: entry.theme,
+        report: entry.report,
+    }
+}
+
+/// Search Open VSX for extensions that contribute a colour theme.
+#[tauri::command]
+pub async fn search_color_themes(query: String) -> Result<Vec<OpenVsxExtension>, String> {
+    // A colour theme is imported into a file of its own, not installed under
+    // the extension's id, so no hit is ever "installed"; the preview says
+    // instead whether a theme would replace one already there.
+    open_vsx::search(&query, Contributes::ColorThemes, Vec::new()).await
+}
+
+/// A directory under the system temp dir, removed when dropped — however the
+/// preview ends. (`tempfile` is only a dev-dependency here, and this is the
+/// one thing it would be used for.)
+struct Staging(PathBuf);
+
+impl Staging {
+    fn new(id: &str) -> std::io::Result<Self> {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_nanos());
+        let dir =
+            std::env::temp_dir().join(format!("atlas-theme-{id}-{}-{nanos}", std::process::id()));
+        // `create_dir`, not `create_dir_all`: on a shared `/tmp` a path that
+        // already exists may be another user's, and this must neither unpack
+        // into it nor later delete it.
+        std::fs::create_dir(&dir)?;
+        Ok(Self(dir))
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for Staging {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+async fn preview_extension(source: OpenVsxSource) -> Result<ThemeImportPreview, String> {
+    let id = format!("{}.{}", source.namespace, source.name);
+    // The id alphabet an icon theme's directory is held to: it is what keeps
+    // `namespace` and `name` single segments of the Open VSX URL.
+    if !atlas_icon_theme::is_valid_id(&id) {
+        return Err(format!("\"{id}\" is not a usable extension id."));
+    }
+    let download =
+        open_vsx::download(&source.namespace, &source.name, source.version.as_deref()).await?;
+    let origin = format!("open-vsx.org/{}/{}", source.namespace, source.name);
+    tokio::task::spawn_blocking(move || {
+        let staging = Staging::new(&id)
+            .map_err(|error| format!("could not make a directory to unpack into: {error}"))?;
+        atlas_icon_theme::vsix::unpack_extension(&download.bytes, staging.path())
+            .map_err(|error| error.to_string())?;
+        let options = ImportOptions {
+            origin: origin.clone(),
+            author_hint: Some(download.publisher),
+            license_hint: Some(download.license),
+            ..ImportOptions::default()
+        };
+        let imported = atlas_theme::import::extension::import_extension(staging.path(), &options)
+            .map_err(|error| error.to_string())?;
+        Ok(ThemeImportPreview {
+            origin,
+            format: "VS Code color theme".to_string(),
+            themes: imported.themes.into_iter().map(candidate).collect(),
+            skipped: imported.skipped,
+        })
+    })
+    .await
+    .map_err(|error| format!("theme import task failed: {error}"))?
 }
 
 /// Convert a foreign theme and report on it, without writing anything.
 #[tauri::command]
 pub async fn preview_theme_import(input: ThemeImportInput) -> Result<ThemeImportPreview, String> {
+    if let Some(source) = input.open_vsx {
+        return preview_extension(source).await;
+    }
     let (source, origin, base_dir) = read_source(input.text, input.url, input.path).await?;
     let format = input.format;
 
@@ -102,20 +216,8 @@ pub async fn preview_theme_import(input: ThemeImportInput) -> Result<ThemeImport
         Ok(ThemeImportPreview {
             origin,
             format: detected,
-            themes: imported
-                .into_iter()
-                .map(|entry| ThemeImportCandidate {
-                    existing: atlas_theme::theme_origin(&entry.theme.id),
-                    id: entry.theme.id.clone(),
-                    name: entry.theme.name.clone(),
-                    author: entry.theme.author.clone(),
-                    license: entry.theme.license.clone(),
-                    variants: entry.report.variants.clone(),
-                    toml: entry.toml,
-                    theme: entry.theme,
-                    report: entry.report,
-                })
-                .collect(),
+            themes: imported.into_iter().map(candidate).collect(),
+            skipped: Vec::new(),
         })
     })
     .await

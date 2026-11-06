@@ -158,6 +158,12 @@ pub async fn auth_sign_in(
     state: State<'_, AuthState>,
 ) -> Result<AuthSnapshot, String> {
     let core = state.core();
+    // Who was signed in before, if anyone: a grant that lands as another
+    // account closes the rooms the previous one hosted (CC-1, below).
+    let previous_user = core
+        .stored()
+        .and_then(|s| s.identity)
+        .map(|identity| identity.id);
 
     let grant = core.start_grant().await.map_err(|e| e.user_message())?;
 
@@ -177,6 +183,16 @@ pub async fn auth_sign_in(
     tauri::async_runtime::spawn(async move {
         match core.run_grant(&grant).await {
             Ok(()) => {
+                // A remote-control room belongs to the account that was
+                // signed in when it started. Signed in as someone else now,
+                // every room this desktop hosts closes; the sessions run on.
+                let now_user = core
+                    .stored()
+                    .and_then(|s| s.identity)
+                    .map(|identity| identity.id);
+                if previous_user.is_some() && previous_user != now_user {
+                    super::rc::close_all_rooms(&task_app).await;
+                }
                 let snap = core.snapshot();
                 // Broadcast first: it identifies, so `auth_signed_in` lands on
                 // the account person rather than the device one.
@@ -260,6 +276,10 @@ pub async fn auth_set_active_org(
 #[tauri::command]
 pub async fn auth_sign_out(app: AppHandle, state: State<'_, AuthState>) -> Result<bool, String> {
     let core = state.core();
+    // Every remote-control room this desktop hosts belongs to the account
+    // leaving: close them while the bearer still mints (the close door needs
+    // it), and leave the sessions themselves running (CC-1).
+    super::rc::close_all_rooms(&app).await;
     let ticket = core.sign_out();
     // The native agent's connection caches an access JWT that outlives the
     // revoked session token — the JWT verifies statelessly against JWKS — and
@@ -393,7 +413,7 @@ pub async fn auth_list_members(
         .core()
         .list_members(&org_id)
         .await
-        .map_err(|e| e.user_message_denied("You don't have access to this organisation's members."))
+        .map_err(|e| e.user_message_denied("You don't have access to this organization's members."))
 }
 
 /// Pending + past invitations. Admin-scoped server-side, so a non-admin's call
@@ -407,12 +427,12 @@ pub async fn auth_list_invitations(
         .core()
         .list_invitations(&org_id)
         .await
-        .map_err(|e| e.user_message_denied("Only an admin can see this organisation's invites."))
+        .map_err(|e| e.user_message_denied("Only an admin can see this organization's invites."))
 }
 
-/// Invite someone by email. The returned `acceptUrl` is the whole point —
-/// email delivery is deferred, so that link is the only way the invitee hears
-/// about it. Changes server state only; the snapshot holds no members, so
+/// Invite someone by email. The server emails the invitee; the returned
+/// `acceptUrl` is the same link, for the inviter to copy too. Changes server
+/// state only; the snapshot holds no members, so
 /// there is nothing to broadcast.
 #[tauri::command]
 pub async fn auth_invite_member(
@@ -476,6 +496,26 @@ pub async fn auth_remove_member(
     core.remove_member(&org_id, &member_id_or_email)
         .await
         .map_err(|e| e.user_message_denied("Only an admin can remove a member."))?;
+    broadcast(&app, core.snapshot());
+    Ok(())
+}
+
+/// Leave an organisation (`org_id` is the SERVER id). Open to every member but
+/// the Owner; the last admin is refused too. Re-broadcasts the snapshot so the
+/// account menu drops the org at once.
+#[tauri::command]
+pub async fn auth_leave_org(
+    org_id: String,
+    app: AppHandle,
+    state: State<'_, AuthState>,
+) -> Result<(), String> {
+    let core = state.core();
+    core.leave_org(&org_id).await.map_err(|e| {
+        e.user_message_denied(
+            "Couldn't leave. The owner can't leave their organization, and an organization's \
+             last admin has to make someone else an admin first.",
+        )
+    })?;
     broadcast(&app, core.snapshot());
     Ok(())
 }

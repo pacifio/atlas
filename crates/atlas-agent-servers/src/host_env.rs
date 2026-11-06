@@ -1,6 +1,5 @@
 //! Host environment fix-ups applied once at startup.
 //!
-//! Moved from `atlas-acp/src/spawn.rs` at Stage 3 of the Zed port, unchanged.
 //! It belongs with the transport because it exists entirely for the benefit of
 //! the child process an [`AcpConnection`](crate::AcpConnection) spawns.
 
@@ -242,5 +241,106 @@ fn probe_shell(
                 .status();
             None
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod probe_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt as _;
+
+    /// A "shell" that takes `-lic <script>` like the real one and does what
+    /// `body` says. The probe is what is under test, not zsh.
+    fn fake_shell(dir: &std::path::Path, body: &str) -> String {
+        let path = dir.join("shell");
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path.to_string_lossy().into_owned()
+    }
+
+    /// A scratch directory (the crate has no `tempfile`), removed on drop.
+    struct Scratch(std::path::PathBuf);
+    impl Scratch {
+        fn new() -> Self {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos());
+            let dir =
+                std::env::temp_dir().join(format!("atlas-probe-{}-{nanos}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            Self(dir)
+        }
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn alive(pid: i32) -> bool {
+        std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .is_ok_and(|s| s.success())
+    }
+
+    #[test]
+    fn a_shell_that_answers_is_read_to_the_end() {
+        let dir = Scratch::new();
+        let shell = fake_shell(dir.path(), r#"printf 'noise\n/opt/x/bin:/usr/bin'"#);
+        let out = probe_shell(&shell, "ignored", std::time::Duration::from_secs(5))
+            .expect("a prompt shell answers");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "noise\n/opt/x/bin:/usr/bin"
+        );
+    }
+
+    /// The boot-time hang: an rc file that blocks (a prompt, a network
+    /// call). The probe must give up on time AND take the shell with it —
+    /// the old pattern leaked one login shell per expiry, forever.
+    #[test]
+    fn a_shell_that_never_answers_is_killed_at_the_deadline() {
+        let dir = Scratch::new();
+        let pid_file = dir.path().join("pid");
+        let shell = fake_shell(
+            dir.path(),
+            &format!("echo $$ > '{}'\nexec sleep 30", pid_file.display()),
+        );
+
+        // Long enough for the fake shell to start and record its pid first:
+        // macOS scans a freshly written executable on its first launch, which
+        // alone took ~330ms on a dev Mac — past the 300ms this used to allow,
+        // so the shell was killed before it wrote the pid file.
+        let started = std::time::Instant::now();
+        let out = probe_shell(&shell, "ignored", std::time::Duration::from_secs(2));
+        assert!(out.is_none(), "an expired probe reports nothing");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "the probe waited past its deadline: {:?}",
+            started.elapsed()
+        );
+
+        let pid: i32 = std::fs::read_to_string(&pid_file)
+            .expect("the shell recorded its pid before blocking")
+            .trim()
+            .parse()
+            .unwrap();
+        // The kill is asynchronous to the probe's return; give it a moment.
+        let gone = (0..50).any(|_| {
+            if alive(pid) {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+                false
+            } else {
+                true
+            }
+        });
+        assert!(
+            gone,
+            "the timed-out probe shell (pid {pid}) is still running"
+        );
     }
 }

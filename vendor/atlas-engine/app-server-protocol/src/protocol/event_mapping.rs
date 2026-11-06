@@ -188,6 +188,7 @@ pub fn item_event_to_server_notification(
                 kind: activity.kind.into(),
                 agent_thread_id: activity.agent_thread_id.to_string(),
                 agent_path: String::from(activity.agent_path),
+                prompt: None,
             };
             ServerNotification::ItemCompleted(ItemCompletedNotification {
                 thread_id,

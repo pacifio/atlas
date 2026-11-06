@@ -35,8 +35,8 @@
 //!   that touch stops nominating the Session for later commits. Without this,
 //!   every future commit to a hot file, including purely human work months
 //!   later and teammate commits arriving via pull, would be attributed to the
-//!   Session forever. This is the carry-forward rule from Entire's link engine,
-//!   and it is the load-bearing half of the design.
+//!   Session forever. This is the carry-forward rule, and it is the
+//!   load-bearing half of the design.
 //! * **Time.** A commit is never linked to a Session that started after the
 //!   commit was created, which is what makes the bounded recovery re-scan safe:
 //!   historical commits that predate every Session can neither link nor consume.

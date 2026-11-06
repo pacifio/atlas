@@ -29,8 +29,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use atlas_agent_wire::{
-    AgentId, Message, MessageMode, MessageRole, PlanEntry, RateLimitWindow, SessionDelta,
-    SessionDeltaEnvelope, SessionStatus, ToolCall, ToolCallStatus, ToolContentBlock, Usage,
+    AgentId, Message, MessageImage, MessageMode, MessageRole, Origin, PlanEntry, QueuedPrompt,
+    RateLimitWindow, SessionDelta, SessionDeltaEnvelope, SessionStatus, Subagent, SubagentStatus,
+    ToolCall, ToolCallStatus, ToolContentBlock, Usage,
 };
 use serde_json::json;
 use uuid::Uuid;
@@ -53,14 +54,15 @@ fn expected() -> BTreeMap<String, BTreeSet<String>> {
             "tool_call_output_chunk",
             &["message_id", "tool_call_id", "delta"],
         ),
+        ("subagent_upserted", &["subagent"]),
         ("plan_updated", &["plan"]),
         ("history_rewound", &["turns"]),
-        ("mode_changed", &["mode_id"]),
+        ("mode_changed", &["mode_id", "origin"]),
         (
             "retry_status",
             &["attempt", "max_attempts", "delay_ms", "last_error"],
         ),
-        ("model_changed", &["model_id"]),
+        ("model_changed", &["model_id", "origin"]),
         ("available_commands", &["commands"]),
         ("usage_updated", &["usage"]),
         (
@@ -68,7 +70,7 @@ fn expected() -> BTreeMap<String, BTreeSet<String>> {
             &["request_id", "mode", "message", "requested_schema", "url"],
         ),
         ("title_updated", &["title"]),
-        ("config_options_updated", &["config_options"]),
+        ("config_options_updated", &["config_options", "origin"]),
         ("context_usage", &["used", "size", "cost", "currency"]),
         ("compaction", &["active"]),
         ("compression_saved", &["saved_tokens"]),
@@ -78,9 +80,22 @@ fn expected() -> BTreeMap<String, BTreeSet<String>> {
             &["request_id", "tool_call", "options"],
         ),
         ("permission_resolved", &["request_id"]),
-        ("turn_finished", &["stop_reason", "turn_seq"]),
+        (
+            "turn_finished",
+            &[
+                "stop_reason",
+                "turn_seq",
+                "started_at_ms",
+                "ended_at_ms",
+                "worked_ms",
+            ],
+        ),
         ("turn_failed", &["error", "turn_seq", "error_kind"]),
+        ("slept_mid_turn", &["turn_seq", "slept_secs"]),
         ("agent_disconnected", &["reason"]),
+        ("user_message", &["message", "origin", "client_message_id"]),
+        ("queue_changed", &["queue"]),
+        ("hold_changed", &["held"]),
     ]
     .into_iter()
     .map(|(kind, fields)| {
@@ -105,6 +120,7 @@ fn contract_kind(delta: &SessionDelta) -> &'static str {
         SessionDelta::TextChunk { .. } => "text_chunk",
         SessionDelta::ThinkingChunk { .. } => "thinking_chunk",
         SessionDelta::ToolCallUpserted { .. } => "tool_call_upserted",
+        SessionDelta::SubagentUpserted { .. } => "subagent_upserted",
         SessionDelta::ToolCallOutputChunk { .. } => "tool_call_output_chunk",
         SessionDelta::PlanUpdated { .. } => "plan_updated",
         SessionDelta::HistoryRewound { .. } => "history_rewound",
@@ -124,7 +140,11 @@ fn contract_kind(delta: &SessionDelta) -> &'static str {
         SessionDelta::PermissionResolved { .. } => "permission_resolved",
         SessionDelta::TurnFinished { .. } => "turn_finished",
         SessionDelta::TurnFailed { .. } => "turn_failed",
+        SessionDelta::SleptMidTurn { .. } => "slept_mid_turn",
         SessionDelta::AgentDisconnected { .. } => "agent_disconnected",
+        SessionDelta::UserMessage { .. } => "user_message",
+        SessionDelta::QueueChanged { .. } => "queue_changed",
+        SessionDelta::HoldChanged { .. } => "hold_changed",
     }
 }
 
@@ -209,6 +229,9 @@ fn samples() -> Vec<SessionDelta> {
             tool_call_id: "call-1".into(),
             delta: "line\n".into(),
         },
+        SessionDelta::SubagentUpserted {
+            subagent: sample_subagent(),
+        },
         SessionDelta::PlanUpdated {
             plan: vec![PlanEntry {
                 content: "do the thing".into(),
@@ -219,6 +242,7 @@ fn samples() -> Vec<SessionDelta> {
         SessionDelta::HistoryRewound { turns: 2 },
         SessionDelta::ModeChanged {
             mode_id: "plan".into(),
+            origin: Some(Origin::Local),
         },
         SessionDelta::RetryStatus {
             attempt: 1,
@@ -228,6 +252,10 @@ fn samples() -> Vec<SessionDelta> {
         },
         SessionDelta::ModelChanged {
             model_id: "anthropic/claude".into(),
+            origin: Some(Origin::Remote {
+                id: "user-7".into(),
+                name: Some("Ada".into()),
+            }),
         },
         SessionDelta::AvailableCommands {
             commands: vec![serde_json::json!({ "name": "login" })],
@@ -255,6 +283,10 @@ fn samples() -> Vec<SessionDelta> {
         },
         SessionDelta::ConfigOptionsUpdated {
             config_options: vec![serde_json::json!({ "id": "thinking" })],
+            origin: Some(Origin::Remote {
+                id: "user-7".into(),
+                name: None,
+            }),
         },
         SessionDelta::ContextUsage {
             used: 100,
@@ -282,16 +314,70 @@ fn samples() -> Vec<SessionDelta> {
         SessionDelta::TurnFinished {
             stop_reason: "end_turn".into(),
             turn_seq: 3,
+            started_at_ms: Some(1_700_000_000_000),
+            ended_at_ms: Some(1_700_000_252_000),
+            worked_ms: Some(251_400),
         },
         SessionDelta::TurnFailed {
             error: "boom".into(),
             turn_seq: 3,
             error_kind: Some("transient".into()),
         },
+        SessionDelta::SleptMidTurn {
+            turn_seq: 3,
+            slept_secs: 600,
+        },
         SessionDelta::AgentDisconnected {
             reason: "process died".into(),
         },
+        SessionDelta::UserMessage {
+            message: sample_user_message(),
+            origin: Origin::Remote {
+                id: "guest:ab12".into(),
+                name: Some("Sam".into()),
+            },
+            client_message_id: Some("cm-1".into()),
+        },
+        SessionDelta::QueueChanged {
+            queue: vec![
+                QueuedPrompt {
+                    id: "q-1".into(),
+                    text: "and then the tests".into(),
+                    origin: Origin::Local,
+                },
+                QueuedPrompt {
+                    id: "q-2".into(),
+                    text: "ship it".into(),
+                    origin: Origin::Remote {
+                        id: "user-7".into(),
+                        name: None,
+                    },
+                },
+            ],
+        },
+        SessionDelta::HoldChanged { held: true },
     ]
+}
+
+fn sample_user_message() -> Message {
+    Message {
+        id: "msg-u".into(),
+        role: MessageRole::User,
+        mode: MessageMode::Text,
+        content: "fix the build".into(),
+        thinking: String::new(),
+        tool_calls: Vec::new(),
+        plan: None,
+        model: None,
+        images: vec![MessageImage {
+            mime_type: "image/png".into(),
+            data: "iVBORw0K".into(),
+        }],
+        timestamp: "2026-01-02T03:04:05Z".parse().unwrap(),
+        timestamp_approximate: false,
+        worked_ms: None,
+        stop_reason: None,
+    }
 }
 
 fn sample_message() -> Message {
@@ -307,6 +393,11 @@ fn sample_message() -> Message {
         images: Vec::new(),
         // Fixed, not `now()`: the golden pins the serialized timestamp.
         timestamp: "2026-01-02T03:04:05Z".parse().unwrap(),
+        // Set, so the golden pins the key; `optional_fields_are_omitted…`
+        // pins its absence when false.
+        timestamp_approximate: true,
+        worked_ms: Some(252_000),
+        stop_reason: Some("cancelled".into()),
     }
 }
 
@@ -326,6 +417,25 @@ fn sample_tool_call() -> ToolCall {
             old_text: Some("old".into()),
             new_text: "new".into(),
         }],
+        parent_tool_call_id: Some("call-parent".into()),
+        started_at_ms: Some(1_700_000_000_000),
+        ended_at_ms: Some(1_700_000_001_500),
+    }
+}
+
+fn sample_subagent() -> Subagent {
+    Subagent {
+        tool_call_id: "call-parent".into(),
+        message_id: "msg-1".into(),
+        name: "Review the auth module".into(),
+        status: SubagentStatus::Running,
+        prompt: Some("Read src/auth.".into()),
+        role: Some("code-reviewer".into()),
+        result: None,
+        tool_call_count: 2,
+        started_at_ms: 1_700_000_000_000,
+        ended_at_ms: None,
+        own_thread: true,
     }
 }
 
@@ -348,6 +458,9 @@ fn golden() -> BTreeMap<&'static str, serde_json::Value> {
         "content_blocks": [
             { "type": "diff", "path": "src/main.rs", "oldText": "old", "newText": "new" }
         ],
+        "parent_tool_call_id": "call-parent",
+        "started_at_ms": 1_700_000_000_000_i64,
+        "ended_at_ms": 1_700_000_001_500_i64,
     });
     BTreeMap::from([
         (
@@ -368,6 +481,9 @@ fn golden() -> BTreeMap<&'static str, serde_json::Value> {
                     "plan": [],
                     "model": "anthropic/claude",
                     "timestamp": "2026-01-02T03:04:05Z",
+                    "timestamp_approximate": true,
+                    "worked_ms": 252_000,
+                    "stop_reason": "cancelled",
                 },
             }),
         ),
@@ -393,6 +509,23 @@ fn golden() -> BTreeMap<&'static str, serde_json::Value> {
             }),
         ),
         (
+            "subagent_upserted",
+            json!({
+                "kind": "subagent_upserted",
+                "subagent": {
+                    "toolCallId": "call-parent",
+                    "messageId": "msg-1",
+                    "name": "Review the auth module",
+                    "status": "running",
+                    "prompt": "Read src/auth.",
+                    "role": "code-reviewer",
+                    "toolCallCount": 2,
+                    "startedAtMs": 1_700_000_000_000i64,
+                    "ownThread": true,
+                },
+            }),
+        ),
+        (
             "plan_updated",
             json!({
                 "kind": "plan_updated",
@@ -405,7 +538,7 @@ fn golden() -> BTreeMap<&'static str, serde_json::Value> {
         ),
         (
             "mode_changed",
-            json!({ "kind": "mode_changed", "mode_id": "plan" }),
+            json!({ "kind": "mode_changed", "mode_id": "plan", "origin": { "kind": "local" } }),
         ),
         (
             "retry_status",
@@ -419,7 +552,11 @@ fn golden() -> BTreeMap<&'static str, serde_json::Value> {
         ),
         (
             "model_changed",
-            json!({ "kind": "model_changed", "model_id": "anthropic/claude" }),
+            json!({
+                "kind": "model_changed",
+                "model_id": "anthropic/claude",
+                "origin": { "kind": "remote", "id": "user-7", "name": "Ada" },
+            }),
         ),
         (
             "available_commands",
@@ -457,7 +594,11 @@ fn golden() -> BTreeMap<&'static str, serde_json::Value> {
         ),
         (
             "config_options_updated",
-            json!({ "kind": "config_options_updated", "config_options": [{ "id": "thinking" }] }),
+            json!({
+                "kind": "config_options_updated",
+                "config_options": [{ "id": "thinking" }],
+                "origin": { "kind": "remote", "id": "user-7" },
+            }),
         ),
         (
             "context_usage",
@@ -495,7 +636,14 @@ fn golden() -> BTreeMap<&'static str, serde_json::Value> {
         ),
         (
             "turn_finished",
-            json!({ "kind": "turn_finished", "stop_reason": "end_turn", "turn_seq": 3 }),
+            json!({
+                "kind": "turn_finished",
+                "stop_reason": "end_turn",
+                "turn_seq": 3,
+                "started_at_ms": 1_700_000_000_000_i64,
+                "ended_at_ms": 1_700_000_252_000_i64,
+                "worked_ms": 251_400,
+            }),
         ),
         (
             "turn_failed",
@@ -507,8 +655,43 @@ fn golden() -> BTreeMap<&'static str, serde_json::Value> {
             }),
         ),
         (
+            "slept_mid_turn",
+            json!({ "kind": "slept_mid_turn", "turn_seq": 3, "slept_secs": 600 }),
+        ),
+        (
             "agent_disconnected",
             json!({ "kind": "agent_disconnected", "reason": "process died" }),
+        ),
+        (
+            "user_message",
+            json!({
+                "kind": "user_message",
+                "message": {
+                    "id": "msg-u",
+                    "role": "user",
+                    "mode": "text",
+                    "content": "fix the build",
+                    "tool_calls": [],
+                    "images": [{ "mime_type": "image/png", "data": "iVBORw0K" }],
+                    "timestamp": "2026-01-02T03:04:05Z",
+                },
+                "origin": { "kind": "remote", "id": "guest:ab12", "name": "Sam" },
+                "client_message_id": "cm-1",
+            }),
+        ),
+        (
+            "queue_changed",
+            json!({
+                "kind": "queue_changed",
+                "queue": [
+                    { "id": "q-1", "text": "and then the tests", "origin": { "kind": "local" } },
+                    { "id": "q-2", "text": "ship it", "origin": { "kind": "remote", "id": "user-7" } },
+                ],
+            }),
+        ),
+        (
+            "hold_changed",
+            json!({ "kind": "hold_changed", "held": true }),
         ),
     ])
 }
@@ -624,11 +807,15 @@ fn the_envelope_flattens_the_delta_beside_its_routing_keys() {
     let value = serde_json::to_value(SessionDeltaEnvelope {
         agent_id: AgentId(Uuid::nil()),
         session_id: "sess-1".into(),
+        seq: 42,
         delta: SessionDelta::Compaction { active: false },
     })
     .unwrap();
 
     assert_eq!(value["session_id"], "sess-1");
+    // The per-session stream position rides beside the routing keys, always
+    // present: a joiner's snapshot-then-tail depends on it (`as_of_seq`).
+    assert_eq!(value["seq"], 42);
     assert_eq!(value["agent_id"], Uuid::nil().to_string());
     // Flattened, not nested: consumers read `kind` off the envelope itself.
     assert_eq!(value["kind"], "compaction");
@@ -648,12 +835,69 @@ fn optional_fields_are_omitted_rather_than_null() {
     .unwrap();
     assert!(value.get("error_kind").is_none());
 
+    let value = serde_json::to_value(SessionDelta::TurnFinished {
+        stop_reason: "end_turn".into(),
+        turn_seq: 0,
+        started_at_ms: None,
+        ended_at_ms: None,
+        worked_ms: None,
+    })
+    .unwrap();
+    assert!(value.get("started_at_ms").is_none());
+    assert!(value.get("ended_at_ms").is_none());
+    assert!(value.get("worked_ms").is_none());
+
+    let mut message = sample_message();
+    message.worked_ms = None;
+    message.stop_reason = None;
+    message.timestamp_approximate = false;
+    let value = serde_json::to_value(&message).unwrap();
+    assert!(value.get("worked_ms").is_none());
+    assert!(value.get("stop_reason").is_none());
+    // A timed message (every live one) serializes exactly as before the flag.
+    assert!(value.get("timestamp_approximate").is_none());
+
+    // A user message nobody minted an id for (a remote prompt, a queued one)
+    // says nothing about it, rather than `null`.
+    let value = serde_json::to_value(SessionDelta::UserMessage {
+        message: sample_user_message(),
+        origin: Origin::Local,
+        client_message_id: None,
+    })
+    .unwrap();
+    assert!(value.get("client_message_id").is_none());
+    assert_eq!(value["origin"], json!({ "kind": "local" }));
+
+    // A setting the agent changed on its own has no origin to name, and says
+    // nothing rather than `null`; one set through the host names who did it.
+    for delta in [
+        SessionDelta::ModeChanged {
+            mode_id: "plan".into(),
+            origin: None,
+        },
+        SessionDelta::ModelChanged {
+            model_id: "m".into(),
+            origin: None,
+        },
+        SessionDelta::ConfigOptionsUpdated {
+            config_options: Vec::new(),
+            origin: None,
+        },
+    ] {
+        let value = serde_json::to_value(&delta).unwrap();
+        assert!(value.get("origin").is_none(), "{value}");
+    }
+
     let mut tool_call = sample_tool_call();
     tool_call.raw_output = None;
     tool_call.content_blocks = Vec::new();
+    tool_call.started_at_ms = None;
+    tool_call.ended_at_ms = None;
     let value = serde_json::to_value(&tool_call).unwrap();
     assert!(value.get("raw_output").is_none());
     assert!(value.get("content_blocks").is_none());
+    assert!(value.get("started_at_ms").is_none());
+    assert!(value.get("ended_at_ms").is_none());
 }
 
 #[test]

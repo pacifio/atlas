@@ -64,7 +64,7 @@ const DONE_SENTINEL: &str = "[DONE]";
 /// What the parser needs to know about the request that produced this stream.
 #[derive(Debug, Clone, Default)]
 pub struct ChatDialect {
-    /// Tools that were freeform upstream and were flattened into functions to
+    /// Tools that were freeform in the original tool shape and were flattened into functions to
     /// cross this wire, by name.
     ///
     /// Their replies have to be turned back into `CustomToolCall`s: the
@@ -72,7 +72,7 @@ pub struct ChatDialect {
     /// the one that runs patches accepts only `Custom`, so a call that is not
     /// turned back is a tool that silently never runs.
     pub freeform_tools: BTreeSet<String>,
-    /// Tools that lived inside a `namespace` upstream (every MCP server's
+    /// Tools that lived inside a `namespace` in the original tool shape (every MCP server's
     /// tools do) and crossed this wire under one flat name, keyed by that name.
     ///
     /// The router resolves a call by namespace and name, so a reply that comes

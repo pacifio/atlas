@@ -2,7 +2,7 @@
 //! fan-out + ranking in `src/features/chat/lib/mentions.ts`.
 //!
 //! Previously: each keystroke in the picker triggered N parallel JS
-//! providers (`Promise.allSettled([files, folders, symbols, knowledge,
+//! providers (`Promise.allSettled([files, folders, knowledge,
 //! repos, branches])`), each invoking its own Tauri command
 //! and returning results, then JS ran `rankMention` to blend + sort.
 //! That's per-keystroke N+1 IPCs + JS-side fuzzy scoring across all
@@ -10,11 +10,11 @@
 //!
 //! Now: one Tauri command. Rust reads the data sources it already
 //! owns (file/folder via the live `FileIndexState`, repo via
-//! existing computes, branch via `git_refs_compute`). Knowledge +
-//! symbols are passed in from the frontend caches that already
-//! mirror Rust state — the input is small (a few hundred entries)
-//! and the alternative (a second Rust cache layer for them) was a
-//! larger refactor without payoff for this round. All seven kinds
+//! existing computes, branch via `git_refs_compute`). Knowledge is
+//! passed in from the frontend cache that already mirrors Rust
+//! state — the input is small (a few hundred entries) and the
+//! alternative (a second Rust cache layer for it) was a larger
+//! refactor without payoff for this round. All five kinds
 //! fan out in parallel via `tokio::join!`; every fuzzy match runs
 //! through `nucleo` (the same matcher Cmd+P uses) and returns a
 //! unified ranked top-N. Past-message is intentionally out of
@@ -30,7 +30,7 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tauri::{State, WebviewWindow};
 
-use super::fileindex::FileIndexState;
+use super::fileindex::{FileIndexState, IndexedFile};
 use super::git::{GitRef, GitRefs};
 use super::git_watcher::GitWatcherState;
 use super::github::{list_cloned_repos, ClonedRepo};
@@ -43,35 +43,22 @@ const TOTAL_LIMIT: usize = 40;
 
 /// Per-process cache of the mention-search inputs that aren't already held in
 /// a lock-protected Rust state. Knowledge entries are pushed in from JS
-/// (`useKnowledgeStore`) via `mention_cache_set_knowledge`; symbols are loaded
-/// Rust-side from the persisted `atlas-codeindex` by [`ensure_symbol_cache`]
-/// (no JS push). Read by `mention_search`.
+/// (`useKnowledgeStore`) via `mention_cache_set_knowledge`. Read by
+/// `mention_search`.
 ///
 /// Why this exists: before the cache, every @-picker keystroke
-/// serialized the full knowledge + symbols arrays from JS to JSON,
-/// shipped them over IPC to Rust, then Rust deserialized them. On a
-/// project with 1000 symbols this was ~150 KB of JSON encode +
-/// decode work on the JS main thread per keystroke — the perceived
+/// serialized the full knowledge array from JS to JSON, shipped it
+/// over IPC to Rust, then Rust deserialized it — JSON encode +
+/// decode work on the JS main thread per keystroke, the perceived
 /// typing lag in the picker. With the cache the per-keystroke
 /// payload is just `(query, scope, project_path)` (a few hundred
 /// bytes) and the heavy data sits hot in Rust.
 /// Per-WINDOW caches (keyed by webview label), for the same reason as
 /// `FileIndexState`: `.manage()` state is process-global, so a single cache
-/// would let window B's knowledge/symbols leak into window A's @-mentions.
+/// would let window B's knowledge leak into window A's @-mentions.
 #[derive(Default)]
 struct WindowCache {
     knowledge: Vec<KnowledgeInput>,
-    symbols: Vec<SymbolInput>,
-    /// Which project `symbols` was loaded from. Symbols are now sourced
-    /// Rust-side from the persisted `atlas-codeindex` (see
-    /// `ensure_symbol_cache`) rather than pushed from JS, so we lazily load
-    /// them on the first symbol-search per project and remember the project
-    /// here to avoid re-reading `docs.json` on every keystroke.
-    symbols_project: Option<String>,
-    /// `docs.json` mtime (ms) the cached `symbols` were built from. Re-read
-    /// when the index is (re)built so freshly-indexed symbols show up without
-    /// a window reload; a cheap `stat` per keystroke gates the reload.
-    symbols_mtime: i64,
 }
 
 #[derive(Default)]
@@ -111,75 +98,6 @@ pub fn mention_cache_clear(
     state.per_window.write().remove(&key);
 }
 
-/// Ranked shape for a code symbol in the @-mention picker. Built Rust-side
-/// from the persisted `atlas-codeindex` (`docs.json`) by [`ensure_symbol_cache`].
-#[derive(Debug, Clone)]
-pub struct SymbolInput {
-    pub name: String,
-    pub kind: String,
-    pub file_path: String,
-    pub line: u32,
-    pub signature: String,
-}
-
-/// Lazily populate a window's symbol cache from the persisted codebase index
-/// (`atlas-codeindex`) the first time symbols are searched for a given
-/// project. The `docs.json` read + flatten runs once per project on a blocking
-/// thread; every subsequent keystroke hits the hot in-memory cache. Mirrors
-/// the branch-refs lazy-cache pattern. A project that has never been indexed
-/// (no `docs.json`) yields an empty list — `@symbol` simply returns nothing
-/// until chat-with-codebase indexing has run.
-async fn ensure_symbol_cache(state: &MentionCacheState, label: &str, project_path: Option<&str>) {
-    let Some(project) = project_path else {
-        return;
-    };
-    // Cheap stat of `docs.json` — its mtime tells us whether the index was
-    // (re)built since we cached. 0 when it doesn't exist yet (unindexed).
-    let mtime = std::fs::metadata(atlas_codeindex::docs_path(project))
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0);
-    // Already loaded for this exact project + index revision → nothing to do.
-    {
-        let map = state.per_window.read();
-        if let Some(c) = map.get(label) {
-            if c.symbols_project.as_deref() == Some(project) && c.symbols_mtime == mtime {
-                return;
-            }
-        }
-    }
-    let project_owned = project.to_string();
-    let symbols = tokio::task::spawn_blocking(move || {
-        let index = atlas_codeindex::load_index(&project_owned);
-        let mut out: Vec<SymbolInput> = Vec::new();
-        for doc in &index.docs {
-            for s in &doc.symbols {
-                out.push(SymbolInput {
-                    name: s.name.clone(),
-                    kind: s.kind.clone(),
-                    // Absolute path so the picker can open the file directly.
-                    file_path: doc.abs_path.clone(),
-                    line: s.line,
-                    // atlas-codeindex stores no signature; synthesize a compact
-                    // "kind name" so the picker's detail line still reads well.
-                    signature: format!("{} {}", s.kind, s.name),
-                });
-            }
-        }
-        out
-    })
-    .await
-    .unwrap_or_default();
-
-    let mut map = state.per_window.write();
-    let entry = map.entry(label.to_string()).or_default();
-    entry.symbols = symbols;
-    entry.symbols_project = Some(project.to_string());
-    entry.symbols_mtime = mtime;
-}
-
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KnowledgeInput {
@@ -214,14 +132,6 @@ pub enum MentionResult {
         display_name: String,
         abs_path: String,
     },
-    Symbol {
-        id: String,
-        display_name: String,
-        signature: String,
-        symbol_kind: String,
-        file_path: String,
-        line: u32,
-    },
     Knowledge {
         id: String,
         display_name: String,
@@ -250,6 +160,7 @@ fn matches_scope(scope: Option<&str>, kind: &str) -> bool {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // a Tauri command takes its state as arguments
 pub async fn mention_search(
     query: String,
     scope: Option<String>,
@@ -268,19 +179,20 @@ pub async fn mention_search(
     let want_folder = matches_scope(scope_ref, "folder");
     let want_repo = matches_scope(scope_ref, "repo");
     let want_branch = matches_scope(scope_ref, "branch");
-    let want_symbol = matches_scope(scope_ref, "symbol");
     let want_knowledge = matches_scope(scope_ref, "knowledge");
 
-    // Pull file/folder snapshots ONCE (no redundant clone) directly
-    // from the lock-protected state. snapshot_folders uses the
-    // watcher-invalidated cache so the O(files × depth) derivation
-    // only runs after a real file-set change — not per keystroke.
-    let files_snapshot: Option<Vec<(String, PathBuf)>> = if want_file {
-        fileindex.snapshot_files(&label).map(|(files, _)| files)
+    // Take POINTERS to the file and folder lists, not copies of them. Both
+    // rankers keep `PER_KIND_LIMIT` (30) results, and deep-cloning a whole
+    // project's index on each keystroke to choose thirty of it was the
+    // picker's remaining per-keystroke cost. `snapshot_folders` uses the
+    // watcher-invalidated cache, so the O(files × depth) derivation still only
+    // runs after a real file-set change.
+    let files_snapshot = if want_file {
+        fileindex.files_arc(&label).map(|(files, _)| files)
     } else {
         None
     };
-    let folders_snapshot: Option<Vec<(String, PathBuf)>> = if want_folder {
+    let folders_snapshot = if want_folder {
         fileindex.snapshot_folders(&label)
     } else {
         None
@@ -293,21 +205,23 @@ pub async fn mention_search(
     let trimmed_for_folder = trimmed.clone();
     let trimmed_for_repo = trimmed.clone();
     let trimmed_for_branch = trimmed.clone();
-    let trimmed_for_symbol = trimmed.clone();
     let trimmed_for_knowledge = trimmed.clone();
 
     let file_fut = async move {
         let Some(files) = files_snapshot else {
             return Vec::new();
         };
-        rank_files(&trimmed_for_file, files)
+        // Matching is pure CPU with no `.await`, so holding the read lock
+        // across it is fine — and is what keeps the list from being copied.
+        let guard = files.read();
+        rank_files(&trimmed_for_file, &guard)
     };
 
     let folder_fut = async move {
         let Some(folders) = folders_snapshot else {
             return Vec::new();
         };
-        rank_folders(&trimmed_for_folder, folders)
+        rank_folders(&trimmed_for_folder, &folders)
     };
 
     let repo_fut = async move {
@@ -349,29 +263,7 @@ pub async fn mention_search(
     // savings come from NOT serializing+deserializing those
     // entries across the IPC boundary on every keystroke (the old
     // path could push 100-500 KB per keystroke on a project with
-    // many symbols, which was the visible typing lag).
-    // Symbols are sourced from the persisted codebase index, loaded lazily
-    // into the per-window cache on the first symbol-search per project.
-    if want_symbol {
-        ensure_symbol_cache(cache.inner(), &label, project_path.as_deref()).await;
-    }
-    let symbols_data: Vec<SymbolInput> = if want_symbol {
-        cache
-            .per_window
-            .read()
-            .get(&label)
-            .map(|c| c.symbols.clone())
-            .unwrap_or_default()
-    } else {
-        Vec::new()
-    };
-    let symbol_fut = async move {
-        if !want_symbol {
-            return Vec::new();
-        }
-        rank_symbols(&trimmed_for_symbol, symbols_data)
-    };
-
+    // many entries, which was the visible typing lag).
     let knowledge_data: Vec<KnowledgeInput> = if want_knowledge {
         cache
             .per_window
@@ -389,19 +281,13 @@ pub async fn mention_search(
         rank_knowledge(&trimmed_for_knowledge, knowledge_data)
     };
 
-    let (files, folders, repos, branches, symbols_res, knowledge_res) = tokio::join!(
-        file_fut,
-        folder_fut,
-        repo_fut,
-        branch_fut,
-        symbol_fut,
-        knowledge_fut
-    );
+    let (files, folders, repos, branches, knowledge_res) =
+        tokio::join!(file_fut, folder_fut, repo_fut, branch_fut, knowledge_fut);
 
     if scope_ref.is_some() {
         // Scoped view: only one kind is populated — flatten and cap.
         let mut all: Vec<MentionResult> = Vec::new();
-        for scored in [files, folders, symbols_res, knowledge_res, repos, branches] {
+        for scored in [files, folders, knowledge_res, repos, branches] {
             all.extend(scored.into_iter().map(|(_, m)| m));
         }
         return Ok(all.into_iter().take(PER_KIND_LIMIT).collect());
@@ -409,8 +295,7 @@ pub async fn mention_search(
 
     if trimmed.is_empty() {
         // Zero-query overview: a small slice of every kind so `@` alone
-        // shows real results (Linear-style) instead of nothing. Symbols
-        // are omitted — "the first N symbols in walk order" is noise.
+        // shows real results (Linear-style) instead of nothing.
         let mut all: Vec<MentionResult> = Vec::new();
         for (scored, cap) in [
             (files, 8),
@@ -428,7 +313,7 @@ pub async fn mention_search(
     // score (stable sort keeps per-kind order on ties), with a per-kind
     // cap so no single kind can push the rest below the fold.
     let mut all: Vec<(u32, MentionResult)> = Vec::new();
-    for scored in [files, folders, symbols_res, knowledge_res, repos, branches] {
+    for scored in [files, folders, knowledge_res, repos, branches] {
         all.extend(scored);
     }
     all.sort_by_key(|entry| std::cmp::Reverse(entry.0));
@@ -452,7 +337,6 @@ fn kind_key(m: &MentionResult) -> &'static str {
     match m {
         MentionResult::File { .. } => "file",
         MentionResult::Folder { .. } => "folder",
-        MentionResult::Symbol { .. } => "symbol",
         MentionResult::Knowledge { .. } => "knowledge",
         MentionResult::Repo { .. } => "repo",
         MentionResult::Branch { .. } => "branch",
@@ -470,30 +354,31 @@ fn kind_key(m: &MentionResult) -> &'static str {
 /// Skipping nucleo for the empty case avoids the previous behavior
 /// of allocating an N-entry scored vec + sort_by every keystroke
 /// when no query has been typed yet.
-fn rank_files(query: &str, files: Vec<(String, PathBuf)>) -> Vec<(u32, MentionResult)> {
-    let to_result = |(rel, abs): (String, PathBuf)| {
-        let abs_str = abs.to_string_lossy().into_owned();
+/// Borrows the index and allocates only for the results it keeps.
+fn rank_files(query: &str, files: &[IndexedFile]) -> Vec<(u32, MentionResult)> {
+    let to_result = |f: &IndexedFile| {
+        let abs_str = f.path.to_string_lossy().into_owned();
         MentionResult::File {
             id: abs_str.clone(),
-            display_name: rel,
+            display_name: f.rel.clone(),
             abs_path: abs_str,
         }
     };
     if query.is_empty() {
         return files
-            .into_iter()
+            .iter()
             .take(PER_KIND_LIMIT)
             .map(|f| (0, to_result(f)))
             .collect();
     }
     let pattern = Pattern::parse(query, CaseMatching::Smart, Normalization::Smart);
     let mut matcher = Matcher::default();
-    let mut scored: Vec<(u32, (String, PathBuf))> = files
-        .into_iter()
-        .filter_map(|(rel, abs)| {
-            let mut buf = Vec::new();
-            let utf = Utf32Str::new(&rel, &mut buf);
-            pattern.score(utf, &mut matcher).map(|s| (s, (rel, abs)))
+    let mut buf = Vec::new();
+    let mut scored: Vec<(u32, &IndexedFile)> = files
+        .iter()
+        .filter_map(|f| {
+            let utf = Utf32Str::new(&f.rel, &mut buf);
+            pattern.score(utf, &mut matcher).map(|s| (s, f))
         })
         .collect();
     scored.sort_by_key(|entry| std::cmp::Reverse(entry.0));
@@ -504,30 +389,31 @@ fn rank_files(query: &str, files: Vec<(String, PathBuf)>) -> Vec<(u32, MentionRe
         .collect()
 }
 
-fn rank_folders(query: &str, folders: Vec<(String, PathBuf)>) -> Vec<(u32, MentionResult)> {
-    let to_result = |(rel, abs): (String, PathBuf)| {
+/// Borrows the cached folder list and allocates only for the results it keeps.
+fn rank_folders(query: &str, folders: &[(String, PathBuf)]) -> Vec<(u32, MentionResult)> {
+    let to_result = |(rel, abs): &(String, PathBuf)| {
         let abs_str = abs.to_string_lossy().into_owned();
         MentionResult::Folder {
             id: abs_str.clone(),
-            display_name: rel,
+            display_name: rel.clone(),
             abs_path: abs_str,
         }
     };
     if query.is_empty() {
         return folders
-            .into_iter()
+            .iter()
             .take(PER_KIND_LIMIT)
             .map(|f| (0, to_result(f)))
             .collect();
     }
     let pattern = Pattern::parse(query, CaseMatching::Smart, Normalization::Smart);
     let mut matcher = Matcher::default();
-    let mut scored: Vec<(u32, (String, PathBuf))> = folders
-        .into_iter()
-        .filter_map(|(rel, abs)| {
-            let mut buf = Vec::new();
-            let utf = Utf32Str::new(&rel, &mut buf);
-            pattern.score(utf, &mut matcher).map(|s| (s, (rel, abs)))
+    let mut buf = Vec::new();
+    let mut scored: Vec<(u32, &(String, PathBuf))> = folders
+        .iter()
+        .filter_map(|f| {
+            let utf = Utf32Str::new(&f.0, &mut buf);
+            pattern.score(utf, &mut matcher).map(|s| (s, f))
         })
         .collect();
     scored.sort_by_key(|entry| std::cmp::Reverse(entry.0));
@@ -637,56 +523,6 @@ fn rank_branches(query: &str, refs: GitRefs) -> Vec<(u32, MentionResult)> {
         .collect()
 }
 
-fn rank_symbols(query: &str, symbols: Vec<SymbolInput>) -> Vec<(u32, MentionResult)> {
-    if query.is_empty() {
-        return symbols
-            .into_iter()
-            .take(PER_KIND_LIMIT)
-            .map(|s| {
-                (
-                    0,
-                    MentionResult::Symbol {
-                        id: format!("{}@{}:{}", s.name, s.file_path, s.line),
-                        display_name: s.name,
-                        signature: s.signature,
-                        symbol_kind: s.kind,
-                        file_path: s.file_path,
-                        line: s.line,
-                    },
-                )
-            })
-            .collect();
-    }
-    let pattern = Pattern::parse(query, CaseMatching::Smart, Normalization::Smart);
-    let mut matcher = Matcher::default();
-    let mut scored: Vec<(u32, SymbolInput)> = symbols
-        .into_iter()
-        .filter_map(|s| {
-            let mut buf = Vec::new();
-            let utf = Utf32Str::new(&s.name, &mut buf);
-            pattern.score(utf, &mut matcher).map(|sc| (sc, s))
-        })
-        .collect();
-    scored.sort_by_key(|entry| std::cmp::Reverse(entry.0));
-    scored
-        .into_iter()
-        .take(PER_KIND_LIMIT)
-        .map(|(sc, s)| {
-            (
-                sc,
-                MentionResult::Symbol {
-                    id: format!("{}@{}:{}", s.name, s.file_path, s.line),
-                    display_name: s.name,
-                    signature: s.signature,
-                    symbol_kind: s.kind,
-                    file_path: s.file_path,
-                    line: s.line,
-                },
-            )
-        })
-        .collect()
-}
-
 fn rank_knowledge(query: &str, entries: Vec<KnowledgeInput>) -> Vec<(u32, MentionResult)> {
     if query.is_empty() {
         return entries
@@ -746,4 +582,148 @@ fn rank_knowledge(query: &str, entries: Vec<KnowledgeInput>) -> Vec<(u32, Mentio
             )
         })
         .collect()
+}
+
+/// Per-keystroke cost of ranking the file index, borrowed vs copied. Not a
+/// correctness test — run it by hand after touching that path:
+///
+/// ```text
+/// cargo test -p atlas --lib mention_search::perf -- --ignored --nocapture
+/// ```
+#[cfg(test)]
+mod perf {
+    use super::*;
+    use std::time::Instant;
+
+    /// The old path, reproduced exactly: `snapshot_files` deep-copied every
+    /// entry, `rank_files` consumed that copy, and the match buffer was
+    /// allocated per candidate rather than once.
+    fn rank_files_old(query: &str, files: Vec<(String, PathBuf)>) -> Vec<(u32, MentionResult)> {
+        let to_result = |(rel, abs): (String, PathBuf)| {
+            let abs_str = abs.to_string_lossy().into_owned();
+            MentionResult::File {
+                id: abs_str.clone(),
+                display_name: rel,
+                abs_path: abs_str,
+            }
+        };
+        if query.is_empty() {
+            return files
+                .into_iter()
+                .take(PER_KIND_LIMIT)
+                .map(|f| (0, to_result(f)))
+                .collect();
+        }
+        let pattern = Pattern::parse(query, CaseMatching::Smart, Normalization::Smart);
+        let mut matcher = Matcher::default();
+        let mut scored: Vec<(u32, (String, PathBuf))> = files
+            .into_iter()
+            .filter_map(|(rel, abs)| {
+                let mut buf = Vec::new();
+                let utf = Utf32Str::new(&rel, &mut buf);
+                pattern.score(utf, &mut matcher).map(|s| (s, (rel, abs)))
+            })
+            .collect();
+        scored.sort_by_key(|entry| std::cmp::Reverse(entry.0));
+        scored
+            .into_iter()
+            .take(PER_KIND_LIMIT)
+            .map(|(s, f)| (s, to_result(f)))
+            .collect()
+    }
+
+    fn index(count: usize) -> Vec<IndexedFile> {
+        (0..count)
+            .map(|i| {
+                // Every fifth path is non-ASCII: `Utf32Str::new` only touches
+                // the shared match buffer for non-ASCII input, so an all-ASCII
+                // fixture never exercises the buffer reuse this module hoists.
+                let dir = if i % 5 == 0 { "café" } else { "area" };
+                IndexedFile {
+                    rel: format!("src/features/{dir}{}/components/widget-{i}.tsx", i % 40),
+                    path: PathBuf::from(format!(
+                        "/Users/dev/project/src/features/{dir}{}/components/widget-{i}.tsx",
+                        i % 40
+                    )),
+                }
+            })
+            .collect()
+    }
+
+    /// The borrowed ranker must answer exactly what the owned one did —
+    /// including the reused match buffer, which `fileindex_search` hoists the
+    /// same way.
+    #[test]
+    fn borrowing_the_index_ranks_identically() {
+        let files = index(400);
+        for query in [
+            "",
+            "widget",
+            "area3",
+            "wdgt",
+            "WIDGET",
+            "components/widget-7",
+            "zzz",
+            "café",
+            "caf",
+        ] {
+            let owned: Vec<(String, PathBuf)> = files
+                .iter()
+                .map(|f| (f.rel.clone(), f.path.clone()))
+                .collect();
+            // `MentionResult` is a wire type without `PartialEq`; compare the
+            // fields the picker actually shows, in order, with their scores.
+            let shown = |v: Vec<(u32, MentionResult)>| {
+                v.into_iter()
+                    .map(|(score, m)| match m {
+                        MentionResult::File {
+                            id,
+                            display_name,
+                            abs_path,
+                        } => (score, id, display_name, abs_path),
+                        other => panic!("rank_files yielded a non-file: {other:?}"),
+                    })
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(
+                shown(rank_files(query, &files)),
+                shown(rank_files_old(query, owned)),
+                "query {query:?}"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "measurement, not a gate"]
+    fn ranking_the_index_does_not_copy_it() {
+        const KEYSTROKES: usize = 200;
+        println!();
+        for count in [5_000usize, 20_000, 50_000] {
+            let files = index(count);
+
+            // Before: snapshot_files' deep copy, then rank consumes it.
+            let t = Instant::now();
+            for _ in 0..KEYSTROKES {
+                let copied: Vec<(String, PathBuf)> = files
+                    .iter()
+                    .map(|f| (f.rel.clone(), f.path.clone()))
+                    .collect();
+                std::hint::black_box(rank_files_old("widget", copied));
+            }
+            let before = t.elapsed().as_micros() as f64 / KEYSTROKES as f64;
+
+            // After: rank borrows the index under its read lock.
+            let t = Instant::now();
+            for _ in 0..KEYSTROKES {
+                std::hint::black_box(rank_files("widget", &files));
+            }
+            let after = t.elapsed().as_micros() as f64 / KEYSTROKES as f64;
+
+            println!(
+                "  {count:>6} files   before: {before:>8.0} µs/keystroke   after: {after:>7.0} µs   {:.1}x",
+                before / after
+            );
+        }
+        println!();
+    }
 }

@@ -7,7 +7,7 @@
 //!
 //! For most agents this record is the fast first paint and the agent's own
 //! `session/load` replay is the authoritative one. For the **native agent** it
-//! is the only one: the ported engine resumes without history (D6) and its
+//! is the only one: the engine resumes without history (D6) and its
 //! rollout format has no Atlas reader (spec OQ8), so what this module recorded
 //! is exactly what a reopened session shows.
 //!
@@ -260,8 +260,21 @@ impl TranscriptState {
 
     /// Snapshot for persisting. Kept in memory afterwards so the next turn
     /// appends rather than starting a new file.
+    ///
+    /// This CLONES the whole transcript — every message and every body. Only
+    /// call it when the data is actually needed (i.e. to `save`). To ask the
+    /// question "is this session being recorded?", use [`Self::is_recording`]:
+    /// that question is asked once per streamed message, and answering it with
+    /// a clone made the cost of a delta grow with the length of the
+    /// conversation it belonged to.
     pub fn snapshot(&self, session_id: &str) -> Option<StoredTranscript> {
         self.open.lock().get(session_id).cloned()
+    }
+
+    /// Whether a buffer exists for `session_id` — i.e. `agents_send` recorded a
+    /// prompt for it and this is a transcript we persist. A map lookup; no copy.
+    pub fn is_recording(&self, session_id: &str) -> bool {
+        self.open.lock().contains_key(session_id)
     }
 }
 
@@ -756,5 +769,59 @@ mod tests {
         save(&dir, &t).unwrap();
         std::fs::write(dir_for(&dir, "/w").join("garbage.json"), b"{not json").unwrap();
         assert_eq!(list(&dir, "/w").len(), 1);
+    }
+}
+
+/// Cost of the per-delta "is this session recorded?" guard, against a
+/// transcript that grows as a real one does. Not a correctness test — run it
+/// by hand after touching that path:
+///
+/// ```text
+/// cargo test -p atlas --lib agent_transcript::perf -- --ignored --nocapture
+/// ```
+#[cfg(test)]
+mod perf {
+    use super::*;
+
+    #[test]
+    #[ignore = "measurement, not a gate"]
+    fn the_message_appended_guard_does_not_scale_with_transcript_length() {
+        const PROBES: usize = 2_000;
+        let body = "x".repeat(2048);
+
+        println!();
+        for msgs in [50usize, 200, 800] {
+            let st = TranscriptState::new(std::env::temp_dir().join("atlas-perf-transcript"));
+            st.note_prompt("s", "/w", "atlas-agent", "hi", "t".into());
+            for i in 0..msgs {
+                st.note_text_chunk("s", &format!("m{i}"), &body, "t".into());
+            }
+
+            let t = std::time::Instant::now();
+            let mut a = 0;
+            for _ in 0..PROBES {
+                if st.snapshot("s").is_some() {
+                    a += 1;
+                }
+            }
+            let clone_ns = t.elapsed().as_nanos() as f64 / PROBES as f64;
+
+            let t = std::time::Instant::now();
+            let mut b = 0;
+            for _ in 0..PROBES {
+                if st.is_recording("s") {
+                    b += 1;
+                }
+            }
+            let lookup_ns = t.elapsed().as_nanos() as f64 / PROBES as f64;
+            assert_eq!(a, b, "both answer the same question");
+
+            println!(
+                "  {msgs:>4} messages (~{:>4} KB)   snapshot(): {clone_ns:>9.0} ns   is_recording(): {lookup_ns:>5.0} ns   {:.0}x",
+                msgs * 2,
+                clone_ns / lookup_ns
+            );
+        }
+        println!();
     }
 }

@@ -1,3 +1,4 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 use libc::c_uint;
 use serde::Deserialize;
 use serde::Serialize;
@@ -255,7 +256,9 @@ pub(crate) struct AsyncSocket {
 impl AsyncSocket {
     fn new(socket: Socket) -> std::io::Result<AsyncSocket> {
         socket.set_nonblocking(true)?;
-        let async_socket = AsyncFd::new(socket)?;
+        // SAFETY: `socket` is an owned, open descriptor moved into the `AsyncFd`;
+        // nothing else closes or replaces it while the `AsyncFd` lives.
+        let async_socket = unsafe { AsyncFd::register(socket)? };
         Ok(AsyncSocket {
             inner: async_socket,
         })
@@ -370,9 +373,10 @@ pub(crate) struct AsyncDatagramSocket {
 impl AsyncDatagramSocket {
     fn new(socket: Socket) -> std::io::Result<Self> {
         socket.set_nonblocking(true)?;
-        Ok(Self {
-            inner: AsyncFd::new(socket)?,
-        })
+        // SAFETY: `socket` is an owned, open descriptor moved into the `AsyncFd`;
+        // nothing else closes or replaces it while the `AsyncFd` lives.
+        let inner = unsafe { AsyncFd::register(socket)? };
+        Ok(Self { inner })
     }
 
     pub unsafe fn from_raw_fd(fd: RawFd) -> std::io::Result<Self> {

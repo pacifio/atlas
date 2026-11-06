@@ -1,5 +1,5 @@
 import { toast } from "sonner";
-import { useChatStore } from "@/features/chat/stores/chat-store";
+import { UNTITLED_SESSION, useChatStore } from "@/features/chat/stores/chat-store";
 import { useSettingsStore } from "@/features/settings/stores/settings-store";
 import {
   NATIVE_AGENT,
@@ -18,6 +18,17 @@ import {
   type TurnEnd,
 } from "./remember";
 import { projectPathForTab } from "./tab-project";
+import { trustedMentionPaths } from "./picked-mentions";
+import { saveLastAgentPref } from "./last-agent-pref";
+import { rc, roomOpen } from "./rc-api";
+import { useRcStore } from "@/features/chat/stores/rc-store";
+import {
+  enqueuePrompt,
+  flushLocalQueue,
+  queueKey,
+  setQueueHold,
+  takeQueuedPrompts,
+} from "./turn-queue";
 
 /** The window event a handoff fires; the composer of `tabId` inserts the
  *  previous conversation as a past-session chip. */
@@ -70,24 +81,35 @@ export interface SessionHandoffDetail {
  * `opts.typed` is what the user typed while the save ran: on an in-place
  * switch the first message goes out on the new bind, carrying the handoff when
  * there is one, and the rest queue behind it.
+ *
+ * `opts.model` is a model of `next` picked in the composer's agent + model
+ * picker: the new session starts on it (the bind applies it before it
+ * releases the first send), wherever the switch lands — in place, in a new
+ * tab, or after a pending `/remember`.
  */
 export function switchAgentForTab(
   tabId: string,
   next: SwitchableAgent,
-  opts: { afterRemember?: "sent" | "unsent"; typed?: string[] } = {},
+  opts: { afterRemember?: "sent" | "unsent"; typed?: string[]; model?: string } = {},
 ): void {
+  // The user's pick, whichever way it lands below: the next new session
+  // starts on it (`agentForNewSession`).
+  if (!opts.afterRemember) saveLastAgentPref(next);
   const pending = pendingSwitches.get(tabId);
   if (pending && !opts.afterRemember) {
-    retargetPendingSwitch(pending, next);
+    retargetPendingSwitch(pending, next, opts.model);
     return;
   }
   const chat = useChatStore.getState();
   const sess = chat.sessions[tabId];
-  if ((sess?.agentType ?? NATIVE_AGENT) === next) return;
+  if ((sess?.agentType ?? NATIVE_AGENT) === next) {
+    if (opts.model) chat.actions.setAcpModel(tabId, opts.model);
+    return;
+  }
 
   const startingOnly = isStartingOnly(sess);
   if (!startingOnly && isBusyAgentStatus(sess?.status)) {
-    openAgentChatInNewTab(next);
+    openAgentChatInNewTab(next, { model: opts.model });
     return;
   }
   // `rememberBeforeSwitch`: the agent being left records what it learned in
@@ -103,7 +125,7 @@ export function switchAgentForTab(
     useSettingsStore.getState().settings.rememberBeforeSwitch &&
     advertisesCommand(sess, REMEMBER_COMMAND)
   ) {
-    void rememberThenSwitch(tabId, sess.agentType ?? NATIVE_AGENT, next);
+    void rememberThenSwitch(tabId, sess.agentType ?? NATIVE_AGENT, next, opts.model);
     return;
   }
   let handoff: MentionPastSession | undefined;
@@ -112,11 +134,11 @@ export function switchAgentForTab(
     // A handoff needs the transcript Atlas recorded under the bound session;
     // without one there is nothing to attach, so keep the conversation instead.
     if (behavior === "new-tab" || (behavior === "handoff" && !sess?.acpSessionId)) {
-      openAgentChatInNewTab(next);
+      openAgentChatInNewTab(next, { model: opts.model });
       return;
     }
     if (behavior === "handoff" && sess?.acpSessionId) {
-      const title = sess.title && sess.title !== "New Chat" ? sess.title : "Previous session";
+      const title = sess.title && sess.title !== UNTITLED_SESSION ? sess.title : "Previous session";
       handoff = {
         kind: "past_session",
         id: sess.acpSessionId,
@@ -138,22 +160,41 @@ export function switchAgentForTab(
     : firstTyped === undefined
       ? undefined
       : { content: firstTyped, mentions: handoff ? [handoff] : [] };
+  // A room is the SESSION's (Rust holds the session alive for it). Switching
+  // in place binds the tab to a fresh session on another agent, so the room
+  // would keep streaming the old thread to the phone with no tab to show it
+  // here and no header to stop it from. End it, and say so.
+  if (sess?.acpSessionId && roomOpen(useRcStore.getState().bySession[sess.acpSessionId])) {
+    const ended = sess.acpSessionId;
+    void rc
+      .stop(ended)
+      .then(() => toast.info("Remote control ended with the previous agent's session"))
+      .catch(() => {});
+  }
   if ((sess?.messages.length ?? 0) > 0) {
     chat.actions.clearSession(tabId);
   }
   chat.actions.switchChatAgent(tabId, next);
+  // Unbound now, so this only records the pick; the bind applies it.
+  if (opts.model) chat.actions.setAcpModel(tabId, opts.model);
   if (held) {
     // Same shape as the composer's first-while-starting send: bubble first,
     // title from the text, status running, prompt held on the session.
     const { actions } = useChatStore.getState();
-    actions.addMessage(tabId, "user", held.content, held.attachments);
+    actions.addMessage(
+      tabId,
+      "user",
+      held.content,
+      held.attachments,
+      trustedMentionPaths(held.mentions),
+    );
     actions.setSessionTitle(
       tabId,
       held.content.slice(0, 40) + (held.content.length > 40 ? "..." : ""),
     );
     actions.updateSessionStatus(tabId, "running");
     actions.setPendingSend(tabId, held);
-    for (const text of restTyped) actions.enqueueMessage(tabId, text);
+    for (const text of restTyped) actions.enqueueMessage(tabId, text, []);
   }
   if (handoff && firstTyped !== undefined) {
     toast(
@@ -183,6 +224,8 @@ export const REMEMBER_STOP_GRACE_MS = 10_000;
 interface PendingSwitch {
   from: string;
   next: SwitchableAgent;
+  /** The model of `next` picked with it, if one was. */
+  model?: string;
   toastId: string | number;
   /** Aborted by "Switch now", and by a pick of the agent the tab is on. */
   waiting: AbortController;
@@ -205,9 +248,16 @@ export function isSwitchPending(tabId: string): boolean {
  *  after that turn as usual. An unbound tab (switched in place) needs nothing:
  *  its bind drains the queue. */
 function releaseHeldQueue(tabId: string): void {
+  // The session's own queue is Rust's: lifting the hold drains its head if
+  // the session is idle (`turn-queue.ts`).
+  setQueueHold(tabId, "switch", false);
   const { sessions, queues, actions } = useChatStore.getState();
   const sess = sessions[tabId];
   if (!sess?.acpSessionId || sess.resumePending || isBusyAgentStatus(sess.status)) return;
+  if (queueKey(tabId)) {
+    void flushLocalQueue(tabId, { drain: true });
+    return;
+  }
   if (!queues[tabId]?.length) return;
   const text = actions.shiftQueue(tabId);
   if (text) window.dispatchEvent(new CustomEvent("atlas:chat-send", { detail: { tabId, text } }));
@@ -223,13 +273,18 @@ function showSavingToast(pending: PendingSwitch, id?: string | number): string |
 
 /** A pick made while a switch waits on `/remember`: retarget that switch, or
  *  call it off when the pick is the agent the tab is already on. */
-function retargetPendingSwitch(pending: PendingSwitch, next: SwitchableAgent): void {
+function retargetPendingSwitch(
+  pending: PendingSwitch,
+  next: SwitchableAgent,
+  model: string | undefined,
+): void {
   if (next === pending.from) {
     pending.cancelled = true;
     pending.waiting.abort();
     return;
   }
   pending.next = next;
+  pending.model = model;
   showSavingToast(pending, pending.toastId);
 }
 
@@ -281,16 +336,21 @@ async function rememberThenSwitch(
   tabId: string,
   from: string,
   next: SwitchableAgent,
+  model: string | undefined,
 ): Promise<void> {
   const pending: PendingSwitch = {
     from,
     next,
+    model,
     toastId: "",
     waiting: new AbortController(),
     cancelled: false,
   };
   pending.toastId = showSavingToast(pending);
   pendingSwitches.set(tabId, pending);
+  // What is typed during the save is for the agent the tab ends up on: Rust
+  // must not drain it into this one when the `/remember` turn ends.
+  setQueueHold(tabId, "switch", true);
   try {
     window.dispatchEvent(
       new CustomEvent("atlas:chat-send", { detail: { tabId, text: REMEMBER_MESSAGE } }),
@@ -321,15 +381,14 @@ async function rememberThenSwitch(
     // in-place switch clears the session, queue included, so they are taken
     // out and handed to the switch; when a new tab opened instead, they go
     // back to this tab.
-    const { queues, actions } = useChatStore.getState();
-    const typed = queues[tabId] ?? [];
-    if (typed.length) actions.clearQueue(tabId);
+    const typed = takeQueuedPrompts(tabId);
     switchAgentForTab(tabId, pending.next, {
       afterRemember: end === "not-started" ? "unsent" : "sent",
       typed,
+      model: pending.model,
     });
     if (stillOn(tabId, from)) {
-      for (const text of typed) useChatStore.getState().actions.enqueueMessage(tabId, text);
+      for (const text of typed) enqueuePrompt(tabId, text, []);
     }
   } finally {
     pendingSwitches.delete(tabId);

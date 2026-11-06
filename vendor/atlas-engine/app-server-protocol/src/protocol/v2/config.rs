@@ -203,6 +203,7 @@ pub struct AppToolConfig {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export_to = "v2/")]
+#[schemars(transform = atlas_engine_protocol::schema_compat::drop_additional_properties)]
 pub struct AppToolsConfig {
     #[serde(default, flatten)]
     pub tools: HashMap<String, AppToolConfig>,
@@ -225,6 +226,7 @@ pub struct AppConfig {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export_to = "v2/")]
+#[schemars(transform = atlas_engine_protocol::schema_compat::drop_additional_properties)]
 pub struct AppsConfig {
     #[serde(default, rename = "_default")]
     pub default: Option<AppsDefaultConfig>,

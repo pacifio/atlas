@@ -1,21 +1,31 @@
-import { useState, useEffect, useRef } from "react";
-import { Dialog } from "@base-ui/react/dialog";
-import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
-import { invoke } from "@tauri-apps/api/core";
-import { useExplorerStore } from "@/features/explorer/stores/explorer-store";
+import { useState, useEffect, useId, useRef, type KeyboardEvent } from "react";
 import { openFile } from "@/lib/open-file";
 import { useSessionStore } from "@/features/app/stores/session-store";
 import { useAppStore } from "@/features/app/stores/app-store";
-import { Search, FileCode, Clock, X } from "lucide-react";
+import { FileCode, Clock, X } from "lucide-react";
+import { codeGrep, type CodeGrepMatch, type CodeSearchOptions } from "@/components/code-search-api";
+import {
+  Button,
+  CommandDialog,
+  CommandDialogPopup,
+  CommandEmpty,
+  CommandGroupLabel,
+  CommandInput,
+  CommandItem,
+  CommandItemIcon,
+  CommandPanel,
+  Hint,
+  Icon,
+  IconButton,
+  Toggle,
+} from "@tryatlas/design";
 
-export interface SearchResult {
-  file_path: string;
-  line: number;
-  content: string;
-  match_start: number;
-  match_end: number;
-}
+/** The switches beside the query, in VS Code's order and with its glyphs. */
+const TOGGLES: { key: keyof CodeSearchOptions; glyph: string; label: string }[] = [
+  { key: "caseSensitive", glyph: "Aa", label: "Match case" },
+  { key: "wholeWord", glyph: "ab", label: "Match whole word" },
+  { key: "regex", glyph: ".*", label: "Use regular expression" },
+];
 
 export function SearchOverlay({
   open,
@@ -25,53 +35,85 @@ export function SearchOverlay({
   onOpenChange: (open: boolean) => void;
 }) {
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<SearchResult[]>([]);
+  const [results, setResults] = useState<CodeGrepMatch[]>([]);
+  const [options, setOptions] = useState<CodeSearchOptions>({
+    regex: false,
+    caseSensitive: false,
+    wholeWord: false,
+  });
+  const [error, setError] = useState<string | null>(null);
+  const [truncated, setTruncated] = useState(false);
   const [searching, setSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
-  const rootPath = useExplorerStore.use.rootPath();
+  const listId = useId();
+  // Bumped by every search (and by closing): a response from an older one is
+  // dropped, so a slow search never overwrites a newer one's results.
+  const searchSeq = useRef(0);
+  // The query the shown results answer.
+  const searchedQuery = useRef("");
   const session = useSessionStore.use.session();
   const { addSearchHistory, removeSearchHistory, clearSearchHistory, saveSession } =
     useSessionStore.use.actions();
   const currentProject = useAppStore.use.currentProject();
+  const rootPath = currentProject?.path ?? null;
 
   useEffect(() => {
     if (!open) {
+      searchSeq.current += 1;
+      setSearching(false);
       setQuery("");
       setResults([]);
+      setError(null);
+      setTruncated(false);
       setSelectedIndex(0);
       setHasSearched(false);
     }
   }, [open]);
 
-  const performSearch = async (searchQuery: string) => {
+  const performSearch = async (searchQuery: string, opts: CodeSearchOptions = options) => {
     if (!searchQuery.trim() || !rootPath) return;
+    const seq = ++searchSeq.current;
     setSearching(true);
     setHasSearched(true);
+    searchedQuery.current = searchQuery.trim();
     try {
-      const res = await invoke<SearchResult[]>("search_in_files", {
-        path: rootPath,
-        query: searchQuery.trim(),
-        maxResults: 50,
-      });
-      setResults(res);
+      const res = await codeGrep(rootPath, searchQuery.trim(), opts);
+      if (seq !== searchSeq.current) return;
+      setResults(res.matches);
+      setTruncated(res.truncated);
+      setError(null);
       setSelectedIndex(0);
       addSearchHistory(searchQuery.trim());
       if (currentProject) saveSession(currentProject.path);
-    } catch {
+    } catch (e) {
+      if (seq !== searchSeq.current) return;
       setResults([]);
+      setTruncated(false);
+      setError(`Search failed: ${e instanceof Error ? e.message : String(e)}`);
     }
     setSearching(false);
   };
 
-  const openResult = (result: SearchResult) => {
-    const fullPath = rootPath ? `${rootPath}/${result.file_path}` : result.file_path;
-    void openFile(fullPath, { reveal: { line: result.line } });
-    onOpenChange(false);
+  const toggle = (key: keyof CodeSearchOptions) => {
+    const next = { ...options, [key]: !options[key] };
+    setOptions(next);
+    inputRef.current?.focus();
+    if (hasSearched) void performSearch(query, next);
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const openResult = (result: CodeGrepMatch) => {
+    const fullPath = rootPath ? `${rootPath}/${result.path}` : result.path;
+    // Close first: the dialog hands focus back as it closes, which would
+    // otherwise land on the old control after the file's tab took it.
+    onOpenChange(false);
+    void openFile(fullPath, { reveal: { line: result.line } });
+  };
+
+  const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    // An IME's Enter commits the composition; it is not a search.
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
       setSelectedIndex((i) => Math.min(i + 1, results.length - 1));
@@ -80,132 +122,157 @@ export function SearchOverlay({
       setSelectedIndex((i) => Math.max(i - 1, 0));
     } else if (e.key === "Enter") {
       e.preventDefault();
-      if (results.length > 0 && results[selectedIndex]) {
+      // The results answer the query that was searched; once it has been
+      // edited, Enter searches the new one rather than opening an old hit.
+      const edited = query.trim() !== searchedQuery.current;
+      if (!edited && results.length > 0 && results[selectedIndex]) {
         openResult(results[selectedIndex]);
       } else {
-        performSearch(query);
+        void performSearch(query);
       }
     }
   };
 
-  return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Backdrop className="fixed inset-0 scrim z-overlay" />
-        <Dialog.Popup
-          className={cn(
-            "fixed top-[15%] left-1/2 -translate-x-1/2",
-            "w-[600px] max-h-[500px] rounded-xl overflow-hidden",
-            "bg-[var(--card)] border border-[var(--border)]",
-            "shadow-md",
-            "flex flex-col",
-            "z-modal",
-          )}
-          // Base UI's initialFocus replaces Radix's onOpenAutoFocus +
-          // preventDefault + focus(): hand it the element to land on.
-          initialFocus={inputRef}
-        >
-          <div className="flex items-center gap-2 px-4 h-[44px] shrink-0 border-b border-[var(--border)]">
-            <Search size={14} className="text-[var(--muted-foreground)] shrink-0" />
-            <input
-              ref={inputRef}
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Search in files..."
-              className="flex-1 bg-transparent border-none outline-none text-sm text-[var(--foreground)] placeholder:text-[var(--muted-foreground)]"
-            />
-            {searching && (
-              <span className="text-2xs text-[var(--muted-foreground)]">Searching...</span>
-            )}
-          </div>
+  const activeId = results[selectedIndex] ? `${listId}-${selectedIndex}` : undefined;
 
-          <div className="overflow-y-auto flex-1 py-1">
-            {results.length === 0 && hasSearched && !searching && (
-              <div className="px-4 py-6 text-center text-xs text-[var(--muted-foreground)]">
-                No results found
-              </div>
-            )}
-            {!query.trim() && !hasSearched && session.searchHistory.length > 0 && (
-              <div className="py-1">
-                <div className="flex items-center justify-between px-4 py-1">
-                  <span className="text-2xs text-[var(--muted-foreground)] uppercase tracking-wide font-semibold">
-                    Recent searches
-                  </span>
-                  <button
-                    onClick={() => {
-                      clearSearchHistory();
-                      if (currentProject) saveSession(currentProject.path);
-                    }}
-                    className="text-3xs text-[var(--muted-foreground)] hover:text-[var(--secondary-foreground)] cursor-pointer"
+  return (
+    <CommandDialog open={open} onOpenChange={onOpenChange}>
+      <CommandDialogPopup
+        title="Search in files"
+        // Base UI's initialFocus replaces Radix's onOpenAutoFocus +
+        // preventDefault + focus(): hand it the element to land on.
+        initialFocus={inputRef}
+      >
+        <CommandInput
+          ref={inputRef}
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Search in files..."
+          // The listbox only exists while there are results.
+          aria-controls={results.length > 0 ? listId : undefined}
+          aria-expanded={results.length > 0}
+          aria-activedescendant={activeId}
+          endAddon={
+            <div className="flex shrink-0 items-center gap-0.5">
+              {searching && (
+                <span className="me-1.5 text-xs text-muted-foreground">Searching...</span>
+              )}
+              {TOGGLES.map(({ key, glyph, label }) => (
+                <Hint key={key} label={label}>
+                  <Toggle
+                    size="sm"
+                    aria-label={label}
+                    pressed={options[key]}
+                    onPressedChange={() => toggle(key)}
+                    className="font-mono"
                   >
-                    Clear all
-                  </button>
-                </div>
-                {session.searchHistory.slice(0, 8).map((q, i) => (
-                  <div
-                    key={`${q}-${i}`}
-                    className="flex items-center px-4 py-1.5 hover:bg-[var(--atlas-element-hover)] group"
-                  >
-                    <button
-                      onClick={() => {
-                        setQuery(q);
-                        performSearch(q);
-                      }}
-                      className="flex items-center gap-2 flex-1 min-w-0 text-left"
-                    >
-                      <Clock size={11} className="text-[var(--muted-foreground)] shrink-0" />
-                      <span className="text-xs text-[var(--secondary-foreground)] font-mono truncate">
-                        {q}
-                      </span>
-                    </button>
-                    <Hint label="Remove from history">
-                      <button
-                        onClick={() => {
-                          removeSearchHistory(q);
-                          if (currentProject) saveSession(currentProject.path);
-                        }}
-                        className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 p-0.5 text-[var(--muted-foreground)] hover:text-[var(--foreground)] shrink-0"
-                      >
-                        <X size={9} />
-                      </button>
-                    </Hint>
-                  </div>
-                ))}
-              </div>
-            )}
-            {!query.trim() && !hasSearched && session.searchHistory.length === 0 && (
-              <div className="px-4 py-6 text-center text-xs text-[var(--muted-foreground)]">
-                Type to search across all files
-              </div>
-            )}
-            {results.map((result, i) => (
-              <button
-                key={`${result.file_path}:${result.line}:${i}`}
-                onClick={() => openResult(result)}
-                onMouseEnter={() => setSelectedIndex(i)}
-                className={cn(
-                  "w-full text-left px-4 py-1.5 transition-colors",
-                  i === selectedIndex ? "bg-[var(--atlas-element-hover)]" : "",
-                )}
+                    {glyph}
+                  </Toggle>
+                </Hint>
+              ))}
+            </div>
+          }
+        />
+
+        {error && !searching && <CommandEmpty>{error}</CommandEmpty>}
+        {results.length === 0 && hasSearched && !searching && !error && (
+          <CommandEmpty>No results found</CommandEmpty>
+        )}
+        {!query.trim() && !hasSearched && session.searchHistory.length > 0 && (
+          <div className="min-h-0 overflow-y-auto px-2 pb-2">
+            <div className="flex items-center justify-between pe-1">
+              <CommandGroupLabel>Recent searches</CommandGroupLabel>
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={() => {
+                  clearSearchHistory();
+                  if (currentProject) saveSession(currentProject.path);
+                }}
               >
-                <div className="flex items-center gap-2">
-                  <FileCode size={12} className="text-[var(--muted-foreground)] shrink-0" />
-                  <span className="text-xs text-[var(--primary)] font-mono truncate">
-                    {result.file_path}
-                  </span>
-                  <span className="text-2xs text-[var(--muted-foreground)] font-mono shrink-0">
-                    :{result.line}
-                  </span>
-                </div>
-                <div className="ml-5 text-xs font-mono text-[var(--secondary-foreground)] truncate mt-0.5">
-                  {result.content.trim()}
-                </div>
-              </button>
+                Clear all
+              </Button>
+            </div>
+            {session.searchHistory.slice(0, 8).map((q, i) => (
+              <div
+                key={`${q}-${i}`}
+                className="group flex items-center rounded-lg pe-1.5 hover:bg-element-hover"
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQuery(q);
+                    performSearch(q);
+                  }}
+                  className="flex min-w-0 flex-1 items-center gap-3 px-2.5 py-1.5 text-left"
+                >
+                  <Icon icon={Clock} size="sm" className="text-muted-foreground" />
+                  <span className="truncate font-mono text-sm text-secondary-foreground">{q}</span>
+                </button>
+                {/* Shown on row hover, or while the button has keyboard focus. */}
+                <span className="flex opacity-0 group-hover:opacity-100 has-focus-visible:opacity-100">
+                  <Hint label="Remove from history">
+                    <IconButton
+                      variant="ghost"
+                      size="xs"
+                      icon={X}
+                      iconSize="xs"
+                      label="Remove from history"
+                      onClick={() => {
+                        removeSearchHistory(q);
+                        if (currentProject) saveSession(currentProject.path);
+                      }}
+                    />
+                  </Hint>
+                </span>
+              </div>
             ))}
           </div>
-        </Dialog.Popup>
-      </Dialog.Portal>
-    </Dialog.Root>
+        )}
+        {!query.trim() && !hasSearched && session.searchHistory.length === 0 && (
+          <CommandEmpty>Type to search across all files</CommandEmpty>
+        )}
+        {results.length > 0 && (
+          <CommandPanel id={listId}>
+            {results.map((result, i) => (
+              <CommandItem
+                key={`${result.path}:${result.line}:${i}`}
+                id={`${listId}-${i}`}
+                active={i === selectedIndex}
+                // Rows stay Tab stops that Enter and Space open, as the
+                // buttons they replace were.
+                tabIndex={0}
+                onClick={() => openResult(result)}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter" && e.key !== " ") return;
+                  e.preventDefault();
+                  openResult(result);
+                }}
+                onMouseEnter={() => setSelectedIndex(i)}
+              >
+                <CommandItemIcon>
+                  <Icon icon={FileCode} size="sm" />
+                </CommandItemIcon>
+                <span className="flex min-w-0 flex-1 flex-col gap-0.5 font-mono">
+                  <span className="flex min-w-0 items-baseline gap-1.5">
+                    <span className="truncate text-sm text-primary">{result.path}</span>
+                    <span className="shrink-0 text-xs text-muted-foreground">:{result.line}</span>
+                  </span>
+                  <span className="truncate text-sm text-secondary-foreground">
+                    {result.text.trim()}
+                  </span>
+                </span>
+              </CommandItem>
+            ))}
+          </CommandPanel>
+        )}
+        {truncated && results.length > 0 && !searching && (
+          <p className="px-5 pb-3 text-xs text-muted-foreground">
+            Showing the first {results.length} matches. Narrow the search to see the rest.
+          </p>
+        )}
+      </CommandDialogPopup>
+    </CommandDialog>
   );
 }

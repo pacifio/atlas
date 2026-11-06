@@ -8,8 +8,13 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { createSelectors } from "@/lib/create-selectors";
 import {
+  cleanActionArgs,
   isNotificationKind,
   isNotificationSettingsSection,
+  isPullRequestTarget,
+  isTimelineSessionTarget,
+  OPEN_ACTION_ID,
+  type NotificationAction,
   type NotificationKind,
   type NotificationSource,
   type NotificationTarget,
@@ -28,7 +33,10 @@ export interface AppNotification {
   source: NotificationSource;
   /** Originating session / tab, for best-effort click-to-focus. */
   sessionId?: string;
+  /** `""` for a session no tab showed. */
   tabId?: string;
+  /** The session's thread id, so a session no tab shows still opens. */
+  threadId?: string;
   /** Terminal source: the layout terminal id inside `tabId`. */
   terminalId?: string;
   /** Owning project and organisation. Items are kept for every org and
@@ -42,6 +50,13 @@ export interface AppNotification {
   /** App-level target (a sign-in surface, a Chat conversation) for items that
    *  own no tab. */
   target?: Exclude<NotificationTarget, TabTarget>;
+  /** Buttons beyond "Open" (the card itself opens), shown until the thing
+   *  the notification was about is resolved. Absent on older items. */
+  actions?: NotificationAction[];
+  /** The notification no longer applies (`clearResolved`): read, and its
+   *  actions are gone — a stale "Rebase or merge…" must not outlive the
+   *  divergence it offered to fix. */
+  resolved?: boolean;
   read: boolean;
 }
 
@@ -94,6 +109,9 @@ interface NotificationsState {
     markKindRead: (kind: NotificationKind, match?: (i: AppNotification) => boolean) => void;
     /** Mark every unread item the predicate accepts as read. */
     markReadWhere: (match: (i: AppNotification) => boolean) => void;
+    /** The matching items no longer apply: mark them read and drop their
+     *  actions. */
+    resolveWhere: (match: (i: AppNotification) => boolean) => void;
     /** Opening marks the VISIBLE items read — pass the active org so a look at
      *  org A's panel does not clear org B's unread state. */
     open: (orgId?: string | null) => void;
@@ -104,6 +122,32 @@ interface NotificationsState {
 
 const markVisibleRead = (items: AppNotification[], orgId?: string | null) =>
   items.map((i) => (i.read || (orgId && i.orgId && i.orgId !== orgId) ? i : { ...i, read: true }));
+
+const MAX_ACTIONS = 2;
+
+/** Well-formed actions beyond "Open", at most `MAX_ACTIONS`; undefined when
+ *  none remain. Whether a handler still exists is checked at render — the
+ *  registry fills as modules load, after the persisted list is read. */
+export function cleanActions(actions: unknown): NotificationAction[] | undefined {
+  if (!Array.isArray(actions)) return undefined;
+  const kept = actions
+    .filter(
+      (a): a is NotificationAction =>
+        !!a &&
+        typeof a === "object" &&
+        typeof a.id === "string" &&
+        !!a.id &&
+        a.id !== OPEN_ACTION_ID &&
+        typeof a.label === "string" &&
+        !!a.label,
+    )
+    .map((a) => {
+      const args = cleanActionArgs(a.args);
+      return args ? { id: a.id, label: a.label, args } : { id: a.id, label: a.label };
+    })
+    .slice(0, MAX_ACTIONS);
+  return kept.length ? kept : undefined;
+}
 
 /** Keep only well-formed items of kinds that still exist — a persisted list
  *  outlives the code that wrote it. */
@@ -120,9 +164,13 @@ function sanitize(items: unknown): AppNotification[] {
     )
     .map((i) => {
       const t = i.target !== undefined && !isAppTarget(i.target) ? { ...i, target: undefined } : i;
-      return t.agentType !== undefined && (typeof t.agentType !== "string" || !t.agentType)
-        ? { ...t, agentType: undefined }
-        : t;
+      const a =
+        t.agentType !== undefined && (typeof t.agentType !== "string" || !t.agentType)
+          ? { ...t, agentType: undefined }
+          : t;
+      return a.actions === undefined
+        ? a
+        : { ...a, actions: a.resolved ? undefined : cleanActions(a.actions) };
     })
     .slice(0, MAX_ITEMS);
 }
@@ -137,7 +185,9 @@ function isAppTarget(t: unknown): t is NonNullable<AppNotification["target"]> {
     r.type === "app-update" ||
     (r.type === "settings" && isNotificationSettingsSection(r.section)) ||
     r.type === "config-file" ||
-    (r.type === "git-panel" && typeof r.projectId === "string" && !!r.projectId)
+    (r.type === "git-panel" && typeof r.projectId === "string" && !!r.projectId) ||
+    isPullRequestTarget(r) ||
+    isTimelineSessionTarget(r)
   );
 }
 
@@ -153,6 +203,7 @@ export const useNotificationsStore = createSelectors(
               items: [
                 {
                   ...n,
+                  actions: cleanActions(n.actions),
                   id: uid(),
                   timestamp: new Date().toISOString(),
                   // If the panel is already open, count it as read immediately.
@@ -180,6 +231,14 @@ export const useNotificationsStore = createSelectors(
           markReadWhere: (match) =>
             set((s) => ({
               items: s.items.map((i) => (!i.read && match(i) ? { ...i, read: true } : i)),
+            })),
+          resolveWhere: (match) =>
+            set((s) => ({
+              items: s.items.map((i) =>
+                match(i) && (!i.read || !i.resolved)
+                  ? { ...i, read: true, resolved: true, actions: undefined }
+                  : i,
+              ),
             })),
           open: (orgId) =>
             set((s) => ({ panelOpen: true, items: markVisibleRead(s.items, orgId) })),

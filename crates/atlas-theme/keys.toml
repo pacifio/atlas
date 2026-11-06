@@ -1,14 +1,23 @@
-# The theme-key registry — the one hand-edited source for every Atlas theme key.
+# The theme-key registry — the one hand-edited source for every Atlas theme key,
+# and for how every shadcn base token a theme leaves out is derived (ADR-0022).
 #
-# GENERATED FROM THIS FILE (never edit those by hand; run `bun run theme:keys`):
+# This file lives in @tryatlas/design (ADR-0027); desktop copies it into
+# crates/atlas-theme/ verbatim. Edit it there, never in a copy.
 #
-#   src/features/theme/theme-key-registry.ts   the TS registry the resolver reads
-#   crates/atlas-theme/theme-keys.txt          the key list + descriptions Rust reads
-#   crates/atlas-theme/schema/theme-v1.json    the `keys` property, so `#:schema`
-#                                              gives authors completion and flags a typo
-#   docs/reference/theme-keys.md               the generated part of the reference
+# GENERATED FROM THIS FILE in the package (never edit those by hand; run
+# `bun run theme`):
 #
-# `bun run theme:keys:check` (and `bun run test`) fail when any of them is stale.
+#   src/theme/theme-key-registry.ts   the TS registry the resolver reads
+#   theme-rules/theme-keys.txt        the key list + descriptions Rust reads
+#   theme-rules/base-rules.txt        the `[[base]]` rules, which Rust's
+#                                     interpreter runs for import and export
+#   src/styles/themes.css             every built-in theme, resolved
+#
+# Desktop generates the rest from its copy: the JSON Schema's `keys` property
+# (so `#:schema` gives authors completion) and the table in
+# docs/reference/theme-keys.md.
+#
+# `bun run theme:check` (and `bun run test`) fail when any of them is stale.
 #
 # ── An entry ──────────────────────────────────────────────────────────────────
 #
@@ -40,12 +49,19 @@
 #                      this colour" means in BOTH appearances: on a dark variant
 #                      the foreground is pale so it lightens, on a light variant
 #                      it is dark so it darkens. Reach for this, not `lighten`.
+#   readable           whichever of `base.foreground` and `base.background` has
+#                      the higher WCAG contrast against the colour: the text for
+#                      a filled surface (`primary-foreground` on a pale primary
+#                      in a dark theme is the dark background). Takes no amount.
 #   lighten            mix `amount` of literal white into the colour. Appearance
 #                      BLIND, so it is only correct where "paler" is the literal
 #                      intent whatever the background — which, after the light
 #                      pass, is one key (`terminal.ansi.bright_white`). A hover
 #                      or a bright ANSI slot used to use it and went PALER on a
 #                      light theme, i.e. away from the reader.
+#
+# Every mix is in OKLab (`color.ts`, `color.rs`), so it moves lightness evenly
+# and keeps the hue.
 #
 # Deleting a key, renaming one, or changing what it derives from is an edit to
 # this file and nothing else.
@@ -67,8 +83,272 @@
 #
 # Reach for this when a colour is a FUNCTION of a key. Anything a theme author
 # would genuinely want to set independently is a key, however small.
+#
+# ── `[[base]]`: how a shadcn base token a theme leaves out is derived ────────
+#
+# No base token is required (ADR-0022). `background`, `foreground` and
+# `primary` are the seeds; everything else follows from them by the rules
+# below, which use the same fields and the same resolution order as a key —
+# an explicit value wins, then `palette`, then `base`, then the default — with
+# `base` naming another base token. Rules are in `BASE_TOKENS` order, and a
+# rule's `base` must be an earlier rule, so one pass resolves them all.
+# `dark`/`light` are required only where nothing else can answer.
+#
+# A built-in or imported theme pins its values, so a change here moves only
+# the themes that left a token out. The amounts were fitted, in OKLab, to the
+# median of the fifteen built-in themes' hand-written values.
 
 version = 1
+
+
+# ── Base tokens ───────────────────────────────────────────────────────────────
+
+[[base]]
+name = "background"
+description = "The app's ground. A seed."
+dark = "#000000"
+light = "#ffffff"
+
+[[base]]
+name = "foreground"
+description = "Body text. A seed; left out, the ink that reads on the background."
+base = "background"
+op = "readable"
+
+[[base]]
+name = "card"
+description = "Raised surfaces: cards, composer, tiles."
+base = "background"
+op = "toward_foreground"
+amount = 0.05
+
+[[base]]
+name = "card-foreground"
+description = "Text on a card."
+base = "foreground"
+
+[[base]]
+name = "popover"
+description = "Menus, popovers, tooltips."
+base = "background"
+op = "toward_foreground"
+amount = 0.12
+
+[[base]]
+name = "popover-foreground"
+description = "Text in a popover."
+base = "foreground"
+
+[[base]]
+name = "primary"
+description = "Brand colour for buttons, focus and selection. A seed; monochrome if unset."
+base = "foreground"
+
+[[base]]
+name = "primary-foreground"
+description = "Text on a primary fill."
+base = "primary"
+op = "readable"
+
+[[base]]
+name = "secondary"
+description = "Secondary button fill."
+base = "background"
+op = "toward_foreground"
+amount = 0.05
+
+[[base]]
+name = "secondary-foreground"
+description = "Secondary text and secondary button labels."
+base = "foreground"
+op = "toward_background"
+amount = 0.28
+
+[[base]]
+name = "muted"
+description = "Quiet fills: wells, inactive tracks."
+base = "background"
+op = "toward_foreground"
+amount = 0.05
+
+[[base]]
+name = "muted-foreground"
+description = "Hints, captions, placeholders."
+base = "foreground"
+op = "toward_background"
+amount = 0.32
+
+[[base]]
+name = "accent"
+description = "Hover and selected rows (shadcn's meaning, not the brand colour)."
+base = "muted"
+
+[[base]]
+name = "accent-foreground"
+description = "Text on an accent row."
+base = "foreground"
+
+[[base]]
+name = "destructive"
+description = "Destructive actions and errors."
+palette = "red"
+dark = "#f44747"
+light = "#c62828"
+
+[[base]]
+name = "destructive-foreground"
+description = "Text on a destructive fill."
+base = "destructive"
+op = "readable"
+
+[[base]]
+name = "border"
+description = "Separators and outlines."
+base = "background"
+op = "toward_foreground"
+amount = 0.16
+
+[[base]]
+name = "input"
+description = "Input outlines."
+base = "border"
+
+[[base]]
+name = "ring"
+description = "Focus rings."
+base = "primary"
+
+[[base]]
+name = "chart-1"
+description = "The first chart series: the theme's ink."
+base = "primary"
+
+[[base]]
+name = "chart-2"
+description = "Chart series 2."
+palette = "green"
+dark = "#9ecf8a"
+light = "#3f7f2f"
+
+[[base]]
+name = "chart-3"
+description = "Chart series 3."
+palette = "yellow"
+dark = "#e0b070"
+light = "#b06000"
+
+[[base]]
+name = "chart-4"
+description = "Chart series 4."
+palette = "purple"
+dark = "#c9a2f5"
+light = "#7b3fb5"
+
+[[base]]
+name = "chart-5"
+description = "Chart series 5."
+palette = "cyan"
+dark = "#7fd1e8"
+light = "#1f7f99"
+
+[[base]]
+name = "sidebar"
+description = "The sidebars' ground."
+base = "background"
+
+[[base]]
+name = "sidebar-foreground"
+description = "Sidebar text."
+base = "foreground"
+
+[[base]]
+name = "sidebar-primary"
+description = "Primary fills in a sidebar."
+base = "primary"
+
+[[base]]
+name = "sidebar-primary-foreground"
+description = "Text on a sidebar primary fill."
+base = "primary-foreground"
+
+[[base]]
+name = "sidebar-accent"
+description = "Hover and selected rows in a sidebar."
+base = "accent"
+
+[[base]]
+name = "sidebar-accent-foreground"
+description = "Text on a sidebar accent row."
+base = "accent-foreground"
+
+[[base]]
+name = "sidebar-border"
+description = "Sidebar separators, quieter than `border`."
+base = "background"
+op = "toward_foreground"
+amount = 0.08
+
+[[base]]
+name = "sidebar-ring"
+description = "Focus rings in a sidebar."
+base = "ring"
+
+[[base]]
+name = "radius"
+description = "Corner radius."
+dark = "8px"
+
+[[base]]
+name = "tracking-normal"
+description = "Letter spacing."
+dark = "0em"
+
+[[base]]
+name = "spacing"
+description = "The spacing unit."
+dark = "0.25rem"
+
+[[base]]
+name = "shadow-2xs"
+description = "Shadow ramp."
+dark = "0 1px 2px rgba(0, 0, 0, 0.35)"
+light = "0 1px 2px rgba(0, 0, 0, 0.04)"
+
+[[base]]
+name = "shadow-xs"
+description = "Shadow ramp."
+dark = "0 1px 2px rgba(0, 0, 0, 0.45)"
+light = "0 1px 2px rgba(0, 0, 0, 0.06)"
+
+[[base]]
+name = "shadow-sm"
+description = "Shadow ramp."
+dark = "0 1px 3px rgba(0, 0, 0, 0.55)"
+light = "0 1px 3px rgba(0, 0, 0, 0.08)"
+
+[[base]]
+name = "shadow-md"
+description = "Shadow ramp."
+dark = "0 4px 12px rgba(0, 0, 0, 0.65)"
+light = "0 4px 12px rgba(0, 0, 0, 0.11)"
+
+[[base]]
+name = "shadow-lg"
+description = "Shadow ramp."
+dark = "0 8px 24px rgba(0, 0, 0, 0.75)"
+light = "0 8px 24px rgba(0, 0, 0, 0.14)"
+
+[[base]]
+name = "shadow-xl"
+description = "Shadow ramp."
+dark = "0 12px 36px rgba(0, 0, 0, 0.82)"
+light = "0 12px 36px rgba(0, 0, 0, 0.18)"
+
+[[base]]
+name = "shadow-2xl"
+description = "Shadow ramp."
+dark = "0 16px 48px rgba(0, 0, 0, 0.9)"
+light = "0 16px 48px rgba(0, 0, 0, 0.22)"
 
 
 # The groups, in order. Every key names one, and a group's keys are contiguous.
@@ -119,6 +399,10 @@ description = "Added and removed regions, inline and side-by-side."
 [[group]]
 name = "Agents and indicators"
 description = "The agent identity chip."
+
+[[group]]
+name = "Identity hues"
+description = "The eight hues that name a thing — a label, a project dot — never a status."
 
 
 # ── Borders ───────────────────────────────────────────────────────────────────
@@ -223,12 +507,13 @@ group = "Text"
 description = "Disabled and unavailable text."
 note = """
 A small step below `muted-foreground`, not a large one. Every built-in used to
-set this key explicitly to a SURFACE colour — the port mapped a background role
+set this key explicitly to a SURFACE colour — an early mapping put a background role
 onto a text role — which rendered disabled text and comms timestamps at 1.06:1
 to 1.66:1 against their own background, i.e. invisible. With the explicit values
-gone and a 0.2 mix, the sixteen shipped variants land between 1.98:1 and 4.22:1
-(median 2.42) where `muted-foreground` itself has a median of 3.03:1. A larger
-mix reaches 1.48:1 at the bottom of that range and is what the old 0.35 did.
+gone and a 0.2 mix (OKLab since ADR-0022), the 28 shipped variants land between
+1.99:1 and 4.40:1 (median 3.10) where `muted-foreground` itself has a median of
+4.37:1. A larger mix reaches 1.48:1 at the bottom of that range and is what the
+old 0.35 did.
 
 The fraction is deliberately ONE value for every theme. The ratio of this key's
 contrast to `muted-foreground`'s is near-constant across the fleet (~0.82), so a
@@ -240,7 +525,7 @@ rule. Where the low reading WAS Atlas's to fix — `phosphor`, `chyral` and
 `mirage`, Atlas's own designs — it was fixed upstream at `muted-foreground`
 instead, which also lifts `syntax.comment`, `editor.gutter.foreground` and
 `terminal.ansi.bright_black` in the same themes. The remaining floor (`one-dark`
-at 1.98:1) comes from a ported third-party palette, and restating someone else's
+at 1.98:1) comes from a palette Atlas did not author, and restating someone else's
 secondary text colour is exactly what a theme key must not do.
 """
 base = "muted-foreground"
@@ -471,46 +756,49 @@ light = "#464261"
 
 
 # ── Syntax ────────────────────────────────────────────────────────────────────
+#
+# Every `dark`/`light` here is Pierre's colour for that role (@pierre/theme, the
+# Atlas theme's syntax), written by `bun run theme:pierre`. Edit them there.
 
 [[key]]
 name = "syntax.comment"
 group = "Syntax"
 description = "Comments and prose quotes."
 base = "muted-foreground"
-dark = "#8f8f8f"
-light = "#9893a5"
+dark = "#737373"
+light = "#737373"
 
 [[key]]
 name = "syntax.keyword"
 group = "Syntax"
 description = "Keywords and control flow."
 palette = "purple"
-dark = "#c9a2f5"
-light = "#286983"
+dark = "#ff678d"
+light = "#d32a61"
 
 [[key]]
 name = "syntax.string"
 group = "Syntax"
 description = "Strings."
 palette = "green"
-dark = "#9ecf8a"
-light = "#ea9d34"
+dark = "#5ecc71"
+light = "#199f43"
 
 [[key]]
 name = "syntax.number"
 group = "Syntax"
 description = "Numbers."
 palette = "orange"
-dark = "#e0b070"
-light = "#ea9d34"
+dark = "#68cdf2"
+light = "#1ca1c7"
 
 [[key]]
 name = "syntax.type"
 group = "Syntax"
 description = "Types, classes, and namespaces."
 palette = "cyan"
-dark = "#7fd1e8"
-light = "#56949f"
+dark = "#d568ea"
+light = "#a631be"
 
 [[key]]
 name = "syntax.function"
@@ -518,80 +806,80 @@ group = "Syntax"
 description = "Functions and headings."
 palette = "blue"
 base = "primary"
-dark = "#61afef"
-light = "#286983"
+dark = "#9d6afb"
+light = "#693acf"
 
 [[key]]
 name = "syntax.variable"
 group = "Syntax"
 description = "Variables."
 base = "foreground"
-dark = "#eaeaea"
-light = "#575279"
+dark = "#a3a3a3"
+light = "#636363"
 
 [[key]]
 name = "syntax.operator"
 group = "Syntax"
 description = "Operators."
 palette = "cyan"
-dark = "#9a9a9a"
-light = "#797593"
+dark = "#636363"
+light = "#636363"
 
 [[key]]
 name = "syntax.tag"
 group = "Syntax"
 description = "Markup tags."
 palette = "red"
-dark = "#f44747"
-light = "#b4637a"
+dark = "#ff855e"
+light = "#d5512f"
 
 [[key]]
 name = "syntax.attribute"
 group = "Syntax"
 description = "Markup attributes."
 palette = "yellow"
-dark = "#d9b47a"
-light = "#ea9d34"
+dark = "#60d199"
+light = "#18a46c"
 
 [[key]]
 name = "syntax.constant"
 group = "Syntax"
 description = "Constants and atoms."
 palette = "orange"
-dark = "#e0b070"
-light = "#d7827e"
+dark = "#08c0ef"
+light = "#08c0ef"
 
 [[key]]
 name = "syntax.regexp"
 group = "Syntax"
 description = "Regular expressions."
 palette = "red"
-dark = "#e59a72"
-light = "#b4637a"
+dark = "#64d1db"
+light = "#17a5af"
 
 [[key]]
 name = "syntax.escape"
 group = "Syntax"
 description = "Escape sequences."
 palette = "pink"
-dark = "#e59a72"
-light = "#d7827e"
+dark = "#61d5c0"
+light = "#16a994"
 
 [[key]]
 name = "syntax.definition"
 group = "Syntax"
 description = "Definitions and strong prose."
 base = "foreground"
-dark = "#ffffff"
-light = "#464261"
+dark = "#9d6afb"
+light = "#693acf"
 
 [[key]]
 name = "syntax.property"
 group = "Syntax"
 description = "Properties and object keys."
 palette = "cyan"
-dark = "#c8c8c8"
-light = "#56949f"
+dark = "#ffa359"
+light = "#d47628"
 
 
 # ── Editor ────────────────────────────────────────────────────────────────────
@@ -817,7 +1105,6 @@ dark = "#0a0a0a"
 light = "#faf4ed"
 
 
-
 # ── Agents and indicators ─────────────────────────────────────────────────────
 
 [[key]]
@@ -846,6 +1133,84 @@ op = "alpha"
 amount = 0.06
 dark = "rgba(255,255,255,0.06)"
 light = "rgba(0,0,0,0.06)"
+
+
+# ── Identity hues ─────────────────────────────────────────────────────────────
+#
+# The `--color-hue-*` utilities (`bg-hue-orange`, `Tag`, `HueDot`) read these.
+# They used to borrow other roles — orange was `syntax.number`, pink was
+# `syntax.escape`, the rest the ANSI slots — and a theme that coloured those
+# roles for code (Atlas's own syntax is Pierre's, where numbers are cyan) turned
+# an "orange" label cyan. A hue now reads the theme's own palette hue of the same
+# name, so it is whatever that theme means by orange, and a theme that wants a
+# different chip colour from its palette sets the key. The defaults, for a
+# theme that writes no palette, are the Atlas theme's chips: its palette,
+# except dark yellow, where the palette has a terminal's pure #ffff00 and the
+# Atlas theme pins a label yellow (see themes/atlas.toml).
+
+[[key]]
+name = "hue.red"
+group = "Identity hues"
+description = "The red identity hue: labels, project dots, meters."
+palette = "red"
+dark = "#f44747"
+light = "#c62828"
+
+[[key]]
+name = "hue.orange"
+group = "Identity hues"
+description = "The orange identity hue: labels, project dots, meters."
+palette = "orange"
+dark = "#e0b070"
+light = "#b06000"
+
+[[key]]
+name = "hue.yellow"
+group = "Identity hues"
+description = "The yellow identity hue: labels, project dots, meters."
+palette = "yellow"
+dark = "#e0ca66"
+light = "#8f7a00"
+
+[[key]]
+name = "hue.green"
+group = "Identity hues"
+description = "The green identity hue: labels, project dots, meters."
+palette = "green"
+dark = "#9ecf8a"
+light = "#3f7f2f"
+
+[[key]]
+name = "hue.cyan"
+group = "Identity hues"
+description = "The cyan identity hue: labels, project dots, meters."
+palette = "cyan"
+dark = "#7fd1e8"
+light = "#1f7f99"
+
+[[key]]
+name = "hue.blue"
+group = "Identity hues"
+description = "The blue identity hue: labels, project dots, meters."
+palette = "blue"
+dark = "#6796e6"
+light = "#1f5fb0"
+
+[[key]]
+name = "hue.purple"
+group = "Identity hues"
+description = "The purple identity hue: labels, project dots, meters."
+palette = "purple"
+dark = "#c9a2f5"
+light = "#7b3fb5"
+
+[[key]]
+name = "hue.pink"
+group = "Identity hues"
+description = "The pink identity hue: labels, project dots, meters."
+palette = "pink"
+dark = "#f0a0c8"
+light = "#b03a6a"
 
 
 # ── Derived variables ─────────────────────────────────────────────────────────

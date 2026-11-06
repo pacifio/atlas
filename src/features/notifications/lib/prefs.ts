@@ -53,7 +53,7 @@ export const TIER_SETTINGS: Readonly<
   },
   team: {
     title: "Team",
-    description: "Messages from people in your organisation.",
+    description: "Messages from people in your organization.",
     native: "notifyTeamNative",
     sound: "notifyTeamSound",
   },

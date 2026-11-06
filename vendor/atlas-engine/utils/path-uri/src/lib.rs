@@ -617,11 +617,11 @@ impl Serialize for PathUri {
 }
 
 impl JsonSchema for PathUri {
-    fn schema_name() -> String {
-        "PathUri".to_string()
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "PathUri".into()
     }
 
-    fn json_schema(generator: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
         String::json_schema(generator)
     }
 }

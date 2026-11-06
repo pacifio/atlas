@@ -362,3 +362,111 @@ describe("elicitationComplete", () => {
     expect(elicitationComplete([field({ kind: "number" })], { f: 0 })).toBe(true);
   });
 });
+
+/**
+ * The regression behind the "ugly modal": an agent that bridges
+ * AskUserQuestion by NAME rather than by `_meta`. One unrecognised companion
+ * made `elicitationQuestionForm` call the whole elicitation a form, so a set
+ * of multiple-choice questions rendered as a dialog full of text inputs.
+ */
+describe("a companion spelled by name rather than by meta", () => {
+  const choice = (title: string, description: string) => ({
+    type: "string",
+    title,
+    description,
+    oneOf: [
+      { const: "keep", title: "Keep them, web layout" },
+      { const: "drop", title: "Exactly 1:1 — drop them" },
+    ],
+  });
+
+  for (const suffix of ["__other", "_custom", "_other"]) {
+    it(`reads \`${suffix}\` as the question's free text`, () => {
+      const fields = parseElicitationSchema({
+        type: "object",
+        properties: {
+          footer_scope: choice("Footer scope", "What should happen to those?"),
+          [`footer_scope${suffix}`]: {
+            type: "string",
+            title: "Other",
+            description: "Type your own answer, or add a note to the option you chose above.",
+          },
+        },
+      });
+      const form = elicitationQuestionForm(fields, "The agent has a question");
+      expect(form, `${suffix} should still be a question card`).not.toBeNull();
+      expect(form!.questions).toHaveLength(1);
+      expect(form!.questions[0].header).toBe("Footer scope");
+      expect(form!.slots[0].customKey).toBe(`footer_scope${suffix}`);
+
+      // And the typed answer goes to the companion, not the choice field.
+      const content = elicitationAnswerContent(form!, [{ selected: [], custom: "move them up" }]);
+      expect(content).toEqual({ [`footer_scope${suffix}`]: "move them up" });
+    });
+  }
+
+  it("handles several questions, each with its own companion", () => {
+    const fields = parseElicitationSchema({
+      type: "object",
+      properties: {
+        footer_scope: choice("Footer scope", "What should happen to those?"),
+        footer_scope__other: { type: "string", title: "Other" },
+        share_scope: choice("Share scope", "How should I handle it?"),
+        share_scope__other: { type: "string", title: "Other" },
+      },
+    });
+    const form = elicitationQuestionForm(fields, "The agent has 2 questions for you.");
+    expect(form).not.toBeNull();
+    expect(form!.questions.map((q) => q.header)).toEqual(["Footer scope", "Share scope"]);
+    expect(form!.slots.map((s) => s.customKey)).toEqual([
+      "footer_scope__other",
+      "share_scope__other",
+    ]);
+  });
+
+  it("leaves a real form alone — a suffix with no question behind it is a field", () => {
+    // `notes_other` names no `notes` question, so it is what it looks like: a
+    // text field, which means this is a form and keeps the dialog.
+    const fields = parseElicitationSchema({
+      type: "object",
+      properties: {
+        branch: { type: "string", title: "Branch" },
+        notes_other: { type: "string", title: "Notes" },
+      },
+    });
+    expect(elicitationQuestionForm(fields, "Name the branch")).toBeNull();
+  });
+
+  it("does not eat a question whose own name happens to end in a suffix", () => {
+    // `scope_other` carries choices, so it is a question in its own right even
+    // though a `scope` question sits beside it.
+    const fields = parseElicitationSchema({
+      type: "object",
+      properties: {
+        scope: choice("Scope", "Which scope?"),
+        scope_other: choice("Other scope", "Which other scope?"),
+      },
+    });
+    const form = elicitationQuestionForm(fields, "two questions");
+    expect(form).not.toBeNull();
+    expect(form!.questions).toHaveLength(2);
+    expect(form!.slots.every((s) => s.customKey === undefined)).toBe(true);
+  });
+
+  it("still prefers the meta marker when both could apply", () => {
+    const fields = parseElicitationSchema({
+      type: "object",
+      properties: {
+        pick: choice("Pick", "Which one?"),
+        // Named for one question, marked for another: the marker wins.
+        pick_other: {
+          type: "string",
+          title: "Other",
+          _meta: { _askUserQuestionCustomAnswer: { questionId: "pick" } },
+        },
+      },
+    });
+    const form = elicitationQuestionForm(fields, "one question");
+    expect(form!.slots[0].customKey).toBe("pick_other");
+  });
+});

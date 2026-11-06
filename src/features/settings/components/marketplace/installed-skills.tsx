@@ -1,28 +1,25 @@
-// Settings → Skills → My Skills. The installed set as a dense monochrome data
-// table (same essence as Settings → API Keys). Rows don't expand inline — a
-// click opens the shared two-panel modal (description left, actions right):
-// a pack lists its skills + manages per-tool projection / update; an authored
-// skill shows its description + projection / promote / uninstall.
+// Settings → Skills → Installed. Every installed skill by its real name, plus
+// packs that ship no skills. Manage opens one dialog: what the skill does, the
+// agent tools it is delivered to, and update / uninstall.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  ArrowUpCircle,
-  ChevronRight,
-  Copy,
-  ExternalLink,
-  Loader2,
-  Package,
-  RefreshCw,
-  Trash2,
-} from "lucide-react";
-import { GithubIcon } from "@/components/github-icon";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { toast } from "sonner";
 
-import { cn } from "@/lib/utils";
+import { copyText } from "@/lib/clipboard";
 import { openFile } from "@/lib/open-file";
 import { skills as skillsApi } from "@/features/skills/lib/skills-api";
 import { packs as packsApi } from "@/features/packs/lib/packs-api";
 import { SKILLS_CHANGED_EVENT } from "@/features/skills/lib/skills-events";
+import {
+  deliveredToolNames,
+  githubUrlFor,
+  installedLists,
+  mergeOptimistic,
+  packMarkdown,
+  skillOrigin,
+  skillToolStatus,
+} from "@/features/skills/lib/skills-view-model";
 import type {
   ProjectionStatus,
   ReconciledSkill,
@@ -30,43 +27,15 @@ import type {
   Scope,
   ToolInfo,
 } from "@/features/skills/lib/types";
-import type { ComponentKind, InstalledPack } from "@/features/packs/lib/types";
+import type { InstalledPack } from "@/features/packs/lib/types";
 
-import { SkillModalShell, SkillDescriptions, ModalAction } from "./skill-modal";
-
-const COL = {
-  name: "flex-1 min-w-[200px]",
-  origin: "w-[180px] shrink-0",
-  tools: "w-[150px] shrink-0",
-  chevron: "w-[28px] shrink-0",
-} as const;
-const TABLE_MIN_W = 200 + 180 + 150 + 28;
-
-/** Apply the per-tool optimistic overrides (toolId → on) on top of a projected
- *  set, so a pack toggle reflects instantly before the disk reconcile lands. */
-function mergeOptimistic(base: Set<string>, optimistic: Record<string, boolean>): Set<string> {
-  const next = new Set(base);
-  for (const [toolId, on] of Object.entries(optimistic)) {
-    if (on) next.add(toolId);
-    else next.delete(toolId);
-  }
-  return next;
-}
-
-const KIND_LABEL: Record<ComponentKind, string> = {
-  skill: "skills",
-  agent: "agents",
-  command: "commands",
-  hook: "hooks",
-  rule: "rules",
-  script: "scripts",
-};
-
-function kindCounts(components: { kind: ComponentKind }[]): string {
-  const m = new Map<ComponentKind, number>();
-  for (const c of components) m.set(c.kind, (m.get(c.kind) ?? 0) + 1);
-  return [...m.entries()].map(([k, n]) => `${n} ${KIND_LABEL[k]}`).join(" · ");
-}
+import {
+  InstalledSkillsView,
+  PackManageDialogView,
+  PackUpdateButton,
+  SkillManageDialogView,
+  type PackUpdateState,
+} from "./views/installed-skills-view";
 
 type ModalTarget =
   | { kind: "pack"; pack: InstalledPack }
@@ -79,7 +48,7 @@ interface InstalledSnapshot {
   packProjected: Record<string, Set<string>>;
 }
 // Cache the installed view (reconcile + packs + projections) per scope so
-// re-entering My Skills or flipping scope paints instantly, then revalidates
+// re-entering Skills or flipping scope paints instantly, then revalidates
 // in the background. Mutations re-fetch and overwrite the entry.
 const installedCache = new Map<string, InstalledSnapshot>();
 const cacheKeyFor = (scope: Scope, project: string | null) => `${scope}:${project ?? ""}`;
@@ -102,11 +71,13 @@ export function InstalledSkills({
   );
   const [target, setTarget] = useState<ModalTarget>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
   // Optimistic per-tool override (toolId → on) for the open modal, so a toggle
   // flips instantly instead of waiting for the disk-reconcile round-trip. Keyed
   // by toolId only (one modal open at a time); cleared once refresh lands.
   const [optimistic, setOptimistic] = useState<Record<string, boolean>>({});
+  // A first load that fails with nothing cached would otherwise read as
+  // loading forever once its toast is gone.
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (projectMissing) {
@@ -141,7 +112,11 @@ export function InstalledSkills({
   }, [scope, effectiveProject, projectMissing]);
 
   useEffect(() => {
-    void refresh().catch((e) => setError(String(e)));
+    setLoadError(null);
+    void refresh().catch((e) => {
+      setLoadError(String(e));
+      toast.error(String(e));
+    });
   }, [refresh]);
 
   // Reflect installs/mutations happening elsewhere (e.g. Discover).
@@ -157,14 +132,7 @@ export function InstalledSkills({
   // row routes to its pack's manage modal (the pack is the install/uninstall
   // unit). Packs that ship NO skills (commands/agents/rules only) still appear
   // as their own rows so they don't vanish.
-  const skills = useMemo(
-    () => [...(view?.skills ?? [])].sort((a, b) => a.name.localeCompare(b.name)),
-    [view],
-  );
-  const packsNoSkills = useMemo(
-    () => packList.filter((p) => !(view?.skills ?? []).some((s) => s.pack === p.pack.name)),
-    [packList, view],
-  );
+  const { packsNoSkills, skills } = useMemo(() => installedLists(view, packList), [view, packList]);
   const packByName = useMemo(() => new Map(packList.map((p) => [p.pack.name, p])), [packList]);
 
   const detectedFor = (t: ToolInfo) => (scope === "project" ? t.detectedProject : t.detectedGlobal);
@@ -174,13 +142,12 @@ export function InstalledSkills({
     async (packName: string, toolId: string, on: boolean) => {
       setBusy(`pack:${packName}:${toolId}`);
       setOptimistic((o) => ({ ...o, [toolId]: on }));
-      setError(null);
       try {
         if (on) await packsApi.project(scope, packName, toolId, null, false, effectiveProject);
         else await packsApi.unproject(scope, packName, toolId, effectiveProject);
         await refresh();
       } catch (e) {
-        setError(String(e));
+        toast.error(String(e));
       } finally {
         setBusy(null);
         setOptimistic((o) => {
@@ -198,13 +165,12 @@ export function InstalledSkills({
     async (name: string, toolId: string, status: ProjectionStatus) => {
       setBusy(`skill:${name}:${toolId}`);
       setOptimistic((o) => ({ ...o, [toolId]: status !== "synced" }));
-      setError(null);
       try {
         if (status === "synced") await skillsApi.unproject(scope, name, toolId, effectiveProject);
         else await skillsApi.project(scope, name, toolId, status === "drifted", effectiveProject);
         await refresh();
       } catch (e) {
-        setError(String(e));
+        toast.error(String(e));
       } finally {
         setBusy(null);
         setOptimistic((o) => {
@@ -220,13 +186,12 @@ export function InstalledSkills({
   const uninstallSkill = useCallback(
     async (name: string) => {
       setBusy(`del:${name}`);
-      setError(null);
       try {
         await skillsApi.delete(scope, name, effectiveProject);
         await refresh();
         setTarget(null);
       } catch (e) {
-        setError(String(e));
+        toast.error(String(e));
       } finally {
         setBusy(null);
       }
@@ -237,13 +202,12 @@ export function InstalledSkills({
   const uninstallPack = useCallback(
     async (name: string) => {
       setBusy(`delpack:${name}`);
-      setError(null);
       try {
         await packsApi.uninstall(scope, name, effectiveProject);
         await refresh();
         setTarget(null);
       } catch (e) {
-        setError(String(e));
+        toast.error(String(e));
       } finally {
         setBusy(null);
       }
@@ -259,7 +223,7 @@ export function InstalledSkills({
         await skillsApi.promote(name, effectiveProject);
         await refresh();
       } catch (e) {
-        setError(String(e));
+        toast.error(String(e));
       } finally {
         setBusy(null);
       }
@@ -267,416 +231,115 @@ export function InstalledSkills({
     [effectiveProject, refresh],
   );
 
+  // The listed `SKILL.md` path first: `skills_path` resolves only the
+  // canonical store, so it fails for a skill found in an agent's folder.
   const openSkill = useCallback(
     async (name: string) => {
       try {
-        void openFile(await skillsApi.path(scope, name, effectiveProject));
+        const metas = await skillsApi.list(scope, effectiveProject).catch(() => []);
+        const known = metas.find((m) => m.name === name)?.path;
+        void openFile(known ?? (await skillsApi.path(scope, name, effectiveProject)));
       } catch (e) {
-        setError(String(e));
+        toast.error(String(e));
       }
     },
     [scope, effectiveProject],
   );
 
-  if (projectMissing) {
-    return (
-      <div className="grid h-full place-items-center px-6 text-center text-xs text-muted-foreground">
-        Open a project to manage project skills.
-      </div>
+  const onPack = (name: string) => {
+    const pack = packByName.get(name);
+    if (pack) setTarget({ kind: "pack", pack });
+  };
+  const closeModal = () => {
+    setTarget(null);
+    setOptimistic({});
+  };
+
+  // Re-derive the live skill or pack on every render, so a toggle shows at
+  // once; the captured `target` is a snapshot from click time.
+  let modal = null;
+  if (target?.kind === "pack") {
+    const name = target.pack.pack.name;
+    const pack = packByName.get(name) ?? target.pack;
+    const packSkills = (view?.skills ?? [])
+      .filter((s) => s.pack === name)
+      .map((s) => ({ name: s.name, description: s.description }));
+    const projected = mergeOptimistic(packProjected[name] ?? new Set<string>(), optimistic);
+    modal = (
+      <PackManageDialogView
+        pack={pack}
+        skills={packSkills}
+        deliverTo={{
+          tools,
+          detectedFor,
+          statusFor: (t) => (projected.has(t.id) ? "synced" : "absent"),
+          busyFor: (t) => busy === `pack:${name}:${t.id}`,
+          onToggle: (t) => void togglePackTool(name, t.id, !projected.has(t.id)),
+        }}
+        uninstalling={busy === `delpack:${name}`}
+        update={
+          <PackUpdate
+            scope={scope}
+            name={name}
+            source={pack.source}
+            effectiveProject={effectiveProject}
+            projectedTools={projected}
+            onDone={() => void refresh()}
+          />
+        }
+        onUninstall={() => void uninstallPack(name)}
+        onCopy={() => void copyText(packMarkdown(pack, packSkills))}
+        onOpenGithub={() => void openUrl(githubUrlFor(pack.source))}
+        onClose={closeModal}
+      />
+    );
+  } else if (target?.kind === "skill") {
+    const name = target.skill.name;
+    const skill = (view?.skills ?? []).find((s) => s.name === name) ?? target.skill;
+    modal = (
+      <SkillManageDialogView
+        skill={{ name: skill.name, description: skill.description }}
+        subtitle={skill.managed ? "Your skill" : "Found in an agent's folder"}
+        deliverTo={{
+          tools,
+          detectedFor,
+          statusFor: (t) => skillToolStatus(skill, t.id, scope, optimistic),
+          busyFor: (t) => busy === `skill:${skill.name}:${t.id}`,
+          onToggle: (t, status) => void toggleSkillTool(name, t.id, status),
+        }}
+        canPromote={scope === "project"}
+        uninstalling={busy === `del:${skill.name}`}
+        promoting={busy === `promote:${skill.name}`}
+        onOpen={() => void openSkill(name)}
+        onPromote={() => void promoteSkill(name)}
+        onUninstall={() => void uninstallSkill(name)}
+        onClose={closeModal}
+      />
     );
   }
 
-  const empty = skills.length === 0 && packList.length === 0;
-
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      {error && (
-        <div className="mx-3 mt-2 rounded-md border border-error/30 bg-error/10 px-3 py-2 text-xs text-error">
-          {error}
-        </div>
-      )}
-
-      <div className="min-h-0 flex-1 overflow-auto hide-scrollbar">
-        <div style={{ minWidth: TABLE_MIN_W }}>
-          <div className="sticky top-0 z-10 flex items-center h-[28px] border-b border-border bg-background px-3 text-2xs uppercase tracking-wider text-muted-foreground">
-            <span className={COL.name}>Name</span>
-            <span className={COL.origin}>Origin</span>
-            <span className={COL.tools}>Tools</span>
-            <span className={COL.chevron} />
-          </div>
-
-          {empty ? (
-            <div className="grid h-[180px] place-items-center text-xs text-muted-foreground">
-              Nothing installed in this scope. Browse Discover to add skills.
-            </div>
-          ) : (
-            <>
-              {/* Packs that ship no skills (commands/agents/rules only). */}
-              {packsNoSkills.map((p) => {
-                const proj = packProjected[p.pack.name] ?? new Set<string>();
-                return (
-                  <button
-                    key={`pack:${p.pack.name}`}
-                    onClick={() => setTarget({ kind: "pack", pack: p })}
-                    className="flex w-full items-center h-[40px] border-b border-border-subtle px-3 text-left transition-colors hover:bg-element-hover"
-                  >
-                    <span className={cn(COL.name, "flex items-center gap-2 min-w-0")}>
-                      <Package size={13} className="shrink-0 text-muted-foreground" />
-                      <span className="truncate text-sm text-foreground">{p.pack.name}</span>
-                    </span>
-                    <span
-                      className={cn(
-                        COL.origin,
-                        "truncate font-mono text-2xs text-muted-foreground",
-                      )}
-                    >
-                      {p.source}
-                    </span>
-                    <span className={cn(COL.tools, "truncate text-2xs text-muted-foreground")}>
-                      {proj.size > 0
-                        ? `${proj.size} tool${proj.size > 1 ? "s" : ""}`
-                        : kindCounts(p.pack.components) || "—"}
-                    </span>
-                    <span className={cn(COL.chevron, "flex justify-end text-muted-foreground")}>
-                      <ChevronRight size={14} />
-                    </span>
-                  </button>
-                );
-              })}
-
-              {/* Every installed skill, by its real name. */}
-              {skills.map((s) => {
-                const onCount = s.cells.filter(
-                  (c) => c.scope === scope && c.status === "synced",
-                ).length;
-                const origin = s.pack ? s.pack : s.managed ? "library" : "external";
-                const onClick = () => {
-                  // Pack-provided skill → manage its pack (the install unit).
-                  const pack = s.pack ? packByName.get(s.pack) : undefined;
-                  if (pack) setTarget({ kind: "pack", pack });
-                  else setTarget({ kind: "skill", skill: s });
-                };
-                return (
-                  <button
-                    key={`skill:${s.pack ?? ""}:${s.name}`}
-                    onClick={onClick}
-                    className="flex w-full items-center min-h-[44px] py-2 border-b border-border-subtle px-3 text-left transition-colors hover:bg-element-hover"
-                  >
-                    <span className={cn(COL.name, "min-w-0 pr-6")}>
-                      <span className="block truncate text-sm text-foreground">{s.name}</span>
-                      {s.description && (
-                        <span className="mt-0.5 text-2xs leading-snug text-muted-foreground line-clamp-2">
-                          {s.description}
-                        </span>
-                      )}
-                    </span>
-                    <span className={cn(COL.origin, "truncate text-xs text-muted-foreground")}>
-                      {origin}
-                    </span>
-                    <span
-                      className={cn(COL.tools, "text-xs text-secondary-foreground tabular-nums")}
-                    >
-                      {onCount > 0 ? `${onCount} on` : "off"}
-                    </span>
-                    <span className={cn(COL.chevron, "flex justify-end text-muted-foreground")}>
-                      <ChevronRight size={14} />
-                    </span>
-                  </button>
-                );
-              })}
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Unified manage modal — re-derive the live skill/pack from current state
-          on every render so per-tool toggles reflect a mutation immediately (the
-          captured `target` object is a stale snapshot from click time). */}
-      {target?.kind === "pack" && (
-        <PackManageModal
-          pack={packByName.get(target.pack.pack.name) ?? target.pack}
-          packSkills={(view?.skills ?? []).filter((s) => s.pack === target.pack.pack.name)}
-          tools={tools}
-          projected={mergeOptimistic(
-            packProjected[target.pack.pack.name] ?? new Set<string>(),
-            optimistic,
-          )}
-          detectedFor={detectedFor}
-          busy={busy}
-          scope={scope}
-          effectiveProject={effectiveProject}
-          onToggle={(toolId, on) => void togglePackTool(target.pack.pack.name, toolId, on)}
-          onUpdated={() => void refresh()}
-          onUninstall={() => void uninstallPack(target.pack.pack.name)}
-          onClose={() => {
-            setTarget(null);
-            setOptimistic({});
-          }}
-        />
-      )}
-      {target?.kind === "skill" && (
-        <SkillManageModal
-          skill={(view?.skills ?? []).find((s) => s.name === target.skill.name) ?? target.skill}
-          tools={tools}
-          scope={scope}
-          detectedFor={detectedFor}
-          busy={busy}
-          optimistic={optimistic}
-          onToggle={(toolId, status) => void toggleSkillTool(target.skill.name, toolId, status)}
-          onOpen={() => void openSkill(target.skill.name)}
-          onPromote={() => void promoteSkill(target.skill.name)}
-          onUninstall={() => void uninstallSkill(target.skill.name)}
-          onClose={() => {
-            setTarget(null);
-            setOptimistic({});
-          }}
-        />
-      )}
-    </div>
-  );
-}
-
-/** A grouped On/Off pill (one rounded container, two segments). */
-function OnOff({
-  on,
-  busy,
-  onChange,
-}: {
-  on: boolean;
-  busy: boolean;
-  onChange: (next: boolean) => void;
-}) {
-  return (
-    <div className="inline-flex items-center gap-0.5 rounded-full border border-border bg-card p-0.5">
-      {([true, false] as const).map((v) => (
-        <button
-          key={String(v)}
-          type="button"
-          disabled={busy}
-          onClick={() => onChange(v)}
-          className={cn(
-            "flex h-[18px] min-w-[34px] items-center justify-center rounded-full px-2 text-2xs font-medium transition-colors",
-            on === v
-              ? "bg-element-selected text-foreground"
-              : "text-muted-foreground hover:text-secondary-foreground",
-          )}
-        >
-          {v ? "On" : "Off"}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-/** Per-tool projection toggles for the right pane — Claude Code / Codex etc.
- *  each get a grouped On/Off pill. */
-function ToolToggles({
-  tools,
-  detectedFor,
-  statusFor,
-  busyFor,
-  onClick,
-}: {
-  tools: ToolInfo[];
-  detectedFor: (t: ToolInfo) => boolean;
-  statusFor: (t: ToolInfo) => ProjectionStatus;
-  busyFor: (t: ToolInfo) => boolean;
-  onClick: (t: ToolInfo, status: ProjectionStatus) => void;
-}) {
-  return (
-    <div className="flex flex-col gap-2.5">
-      <div className="text-2xs uppercase tracking-wider text-muted-foreground">Deliver to</div>
-      {tools.map((t) => {
-        const status = statusFor(t);
-        const detected = detectedFor(t);
-        const on = status === "synced";
-        const readOnly = status === "pack" || status === "conflict";
-        return (
-          <div key={t.id} className="flex items-center justify-between">
-            <span className="text-sm text-secondary-foreground">{t.displayName}</span>
-            {!detected ? (
-              <span className="text-2xs text-disabled" title="Tool not detected in this scope">
-                n/a
-              </span>
-            ) : readOnly ? (
-              <span className="text-2xs text-muted-foreground capitalize">{status}</span>
-            ) : (
-              <OnOff
-                on={on}
-                busy={busyFor(t)}
-                onChange={(next) => {
-                  if (next !== on) onClick(t, status);
-                }}
-              />
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function PackManageModal({
-  pack,
-  packSkills,
-  tools,
-  projected,
-  detectedFor,
-  busy,
-  scope,
-  effectiveProject,
-  onToggle,
-  onUpdated,
-  onUninstall,
-  onClose,
-}: {
-  pack: InstalledPack;
-  packSkills: ReconciledSkill[];
-  tools: ToolInfo[];
-  projected: Set<string>;
-  detectedFor: (t: ToolInfo) => boolean;
-  busy: string | null;
-  scope: Scope;
-  effectiveProject: string | null;
-  onToggle: (toolId: string, on: boolean) => void;
-  onUpdated: () => void;
-  onUninstall: () => void;
-  onClose: () => void;
-}) {
-  const githubUrl = `https://github.com/${pack.source}`;
-  const copyMarkdown = () => {
-    const lines = [`# ${pack.pack.name}`, ""];
-    for (const s of packSkills) {
-      lines.push(`## ${s.name}`);
-      if (s.description) lines.push("", s.description);
-      lines.push("");
-    }
-    lines.push(`Source: ${githubUrl}`);
-    void navigator.clipboard.writeText(lines.join("\n"));
-  };
-
-  return (
-    <SkillModalShell
-      open
-      onClose={onClose}
-      title={pack.pack.name}
-      subtitle={`${pack.source} · ${kindCounts(pack.pack.components)}`}
-      actions={
-        <div className="flex flex-col gap-3">
-          <ToolToggles
-            tools={tools}
-            detectedFor={detectedFor}
-            statusFor={(t) => (projected.has(t.id) ? "synced" : "absent")}
-            busyFor={(t) => busy === `pack:${pack.pack.name}:${t.id}`}
-            onClick={(t) => onToggle(t.id, !projected.has(t.id))}
-          />
-          <div className="flex flex-col gap-2 border-t border-border pt-3">
-            <PackUpdate
-              scope={scope}
-              name={pack.pack.name}
-              source={pack.source}
-              effectiveProject={effectiveProject}
-              projectedTools={projected}
-              onDone={onUpdated}
-            />
-            <ModalAction icon={Copy} label="Copy as markdown" onClick={copyMarkdown} />
-            <ModalAction
-              icon={GithubIcon}
-              label="View on GitHub"
-              onClick={() => void openUrl(githubUrl)}
-            />
-            <ModalAction
-              icon={Trash2}
-              label="Uninstall pack"
-              variant="danger"
-              busy={busy === `delpack:${pack.pack.name}`}
-              onClick={onUninstall}
-            />
-          </div>
-        </div>
+    <InstalledSkillsView
+      loaded={view !== null}
+      loadError={loadError}
+      packsNoSkills={packsNoSkills}
+      skills={skills.map((s) => ({
+        skill: s,
+        origin: skillOrigin(s),
+        toolNames: deliveredToolNames(s, tools, scope),
+      }))}
+      onManagePack={onPack}
+      onManageSkill={(s) =>
+        s.pack && packByName.has(s.pack) ? onPack(s.pack) : setTarget({ kind: "skill", skill: s })
       }
     >
-      <SkillDescriptions
-        skills={packSkills.map((s) => ({ name: s.name, description: s.description }))}
-        fallback="This pack ships no skills (commands / agents / rules only)."
-      />
-    </SkillModalShell>
+      {modal}
+    </InstalledSkillsView>
   );
 }
 
-function SkillManageModal({
-  skill,
-  tools,
-  scope,
-  detectedFor,
-  busy,
-  optimistic,
-  onToggle,
-  onOpen,
-  onPromote,
-  onUninstall,
-  onClose,
-}: {
-  skill: ReconciledSkill;
-  tools: ToolInfo[];
-  scope: Scope;
-  detectedFor: (t: ToolInfo) => boolean;
-  busy: string | null;
-  optimistic: Record<string, boolean>;
-  onToggle: (toolId: string, status: ProjectionStatus) => void;
-  onOpen: () => void;
-  onPromote: () => void;
-  onUninstall: () => void;
-  onClose: () => void;
-}) {
-  const statusFor = (t: ToolInfo): ProjectionStatus => {
-    const ov = optimistic[t.id];
-    if (ov !== undefined) return ov ? "synced" : "absent";
-    return skill.cells.find((c) => c.tool === t.id && c.scope === scope)?.status ?? "absent";
-  };
-
-  return (
-    <SkillModalShell
-      open
-      onClose={onClose}
-      title={skill.name}
-      subtitle={`${skill.managed ? "Library skill" : "External skill"} · ${scope}`}
-      actions={
-        <div className="flex flex-col gap-3">
-          <ToolToggles
-            tools={tools}
-            detectedFor={detectedFor}
-            statusFor={statusFor}
-            busyFor={(t) => busy === `skill:${skill.name}:${t.id}`}
-            onClick={(t, status) => onToggle(t.id, status)}
-          />
-          <div className="flex flex-col gap-2 border-t border-border pt-3">
-            <ModalAction icon={ExternalLink} label="Open in editor" onClick={onOpen} />
-            {scope === "project" && (
-              <ModalAction
-                icon={ArrowUpCircle}
-                label="Promote to global"
-                busy={busy === `promote:${skill.name}`}
-                onClick={onPromote}
-              />
-            )}
-            <ModalAction
-              icon={Trash2}
-              label="Uninstall"
-              variant="danger"
-              busy={busy === `del:${skill.name}`}
-              onClick={onUninstall}
-            />
-          </div>
-        </div>
-      }
-    >
-      <SkillDescriptions skills={[{ name: skill.name, description: skill.description }]} />
-    </SkillModalShell>
-  );
-}
-
-/** Compact Check/Update control for a pack (cheap ls-remote, then re-install). */
+/** Check for a newer commit of the pack (a cheap ls-remote), then re-install
+ *  it and re-deliver it to the tools it was in. */
 function PackUpdate({
   scope,
   name,
@@ -692,9 +355,7 @@ function PackUpdate({
   projectedTools: Set<string>;
   onDone: () => void;
 }) {
-  const [state, setState] = useState<"idle" | "checking" | "available" | "uptodate" | "updating">(
-    "idle",
-  );
+  const [state, setState] = useState<PackUpdateState>("idle");
 
   const check = async () => {
     setState("checking");
@@ -722,30 +383,7 @@ function PackUpdate({
     }
   };
 
-  const base =
-    "flex w-full items-center gap-2 rounded-md border border-border px-2.5 py-2 text-sm font-medium text-secondary-foreground transition-colors hover:bg-element-hover hover:text-foreground";
-  if (state === "checking")
-    return (
-      <span className={base}>
-        <Loader2 size={13} className="animate-spin" /> Checking…
-      </span>
-    );
-  if (state === "updating")
-    return (
-      <span className={base}>
-        <Loader2 size={13} className="animate-spin" /> Updating…
-      </span>
-    );
-  if (state === "uptodate") return <span className={base}>Up to date</span>;
-  if (state === "available")
-    return (
-      <button onClick={apply} className={base}>
-        <ArrowUpCircle size={13} /> Update available
-      </button>
-    );
   return (
-    <button onClick={check} className={base}>
-      <RefreshCw size={13} /> Check for update
-    </button>
+    <PackUpdateButton state={state} onCheck={() => void check()} onApply={() => void apply()} />
   );
 }

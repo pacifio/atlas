@@ -1,11 +1,9 @@
-//! The `AgentConnection` seam — ported from `zed-ref/crates/acp_thread/src/connection.rs`.
+//! The `AgentConnection` seam.
 //!
 //! This is the trait every agent implements: external ACP agents (through
-//! `atlas-agent-servers`) and the native agent alike. It is ported
-//! near-verbatim, because it is the contract the whole UI consumes; the
-//! deviations are only the ones forced by not being GPUI, and each is called out
-//! at the point it appears. The catalogue of them lives in [`crate`]'s module
-//! docs.
+//! `atlas-agent-servers`) and the native agent alike. It is the contract the
+//! whole UI consumes, so its shape is deliberate; the design choices that
+//! follow from running on tokio are called out at the point they appear.
 
 use std::any::Any;
 use std::collections::HashSet;
@@ -26,8 +24,7 @@ use crate::{AcpThreadHandle, ElicitationStoreHandle};
 
 /// Identifies an agent (`"claude-code"`, `"atlas-agent"`, …).
 ///
-/// Zed's lives in its `project` crate; the port keeps a local newtype so this
-/// crate stays leaf-level.
+/// A local newtype so this crate stays leaf-level.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct AgentId(pub Arc<str>);
 
@@ -119,12 +116,10 @@ impl From<&str> for AgentModelId {
 
 /// A login command an agent's own CLI must run in a terminal.
 ///
-/// Zed returns `task::SpawnInTerminal` here and hands it to its terminal task
-/// system (`build_terminal_auth_task`, `connection.rs:69-89`). Atlas has no such
-/// task type, so the port keeps the same *fields* and lets the host decide how
-/// to run it — Atlas already streams a login CLI's output into `AgentOAuthModal`.
-/// Zed's `use_new_terminal` / `allow_concurrent_runs` / `hide: Always` are all
-/// consequences of running inside its terminal panel and have no meaning here.
+/// This carries only the fields needed to run the command and lets the host
+/// decide how to run it — Atlas already streams a login CLI's output into
+/// `AgentOAuthModal`. Options that only make sense inside a terminal panel
+/// (reusing a terminal, concurrent runs, hiding it) have no meaning here.
 #[derive(Clone, PartialEq, Eq)]
 pub struct TerminalAuthCommand {
     pub id: String,
@@ -169,7 +164,7 @@ impl fmt::Debug for TerminalAuthCommand {
     }
 }
 
-/// Ported from `build_terminal_auth_task` (`connection.rs:69-89`).
+/// Builds a [`TerminalAuthCommand`] from its parts.
 pub fn build_terminal_auth_command(
     id: String,
     label: String,
@@ -190,17 +185,15 @@ pub fn build_terminal_auth_command(
 
 /// A live connection to one agent.
 ///
-/// Deviations from Zed, all mechanical:
-/// - `Rc<Self>` → `Arc<Self>`: handlers run on tokio worker threads, so every
-///   trait object here is `Send + Sync`. Zed can use `Rc` because everything
-///   lives on its foreground thread.
-/// - `Task<Result<T>>` → `BoxFuture<'static, Result<T>>`. Zed's `Task` is a
-///   GPUI-scheduled future; boxing is the dyn-safe equivalent.
-/// - Every `cx: &mut App` / `cx: &App` parameter is gone.
-/// - `Entity<AcpThread>` → [`AcpThreadHandle`].
-/// - `project: Entity<Project>` is gone; `work_dirs` carries what the port
-///   actually needs. Atlas serves `fs/*` from disk (§D12-6), so there is no
-///   project buffer store to pass.
+/// Design notes:
+/// - Connections are shared as `Arc<Self>`: handlers run on tokio worker
+///   threads, so every trait object here is `Send + Sync`.
+/// - Async methods return `BoxFuture<'static, Result<T>>`, the dyn-safe form of
+///   an async fn.
+/// - Threads are shared through [`AcpThreadHandle`].
+/// - There is no project handle; `work_dirs` carries what a session actually
+///   needs. Atlas serves `fs/*` from disk (§D12-6), so there is no project
+///   buffer store to pass.
 pub trait AgentConnection: Send + Sync {
     fn agent_id(&self) -> AgentId;
 
@@ -214,6 +207,16 @@ pub trait AgentConnection: Send + Sync {
         self: Arc<Self>,
         work_dirs: Vec<PathBuf>,
     ) -> BoxFuture<'static, Result<AcpThreadHandle>>;
+
+    /// Resolves once the agent process behind this connection has exited.
+    ///
+    /// A connection whose process is gone can still be handed out as
+    /// "connected", and every request on it waits a full deadline to learn
+    /// what this says at once. The manager watches it to evict the entry.
+    /// Connections with no process to lose (the native agent) never resolve.
+    fn exited(self: Arc<Self>) -> BoxFuture<'static, ()> {
+        Box::pin(std::future::pending())
+    }
 
     /// Whether this agent supports loading existing sessions.
     fn supports_load_session(&self) -> bool {
@@ -286,6 +289,32 @@ pub trait AgentConnection: Send + Sync {
     /// Whether this agent supports additional session directories.
     fn supports_session_additional_directories(&self) -> bool {
         false
+    }
+
+    /// Whether [`Self::update_session_roots`] changes what a session that is
+    /// already open may touch, from its next turn. ACP has no request for
+    /// that — a session's directories are fixed at `session/new`, `session/load`
+    /// and `session/resume` — so an external agent answers `false` and picks
+    /// new roots up the next time the session is opened. Session-independent,
+    /// and decided by what the connection can do, never by which agent it is.
+    fn supports_live_session_roots(&self) -> bool {
+        false
+    }
+
+    /// Replace the extra roots an open session may use: its attached projects
+    /// ([`SessionRoots`]). Takes effect from the session's next turn. Only
+    /// meaningful where [`Self::supports_live_session_roots`] is `true`; the
+    /// default refuses.
+    fn update_session_roots(
+        &self,
+        _session_id: &acp::SessionId,
+        _roots: SessionRoots,
+    ) -> BoxFuture<'static, Result<()>> {
+        Box::pin(async {
+            Err(anyhow::Error::msg(
+                "this agent cannot change an open session's roots",
+            ))
+        })
     }
 
     fn auth_methods(&self) -> &[acp::AuthMethod];
@@ -366,6 +395,30 @@ pub trait AgentConnection: Send + Sync {
     }
 
     fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
+}
+
+/// The folders a session may use besides its own working directories: the
+/// projects attached to it (Atlas's "projects in this session").
+///
+/// Two lists because the access differs, and the difference is the point:
+/// a read-only root may be read and never written, a read-write root is a
+/// writable root of the sandbox like the working directory is. A path is in
+/// at most one list.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SessionRoots {
+    pub read_only: Vec<PathBuf>,
+    pub read_write: Vec<PathBuf>,
+}
+
+impl SessionRoots {
+    pub fn is_empty(&self) -> bool {
+        self.read_only.is_empty() && self.read_write.is_empty()
+    }
+
+    /// Every root, read-write first.
+    pub fn all(&self) -> impl Iterator<Item = &PathBuf> {
+        self.read_write.iter().chain(self.read_only.iter())
+    }
 }
 
 impl dyn AgentConnection {
@@ -533,8 +586,8 @@ pub trait AgentSessionList: Send + Sync {
         Box::pin(async { Err(anyhow::anyhow!("delete_sessions not supported")) })
     }
 
-    /// Zed uses an `async_channel::Receiver`; tokio's unbounded receiver is the
-    /// same single-consumer stream without pulling in a second channel crate.
+    /// Tokio's unbounded receiver is a single-consumer stream that avoids
+    /// pulling in a second channel crate.
     fn watch(&self) -> Option<tokio::sync::mpsc::UnboundedReceiver<SessionListUpdate>> {
         None
     }
@@ -553,8 +606,8 @@ impl dyn AgentSessionList {
 /// The error every RPC maps to when the agent reports `ErrorCode::AuthRequired`.
 ///
 /// The host matches on this to route the user into the sign-in flow, so it is
-/// carried as a real `std::error::Error` rather than a string — the same reason
-/// Zed does (`map_acp_error`, `agent_servers/src/acp.rs:2074-2086`).
+/// carried as a real `std::error::Error` rather than a string, so it survives
+/// being wrapped and can still be downcast.
 #[derive(Debug, Default)]
 pub struct AuthRequired {
     pub description: Option<String>,
@@ -608,9 +661,8 @@ pub trait AgentModelSelector: Send + Sync + 'static {
 
 /// Icon for a model in the model selector.
 ///
-/// Zed's `Named` variant carries a `ui::IconName` from its own icon set; the UI
-/// stays in the frontend here, so the port carries the name as a string and lets
-/// the renderer resolve it.
+/// The UI stays in the frontend, so a named icon is carried as a string and the
+/// renderer resolves it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentModelIcon {
     Named(Arc<str>),
@@ -623,11 +675,18 @@ pub struct AgentModelInfo {
     pub name: Arc<str>,
     pub description: Option<Arc<str>>,
     pub icon: Option<AgentModelIcon>,
+    /// Newly released — the picker's "New" badge.
     pub is_latest: bool,
     pub cost: Option<Arc<str>>,
-    /// Zed carries `language_model::DisabledReason`; that enum is about Zed's
-    /// own plan/billing states, so the port carries the reason as text.
+    /// Why the model is unavailable, carried as text for display.
     pub disabled: Option<Arc<str>>,
+    /// Who makes the model, as the agent stated it: the gateway's
+    /// `publisher`, or the name of the group an agent listed it under. `None`
+    /// when the agent said nothing — never inferred from the id.
+    pub provider: Option<Arc<str>>,
+    /// Superseded but still served — the picker folds these into a
+    /// "Legacy models" section.
+    pub legacy: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

@@ -9,11 +9,11 @@ type WireMessage = ReturnType<typeof snapshotMessageToWire>;
 
 /**
  * Session resume, shared by every "open a past chat" path
- * (`session-sidebar.handleOpenAgent`, `openAgentSession`).
+ * (`openThread` in `open-thread.ts`, `openAgentSession`).
  *
- * **One paint, after the session is loaded** — Zed's model
- * (`conversation_view.rs:1149-1206`: the view is not built until `session/load`
- * resolves, and the thread accumulates replayed entries invisibly until then).
+ * **One paint, after the session is loaded** — the view is not built until
+ * `session/load` resolves, and the thread accumulates replayed entries
+ * invisibly until then.
  *
  * This replaced a two-stage resume that painted the on-disk transcript first
  * and the authoritative snapshot second. The idea was that the disk content was

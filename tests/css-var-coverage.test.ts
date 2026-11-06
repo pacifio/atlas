@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import builtinThemes from "@/dev/mock-backend/fixtures/builtin-themes.json";
-import { resolveTheme } from "@/features/theme/resolve-theme";
-import type { Theme } from "@/features/theme/lib/theme-api";
+import { BUILTIN_THEMES } from "@/dev/mock-backend/fixtures/builtin-themes";
+import { resolveTheme } from "@tryatlas/design/theme";
 
 /**
  * Every CSS custom property `src/` reads must be one something defines.
@@ -15,12 +15,18 @@ import type { Theme } from "@/features/theme/lib/theme-api";
  * variable comes from, so a key renamed or dropped from the theme leaves every
  * rule that named it painting nothing. A variable counts as defined when the
  * resolved theme produces it, when a stylesheet or inline style under `src/`
- * declares it, or when it is on the allowlist below with the reason.
+ * declares it, when `@tryatlas/design`'s stylesheet (which `globals.css`
+ * imports) declares it, or when it is on the allowlist below with the reason.
  */
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SRC = path.join(REPO_ROOT, "src");
-const themes = builtinThemes as Theme[];
+const PACKAGE_STYLES = path.join(
+  path.dirname(createRequire(import.meta.url).resolve("@tryatlas/design/package.json")),
+  "src",
+  "styles",
+);
+const themes = BUILTIN_THEMES;
 
 function walk(directory: string): string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -43,6 +49,18 @@ const CSS_VAR_ALLOWLIST: Record<string, string> = {
   "--atlas-pulse-color": "component-local animation colour",
   "--atlas-ants-color": "component-local animation colour",
   "--atlas-beam-travel": "component-local animation distance",
+  "--pr-label": "component-local pull request label colour, from the host",
+  // Set on <html> by `features/settings/lib/display-settings.ts` from the
+  // user's settings; the two fonts only when set, so every reader carries its
+  // own fallback.
+  "--atlas-ui-font": "the user's uiFontFamily, set at runtime",
+  "--atlas-code-font": "the user's codeFontFamily, set at runtime",
+  "--atlas-composer-font": "the user's composerFontFamily, set at runtime",
+  "--atlas-terminal-font": "the user's terminalFontFamily, set at runtime",
+  "--atlas-editor-font-size": "the user's editorFontSize, set at runtime",
+  "--atlas-terminal-font-size": "the user's terminalFontSize, set at runtime",
+  "--ui-zoom": "the user's uiScale, set at runtime by applyUiScale",
+  "--diffs-grid-number-column-width": "set by the diff viewer inside its shadow root",
 };
 
 describe("CSS custom properties", () => {
@@ -52,8 +70,11 @@ describe("CSS custom properties", () => {
     const references = new Set(
       [...text.matchAll(/var\((--[A-Za-z0-9_-]+)/g)].map((match) => match[1]),
     );
+    const packageCss = walk(PACKAGE_STYLES)
+      .map((file) => readFileSync(file, "utf8"))
+      .join("\n");
     const declared = new Set(
-      [...text.matchAll(/(--[A-Za-z0-9_-]+)\s*:/g)].map((match) => match[1]),
+      [...`${text}\n${packageCss}`.matchAll(/(--[A-Za-z0-9_-]+)\s*:/g)].map((match) => match[1]),
     );
     const produced = new Set<string>([
       ...Object.keys(resolveTheme(themes[0], "dark").cssVars),

@@ -81,6 +81,11 @@ pub enum MentionSpec {
         display_name: String,
         abs_path: String,
         has_readme: bool,
+        /// The access the session holds on this folder when it is attached
+        /// to it (`read_only` / `read_write`); absent for a mention that is
+        /// not attached, which keeps the old wording.
+        #[serde(default)]
+        access: Option<String>,
     },
     /// Another project in the app, referenced with `@workspace:<name>`.
     /// Hands the agent that project's absolute path so it can inspect a sibling
@@ -95,6 +100,9 @@ pub enum MentionSpec {
         abs_path: String,
         #[serde(default)]
         org_name: Option<String>,
+        /// As on `Repo`: the attached project's access level, if attached.
+        #[serde(default)]
+        access: Option<String>,
     },
     Paper {
         id: String,
@@ -183,6 +191,58 @@ pub enum MentionSpec {
         #[serde(default)]
         resolved: bool,
     },
+    /// A passage of one of this session's own agent replies, cited back with
+    /// `@cite:<id>` and an optional note (`cited-text.ts`). Private to the
+    /// agent: it is a block in the prompt, never a comment. The agent already
+    /// holds the reply, so the quote says which part the user means.
+    CitedText {
+        /// Short and unique within the draft — the token's value.
+        id: String,
+        display_name: String,
+        /// The transcript message the passage was selected in.
+        message_id: String,
+        /// The captured row that message is, on a session shared with the
+        /// team; absent when the session is not captured.
+        #[serde(default)]
+        row_id: Option<String>,
+        /// The passage, already capped by the frontend (`CITE_MAX_CHARS`).
+        text: String,
+        #[serde(default)]
+        note: Option<String>,
+    },
+    /// A comment on lines of a diff or a file, written in the gutter beside
+    /// the session and referenced with `@review:<id>` (`review-comments.ts`).
+    /// Local to the draft: it is a block in the prompt, never posted. The
+    /// block names the file and the range, quotes the lines, then the comment.
+    ReviewComment {
+        /// Short and unique within the draft — the token's value.
+        id: String,
+        display_name: String,
+        /// The diff scope or `file:<path>` it was written in (drawing only).
+        #[serde(default)]
+        section_id: String,
+        /// That section for a reader: "Changes", "Turn 3", "File".
+        section_title: String,
+        /// The path as the diff or the file view showed it.
+        file_path: String,
+        /// `+12 to +14`, `L3`: the range in the section's numbering.
+        range_label: String,
+        /// The quoted lines, already capped by the frontend.
+        diff: String,
+        /// The fence for the quote: `diff`, or the file's extension.
+        fence_language: String,
+        /// The comment, already capped by the frontend.
+        text: String,
+        /// The picked range, for drawing it back (unused here).
+        #[serde(default)]
+        start: u32,
+        #[serde(default)]
+        end: u32,
+        #[serde(default)]
+        side: String,
+        #[serde(default)]
+        end_side: String,
+    },
 }
 
 impl MentionSpec {
@@ -202,7 +262,9 @@ impl MentionSpec {
             | MentionSpec::Member { id, .. }
             | MentionSpec::Conversation { id, .. }
             | MentionSpec::RecordedSession { id, .. }
-            | MentionSpec::Comment { id, .. } => id,
+            | MentionSpec::Comment { id, .. }
+            | MentionSpec::CitedText { id, .. }
+            | MentionSpec::ReviewComment { id, .. } => id,
         }
     }
 
@@ -243,6 +305,8 @@ impl MentionSpec {
                 format!("@recorded-session:{}", v(display_name))
             }
             MentionSpec::Comment { display_name, .. } => format!("@comment:{}", v(display_name)),
+            MentionSpec::CitedText { id, .. } => format!("@cite:{id}"),
+            MentionSpec::ReviewComment { id, .. } => format!("@review:{id}"),
         }
     }
 }
@@ -413,6 +477,24 @@ pub async fn compose_prompt(
     })
 }
 
+/// An attached project's mention also says what the session may do there, so
+/// the agent does not try an edit the sandbox will refuse (or ask for access
+/// it already holds). `None` (not attached) keeps the old wording.
+fn access_note(access: Option<&str>) -> &'static str {
+    match access {
+        Some("read_write") => {
+            "\n\nThis project is attached to the session with **read and write** access: \
+             you may edit files in it."
+        }
+        Some("read_only") => {
+            "\n\nThis project is attached to the session **read-only**: read it, but do not \
+             edit files in it. If the request needs changes there, ask for write access with \
+             the `request_project_access` tool, or tell the user."
+        }
+        _ => "",
+    }
+}
+
 /// Synchronous body renderer for a single mention. Runs on the
 /// blocking pool. Returns `None` for mentions that don't contribute
 /// a body block (only branches today — the short form alone is the
@@ -431,6 +513,7 @@ fn render_block(m: &MentionSpec) -> Option<String> {
             abs_path,
             display_name,
             org_name,
+            access,
             ..
         } => {
             let org = org_name
@@ -442,14 +525,16 @@ fn render_block(m: &MentionSpec) -> Option<String> {
                  absolute path:\n`{abs_path}`\n\n\
                  Use your filesystem tools to inspect it — list its tree, read the relevant \
                  source, and apply what you find to this request. It is a SEPARATE project from \
-                 the current working directory; reference it by this absolute path.",
+                 the current working directory; reference it by this absolute path.{note}",
                 sf = m.short_form(),
+                note = access_note(access.as_deref()),
             ))
         }
         MentionSpec::Repo {
             abs_path,
             display_name,
             has_readme,
+            access,
             ..
         } => {
             // Lead with an explicit directive so the agent actually EXPLORES the
@@ -461,8 +546,9 @@ fn render_block(m: &MentionSpec) -> Option<String> {
                  **Explore this codebase** using your filesystem tools — list its directory \
                  tree, open the key source files, and trace how the pieces fit together to \
                  understand what it does and how it works. Do NOT rely on the README alone; \
-                 read the actual source. Apply this understanding to the rest of this request.",
+                 read the actual source. Apply this understanding to the rest of this request.{note}",
                 sf = m.short_form(),
+                note = access_note(access.as_deref()),
             );
             let readme = if *has_readme {
                 match read_repo_readme_body(abs_path, display_name) {
@@ -591,7 +677,102 @@ fn render_block(m: &MentionSpec) -> Option<String> {
             parent_id.as_deref(),
             *resolved,
         )),
+        MentionSpec::CitedText {
+            message_id,
+            row_id,
+            text,
+            note,
+            ..
+        } => Some(render_cite_block(
+            &m.short_form(),
+            message_id,
+            row_id.as_deref(),
+            text,
+            note.as_deref(),
+        )),
+        MentionSpec::ReviewComment {
+            section_title,
+            file_path,
+            range_label,
+            diff,
+            fence_language,
+            text,
+            ..
+        } => Some(render_review_comment_block(
+            &m.short_form(),
+            section_title,
+            file_path,
+            range_label,
+            diff,
+            fence_language,
+            text,
+        )),
     }
+}
+
+/// The block a review comment contributes: where it is, the user's comment,
+/// then the lines it is on in a fence neither can close.
+fn render_review_comment_block(
+    short_form: &str,
+    section_title: &str,
+    file_path: &str,
+    range_label: &str,
+    diff: &str,
+    fence_language: &str,
+    text: &str,
+) -> String {
+    let quote = clip_body(diff.trim_matches('\n'));
+    let longest = quote.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+    let fence = "`".repeat((longest + 1).max(3));
+    let comment = clip_body(text.trim())
+        .lines()
+        .map(|line| format!("> {line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let section = section_title.trim();
+    let section = if section.is_empty() {
+        String::new()
+    } else {
+        format!(" ({section})")
+    };
+    let language = fence_language.trim();
+    format!(
+        "## {short_form}\n\n\
+         The user left a review comment on `{file_path}`, {range_label}{section}:\n\n\
+         {comment}\n\n\
+         The lines it is on:\n\n\
+         {fence}{language}\n{quote}\n{fence}"
+    )
+}
+
+/// The block a cited passage contributes: the passage, said to be from an
+/// earlier reply of the agent's own in this session, then the user's note.
+fn render_cite_block(
+    short_form: &str,
+    message_id: &str,
+    row_id: Option<&str>,
+    text: &str,
+    note: Option<&str>,
+) -> String {
+    let quoted = clip_body(text.trim_matches('\n'))
+        .lines()
+        .map(|line| format!("> {line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let row = row_id
+        .filter(|r| !r.trim().is_empty())
+        .map(|r| format!(", captured row `{r}`"))
+        .unwrap_or_default();
+    let note = note
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .map(|n| format!("\n\nThe user's note on it:\n\n{}", clip_body(n)))
+        .unwrap_or_default();
+    format!(
+        "## {short_form}\n\n\
+         The user is citing this passage from one of your earlier replies in this session \
+         (message `{message_id}`{row}):\n\n{quoted}{note}"
+    )
 }
 
 /// The block a linked comment contributes: who said what, on what, and that
@@ -714,8 +895,11 @@ fn clip_body(body: &str) -> String {
     if body.len() <= MENTION_BODY_BUDGET_BYTES {
         return body.to_string();
     }
-    let head = &body[..MENTION_BODY_BUDGET_BYTES];
-    let elided = body.len() - MENTION_BODY_BUDGET_BYTES;
+    // On a character boundary: slicing inside a multi-byte character panics,
+    // and a body is whatever the user or a file put in it.
+    let cut = body.floor_char_boundary(MENTION_BODY_BUDGET_BYTES);
+    let head = &body[..cut];
+    let elided = body.len() - cut;
     format!("{head}\n\n… (truncated, {elided} bytes elided)")
 }
 
@@ -1049,6 +1233,109 @@ mod org_mention_tests {
 }
 
 #[cfg(test)]
+mod cite_tests {
+    use super::*;
+
+    fn cite(note: Option<&str>, row: Option<&str>) -> MentionSpec {
+        serde_json::from_value(serde_json::json!({
+            "kind": "cited_text",
+            "id": "k3x9q2",
+            "displayName": "“Scope it to the usage page.”",
+            "messageId": "msg-7",
+            "rowId": row,
+            "text": "Scope it to the usage page.\nThen refresh on focus.",
+            "note": note,
+        }))
+        .expect("the frontend's cite shape")
+    }
+
+    /// The passage reaches the agent quoted and labelled as its own earlier
+    /// reply, the note after it; the token in the prose names the block.
+    #[tokio::test]
+    async fn a_cite_quotes_the_passage_as_an_earlier_reply_then_the_note() {
+        let composed = compose_prompt(
+            "why @cite:k3x9q2".into(),
+            vec![cite(Some("Does billing need this too?"), Some("am-42"))],
+        )
+        .await
+        .unwrap();
+        assert!(composed.resource_links.is_empty(), "a cite is not a link");
+        let prose = &composed.prose;
+        assert!(
+            prose.starts_with("why @cite:k3x9q2\n\n---\n# Atlas context\n\n## @cite:k3x9q2\n\n"),
+            "{prose}"
+        );
+        assert!(
+            prose.contains(
+                "citing this passage from one of your earlier replies in this session \
+                 (message `msg-7`, captured row `am-42`):\n\n\
+                 > Scope it to the usage page.\n> Then refresh on focus.\n\n\
+                 The user's note on it:\n\nDoes billing need this too?"
+            ),
+            "{prose}"
+        );
+    }
+
+    /// Without a note or a captured row, the block is just the quote.
+    #[test]
+    fn a_cite_without_a_note_or_row_is_just_the_quote() {
+        let block = render_block(&cite(None, None)).expect("a cite renders a block");
+        assert!(block.ends_with("> Then refresh on focus."), "{block}");
+        assert!(!block.contains("captured row"), "{block}");
+        assert!(!block.contains("note"), "{block}");
+        let blank = render_block(&cite(Some("  "), Some(""))).unwrap();
+        assert_eq!(blank, block, "a blank note or row is no note or row");
+    }
+
+    /// A multi-byte character straddling the budget is kept whole or left
+    /// out, never split: slicing inside it would panic the send.
+    #[test]
+    fn clip_body_cuts_on_a_character_boundary() {
+        // "é" is two bytes; one byte short of the budget puts it across it.
+        let body = format!("{}é tail", "a".repeat(MENTION_BODY_BUDGET_BYTES - 1));
+        let clipped = clip_body(&body);
+        let head = clipped.split("\n\n…").next().unwrap();
+        assert_eq!(head, "a".repeat(MENTION_BODY_BUDGET_BYTES - 1));
+        assert!(clipped.ends_with(&format!(" {} bytes elided)", body.len() - head.len())));
+        // An emoji (four bytes) one byte into the budget's end.
+        let emoji = format!("{}🙂", "a".repeat(MENTION_BODY_BUDGET_BYTES - 1));
+        assert!(clip_body(&emoji).starts_with(&"a".repeat(MENTION_BODY_BUDGET_BYTES - 1)));
+    }
+
+    /// The token is the id alone, and a send dedupes on it.
+    #[test]
+    fn a_cite_short_form_and_dedupe_key_are_its_id() {
+        let a = cite(None, None);
+        let b = cite(Some("again"), None);
+        assert_eq!(a.dedupe_key(), b.dedupe_key());
+        assert_eq!(a.short_form(), "@cite:k3x9q2");
+    }
+
+    /// An attached project's block says what the session may do there; an
+    /// unattached mention (no `access` on the wire) reads as it always did.
+    #[test]
+    fn a_project_block_states_its_attached_access() {
+        let project = |access: Option<&str>| {
+            serde_json::from_value::<MentionSpec>(serde_json::json!({
+                "kind": "workspace",
+                "id": "p1",
+                "displayName": "server",
+                "absPath": "/work/server",
+                "access": access,
+            }))
+            .unwrap()
+        };
+        let plain = render_block(&project(None)).unwrap();
+        assert!(!plain.contains("attached"), "{plain}");
+        let ro = render_block(&project(Some("read_only"))).unwrap();
+        assert!(ro.contains("**read-only**"), "{ro}");
+        assert!(ro.contains("request_project_access"), "{ro}");
+        let rw = render_block(&project(Some("read_write"))).unwrap();
+        assert!(rw.contains("**read and write**"), "{rw}");
+    }
+}
+
+#[cfg(test)]
 mod short_form_tests {
     use super::short_form_value;
 
@@ -1066,5 +1353,70 @@ mod short_form_tests {
     fn a_bare_value_is_left_alone() {
         assert_eq!(short_form_value("src/main.rs"), "src/main.rs");
         assert_eq!(short_form_value("Shot@2x.png"), "Shot@2x.png");
+    }
+}
+
+#[cfg(test)]
+mod review_comment_tests {
+    use super::*;
+
+    fn review(diff: &str) -> MentionSpec {
+        serde_json::from_value(serde_json::json!({
+            "kind": "review_comment",
+            "id": "r4n2c8",
+            "displayName": "src/app.ts:12-13",
+            "sectionId": "/repo\u{0}branch-range\u{0}\u{0}s-1",
+            "sectionTitle": "Changes",
+            "filePath": "src/app.ts",
+            "rangeLabel": "+12 to +13",
+            "diff": diff,
+            "fenceLanguage": "diff",
+            "text": "Rename this.\nIt shadows the import.",
+            "start": 12,
+            "end": 13,
+            "side": "additions",
+            "endSide": "additions",
+        }))
+        .expect("the frontend's review comment shape")
+    }
+
+    /// The comment reaches the agent with its file, range, quote and text,
+    /// under the token the prose carries; it is not a link.
+    #[tokio::test]
+    async fn a_review_comment_names_the_file_and_range_then_quotes_the_lines() {
+        let composed = compose_prompt(
+            "fix these @review:r4n2c8".into(),
+            vec![review("@@ -10,2 +12,2 @@\n-let a = 1;\n+let b = 1;")],
+        )
+        .await
+        .unwrap();
+        assert!(
+            composed.resource_links.is_empty(),
+            "a review comment is not a link"
+        );
+        let prose = &composed.prose;
+        assert!(
+            prose.starts_with(
+                "fix these @review:r4n2c8\n\n---\n# Atlas context\n\n## @review:r4n2c8\n\n"
+            ),
+            "{prose}"
+        );
+        assert!(
+            prose.contains(
+                "The user left a review comment on `src/app.ts`, +12 to +13 (Changes):\n\n\
+                 > Rename this.\n> It shadows the import.\n\n\
+                 The lines it is on:\n\n\
+                 ```diff\n@@ -10,2 +12,2 @@\n-let a = 1;\n+let b = 1;\n```"
+            ),
+            "{prose}"
+        );
+    }
+
+    /// A quote holding a fence gets a longer one, so it cannot close early.
+    #[test]
+    fn a_quote_with_backticks_gets_a_longer_fence() {
+        let block = render_block(&review("+```js\n+x\n+```")).unwrap();
+        assert!(block.contains("\n````diff\n+```js"), "{block}");
+        assert!(block.ends_with("+```\n````"), "{block}");
     }
 }

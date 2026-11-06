@@ -1,7 +1,6 @@
 //! A canned HTTP client, so no test in this crate touches the network.
 //!
-//! Zed's equivalent is `FakeHttpClient` (`http_client::FakeHttpClient`). Same
-//! job: answer a known URL with known bytes, 404 everything else, and count
+//! It answers a known URL with known bytes, 404s everything else, and counts
 //! requests so a throttle can be asserted.
 
 #![allow(dead_code)]
@@ -26,6 +25,10 @@ pub struct FakeHttp {
     /// per-chunk one — which is the difference between a download cap that
     /// holds and one a slow drip walks straight through.
     chunk_size: Mutex<Option<usize>>,
+    /// URL → how many body bytes to deliver before the stream fails. A real
+    /// download that loses its connection errors mid-body, not up front, and
+    /// a staged install has to be proven to discard what it had.
+    fail_after: Mutex<HashMap<String, usize>>,
 }
 
 impl FakeHttp {
@@ -50,6 +53,23 @@ impl FakeHttp {
     /// Make every response take `delay`, so concurrent callers overlap.
     pub fn slow(self: &Arc<Self>, delay: std::time::Duration) -> Arc<Self> {
         *self.delay.lock().unwrap() = Some(delay);
+        self.clone()
+    }
+
+    /// Deliver `bytes` of `url`'s body, then fail the stream — a connection
+    /// dropped mid-download. Combine with [`Self::chunked`] to decide where the
+    /// cut lands relative to a chunk boundary.
+    pub fn failing_after(self: &Arc<Self>, url: &str, bytes: usize) -> Arc<Self> {
+        self.fail_after
+            .lock()
+            .unwrap()
+            .insert(url.to_string(), bytes);
+        self.clone()
+    }
+
+    /// Undo [`Self::failing_after`] for `url` — the link came back.
+    pub fn heal(self: &Arc<Self>, url: &str) -> Arc<Self> {
+        self.fail_after.lock().unwrap().remove(url);
         self.clone()
     }
 
@@ -79,6 +99,7 @@ impl HttpClient for FakeHttp {
             .unwrap_or((404, b"not found".to_vec()));
         let delay = *self.delay.lock().unwrap();
         let chunk_size = *self.chunk_size.lock().unwrap();
+        let fail_after = self.fail_after.lock().unwrap().get(url).copied();
         Box::pin(async move {
             if let Some(delay) = delay {
                 tokio::time::sleep(delay).await;
@@ -87,10 +108,30 @@ impl HttpClient for FakeHttp {
                 Some(size) if !body.is_empty() => body.chunks(size).map(<[u8]>::to_vec).collect(),
                 _ => vec![body],
             };
-            Ok(HttpResponse {
-                status,
-                body: futures::stream::iter(chunks.into_iter().map(Ok)).boxed(),
-            })
+            let total: usize = chunks.iter().map(Vec::len).sum();
+            let body = match fail_after {
+                // A cut at or past the end is no cut at all.
+                Some(limit) if limit < total => {
+                    // Everything up to the cut, then one error, then nothing.
+                    let mut delivered = 0usize;
+                    let mut kept = Vec::new();
+                    for chunk in chunks {
+                        if delivered >= limit {
+                            break;
+                        }
+                        let take = chunk.len().min(limit - delivered);
+                        delivered += take;
+                        kept.push(Ok(chunk[..take].to_vec()));
+                    }
+                    kept.push(Err(std::io::Error::new(
+                        std::io::ErrorKind::ConnectionReset,
+                        "connection reset by peer (fake)",
+                    )));
+                    futures::stream::iter(kept).boxed()
+                }
+                _ => futures::stream::iter(chunks.into_iter().map(Ok)).boxed(),
+            };
+            Ok(HttpResponse { status, body })
         })
     }
 }

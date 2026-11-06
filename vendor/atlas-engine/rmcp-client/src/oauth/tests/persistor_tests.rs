@@ -11,7 +11,7 @@ use atlas_engine_exec_server::RouteAwareHttpClient;
 use atlas_engine_http_client::HttpClientFactory;
 use atlas_engine_http_client::OutboundProxyPolicy;
 use http::HeaderMap;
-use keyring::Error as KeyringError;
+use keyring_core::Error as KeyringError;
 use oauth2::AccessToken;
 use oauth2::TokenResponse;
 use pretty_assertions::assert_eq;

@@ -7,6 +7,10 @@ export interface DiffFile {
   deletions: number;
   hunks: DiffHunk[];
   language: string;
+  /** Git printed "Binary files … differ" — there are no lines to show. */
+  binary?: boolean;
+  /** The path before a rename (`rename from`), when the file was renamed. */
+  oldPath?: string;
 }
 
 export interface DiffHunk {
@@ -73,6 +77,8 @@ export function parseDiff(raw: string): DiffFile[] {
     let currentHunk: DiffHunk | null = null;
     let oldLine = 0,
       newLine = 0;
+    let binary = false;
+    let oldPath: string | undefined;
 
     for (let i = 1; i < lines.length; i++) {
       const line = lines[i];
@@ -84,7 +90,12 @@ export function parseDiff(raw: string): DiffFile[] {
         hunks.push(currentHunk);
         continue;
       }
-      if (!currentHunk) continue;
+      if (!currentHunk) {
+        // Extended header lines, before the first hunk.
+        if (line.startsWith("Binary files ")) binary = true;
+        else if (line.startsWith("rename from ")) oldPath = line.slice("rename from ".length);
+        continue;
+      }
       if (line.startsWith("+")) {
         currentHunk.lines.push({ type: "add", content: line.slice(1), newLine: newLine++ });
         additions++;
@@ -100,7 +111,15 @@ export function parseDiff(raw: string): DiffFile[] {
         });
       }
     }
-    files.push({ path, additions, deletions, hunks, language: getLanguage(path) });
+    files.push({
+      path,
+      additions,
+      deletions,
+      hunks,
+      language: getLanguage(path),
+      ...(binary && { binary }),
+      ...(oldPath && { oldPath }),
+    });
   }
   return files;
 }
@@ -141,6 +160,38 @@ export function buildRows(files: DiffFile[], collapsedFiles: Set<string>): Virtu
     rows.push({ kind: "file-footer", fileIndex: fi });
   }
   return rows;
+}
+
+/** One side-by-side line pair; a missing side is filler. */
+export interface SplitLine {
+  left?: DiffLine;
+  right?: DiffLine;
+}
+
+/**
+ * Pair a hunk's lines for a side-by-side view. Context sits on both sides; a
+ * run of removals followed by a run of additions is laid out row by row, so a
+ * modified line reads across from what replaced it.
+ */
+export function splitHunkLines(hunk: DiffHunk): SplitLine[] {
+  const out: SplitLine[] = [];
+  const lines = hunk.lines;
+  let i = 0;
+  while (i < lines.length) {
+    if (lines[i].type === "context") {
+      out.push({ left: lines[i], right: lines[i] });
+      i++;
+      continue;
+    }
+    const removed: DiffLine[] = [];
+    const added: DiffLine[] = [];
+    while (i < lines.length && lines[i].type === "remove") removed.push(lines[i++]);
+    while (i < lines.length && lines[i].type === "add") added.push(lines[i++]);
+    for (let k = 0; k < Math.max(removed.length, added.length); k++) {
+      out.push({ left: removed[k], right: added[k] });
+    }
+  }
+  return out;
 }
 
 /** Wire shape for hunk/line staging: the hunk exactly as displayed. */

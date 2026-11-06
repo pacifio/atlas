@@ -201,7 +201,8 @@ export function elicitationQuestionForm(
   fields: ElicitationField[],
   message: string,
 ): ElicitationQuestionForm | null {
-  const asked = fields.filter((f) => !f.customFor);
+  const companions = resolveCompanions(fields);
+  const asked = fields.filter((f) => !companions.has(f.name));
   if (asked.length === 0) return null;
   // Every asked field must be a choice list; one stray text/number field means
   // this is a form, not a set of questions.
@@ -209,7 +210,8 @@ export function elicitationQuestionForm(
 
   const customByTarget = new Map<string, ElicitationField>();
   for (const f of fields) {
-    if (f.customFor) customByTarget.set(f.customFor, f);
+    const target = companions.get(f.name);
+    if (target) customByTarget.set(target, f);
   }
 
   const questions: QuestionSpec[] = [];
@@ -230,6 +232,51 @@ export function elicitationQuestionForm(
     });
   }
   return { questions, slots };
+}
+
+/**
+ * Which fields are free-text companions, and which question each belongs to.
+ *
+ * `_meta._askUserQuestionCustomAnswer.questionId` is the marker Atlas's own
+ * agent writes (`engine/questions.rs`) and the only one worth trusting, so it
+ * wins wherever it is present.
+ *
+ * It is not always present. Other agents bridge the same tool and spell the
+ * companion by NAME — `<id>__other`, `<id>_custom`, `<id>_other` — with no
+ * meta at all, and the rule this replaces read such a field as a stray text
+ * input, decided the whole elicitation was a form, and dropped the entire
+ * question set into the dialog. That is the "ugly modal": not a styling
+ * problem, a field one marker short of being recognised.
+ *
+ * The suffix is only honoured when it names a field that EXISTS and carries
+ * choices, so a genuine form field called `notes_other` cannot smuggle itself
+ * in — there is no `notes` question for it to belong to.
+ */
+const CUSTOM_SUFFIXES = ["__other", "_custom", "_other"] as const;
+
+function resolveCompanions(fields: ElicitationField[]): Map<string, string> {
+  const byName = new Map(fields.map((f) => [f.name, f]));
+  const hasChoices = (name: string) => (byName.get(name)?.choices.length ?? 0) > 0;
+  const companions = new Map<string, string>();
+
+  for (const f of fields) {
+    if (f.customFor) {
+      companions.set(f.name, f.customFor);
+      continue;
+    }
+    // Only a plain text field can be a companion; anything with choices of its
+    // own is a question.
+    if (f.kind !== "string" || f.choices.length > 0) continue;
+    for (const suffix of CUSTOM_SUFFIXES) {
+      if (!f.name.endsWith(suffix)) continue;
+      const target = f.name.slice(0, -suffix.length);
+      if (target && hasChoices(target)) {
+        companions.set(f.name, target);
+        break;
+      }
+    }
+  }
+  return companions;
 }
 
 /** One question's answer as the card reports it. */

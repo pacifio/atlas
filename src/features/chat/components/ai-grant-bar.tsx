@@ -1,13 +1,11 @@
 import { useCallback, useState } from "react";
-import { Cloud, MoveUpRight, RotateCw, X } from "lucide-react";
+import { Cloud, CreditCard, RotateCw } from "lucide-react";
 import { toast } from "sonner";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
 import { useAuthStore } from "@/features/auth/stores/auth-store";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
 import { isLocalOrg, useActiveOrganisation, useAiGrantStore } from "../stores/ai-grant-store";
-import { COMPOSER_STRIP, COMPOSER_STRIP_ACTION } from "./composer-strip";
+import { ChatNoticeView } from "./views/chat-notice-view";
 
 /**
  * The native agent's no-grant setup state (spec D15a, acceptance bar item 14).
@@ -15,8 +13,9 @@ import { COMPOSER_STRIP, COMPOSER_STRIP_ACTION } from "./composer-strip";
  * A signed-in user whose organisation has no AI grant is not having a failure,
  * they are having a **setup problem** — the gateway's own words. Shown as an
  * error it reads as something broken, and they go hunting for a switch to flip.
- * There is no such switch; an admin has to grant it, so the bar says that and
- * offers the two things the user *can* do: re-check, or ask to be counted.
+ * There is no such switch: a Free account has no Atlas Credits, so the bar
+ * says that and offers the two things the user *can* do: re-check, or buy
+ * credits on the billing page.
  *
  * The composer below it is disabled while this shows (see `message-input.tsx`),
  * so this bar is the explanation for a dead input — which is why the strip is
@@ -30,15 +29,28 @@ import { COMPOSER_STRIP, COMPOSER_STRIP_ACTION } from "./composer-strip";
  * The org NAME is right there in the auth snapshot.
  */
 
-// The strip itself lives in `composer-strip.ts`, shared with every other
-// notice that tucks into the composer (`removed-agent-bar.tsx`).
-const STRIP = COMPOSER_STRIP;
-const ACTION = COMPOSER_STRIP_ACTION;
+// Drawn as a tucked `ChatNoticeView`, the strip every composer notice shares
+// (`removed-agent-bar.tsx`, `mode-restore-bar.tsx`…).
 
-/** Where "Request" goes. The one place that can actually issue a grant. */
-const GRANT_REQUEST_URL = "https://credits.tryatlas.cc/";
+/** Where "Purchase" goes: the account's billing page, where credits are
+ *  bought. A Free account has none to spend. */
+const BILLING_URL = "https://app.tryatlas.cc/settings/billing";
 
-export function AiGrantBar() {
+/**
+ * Whether the bar is on screen — the composer's other strips step aside
+ * while it is (`message-input.tsx`): with no grant the native agent cannot
+ * run at all, and a download offer or a mode notice above a dead input is
+ * noise. Same conditions as the render below, read from the same stores.
+ */
+export function useAiGrantBarShown(turnRunning: boolean): boolean {
+  const entitlement = useAiGrantStore.use.entitlement();
+  const dismissed = useAiGrantStore.use.dismissed();
+  const local = isLocalOrg(useActiveOrganisation());
+  if (dismissed || turnRunning) return false;
+  return (entitlement?.state === "localOrg" && local) || entitlement?.state === "noGrant";
+}
+
+export function AiGrantBar({ turnRunning = false }: { turnRunning?: boolean }) {
   const snapshot = useAuthStore((s) => s.snapshot);
   // `AuthSnapshot` is a discriminated union — the orgs only exist on the
   // signed-in arm, which is also the only arm this bar renders under.
@@ -83,16 +95,16 @@ export function AiGrantBar() {
     if (!(await refresh())) toast.error("Could not reach the gateway.");
   }, [refresh]);
 
-  // Requesting a grant is a page on the web, not a signal Atlas can send: the
-  // gateway has no access-request endpoint, and the PostHog `ai_access_requested`
-  // event this button used to fire told the user's own team nothing — it landed
-  // in Atlas's analytics, where nobody could act on it. Open the credits page
-  // and let the user ask somewhere that answers.
-  const onRequest = useCallback(() => {
-    void openUrl(GRANT_REQUEST_URL).catch((e) => toast.error(String(e)));
+  // Credits are bought on the web, not through a signal Atlas can send: the
+  // gateway has no purchase endpoint. Open the billing page.
+  const onPurchase = useCallback(() => {
+    void openUrl(BILLING_URL).catch((e) => toast.error(String(e)));
   }, []);
 
   if (dismissed) return null;
+  // A running turn was admitted before the answer said no; the bar and the
+  // composer lock wait for it to end (`grantLocksComposer` says why).
+  if (turnRunning) return null;
 
   // A local organisation: not a grant that is missing, a link that is. The
   // native agent bills an org the gateway knows, and this one only exists on
@@ -100,93 +112,57 @@ export function AiGrantBar() {
   // org switcher, not here.
   if (entitlement?.state === "localOrg" && local) {
     return (
-      <div
+      <ChatNoticeView
+        placement="tucked"
+        tone="neutral"
         data-testid="ai-grant-bar"
-        className={STRIP}
-        title="Atlas Agent works with organisations synced to your account"
+        title="Atlas Agent works with organizations synced to your account"
+        action={{
+          label: syncing ? "Syncing…" : "Turn on sync",
+          icon: Cloud,
+          title: account
+            ? "Create this organization in your Atlas account"
+            : "Sign in to sync this organization",
+          busy: syncing,
+          onClick: () => void onTurnOnSync(),
+        }}
+        onDismiss={() => dismiss()}
+        dismissLabel="Dismiss"
       >
-        <span className="min-w-0 truncate">
-          <span className="font-semibold text-[var(--foreground)]">
-            {orgName ?? "This organisation"}
-          </span>
-          <span className="text-[var(--muted-foreground)]">
-            {" "}
-            is local — sync it to use Atlas Agent
-          </span>
-        </span>
-
-        <div className="flex shrink-0 items-center gap-0.5">
-          <button
-            type="button"
-            onClick={() => void onTurnOnSync()}
-            disabled={syncing}
-            title={
-              account
-                ? "Create this organisation in your Atlas account"
-                : "Sign in to sync this organisation"
-            }
-            className={cn(ACTION, syncing ? "cursor-default" : "cursor-pointer")}
-          >
-            <Cloud size={11} className={cn(syncing && "animate-pulse")} />
-            {syncing ? "Syncing…" : "Turn on sync"}
-          </button>
-          <Hint label="Dismiss" side="top">
-            <button
-              type="button"
-              onClick={() => dismiss()}
-              className="shrink-0 cursor-pointer rounded p-0.5 text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)]"
-            >
-              <X size={12} />
-            </button>
-          </Hint>
-        </div>
-      </div>
+        <span className="font-semibold text-foreground">{orgName ?? "This organization"}</span> is
+        local — sync it to use Atlas Agent
+      </ChatNoticeView>
     );
   }
 
   if (entitlement?.state !== "noGrant") return null;
 
   return (
-    <div data-testid="ai-grant-bar" className={STRIP} title={entitlement.message}>
-      <span className="min-w-0 truncate">
-        <span className="font-semibold text-[var(--foreground)]">
-          {orgName ?? "This organisation"}
-        </span>
-        <span className="text-[var(--muted-foreground)]"> doesn&apos;t have AI grants</span>
-      </span>
-
-      <div className="flex shrink-0 items-center gap-0.5">
-        <button
-          type="button"
-          onClick={() => void onRefresh()}
-          disabled={checking}
-          title="Check again"
-          className={cn(ACTION, checking ? "cursor-default" : "cursor-pointer")}
-        >
-          <RotateCw size={11} className={cn(checking && "animate-spin")} />
-          Refresh
-        </button>
-
-        <button
-          type="button"
-          onClick={onRequest}
-          title="Request AI credits for your organisation"
-          className={cn(ACTION, "cursor-pointer")}
-        >
-          <MoveUpRight size={11} />
-          Request
-        </button>
-
-        <Hint label="Dismiss" side="top">
-          <button
-            type="button"
-            onClick={() => dismiss()}
-            className="shrink-0 cursor-pointer rounded p-0.5 text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)]"
-          >
-            <X size={12} />
-          </button>
-        </Hint>
-      </div>
-    </div>
+    <ChatNoticeView
+      placement="tucked"
+      tone="neutral"
+      data-testid="ai-grant-bar"
+      title={entitlement.message}
+      action={{
+        label: "Refresh",
+        icon: RotateCw,
+        title: "Check again",
+        busy: checking,
+        onClick: () => void onRefresh(),
+      }}
+      extraActions={[
+        {
+          label: "Purchase",
+          icon: CreditCard,
+          title: "Buy Atlas Credits on your account's billing page",
+          onClick: onPurchase,
+        },
+      ]}
+      onDismiss={() => dismiss()}
+      dismissLabel="Dismiss"
+    >
+      <span className="font-semibold text-foreground">Atlas Credits</span> are not available for
+      Free accounts
+    </ChatNoticeView>
   );
 }

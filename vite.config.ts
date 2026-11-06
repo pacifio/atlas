@@ -41,8 +41,9 @@ export default defineConfig(() => ({
         "node_modules/decode-named-character-reference/index.js",
       ),
     },
-    // Dedupe CodeMirror + Lezer. The lang packages (lang-json, lang-rust, …)
-    // are lazy-imported as separate chunks and each transitively imports
+    // Dedupe CodeMirror + Lezer (the file editor and the team-chat draft
+    // editor). lang-markdown and
+    // the grammars it nests (html, css, javascript) each transitively import
     // @codemirror/{state,view,language} and @lezer/{common,highlight,lr};
     // without dedup Rollup can ship two copies, and facets/extensions from
     // one copy are invisible to an EditorView built from the other.
@@ -66,6 +67,15 @@ export default defineConfig(() => ({
       // worker is imported separately via `?url`. Two copies would mismatch
       // the worker against the main-thread API version and fail to render.
       "pdfjs-dist",
+      // The design package and the two peers its primitives share with the
+      // app. A second `@base-ui/react` splits the floating-UI contexts (a
+      // menu inside a dialog no longer sees its parent), and a second
+      // `motion` splits `LayoutGroup`/`MotionConfig`. While the package is
+      // `bun link`ed it resolves peers from its own node_modules, which is
+      // exactly the duplicate this prevents (the package's README).
+      "@tryatlas/design",
+      "@base-ui/react",
+      "motion",
     ],
   },
   clearScreen: false,
@@ -82,8 +92,8 @@ export default defineConfig(() => ({
       "@codemirror/view",
       "@codemirror/language",
       "@codemirror/commands",
-      "@codemirror/autocomplete",
       "@codemirror/search",
+      "@codemirror/autocomplete",
       "@lezer/common",
       "@lezer/highlight",
       "@lezer/lr",
@@ -95,6 +105,11 @@ export default defineConfig(() => ({
       "@base-ui/react/dialog",
       "@base-ui/react/context-menu",
       "@base-ui/react/tooltip",
+      // Imported only by the mock-backend script, which `transformIndexHtml`
+      // injects, so the dep scanner never sees it. Undeclared, a cold cache
+      // finds it mid-load and force-reloads the page: two Reacts ("Invalid
+      // hook call"), failed lazy imports, and dropped IPC callbacks.
+      "@tauri-apps/api/mocks",
       // Pre-bundle the Tiptap stack so opening the Knowledge tab for
       // the first time doesn't trigger Vite's "new dependencies
       // optimized → reloading" cycle (which dumps editor state and
@@ -183,22 +198,24 @@ export default defineConfig(() => ({
       output: {
         codeSplitting: {
           groups: [
-            // Tiny shared utils, highest priority. `cn()` (clsx +
-            // tailwind-merge) is used all over the eager boot path AND by
-            // react-pdf. Left to a lower priority, clsx gets folded into
-            // `vendor-pdf`, so the entry imports a 200-byte function from a
-            // 425 KB chunk and preloads all of pdfjs before first paint —
-            // silently defeating the lazy `PdfViewer` boundary in
-            // center-panel.tsx. `\0vite/preload-helper` (the `__vitePreload`
-            // runtime) rides along for the same reason: it is needed eagerly,
-            // and wherever it lands the entry must import that chunk.
+            // Tiny shared utils, highest priority. clsx is used on the eager
+            // boot path (class-variance-authority) AND by react-pdf. Left to a
+            // lower priority, clsx gets folded into `vendor-pdf`, so the entry
+            // imports a 200-byte function from a 425 KB chunk and preloads all
+            // of pdfjs before first paint — silently defeating the lazy
+            // `PdfViewer` boundary in center-panel.tsx.
+            // `\0vite/preload-helper` (the `__vitePreload` runtime) rides along
+            // for the same reason: it is needed eagerly, and wherever it lands
+            // the entry must import that chunk. `cn` is the class merger
+            // `@tryatlas/design` and `@/lib/utils` share: eager, and the same
+            // risk.
             {
               name: "vendor-utils",
               priority: 100,
               test: (id) =>
                 !id.endsWith(".css") &&
                 (id.includes("/node_modules/clsx/") ||
-                  id.includes("/node_modules/tailwind-merge/") ||
+                  id.includes("/node_modules/cn/") ||
                   id.includes("vite/preload-helper")),
             },
             // Exact package roots only — NOT a `/react/` substring (which
@@ -215,19 +232,17 @@ export default defineConfig(() => ({
                   id.includes("/node_modules/scheduler/")),
             },
             // `@codemirror/lang-*` is deliberately absent from every group, so
-            // each grammar keeps its own chunk. They are dynamically imported
-            // per-language in editor/lib/languages.ts; capturing them here
-            // collapses all 13 lazy boundaries into one chunk, so opening a
-            // JSON file would load every grammar. `@lezer/{common,highlight,lr}`
-            // are core runtime, not grammars, and stay with the editor chunk.
+            // the grammars ride with the team-chat draft editor that imports
+            // them rather than with the core runtime every CodeMirror consumer
+            // loads. `@lezer/{common,highlight,lr}` are core runtime, not
+            // grammars, and stay in this chunk.
             {
               name: "vendor-codemirror",
               priority: 80,
               test: (id) =>
                 !id.endsWith(".css") &&
                 !id.includes("@codemirror/lang-") &&
-                (id.includes("@codemirror") ||
-                  /@lezer\/(common|highlight|lr)\//.test(id)),
+                (id.includes("@codemirror") || /@lezer\/(common|highlight|lr)\//.test(id)),
             },
             {
               name: "vendor-xterm",
@@ -257,8 +272,36 @@ export default defineConfig(() => ({
                 (id.includes("react-markdown") ||
                   id.includes("remark-") ||
                   id.includes("rehype-") ||
-                  id.includes("shiki") ||
                   id.includes("highlight.js")),
+            },
+            // The diff viewer: `@pierre/diffs` and Shiki's core, reached only
+            // through the lazy diff panel. BELOW vendor-markdown on purpose: the
+            // two share hast utilities (`hast-util-to-html` and its tree), and
+            // a group captures its modules' dependencies, so at a higher
+            // priority this chunk took them and the eagerly-loaded markdown
+            // chunk then imported it, preloading the whole viewer at startup.
+            //
+            // Grammars, themes and the Oniguruma WASM are deliberately NOT in
+            // it. Shiki imports each grammar dynamically, so each keeps its own
+            // chunk and a TypeScript diff loads TypeScript alone; capturing them
+            // here would collapse ~300 lazy boundaries into one multi-MB chunk
+            // fetched on first open. The WASM is loaded by the workers, which
+            // Vite bundles separately (`?worker`), so it never enters this one.
+            {
+              name: "vendor-diffs",
+              priority: 55,
+              test: (id) =>
+                !id.endsWith(".css") &&
+                id.includes("node_modules") &&
+                (id.includes("/@pierre/diffs/") ||
+                  id.includes("/@pierre/theming/") ||
+                  id.includes("/shiki/") ||
+                  id.includes("/@shikijs/")) &&
+                !id.includes("/@shikijs/langs/") &&
+                !id.includes("/@shikijs/themes/") &&
+                !id.includes("/shiki/dist/langs") &&
+                !id.includes("/shiki/dist/themes") &&
+                !/wasm/i.test(id),
             },
             {
               name: "vendor-base-ui",
@@ -274,8 +317,7 @@ export default defineConfig(() => ({
               name: "vendor-pdf",
               priority: 30,
               test: (id) =>
-                !id.endsWith(".css") &&
-                (id.includes("pdfjs-dist") || id.includes("react-pdf")),
+                !id.endsWith(".css") && (id.includes("pdfjs-dist") || id.includes("react-pdf")),
             },
             {
               name: "vendor-tauri",
@@ -352,8 +394,6 @@ export default defineConfig(() => ({
         "./src/styles/globals.css",
         "./src/features/layout/components/app-layout.tsx",
         "./src/features/layout/components/center-panel.tsx",
-        "./src/features/layout/components/left-panel.tsx",
-        "./src/features/layout/components/right-panel.tsx",
         "./src/features/layout/stores/layout-store.ts",
         "./src/features/app/stores/app-store.ts",
         "./src/features/app/components/welcome-screen.tsx",
@@ -363,8 +403,8 @@ export default defineConfig(() => ({
         "./src/features/chat/stores/chat-store.ts",
         "./src/features/chat/lib/agents-api.ts",
         "./src/components/titlebar.tsx",
-        "./src/components/command-palette.tsx",
-        "./src/components/atlas-icon.tsx",
+        "./src/features/command-palette/components/command-palette.tsx",
+        "./src/components/brand-marks/atlas.tsx",
       ],
     },
   },

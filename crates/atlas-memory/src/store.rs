@@ -43,8 +43,12 @@ impl HnswStore {
     /// Reload a persisted index from `path`, validating its dimensionality.
     pub fn load(path: &Path, dim: usize) -> Result<Self> {
         let index = Index::new(&Self::options(dim)).map_err(|e| anyhow!("usearch new: {e}"))?;
-        let p = path.to_str().ok_or_else(|| anyhow!("non-utf8 path"))?;
-        index.load(p).map_err(|e| anyhow!("usearch load: {e}"))?;
+        // Read here, not by usearch: its C `fopen` reads a UTF-8 path in the
+        // ANSI code page on Windows, so a non-ASCII project folder fails.
+        let bytes = std::fs::read(path)?;
+        index
+            .load_from_buffer(&bytes)
+            .map_err(|e| anyhow!("usearch load: {e}"))?;
         let loaded_dim = index.dimensions();
         if loaded_dim != dim {
             return Err(anyhow!(
@@ -60,8 +64,13 @@ impl HnswStore {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let p = path.to_str().ok_or_else(|| anyhow!("non-utf8 path"))?;
-        self.index.save(p).map_err(|e| anyhow!("usearch save: {e}"))
+        // Written here for the same reason as `load`.
+        let mut bytes = vec![0; self.index.serialized_length()];
+        self.index
+            .save_to_buffer(&mut bytes)
+            .map_err(|e| anyhow!("usearch save: {e}"))?;
+        std::fs::write(path, &bytes)?;
+        Ok(())
     }
 
     /// Number of live vectors.

@@ -329,7 +329,8 @@ pub async fn memory_policy_update(
     old_text: String,
     new_text: String,
 ) -> Result<(), String> {
-    if !is_allowed_memory_path(&file_path) {
+    let home = dirs::home_dir().unwrap_or_default();
+    if !allowed_memory_path(&home, Path::new(&file_path)) {
         return Err("path not allowed".into());
     }
     if old_text.is_empty() {
@@ -350,11 +351,79 @@ pub async fn memory_policy_update(
     .map_err(|e| format!("update task: {e}"))?
 }
 
-fn is_allowed_memory_path(p: &str) -> bool {
-    let home = dirs::home_dir().unwrap_or_default();
-    let path = Path::new(p);
-    path.starts_with(home.join(".claude"))
-        || path.starts_with(home.join(".codex"))
-        || p.ends_with("CLAUDE.md")
-        || p.ends_with("AGENTS.md")
+/// Whether the Policy editor may rewrite `p`: an existing file that, once
+/// every symlink and `..` is resolved, sits under `~/.claude` or `~/.codex`,
+/// or is named exactly `CLAUDE.md` / `AGENTS.md`. Judged on the resolved
+/// path, so `~/.claude/../.zshrc` and a symlink named `AGENTS.md` pointing
+/// at a dotfile are both refused.
+fn allowed_memory_path(home: &Path, p: &Path) -> bool {
+    let Ok(real) = dunce::canonicalize(p) else {
+        return false;
+    };
+    if !real.is_file() {
+        return false;
+    }
+    let under = |dir: &str| {
+        let base = home.join(dir);
+        let base = dunce::canonicalize(&base).unwrap_or(base);
+        real.starts_with(&base)
+    };
+    let named = real
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n == "CLAUDE.md" || n == "AGENTS.md");
+    under(".claude") || under(".codex") || named
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::allowed_memory_path;
+
+    #[test]
+    fn only_agent_memory_files_may_be_edited() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        std::fs::create_dir_all(home.join(".claude/projects/x/memory")).unwrap();
+        std::fs::write(home.join(".claude/projects/x/memory/a.md"), "a").unwrap();
+        std::fs::write(home.join(".zshrc"), "z").unwrap();
+        let proj = tmp.path().join("proj");
+        std::fs::create_dir_all(&proj).unwrap();
+        std::fs::write(proj.join("CLAUDE.md"), "c").unwrap();
+        std::fs::write(proj.join("NOTCLAUDE.md"), "n").unwrap();
+
+        assert!(allowed_memory_path(
+            &home,
+            &home.join(".claude/projects/x/memory/a.md")
+        ));
+        assert!(allowed_memory_path(&home, &proj.join("CLAUDE.md")));
+        assert!(
+            !allowed_memory_path(&home, &home.join(".claude/../.zshrc")),
+            "`..` out of the memory dir"
+        );
+        assert!(
+            !allowed_memory_path(&home, &proj.join("NOTCLAUDE.md")),
+            "suffix is not the name"
+        );
+        assert!(
+            !allowed_memory_path(&home, &home.join(".claude/missing.md")),
+            "must exist"
+        );
+        assert!(
+            !allowed_memory_path(&home, &home.join(".claude/projects")),
+            "a directory is not a memory file"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_named_like_a_memory_file_is_judged_by_its_target() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(home.join(".zshrc"), "z").unwrap();
+        let proj = tmp.path().join("proj");
+        std::fs::create_dir_all(&proj).unwrap();
+        std::os::unix::fs::symlink(home.join(".zshrc"), proj.join("AGENTS.md")).unwrap();
+        assert!(!allowed_memory_path(&home, &proj.join("AGENTS.md")));
+    }
 }

@@ -18,7 +18,7 @@ import { fileURLToPath } from "node:url";
  * - **The upstream product the engine was forked from.** Its name is also
  *   the name of a *different* product Atlas runs as a third-party ACP agent
  *   (OpenAI's Codex CLI), which the app layer may talk about by name. So in
- *   the engine's own territory — the vendored tree, the seam crate, the
+ *   the engine's own territory — the engine tree, the seam crate, the
  *   manifests, CI, the contract tests, the living docs — the word is banned
  *   outright; everywhere else only its engine-shaped spellings are: crate
  *   and module identifiers, its env vars, its dot-directory, the old vendor
@@ -91,7 +91,7 @@ const UPSTREAM_RESIDUE: [pattern: RegExp, reason: string][] = [
   ],
   [
     /^tests\/vendor-licensing\.test\.ts$/,
-    "names the path the engine was vendored under, where its git history lives",
+    "names the path the engine was first imported under, where its git history lives",
   ],
   [/^tests\/no-legacy-names\.test\.ts$/, "this file"],
   [
@@ -117,6 +117,11 @@ const ALLOWED_LINES: [pattern: RegExp, reason: string][] = [
   ],
   [/codex-acp|@openai\/codex|codex-(darwin|linux|win32)/, "third-party Codex CLI packages"],
   [/`codex-login`/, "the third-party Codex CLI's slash command"],
+  [/`~\/\.codex`/, "the third-party Codex CLI's home directory, which Atlas never reads"],
+  [
+    /the Memory panel's Codex thread list/,
+    "CONTEXT.md's flagged exception names the third-party CLI",
+  ],
 ];
 
 /** Files whose bytes are not text; never read. */

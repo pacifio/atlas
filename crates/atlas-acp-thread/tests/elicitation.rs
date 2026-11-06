@@ -1,6 +1,4 @@
-//! Elicitation-store tests, adapted from Zed's `acp_thread` suite
-//! (`~/Codes/zed-ref/crates/acp_thread/src/acp_thread.rs`, the elicitation
-//! tests around `test_form_elicitation_accepts_response` onwards).
+//! Elicitation-store tests.
 //!
 //! The invariants under test are the ones an agent's `elicitation/create` call
 //! is blocked on: it must always get exactly one answer, and never zero.
@@ -67,8 +65,6 @@ fn status_of(store: &ElicitationStore, id: &ElicitationEntryId) -> String {
         .unwrap()
         .to_string()
 }
-
-/// Adapted from `test_form_elicitation_accepts_response`.
 #[tokio::test]
 async fn accepting_a_form_resolves_the_waiter_and_records_accepted() {
     let (mut store, _events) = new_store();
@@ -81,9 +77,6 @@ async fn accepting_a_form_resolves_the_waiter_and_records_accepted() {
     assert_eq!(status_of(&store, &id), "Accepted");
 }
 
-/// Adapted from `test_session_elicitation_ignores_duplicate_response` /
-/// `test_request_elicitation_store_ignores_duplicate_response`.
-///
 /// The oneshot has already been consumed; a second answer must be dropped
 /// rather than panicking or overwriting the recorded status.
 #[tokio::test]
@@ -103,8 +96,6 @@ async fn a_duplicate_response_is_ignored() {
     ));
     assert_eq!(status_of(&store, &id), "Accepted");
 }
-
-/// Adapted from `test_cancel_pending_session_elicitation_resolves_cancel`.
 #[tokio::test]
 async fn cancelling_a_pending_elicitation_resolves_it_as_cancelled() {
     let (mut store, _events) = new_store();
@@ -133,8 +124,6 @@ async fn dropping_the_store_still_answers_the_agent() {
         acp::ElicitationAction::Cancel
     ));
 }
-
-/// Adapted from `test_url_elicitation_can_be_completed`.
 #[tokio::test]
 async fn an_accepted_url_elicitation_can_be_completed() {
     let (mut store, _events) = new_store();
@@ -150,8 +139,6 @@ async fn an_accepted_url_elicitation_can_be_completed() {
     assert_eq!(status_of(&store, &id), "Completed");
 }
 
-/// Adapted from `test_cancel_accepted_url_elicitation_marks_canceled`.
-///
 /// An accepted URL elicitation is still outstanding — the user is off in a
 /// browser — so cancellation is allowed to reach it, unlike other resolved
 /// states.
@@ -169,8 +156,6 @@ async fn an_accepted_url_elicitation_can_still_be_cancelled() {
     assert_eq!(status_of(&store, &id), "Canceled");
 }
 
-/// Adapted from
-/// `test_request_elicitation_store_clear_resolved_preserves_outstanding`.
 #[tokio::test]
 async fn clear_resolved_keeps_pending_and_accepted_url_entries() {
     let (mut store, _events) = new_store();
@@ -194,8 +179,6 @@ async fn clear_resolved_keeps_pending_and_accepted_url_entries() {
     assert!(store.elicitation(&url).is_some());
 }
 
-/// Adapted from `test_cancel_request_scoped_elicitation_resolves_cancel`.
-///
 /// Abandoning one in-flight auth request must cancel only that request's
 /// elicitations, not every outstanding one.
 #[tokio::test]
@@ -214,8 +197,6 @@ async fn cancel_request_only_touches_that_requests_elicitations() {
     assert_eq!(status_of(&store, &mine), "Canceled");
     assert_eq!(status_of(&store, &other), "Pending");
 }
-
-/// Adapted from `test_request_elicitation_store_cancel_all_resolves_cancel`.
 #[tokio::test]
 async fn cancel_all_resolves_every_pending_waiter() {
     let (mut store, _events) = new_store();
@@ -235,8 +216,6 @@ async fn cancel_all_resolves_every_pending_waiter() {
     ));
 }
 
-/// Adapted from `test_url_elicitation_rejects_non_browser_urls`.
-///
 /// This is a security boundary, not validation politeness: the client is about
 /// to hand this URL to the OS browser.
 #[tokio::test]
@@ -262,7 +241,7 @@ async fn a_url_elicitation_must_be_http_or_https_with_a_host() {
         .is_ok());
 }
 
-/// Adapted from `test_elicitation_rejects_unadvertised_mode`: a mode this client
+/// A mode this client
 /// cannot render is refused rather than silently accepted and never answered.
 #[tokio::test]
 async fn an_unknown_elicitation_mode_is_rejected() {

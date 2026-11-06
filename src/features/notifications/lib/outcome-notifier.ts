@@ -24,6 +24,7 @@ import {
   type GitRemoteOp,
 } from "./outcome-notifier-rules";
 import { prefsFromSettings } from "./prefs";
+import { sourceControlShown } from "@/features/layout/lib/source-control";
 
 const UPDATE_NOTIFIED_KEY = "atlas:update-notified-version";
 
@@ -81,7 +82,7 @@ export function notifyModelDownload(done: {
 }): void {
   try {
     const name = useModelsStore.getState().list.find((m) => m.id === done.id)?.name ?? done.id;
-    const settingsShowsModels = useSettingsNav.getState().shown === "models" && settingsTabActive();
+    const settingsShowsModels = useSettingsNav.getState().shown === "memory";
     const decision = decideModelDownload(
       { ...done, name, seq: ++modelSeq },
       envFor(settingsShowsModels),
@@ -91,12 +92,6 @@ export function notifyModelDownload(done: {
   } catch (err) {
     console.warn("model download notification failed:", err);
   }
-}
-
-function settingsTabActive(): boolean {
-  const layout = useLayoutStore.getState();
-  const shown = [layout.activeTabId, ...Object.values(layout.activeByGroup)];
-  return shown.some((id) => id && layout.tabs.find((t) => t.id === id)?.type === "settings");
 }
 
 let gitSeq = 0;
@@ -114,9 +109,8 @@ export function notifyGitRemoteOp(
     const project = ws.projects.find((p) => p.path === repoPath);
     if (!project) return;
     const projectActive = project.id === ws.activeProjectId;
-    const rp = useLayoutStore.getState().rightPanel;
-    const panelShowing =
-      rp.visible && rp.mode === "source-control" && rp.activeSection === "changes";
+    const layout = useLayoutStore.getState();
+    const panelShowing = sourceControlShown(layout) && layout.sourceControl.section === "changes";
     const decision = decideGitOp(
       {
         op,

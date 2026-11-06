@@ -184,7 +184,17 @@ export function ChatCommentsController({ tabId }: { tabId: string }) {
     }
   }, [tabId, comments, linkable, target, setComments]);
 
-  useEffect(() => () => clear(tabId), [tabId, clear]);
+  // Clearing the store entry must also forget the target this instance last
+  // pushed: a hidden pane (an inactive center tab) runs its effect cleanups but
+  // keeps its refs, so on show `resolve` would find the same target, skip
+  // `setTarget`, and leave the store without one — no badge, no faces, no link.
+  useEffect(
+    () => () => {
+      targetRef.current = null;
+      clear(tabId);
+    },
+    [tabId, clear],
+  );
 
   return null;
 }

@@ -131,4 +131,31 @@ describe("useSessionComments", () => {
     expect([...net.values()].every((n) => n === 0)).toBe(true);
     expect(followMock).toHaveBeenCalledTimes(3);
   });
+
+  /// Edit sends only the body, and folds the server's answer — the one with
+  /// `editedAt` stamped — into the thread in place.
+  it("edits a comment's body and shows the server's edited row", async () => {
+    listMock.mockResolvedValue(threadsOf("ses_a"));
+    const edited = {
+      ...comment("ses_a", "c-ses_a"),
+      body: "fixed typo",
+      editedAt: "2026-09-20T10:05:00.000Z",
+    };
+    invokeMock.mockImplementationOnce(async () => edited as never);
+    const { result } = renderHook(() => useSessionComments("rp_1", "ses_a"));
+    await act(async () => {});
+
+    await act(async () => result.current?.actions.edit?.("c-ses_a", "fixed typo"));
+
+    expect(invokeMock).toHaveBeenCalledWith("artifacts_cloud_comment_update", {
+      projectId: "rp_1",
+      sessionId: "ses_a",
+      commentId: "c-ses_a",
+      body: "fixed typo",
+      resolved: null,
+    });
+    const row = result.current?.byAnchor["row-1"];
+    expect(row).toHaveLength(1);
+    expect(row?.[0]).toMatchObject({ body: "fixed typo", editedAt: "2026-09-20T10:05:00.000Z" });
+  });
 });

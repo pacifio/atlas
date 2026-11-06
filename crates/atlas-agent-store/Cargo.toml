@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 atlas-process = { path = "../atlas-process" }
 # The seam this crate implements. `agent-client-protocol` arrives through it at
-# the exact `=2.0.0` pin both stage-1 crates use (`zed-ref/Cargo.toml:518`);
+# the exact `=2.0.0` pin the other ACP crates use;
 # this crate needs no protocol types of its own, so it takes no direct dep
 # rather than pinning a version it would never name.
 atlas-agent-servers = { path = "../atlas-agent-servers" }
@@ -16,8 +16,8 @@ bzip2 = "0.4"
 flate2 = "1"
 futures = "0.3"
 percent-encoding = "2"
-reqwest = { version = "0.12", default-features = false, features = [
-    "rustls-tls",
+reqwest = { version = "0.13", default-features = false, features = [
+    "rustls",
     "stream",
 ] }
 semver = "1"
@@ -37,7 +37,16 @@ tokio = { version = "1", features = [
 ] }
 tracing = "0.1"
 url = "2"
-zip = "8"
+zip = "9.1"
+
+# bzip2 compiled in on Linux rather than linked from the build machine.
+# Debian and Ubuntu name the shared library `libbz2.so.1.0`; Fedora, RHEL
+# and openSUSE name it `libbz2.so.1`. A binary built on Ubuntu that links
+# the system one cannot start on Fedora, so the Linux release links none.
+# Linux-only: features of a target-specific dependency stay on that target
+# (resolver 2), so macOS and Windows build bzip2 exactly as before.
+[target.'cfg(target_os = "linux")'.dependencies]
+bzip2 = { version = "0.4", features = ["static"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }

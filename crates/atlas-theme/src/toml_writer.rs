@@ -15,7 +15,9 @@
 //!  - **The `#:schema` line**, which is a comment and therefore invisible to
 //!    any serialiser, but is what makes the file validate in an editor.
 
-use crate::{Theme, ThemeKeyValue, ThemeVariant, BASE_TOKENS, PALETTE_KEYS};
+use std::collections::BTreeMap;
+
+use crate::{Theme, ThemeKeyValue, ThemeVariant, BASE_TOKENS, FONT_TOKENS, PALETTE_KEYS};
 
 /// The published schema URL, written as the first line of every file we emit.
 pub const SCHEMA_URL: &str = "https://docs.tryatlas.cc/schema/theme-v1.json";
@@ -32,33 +34,53 @@ pub fn theme_to_toml(theme: &Theme) -> String {
     out.push_str(&format!("name = {}\n", quote(&theme.name)));
     out.push_str(&format!("author = {}\n", quote(&theme.author)));
     out.push_str(&format!("license = {}\n", quote(&theme.license)));
+    if !theme.base.is_empty() {
+        out.push_str("\n[base]\n");
+        write_base(&mut out, &theme.base, &BTreeMap::new());
+    }
     for (appearance, variant) in [
         ("dark", theme.dark.as_ref()),
         ("light", theme.light.as_ref()),
     ] {
         if let Some(variant) = variant {
-            write_variant(&mut out, appearance, variant);
+            write_variant(&mut out, appearance, variant, &theme.base);
         }
     }
     out
 }
 
-fn write_variant(out: &mut String, appearance: &str, variant: &ThemeVariant) {
-    out.push_str(&format!("\n[{appearance}.base]\n"));
-    // Documented order first, then anything the schema gains later, so a token
-    // added to BASE_TOKENS without being added here is still written out.
+/// `base` in the documented order, then anything the schema gains later, so a
+/// token added to BASE_TOKENS without being added here is still written out.
+/// Tokens equal to the shared `[base]` are left to it.
+fn write_base(
+    out: &mut String,
+    base: &BTreeMap<String, String>,
+    shared: &BTreeMap<String, String>,
+) {
     let mut written = Vec::new();
-    for token in BASE_TOKENS {
-        if let Some(value) = variant.base.get(*token) {
-            out.push_str(&format!("{} = {}\n", quote(token), quote(value)));
+    for token in BASE_TOKENS.iter().chain(FONT_TOKENS) {
+        if let Some(value) = base.get(*token) {
+            if shared.get(*token) != Some(value) {
+                out.push_str(&format!("{} = {}\n", quote(token), quote(value)));
+            }
             written.push(*token);
         }
     }
-    for (token, value) in &variant.base {
-        if !written.contains(&token.as_str()) {
+    for (token, value) in base {
+        if !written.contains(&token.as_str()) && shared.get(token) != Some(value) {
             out.push_str(&format!("{} = {}\n", quote(token), quote(value)));
         }
     }
+}
+
+fn write_variant(
+    out: &mut String,
+    appearance: &str,
+    variant: &ThemeVariant,
+    shared: &BTreeMap<String, String>,
+) {
+    out.push_str(&format!("\n[{appearance}.base]\n"));
+    write_base(out, &variant.base, shared);
 
     if !variant.palette.is_empty() {
         out.push_str(&format!("\n[{appearance}.palette]\n"));

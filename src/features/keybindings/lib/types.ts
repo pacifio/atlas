@@ -12,6 +12,9 @@
  * `basedOn` names a preset (`presets.ts`) layered between the defaults and
  * the overrides, so "the default" for an absent key is the preset's chord
  * when it has one. An id this build doesn't know is kept on disk and ignored.
+ *
+ * `when` replaces an action's condition (`when.ts`): an expression, or "" for
+ * "always". An absent key keeps the action's own context.
  */
 export interface KeybindingProfile {
   id: string;
@@ -21,6 +24,7 @@ export interface KeybindingProfile {
   builtIn?: boolean;
   basedOn?: string;
   bindings: Record<string, string[] | null>;
+  when?: Record<string, string>;
 }
 
 export interface KeybindingsFile {

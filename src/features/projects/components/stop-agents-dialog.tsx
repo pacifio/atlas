@@ -40,7 +40,7 @@ export function StopAgentsDialog() {
               {pending.count} {plural} still working. {pending.actionLabel} will stop{" "}
               {pending.count === 1 ? "it" : "them"} — the conversation
               {pending.count === 1 ? " stays" : "s stay"} in history, but the in-flight work is
-              cancelled.
+              canceled.
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <button
@@ -48,7 +48,7 @@ export function StopAgentsDialog() {
                 onClick={() => settle(false)}
                 className={cn(
                   pillButton,
-                  "bg-[var(--card)] text-[var(--secondary-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]",
+                  "bg-[var(--card)] text-[var(--secondary-foreground)] hover:bg-element-hover hover:text-[var(--foreground)]",
                 )}
               >
                 Go back

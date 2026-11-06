@@ -1,3 +1,4 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 #![cfg(not(target_os = "windows"))]
 // Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 
@@ -45,7 +46,6 @@ use serde_json::json;
 use wiremock::Mock;
 use wiremock::MockServer;
 use wiremock::ResponseTemplate;
-use wiremock::matchers::body_json;
 use wiremock::matchers::body_partial_json;
 use wiremock::matchers::header;
 use wiremock::matchers::method;

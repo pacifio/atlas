@@ -11,11 +11,11 @@ edits; nothing keeps a link back to the source and nothing re-reads it.
 
 ## The three formats
 
-| format | fidelity | why |
-|---|---|---|
-| shadcn / tweakcn | **native** | Atlas's base tokens *are* shadcn's names (decision 9), so the chrome crosses verbatim |
-| Zed | **near-lossless** | Atlas's theme keys were modelled on Zed's roles; only the shadcn layer has to be invented |
-| VS Code | **lossy** | a workbench theme and an app theme are different things |
+| format           | fidelity          | why                                                                                       |
+| ---------------- | ----------------- | ----------------------------------------------------------------------------------------- |
+| shadcn / tweakcn | **native**        | Atlas's base tokens _are_ shadcn's names (decision 9), so the chrome crosses verbatim     |
+| Zed              | **near-lossless** | Zed's colour roles map onto Atlas's theme keys almost one-to-one; only the shadcn layer has to be invented |
+| VS Code          | **lossy**         | a workbench theme and an app theme are different things                                   |
 
 Every import returns a report — keys **mapped** (the source said this), **derived**
 (Atlas worked it out, and from what) and **ignored** (nowhere to put it, grouped
@@ -33,23 +33,28 @@ four derived status fills on top of those. An import that skipped it would
 produce a theme whose editor is the author's and whose chrome is Atlas's. Each
 colour is taken from the first of:
 
-| palette | source, in order |
-|---|---|
-| `red` | `terminal.ansi.red` → `syntax.tag` → `status.error.foreground` → base `destructive` |
-| `green` | `terminal.ansi.green` → `syntax.string` → `status.success.foreground` |
-| `yellow` | `terminal.ansi.yellow` → `syntax.attribute` → `status.warning.foreground` |
-| `blue` | `terminal.ansi.blue` → `syntax.function` → `status.info.foreground` → base `primary` |
-| `cyan` | `terminal.ansi.cyan` → `syntax.type` |
-| `purple` | `terminal.ansi.magenta` → `syntax.keyword` |
-| `orange` | `syntax.number` → `terminal.ansi.bright_red` |
-| `pink` | `syntax.escape` → `terminal.ansi.bright_magenta` → `syntax.regexp` |
+| palette  | source, in order                                                                     |
+| -------- | ------------------------------------------------------------------------------------ |
+| `red`    | `terminal.ansi.red` → `syntax.tag` → `status.error.foreground` → base `destructive`  |
+| `green`  | `terminal.ansi.green` → `syntax.string` → `status.success.foreground`                |
+| `yellow` | `terminal.ansi.yellow` → `syntax.attribute` → `status.warning.foreground`            |
+| `blue`   | `terminal.ansi.blue` → `syntax.function` → `status.info.foreground` → base `primary` |
+| `cyan`   | `terminal.ansi.cyan` → `syntax.type`                                                 |
+| `purple` | `terminal.ansi.magenta` → `syntax.keyword`                                           |
+| `orange` | `syntax.number` → `terminal.ansi.bright_red`                                         |
+| `pink`   | `syntax.escape` → `terminal.ansi.bright_magenta` → `syntax.regexp`                   |
 
-**Required base tokens.** All 45 are mandatory, so anything the source did not
-supply is filled from a chain of tokens already set (`popover` → `card` →
-`background`, `input` → `border`, `ring` → `primary`, the chart ramp from the
-palette), then from Atlas's default for the appearance. Two are a contrast
-question rather than a chain: `primary-foreground` and `destructive-foreground`
-pick whichever of a light or dark default reads against their surface.
+**Base tokens the source lacks.** No base token is required (ADR-0022), but an
+import fills every one the source did not supply and **pins** it in the file, so
+the theme you previewed is the theme you keep even if a rule changes later.
+The filling is not importer-specific: it is the same `[[base]]` rules in
+`crates/atlas-theme/keys.toml` that any theme leaving a token out resolves
+through — `card` and `border` mixed from `background` toward `foreground` in
+OKLab, `input` ← `border`, `ring` ← `primary`, the chart ramp from the palette,
+and `primary-foreground` / `destructive-foreground` as whichever of the theme's
+own foreground and background reads better on the fill. The report names the
+rule each value came from. The table is in
+[theme keys](theme-keys.md#how-a-missing-base-token-is-derived).
 
 Light variants get a **light shadow ramp**, not the dark one.
 
@@ -67,7 +72,9 @@ name, per variant, with `cssVars.theme` / `@theme` behind both. Colour values
 keep the author's notation: an oklch theme stays oklch. tweakcn's extras land
 where Atlas has a home — `font-sans` / `font-serif` / `font-mono`, `radius`,
 `tracking-normal` (also read from tweakcn's `--letter-spacing`) and the composed
-`shadow-2xs`…`shadow-2xl` ramp.
+`shadow-2xs`…`shadow-2xl` ramp. The font stacks are the one optional set of base
+tokens; a stack both variants share is written once, in the theme's top-level
+`[base]` table (shadcn's `cssVars.theme`), and a user's font setting outranks it.
 
 **Derives.** Nothing beyond the shared machinery, plus `destructive-foreground`,
 which current shadcn registries no longer emit.
@@ -83,13 +90,13 @@ app-owned, so the value stays in the file — dropping it would lose the author'
 intent on a round trip — and the report warns that nothing honours it.
 
 **Not carried, by construction.** shadcn describes application chrome and stops
-there: no editor, no terminal, no syntax, no diff. *Every* Atlas theme key —
+there: no editor, no terminal, no syntax, no diff. _Every_ Atlas theme key —
 the set `crates/atlas-theme/keys.toml` declares and
 [`theme-keys.md`](./theme-keys.md) tabulates — resolves from the base tokens or
 from Atlas's defaults.
 
 **Appearance.** `cssVars.light` / `cssVars.dark` are trusted. In pasted CSS,
-`:root` is the light variant *when a `.dark` block exists to be the other half*;
+`:root` is the light variant _when a `.dark` block exists to be the other half_;
 a dark-only paste is judged by its `background` lightness and filed as dark,
 which the report says.
 
@@ -115,10 +122,10 @@ key is a colour, and the loader rejects a `font_style` by name rather than
 accept one nothing reads, so an italic scope imports upright and the drop is
 listed under "font styles".
 
-**Derives.** All 45 base tokens, since Zed has no shadcn layer. Every source
+**Derives.** The base tokens, since Zed has no shadcn layer. Every source
 below is a ZED style key, not an Atlas one. The judgements worth knowing:
 `primary` ← Zed's `text.accent`, `accent` ← Zed's `element.hover` (shadcn's
-`accent` is a hover *surface*, which is the audit's "accent collision"), `card`
+`accent` is a hover _surface_, which is the audit's "accent collision"), `card`
 and `popover` ← `elevated_surface.background`, `sidebar` and `secondary` ←
 `surface.background`, `destructive` ← `error`, `ring` ← Zed's `border.focused`,
 the chart ramp ← the ANSI blue/green/yellow/magenta/red.
@@ -135,12 +142,30 @@ ramp, and whichever `syntax` scopes are finer than Atlas's 15 roles.
 
 `include` is resolved relative to the file on disk (up to 8 hops, cycle-checked);
 the included file is the base and the including file overrides it, with
-`tokenColors` concatenated so the includer's rules come last. A *pasted* theme
+`tokenColors` concatenated so the includer's rules come last. A _pasted_ theme
 cannot resolve an include, and the report says which file was missed. The
 JSON-with-comments dialect VS Code themes are actually written in is read.
 
 Appearance comes from `type`; with no `type`, from `editor.background`'s
 lightness.
+
+### From Open VSX
+
+**Settings → Appearance → Import theme → Open VSX** searches open-vsx.org for
+extensions that carry a colour theme. As with icon themes, a hit is kept only if
+its real `package.json` declares `contributes.themes`, which is checked before
+it is listed. Converting one downloads the `.vsix` (32 MB cap, 60-second
+timeout), unpacks it into a temporary directory that is deleted when the
+preview returns, and imports every theme `contributes.themes` names, each under
+its label, with the publisher and licence Open VSX lists for it. One extension
+is often a family: GitHub's yields ten candidates, Catppuccin's four.
+
+The themes are read off disk, so `include` resolves as it does for a chosen
+file, except that it may not leave the extension (`ImportOptions::include_root`).
+A contributed `.tmTheme` (a TextMate theme, with no workbench colours) is
+skipped, and so is a path outside the extension; the preview lists what was
+skipped and why (`skipped`). Nothing is fetched except when someone asks, and
+nothing is kept but what they then add.
 
 ### Workbench keys
 
@@ -175,7 +200,7 @@ follows the accent and sidebar tokens), text roles
 
 ### TextMate scope → syntax key
 
-`tokenColors` is a list of rules carrying grammar *selectors*, not roles. A
+`tokenColors` is a list of rules carrying grammar _selectors_, not roles. A
 selector matches a scope when it is a dotted prefix of it (`string` matches
 `string.quoted.double.ts`), and VS Code resolves a token by taking the **longest
 matching selector, later rules winning a tie**. A descendant selector
@@ -185,23 +210,23 @@ considered.
 This importer inverts that: for each Atlas key it holds representative scopes
 and asks which rule VS Code would apply to each, first match winning.
 
-| Atlas key | scopes, in order |
-|---|---|
-| `syntax.comment` | `comment`, `comment.line`, `punctuation.definition.comment` |
-| `syntax.keyword` | `keyword.control`, `keyword`, `storage.type`, `storage.modifier` |
-| `syntax.operator` | `keyword.operator`, `keyword.operator.arithmetic` |
-| `syntax.string` | `string.quoted.double`, `string` |
-| `syntax.escape` | `constant.character.escape` |
-| `syntax.regexp` | `string.regexp` |
-| `syntax.number` | `constant.numeric` |
-| `syntax.constant` | `constant.other`, `constant.language`, `constant`, `variable.language`, `support.constant` |
-| `syntax.type` | `entity.name.type`, `entity.name.class`, `support.type`, `support.class`, `storage.type.class` |
-| `syntax.function` | `entity.name.function`, `support.function`, `meta.function-call` |
-| `syntax.definition` | `entity.name.function.definition`, `entity.name`, `entity.name.namespace` |
-| `syntax.variable` | `variable.other.readwrite`, `variable` |
-| `syntax.property` | `variable.other.property`, `support.type.property-name`, `meta.object-literal.key` |
-| `syntax.tag` | `entity.name.tag` |
-| `syntax.attribute` | `entity.other.attribute-name`, `meta.preprocessor`, `keyword.control.directive` |
+| Atlas key           | scopes, in order                                                                               |
+| ------------------- | ---------------------------------------------------------------------------------------------- |
+| `syntax.comment`    | `comment`, `comment.line`, `punctuation.definition.comment`                                    |
+| `syntax.keyword`    | `keyword.control`, `keyword`, `storage.type`, `storage.modifier`                               |
+| `syntax.operator`   | `keyword.operator`, `keyword.operator.arithmetic`                                              |
+| `syntax.string`     | `string.quoted.double`, `string`                                                               |
+| `syntax.escape`     | `constant.character.escape`                                                                    |
+| `syntax.regexp`     | `string.regexp`                                                                                |
+| `syntax.number`     | `constant.numeric`                                                                             |
+| `syntax.constant`   | `constant.other`, `constant.language`, `constant`, `variable.language`, `support.constant`     |
+| `syntax.type`       | `entity.name.type`, `entity.name.class`, `support.type`, `support.class`, `storage.type.class` |
+| `syntax.function`   | `entity.name.function`, `support.function`, `meta.function-call`                               |
+| `syntax.definition` | `entity.name.function.definition`, `entity.name`, `entity.name.namespace`                      |
+| `syntax.variable`   | `variable.other.readwrite`, `variable`                                                         |
+| `syntax.property`   | `variable.other.property`, `support.type.property-name`, `meta.object-literal.key`             |
+| `syntax.tag`        | `entity.name.tag`                                                                              |
+| `syntax.attribute`  | `entity.other.attribute-name`, `meta.preprocessor`, `keyword.control.directive`                |
 
 The 2026-09-18 key-set cut removed `syntax.boolean`, `syntax.null`,
 `syntax.builtin`, `syntax.meta` and `syntax.punctuation`. Their scopes did not
@@ -226,7 +251,7 @@ writes one is stating its intent more directly than a grammar selector can. Only
 → `syntax.type`; `macro` → `syntax.attribute`; `enumMember` →
 `syntax.constant`; plus `keyword`, `comment`, `string`, `number`, `operator` and
 `regexp` onto their own keys. A selector carrying modifiers
-(`variable.readonly.defaultLibrary`) is a *conditional* rule and cannot be
+(`variable.readonly.defaultLibrary`) is a _conditional_ rule and cannot be
 applied unconditionally, so it is reported rather than used.
 
 ## Export
@@ -241,11 +266,12 @@ TOML instead.
 
 ## Commands
 
-| command | does |
-|---|---|
-| `preview_theme_import({text?, url?, path?, format?})` | converts and reports; writes nothing. `path` is the only source that can resolve a VS Code `include`. A URL is fetched once, http(s) only, 10-second timeout, 4 MB cap, never at startup. |
-| `commit_theme_import(toml, id, name)` | re-parses, renames and re-serialises, then writes `~/.config/atlas/themes/<id>.toml`. The id is slugged, so it cannot escape the directory. |
-| `export_theme_shadcn(id)` | the registry item plus its drop report. |
+| command                                                         | does                                                                                                                                                                                                                                                                                                                                 |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `search_color_themes(query)`                                    | Open VSX extensions whose `package.json` declares `contributes.themes`, in Open VSX's relevance order.                                                                                                                                                                                                                               |
+| `preview_theme_import({text?, url?, path?, format?, openVsx?})` | converts and reports; writes nothing. `path` and `openVsx` are the sources that can resolve a VS Code `include`. A URL is fetched once, http(s) only, 10-second timeout, 4 MB cap, never at startup. `openVsx: {namespace, name, version?}` imports every colour theme the extension carries; `skipped` lists the ones it could not. |
+| `commit_theme_import(toml, id, name)`                           | re-parses, renames and re-serialises, then writes `~/.config/atlas/themes/<id>.toml`. The id is slugged, so it cannot escape the directory.                                                                                                                                                                                          |
+| `export_theme_shadcn(id)`                                       | the registry item plus its drop report.                                                                                                                                                                                                                                                                                              |
 
 No new event channel: the existing `~/.config/atlas/themes` watcher and
 `atlas:themes-changed` refresh the picker.

@@ -23,8 +23,8 @@ use anyhow::Result;
 use atlas_engine_keyring_store::KeyringStore;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
-use rand::TryRngCore;
-use rand::rngs::OsRng;
+use rand::TryRng;
+use rand::rngs::SysRng;
 use serde::Deserialize;
 use serde::Serialize;
 use sha2::Digest;
@@ -358,7 +358,7 @@ fn write_file_atomically(path: &Path, contents: &[u8]) -> Result<()> {
 
 fn generate_passphrase() -> Result<SecretString> {
     let mut bytes = [0_u8; 32];
-    let mut rng = OsRng;
+    let mut rng = SysRng;
     rng.try_fill_bytes(&mut bytes)
         .context("failed to generate random secrets key")?;
     // Base64 keeps the keyring payload ASCII-safe without reducing entropy.
@@ -419,7 +419,7 @@ fn parse_canonical_key(canonical_key: &str) -> Option<SecretListEntry> {
 mod tests {
     use super::*;
     use atlas_engine_keyring_store::tests::MockKeyringStore;
-    use keyring::Error as KeyringError;
+    use keyring_core::Error as KeyringError;
     use pretty_assertions::assert_eq;
 
     static MCP_OAUTH_CACHE_TEST_LOCK: Mutex<()> = Mutex::new(());

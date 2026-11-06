@@ -1,11 +1,10 @@
 //! The ACP registry, as data.
 //!
-//! Ported from `zed-ref/crates/project/src/agent_registry_store.rs`. This is the
-//! marketplace's catalogue and nothing else: it installs nothing, spawns
+//! This is the marketplace's catalogue and nothing else: it installs nothing, spawns
 //! nothing, and an agent appearing here does not make it available. Only an
 //! entry in [`crate::settings::AllAgentServersSettings`] does that.
 //!
-//! Three behaviours are ported deliberately:
+//! Three behaviours are deliberate:
 //!
 //! - **Cache-first.** The last good `registry.json` and its icons live on disk,
 //!   so the marketplace renders instantly and offline.
@@ -195,10 +194,9 @@ impl AgentRegistryStore {
     /// Fetch the registry index and replace the catalogue.
     ///
     /// A refresh already in flight is JOINED, not skipped: the second caller
-    /// waits for it and adopts its outcome. Zed's `pending_refresh` guard
-    /// (`agent_registry_store.rs:203-206`) can return early because its callers
-    /// observe the catalogue reactively; ours returns the catalogue *to the
-    /// caller*, so an early `Ok(())` was a lie — it handed back whatever was in
+    /// waits for it and adopts its outcome. A guard that returned early would
+    /// only suit callers that observe the catalogue reactively; ours returns the
+    /// catalogue *to the caller*, so an early `Ok(())` was a lie — it handed back whatever was in
     /// memory (on a cold start, nothing) and reported success. That is what made
     /// the marketplace show "Registry unavailable" on first open and then fill in
     /// on a manual Refresh: its mount-time refresh collided with the one boot had
@@ -268,8 +266,7 @@ impl AgentRegistryStore {
         }
     }
 
-    /// Replace the catalogue without going to the network. Zed gates the
-    /// equivalent behind `test-support`; here it is also how a host that
+    /// Replace the catalogue without going to the network. It is how a host that
     /// already has the index (a warm start, a test) seeds the store.
     pub fn set_agents(&self, agents: Vec<RegistryAgent>) {
         self.state.lock().unwrap().agents = agents;
@@ -321,7 +318,7 @@ impl AgentRegistryStore {
         self.build_registry_agents(index, &body, true).await
     }
 
-    /// Ported from `agent_registry_store.rs:344-455`. `update_cache` is what
+    /// `update_cache` is what
     /// separates "we just fetched this" (write it down, fetch missing icons)
     /// from "we just read it off disk".
     async fn build_registry_agents(
@@ -491,15 +488,15 @@ fn resolve_icon_url(entry: &RegistryEntry) -> Option<String> {
     ))
 }
 
-/// Registry ids reach the filesystem as icon file names; Zed writes them raw.
-/// This crate sanitizes, for the same reason [`crate::sanitize_path_component`]
+/// Registry ids reach the filesystem as icon file names, so
+/// this crate sanitizes them, for the same reason [`crate::sanitize_path_component`]
 /// exists on the install path.
 fn sanitize_icon_name(id: &str) -> String {
     crate::sanitize_path_component(id)
 }
 
 /// The registry's platform key for this host, or `None` where the registry has
-/// no concept of us. Ported from `agent_registry_store.rs:581-618`.
+/// no concept of us.
 pub fn current_platform_key() -> Option<&'static str> {
     let os = if cfg!(target_os = "macos") {
         "darwin"
@@ -551,11 +548,10 @@ pub(crate) struct RegistryIndex {
 /// document is one failure domain, so one publisher omitting one required
 /// field takes the catalogue with it.
 ///
-/// This is a deliberate divergence from Zed, whose parser is byte-identical
-/// and is *not* wrong — see the note in `lib.rs`. Zed survives a failed parse
-/// because it ships a builtin agent list and a featured-agents page. Atlas
-/// LOCKED the decision to ship neither, so here the registry is the only route
-/// to an external agent and the same failure removes all of them.
+/// That is a deliberate choice — see the note in `lib.rs`. Atlas LOCKED the
+/// decision to ship no builtin agent list and no featured-agents page, so the
+/// registry is the only route to an external agent and one bad entry would
+/// remove all of them.
 ///
 /// The top level stays strict on purpose: a body that is not a registry, or
 /// one with no `agents` array, is still an error. Only the elements are

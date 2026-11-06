@@ -36,7 +36,7 @@ export async function jumpToTerminal(t: TerminalTarget): Promise<boolean> {
     const activeOrg = useOrgStore.getState().activeOrganisationId;
     if (ownerWs?.orgId && activeOrg && ownerWs.orgId !== activeOrg) {
       const org = useOrgStore.getState().organisations.find((o) => o.id === ownerWs.orgId);
-      toast(`Switch to ${org?.name ?? "that organisation"} to open this terminal`);
+      toast(`Switch to ${org?.name ?? "that organization"} to open this terminal`);
       return false;
     }
     if (owner !== ws.activeProjectId) {

@@ -2,7 +2,7 @@
 //
 // The editor, the SVG tab, the media tab and the diff view all read bytes
 // through `invoke()`, so a handful of files with genuine source in them is the
-// difference between CodeMirror mounting on an empty document and CodeMirror
+// difference between the file view mounting on an empty document and it
 // mounting on something a syntax theme can actually be judged against. Each
 // language the editor highlights differently gets one file: TypeScript, TSX,
 // Rust, JSON, Markdown, CSS — plus an SVG, a PNG, and an extensionless dotfile
@@ -12,17 +12,17 @@
 // mtime, so save → reload → diff behaves like a real round trip for the rest of
 // the session. The explorer's context menu writes through the same map — create,
 // rename, delete, copy, duplicate — so a file created in the tree is a file
-// `read_directory`, Cmd+P and the editor all agree exists.
+// `read_directories`, Cmd+P and the editor all agree exists.
 
 import { emit } from "@tauri-apps/api/event";
-import type { FileEntry } from "@/features/explorer/stores/explorer-store";
+import type { DirectoryListing, ProjectEntry } from "@/features/explorer/lib/fs-api";
 import type {
   FileIndexStatus,
   FileMatch,
   FolderMatch,
 } from "@/features/file-picker/lib/file-picker-api";
 import type { RecentFile } from "@/features/chat/stores/recent-files-store";
-import type { SearchResult } from "@/components/search-overlay";
+import type { CodeGrepMatch, CodeGrepResult } from "@/components/code-search-api";
 import type { TypedHandlers, Unread } from "../types";
 import { abs, MOCK_PROJECT } from "../project";
 
@@ -647,6 +647,66 @@ const EXPLORE_IPYNB = JSON.stringify(
   1,
 );
 
+/** A generated module of 10,000 lines: the file the code view's open time and
+ *  scrolling are measured against. Varied enough to keep the highlighter busy. */
+const LARGE_TS = (() => {
+  const lines: string[] = ["// Generated catalogue. Do not edit by hand.", ""];
+  for (let i = 0; lines.length < 9_996; i++) {
+    const id = String(i).padStart(4, "0");
+    lines.push(
+      `/** Entry ${id}: priced in cents, with a stock count and tags. */`,
+      `export const item${id} = { id: "sku-${id}", price: ${(i * 37) % 9_999}, stock: ${(i * 13) % 250}, tags: ["t${i % 7}", "t${i % 11}"] } as const;`,
+      `export function total${id}(qty: number): number {`,
+      `  return qty > 0 ? item${id}.price * qty : 0; // ${i % 3 === 0 ? "bulk" : "single"}`,
+      "}",
+      "",
+    );
+  }
+  lines.length = 9_999;
+  lines.push("export const CATALOGUE_SIZE = 1_666;");
+  return `${lines.join("\n")}\n`;
+})();
+
+const ORDERS_CSV = `order_id,customer,region,items,total_usd,placed_at,status
+A-1001,"Okafor, Ada",EMEA,3,129.50,2026-09-01T09:12:00Z,shipped
+A-1002,Lin Wei,APAC,1,19.99,2026-09-01T10:40:00Z,delivered
+A-1003,"Müller ""Max"" Hans",EMEA,7,412.00,2026-09-02T08:05:00Z,processing
+A-1004,Sofia Reyes,AMER,2,64.10,2026-09-02T14:22:00Z,shipped
+A-1005,Priya Natarajan,APAC,4,233.75,2026-09-03T07:58:00Z,cancelled
+A-1006,Tom Becker,AMER,1,9.00,2026-09-03T16:31:00Z,delivered
+A-1007,Yuki Tanaka,APAC,12,980.40,2026-09-04T03:12:00Z,processing
+A-1008,Amara Diallo,EMEA,5,175.25,2026-09-04T11:47:00Z,shipped
+`;
+
+const METRICS_TSV = `week\tsignups\tactivated\tchurned\tnotes
+2026-W33\t412\t301\t12\tbaseline
+2026-W34\t455\t338\t15\tpricing page test
+2026-W35\t498\t372\t9\t
+2026-W36\t530\t401\t21\toutage on Tuesday
+2026-W37\t611\t467\t14\tlaunch week
+`;
+
+const LANDING_HTML = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Acme: ship faster</title>
+    <style>
+      body { font: 16px/1.5 system-ui, sans-serif; margin: 0; padding: 48px; }
+      .hero { max-width: 640px; }
+      .cta { display: inline-block; padding: 8px 16px; border-radius: 8px; border: 1px solid currentColor; }
+    </style>
+  </head>
+  <body>
+    <main class="hero">
+      <h1>Ship faster with Acme</h1>
+      <p>Everything your team needs to plan, build and release, in one place.</p>
+      <a class="cta" href="#pricing">See pricing</a>
+    </main>
+  </body>
+</html>
+`;
+
 /** Working-tree content, keyed by path relative to the project root. */
 const SEED: Record<string, MockFile> = {
   "src/lib/api.ts": { text: API_TS, mtimeMs: T0 },
@@ -675,6 +735,10 @@ const SEED: Record<string, MockFile> = {
     mtimeMs: T0 - 5_400_000,
   },
   "notebooks/explore.ipynb": { text: EXPLORE_IPYNB, mtimeMs: T0 - 2_700_000 },
+  "src/generated/catalog.ts": { text: LARGE_TS, mtimeMs: T0 - 3_000_000 },
+  "data/orders.csv": { text: ORDERS_CSV, mtimeMs: T0 - 4_000_000 },
+  "data/metrics.tsv": { text: METRICS_TSV, mtimeMs: T0 - 4_100_000 },
+  "public/landing.html": { text: LANDING_HTML, mtimeMs: T0 - 4_200_000 },
   // Seeded so `fs_add_to_gitignore` lands on its dedupe branch — the one every
   // project open hits — instead of always creating the file. Delete it in the
   // explorer to reach the create branch.
@@ -756,8 +820,19 @@ function byteLength(file: MockFile): number {
   return Math.floor(((file.base64?.length ?? 0) * 3) / 4);
 }
 
+/** One entry of a fake directory listing: what `listDir` and the tree builders
+ *  answer, before `directoryListings` makes it root-relative. */
+export interface FileEntry {
+  name: string;
+  path: string;
+  is_dir: boolean;
+  is_symlink: boolean;
+  size: number;
+  extension: string | null;
+}
+
 /**
- * `read_directory` over the fake tree: one level of the seeded file map, with
+ * One level of the fake tree, as `fs::read_dir` would list it, with
  * the directories that contain those files synthesised. Paths outside the
  * project root list as empty rather than throwing — the sidebar asks about
  * every project it knows, and only this one has files.
@@ -765,8 +840,8 @@ function byteLength(file: MockFile): number {
 export function listDir(absPath: string): FileEntry[] {
   const root = MOCK_PROJECT.path;
   if (absPath !== root && !absPath.startsWith(`${root}/`)) return [];
-  // Rust refuses a path that is not a directory outright, and the explorer's
-  // collision probe leans on that failing rather than returning nothing.
+  // Rust refuses a path that is not a directory outright, and the tree's
+  // listing reports that as the folder's error rather than an empty one.
   if (files.has(absPath)) throw new Error(`Not a directory: ${absPath}`);
   const rel = absPath === root ? "" : `${absPath.slice(root.length + 1).replace(/\/$/, "")}/`;
 
@@ -814,6 +889,80 @@ export function listDir(absPath: string): FileEntry[] {
   return [...dirEntries, ...here];
 }
 
+// ── `read_directories`: the new tree's listing ────────────────────────────
+
+/**
+ * Ignored entries layered over a fake project's root, so the tree's dimmed
+ * rows have something to show. Nothing else in the mock sees them: they are
+ * not files, so search, git and the editor stay as they were.
+ */
+const IGNORED: Record<string, ProjectEntry[]> = {
+  "": [
+    { path: "dist", kind: "directory", ignored: true },
+    { path: "node_modules", kind: "directory", ignored: true },
+    { path: ".env.local", kind: "file", ignored: true },
+  ],
+  dist: [
+    { path: "dist/assets", kind: "directory", ignored: true },
+    { path: "dist/index.html", kind: "file", ignored: true },
+  ],
+  "dist/assets": [{ path: "dist/assets/index-4f2a.js", kind: "file", ignored: true }],
+  node_modules: [
+    { path: "node_modules/react", kind: "directory", ignored: true },
+    { path: "node_modules/.package-lock.json", kind: "file", ignored: true },
+  ],
+  "node_modules/react": [{ path: "node_modules/react/package.json", kind: "file", ignored: true }],
+};
+
+const isDirEntry = (entry: ProjectEntry) => entry.kind === "directory";
+const nameOf = (entry: ProjectEntry) => entry.path.slice(entry.path.lastIndexOf("/") + 1);
+
+/**
+ * `read_directories` over any fake tree that one-level `list` answers:
+ * the same listing, made root-relative, with the ignored overlay merged in
+ * when `withIgnored`. Directories first, then case-insensitive by name.
+ */
+export function directoryListings(
+  root: string,
+  paths: string[],
+  list: (absPath: string) => FileEntry[],
+  withIgnored: boolean,
+): DirectoryListing[] {
+  return paths.map((path) => {
+    const overlay = withIgnored ? (IGNORED[path] ?? []) : [];
+    if (withIgnored && path in IGNORED && path !== "") return { path, entries: overlay };
+    try {
+      const entries: ProjectEntry[] = list(path ? `${root}/${path}` : root).map((entry) => ({
+        path: path ? `${path}/${entry.name}` : entry.name,
+        kind: entry.is_symlink ? "symlink" : entry.is_dir ? "directory" : "file",
+      }));
+      // The overlay wins where it repeats a real entry (`.env.local` is both
+      // seeded and ignored): Rust lists each name once, flagged.
+      const overlaid = new Set(overlay.map((entry) => entry.path));
+      const merged = [...entries.filter((entry) => !overlaid.has(entry.path)), ...overlay].sort(
+        (a, b) =>
+          Number(isDirEntry(b)) - Number(isDirEntry(a)) ||
+          nameOf(a).toLowerCase().localeCompare(nameOf(b).toLowerCase()),
+      );
+      return { path, entries: merged };
+    } catch (error) {
+      return { path, entries: [], error: String(error) };
+    }
+  });
+}
+
+/**
+ * Binary files outside any project that `convertFileSrc` must still resolve —
+ * a scenario's cached avatar photos. Kept apart from `files` so they never show
+ * up in the explorer, search or git.
+ */
+const outsideTree = new Map<string, MockFile>();
+
+/** Serve `base64` at the absolute `path` through the `convertFileSrc` stand-in. */
+export function seedAsset(path: string, mime: string, base64: string): void {
+  outsideTree.set(path, { text: null, base64, mime, mtimeMs: T0 });
+}
+
 /**
  * Stand in for Tauri's `convertFileSrc`, which the media viewer uses instead of
  * `invoke()`: its `asset://` URL resolves to nothing in a plain browser, so a
@@ -822,7 +971,8 @@ export function listDir(absPath: string): FileEntry[] {
  * state).
  */
 export function mockAssetUrl(path: string, fallback: (p: string) => string): string {
-  const file = files.get(path.split("?")[0]);
+  const key = path.split("?")[0];
+  const file = files.get(key) ?? outsideTree.get(key);
   if (!file?.base64) return fallback(path);
   // The trailing `#` matters: the media viewer appends its own `?v=<mtime>`
   // cache-buster to whatever comes back, and that would otherwise land inside
@@ -911,44 +1061,22 @@ function stemAndExt(name: string): { stem: string; ext: string | null } {
   return { stem: name.slice(0, dot), ext: name.slice(dot + 1) };
 }
 
-/** The extension allowlist `search.rs` walks, and the names it refuses to enter. */
-const SEARCHABLE_EXTS = new Set([
-  "rs",
-  "ts",
-  "tsx",
-  "js",
-  "jsx",
-  "py",
-  "go",
-  "rb",
-  "java",
-  "c",
-  "cpp",
-  "h",
-  "hpp",
-  "swift",
-  "kt",
-  "css",
-  "scss",
-  "html",
-  "json",
-  "toml",
-  "yaml",
-  "yml",
-  "md",
-  "sh",
-  "bash",
-  "zsh",
-  "sql",
-  "xml",
-  "svg",
-  "txt",
-  "cfg",
-  "ini",
-  "env",
-  "lock",
-]);
-const SEARCH_SKIPPED = new Set(["node_modules", "target", "dist", "build", "__pycache__"]);
+/**
+ * The secret files `code_grep` hides (`atlas_search::DEFAULT_DENY_GLOBS`):
+ * `.env` and `.env.*` but not `.env.example`, `*.pem`, `*.key`, `id_rsa*`,
+ * `id_ed25519*`.
+ */
+function isSecretFile(name: string): boolean {
+  if (name === ".env.example") return false;
+  return (
+    name === ".env" ||
+    name.startsWith(".env.") ||
+    name.endsWith(".pem") ||
+    name.endsWith(".key") ||
+    name.startsWith("id_rsa") ||
+    name.startsWith("id_ed25519")
+  );
+}
 
 /**
  * The "recently opened" queue Rust owns. Seeded, because the `@` picker's
@@ -1000,7 +1128,8 @@ export interface FsResponses {
   fs_duplicate: string;
   fs_add_to_gitignore: Unread;
   fs_open_in_terminal: Unread;
-  search_in_files: SearchResult[];
+  code_grep: CodeGrepResult;
+  read_directories: DirectoryListing[];
 }
 
 export const fsHandlers: TypedHandlers<FsResponses> = {
@@ -1042,8 +1171,8 @@ export const fsHandlers: TypedHandlers<FsResponses> = {
   // — the updated list only reaches the store through the change event.
   recent_files_rename: ({ oldPath, newPath, workspaceId: projectId }): RecentFile[] => {
     // Rust takes `project_id: String`, so Tauri rejects a call that omits it
-    // before the command body ever runs. `file-tree.tsx`'s drag-move does omit
-    // it; faking a success there would hide that.
+    // before the command body ever runs. A caller that omits it (no active
+    // project) must see that failure; faking a success here would hide it.
     if (projectId === undefined) {
       throw new Error(
         "invalid args `workspaceId` for command `recent_files_rename`: command recent_files_rename missing required key workspaceId",
@@ -1106,7 +1235,7 @@ export const fsHandlers: TypedHandlers<FsResponses> = {
   },
 
   // ── explorer context menu ───────────────────────────────────────────────
-  // Every one of these mutates the same map `read_directory` and the editor
+  // Every one of these mutates the same map `read_directories` and the editor
   // read from, so the tree, Cmd+P and any open tab stay in agreement. The
   // failure cases matter more than the happy path here: each one is a toast the
   // explorer renders and nothing else in the app can produce.
@@ -1207,40 +1336,49 @@ export const fsHandlers: TypedHandlers<FsResponses> = {
   // success — the menu item is deliberately the one that shows nothing.
   fs_open_in_terminal: (): null => null,
 
-  // Cmd+Shift+F. Kept here because it reads the same in-memory files, and
-  // because the overlay renders `results.length` straight from the result.
-  search_in_files: ({ path, query, maxResults }): SearchResult[] => {
+  // Cmd+Shift+F. Kept here because it reads the same in-memory files. The
+  // engine's visible rules: literal unless `regex`, case-insensitive unless
+  // `caseSensitive`, `wholeWord` on word boundaries, `.git` and secret files
+  // never read. Paths in order (the engine sorts newest-modified first; the
+  // fixture's mtimes are not what this screen is about).
+  code_grep: ({ path, query, regex, caseSensitive, wholeWord, maxResults }): CodeGrepResult => {
     const root = String(path);
-    if (!isDir(root)) throw new Error("Not a directory");
+    if (!isDir(root)) throw new Error(`io error: session root ${root} is not readable`);
     const max = Number(maxResults ?? 100);
-    const needle = String(query).toLowerCase();
-    const results: SearchResult[] = [];
+    const source = regex ? String(query) : String(query).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const needle = new RegExp(wholeWord ? `\\b(?:${source})\\b` : source, caseSensitive ? "" : "i");
+    const matches: CodeGrepMatch[] = [];
+    const matchedFiles = new Set<string>();
+    let totalMatches = 0;
     for (const rel of mockFilePaths().sort()) {
-      if (results.length >= max) break;
       const segments = rel.split("/");
-      // Rust refuses to enter (or read) anything hidden or vendored, so
-      // `.env.local` and `.gitignore` never appear in results.
-      if (segments.some((name) => name.startsWith(".") || SEARCH_SKIPPED.has(name))) continue;
-      const { ext } = stemAndExt(segments[segments.length - 1] ?? rel);
-      if (ext === null || !SEARCHABLE_EXTS.has(ext)) continue;
+      if (segments.includes(".git") || isSecretFile(segments[segments.length - 1] ?? rel)) continue;
       const text = files.get(abs(rel))?.text;
       if (text === undefined || text === null) continue;
-      // `str::lines()`, so a trailing newline does not invent a final line.
       const lines = text.endsWith("\n") ? text.slice(0, -1).split("\n") : text.split("\n");
       for (const [index, line] of lines.entries()) {
-        if (results.length >= max) break;
-        // Rust reports the FIRST hit on a line, not every one.
-        const at = line.toLowerCase().indexOf(needle);
-        if (at === -1) continue;
-        results.push({
-          file_path: rel,
-          line: index + 1,
-          content: line,
-          match_start: at,
-          match_end: at + needle.length,
-        });
+        if (!needle.test(line)) continue;
+        totalMatches += 1;
+        matchedFiles.add(rel);
+        if (matches.length < max) matches.push({ path: rel, line: index + 1, text: line });
       }
     }
-    return results;
+    return {
+      matches,
+      totalMatches,
+      totalFiles: matchedFiles.size,
+      truncated: totalMatches > matches.length,
+      partial: false,
+    };
   },
+
+  // The new tree's listing: root-relative, with ignored entries flagged. Only
+  // the fake project gets the ignored overlay; other roots list as empty.
+  read_directories: ({ root, paths }): DirectoryListing[] =>
+    directoryListings(
+      String(root),
+      (paths ?? []) as string[],
+      listDir,
+      String(root) === MOCK_PROJECT.path,
+    ),
 };

@@ -18,11 +18,10 @@
 //! **Imported Sessions get no Checkpoints.** The link rule needs
 //! `existed_before` captured at write time, which is unknowable retroactively —
 //! inferring it would manufacture exactly the false attribution the rule exists
-//! to prevent. This is a deliberate divergence from Entire's importer, which
-//! *does* reconstruct checkpoint records from old transcripts. It can, because
-//! its checkpoints are self-contained snapshots making no attribution claim;
-//! Atlas's assert "this Session produced this commit", and imported data cannot
-//! honestly support that. Do not "fix" this later by copying Entire.
+//! to prevent. Reconstructing checkpoint records from old transcripts is sound
+//! only where checkpoints are self-contained snapshots making no attribution
+//! claim; Atlas's assert "this Session produced this commit", and imported data
+//! cannot honestly support that. Do not "fix" this later by reconstructing them.
 //!
 //! **Cross-source dedupe is explicit work here, not a schema guarantee.** The
 //! UNIQUE constraint covers `(project, source, native_id)` and therefore

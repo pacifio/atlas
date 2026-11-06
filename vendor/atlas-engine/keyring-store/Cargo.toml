@@ -9,20 +9,19 @@ license.workspace = true
 workspace = true
 
 [dependencies]
-keyring = { workspace = true, features = ["crypto-rust"] }
+keyring-core = { workspace = true }
 tracing = { workspace = true }
 
-[target.'cfg(target_os = "linux")'.dependencies]
-keyring = { workspace = true, features = ["linux-native-async-persistent"] }
-
+# The per-platform credential store `ensure_default_store` installs. Linux uses
+# the Secret Service; the BSDs are not shipped targets, so they get it too.
 [target.'cfg(target_os = "macos")'.dependencies]
-keyring = { workspace = true, features = ["apple-native"] }
+apple-native-keyring-store = { workspace = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-keyring = { workspace = true, features = ["windows-native"] }
+windows-native-keyring-store = { workspace = true }
 
-[target.'cfg(any(target_os = "freebsd", target_os = "openbsd"))'.dependencies]
-keyring = { workspace = true, features = ["sync-secret-service"] }
+[target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))'.dependencies]
+zbus-secret-service-keyring-store = { workspace = true }
 
 [lib]
 test = false

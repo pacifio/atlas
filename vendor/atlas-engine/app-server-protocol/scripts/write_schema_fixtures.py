@@ -9,7 +9,7 @@ import subprocess
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Regenerate vendored app-server schema fixtures"
+        description="Regenerate checked-in app-server schema fixtures"
     )
     parser.add_argument(
         "--schema-root",

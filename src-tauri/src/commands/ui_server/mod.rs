@@ -11,7 +11,7 @@
 //!   [`UI_ACTION_EVENT`], performed by the frontend through the app's own
 //!   openers and store actions, answered by [`ui_action_respond`]. Rust
 //!   forwards the frontend's JSON verbatim and mirrors no UI state — the
-//!   frontend owns layout and focus (ARCHITECTURE.md). An action the window
+//!   frontend owns layout and focus (docs/architecture.md). An action the window
 //!   does not answer in time is a tool error, never a hung turn.
 //! - **Gated by the user's navigation setting** ([`NavigationGate`]), at
 //!   offer time and on every call.
@@ -62,10 +62,12 @@ pub fn action_event(request: &UiRequest) -> &'static str {
     }
 }
 
-/// Whether the user lets Atlas Agent act on the window (Settings → General →
+/// Whether the user lets Atlas Agent act on the window (Settings → Agents →
 /// "Let Atlas Agent navigate the app"). Checked when a session is offered the
 /// server and on every call, so switching it off stops the agent at once.
-pub type NavigationGate = Arc<dyn Fn() -> bool + Send + Sync>;
+/// Given the session's launch directory: the setting can be overridden per
+/// project.
+pub type NavigationGate = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 
 /// The window's answer to one UI action. An id nobody is waiting on — already
 /// answered, timed out, or never issued — is a harmless no-op.

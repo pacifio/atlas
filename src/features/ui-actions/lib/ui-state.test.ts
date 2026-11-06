@@ -6,9 +6,7 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async () => () => {}), e
 
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useAppStore } from "@/features/app/stores/app-store";
-import { EditorSelection, EditorState } from "@codemirror/state";
-import type { EditorView } from "@codemirror/view";
-import { registerEditorView } from "@/features/editor/lib/editor-views";
+import { positionOfSelection, registerEditorView } from "@/features/editor/lib/editor-views";
 import { buildUiState } from "./ui-state";
 import { seedWindow, tab, uiRequest } from "./test-fixtures";
 
@@ -44,11 +42,11 @@ describe("buildUiState", () => {
 
   it("reports the panels", () => {
     expect(buildUiState(uiRequest("ui_state")).panels).toEqual({
-      left: { visible: true, section: "files" },
-      right: { visible: false, section: "changes", mode: "source-control" },
+      files: { visible: false },
+      teamChat: { visible: false },
+      sourceControl: { visible: false, section: "changes" },
       chatSidebar: true,
       terminalVisible: true,
-      tabBar: true,
       zen: false,
     });
   });
@@ -58,8 +56,13 @@ describe("buildUiState", () => {
   });
 
   it("reports the active editor's cursor and selection, 1-based", () => {
-    const state = EditorState.create({ doc: "a\nbcd\ne", selection: EditorSelection.range(2, 4) });
-    const drop = registerEditorView("editor:/p/src/App.tsx", { state } as unknown as EditorView);
+    const drop = registerEditorView("editor:/p/src/App.tsx", () =>
+      positionOfSelection({
+        start: { line: 1, character: 0 },
+        end: { line: 1, character: 2 },
+        direction: 1,
+      }),
+    );
     expect(buildUiState(uiRequest("ui_state")).activeFile).toEqual({
       path: "/p/src/App.tsx",
       cursor: { line: 2, col: 3 },

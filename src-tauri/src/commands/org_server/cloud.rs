@@ -71,17 +71,17 @@ impl std::fmt::Display for CloudError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::SignedOut(reason) => write!(f, "not signed in to Atlas ({reason}); ask the user to sign in"),
-            Self::Forbidden(reason) => write!(f, "the organisation refused this ({reason})"),
+            Self::Forbidden(reason) => write!(f, "the organization refused this ({reason})"),
             Self::NotFound(reason) => write!(f, "not found ({reason})"),
-            Self::Unavailable(reason) => write!(f, "the organisation could not be reached ({reason}); try again later"),
+            Self::Unavailable(reason) => write!(f, "the organization could not be reached ({reason}); try again later"),
             Self::ChatElsewhere { grant_org, chat_org: Some(chat_org) } => write!(
                 f,
-                "chat is connected to organisation {chat_org}, but this session acts in organisation {grant_org} \
+                "chat is connected to organization {chat_org}, but this session acts in organization {grant_org} \
                  (the one its project is bound to); ask the user to switch chat to {grant_org}"
             ),
             Self::ChatElsewhere { grant_org, chat_org: None } => write!(
                 f,
-                "chat is not connected to an organisation, and this session acts in organisation {grant_org}; \
+                "chat is not connected to an organization, and this session acts in organization {grant_org}; \
                  ask the user to open chat in {grant_org}"
             ),
         }

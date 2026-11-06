@@ -1,5 +1,10 @@
-import type { Theme, ThemeMode } from "./lib/theme-api";
-import { resolveTheme, type ResolvedTheme, type ThemeOverride } from "./resolve-theme";
+import {
+  type Theme,
+  type ThemeMode,
+  resolveTheme,
+  type ResolvedTheme,
+  type ThemeOverride,
+} from "@tryatlas/design/theme";
 
 const STYLE_ID = "atlas-resolved-theme";
 /**
@@ -8,14 +13,28 @@ const STYLE_ID = "atlas-resolved-theme";
  *
  * `html:root` rather than `:root` for the specificity. The boot script creates
  * this `<style>` inside `<head>` before any stylesheet exists, so on a cold
- * start it sits BEFORE `tokens.css`; at plain `:root` the compiled-in Atlas-dark
+ * start it sits BEFORE `@tryatlas/design`'s stylesheet; at plain `:root` the compiled-in Atlas-dark
  * fallbacks there would win on source order and undo the replay. One extra type
  * selector makes the resolved theme win wherever the element sits.
  */
 const THEME_SELECTOR = "html:root";
+
+/**
+ * The selector a surface sets on itself to be drawn in the OTHER appearance.
+ *
+ * A panel over the record — the session reader's share sheet, its comments —
+ * reads as a layer rather than as more of the page when it is the opposite
+ * colour. The web does this with `data-theme="light"` on the element; here the
+ * active theme is written at runtime rather than declared per appearance in
+ * CSS, so the inverted block is emitted alongside it from the same resolve.
+ *
+ * Its own attribute rather than reusing `data-theme`, which already carries
+ * the theme's ID on `<html>` — one attribute, one meaning.
+ */
+const INVERT_SELECTOR = "[data-theme-invert]";
 /**
  * Where `index.html` looks for the last theme at launch. Read by an inline
- * script before any module — and before `tokens.css` — so the first frame
+ * script before any module — and before `@tryatlas/design`'s stylesheet — so the first frame
  * paints in the theme the user chose instead of flashing black.
  */
 const LAUNCH_CACHE_KEY = "atlas:launch-theme";
@@ -28,7 +47,7 @@ let activeTheme: ResolvedTheme | null = null;
  * properties. `vars` is the WHOLE resolved map, which `index.html` writes into
  * the same `<style id="atlas-resolved-theme">` this module owns. It used to be
  * only the seven, and the app's first render — which happens three IPC round
- * trips before the first `applyTheme` — had no `--atlas-*` variable at all:
+ * trips before the first `applyTheme` — had no theme-key variable at all:
  * transparent surfaces, and a dark flash for anyone on a light theme. A couple
  * of hundred short strings is still nothing to parse on the critical path.
  */
@@ -49,16 +68,37 @@ function launchCache(resolved: ResolvedTheme) {
 /** The resolved block's stylesheet text. `index.html` builds the identical
  *  string from the cached `vars`, so the two never disagree about a frame. */
 export function resolvedThemeCss(cssVars: Record<string, string>): string {
-  const declarations = Object.entries(cssVars)
+  return `${THEME_SELECTOR}{${declarations(cssVars)}}`;
+}
+
+function declarations(cssVars: Record<string, string>): string {
+  return Object.entries(cssVars)
     .map(([name, value]) => `${name}:${value}`)
     .join(";");
-  return `${THEME_SELECTOR}{${declarations}}`;
+}
+
+/**
+ * The same theme resolved the other way round, scoped to anything carrying
+ * `data-theme-invert`.
+ *
+ * Every variable is re-declared inside the scope, not only the ones that
+ * differ: `var(--x)` resolves where it is DECLARED and is inherited already
+ * resolved, so a half-declared scope would inherit the page's answers for
+ * everything it left out — white text on a white panel.
+ *
+ * A theme with only one variant resolves to that variant both times, so the
+ * panel simply does not invert. That is `resolveTheme`'s documented fallback
+ * and is better than inventing a palette the theme's author never chose.
+ */
+export function invertedThemeCss(cssVars: Record<string, string>): string {
+  return `${INVERT_SELECTOR}{${declarations(cssVars)}}`;
 }
 
 /**
  * Cache it for the next cold start. Failure is silent and harmless —
- * `index.html` falls back to `tokens.css` and the literals it has always had
- * (a blocked or full store, or a private window, all land there).
+ * `index.html` falls back to the literals it has always had, and the theme
+ * keys wait for the first `applyTheme` (a blocked or full store, or a private
+ * window, all land there).
  */
 function cacheLaunchTheme(cache: ReturnType<typeof launchCache>): void {
   try {
@@ -120,12 +160,23 @@ export function appearanceForMode(mode: ThemeMode): "dark" | "light" {
   return matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
 }
 
+/** `interfaceContrast`, held here because every apply resolves through it;
+ *  the settings store sets it before re-applying. */
+let interfaceContrast = 100;
+
+export function setInterfaceContrast(contrast: number): void {
+  interfaceContrast = contrast;
+}
+
 export function applyTheme(
   theme: Theme,
   mode: ThemeMode,
   themeOverride: ThemeOverride = {},
+  /** A preview (the theme editor's draft) paints the app but is not cached
+   *  for the next launch, so quitting mid-edit never boots into a draft. */
+  { preview = false }: { preview?: boolean } = {},
 ): ResolvedTheme {
-  const resolved = resolveTheme(theme, appearanceForMode(mode), themeOverride);
+  const resolved = resolveTheme(theme, appearanceForMode(mode), themeOverride, interfaceContrast);
   activeTheme = resolved;
   if (typeof document === "undefined") return resolved;
 
@@ -140,10 +191,17 @@ export function applyTheme(
     style.id = STYLE_ID;
     document.head.append(style);
   }
-  style.textContent = resolvedThemeCss(resolved.cssVars);
+  // The page's own appearance, then the other one for any surface that asks.
+  const inverted = resolveTheme(
+    theme,
+    resolved.appearance === "dark" ? "light" : "dark",
+    themeOverride,
+    interfaceContrast,
+  );
+  style.textContent = resolvedThemeCss(resolved.cssVars) + invertedThemeCss(inverted.cssVars);
   const cache = launchCache(resolved);
   applyBootVars(root, cache);
-  cacheLaunchTheme(cache);
+  if (!preview) cacheLaunchTheme(cache);
   window.dispatchEvent(new CustomEvent("atlas:theme-applied"));
   return resolved;
 }

@@ -1,4 +1,4 @@
-//! The vendored engine, behind the seam.
+//! The engine, behind the seam.
 //!
 //! This module used to be gated on the `ported-engine` feature — the
 //! development-time switch of spec Phase 2, kept while the previous native path was
@@ -54,7 +54,7 @@ pub use catalog_cache::{
     ProjectedCatalogue,
 };
 // Re-exported so `src-tauri` names only this crate (the quarantine rule):
-// the org source lives in the vendored API layer because that is where the
+// the org source lives in the engine API layer because that is where the
 // header is attached, but the host registers it from Atlas's auth state.
 pub use atlas_engine_api::atlas_chat::org::set_org_source;
 pub use config::{EngineHome, EngineProvider, EngineSettings, WireDialect};

@@ -1,36 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-
-export type ThemeMode = "system" | "dark" | "light";
-export type ThemeAppearance = "dark" | "light";
-/** The table spelling of a theme key. Rust rejects a `font_style` here:
- *  nothing between a theme key and CodeMirror, highlight.js or the markdown
- *  renderer can carry one, so accepting it would render upright in silence. */
-export type ThemeKeyStyle = { color: string };
-export type ThemeKeyValue = string | ThemeKeyStyle;
-
-export interface ThemeVariant {
-  base: Record<string, string>;
-  palette: Record<string, string>;
-  keys: Record<string, ThemeKeyValue>;
-}
-
-export interface Theme {
-  schema: number;
-  id: string;
-  name: string;
-  author: string;
-  license: string;
-  dark?: ThemeVariant;
-  light?: ThemeVariant;
-  /** Omitted by Rust when there are no forward-compatibility warnings. */
-  warnings?: ThemeWarning[];
-}
-
-export interface ThemeWarning {
-  key: string;
-  message: string;
-}
+import type { Theme, ThemeWarning } from "@tryatlas/design/theme";
 
 export interface ThemeSummary {
   id: string;
@@ -59,6 +29,19 @@ export function listThemes(): Promise<ThemeCatalogSummary> {
 
 export function getTheme(id: string): Promise<Theme> {
   return invoke("get_theme", { id });
+}
+
+/** Where `saveTheme` wrote. */
+export interface SavedTheme {
+  /** The id it was saved under, slugged: what `themeDark`/`themeLight` name. */
+  id: string;
+  path: string;
+}
+
+/** Write a theme from the theme editor to `~/.config/atlas/themes/<id>.toml`.
+ *  It carries only what the author set; the rest derives (ADR-0022). */
+export function saveTheme(theme: Theme): Promise<SavedTheme> {
+  return invoke("save_theme", { theme });
 }
 
 export function onThemesChanged(callback: () => void): Promise<UnlistenFn> {

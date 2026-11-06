@@ -84,7 +84,7 @@ async function pageWrite(request: UiActionRequest) {
   const chatOrg = useCommsStore.getState().connection.orgId;
   if (chatOrg !== orgId) {
     throw new Refusal(
-      "the Atlas window's organisation chat is not on this chat's organisation; ask the user to switch to it",
+      "the Atlas window's organization chat is not on this chat's organization; ask the user to switch to it",
     );
   }
   return writeSpacePage(appSpaceTransport, { convId, pageId }, readDiagram(request.args.document));
@@ -96,7 +96,7 @@ export async function performOrgWindowAction(request: UiActionRequest): Promise<
       case "org_page_write":
         return ok(await pageWrite(request));
       default:
-        return fail(`unknown organisation window action "${request.tool}"`);
+        return fail(`unknown organization window action "${request.tool}"`);
     }
   } catch (e) {
     if (e instanceof PageWriteRefusal) return fail(e.message);

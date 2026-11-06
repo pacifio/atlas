@@ -17,6 +17,7 @@
 
 pub mod css;
 mod draft;
+pub mod extension;
 pub mod report;
 mod shadcn;
 mod vscode;
@@ -93,7 +94,7 @@ impl ImportFormat {
             Self::Shadcn => "shadcn registry item",
             Self::ShadcnCss => "shadcn CSS",
             Self::Zed => "Zed theme",
-            Self::VsCode => "VS Code colour theme",
+            Self::VsCode => "VS Code color theme",
         }
     }
 }
@@ -108,6 +109,11 @@ pub struct ImportOptions {
     pub name_hint: Option<String>,
     pub author_hint: Option<String>,
     pub license_hint: Option<String>,
+    /// A directory a VS Code `include` may not leave: an unpacked extension's
+    /// root, so a theme file cannot pull some other file off the disk into the
+    /// preview with `"include": "../../…"`. `None` for a file the user chose,
+    /// whose siblings are theirs to name.
+    pub include_root: Option<PathBuf>,
 }
 
 /// One converted theme: the file to write, and the story of how it was made.
@@ -172,7 +178,7 @@ pub fn import_themes(
     let format = format.or_else(|| detect_format(source)).ok_or_else(|| {
         crate::validation(
             &options.origin,
-            "unrecognised theme format: expected a shadcn registry item, a shadcn globals.css, a Zed theme family, or a VS Code colour theme",
+            "unrecognized theme format: expected a shadcn registry item, a shadcn globals.css, a Zed theme family, or a VS Code color theme",
         )
     })?;
     match format {
@@ -226,6 +232,7 @@ fn finish_theme(
             .license_hint
             .clone()
             .unwrap_or_else(|| "Unknown".to_string()),
+        base: Default::default(),
         dark: None,
         light: None,
         warnings: Vec::new(),
@@ -244,6 +251,7 @@ fn finish_theme(
     report.variants.sort();
     report.variants.dedup();
     report.finish();
+    hoist_shared_fonts(&mut theme);
 
     let toml = theme_to_toml(&theme);
     let theme = parse_theme(&toml, &options.origin)?;
@@ -333,6 +341,13 @@ fn resolve_includes(
         };
         let path = current_dir.join(&target);
         let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+        if let Some(root) = &options.include_root {
+            let root = root.canonicalize().unwrap_or_else(|_| root.clone());
+            if !canonical.starts_with(&root) {
+                unresolved.push(format!("{target} (outside the extension)"));
+                break;
+            }
+        }
         if !seen.insert(canonical) {
             unresolved.push(format!("{target} (cycle)"));
             break;
@@ -474,6 +489,24 @@ fn strip_jsonc(source: &str) -> String {
         }
     }
     out
+}
+
+/// A font stack every variant agrees on is written once, in the shared
+/// `[base]`, the way shadcn keeps it in `cssVars.theme` — so the file reads
+/// as "this theme uses Montserrat", not as two copies that could drift.
+fn hoist_shared_fonts(theme: &mut Theme) {
+    let variants = [theme.dark.as_ref(), theme.light.as_ref()]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    for token in crate::FONT_TOKENS {
+        let mut values = variants.iter().map(|variant| variant.base.get(*token));
+        if let Some(Some(first)) = values.next() {
+            if values.all(|value| value == Some(first)) {
+                theme.base.insert((*token).to_string(), first.clone());
+            }
+        }
+    }
 }
 
 #[cfg(test)]

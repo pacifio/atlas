@@ -13,7 +13,7 @@ installed ACP agent) shares it without special-casing.
 > extraction/persistence and the embedding-provider trait (`src/session.rs`,
 > `src/embedding.rs`) came from the SDK, which was deleted in #54; they are
 > Atlas's own code now. `tests/behaviour.rs` pins their behaviour — run it before
-> touching either. The ported grafeo graph store, its consolidation pass and the
+> touching either. The grafeo graph store, its consolidation pass and the
 > dream gates were removed in #89 (retrieval is HNSW-only; global promotion runs
 > over the record table).
 
@@ -52,14 +52,16 @@ store promotes Facts seen in two or more repositories.
     `MemorySearch = Fn(cwd, query, limit) -> Vec<MemDoc>` callback that
     `commands/agents.rs` installs with
     `atlas_native_agent::engine::memory::register_search`;
-  - the per-send `--- RELEVANT PROJECT MEMORY ---` block, pushed into every
-    agent's prompt when memory sharing is enabled for the project.
+  - the memory MCP server's `memory_search` tool, which every ACP agent is
+    offered (over HTTP, or the stdio bridge, ADR-0019) when memory sharing is
+    enabled for the project: `commands/agents.rs` passes it an `IndexSearch`
+    callback over `retrieve`, so its answer includes the indexed documents.
 
   Changing the engine never touches the agents.
 
 ```
-native agent ──search_memory──▶ MemorySearch callback ──┐
-any agent ──send (sharing on)──▶ pushed memory block ────┴─▶ memory_retrieve::retrieve
+native agent ──search_memory──▶ MemorySearch callback ────┐
+ACP agent ──memory_search (MCP)──▶ IndexSearch callback ──┴─▶ memory_retrieve::retrieve
                                                                 └─▶ registry.engine_for(cwd)
                                                                       └─▶ MemoryEngine::retrieve   (atlas-memory)
 ```
@@ -70,9 +72,9 @@ any agent ──send (sharing on)──▶ pushed memory block ────┴�
 
 ### 3a. "I just want the agents to recall project memory"
 Nothing to do — it's wired. The **native agent** has a `search_memory` tool it
-calls on demand; with memory sharing enabled for the project, **every agent**
-(ACP agents have no pull tool) also gets the top hits *pushed* into its prompt
-on each send. Indexing happens automatically: on project open
+calls on demand; with memory sharing enabled for the project, **every ACP
+agent** gets the memory MCP tools and pulls the same hits through
+`memory_search`. Nothing is pushed into a prompt. Indexing happens automatically: on project open
 (cold index), on file changes (watched + debounced), and after each finished turn.
 
 ### 3b. "I want to force a reindex"
@@ -117,7 +119,7 @@ job carries a `cwd`** so multiple open projects stay isolated.
 | Trigger | Job |
 |---|---|
 | Project opened (first `engine_for`) | one cold `IndexCorpus{cwd}` + one `Compact{cwd}` (global promotion) |
-| Watched file changes (`*.md`, `CLAUDE.md`, `AGENTS.md`, `codebase-index/docs.json`), debounced ~2s | `IndexCorpus{cwd}` |
+| Watched file changes (`*.md`, `CLAUDE.md`, `AGENTS.md`), debounced ~2s | `IndexCorpus{cwd}` |
 | A chat turn finishes | `IndexCorpus{cwd}` (always) + `ExtractSession{cwd,writer,turns}` (the extractor's gated pass) |
 | A session ends | `SessionEnded{cwd,writer}` (the extractor's one end-of-session pass) |
 | An extractor pass stored entries | `IndexCorpus{cwd}` + `Compact{cwd}` |
@@ -158,11 +160,16 @@ Per project, under `<project>/.atlas/memory/`:
 
 | File | What |
 |---|---|
-| `hnsw.usearch` | the persistent usearch HNSW index (vectors) |
-| `manifest.json` | `{provider_name, dim, next_key, entries:[{id,key,content_hash,corpus,mtime}]}` — id↔u64 key map + incremental ledger |
-| `docstore.json` | `id -> {title, source, text}` for building results (vectors alone have no text) |
-| `memory.sqlite` | the shared-memory record store (see `src/record.rs`) |
+| `corpus.sqlite` | the corpus index (`src/corpus.rs`): one row per doc (id, text, content hash, corpus), BM25 rows, and the embedding cache keyed by `(model, text)` |
+| `corpus.<model>.usearch` | the vectors of one model: a projection rebuilt from `corpus.sqlite`'s cache whenever it is missing, torn or out of step, without the model |
+| `memory.sqlite` | the shared-memory record store (see `src/record.rs`): revisions (canonical), entries (the current view), BM25, the vector cache, links, handoff notes, feedback, dream proposals |
+| `memory.snapshot.sqlite` | the record's daily snapshot (`VACUUM INTO`), restored when an open finds the record damaged |
+| `memory.sqlite.corrupt-<ms>` | a damaged record set aside on open, kept as evidence |
 | `extracted/*.md` | legacy session-extraction output (memdir; migrated, no longer written) |
+
+`hnsw.usearch`, `manifest.json` and `docstore.json` (the corpus index before
+M1) are deleted on first open: they are derived, and the corpus is embedded
+again once.
 
 Left behind by older versions and no longer read (safe to delete): `graph/`
 (the grafeo store), `.shared-memory-imported`, `.consolidation_state.json`,
@@ -223,11 +230,59 @@ Tune the consts in `retrieve.rs` / `global.rs`.
 | `docstore.rs` | `id -> {title,source,text}` side store |
 | `retrieve.rs` | HNSW retrieve + floor + dedup + global blend |
 | `extract.rs` | the extractor: gates, four-kind prompt with confidence, parser (model call injected; entries land in the record store via `src-tauri/src/commands/memory_extract.rs`) |
-| `record.rs` | the shared-memory record store (+ `record/legacy.rs`, the one-time import of the legacy event log and memdir) |
+| `record.rs` | the shared-memory record store (+ `record/legacy.rs`, the one-time import of the legacy event log and memdir): revisions, hash chain, hybrid search, CAS, purge, feedback, links, episodes, dream proposals |
+| `corpus.rs` | the corpus index: `corpus.sqlite` plus a per-model vector file that heals from the embedding cache |
+| `health.rs` | the reconciler: checks, repairs, snapshot, expiry |
+| `citation.rs` | code citations and their validation; commit-evidence validity |
+| `consolidate.rs` | merge proposals and contradiction links |
+| `handoff.rs` | the handoff note a session leaves |
+| `dream.rs` | the dream pass's prompt, parser and validator (pure) |
+| `amr.rs` | the Agent Memory Repo line format |
 | `global.rs` | Fact promotion over the record table + global recall |
 
 App layer: `src-tauri/src/commands/memory_indexer.rs` (registry + indexer + watcher
 + `force_reindex`), `memory_retrieve.rs` (the seam wiring).
+
+---
+
+## 9b. The shared-memory record since M0–M4
+
+The record (`record.rs`) is what every agent reads and writes through the
+memory tool server. The memory plan
+(`docs/superpowers/plans/2026-10-03-memory-system/`) changed it in five steps;
+ADR-0017, ADR-0018 and ADR-0019 hold the decisions.
+
+- **Revisions are canonical (M1, ADR-0017).** Every write appends an
+  immutable revision, sealed into a blake3 hash chain; `entries` is the
+  current view and can be rebuilt from them. Only `clear` and `purge` delete a
+  revision. A keyed replace of another writer's entry needs the
+  `expected_revision` it read. Seven kinds: the six of `CONTEXT.md` plus
+  **preference**, briefed first. Each entry has a **state**: active,
+  candidate (captured, unconfirmed, never briefed) or archived.
+- **Search is hybrid.** BM25 (`entries_fts`, porter stemming) and dense
+  vectors (cached by `(model, text)`) fused by RRF; every hit says which legs
+  found it.
+- **The reconciler (M2, `health.rs`).** A health pass per project on open,
+  every 30 minutes and after a model switch rebuilds every derived thing
+  (view, BM25, vectors, corpus file) from canonical data, snapshots the record
+  daily, quarantines a damaged file and restores the snapshot, and reports a
+  broken hash chain without repairing it until the user accepts the edit.
+- **Evidence (M3, ADR-0018, `citation.rs`).** `memory_remember` can cite code;
+  the server hashes the lines. Every read checks them (`valid`, `moved`,
+  `stale`, `unverifiable`); stale memories leave the briefing. Uncited
+  decisions, facts and architecture notes get commit evidence from the
+  session recorder. Unused candidates and unused stale memories archive after
+  28 days.
+- **The loop (M4).** `memory_feedback` (useful / wrong / stale); a review
+  queue; deterministic consolidation (`consolidate.rs`: merge proposals,
+  `contradicts` links); a handoff note per finished session (`handoff.rs`)
+  served in the next briefing; a daily dream pass that only proposes
+  (`dream.rs`, setting `memoryDreams`, off); an Agent Memory Repo mirror and
+  import (`amr.rs`, setting `memoryRepoMirror`, off); `memory_why`.
+
+The session recorder (`atlas-checkpoint`) is read, never written: provenance,
+commit evidence, the handoff's facts, rewound turns and `memory_why` come from
+it at read time and nothing from it is stored in `memory.sqlite`.
 
 ---
 

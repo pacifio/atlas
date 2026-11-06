@@ -1,11 +1,10 @@
 //! What the manager needs to know about installed agents.
 //!
-//! Zed's connection store reads `project.agent_server_store()` directly. The
-//! trait here is that same read surface, named — [`AgentServerStore`]
-//! implements it, and a test can stand in something simpler than a store with a
-//! registry, an HTTP client and a Node runtime behind it. It is the same kind
-//! of seam stage 1 and 2 used for `ExternalAgentServer`, `HttpClient` and
-//! `ProjectEnvironment`, and for the same reason.
+//! The manager reads the installed-agent store through this trait, a named read
+//! surface — [`AgentServerStore`] implements it, and a test can stand in
+//! something simpler than a store with a registry, an HTTP client and a Node
+//! runtime behind it. It is the same kind of seam as `ExternalAgentServer`,
+//! `HttpClient` and `ProjectEnvironment`, and for the same reason.
 
 use std::sync::Arc;
 
@@ -32,8 +31,7 @@ pub trait AgentCatalog: Send + Sync + 'static {
     /// Fires with install progress while this agent downloads.
     fn watch_loading_status(&self, id: &AgentId) -> Option<watch::Receiver<Option<String>>>;
 
-    /// Bumps whenever the installed map is rebuilt. Zed's
-    /// `cx.emit(AgentServersUpdated)`.
+    /// Bumps whenever the installed map is rebuilt.
     fn updates(&self) -> watch::Receiver<u64>;
 }
 

@@ -24,6 +24,26 @@ describe("profile transfer", () => {
     });
   });
 
+  it("carries conditions, and refuses one it can't read", () => {
+    const text = exportProfile({
+      id: "x",
+      name: "Mine",
+      bindings: {},
+      when: { "nav.commandPalette": "!terminalFocus" },
+    });
+    const back = importProfile(text);
+    expect(back.ok && back.profile.when).toEqual({ "nav.commandPalette": "!terminalFocus" });
+    const bad = importProfile(
+      JSON.stringify({
+        atlasKeybindings: 1,
+        name: "x",
+        bindings: {},
+        when: { "tabs.close": "a &&" },
+      }),
+    );
+    expect(bad.ok).toBe(false);
+  });
+
   it("keeps commands and presets this build doesn't know, and says so", () => {
     const r = importProfile(
       JSON.stringify({

@@ -5,7 +5,8 @@
 # Generates:
 #   1. Standalone portable tarball (atlas-<version>-linux-<arch>.tar.gz)
 #      with binary, desktop integration, icons, licenses, and installer scripts.
-#   2. AUR `atlas-bin` PKGBUILD with calculated checksums.
+#   2. AUR `tryatlas-bin` PKGBUILD with calculated checksums.
+#   3. Conflict-free deb and rpm (`tryatlas`, installing `atl`).
 #
 # Usage:
 #   scripts/package-linux.sh [x86_64|aarch64]
@@ -75,7 +76,106 @@ if [ -z "$ATLAS_BIN" ] || [ ! -f "$ATLAS_BIN" ]; then
   fi
 fi
 
-OUTPUT_DIR="${ROOT_DIR}/dist/release-linux"
+# The runtime dependencies of every package format, from one list.
+# shellcheck source=scripts/linux/runtime-deps.sh
+. "${ROOT_DIR}/scripts/linux/runtime-deps.sh"
+join_by() {
+  local sep="$1"
+  shift
+  local out="$1"
+  shift
+  for item in "$@"; do out+="${sep}${item}"; done
+  printf '%s' "$out"
+}
+
+# The newest glibc symbol version the binary needs: its real libc floor,
+# which the deb states as `libc6 (>= …)` rather than leaving it implicit.
+GLIBC_NEEDED="$(objdump -T "$ATLAS_BIN" | grep -o 'GLIBC_[0-9][0-9.]*' | sed 's/GLIBC_//' | sort -V | tail -n 1)"
+if [ -z "$GLIBC_NEEDED" ]; then
+  echo "Error: could not read the binary's glibc requirement (objdump -T)" >&2
+  exit 1
+fi
+
+# --- the linked libraries, checked against the Depends list -------------------
+# dpkg-shlibdeps reads the binary's DT_NEEDED sonames and maps each to the
+# package that owns it on THIS machine, at this machine's versions. That is why
+# its line is not copied into the control file: built on a time64 distro it
+# writes libglib2.0-0t64, which Ubuntu 22.04 and Debian 12 do not have. It is a
+# check instead. A linked library that neither DEB_DEPENDS nor
+# DEB_LINKED_VIA_DEPENDS names is one apt would not install, so the app would
+# start on the builder and fail at launch elsewhere, with nothing failing here.
+# docs/research/deb-dependencies-cargo-deb.md has the reasoning.
+command -v dpkg-shlibdeps >/dev/null 2>&1 || {
+  echo "Error: dpkg-shlibdeps not found (apt install dpkg-dev)" >&2
+  exit 1
+}
+ATLAS_BIN_ABS="$(cd "$(dirname "$ATLAS_BIN")" && pwd)/$(basename "$ATLAS_BIN")"
+SHLIBDEPS_DIR="$(mktemp -d)"
+mkdir -p "${SHLIBDEPS_DIR}/debian"
+: > "${SHLIBDEPS_DIR}/debian/control" # the tool insists on one; it stays empty
+if ! SHLIBS_LINE="$(cd "${SHLIBDEPS_DIR}" && dpkg-shlibdeps -O "${ATLAS_BIN_ABS}" 2>/dev/null)"; then
+  echo "Error: dpkg-shlibdeps failed on ${ATLAS_BIN}:" >&2
+  (cd "${SHLIBDEPS_DIR}" && dpkg-shlibdeps -O "${ATLAS_BIN_ABS}") >&2 || true
+  rm -rf "${SHLIBDEPS_DIR}"
+  exit 1
+fi
+rm -rf "${SHLIBDEPS_DIR}"
+SHLIBS_LINE="${SHLIBS_LINE#shlibs:Depends=}"
+LIBSTDCXX_NEEDED=""
+UNNAMED=()
+IFS=',' read -r -a SHLIBS_ITEMS <<<"${SHLIBS_LINE}"
+for item in "${SHLIBS_ITEMS[@]}"; do
+  item="${item#"${item%%[![:space:]]*}"}" # trim the leading space
+  pkg="${item%% *}"                        # the name, before " (>= version)"
+  ver="$(sed -n 's/.*(>= \([^)]*\)).*/\1/p' <<<"$item")"
+  base="${pkg%t64}" # Debian 13 / Ubuntu 24.04 time64 rename; Provides the old name
+  known=0
+  for n in "${DEB_DEPENDS[@]}" "${DEB_LINKED_VIA_DEPENDS[@]}"; do
+    if [ "$n" = "$base" ]; then
+      known=1
+      break
+    fi
+  done
+  [ "$known" = 1 ] || UNNAMED+=("$item")
+  [ "$base" = "libstdc++6" ] && LIBSTDCXX_NEEDED="$ver"
+done
+if [ "${#UNNAMED[@]}" -gt 0 ]; then
+  echo "Error: the binary links libraries the deb does not name: ${UNNAMED[*]}" >&2
+  echo "  Add each to DEB_DEPENDS in scripts/linux/runtime-deps.sh if Atlas needs it, or to" >&2
+  echo "  DEB_LINKED_VIA_DEPENDS there if it only comes with a package already named." >&2
+  exit 1
+fi
+echo "dpkg-shlibdeps: every library the binary links is named by the deb or comes with one that is"
+
+# The floors this machine's toolchain gave the binary, against what the
+# release supports (docs/reference/linux-support.md). Built on a newer distro
+# the binary imports newer symbols, and apt on an older one refuses the deb:
+# Debian 13 (glibc 2.41) answers "Depends: libc6 (>= 2.43) but 2.41 is to be
+# installed". Nothing in the package can lower that; the deb is honest about
+# a binary that would otherwise fail at launch. Only building on the floor
+# changes it, which release-linux.yml does on Ubuntu 22.04. A warning, not a
+# failure: a local build for this machine is a fine thing to make. Verify
+# fails it in CI. libstdc++6 12 is Ubuntu 22.04's and Debian 12's.
+GLIBC_SUPPORTED="${GLIBC_FLOOR:-2.35}"
+LIBSTDCXX_SUPPORTED="${LIBSTDCXX_FLOOR:-12}"
+newest() { printf '%s\n' "$1" "$2" | sort -V | tail -n 1; }
+echo "floors: glibc ${GLIBC_NEEDED} (release supports ${GLIBC_SUPPORTED}), libstdc++6 ${LIBSTDCXX_NEEDED:-none} (release supports ${LIBSTDCXX_SUPPORTED})"
+if [ "$(newest "$GLIBC_NEEDED" "$GLIBC_SUPPORTED")" != "$GLIBC_SUPPORTED" ]; then
+  echo "Warning: this binary needs glibc ${GLIBC_NEEDED}, above the release floor ${GLIBC_SUPPORTED}." >&2
+  echo "  The deb installs only on distros with glibc >= ${GLIBC_NEEDED}; older ones refuse it on libc6." >&2
+  echo "  For a deb that installs everywhere supported, build on the floor (release-linux.yml: Ubuntu 22.04)." >&2
+fi
+if [ -n "$LIBSTDCXX_NEEDED" ] && [ "$(newest "$LIBSTDCXX_NEEDED" "$LIBSTDCXX_SUPPORTED")" != "$LIBSTDCXX_SUPPORTED" ]; then
+  echo "Warning: this binary needs libstdc++6 >= ${LIBSTDCXX_NEEDED} (a GCC ${LIBSTDCXX_NEEDED} symbol), above the release floor ${LIBSTDCXX_SUPPORTED}." >&2
+  echo "  Older distros refuse the deb or fail at launch with 'CXXABI/GLIBCXX version not found'." >&2
+fi
+
+# Under target/, with the binary, not under dist/. `dist/` is the frontend
+# bundle: `scripts/build-frontend.mjs` syncs it to Vite's output before every
+# build, deleting whatever else is there, and `tauri-build` watches all of it,
+# so packages staged there were wiped and relinked the app on the next build.
+# `cargo clean` removes this with the rest of the build output.
+OUTPUT_DIR="${ROOT_DIR}/target/release-linux"
 rm -rf "${OUTPUT_DIR}"
 mkdir -p "${OUTPUT_DIR}"
 
@@ -126,8 +226,9 @@ echo "Installing Atlas to ${PREFIX}..."
 install -d "${PREFIX}/bin" "${PREFIX}/share/applications" "${PREFIX}/share/licenses/atlas"
 install -m 755 bin/atlas "${PREFIX}/bin/atl"
 ln -sf atl "${PREFIX}/bin/tryatlas"
-if [ ! -e "${PREFIX}/bin/atlas" ]; then
-  ln -sf atl "${PREFIX}/bin/atlas"
+# `atlas` belongs to the standalone Atlas CLI; drop the alias earlier versions made
+if [ -L "${PREFIX}/bin/atlas" ] && [ "$(readlink "${PREFIX}/bin/atlas")" = "atl" ]; then
+  rm -f "${PREFIX}/bin/atlas"
 fi
 # Remove legacy desktop launcher aliases if present from earlier versions
 rm -f "${PREFIX}/share/applications/atlas.desktop" "${PREFIX}/share/applications/atl.desktop" "${PREFIX}/share/applications/tryatlas.desktop"
@@ -141,6 +242,11 @@ if command -v gtk-update-icon-cache >/dev/null 2>&1; then
   gtk-update-icon-cache -q -t "${PREFIX}/share/icons/hicolor" 2>/dev/null || true
 fi
 echo "Atlas installed successfully to ${PREFIX}! (run 'atl' or 'tryatlas')"
+# The deb, rpm and Arch package pull bubblewrap in; a tarball cannot.
+if ! command -v bwrap >/dev/null 2>&1; then
+  echo "Note: bubblewrap (bwrap) is not installed. Atlas's agent needs it to run"
+  echo "commands. Install your distribution's 'bubblewrap' package."
+fi
 EOF
 chmod 755 "${STAGE_DIR}/install.sh"
 
@@ -185,60 +291,15 @@ echo "Created standalone tarball: ${TARBALL_PATH}"
 TARBALL_SHA256="$(sha256sum "${TARBALL_PATH}" | awk '{print $1}')"
 echo "Tarball SHA256: ${TARBALL_SHA256}"
 
-# 7. Generate AUR PKGBUILD
+# 7. Generate AUR PKGBUILD (this arch only; the release's publish job writes
+#    the multi-arch one that ships)
 AUR_DIR="${OUTPUT_DIR}/aur-tryatlas-bin"
-mkdir -p "${AUR_DIR}"
-REPO="${GITHUB_REPOSITORY:-pacifio/atlas}"
-
-cat <<EOF > "${AUR_DIR}/PKGBUILD"
-# Maintainer: Atlas Team <contact@tryatlas.cc>
-pkgname=tryatlas-bin
-_pkgname=atlas
-pkgver=${VERSION}
-pkgrel=1
-pkgdesc="Atlas — agent-first ideation and planning tool"
-arch=('${ARCH}')
-url="https://tryatlas.cc"
-license=('Apache-2.0')
-depends=(
-    'webkit2gtk-4.1'
-    'gtk3'
-    'libayatana-appindicator'
-    'bubblewrap'
-    'openssl'
-)
-optdepends=(
-    'xdg-terminal-exec: Open folders in default terminal'
-    'wl-clipboard: Wayland clipboard support'
-    'xclip: X11 clipboard support'
-    'xsel: Alternative X11 clipboard support'
-)
-provides=("tryatlas=\${pkgver}" "atl=\${pkgver}")
-options=('!strip' '!debug')
-source_${ARCH}=("atlas-\${pkgver}-linux-${ARCH}.tar.gz::https://github.com/${REPO}/releases/download/${RELEASE_TAG}/atlas-\${pkgver}-linux-${ARCH}.tar.gz")
-sha256sums_${ARCH}=('${TARBALL_SHA256}')
-
-package() {
-    cd "\${srcdir}/atlas-\${pkgver}"
-    install -Dm755 bin/atlas "\${pkgdir}/usr/bin/atl"
-    ln -sf atl "\${pkgdir}/usr/bin/tryatlas"
-    install -Dm644 share/applications/dev.atlas.ide.desktop "\${pkgdir}/usr/share/applications/dev.atlas.ide.desktop"
-    for size in 32 64 128 256 512; do
-        if [ -f "share/icons/hicolor/\${size}x\${size}/apps/atlas.png" ]; then
-            install -Dm644 "share/icons/hicolor/\${size}x\${size}/apps/atlas.png" \\
-                "\${pkgdir}/usr/share/icons/hicolor/\${size}x\${size}/apps/atlas.png"
-        fi
-    done
-    install -d "\${pkgdir}/usr/share/licenses/\${pkgname}"
-    install -m644 share/licenses/atlas/* "\${pkgdir}/usr/share/licenses/\${pkgname}/"
-}
-EOF
+VERSION="${VERSION}" RELEASE_TAG="${RELEASE_TAG}" \
+  "${ROOT_DIR}/scripts/linux/aur-pkgbuild.sh" "${OUTPUT_DIR}" "${AUR_DIR}/PKGBUILD"
 
 # Copy tarball to AUR dir so makepkg can build offline/locally
 cp "${TARBALL_PATH}" "${AUR_DIR}/"
 
-
-echo "Created AUR PKGBUILD: ${AUR_DIR}/PKGBUILD"
 
 # 8. Generate conflict-free Debian package (tryatlas_<version>_<arch>.deb)
 echo "Building conflict-free Debian package (tryatlas_${VERSION}_${DEB_ARCH}.deb)..."
@@ -249,6 +310,7 @@ mkdir -p "${DEB_STAGING}/usr/bin"
 mkdir -p "${DEB_STAGING}/usr/share/applications"
 mkdir -p "${DEB_STAGING}/usr/share/icons"
 mkdir -p "${DEB_STAGING}/usr/share/licenses/tryatlas"
+mkdir -p "${DEB_STAGING}/usr/share/doc/tryatlas"
 
 # Payload installs /usr/bin/atl and symlinks /usr/bin/tryatlas (does NOT claim /usr/bin/atlas in package index)
 cp "${STAGE_DIR}/bin/atlas" "${DEB_STAGING}/usr/bin/atl"
@@ -260,6 +322,28 @@ cp -r "${STAGE_DIR}/share/applications/"* "${DEB_STAGING}/usr/share/applications
 cp -r "${STAGE_DIR}/share/icons/"* "${DEB_STAGING}/usr/share/icons/"
 cp -r "${STAGE_DIR}/share/licenses/atlas/"* "${DEB_STAGING}/usr/share/licenses/tryatlas/"
 
+# Debian policy's two files every binary package carries: the copyright
+# statement (machine-readable format) and a compressed changelog.
+cat <<EOF > "${DEB_STAGING}/usr/share/doc/tryatlas/copyright"
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: Atlas
+Upstream-Contact: Atlas Team <contact@tryatlas.cc>
+Source: https://github.com/tryatlas/atlas
+
+Files: *
+Copyright: Atlas contributors
+License: Apache-2.0
+ On Debian systems the full text of the Apache License 2.0 is in
+ /usr/share/common-licenses/Apache-2.0. The licenses of bundled third-party
+ code are in /usr/share/licenses/tryatlas.
+EOF
+printf 'tryatlas (%s) unstable; urgency=medium\n\n  * Atlas %s. Release notes: https://github.com/tryatlas/atlas/releases/tag/%s\n\n -- Atlas Team <contact@tryatlas.cc>  %s\n' \
+  "${VERSION}" "${VERSION}" "${RELEASE_TAG}" "$(date -R -u -d "@${SOURCE_DATE_EPOCH:-$(date +%s)}")" \
+  | gzip -9n > "${DEB_STAGING}/usr/share/doc/tryatlas/changelog.Debian.gz"
+chmod 644 "${DEB_STAGING}/usr/share/doc/tryatlas/"*
+INSTALLED_SIZE="$(du -sk --apparent-size "${DEB_STAGING}/usr" | cut -f1)"
+DEB_DEPENDS_LINE="$(join_by ", " "libc6 (>= ${GLIBC_NEEDED})" "${DEB_DEPENDS[@]}")"
+
 cat <<EOF > "${DEB_STAGING}/DEBIAN/control"
 Package: tryatlas
 Version: ${VERSION}
@@ -267,7 +351,8 @@ Section: devel
 Priority: optional
 Architecture: ${DEB_ARCH}
 Maintainer: Atlas Team <contact@tryatlas.cc>
-Depends: libwebkit2gtk-4.1-0, libgtk-3-0, libayatana-appindicator3-1, bubblewrap, libglib2.0-0
+Installed-Size: ${INSTALLED_SIZE}
+Depends: ${DEB_DEPENDS_LINE}
 Suggests: wl-clipboard, xclip, xsel
 Provides: tryatlas (= ${VERSION}), atl (= ${VERSION})
 Description: Atlas — agent-first ideation and planning tool
@@ -277,8 +362,9 @@ EOF
 cat <<'EOF' > "${DEB_STAGING}/DEBIAN/postinst"
 #!/bin/sh
 set -e
-if [ ! -e /usr/bin/atlas ]; then
-  ln -sf atl /usr/bin/atlas
+# `atlas` belongs to the standalone Atlas CLI; drop the alias earlier versions made
+if [ -L /usr/bin/atlas ] && [ "$(readlink /usr/bin/atlas)" = "atl" ]; then
+  rm -f /usr/bin/atlas
 fi
 # Remove legacy desktop launcher aliases if present from earlier versions
 rm -f /usr/share/applications/atlas.desktop /usr/share/applications/atl.desktop /usr/share/applications/tryatlas.desktop
@@ -309,7 +395,8 @@ chmod 755 "${DEB_STAGING}/DEBIAN/postrm"
 
 DEB_FILE="${OUTPUT_DIR}/tryatlas_${VERSION}_${DEB_ARCH}.deb"
 if command -v dpkg-deb >/dev/null 2>&1; then
-  dpkg-deb --build "${DEB_STAGING}" "${DEB_FILE}"
+  # root:root ownership regardless of who builds, as lintian requires.
+  dpkg-deb --root-owner-group --build "${DEB_STAGING}" "${DEB_FILE}"
 else
   echo "2.0" > "${DEB_STAGING}/debian-binary"
   tar -czf "${DEB_STAGING}/control.tar.gz" -C "${DEB_STAGING}/DEBIAN" .
@@ -339,8 +426,14 @@ License:        Apache-2.0
 URL:            https://tryatlas.cc
 Provides:       tryatlas = %{version}-%{release}
 Provides:       atl = %{version}-%{release}
-AutoReqProv:    no
-Requires:       webkit2gtk4.1, gtk3, libayatana-appindicator-gtk3, bubblewrap, glib2
+# The shared-library requirements are read from the ELF by rpm itself, so
+# they cannot drift from what the binary links. Provides stay off: the
+# package provides commands, not the sonames inside it. bubblewrap is
+# exec'd rather than linked, so it is named explicitly with the rest of
+# runtime-deps.sh.
+AutoReq:        yes
+AutoProv:       no
+Requires:       $(join_by ", " "${RPM_REQUIRES[@]}")
 Suggests:       wl-clipboard, xclip, xsel
 
 %description
@@ -359,8 +452,9 @@ cp -r ${STAGE_DIR}/share/icons/hicolor/* %{buildroot}/usr/share/icons/hicolor/
 cp -r ${STAGE_DIR}/share/licenses/atlas/* %{buildroot}/usr/share/licenses/tryatlas/
 
 %post
-if [ ! -e /usr/bin/atlas ]; then
-  ln -sf atl /usr/bin/atlas
+# The atlas command belongs to the standalone Atlas CLI; drop the alias earlier versions made
+if [ -L /usr/bin/atlas ] && [ "\$(readlink /usr/bin/atlas)" = "atl" ]; then
+  rm -f /usr/bin/atlas
 fi
 # Remove legacy desktop launcher aliases if present from earlier versions
 rm -f /usr/share/applications/atlas.desktop /usr/share/applications/atl.desktop /usr/share/applications/tryatlas.desktop

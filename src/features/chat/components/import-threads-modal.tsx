@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { Dialog } from "@base-ui/react/dialog";
-import { DialogOverlay } from "@/ui/dialog";
 import { AlertTriangle, Check, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { importCandidates, importThreads, type ImportCandidate } from "../lib/history-api";
+import { DialogOverlay } from "@tryatlas/design";
 
 /**
  * Pull sessions an agent kept for itself into Atlas's history.
@@ -90,7 +90,7 @@ export function ImportThreadsModal({
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <DialogOverlay className="backdrop-blur-sm" />
+        <DialogOverlay blur />
         <Dialog.Popup
           aria-describedby={undefined}
           className={cn(

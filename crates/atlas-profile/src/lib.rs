@@ -51,8 +51,8 @@ pub const DEFAULT_IDENTIFIER: &str = "dev.atlas.ide";
 
 /// The dev profile's bundle identifier — `identifier` in
 /// `src-tauri/tauri.dev.conf.json`. It starts with [`DEFAULT_IDENTIFIER`] so
-/// anything that recognises Atlas by searching for its identifier (the Linux
-/// CLI helper's binary probe) still recognises a dev build.
+/// anything that recognises Atlas by searching for its identifier still
+/// recognises a dev build.
 pub const DEV_IDENTIFIER: &str = "dev.atlas.ide.dev";
 
 /// Which set of on-disk names this process uses. See the module docs.

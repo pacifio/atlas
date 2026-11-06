@@ -182,7 +182,7 @@ fn assert_schema_trees_match(
             .to_string();
 
         panic!(
-            "Vendored {label} app-server schema fixture file set doesn't match freshly generated output. \
+            "Checked-in {label} app-server schema fixture file set doesn't match freshly generated output. \
 Run `just write-app-server-schema` to overwrite with your changes.\n\n{diff}"
         );
     }
@@ -203,7 +203,7 @@ Run `just write-app-server-schema` to overwrite with your changes.\n\n{diff}"
             .header("fixture", "generated")
             .to_string();
         panic!(
-            "Vendored {label} app-server schema fixture {} differs from generated output. \
+            "Checked-in {label} app-server schema fixture {} differs from generated output. \
 Run `just write-app-server-schema` to overwrite with your changes.\n\n{diff}",
             path.display()
         );

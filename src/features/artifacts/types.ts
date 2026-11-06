@@ -195,6 +195,27 @@ export interface BoardSession extends SessionSummary {
 }
 
 /**
+ * What the board is narrowed to — mirrors `commands::capture::BoardFilter`.
+ *
+ * A Project with a checkout here is its folder; one the Organisation has and
+ * this machine does not has no folder, only its server id.
+ */
+export type ProjectFilter = { local: string } | { remote: string };
+
+/** The filter that selects a row's Project, or `null` for a row that names
+ *  neither a folder nor a server Project. */
+export function projectFilterFor(row: BoardSession): ProjectFilter | null {
+  if (row.projectPath) return { local: row.projectPath };
+  if (row.remoteProjectId) return { remote: row.remoteProjectId };
+  return null;
+}
+
+/** A string that identifies a filter, for keys and equality. */
+export function projectFilterKey(filter: ProjectFilter): string {
+  return "local" in filter ? `local:${filter.local}` : `remote:${filter.remote}`;
+}
+
+/**
  * Where a board row was read from.
  *
  * `both` is the normal state of your own work once a Project is synced. It
@@ -222,4 +243,65 @@ export interface BoardPage {
    * board. Goes false again the moment any refresh succeeds.
    */
   cloudFailed: boolean;
+}
+
+/**
+ * One page of the Trace — mirrors `atlas_artifacts::TracePage`, which is the
+ * server's `GET /sessions/trace` answer passed through, plus this machine's
+ * own Sessions on the first page.
+ */
+export interface TracePage {
+  from: string;
+  to: string;
+  sessions: TraceSessionRow[];
+  workspaces: { id: string; slug: string | null; name: string | null; number: number | null }[];
+  /** `null` on the last page. */
+  nextCursor: string | null;
+  /** Caveats — a Workspace the server could not reach, or the server half
+   *  not being readable at all. Said, not swallowed. */
+  notes: string[];
+}
+
+/** One Session on the Trace — mirrors `atlas_artifacts::TraceSession`. */
+export interface TraceSessionRow {
+  id: string;
+  number: number | null;
+  /** The server Workspace; empty for a row read from an unbound checkout. */
+  workspaceId: string;
+  workspaceSlug: string | null;
+  /** `null` on a row read from this disk — that work is this account's. */
+  authorId: string | null;
+  /** User ids, the author first. Empty on a row read from this disk. */
+  participants: string[];
+  title: string | null;
+  agent: string | null;
+  source: string | null;
+  startedAt: string;
+  /** There is no stored end: a finished Session ends here. */
+  lastActivityAt: string;
+  live: boolean;
+  incomplete: boolean;
+  checkpoints: TraceCheckpointRow[];
+  /** The server sent this Session's newest Checkpoints, not all of them. */
+  checkpointsTruncated: boolean;
+  /** Host-only: the checkout a row read from disk came from. Absent on the
+   *  server's rows. */
+  projectPath?: string;
+}
+
+/** One Checkpoint on the Trace — mirrors `atlas_artifacts::TraceCheckpoint`. */
+export interface TraceCheckpointRow {
+  id: string;
+  sessionId: string;
+  at: string;
+  /** `null` on a row read from this disk. */
+  authorId: string | null;
+  commitSha: string;
+  branch: string | null;
+  linkState: LinkState;
+  insertions: number;
+  deletions: number;
+  files: number;
+  /** Host-only: read from git on this machine. The server has no subject. */
+  commitSubject?: string | null;
 }

@@ -8,7 +8,7 @@ export type NetworkRequirements = { enabled: boolean | null, httpPort: number | 
 /**
  * Canonical network permission map for `experimental_network`.
  */
-domains: { [key in string]?: NetworkDomainPermission } | null,
+domains: { [key in string]: NetworkDomainPermission } | null,
 /**
  * When true, only managed allowlist entries are respected while managed
  * network enforcement is active.
@@ -25,7 +25,7 @@ deniedDomains: Array<string> | null,
 /**
  * Canonical unix socket permission map for `experimental_network`.
  */
-unixSockets: { [key in string]?: NetworkUnixSocketPermission } | null,
+unixSockets: { [key in string]: NetworkUnixSocketPermission } | null,
 /**
  * Legacy compatibility view derived from `unix_sockets`.
  */

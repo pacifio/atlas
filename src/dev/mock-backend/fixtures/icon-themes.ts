@@ -23,9 +23,9 @@ import type {
   IconFontFace,
   IconRequest,
   IconThemeSummary,
-  OpenVsxIconTheme,
   ResolvedIcon,
 } from "@/features/icon-theme/lib/icon-theme-api";
+import type { OpenVsxExtension } from "@/lib/open-vsx";
 import type { TypedHandlers, Unit } from "../types";
 
 /** Trimmed `iconDefinitions`: id -> SVG source, exactly as Rust serves it. */
@@ -270,7 +270,7 @@ function definitionFor(request: IconRequest, appearance: IconAppearance): string
  * states rather than happy paths, and "the download died half way" is the
  * state this picker most needs to look right in.
  */
-const OPEN_VSX: OpenVsxIconTheme[] = [
+const OPEN_VSX: OpenVsxExtension[] = [
   {
     id: "pkief.material-icon-theme",
     namespace: "PKief",
@@ -315,7 +315,7 @@ export interface IconThemeResponses {
   resolve_icons: (ResolvedIcon | null)[];
   get_icon_theme_assets: Record<string, IconAsset>;
   get_icon_theme_fonts: IconFontFace[];
-  search_icon_themes: OpenVsxIconTheme[];
+  search_icon_themes: OpenVsxExtension[];
   install_icon_theme: IconThemeSummary;
   remove_icon_theme: Unit;
 }
@@ -364,7 +364,7 @@ export const iconThemeHandlers: TypedHandlers<IconThemeResponses> = {
     return [{ id: "seti", weight: "normal", style: "normal", src: [] }];
   },
 
-  search_icon_themes: (a): OpenVsxIconTheme[] => {
+  search_icon_themes: (a): OpenVsxExtension[] => {
     const query = String(a.query ?? "")
       .trim()
       .toLowerCase();

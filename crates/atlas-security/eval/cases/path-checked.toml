@@ -1,0 +1,18 @@
+id = "path-checked"
+kind = "synthetic"
+vulnerable = false
+class = "none"
+severity = 0
+title = "Serve workspace attachments"
+diff = '''
+--- a/src-tauri/src/commands/files.rs
++++ b/src-tauri/src/commands/files.rs
+@@ -1,0 +1,7 @@
++#[tauri::command]
++pub fn read_attachment(state: State<AppState>, name: String) -> Result<Vec<u8>, String> {
++    let base = state.attachments_dir.canonicalize().map_err(|e| e.to_string())?;
++    let path = base.join(&name).canonicalize().map_err(|e| e.to_string())?;
++    if !path.starts_with(&base) { return Err("invalid path".into()); }
++    std::fs::read(path).map_err(|e| e.to_string())
++}
+'''

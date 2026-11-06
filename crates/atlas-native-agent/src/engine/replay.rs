@@ -117,6 +117,12 @@ pub fn replay_turns(thread: &mut AcpThread, turns: &[v2::Turn]) {
                 // identically to the one the user watched run.
                 item => {
                     if let Some(mut call) = crate::engine::sink::tool_call_of(item) {
+                        // A command's output lives in a terminal the call
+                        // names (see `sink::command_terminal_id`). The live
+                        // sink creates it as deltas arrive; a rollout has only
+                        // the aggregate, so it is written here — BEFORE the
+                        // upsert, or the reopened call renders an empty pane.
+                        crate::engine::sink::settle_command_terminal_in(thread, item);
                         // A rollout only records completed items, so an
                         // in-progress status here belongs to a turn that was
                         // cut off. Leaving it spinning would be a second way
@@ -187,7 +193,7 @@ mod tests {
     use serde_json::json;
 
     /// Items and turns are built from JSON rather than struct literals: the
-    /// protocol types gain fields upstream, and a test that spells every one
+    /// protocol types gain fields over time, and a test that spells every one
     /// of them out breaks on changes it has no opinion about.
     fn turn(status: &str, items: serde_json::Value) -> v2::Turn {
         serde_json::from_value(json!({
@@ -215,7 +221,10 @@ mod tests {
             "processId": null,
             "status": "completed",
             "commandActions": [],
-            "aggregatedOutput": "",
+            // Real output, so the tests below cannot pass on a replay that
+            // drops it — which is what happened when a rebuilt tool call named
+            // a terminal nobody had created.
+            "aggregatedOutput": format!("{command}: ran\n"),
             "exitCode": exit_code,
             "durationMs": null,
         })
@@ -282,6 +291,30 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    /// Reopening a session rebuilds each command's tool call from the rollout.
+    /// Its output is the rollout's `aggregatedOutput`, and the call renders it
+    /// through a terminal — so the replay has to create and fill that terminal,
+    /// or the reopened pane is blank however much the command printed.
+    #[test]
+    fn a_replayed_command_keeps_its_output() {
+        let thread = replay(&[turn("completed", json!([command("c1", "ls -la", 0)]))]);
+        let guard = thread.lock().expect("thread lock");
+        let outputs: Vec<String> = guard
+            .entries()
+            .iter()
+            .filter_map(|e| match e {
+                atlas_acp_thread::AgentThreadEntry::ToolCall(call) => Some(call),
+                _ => None,
+            })
+            .flat_map(|call| call.content.iter())
+            .filter_map(|block| match block {
+                atlas_acp_thread::ToolCallContent::Terminal(id) => guard.terminal_output(id),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(outputs, vec!["ls -la: ran\n".to_string()]);
     }
 
     /// The tool calls a turn really made are part of the record of it. They

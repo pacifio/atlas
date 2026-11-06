@@ -7,8 +7,8 @@
 //! merged with a live ACP `session/list` query. That coupled Atlas to formats
 //! it does not own, needed a bespoke reader per agent (special treatment by
 //! construction), and made history impossible for any agent nobody had written
-//! a reader for. Zed, whose ACP stack Atlas is porting, never reads another
-//! program's storage: it owns its history. So does Atlas now. See ADR-0001.
+//! a reader for. Atlas now owns its history and never reads another program's
+//! storage. See ADR-0001.
 //!
 //! # The shape
 //!
@@ -18,7 +18,9 @@
 //! agent forgetting the session afterwards.
 //!
 //! A row is **metadata only** — ids, agent, titles, timestamps, worktree paths,
-//! archived flag. No message, no chunk, no tool call, no token. Replaying a
+//! the session's lifecycle (settled, pinned, snoozed, last viewed), and the
+//! projects attached to it besides its own folder ([`AttachedProject`]), and
+//! the pull requests linked to it ([`PullRequestLink`]). No message, no chunk, no tool call, no token. Replaying a
 //! conversation is the agent's job, through `session/load`. This is the single
 //! invariant the whole design rests on; anything that would put transcript
 //! content in this crate is a design error, not a feature.
@@ -28,19 +30,26 @@
 //! ([`ThreadMetadataStore::save_all`]). Nothing else feeds it, and in
 //! particular nothing reads anyone's files.
 //!
-//! # Provenance
+//! # Design choices
 //!
-//! This is a port of Zed's `ThreadMetadataStore`
-//! (`zed-ref/crates/agent_ui/src/thread_metadata_store.rs`), mechanism for
-//! mechanism, with the Zed file:line cited at every ported decision.
-//! Divergences are stated where they are made; there are three, all documented
-//! at their site: no GPUI reactivity (a broadcast channel replaces `cx.notify`),
-//! no `archived_git_worktrees` side tables (out of scope), and no `NULL`
-//! encoding of the native agent's id (it would be an agent-identity branch).
+//! Three are documented at their site: change notification is a broadcast
+//! channel, there are no archived-git-worktree side tables (out of scope), and
+//! the native agent's id has no `NULL` encoding (it would be an agent-identity
+//! branch).
+//!
+//! # Lifecycle
+//!
+//! A session is active, settled (done for now, on the sidebar's Settled
+//! shelf), pinned (kept at the top, never auto-settled) or snoozed (out of the
+//! way until a time, or until it raises its hand). Every rule between those
+//! states lives in [`ThreadMetadataStore`], under its write lock, so the host
+//! and the UI cannot get them subtly different. There is no archived state:
+//! settling replaced it (the `threads_lifecycle` migration moved every
+//! archived row to Settled).
 //!
 //! # Testing
 //!
-//! The crate is Tauri-free and GPUI-free on purpose. Its tests drive the public
+//! The crate is Tauri-free and UI-framework-free on purpose. Its tests drive the public
 //! API against a real temporary SQLite database, and assert persistence by
 //! reopening the store — never by reading a row.
 
@@ -49,17 +58,28 @@ mod error;
 mod import;
 mod model;
 mod paths;
+mod projects;
+mod pull_requests;
 mod recorder;
 mod schema;
 mod store;
 
 pub use error::{Error, Result};
 pub use import::{collect_all_sessions, importable_threads};
-pub use model::{ThreadFilter, ThreadId, ThreadMetadata, DEFAULT_THREAD_TITLE};
+pub use model::{ThreadId, ThreadMetadata, DEFAULT_THREAD_TITLE};
 pub use paths::{LengthMismatch, PathList, SerializedPathList, WorktreePaths};
-pub use recorder::{affects_thread_metadata, ThreadRecorder, ThreadSnapshot};
-pub use schema::SCHEMA_VERSION;
-pub use store::{LiveThreadUpdate, ThreadMetadataStore, ThreadProject, ThreadStoreEvent};
+pub use projects::{AttachSource, AttachedProject, ProjectAccess};
+pub use pull_requests::{
+    visible as visible_pull_requests, PullRequestLink, PullRequestLinkSource, PullRequestSnapshot,
+    PullRequestWatch, WatchSync,
+};
+pub use recorder::{
+    affects_thread_metadata, lifecycle_signal, LifecycleSignal, ThreadRecorder, ThreadSnapshot,
+};
+pub use schema::{LEGACY_MAX, SCHEMA_EPOCH};
+pub use store::{
+    LiveThreadUpdate, MarkUnread, ThreadMetadataStore, ThreadProject, ThreadStoreEvent,
+};
 
 /// Where the store lives: one file beside the rest of Atlas's app-level state.
 ///

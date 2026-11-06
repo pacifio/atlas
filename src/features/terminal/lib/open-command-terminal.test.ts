@@ -7,11 +7,13 @@ import { beforeEach, describe, expect, it } from "vitest";
 // one — behaviour a `vi.fn()` cannot have.
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { collectPanes, useTerminalStore } from "../stores/terminal-store";
+import { renderHook } from "@testing-library/react";
 import {
   closeCommandTerminal,
   openCommandTerminal,
   shellLine,
   shellQuote,
+  useCommandTerminalPresence,
 } from "./open-command-terminal";
 
 /** A project with one editor tab and no terminal. */
@@ -212,5 +214,66 @@ describe("closeCommandTerminal", () => {
     // Its queued command goes with it; the other one is untouched.
     expect(useTerminalStore.getState().pendingCommands[second.terminalId]).toBeUndefined();
     expect(useTerminalStore.getState().pendingCommands[first.terminalId]).toBe("first login");
+  });
+});
+
+describe("useCommandTerminalPresence", () => {
+  /** Put `tabId` on screen in `group`, and focus that column. */
+  function show(group: string, tabId: string | null) {
+    useLayoutStore.setState((s) => ({
+      activeByGroup: { ...s.activeByGroup, [group]: tabId },
+      focusedGroupId: group,
+      activeTabId: tabId,
+    }));
+  }
+
+  it("is visible while its terminal is the tab showing in its column", () => {
+    const opened = openCommandTerminal("agent login", "Sign in")!;
+    const { result } = renderHook(() => useCommandTerminalPresence(opened));
+    expect(result.current).toBe("visible");
+  });
+
+  it("is hidden once another tab takes the column", () => {
+    // The dock's whole bug: the sign-in is still live, but the terminal it is
+    // about is no longer on screen.
+    const opened = openCommandTerminal("agent login", "Sign in")!;
+    const { result, rerender } = renderHook(() => useCommandTerminalPresence(opened));
+    // A terminal opens in the surfaces pane, never the main column.
+    const tab = useLayoutStore.getState().tabs.find((t) => t.id === opened.tabId)!;
+    show(tab.groupId ?? "main", "editor:a.ts");
+    rerender();
+    expect(result.current).toBe("hidden");
+  });
+
+  it("stays visible when the terminal is in another SPLIT COLUMN that still shows it", () => {
+    // Per column, not per window. A terminal in the right-hand split is in
+    // plain sight while the user types in a chat on the left, so keying this
+    // off the focused tab would hide a dock about a terminal they can see.
+    const opened = openCommandTerminal("agent login", "Sign in")!;
+    useLayoutStore.setState((s) => ({
+      tabs: s.tabs.map((t) => (t.id === opened.tabId ? { ...t, groupId: "right" } : t)),
+      groupOrder: ["main", "right"],
+      activeByGroup: { main: "editor:a.ts", right: opened.tabId },
+      focusedGroupId: "main",
+      activeTabId: "editor:a.ts",
+    }));
+    const { result } = renderHook(() => useCommandTerminalPresence(opened));
+    expect(result.current).toBe("visible");
+  });
+
+  it("reports a closed tab as closed, never as hidden", () => {
+    // The distinction is load-bearing. A caller that hides UI while the
+    // terminal is out of sight must still SHOW it when the terminal is gone:
+    // there is then nowhere left to finish the login, and that UI is the only
+    // way out of it.
+    const opened = openCommandTerminal("agent login", "Sign in")!;
+    closeCommandTerminal(opened);
+    const { result } = renderHook(() => useCommandTerminalPresence(opened));
+    expect(result.current).toBe("closed");
+  });
+
+  it("reports no terminal at all as closed", () => {
+    const { result } = renderHook(() => useCommandTerminalPresence(null));
+    expect(result.current).toBe("closed");
   });
 });

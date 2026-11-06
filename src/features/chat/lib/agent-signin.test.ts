@@ -246,7 +246,7 @@ describe("bindFailureAction", () => {
     // is reworded, this fails and the token list beside it needs the same edit
     // — which is the whole point of pinning it here.
     const NO_MODELS =
-      "Atlas Agent has no models to offer: the gateway lists none this organisation may use.";
+      "Atlas Agent has no models to offer: the gateway lists none this organization may use.";
 
     beforeEach(() => {
       catalog = { "atlas-agent": { kind: "native", login: null } };

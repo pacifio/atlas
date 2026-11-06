@@ -29,6 +29,7 @@
 
 import { emit } from "@tauri-apps/api/event";
 import type { SessionSummary } from "@/features/artifacts/types";
+import type { SessionFile } from "@/features/chat/lib/session-files";
 import type {
   Binding,
   CaptureHealth,
@@ -282,7 +283,7 @@ function healthOf(project: ProjectCapture): CaptureHealth {
     issues.push({
       state: "degraded",
       reason:
-        "No longer authorized to sync with your Organisation — new work stays on this machine.",
+        "No longer authorized to sync with your Organization — new work stays on this machine.",
       nextStep:
         "Reconnect or re-register this Project to resume syncing. Capture itself continues.",
     });
@@ -291,14 +292,13 @@ function healthOf(project: ProjectCapture): CaptureHealth {
     issues.push({
       state: "degraded",
       reason: `${project.flaggedSessions} Session${plural(project.flaggedSessions)} could not be fully recorded.`,
-      nextStep:
-        "Open the Session to see what was flagged. Content that could not be scrubbed was not stored.",
+      nextStep: "Open the Session to see what is missing. Nothing unscrubbed was stored.",
     });
   }
   if (project.failedRows > 0) {
     issues.push({
       state: "degraded",
-      reason: `${project.failedRows} record${plural(project.failedRows)} could not be sent to your Organisation.`,
+      reason: `${project.failedRows} record${plural(project.failedRows)} could not be sent to your Organization.`,
       nextStep: "They are skipped so the rest keep syncing. Retry from the sync status.",
     });
   }
@@ -429,6 +429,7 @@ export interface CaptureResponses {
   capture_health: CaptureHealth;
   capture_activate: Unread;
   capture_session_summary: SessionSummary | null;
+  capture_session_files: SessionFile[];
   capture_enable: Unread;
   capture_disable: Unread;
   capture_git_init: Unread;
@@ -462,6 +463,44 @@ export const captureHandlers: TypedHandlers<CaptureResponses> = {
   // section at all, rather than a row of zeroes.
   capture_session_summary: ({ projectPath, sessionId }): SessionSummary | null =>
     projectFor(projectPath).binding ? sessionSummary(String(sessionId)) : null,
+  // The record's file list for the Details card's Changes section — empty, like Rust, when
+  // capture is off. Two with counts (edit-shaped calls, which leave a patch)
+  // and one without (a shell edit, attributed by watching the tree).
+  capture_session_files: ({ projectPath }): SessionFile[] =>
+    projectFor(projectPath).binding
+      ? [
+          {
+            path: "src/server/discounts.ts",
+            created: false,
+            deleted: false,
+            outOfRepo: false,
+            turns: 2,
+            lastTurnSeq: 2,
+            added: 41,
+            removed: 9,
+          },
+          {
+            path: "tests/discounts.test.ts",
+            created: true,
+            deleted: false,
+            outOfRepo: false,
+            turns: 1,
+            lastTurnSeq: 2,
+            added: 88,
+            removed: 0,
+          },
+          {
+            path: "package.json",
+            created: false,
+            deleted: false,
+            outOfRepo: false,
+            turns: 1,
+            lastTurnSeq: 2,
+            added: null,
+            removed: null,
+          },
+        ]
+      : [],
 
   // ── Enable / disable ────────────────────────────────────────────────────
   capture_enable: ({ projectPath, mode }): Binding => {

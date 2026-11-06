@@ -363,14 +363,14 @@ pub async fn start(args: InProcessStartArgs) -> IoResult<InProcessClientHandle> 
 ///
 /// Added by Atlas. The engine's `ExternalAuth` trait is the injection point an
 /// embedder needs to authenticate with its own account system, but neither
-/// start-args struct exposed it: upstream's only in-protocol route to
+/// start-args struct exposed it: the original's only in-protocol route to
 /// `AuthManager::set_external_auth` is ChatGPT-shaped, gated on
 /// `ForcedLoginMethod::Chatgpt`, and refreshes over a server→client
 /// `ChatgptAuthTokensRefresh` round trip. Atlas removes that login path
 /// entirely, so it needed a way in that does not pretend to be ChatGPT.
 ///
 /// This is a second entry point rather than a field on [`InProcessStartArgs`]
-/// deliberately: a new field would have to be written at all ten of upstream's
+/// deliberately: a new field would have to be written at all ten of the original's
 /// construction sites, most of them tests, for no behavioural reason. `start`
 /// passes `None` and behaves exactly as it did.
 pub async fn start_with_external_auth(

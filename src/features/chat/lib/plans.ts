@@ -1,4 +1,5 @@
 import type { ToolCallRef } from "@/types/acp";
+import { formatTime } from "@/lib/format-time";
 
 /** A saved plan record — mirrors `commands/plans.rs::PlanRecord`. */
 export interface PlanRecord {
@@ -40,10 +41,7 @@ export function formatPlanTimestamp(iso: string): string {
     day: "numeric",
     year: "numeric",
   });
-  const time = d.toLocaleTimeString(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  const time = formatTime(d);
   return `${date} · ${time}`;
 }
 

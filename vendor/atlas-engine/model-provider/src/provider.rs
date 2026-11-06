@@ -315,7 +315,7 @@ impl ModelProvider for ConfiguredModelProvider {
         &self.info
     }
 
-    /// Added by Atlas (D13). Upstream's classifier is calibrated to OpenAI's
+    /// Added by Atlas (D13). The original classifier is calibrated to OpenAI's
     /// error vocabulary and puts every Atlas-specific code in the wrong bucket
     /// — most damagingly a `402 cap_exceeded`, which it retries against a wall
     /// that cannot clear for weeks. Without this hook the arm in
@@ -580,7 +580,7 @@ mod tests {
     #[test]
     fn a_filled_cap_on_the_gateway_wire_is_not_retried() {
         // The whole reason the D13 arm exists. Without this hook the arm is a
-        // library nothing calls, and upstream's classifier answers a 402 with
+        // library nothing calls, and the original classifier answers a 402 with
         // `UnexpectedStatus` — which the turn loop retries against a wall that
         // cannot clear for weeks.
         let body = r#"{"error":{"message":"The org monthly AI budget is spent.","code":"cap_exceeded","window":"monthly","scope":"org","used":307425,"cap":350000}}"#;
@@ -598,7 +598,7 @@ mod tests {
 
     #[test]
     fn a_rate_limit_on_the_gateway_wire_waits_the_interval_it_was_given() {
-        // Upstream reads `Retry-After` nowhere at all, and maps a non-ChatGPT
+        // The original reads `Retry-After` nowhere at all, and maps a non-ChatGPT
         // 429 body to a terminal error — the opposite of what the gateway asks
         // for on the one status where waiting is instructed.
         let body = r#"{"error":{"message":"too many requests","code":"rate_limited"}}"#;

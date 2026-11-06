@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
@@ -19,7 +20,7 @@ import { fileURLToPath } from "node:url";
  * collecting fails the quietest way there is: every build stays green while
  * target/ grows back to the 67 GB it was before the script existed, and the
  * first symptom is a full disk. The opposite slip is as quiet and costs more:
- * a sweep on a downgrade (a worktree on an older version branch sharing the
+ * a sweep on a downgrade (a worktree on an older branch sharing the
  * target dir) throws away builds that the next run on the newer branch has to
  * redo from scratch.
  *
@@ -35,6 +36,18 @@ const SCRIPT = path.resolve(
   "target-gc.sh",
 );
 
+// `ci:local` runs the script on Windows too, through Git Bash. Its usr/bin holds
+// bash and the coreutils the script calls; System32's bash.exe is WSL's. Outside
+// Git Bash, PATH usually has only Git's cmd/, next to usr/.
+const BASICS =
+  process.platform === "win32"
+    ? (process.env.PATH ?? "")
+        .split(path.delimiter)
+        .flatMap((p) => [p, path.join(p, "..", "usr", "bin")])
+        .filter((p) => existsSync(path.join(p, "bash.exe")) && existsSync(path.join(p, "cat.exe")))
+        .slice(0, 1)
+    : ["/usr/bin", "/bin"];
+
 let dir: string;
 let bin: string;
 let target: string;
@@ -46,17 +59,27 @@ function stub(name: string, body: string) {
   chmodSync(p, 0o755);
 }
 
-function run(release: string, { sweepInstalled = true } = {}) {
+function run(
+  release: string,
+  { sweepInstalled = true, env: extra = {} as Record<string, string>, target: dir_ = target } = {},
+) {
   stub("rustc", `echo "rustc ${release}"; echo "release: ${release}"`);
   stub("rustup", `echo "${release}-test-toolchain (overridden)"`);
   stub("cargo", `echo "$*" >> "${log}"; echo "[INFO] Cleaned 1 GiB"`);
   if (sweepInstalled) stub("cargo-sweep", "exit 0");
   else rmSync(path.join(bin, "cargo-sweep"), { force: true });
-  return execFileSync("bash", [SCRIPT, target], {
+  // Windows spells it `Path`; drop every spelling so ours is the only one.
+  // The ATLAS_GC_* knobs too, so a developer's own settings can't leak in.
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([key]) => key.toUpperCase() !== "PATH" && !key.startsWith("ATLAS_GC_"),
+    ),
+  );
+  return execFileSync("bash", [SCRIPT, dir_], {
     encoding: "utf8",
     // Only the stubs and the basics: a real cargo-sweep on this machine must
     // not stand in for the stub the test removed.
-    env: { ...process.env, PATH: `${bin}:/usr/bin:/bin` },
+    env: { ...env, ...extra, PATH: [bin, ...BASICS].join(path.delimiter) },
   });
 }
 
@@ -128,4 +151,42 @@ describe("target-gc.sh", () => {
     expect(existsSync(stale)).toBe(false);
     expect(existsSync(path.join(target, "debug", "incremental", "atlas_lib-abc"))).toBe(true);
   });
+
+  it("takes the ages from ATLAS_GC_UNUSED_DAYS and ATLAS_GC_EVERY_DAYS", () => {
+    const env = { ATLAS_GC_UNUSED_DAYS: "3", ATLAS_GC_EVERY_DAYS: "1" };
+    run("1.99.0", { env });
+    expect(sweeps()).toContain("sweep --time 3 .");
+    daysAgo(path.join(target, ".atlas-gc-swept"), 2);
+    run("1.99.0", { env });
+    expect(sweeps().filter((s) => s.includes("--time 3"))).toHaveLength(2);
+  });
+
+  it("caps the size only when ATLAS_GC_MAX_MB is set and exceeded", () => {
+    writeFileSync(path.join(target, "debug", "big.rlib"), Buffer.alloc(3 * 1024 * 1024, 1));
+    run("1.99.0");
+    run("1.99.0", { env: { ATLAS_GC_MAX_MB: "100" } });
+    expect(sweeps().filter((s) => s.includes("--maxsize"))).toEqual([]);
+    expect(existsSync(path.join(target, "debug", "incremental", "atlas_lib-abc"))).toBe(true);
+    // The stub sweep deletes nothing, so the dir is still over afterwards.
+    const out = run("1.99.0", { env: { ATLAS_GC_MAX_MB: "1" } });
+    expect(sweeps()).toContain("sweep --maxsize 1 .");
+    expect(existsSync(path.join(target, "debug", "incremental"))).toBe(false);
+    expect(out).toContain("still 3 MB after the sweep");
+  });
+
+  // Creating a symlink on Windows needs developer mode or admin rights.
+  it.skipIf(process.platform === "win32")(
+    "measures a symlinked target dir, and sweeps it only under the wrapper's lock",
+    () => {
+      writeFileSync(path.join(target, "debug", "big.rlib"), Buffer.alloc(3 * 1024 * 1024, 1));
+      const link = path.join(dir, "linked-target");
+      symlinkSync(target, link);
+      const env = { ATLAS_GC_MAX_MB: "1" };
+      const out = run("1.99.0", { env, target: link });
+      expect(out).toContain("shared target dir");
+      expect(sweeps()).toEqual([]);
+      run("1.99.0", { env: { ...env, ATLAS_GC_LOCKED: "1" }, target: link });
+      expect(sweeps()).toContain("sweep --maxsize 1 .");
+    },
+  );
 });

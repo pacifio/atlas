@@ -262,7 +262,7 @@ For casual greetings, acknowledgements, or other one-off conversational messages
 
 When using the shell, you must adhere to the following guidelines:
 
-- When searching for text or files, prefer using `rg` or `rg --files` respectively because `rg` is much faster than alternatives like `grep`. (If the `rg` command is not found, then use alternatives.)
+- When searching for text or files, use the `atlas_code` tools when they are available: `grep` for file contents and `find_files` for paths. They run in-process, respect .gitignore, skip secrets and return compact, paginated results (follow their `next_offset` instead of re-running broader searches). Fall back to `rg` or `rg --files` in the shell only for what they cannot express (PCRE features, replacements, piping into other commands). (If neither is available, use alternatives.)
 - Do not use python scripts to attempt to output larger chunks of a file.
 
 ## `update_plan`

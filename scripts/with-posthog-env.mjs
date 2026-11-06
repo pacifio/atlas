@@ -14,7 +14,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { delimiter, dirname, join } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -63,9 +63,34 @@ console.log(
   `[with-posthog-env] PostHog key ${embedded ? "embedded from env/.env" : "not set — telemetry inert"}`,
 );
 
-const result = spawnSync(cmd, args, {
+// `tauri dev` is how most people build, and without this nothing ever collects
+// their `target/` (target-gc.sh used to run only from `ci:local`). The script
+// decides for itself whether anything is due (a Rust upgrade, or the weekly
+// sweep), so the usual run costs a couple of process spawns. Best effort: a
+// missing bash, a missing cargo-sweep or a failed collection prints one line
+// and dev starts anyway.
+if (cmd === "tauri" && args[0] === "dev" && process.platform !== "win32") {
+  // The directory the build will use: cargo honours CARGO_TARGET_DIR, resolved
+  // against the working directory it is invoked from. No timeout: killing bash
+  // would leave a `cargo sweep` child deleting artifacts under the compile that
+  // follows, so we wait for the collection to finish (it is a no-op most runs).
+  const target = resolve(process.cwd(), env.CARGO_TARGET_DIR || join(root, "target"));
+  const gc = spawnSync("bash", [join(root, "scripts", "target-gc.sh"), target], {
+    stdio: "inherit",
+    env,
+  });
+  if (gc.status !== 0) console.log("[with-posthog-env] target-gc skipped or failed; continuing");
+}
+
+// `shell: true` (needed on Windows so `tauri` resolves to `tauri.cmd`) makes
+// Node join the command and arguments with bare spaces for cmd.exe, so a part
+// containing a space — `C:\Program Files\nodejs\node.exe`, the default install
+// path — is split into `C:\Program`. Quote such parts ourselves.
+const win = process.platform === "win32";
+const quote = (part) => (win && /\s/.test(part) && !/^".*"$/.test(part) ? `"${part}"` : part);
+const result = spawnSync(quote(cmd), args.map(quote), {
   stdio: "inherit",
   env,
-  shell: process.platform === "win32",
+  shell: win,
 });
 process.exit(result.status ?? 1);

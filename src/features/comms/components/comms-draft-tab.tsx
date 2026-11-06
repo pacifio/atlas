@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { DraftEditor } from "./draft-editor";
 import { useCommsStore } from "../stores/comms-store";
+import { CommsDraftTabView } from "./views/comms-draft-tab-view";
 
 /**
  * The centre-panel host for a draft editor tab (`type: "comms-draft"`).
@@ -20,19 +21,13 @@ export function CommsDraftTab({ convId, draftId }: { convId: string; draftId: st
   );
   const draft = useMemo(() => drafts?.find((d) => d.id === draftId) ?? null, [drafts, draftId]);
 
-  if (!conv || !draft) {
-    return (
-      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-        This draft is no longer available.
-      </div>
-    );
-  }
+  if (!conv || !draft) return <CommsDraftTabView missing />;
 
   return (
-    <div className="flex h-full flex-col bg-[var(--background)]">
+    <CommsDraftTabView missing={false}>
       {/* Keyed by draft: the editor's session (its Y.Doc, the socket relay,
           `ready`) belongs to ONE draft and is not rebuilt when the prop changes. */}
       <DraftEditor key={draft.id} conv={conv} draft={draft} />
-    </div>
+    </CommsDraftTabView>
   );
 }

@@ -13,6 +13,7 @@
 
 pub mod app_state;
 pub mod atlas_config;
+pub mod project_config;
 
 pub use app_state::{AppState, AppStateHandle, AppStatePatch};
 pub use atlas_config::{

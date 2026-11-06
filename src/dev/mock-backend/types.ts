@@ -4,13 +4,19 @@ import type { AgentResponses } from "./fake-agent";
 import type { ArtifactsResponses } from "./fixtures/artifacts";
 import type { CaptureResponses } from "./fixtures/capture";
 import type { CommsResponses } from "./fixtures/comms";
+import type { ExternalEditorResponses } from "./fixtures/external-editor";
 import type { FsResponses } from "./fixtures/files";
 import type { GitResponses } from "./fixtures/git";
 import type { IconThemeResponses } from "./fixtures/icon-themes";
+import type { InboxResponses } from "./fixtures/inbox";
+import type { OrgAgentResponses } from "./fixtures/org-agent";
 import type { IntegrationsResponses } from "./fixtures/integrations";
 import type { KnowledgeResponses } from "./fixtures/knowledge";
 import type { LogResponses } from "./fixtures/log";
 import type { MemoryResponses } from "./fixtures/memory";
+import type { PullRequestsResponses } from "./fixtures/pull-requests";
+import type { RcResponses } from "./fixtures/rc";
+import type { SecurityResponses } from "./fixtures/security";
 import type { SettingsResponses } from "./fixtures/settings";
 import type { SkillsResponses } from "./fixtures/skills";
 import type { SpacesResponses } from "./fixtures/spaces";
@@ -60,13 +66,19 @@ export interface MockResponses
     ArtifactsResponses,
     CaptureResponses,
     CommsResponses,
+    ExternalEditorResponses,
     FsResponses,
     GitResponses,
     IconThemeResponses,
+    InboxResponses,
+    OrgAgentResponses,
     IntegrationsResponses,
     KnowledgeResponses,
     LogResponses,
     MemoryResponses,
+    PullRequestsResponses,
+    RcResponses,
+    SecurityResponses,
     SettingsResponses,
     SkillsResponses,
     SpacesResponses,
@@ -84,6 +96,14 @@ export interface Scenario {
    * declares a response type for.
    */
   commands?: Partial<TypedHandlers<MockResponses>>;
+  /**
+   * Overrides for commands no fixture has a `<Domain>Responses` type for yet —
+   * the boot commands written inline in `base.ts` and the catch-all
+   * `fixtures/misc.ts`. Untyped, so prefer `commands`; a scenario that has to
+   * restate the app's identity (its organisation, its projects, its version)
+   * has no other way in. `commands` wins when both name a command.
+   */
+  rawCommands?: MockHandlers;
   /** Runs synchronously at install, before any app code. Seed fake state here. */
   init?: () => void;
   /**
@@ -91,6 +111,9 @@ export interface Scenario {
    * right tab, or to fire events with `emit()` so the screen shows live changes.
    */
   setup?: () => void | Promise<void>;
-  /** Named triggers, callable from the console as `__atlasMock.actions.<name>()`. */
-  actions?: Record<string, () => void | Promise<void>>;
+  /**
+   * Named triggers, callable from the console as `__atlasMock.actions.<name>()`.
+   * One may return (or resolve to) why it did nothing.
+   */
+  actions?: Record<string, () => void | string | Promise<void | string | undefined>>;
 }

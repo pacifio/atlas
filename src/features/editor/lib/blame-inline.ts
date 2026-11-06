@@ -1,6 +1,7 @@
 // CodeMirror extension: inline Git blame on the active line only — a dim
 // trailing "Author, 3 days ago · commit summary" annotation that follows the
-// cursor. Fed by the native `git_blame_file` engine via the `setBlame` effect.
+// cursor. Each part takes a syntax colour from the theme (author, time,
+// summary) so the line parses at a glance instead of reading as one grey run. Fed by the native `git_blame_file` engine via the `setBlame` effect.
 //
 // Committed lines live in a RangeSet keyed by line start, so attribution
 // shifts correctly through edits; any line the user touches (and any line git
@@ -74,33 +75,57 @@ const blameField = StateField.define<BlameState>({
   },
 });
 
-function relativeTime(ms: number): string {
+/**
+ * git's own relative date (`show_date_relative` in git's `date.c`), the `%cr`
+ * that Source Control → History prints for the same commit. Each step rounds
+ * to nearest and has git's thresholds; the floor-everything version this
+ * replaced put "22 hours ago" on the line and "23 hours ago" in History.
+ */
+export function relativeTime(ms: number, now = Date.now()): string {
   if (!ms) return "";
-  const s = Math.max(0, Math.floor((Date.now() - ms) / 1000));
-  if (s < 60) return "just now";
-  const m = Math.floor(s / 60);
-  if (m < 60) return m === 1 ? "1 minute ago" : `${m} minutes ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return h === 1 ? "1 hour ago" : `${h} hours ago`;
-  const d = Math.floor(h / 24);
-  if (d < 30) return d === 1 ? "1 day ago" : `${d} days ago`;
-  const mo = Math.floor(d / 30);
-  if (mo < 12) return mo === 1 ? "1 month ago" : `${mo} months ago`;
-  const y = Math.floor(d / 365);
-  return y <= 1 ? "1 year ago" : `${y} years ago`;
+  const unit = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"} ago`;
+  let diff = Math.max(0, Math.floor((now - ms) / 1000));
+  if (diff < 90) return unit(diff, "second");
+  diff = Math.floor((diff + 30) / 60);
+  if (diff < 90) return unit(diff, "minute");
+  diff = Math.floor((diff + 30) / 60);
+  if (diff < 36) return unit(diff, "hour");
+  diff = Math.floor((diff + 12) / 24);
+  if (diff < 14) return unit(diff, "day");
+  if (diff < 70) return unit(Math.floor((diff + 3) / 7), "week");
+  if (diff < 365) return unit(Math.floor((diff + 15) / 30), "month");
+  if (diff < 1825) {
+    const totalMonths = Math.floor((diff * 12 * 2 + 365) / (365 * 2));
+    const years = Math.floor(totalMonths / 12);
+    const months = totalMonths % 12;
+    const y = `${years} year${years === 1 ? "" : "s"}`;
+    return months ? `${y}, ${unit(months, "month")}` : `${y} ago`;
+  }
+  return unit(Math.floor((diff + 183) / 365), "year");
 }
 
+/** One coloured run of the annotation; `kind` picks its `.cm-blame-<kind>` class. */
+type BlamePart = { kind: "author" | "time" | "summary" | "uncommitted" | "sep"; text: string };
+
 class BlameWidget extends WidgetType {
-  constructor(readonly text: string) {
+  constructor(readonly parts: BlamePart[]) {
     super();
   }
   eq(other: BlameWidget) {
-    return other.text === this.text;
+    return (
+      other.parts.length === this.parts.length &&
+      other.parts.every((p, i) => p.kind === this.parts[i].kind && p.text === this.parts[i].text)
+    );
   }
   toDOM() {
     const el = document.createElement("span");
     el.className = "cm-blame-inline";
-    el.textContent = this.text;
+    for (const part of this.parts) {
+      const span = document.createElement("span");
+      span.className = `cm-blame-${part.kind}`;
+      span.textContent = part.text;
+      el.appendChild(span);
+    }
     return el;
   }
   ignoreEvent() {
@@ -108,7 +133,7 @@ class BlameWidget extends WidgetType {
   }
 }
 
-function blameTextFor(state: BlameState, doc: Text, head: number): string | null {
+function blamePartsFor(state: BlameState, doc: Text, head: number): BlamePart[] | null {
   if (state === null) return null;
   const line = doc.lineAt(head);
   let found: BlameLine | null = null;
@@ -116,10 +141,19 @@ function blameTextFor(state: BlameState, doc: Text, head: number): string | null
     found = v.info;
     return false;
   });
-  if (found === null) return "You · Uncommitted changes";
+  if (found === null) {
+    return [
+      { kind: "author", text: "You" },
+      { kind: "sep", text: " · " },
+      { kind: "uncommitted", text: "Uncommitted changes" },
+    ];
+  }
   const b: BlameLine = found;
   const when = relativeTime(b.timeMs);
-  return `${b.author}${when ? `, ${when}` : ""} · ${b.summary}`;
+  const parts: BlamePart[] = [{ kind: "author", text: b.author }];
+  if (when) parts.push({ kind: "sep", text: ", " }, { kind: "time", text: when });
+  parts.push({ kind: "sep", text: " · " }, { kind: "summary", text: b.summary });
+  return parts;
 }
 
 const blameDecorations = ViewPlugin.fromClass(
@@ -138,14 +172,14 @@ const blameDecorations = ViewPlugin.fromClass(
     }
 
     build(view: EditorView): DecorationSet {
-      const text = blameTextFor(
+      const parts = blamePartsFor(
         view.state.field(blameField),
         view.state.doc,
         view.state.selection.main.head,
       );
-      if (text === null) return Decoration.none;
+      if (parts === null) return Decoration.none;
       const line = view.state.doc.lineAt(view.state.selection.main.head);
-      const deco = Decoration.widget({ widget: new BlameWidget(text), side: 1 });
+      const deco = Decoration.widget({ widget: new BlameWidget(parts), side: 1 });
       return Decoration.set([deco.range(line.to)]);
     }
   },
@@ -154,15 +188,28 @@ const blameDecorations = ViewPlugin.fromClass(
 
 const blameTheme = EditorView.baseTheme({
   ".cm-blame-inline": {
-    marginLeft: "2em",
+    // PADDING, never margin. With the cursor at the end of the line (the
+    // widget sits at `line.to`), CodeMirror draws the caret at the widget's
+    // box — and a margin lies outside that box, so the caret was drawn 2em
+    // past the end of the text, which on an empty line looked like an indent
+    // nobody typed. Padding keeps the gap inside the box, so its left edge is
+    // the end of the text and the caret stays there.
+    paddingLeft: "2em",
     color: "var(--muted-foreground)",
-    opacity: "0.65",
+    // Higher than a plain grey annotation would need: the parts are told apart
+    // by hue, and at 0.65 the syntax colours wash into one another.
+    opacity: "0.8",
     fontStyle: "italic",
     fontSize: BLAME_FONT_SIZE,
     whiteSpace: "pre",
     pointerEvents: "none",
     userSelect: "none",
   },
+  ".cm-blame-author": { color: "var(--syntax-function)" },
+  ".cm-blame-time": { color: "var(--syntax-number)" },
+  ".cm-blame-summary": { color: "var(--syntax-string)" },
+  ".cm-blame-uncommitted": { color: "var(--syntax-keyword)" },
+  ".cm-blame-sep": { color: "var(--syntax-comment)" },
 });
 
 /** The inline-blame extension. Add to the editor's extensions, then dispatch

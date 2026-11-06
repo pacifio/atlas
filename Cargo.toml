@@ -8,7 +8,7 @@
 # (spec `docs/archive/atlas-agent-codex-port-spec.md`, decision D4 and its premise
 # correction; issue #38).
 #
-# The workspace exists so the vendored engine (#42) lands in the same
+# The workspace exists so the engine (#42) lands in the same
 # dependency graph as the app instead of a parallel one. Nothing about how
 # Atlas builds today changes: the patch tables and profiles below are the ones
 # that were in `src-tauri/Cargo.toml`, moved rather than rewritten, because
@@ -33,7 +33,6 @@ members = [
   "crates/atlas-artifacts",
   "crates/atlas-bus",
   "crates/atlas-checkpoint",
-  "crates/atlas-codeindex",
   "crates/atlas-comms",
   "crates/atlas-embed",
   "crates/atlas-git",
@@ -45,12 +44,16 @@ members = [
   "crates/atlas-process",
   "crates/atlas-profile",
   "crates/atlas-redact",
+  "crates/atlas-remote-control",
+  "crates/atlas-retrieval",
+  "crates/atlas-search",
+  "crates/atlas-security",
   "crates/atlas-terminal",
   "crates/atlas-theme",
   "crates/atlas-thread-metadata",
   "src-tauri",
 
-  # The vendored engine — see the block below.
+  # The engine — see the block below.
   "vendor/atlas-engine/agent-graph-store",
   "vendor/atlas-engine/agent-identity",
   "vendor/atlas-engine/analytics",
@@ -177,10 +180,10 @@ exclude = [
   "crates/atlas-kb-server",
 ]
 
-# ─── Vendored engine (ADR-0003 fork point `42b5f05`; renamed in ADR-0011) ──────────
-# The engine closure, vendored whole: no submodule, no upstream remote, no
+# ─── Engine (ADR-0003 fork point `42b5f05`; renamed in ADR-0011) ──────────
+# The engine closure, ported whole: no submodule, no upstream remote, no
 # upstream tracking (ADR-0003, D2, D4 — issue #42). Copied from
-# the upstream repository @ 42b5f05 with `target/` excluded; upstream's LICENSE and
+# the original repository @ 42b5f05 with `target/` excluded; the original LICENSE and
 # NOTICE travel with the code in `vendor/atlas-engine/`, as Apache-2.0 §4 requires.
 #
 # **"Quarantined" here means the phone-home PATHS are severed, not that the
@@ -189,7 +192,7 @@ exclude = [
 # binary's closure. What does not ship is their telemetry: `atlas-engine-analytics`
 # had its destination, POST and capture sink removed (#43, spec D2; the local
 # fact-reducer stays for its 79 tests), `atlas-engine-otel` defaults to
-# `exporter: None` (upstream defaulted to a hardcoded Statsig endpoint), and
+# `exporter: None` (the original defaulted to a hardcoded Statsig endpoint), and
 # `atlas-engine-feedback`'s uploader is gone — its `sentry` dep is now `sentry-types`
 # for one test-only attachment builder. `tests/engine-quarantine.test.ts`
 # documents which crates the containment rules cover.
@@ -199,8 +202,8 @@ exclude = [
 # chose the in-process **app-server client**, whose closure is larger — it also
 # pulls `atlas-engine-app-server` itself and the `ext/` extensions the inventory lists
 # as droppable. 105 crates normal+build, 110 including the five test-support
-# crates the vendored crates' own dev-dependencies need (the spec's Testing
-# Decisions keep upstream's suite). Upstream has 140 members, so 30 are
+# crates the engine crates' own dev-dependencies need (the spec's Testing
+# Decisions keep the engine's suite). The original had 140 members, so 30 are
 # dropped, not 63.
 
 [workspace.package]
@@ -228,9 +231,9 @@ license = "Apache-2.0"
 #     because `cargo metadata`'s resolve graph is a workspace-wide union and
 #     reports edges the app never compiles.
 
-# Upstream's workspace dependency table, verbatim except that internal `path`
+# The original workspace dependency table, verbatim except that internal `path`
 # entries are rebased onto `vendor/atlas-engine/`. 24 entries naming crates outside the
-# vendored closure are dropped rather than left dangling.
+# engine closure are dropped rather than left dangling.
 [workspace.dependencies]
 
 # Internal
@@ -345,7 +348,7 @@ atlas-engine-windows-sandbox = { path = "vendor/atlas-engine/windows-sandbox-rs"
 core_test_support = { path = "vendor/atlas-engine/core/tests/common" }
 
 # External
-age = "0.11.1"
+age = "0.12.1"
 ansi-to-tui = "8.0.1"
 anyhow = "1"
 arboard = { version = "3", features = ["wayland-data-control"] }
@@ -360,8 +363,9 @@ aws-credential-types = "1"
 aws-sigv4 = "1"
 aws-types = "1"
 axum = { version = "0.8", default-features = false }
-base64 = "0.22.1"
+base64 = "0.23"
 bitflags = "2.13.1"
+blake3 = "1.8"
 bm25 = "2.3.2"
 bytes = "1.10.1"
 chardetng = "0.1.17"
@@ -385,20 +389,24 @@ ctor = "0.6.3"
 deno_core_icudata = "0.77.0"
 derive_more = "2"
 diffy = "0.4.2"
-dirs = "6"
+dirs = "7"
 divan = "0.1.21"
 dns-lookup = "3.0.1"
 dotenvy = "0.15.7"
 dunce = "1.0.4"
-ed25519-dalek = { version = "2.2.0", features = ["pkcs8"] }
+ed25519-dalek = { version = "3.0.0", features = ["alloc", "pkcs8"] }
 encoding_rs = "0.8.35"
 eventsource-stream = "0.2.3"
 flate2 = "1.1.8"
 futures = { version = "0.3", default-features = false }
 gethostname = "1.1.0"
-gix = { version = "0.83.0", default-features = false, features = ["sha1"] }
+gix = { version = "0.90", default-features = false, features = ["sha1"] }
 glob = "0.3"
 globset = "0.4"
+grep-matcher = "0.1.9"
+grep-regex = "0.1.14"
+grep-searcher = "0.1.17"
+half = "2"
 hmac = "0.12.1"
 http = "1.3.1"
 httpdate = "1.0.3"
@@ -414,11 +422,29 @@ insta = "1.46.3"
 inventory = "0.3.19"
 itertools = "0.14.0"
 jsonptr = { version = "0.7.1", default-features = false }
-jsonwebtoken = { version = "10.4.0", default-features = false, features = [
+jsonwebtoken = { version = "11.1.0", default-features = false, features = [
     "use_pem",
     "aws_lc_rs",
 ] }
-keyring = { version = "3.6", default-features = false }
+# The credential-store API (keyring 3 was split: this is the API, the platform
+# stores below are the implementations; keyring 4 is a sample CLI, not a library).
+# Nothing may make an `Entry` before a store is installed; that is
+# `atlas_engine_keyring_store::ensure_default_store`.
+keyring-core = "1"
+# macOS: the legacy "User" (login) keychain, which is what keyring 3's
+# `apple-native` used. Not `protected`: that is the data-protection keychain, a
+# different store.
+apple-native-keyring-store = { version = "1", default-features = false, features = [
+    "keychain",
+] }
+# Windows Credential Manager. Default config is keyring 3's: target name
+# `user.service`, Enterprise persistence, UTF-16LE blob. No `search` (regex).
+windows-native-keyring-store = { version = "1", default-features = false }
+# Linux: the Secret Service over zbus, as keyring 3's `linux-native-async-persistent`
+# actually resolved to (its default builder only ever built Secret Service entries).
+zbus-secret-service-keyring-store = { version = "1", features = [
+    "rt-async-io-crypto-rust",
+] }
 landlock = "0.4.4"
 lazy_static = "1"
 libc = "0.2.182"
@@ -433,22 +459,26 @@ mime_guess = "2.0.5"
 multimap = "0.10.0"
 notify = "8.2.0"
 nucleo = { git = "https://github.com/helix-editor/nucleo.git", rev = "4253de9faabb4e5c6d81d946a5e35a90f87347ee" }
+# crates.io `nucleo-matcher` (what src-tauri links), not the git `nucleo`'s copy.
+nucleo-matcher = "0.3"
 once_cell = "1.20.2"
 openssl-sys = "*"
-opentelemetry = "0.31.0"
-opentelemetry-appender-tracing = "0.31.0"
-opentelemetry-otlp = "0.31.0"
-opentelemetry-semantic-conventions = "0.31.0"
-opentelemetry_sdk = "0.31.0"
+opentelemetry = "0.33.1"
+opentelemetry-appender-tracing = "0.33.1"
+opentelemetry-otlp = "0.33.1"
+opentelemetry-semantic-conventions = "0.33.1"
+opentelemetry_sdk = "0.33.1"
 os_info = "3.12.0"
 owo-colors = "4.3.0"
 pathdiff = "0.2"
 portable-pty = "0.9.0"
 predicates = "3"
 pretty_assertions = "1.4.1"
-pulldown-cmark = { version = "0.10", default-features = false }
+proptest = "1.11"
+pulldown-cmark = { version = "0.13", default-features = false }
 quick-xml = "0.41.0"
-rand = "0.9"
+rand = "0.10"
+rayon = "1.12"
 ratatui = { version = "0.30.2", default-features = false, features = [
     "crossterm",
     "layout-cache",
@@ -460,27 +490,27 @@ rcgen = { version = "0.14.7", default-features = false, features = [
     "pem",
 ] }
 regex = "1.12.3"
+regex-syntax = "0.8"
 regex-lite = "0.1.8"
-# `default-features = false`: reqwest's default set is `default-tls` + the
-# three below. `default-tls` is native-tls (Security.framework on macOS), which
-# no consumer wants — every vendored and Atlas crate asks for `rustls-tls` —
-# yet with both on, any `Client::new()` that never called `.use_rustls_tls()`
-# silently took native-tls. Dropping it removes native-tls, hyper-tls and
-# tokio-native-tls from the graph and puts every client on rustls/ring.
+# `default-features = false`: reqwest 0.13's default set is `default-tls` (an
+# alias for `rustls`) + `charset`, `http2` and `system-proxy`. Spelling the set
+# out keeps every client on one TLS stack and makes the choice visible here:
+# `rustls` is rustls on aws-lc-rs verifying through the OS trust store
+# (rustls-platform-verifier). No consumer wants native-tls, so it stays out of
+# the graph. `query` and `form` are opt-in features since 0.13; each crate that
+# calls `.query(` / `.form(` adds its own.
 # `cookies` stays: atlas-engine-http-client implements `reqwest::cookie::CookieStore`.
-reqwest = { version = "0.12", default-features = false, features = [
+reqwest = { version = "0.13", default-features = false, features = [
     "charset",
     "http2",
     "system-proxy",
     "cookies",
-    "rustls-tls",
+    "rustls",
 ] }
-# NOTE (Sep-03 audit): rmcp, rig-core and posthog-rs are the three crates
-# holding a second reqwest (0.13) tower in the lock, duplicating hyper/h2/
-# http/tower behind it. The collapse runs FORWARD, not back: all three have
-# 0.13 as their floor in every current release, so unification means moving
-# the app AND the vendored engine to 0.13 — an upstream-sync-sized change,
-# not a pin. Left as-is deliberately.
+# NOTE: every reqwest user here is on 0.13 except oauth2 5.0.0 (the latest
+# release), which still depends on reqwest 0.12 and so keeps a second hyper /
+# h2 / http / tower stack in the lock. That duplicate goes away when oauth2
+# moves to 0.13; nothing here can unify it.
 rmcp = { version = "=3.0.0", default-features = false }
 runfiles = { git = "https://github.com/dzbarsky/rules_rust", rev = "b56cbaa8465e74127f1ea216f813cd377295ad81" }
 rustix = { version = "1.1.4", features = ["net"] }
@@ -490,7 +520,7 @@ rustls = { version = "0.23", default-features = false, features = [
 ] }
 rustls-native-certs = "0.8.3"
 rustls-pki-types = "1.14.0"
-schemars = "0.8.22"
+schemars = "1"
 seccompiler = "0.5.0"
 semver = "1.0"
 # Types only. The full `sentry` client (transport, panic hooks, its own HTTP
@@ -531,7 +561,7 @@ sqlx = { version = "0.9.0", default-features = false, features = [
     "uuid",
 ] }
 starlark = { version = "0.14.2", default-features = false }
-strum = "0.27.2"
+strum = "0.28"
 strum_macros = "0.28.0"
 supports-color = "3.0.2"
 syntect = "5"
@@ -557,21 +587,21 @@ toml = "0.9.5"
 toml_edit = "0.24.0"
 tracing = "0.1.44"
 tracing-appender = "0.2.3"
-tracing-opentelemetry = "0.32.0"
+tracing-opentelemetry = "0.34.0"
 tracing-subscriber = "0.3.22"
 tracing-test = "0.2.5"
 tonic = { version = "0.14.3", default-features = false, features = ["channel", "codegen"] }
 tonic-prost = "0.14.3"
-# BLOCKER B (#39/#42): `tree-sitter` sets `links = "tree-sitter"`, so the fork
-# and `atlas-codeindex` cannot hold different majors. D4 resolves it by
-# bumping the fork rather than pinning Atlas back: upstream was 0.25.10 here.
+# BLOCKER B (#39/#42): `tree-sitter` sets `links = "tree-sitter"`, so no two
+# crates in the graph may hold different majors. D4 resolved it by bumping the
+# engine rather than pinning Atlas back: the original was 0.25.10 here.
 # `tree-sitter-bash` stays at 0.25 — there is no 0.26 of it, and it does not
 # need one: grammar crates bind to the `tree-sitter-language` shim rather than
 # to the core, which is exactly what lets one core serve grammars of several
 # vintages (Atlas's own are 0.23).
-tree-sitter = "0.26"
+tree-sitter = "0.27"
 tree-sitter-bash = "0.25"
-ts-rs = "11"
+ts-rs = "12"
 tungstenite = { version = "0.27.0", features = ["deflate", "proxy"] }
 uds_windows = "1.1.0"
 unicode-segmentation = "1.12.0"
@@ -587,7 +617,7 @@ which = "8"
 whoami = "1.6.1"
 wildmatch = "2.6.1"
 winapi-util = "0.1.11"
-zip = "2.4.2"
+zip = "9.1"
 zstd = "0.13"
 
 wiremock = "0.6"
@@ -666,20 +696,20 @@ double_must_use = "allow"
 # filesystem — the killed command's marker file never appears.
 [patch.crates-io]
 
-# ─── The vendored engine's own git forks ─────────────────────────────────────
+# ─── The engine's own git forks ─────────────────────────────────────
 # Copied from the fork point's `[patch.crates-io]`. A patch table is honored
-# only in the manifest cargo was invoked on, so upstream's copy is inert now
+# only in the manifest cargo was invoked on, so the original copy is inert now
 # that these crates are members here: without these three lines the engine
 # silently resolves the unforked crates instead (#42).
-# crossterm is deliberately NOT patched here, though upstream patches it.
-# Its only consumer is the TUI, which is outside the vendored closure, so
+# crossterm is deliberately NOT patched here, though the original patched it.
+# Its only consumer is the TUI, which is outside the engine closure, so
 # carrying the entry earned a "patch was not used in the crate graph"
 # warning on every cargo invocation and patched nothing. Restore it with
 # the TUI, if the TUI is ever ported.
 tokio-tungstenite = { git = "https://github.com/openai-oss-forks/tokio-tungstenite", rev = "0e5b2d73aa18dd9f0a50ee9ff199d5aef7594186" }
 tungstenite = { git = "https://github.com/openai-oss-forks/tungstenite-rs", rev = "4fffad30fe373adbdcffab9545e9e9bf4f2fc19f" }
 
-# Upstream also patches the ssh spelling of the same fork, because a dependency
+# The original also patched the ssh spelling of the same fork, because a dependency
 # names it that way. Verbatim; dropping it resolves tungstenite twice.
 [patch."ssh://git@github.com/openai-oss-forks/tungstenite-rs.git"]
 tungstenite = { git = "https://github.com/openai-oss-forks/tungstenite-rs", rev = "4fffad30fe373adbdcffab9545e9e9bf4f2fc19f" }
@@ -739,7 +769,7 @@ codegen-units = 256
 debug = "line-tables-only"
 
 # Optimize ALL transitive dependencies in dev mode at `opt-level = 1`
-# (Tauri, wry, tao, tokio, serde, reqwest, the old vendored SDK forks, etc.).
+# (Tauri, wry, tao, tokio, serde, reqwest, the old SDK forks, etc.).
 # First clean build pays a one-time ~3–5 minute cost; subsequent rebuilds only
 # recompile the app crate and are unaffected. Net effect: `bunx tauri dev`
 # startup drops noticeably because Tauri's runtime is no longer running
@@ -783,8 +813,6 @@ opt-level = 1
 opt-level = 1
 [profile.dev.package.atlas-checkpoint]
 opt-level = 1
-[profile.dev.package.atlas-codeindex]
-opt-level = 1
 [profile.dev.package.atlas-comms]
 opt-level = 1
 [profile.dev.package.atlas-embed]
@@ -807,6 +835,14 @@ opt-level = 1
 opt-level = 1
 [profile.dev.package.atlas-redact]
 opt-level = 1
+[profile.dev.package.atlas-remote-control]
+opt-level = 1
+[profile.dev.package.atlas-retrieval]
+opt-level = 1
+[profile.dev.package.atlas-search]
+opt-level = 1
+[profile.dev.package.atlas-security]
+opt-level = 1
 [profile.dev.package.atlas-terminal]
 opt-level = 1
 [profile.dev.package.atlas-theme]
@@ -814,21 +850,21 @@ opt-level = 1
 [profile.dev.package.atlas-thread-metadata]
 opt-level = 1
 
-# The vendored engine's members, same reasoning as the stanzas above (#65).
+# The engine's members, same reasoning as the stanzas above (#65).
 # #42's exemption — "quarantined, on no runtime path until the seam is rewired
 # (#45)" — expired when #45 and #54 landed: the engine now runs on EVERY dev
 # turn (streaming, rollout I/O, sandboxing, apply-patch, ~600k LOC), and at
 # the profile's opt-level 0 it was the slowest code on the hottest path. The
 # cost is a longer first clean build; the `"*"` override cannot cover these
 # because workspace members are excluded from it by cargo. Generated from the
-# member list — a new vendored member belongs here too, and
+# member list — a new engine member belongs here too, and
 # tests/cargo-workspace.test.ts fails if it is missing.
 #
 # `incremental = false` on every one of them: these crates change only when
-# the fork is patched, so incremental state (14.6 GB of target/debug, the
+# the engine is patched, so incremental state (14.6 GB of target/debug, the
 # bulk of it) was write-once and never re-read. Non-incremental codegen is
 # also faster on a first compile and, unlike incremental units, is cacheable
-# by a rustc wrapper such as sccache. The trade: editing a vendored crate
+# by a rustc wrapper such as sccache. The trade: editing an engine crate
 # recompiles that crate from scratch. Atlas's own members stay incremental.
 
 [profile.dev.package.app_test_support]

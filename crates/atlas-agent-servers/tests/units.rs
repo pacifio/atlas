@@ -517,7 +517,7 @@ fn an_agent_with_no_workaround_gets_a_clean_environment() {
 }
 
 /// Codex's auth reads `CODEX_API_KEY` and `OPENAI_API_KEY`. The second was once
-/// forwarded as `OPEN_AI_API_KEY` (Zed's spelling), a name nothing reads, so a
+/// forwarded as `OPEN_AI_API_KEY`, a name nothing reads, so a
 /// key the user exported never reached the agent.
 #[test]
 fn codex_gets_the_api_keys_its_auth_actually_reads() {
@@ -576,8 +576,8 @@ fn advertised_capabilities_match_what_the_handlers_serve() {
 
 // ── the terminal-output pump ────────────────────────────────────────────────
 //
-// `follow_terminal_output` is the link Zed gets from GPUI for free: a running
-// command's output has to become thread events, or the tool call that renders
+// `follow_terminal_output` is the link between a terminal and the tool call that
+// renders it: a running command's output has to become thread events, or the tool call that renders
 // it is never re-projected and the output pane stays frozen. These drive the
 // real spawned task against a real PTY.
 

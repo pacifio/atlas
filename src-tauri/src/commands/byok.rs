@@ -1,9 +1,11 @@
 //! BYOK (bring-your-own-key) — a view onto the user's shell environment.
 //!
-//! **Atlas stores no API keys.** It used to keep them in a private JSON file;
-//! that store is gone. A key lives exactly where the rest of the user's tooling
-//! already looks for it — an `export` in their shell profile — and Settings ▸
-//! API Keys is an editor for those lines, not a vault.
+//! **Atlas stores no provider keys.** It used to keep them in a private JSON
+//! file; that store is gone. A key lives exactly where the rest of the user's
+//! tooling already looks for it — an `export` in their shell profile — and
+//! Settings ▸ Agents ▸ Provider keys is an editor for those lines, not a vault.
+//! (A variable the user sets for one agent and marks sensitive is another
+//! matter: it goes to the OS keychain, ADR-0023, `agent_secrets`.)
 //!
 //! This is the right shape for three reasons:
 //!
@@ -57,6 +59,8 @@ use super::shell_profile::{self, ShellKind};
 /// `DEEPINFRA_API_TOKEN`, ElevenLabs historically `XI_API_KEY`) — a user who
 /// exported ANY recognised spelling gets their key imported.
 const ENV_KEY_VARS: &[(&str, &[&str])] = &[
+    ("minimax", &["MINIMAX_API_KEY"]),
+    ("minimax-cn", &["MINIMAX_CN_API_KEY"]),
     ("anthropic", &["ANTHROPIC_API_KEY", "CLAUDE_API_KEY"]),
     ("openai", &["OPENAI_API_KEY", "OPENAI_KEY"]),
     (
@@ -121,7 +125,7 @@ pub struct EnvKey {
 
 /// Two-phase, NEVER-blocking env-key state. The old `OnceLock::get_or_init`
 /// design made whichever reader arrived first (often the settings screen's
-/// `byok_env_list`, since Settings → API Keys is a common first stop after
+/// `byok_env_list`, since Settings → Agents → Provider keys is a common first stop after
 /// launch) wait up to 5s on the login-shell probe. Now:
 ///
 /// - Phase 1 (instant, at first read): the process env is scanned — free, and
@@ -572,7 +576,7 @@ pub fn byok_env_set(app: AppHandle, env_var: String, value: String) -> Result<St
     }
     if !known_vars().iter().any(|(_, v)| *v == env_var) {
         return Err(format!(
-            "'{env_var}' is not a recognised provider key variable."
+            "'{env_var}' is not a recognized provider key variable."
         ));
     }
     let home = home_dir().ok_or("No home directory.")?;
@@ -741,6 +745,20 @@ fn probe_shell_vars(vars: &[&str]) -> BTreeMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_minimax_region_keys_are_separate() {
+        for (provider, env) in [
+            ("minimax", "MINIMAX_API_KEY"),
+            ("minimax-cn", "MINIMAX_CN_API_KEY"),
+        ] {
+            let (_, vars) = ENV_KEY_VARS
+                .iter()
+                .find(|(id, _)| *id == provider)
+                .expect("MiniMax region must have a key mapping");
+            assert_eq!(*vars, &[env]);
+        }
+    }
 
     #[test]
     fn test_orcarouter_env_vars() {

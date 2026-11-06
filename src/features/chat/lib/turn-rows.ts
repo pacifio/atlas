@@ -13,14 +13,22 @@
 // The closed set matters: a new row kind is a deliberate addition to the
 // vocabulary of the transcript, not an ad-hoc branch in a render function.
 
-import type { ChatMessage, ToolCallDisplay, TurnFile } from "@/types/agent";
+import type {
+  ChatMessage,
+  Subagent,
+  SubagentStatus,
+  ToolCallDisplay,
+  TurnFile,
+  TurnInterruption,
+} from "@/types/agent";
 import type { ImageAttachment } from "@/types/agents";
 
 // Shared so a row without images keeps a stable prop for the row's `memo`.
 const NO_ATTACHMENTS: readonly ImageAttachment[] = Object.freeze([]);
 import { isBashToolCall, bashCommandOf } from "./tool-calls";
+import { liveThought, thoughtHeadline } from "./thought-headline";
 import { orgToolOf, orgToolRow } from "@/features/org-actions/lib/org-tool-rows";
-import { parseShellCommand } from "./parse-shell-command";
+import { commandProgramName, parseShellCommand } from "./parse-shell-command";
 import {
   getFilePathFromInput,
   classifyToolFileKind,
@@ -28,8 +36,10 @@ import {
   countEditLines,
   isFileCreated,
 } from "./tool-files";
+import { isEmptyMessage, stableTurnKey } from "./turn-identity";
 import { splitAtlasContext } from "./atlas-context";
 import { stripNextSteps, stripNextStepsDirective } from "./next-steps";
+import { detectInjectedPrompt, type InjectedPrompt } from "./injected-prompt";
 
 // ── Row kinds ──────────────────────────────────────────────────────────────
 
@@ -42,6 +52,9 @@ export const RowKind = {
   Separator: 5,
   TurnFooter: 6,
   WorkHeader: 7,
+  Subagent: 8,
+  Interruption: 9,
+  Injected: 10,
 } as const;
 
 /** Marker execution state — drives the leading glyph, nothing else. */
@@ -68,7 +81,19 @@ export interface UserRow extends RowBase {
   expanded: boolean;
   /** The images sent with the prompt, shown as tiles above the bubble. */
   attachments: readonly ImageAttachment[];
+  /** The remote-control driver who sent it, when it was not this window's
+   *  composer: shown under the bubble so the thread says whose prompt it was.
+   *  The name the wire carried, or "Someone else" — the room never names a
+   *  user, so the row resolves `remoteAuthorId` against the roster first. */
+  remoteAuthor: string | null;
+  /** Their principal id, for a face and a real name (`useRcPeople`). */
+  remoteAuthorId: string | null;
   timestamp: string;
+  /** `timestamp` is only when Atlas replayed the message; show no clock. */
+  timestampApproximate?: true;
+  /** `ChatMessage.trustedMentionPaths`: the outside paths the composer
+   *  attached, the only ones a click in this bubble may open. */
+  trustedPaths?: readonly string[];
 }
 
 /** The `ChatMessage.id` behind a user row. Row ids are minted as
@@ -88,11 +113,27 @@ export interface ProseRow extends RowBase {
   showHeader: boolean;
   model: string | null;
   timestamp: string;
+  /** `timestamp` is only when Atlas replayed the message; show no clock. */
+  timestampApproximate?: true;
+  /** Set on the turn's last response when the turn ends on a footer row: its
+   *  hover footer (copy, branch, pin, time) moves below the changed-files card,
+   *  to the end of the response, and this row reserves no gap for it. */
+  footerBelow?: true;
 }
 
 export interface ThinkingRow extends RowBase {
   kind: typeof RowKind.Thinking;
+  /** The full reasoning, only while the reader has the row open. Collapsed it
+   *  is empty, so a streaming thought re-renders its row when the headline
+   *  changes rather than on every chunk. */
   text: string;
+  /** What the agent is thinking about, from `thoughtHeadline`. */
+  headline: string | null;
+  /** The thought as it arrives, from `liveThought`: set only while this is
+   *  the turn's current step — streaming, with no tool call or answer after
+   *  it yet. The row shows it open, then folds to `headline` the moment the
+   *  agent moves on. */
+  live: string | null;
   streaming: boolean;
   expanded: boolean;
 }
@@ -119,6 +160,8 @@ export type MarkerTool =
   | "move"
   | "file"
   | "org"
+  | "memory"
+  | "browser"
   | "tool";
 
 export interface MarkerRow extends RowBase {
@@ -140,28 +183,34 @@ export interface MarkerRow extends RowBase {
    *  this is what the hover title falls back to — the information the
    *  reclassification hid has to stay reachable without opening the panel. */
   cmd?: string;
+  /** The MCP server the call went to, in words ("browser", "github"), for
+   *  calls Atlas has no verb for. A block counts these per server: "Used
+   *  browser 2 times" says more than "Used 2 tools". */
+  server?: string;
   /** Only set for edit markers, so the row can show `+n −m` inline. */
   added: number;
   removed: number;
-  /** Epoch ms the call was first seen, client-stamped by the store. `undefined`
-   *  on any call restored from a transcript — see `ToolCallDisplay.startedAt`.
-   *  Feeds the live elapsed figure; nothing settled reads it. */
+  /** Epoch ms the call was first seen (`ToolCallDisplay.startedAt`). Feeds the
+   *  live elapsed figure; nothing settled reads it. */
   startedAt: number | undefined;
+  /** How long the call took, once it settled — set only when both ends were
+   *  stamped. An expanded block shows it in the right gutter for calls that
+   *  took a second or more. Derived from the call, so a segment that holds
+   *  holds this too. */
+  durationMs?: number;
 }
 
 export interface MarkerGroupRow extends RowBase {
   kind: typeof RowKind.MarkerGroup;
-  /** The whole folded block as one sentence: "Read files, ran commands". This
-   *  is what tells one block from the next in a column of them, which is why
-   *  it is the line and not a fixed label. */
+  /** The whole block as one counted sentence: "Ran 3 commands and read 2
+   *  files". See "Folded-block summary". */
   summary: string;
   /** How many tool calls the block stands for. Not rendered — the summary is
    *  the whole line — but it is what `summary` was counted from, and the thing
    *  to assert on when testing that projection. */
   count: number;
-  /** The glyph for the whole block: the icon of the FIRST bucket in `summary`,
-   *  so the wrench leads "Loaded a tool, read files…" and the book leads "Read
-   *  files, ran commands" — note 3 under "Folded-block summary". */
+  /** The glyph for the whole block: the icon of the group `summary` names
+   *  first. */
   tool: MarkerTool;
   /** Calls in this consecutive sequence, shown inside the disclosure. */
   markers: MarkerRow[];
@@ -200,11 +249,60 @@ export interface WorkHeaderRow extends RowBase {
   live: boolean;
   /** Epoch ms the live clock counts from — the user's message. */
   startedAt: number | null;
-  /** Settled wall time, when the turn was timed live (`ChatMessage.workedMs`). */
+  /** Settled wall time, when Rust timed the turn (`ChatMessage.workedMs`). */
   workedMs: number | null;
+  /** The user stopped the turn (`ChatMessage.stopReason` is `cancelled`):
+   *  the settled label reads "Stopped after" rather than "Worked for". */
+  stopped: boolean;
   /** There are rows behind the header to fold; without them it is a caption. */
   foldable: boolean;
   open: boolean;
+}
+
+/**
+ * A child agent the turn delegated to — the launching tool call, rendered as
+ * the child rather than as the call.
+ *
+ * The call that spawns a subagent is a poor row: its name is the agent's word
+ * for the mechanism ("Task", "spawn_agent", "Start subagent counter") and its
+ * result is a transport detail. The child is the thing the reader is following,
+ * so the row carries the child's name, status and work instead, and the launch
+ * survives only as the identity (`toolCallId`).
+ *
+ * Deliberately NOT folded into a `MarkerGroup`. A folded block says "loaded
+ * tools" and hides how many agents are running and whether any has come back —
+ * which is the whole question a delegating turn raises.
+ */
+export interface SubagentRow extends RowBase {
+  kind: typeof RowKind.Subagent;
+  /** The launching call's id — the child's identity, and what its own calls
+   *  point back to (`ToolCallDisplay.parentToolCallId`). */
+  toolCallId: string;
+  name: string;
+  status: SubagentStatus;
+  /** The child's role, when the launch named one: Claude's `subagent_type`,
+   *  the engine's `agent_type`. */
+  role: string | undefined;
+  /** What it was asked to do, for the row's second line. */
+  prompt: string | undefined;
+  /** What it reported back. For a mail child (the native engine's) this is the
+   *  whole of what it ever says. */
+  result: string | undefined;
+  /** Epoch ms the launch was first seen — the live elapsed figure counts from
+   *  here, exactly as a marker's does. */
+  startedAt: number;
+  /** Set once it has ended, so a settled row states a duration rather than
+   *  ticking forever. */
+  endedAt: number | undefined;
+  /** Its own tool calls, when the agent attributes them. ALWAYS EMPTY for a
+   *  mail child, whose calls run on a thread this session never sees — so an
+   *  empty list is "not visible", never "did nothing". */
+  markers: MarkerRow[];
+  /** How many calls the CHILD reports having made, which is not
+   *  `markers.length`: the agent can count work whose calls it never attributed
+   *  to this session. Zero means "nothing visible", so a row renders no count
+   *  rather than "0" — which would be a claim about the child that is false. */
+  workCount: number;
 }
 
 export interface SeparatorRow extends RowBase {
@@ -214,28 +312,60 @@ export interface SeparatorRow extends RowBase {
 
 export interface TurnFooterRow extends RowBase {
   kind: typeof RowKind.TurnFooter;
-  /** The first few, shown collapsed. */
+  /** The turn's frozen `turnSummary.files`, by identity: the same array every
+   *  projection, so a settled turn's changed-files card never re-renders. */
   files: TurnFile[];
-  /** Everything — the overflow disclosure renders from this. */
-  allFiles: TurnFile[];
-  /** How many `allFiles` holds beyond `files`. */
-  overflow: number;
   repoAtTurn: boolean;
+  /** The turn's stable key (`stableTurnKey`): what the card opens and
+   *  remembers its folders by, since `turnId` changes when the log reloads. */
+  turnKey: string;
   /** Message id, so the footer can reach usage/suggestions/contextUsage. */
   messageId: string;
   hasSuggestions: boolean;
   contextChip: boolean;
+  /** The turn's last response, whose hover footer this row draws after the
+   *  card (that prose row carries `footerBelow`). Flat fields rather than one
+   *  object so the shallow row comparison keeps a settled footer row stable. */
+  responseRowId?: string;
+  responseText?: string;
+  responseTimestamp?: string;
+  /** False when the response's header line already shows the time. */
+  responseShowTimestamp?: boolean;
+}
+
+/** A prompt Atlas sent the agent on its own (`ChatMessage.injected`): a user
+ *  turn, but not the user's words, so not drawn as their bubble. */
+export interface InjectedRow extends RowBase {
+  kind: typeof RowKind.Injected;
+  injected: InjectedPrompt;
+  /** The prompt as the agent received it, shown when the row is opened. */
+  text: string;
+  timestamp: string;
+}
+
+/** Something outside the conversation cut into this turn (`TurnInterruption`).
+ *  Its own row, after the footer, so it reads as Atlas speaking about the turn
+ *  rather than as more of the reply. */
+export interface InterruptionRow extends RowBase {
+  kind: typeof RowKind.Interruption;
+  interruption: TurnInterruption;
+  /** True when this is the thread's last turn — the only one whose Retry and
+   *  Continue would act on the reply the row is about. */
+  latest: boolean;
 }
 
 export type Row =
   | UserRow
+  | InjectedRow
+  | InterruptionRow
   | ProseRow
   | ThinkingRow
   | MarkerRow
   | MarkerGroupRow
   | SeparatorRow
   | TurnFooterRow
-  | WorkHeaderRow;
+  | WorkHeaderRow
+  | SubagentRow;
 
 // ── Turns ──────────────────────────────────────────────────────────────────
 
@@ -259,6 +389,8 @@ export interface Turn {
 export interface Projection {
   rows: Row[];
   turns: Turn[];
+  /** Per-turn pieces, for the next projection to reuse. See `projectRows`. */
+  segments: Segment[];
 }
 
 /**
@@ -348,6 +480,35 @@ function diffEditOf(tc: ToolCallDisplay): FileEdit | null {
   };
 }
 
+/**
+ * An Atlas memory call's tool, from either spelling of its name:
+ * `mcp__atlas_memory__memory_search` (an ACP agent's) or
+ * `atlas_memory.memory_search` (Atlas Agent's).
+ */
+export function memoryToolOf(toolName: string): string | null {
+  return /^(?:mcp__atlas_memory__|atlas_memory\.)(memory_[a-z_]+)$/.exec(toolName)?.[1] ?? null;
+}
+
+/** The line a memory call reads as: what it looked for, or what it kept. */
+function memoryToolRow(
+  tool: string,
+  args: Record<string, unknown>,
+): { verb: string; detail: string } {
+  const str = (v: unknown) => (typeof v === "string" ? v : "");
+  switch (tool) {
+    case "memory_search":
+      return str(args.query)
+        ? { verb: "Searched memory for", detail: str(args.query) }
+        : { verb: "Searched memory", detail: "" };
+    case "memory_remember":
+      return str(args.kind)
+        ? { verb: "Remembered a", detail: str(args.kind) }
+        : { verb: "Remembered", detail: "" };
+    default:
+      return { verb: "Read memory", detail: "" };
+  }
+}
+
 /** Trim a path to something that reads in one line without the eye scanning. */
 export function shortPath(p: string): string {
   const parts = p.split("/").filter(Boolean);
@@ -366,6 +527,19 @@ const TOOL_ICON_BY_KIND: Record<string, MarkerTool> = {
   fetch: "fetch",
   think: "think",
 };
+
+/**
+ * How a marker names a call no verb branch recognised. Atlas's own tool
+ * servers read as their tool, in words: `mcp__atlas_code__find_symbol`
+ * (Claude Code's name for it) and `atlas_code.find_symbol` (Atlas Agent's)
+ * both become "Find symbol". Any other tool keeps its own name.
+ */
+export function toolDisplayName(toolName: string): string {
+  const tool = /^(?:mcp__atlas_[a-z]+__|atlas_[a-z]+\.)([a-z_]+)$/.exec(toolName)?.[1];
+  if (!tool) return toolName;
+  const words = tool.replace(/_/g, " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
 
 /**
  * The icon key for a call the verb branches did not already classify.
@@ -387,89 +561,149 @@ export function toolIconFor(kind: string | null | undefined, toolName: string): 
   return "tool";
 }
 
+/**
+ * A call to a third-party MCP server, by Claude Code's name for it
+ * (`mcp__<server>__<tool>`): the server in words, and the tool as a phrase.
+ * Atlas's own servers are not here — memory, organisation and code calls
+ * already read as what they did.
+ */
+export function mcpToolOf(toolName: string): { server: string; tool: string } | null {
+  const match = /^mcp__(.+?)__(.+)$/.exec(toolName);
+  if (!match || match[1].startsWith("atlas_")) return null;
+  const [, server, tool] = match;
+  // Every browser-driving server is one thing to the reader. The server
+  // decides it; a tool name only by a `browser_` prefix, so
+  // `vercel__get_preview_deployment` stays vercel's.
+  const label =
+    /browser|playwright|puppeteer|chrome|preview/i.test(server) || /^browser[_-]/i.test(tool)
+      ? "browser"
+      : server.replace(/[_-]+/g, " ").toLowerCase();
+  const words = tool.replace(/[_-]+/g, " ").trim();
+  return { server: label, tool: words.charAt(0).toUpperCase() + words.slice(1) };
+}
+
 // ── Folded-block summary ───────────────────────────────────────────────────
 //
-// "Loaded a tool, read files, ran commands" — the whole of a folded turn as one
-// sentence, the way the Codex desktop app writes it.
-//
-// That app is not open source and its UI was not part of the engine port, so
-// unlike `parse-shell-command.ts` this is RECONSTRUCTED from screenshots rather
-// than ported. Three things the screenshots actually prove, and which the code
-// below is shaped by — change them only against new evidence:
-//
-//  1. The buckets are coarser than the row glyphs. A turn whose rows were
-//     `run ×6, tool ×1, read ×1, search ×1` summarised as exactly three
-//     fragments with no "searched" among them — so a search counts toward
-//     "read files". The plural confirms it: that turn read ONE file by glyph
-//     yet said "read files", which only adds up if the search counted too.
-//  2. The order is fixed, not by frequency and not by when things happened.
-//     That same turn led with "Loaded a tool" off a single call while its six
-//     commands came last, and its first row chronologically was a command.
-//  3. The glyph is the first bucket in the sentence, again not the commonest —
-//     the wrench above six terminal rows, and a book on "Read files, ran
-//     commands".
-//
-// Where the fragment for a bucket is unobserved (`edit`), or where a glyph has
-// no obviously right bucket (`fetch`, `think`), the choice below is ours.
+// "Ran 3 commands and read 2 files": a block of tool calls as one counted
+// sentence. Calls are grouped by what they did. The two most telling groups
+// are named, in the order they first happened, and anything left over is
+// counted as "performed N other actions". Changing the project (commands,
+// edits) outranks looking at it (reads, searches, lookups), which outranks a
+// generic tool, so a block that ran a build is never summarised by the file
+// it read on the way.
 
-type SummaryBucket = "tool" | "read" | "edit" | "run";
+type SummaryAction =
+  | "run"
+  | "edit"
+  | "read"
+  | "search"
+  | "fetch"
+  | "org"
+  | "memory"
+  | "server"
+  | "tool";
 
-/** Which sentence fragment each row glyph counts toward. */
-const SUMMARY_BUCKET: Record<MarkerTool, SummaryBucket> = {
+/** Which group each row glyph counts toward. */
+const SUMMARY_ACTION: Record<MarkerTool, SummaryAction> = {
   run: "run",
-  // Searching and listing are reading — see note 1 above.
-  read: "read",
-  search: "read",
-  list: "read",
-  file: "read",
   edit: "edit",
   delete: "edit",
   move: "edit",
-  // Unobserved: a fetch or a think has no fragment of its own, and "loaded a
-  // tool" is the least wrong of the four.
+  read: "read",
+  list: "read",
+  file: "read",
+  search: "search",
+  fetch: "fetch",
+  org: "org",
+  memory: "memory",
+  browser: "server",
   tool: "tool",
-  fetch: "tool",
   think: "tool",
-  org: "tool",
 };
 
-/** Fixed order — note 2 above. `edit`'s slot is the one we chose. */
-const SUMMARY_ORDER: readonly SummaryBucket[] = ["tool", "read", "edit", "run"];
-
-/** [one, several]. The singular is load-bearing: "Loaded a tool" is what a
- *  single call reads as, and it is how note 1's plural was diagnosed.
- *
- *  A counted form ("3 files read") was tried on a two-line header and reverted:
- *  every block then opened with the same bold "Tool calls" label, so a column
- *  of them stopped differentiating at a glance. The sentence IS the
- *  differentiator — "Read files, ran commands" and "Edited files" are
- *  recognisably different lines. */
-const SUMMARY_PHRASE: Record<SummaryBucket, [string, string]> = {
-  tool: ["loaded a tool", "loaded tools"],
-  read: ["read a file", "read files"],
-  edit: ["edited a file", "edited files"],
-  run: ["ran a command", "ran commands"],
+/** Lower is named first. */
+const SUMMARY_PRIORITY: Record<SummaryAction, number> = {
+  run: 0,
+  edit: 0,
+  read: 1,
+  search: 1,
+  fetch: 1,
+  org: 1,
+  memory: 1,
+  server: 1,
+  tool: 2,
 };
 
-/** One folded block → the sentence on its header, and the glyph that leads it
- *  (note 3: the first bucket's, not the commonest). */
-function summarizeMarkers(markers: MarkerRow[]): { summary: string; tool: MarkerTool } {
-  const counts = new Map<SummaryBucket, number>();
-  for (const m of markers) {
-    const bucket = SUMMARY_BUCKET[m.tool];
-    counts.set(bucket, (counts.get(bucket) ?? 0) + 1);
+function counted(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+function actionLabel(action: SummaryAction, n: number, server: string | undefined): string {
+  switch (action) {
+    case "run":
+      return `Ran ${counted(n, "command", "commands")}`;
+    case "edit":
+      return `Changed ${counted(n, "file", "files")}`;
+    case "read":
+      return `Read ${counted(n, "file", "files")}`;
+    case "search":
+      return n === 1 ? "Searched code once" : `Searched code ${n} times`;
+    case "fetch":
+      return n === 1 ? "Fetched a page" : `Fetched ${n} pages`;
+    case "org":
+      return n === 1 ? "Checked your organization" : `Checked your organization ${n} times`;
+    case "memory":
+      return n === 1 ? "Used Atlas memory" : `Used Atlas memory ${n} times`;
+    case "server":
+      return n === 1 ? `Used ${server}` : `Used ${server} ${n} times`;
+    case "tool":
+      return n === 1 ? "Used a tool" : `Used ${n} tools`;
   }
-  const present = SUMMARY_ORDER.filter((b) => counts.has(b));
-  if (present.length === 0) return { summary: "Used tools", tool: "tool" };
+}
 
-  const fragments = present.map((b) => SUMMARY_PHRASE[b][counts.get(b) === 1 ? 0 : 1]);
-  const sentence = fragments.join(", ");
-  // Only the first fragment is capitalised; the rest stay mid-sentence.
-  return {
-    summary: sentence.charAt(0).toUpperCase() + sentence.slice(1),
-    // Each bucket is named after the glyph that stands for it.
-    tool: present[0],
-  };
+/** One block → the sentence on its header, and the glyph of the group that
+ *  leads it. */
+export function summarizeMarkers(markers: MarkerRow[]): { summary: string; tool: MarkerTool } {
+  // Keyed by action, and an MCP server's calls by server: two servers are two
+  // groups, each named for itself.
+  const groups = new Map<string, MarkerRow[]>();
+  for (const m of markers) {
+    const key = m.server ? `server:${m.server}` : SUMMARY_ACTION[m.tool];
+    const group = groups.get(key);
+    if (group) group.push(m);
+    else groups.set(key, [m]);
+  }
+  if (groups.size === 0) return { summary: "Used tools", tool: "tool" };
+
+  const all = [...groups.values()].map((calls, index) => {
+    const action: SummaryAction = calls[0].server ? "server" : SUMMARY_ACTION[calls[0].tool];
+    return {
+      action,
+      server: calls[0].server,
+      glyph: calls[0].tool,
+      index,
+      calls: calls.length,
+      // Edits count files, not calls: three edits to one file changed one file.
+      n:
+        action === "edit"
+          ? new Set(calls.map((c) => c.path ?? (c.detail || c.toolCallId))).size
+          : calls.length,
+    };
+  });
+  const named = [...all]
+    .sort((a, b) => SUMMARY_PRIORITY[a.action] - SUMMARY_PRIORITY[b.action] || a.index - b.index)
+    .slice(0, 2)
+    .sort((a, b) => a.index - b.index);
+  const labels = named.map((g) => actionLabel(g.action, g.n, g.server));
+  const rest = markers.length - named.reduce((sum, g) => sum + g.calls, 0);
+  if (rest > 0) labels.push(`Performed ${counted(rest, "other action", "other actions")}`);
+
+  const parts = labels.map((l, i) => (i === 0 ? l : l.charAt(0).toLowerCase() + l.slice(1)));
+  const summary =
+    parts.length < 3
+      ? parts.join(" and ")
+      : `${parts.slice(0, -1).join(", ")}, and ${parts[parts.length - 1]}`;
+  return { summary, tool: named[0].action === "server" ? named[0].glyph : named[0].action };
 }
 
 /**
@@ -508,8 +742,12 @@ function liveMarkerLabel(marker: MarkerRow): string {
     // the object of "searching for" rather than as a name.
     case "search":
       return target ? `Searching for ${target}` : "Searching files";
-    case "run":
-      return target ? `Running ${target}` : "Running command";
+    // The program, not the whole command line: "Running sed" holds the one
+    // line at any width, and the command is a click away in the block.
+    case "run": {
+      const program = target ? commandProgramName(target) : null;
+      return program ? `Running ${program}` : target ? `Running ${target}` : "Running command";
+    }
     case "fetch":
       return target ? `Fetching ${target}` : "Fetching content";
     case "think":
@@ -518,8 +756,23 @@ function liveMarkerLabel(marker: MarkerRow): string {
     case "org":
       return target ? `${marker.verb} ${target}` : marker.verb;
     default:
+      // An MCP call's verb is already the tool, in words ("Take snapshot").
+      if (marker.server) return target ? `${marker.verb} ${target}` : marker.verb;
       return target ? `Running ${marker.verb} ${target}` : "Using a tool";
   }
+}
+
+/** Where the engine moved the file its arguments name, read off its `changes`
+ *  list without parsing the patch: a renamed file's row opens where it went. */
+function movedPathOf(args: Record<string, unknown>, path: string | null): string | null {
+  if (!path || !Array.isArray(args.changes)) return null;
+  for (const change of args.changes as unknown[]) {
+    if (!change || typeof change !== "object") continue;
+    const c = change as { path?: unknown; movePath?: unknown };
+    if (c.path !== path) continue;
+    return typeof c.movePath === "string" && c.movePath.length > 0 ? c.movePath : null;
+  }
+  return null;
 }
 
 /**
@@ -538,9 +791,14 @@ function markerFor(tc: ToolCallDisplay, turnId: string, first: boolean): MarkerR
           ? "running"
           : "pending";
 
-  // A tool call that ran a terminal always has an output pane worth opening,
+  // A tool call that is running a terminal has an output pane worth opening
   // even before the command's first byte: watching it stream is the point.
-  const ranTerminal = (tc.contentBlocks ?? []).some((b) => b.type === "terminal");
+  // Once it has finished, the pane is worth opening only if something was
+  // printed — every native command carries a terminal now, and a silent
+  // `git config` should not claim an output nobody can open.
+  const ranTerminal =
+    (tc.contentBlocks ?? []).some((b) => b.type === "terminal") &&
+    (tc.status === "pending" || tc.status === "running" || !!tc.result);
 
   let verb = tc.toolName;
   let tool: MarkerTool = toolIconFor(tc.kind, tc.toolName);
@@ -566,10 +824,19 @@ function markerFor(tc: ToolCallDisplay, turnId: string, first: boolean): MarkerR
       : diffEditOf(tc);
   // The path the marker reports: whatever the arguments named, else whatever
   // the diff blocks did. It is what the diff viewer lands on.
-  const path = argsPath ?? edit?.path ?? null;
+  // A file the engine renamed is reported where it went.
+  const path = movedPathOf(args, argsPath) ?? argsPath ?? edit?.path ?? null;
 
   const orgTool = orgToolOf(tc.toolName);
-  if (orgTool) {
+  const memoryTool = memoryToolOf(tc.toolName);
+  const mcp = mcpToolOf(tc.toolName);
+  let server: string | undefined;
+  if (memoryTool) {
+    const row = memoryToolRow(memoryTool, args);
+    tool = "memory";
+    verb = row.verb;
+    detail = row.detail;
+  } else if (orgTool) {
     // An organisation call (ADR-0014): the organisation icon, and the line
     // that names what it was about — the member, conversation or recorded
     // session — from the table the Logs row reads too. A failed call's text
@@ -628,14 +895,19 @@ function markerFor(tc: ToolCallDisplay, turnId: string, first: boolean): MarkerR
     tool = "search";
     detail = args.pattern;
     opens = "output";
+  } else if (mcp) {
+    verb = mcp.tool;
+    server = mcp.server;
+    if (mcp.server === "browser") tool = "browser";
+    detail = path ? shortPath(path) : "";
   } else if (path) {
-    verb = tc.toolName;
+    verb = toolDisplayName(tc.toolName);
     // It named a file but neither `kind` nor its arguments say what it did to
     // it. A neutral page beats guessing between the book and the pencil.
     if (tool === "tool") tool = "file";
     detail = shortPath(path);
   } else {
-    verb = tc.toolName;
+    verb = toolDisplayName(tc.toolName);
     detail = "";
   }
 
@@ -652,9 +924,13 @@ function markerFor(tc: ToolCallDisplay, turnId: string, first: boolean): MarkerR
     opens,
     cmd,
     path: path ?? undefined,
+    ...(server && { server }),
     added,
     removed,
     startedAt: tc.startedAt,
+    ...(tc.startedAt !== undefined && tc.endedAt !== undefined
+      ? { durationMs: Math.max(0, tc.endedAt - tc.startedAt) }
+      : {}),
   };
 }
 
@@ -669,23 +945,6 @@ function formatGap(ms: number): string {
   const h = Math.round(m / 60);
   if (h < 24) return `${h}h`;
   return `${Math.round(h / 24)}d`;
-}
-
-/**
- * A message renders nothing at all — no prose, no thinking, no tools, no files,
- * no plan. claude-agent-acp routinely emits signature-only `thinking` blocks
- * with empty content as turn markers; projecting them produced phantom rows
- * whose padding read as unexplained gaps. Filtered here rather than in the
- * list, so the row index never contains one.
- */
-function isEmptyMessage(m: ChatMessage): boolean {
-  return (
-    !(m.content && m.content.trim()) &&
-    !(m.thinking && m.thinking.trim()) &&
-    m.toolCalls.length === 0 &&
-    m.fileChanges.length === 0 &&
-    !(m.plan && m.plan.length > 0)
-  );
 }
 
 /**
@@ -705,6 +964,19 @@ interface UserDerived {
 }
 const userDerivedCache = new WeakMap<ChatMessage, UserDerived>();
 const proseCache = new WeakMap<ChatMessage, string>();
+// A delegating session re-projects every turn, so a settled thought would
+// otherwise be re-read every frame; keyed by message, which immer replaces
+// whenever the thinking changes.
+const headlineCache = new WeakMap<ChatMessage, string | null>();
+
+function headlineOf(m: ChatMessage): string | null {
+  let line = headlineCache.get(m);
+  if (line === undefined) {
+    line = thoughtHeadline(m.thinking ?? "");
+    headlineCache.set(m, line);
+  }
+  return line;
+}
 
 function derivedUser(m: ChatMessage): UserDerived {
   const hit = userDerivedCache.get(m);
@@ -759,51 +1031,241 @@ export interface ProjectOptions {
    *  right now — it may be paused on a permission prompt. Drives the work
    *  header only; defaults to `streaming`. */
   turnInProgress?: boolean;
+  /** The session's delegated children, keyed by their launching call id
+   *  (`ChatSession.subagents`). Absent for the overwhelming majority of
+   *  sessions, and then this projection behaves exactly as it did before:
+   *  no subagent rows, and nothing re-attributed. */
+  subagents?: Record<string, Subagent>;
 }
 
 /**
  * Project a thread into rows.
  *
- * This DOES run per applied streaming batch — immer gives `messages` a new
- * identity on every appended chunk — which is why `prev` matters: rows and
- * turns that are field-identical to the previous projection are returned as
- * the PREVIOUS objects, so the memo'd row views hold for every row except the
- * ones that actually changed (typically just the streaming tail). Without the
- * sharing pass, every row object was freshly allocated each frame and every
- * mounted row re-rendered per chunk.
+ * This runs per applied streaming batch: immer gives `messages` a new identity
+ * on every appended chunk. Two things keep that cheap on a long session:
+ *
+ * - Per-turn reuse. The thread is projected turn by turn into segments
+ *   (`Segment`), and a turn whose messages, neighbour and options are the
+ *   same objects as last time is not projected again: its rows come back as
+ *   last time's. While an agent streams, only the live turn is projected, so
+ *   the per-frame cost tracks that turn, not the length of the thread.
+ * - Structural sharing inside a re-projected turn. Rows that are
+ *   field-identical to the previous projection's are returned as the PREVIOUS
+ *   objects, so the memo'd row views hold for every row except the ones that
+ *   actually changed (typically just the streaming tail).
  */
 export function projectRows(
   messages: ChatMessage[],
   opts: ProjectOptions,
   prev?: Projection | null,
 ): Projection {
+  // A child's calls are attributed to it by `parentToolCallId`, and they can
+  // arrive in a LATER message than the launch — the agent announces the call
+  // and assigns it afterwards. So they are collected in one pass up front
+  // rather than looked up per launch, which would be O(children × calls) over
+  // a transcript re-projected on every streaming frame.
+  //
+  // Skipped entirely when the session has delegated nothing, which is almost
+  // every session: no allocation, no pass.
+  const childCalls = new Map<string, ToolCallDisplay[]>();
+  if (opts.subagents) {
+    for (const m of messages) {
+      for (const tc of m.toolCalls) {
+        const parent = tc.parentToolCallId;
+        if (!parent || !opts.subagents[parent]) continue;
+        const bucket = childCalls.get(parent);
+        if (bucket) bucket.push(tc);
+        else childCalls.set(parent, [tc]);
+      }
+    }
+  }
+
+  const prevSegments = new Map<string, Segment>();
+  if (prev) for (const s of prev.segments) prevSegments.set(s.id, s);
+
   const rows: Row[] = [];
   const turns: Turn[] = [];
-
+  const segments: Segment[] = [];
   const lastIdx = messages.length - 1;
+  const turnInProgress = opts.turnInProgress ?? opts.streaming;
   let i = 0;
 
   while (i < messages.length) {
     const m = messages[i];
     const isStreamingTail = opts.streaming && i === lastIdx && m.role === "assistant";
-
     if (!isStreamingTail && isEmptyMessage(m)) {
       i += 1;
       continue;
     }
 
-    // ── User turn: exactly one row. ────────────────────────────────────────
-    if (m.role === "user") {
-      const derived = derivedUser(m);
-      const text = derived.text;
-      const turnId = `t:${m.id}`;
-      // The gap separator belongs BETWEEN turns, so it is emitted before
-      // `rowStart` is captured — otherwise a turn's first row would be the
-      // separator, and both `firstInTurn` and every scroll anchor that targets
-      // "the start of this turn" would point one row too high.
-      maybeGapSeparator(rows, messages, i, turnId);
-      const rowStart = rows.length;
+    // A user turn is one message; an assistant turn is the whole consecutive
+    // run of them (the store emits one message per block).
+    let end = i + 1;
+    if (m.role === "assistant") {
+      while (end < messages.length && messages[end].role === "assistant") end += 1;
+    }
+    const final = end === messages.length;
 
+    const old = prevSegments.get(m.id);
+    let seg: Segment;
+    if (old && segmentHolds(old, messages, i, end, opts, final, turnInProgress)) {
+      seg = old.offset === rows.length && old.start === i ? old : shiftSegment(old, rows.length, i);
+    } else {
+      seg = projectSegment(messages, i, end, opts, childCalls, rows.length);
+      if (old) shareRows(seg, old);
+    }
+    segments.push(seg);
+    for (const r of seg.rows) rows.push(r);
+    for (const t of seg.turns) turns.push(t);
+    i = end;
+  }
+
+  return { rows, turns, segments };
+}
+
+/**
+ * One turn's slice of a projection, and what it was projected from — the
+ * inputs `segmentHolds` checks before handing it back unchanged.
+ */
+interface Segment {
+  /** The turn's first message id. */
+  id: string;
+  /** The messages it was projected from, by identity. */
+  messages: ChatMessage[];
+  /** The message just before it: the gap separator and the live clock read
+   *  its timestamp. */
+  before: ChatMessage | undefined;
+  /** It ran to the end of the thread, where streaming and the live turn
+   *  apply. */
+  final: boolean;
+  streaming: boolean;
+  turnInProgress: boolean;
+  expanded: ReadonlySet<string>;
+  expandedTurns: ReadonlySet<string>;
+  /** Cleared when the session rebinds to a new agent session, with the
+   *  messages untouched: a turn projected with children is stale without. */
+  subagents: Record<string, Subagent> | undefined;
+  /** Where its rows and first message sat when its `turns` were stamped. */
+  offset: number;
+  start: number;
+  rows: Row[];
+  /** With absolute `rowStart`/`rowEnd`/`messageIndex`, per `offset`/`start`. */
+  turns: Turn[];
+}
+
+function segmentHolds(
+  s: Segment,
+  messages: ChatMessage[],
+  start: number,
+  end: number,
+  opts: ProjectOptions,
+  final: boolean,
+  turnInProgress: boolean,
+): boolean {
+  // A delegating session re-projects every turn: a child's calls can land in
+  // messages outside its launching turn, so the slice is not the whole input.
+  if (opts.subagents || s.subagents !== opts.subagents) return false;
+  if (s.final !== final) return false;
+  if (final && (s.streaming !== opts.streaming || s.turnInProgress !== turnInProgress)) {
+    return false;
+  }
+  if (s.expanded !== opts.expanded || s.expandedTurns !== opts.expandedTurns) return false;
+  if (s.before !== messages[start - 1]) return false;
+  if (s.messages.length !== end - start) return false;
+  for (let k = 0; k < s.messages.length; k++) {
+    if (s.messages[k] !== messages[start + k]) return false;
+  }
+  return true;
+}
+
+/** The same segment at a new place in the thread: older history loaded above
+ *  it, or a turn above it changed its row count. Only the indices move. */
+function shiftSegment(s: Segment, offset: number, start: number): Segment {
+  const dRow = offset - s.offset;
+  const dMsg = start - s.start;
+  return {
+    ...s,
+    offset,
+    start,
+    turns: s.turns.map((t) => ({
+      ...t,
+      rowStart: t.rowStart + dRow,
+      rowEnd: t.rowEnd + dRow,
+      messageIndex: t.messageIndex + dMsg,
+    })),
+  };
+}
+
+/** Hand back the previous segment's row and marker objects wherever the new
+ *  ones are field-identical. Runs after `firstInTurn` is final, or a shared
+ *  object could be mutated in place where no memo would see it. */
+function shareRows(seg: Segment, old: Segment): void {
+  const prevRows = new Map<string, Row>();
+  for (const r of old.rows) prevRows.set(r.id, r);
+  for (let k = 0; k < seg.rows.length; k++) {
+    const row = seg.rows[k];
+    const was = prevRows.get(row.id);
+    if (!was) continue;
+    if (was.kind === RowKind.MarkerGroup && row.kind === RowKind.MarkerGroup) {
+      const oldMarkers = new Map(was.markers.map((marker) => [marker.id, marker]));
+      row.markers = row.markers.map((marker) => {
+        const previous = oldMarkers.get(marker.id);
+        return previous && sameShallow(previous, marker) ? previous : marker;
+      });
+    }
+    if (sameShallow(was, row)) seg.rows[k] = was;
+  }
+  const prevTurns = new Map<string, Turn>();
+  for (const t of old.turns) prevTurns.set(t.id, t);
+  for (let k = 0; k < seg.turns.length; k++) {
+    const was = prevTurns.get(seg.turns[k].id);
+    if (was && sameShallow(was, seg.turns[k])) seg.turns[k] = was;
+  }
+}
+
+/**
+ * Project one turn: the user message at `start`, or the assistant run
+ * `[start, end)`. `offset` is where its rows land in the whole projection.
+ */
+function projectSegment(
+  messages: ChatMessage[],
+  start: number,
+  end: number,
+  opts: ProjectOptions,
+  childCalls: Map<string, ToolCallDisplay[]>,
+  offset: number,
+): Segment {
+  const rows: Row[] = [];
+  const turns: Turn[] = [];
+  const lastIdx = messages.length - 1;
+  let i = start;
+  const m = messages[i];
+  // ── User turn: exactly one row. ────────────────────────────────────────
+  if (m.role === "user") {
+    const derived = derivedUser(m);
+    const text = derived.text;
+    const turnId = `t:${m.id}`;
+    // The gap separator belongs BETWEEN turns, so it is emitted before
+    // `rowStart` is captured — otherwise a turn's first row would be the
+    // separator, and both `firstInTurn` and every scroll anchor that targets
+    // "the start of this turn" would point one row too high.
+    maybeGapSeparator(rows, messages, i, turnId);
+    const rowStart = rows.length;
+
+    // Atlas's own prompt — live, or recognised by its wording on replay — is
+    // not the user's words, so it is not their bubble.
+    const injected = m.injected ?? detectInjectedPrompt(m.content);
+    if (injected) {
+      rows.push({
+        kind: RowKind.Injected,
+        id: `u:${m.id}`,
+        turnId,
+        firstInTurn: true,
+        injected,
+        text: m.content,
+        timestamp: m.timestamp,
+      });
+    } else {
       rows.push({
         kind: RowKind.User,
         id: `u:${m.id}`,
@@ -813,25 +1275,31 @@ export function projectRows(
         contextBlocks: derived.contextBlocks,
         expanded: opts.expanded.has(`u:${m.id}`),
         attachments: m.attachments ?? NO_ATTACHMENTS,
+        remoteAuthor: m.origin?.kind === "remote" ? m.origin.name?.trim() || "Someone else" : null,
+        remoteAuthorId: m.origin?.kind === "remote" ? m.origin.id : null,
         timestamp: m.timestamp,
+        ...(m.timestampApproximate && { timestampApproximate: true as const }),
+        ...(m.trustedMentionPaths?.length && { trustedPaths: m.trustedMentionPaths }),
       });
-
-      turns.push({
-        id: turnId,
-        role: "user",
-        rowStart,
-        rowEnd: rows.length,
-        messageIndex: i,
-        status: "settled",
-        preview: derived.preview,
-        timestamp: m.timestamp,
-        toolCount: 0,
-        fileCount: 0,
-      });
-      i += 1;
-      continue;
     }
 
+    turns.push({
+      id: turnId,
+      role: "user",
+      rowStart,
+      rowEnd: rows.length,
+      messageIndex: i,
+      status: "settled",
+      preview: !injected
+        ? derived.preview
+        : injected.source === "restart"
+          ? injected.summary
+          : `Pull request watch: ${injected.summary}`,
+      timestamp: m.timestamp,
+      toolCount: 0,
+      fileCount: 0,
+    });
+  } else {
     // ── Assistant turn: consume the whole consecutive assistant run. ───────
     // The store emits one message per block (text / tool / thinking); a turn is
     // the run of them between user messages. Collapsing that run here is what
@@ -841,9 +1309,27 @@ export function projectRows(
     maybeGapSeparator(rows, messages, i, turnId);
     const rowStart = rows.length;
 
+    // The turn is still going: running, or paused on a prompt.
+    const inProgress = (opts.turnInProgress ?? opts.streaming) && end === messages.length;
     let markers: MarkerRow[] = [];
     const flushMarkers = () => {
       if (markers.length === 0) return;
+      // A lone finished call is its own row: a disclosure that opens onto one
+      // line says less than the line itself. Only once the turn has settled:
+      // while it runs, the block carries the live label, and a call that just
+      // finished is usually about to be joined by the next one, so swapping
+      // it for a line would flicker between the two.
+      if (
+        !inProgress &&
+        markers.length === 1 &&
+        (markers[0].state === "done" || markers[0].state === "failed")
+      ) {
+        const only = markers[0];
+        only.firstInTurn = rows.length === rowStart;
+        rows.push(only);
+        markers = [];
+        return;
+      }
       const id = `mg:${turnId}:${markers[0].toolCallId}`;
       rows.push({
         kind: RowKind.MarkerGroup,
@@ -863,8 +1349,13 @@ export function projectRows(
       markers = [];
     };
     let workedMs: number | null = null;
+    let stopReason: string | null = null;
     let toolCount = 0;
+    /** Children this turn delegated to, flushed after its last row. */
+    const delegated: SubagentRow[] = [];
     let footerMsg: ChatMessage | null = null;
+    let interruption: TurnInterruption | null = null;
+    let interruptedMsgId = "";
     let headerShown = false;
     let sawError = false;
 
@@ -883,7 +1374,15 @@ export function projectRows(
           id: `th:${msg.id}`,
           turnId,
           firstInTurn: rows.length === rowStart,
-          text: msg.thinking,
+          text: opts.expanded.has(`th:${msg.id}`) ? msg.thinking : "",
+          headline: headlineOf(msg),
+          live:
+            tail &&
+            !opts.expanded.has(`th:${msg.id}`) &&
+            msg.toolCalls.length === 0 &&
+            !derivedProse(msg)
+              ? liveThought(msg.thinking)
+              : null,
           streaming: tail,
           expanded: opts.expanded.has(`th:${msg.id}`),
         });
@@ -891,9 +1390,52 @@ export function projectRows(
 
       for (const tc of msg.toolCalls) {
         if (isInternalTool(tc)) continue;
+
+        // A child's own call belongs under its parent's row, not in the
+        // turn's stream: left here it would read as the parent's work, and
+        // three children running at once would interleave into one
+        // unattributable block. Collected by `childCalls` above.
+        //
+        // BEFORE the counters: a child's failed grep is the child's failure,
+        // and counted here it set the whole turn to "error" and inflated the
+        // parent's tool count with work it never did.
+        if (tc.parentToolCallId && opts.subagents?.[tc.parentToolCallId]) continue;
+
         toolCount += 1;
-        markers.push(markerFor(tc, turnId, false));
         if (tc.status === "failed") sawError = true;
+
+        // A launching call becomes the child it launched. Its own shape says
+        // nothing a reader wants — see `SubagentRow`.
+        const child = opts.subagents?.[tc.id];
+        if (child) {
+          // Collected, not pushed here. A child outlives the moment it was
+          // spawned — it keeps working while the parent writes prose and runs
+          // its own tools — so a row left where the launch happened gets
+          // buried mid-turn and goes on changing where nobody is looking.
+          // They go at the END of the turn, together, which is also where
+          // Claude Desktop puts them: one block, last thing before the footer.
+          const id = `sa:${tc.id}`;
+          const own = (childCalls.get(tc.id) ?? []).map((c) => markerFor(c, turnId, false));
+          delegated.push({
+            kind: RowKind.Subagent,
+            id,
+            turnId,
+            firstInTurn: false,
+            toolCallId: tc.id,
+            name: child.name.trim() || "Subagent",
+            status: child.status,
+            role: child.role,
+            prompt: child.prompt,
+            result: child.result,
+            startedAt: child.startedAtMs,
+            endedAt: child.endedAtMs,
+            markers: own,
+            workCount: child.toolCallCount,
+          });
+          continue;
+        }
+
+        markers.push(markerFor(tc, turnId, false));
       }
 
       const prose = derivedProse(msg);
@@ -909,6 +1451,7 @@ export function projectRows(
           showHeader: !headerShown,
           model: msg.model ?? null,
           timestamp: msg.timestamp,
+          ...(msg.timestampApproximate && { timestampApproximate: true as const }),
         });
         headerShown = true;
       }
@@ -916,9 +1459,19 @@ export function projectRows(
       // The footer data is frozen onto the trailing message at turn_finished.
       if (msg.turnSummary || msg.suggestions || msg.contextUsage) footerMsg = msg;
       if (msg.workedMs !== undefined) workedMs = msg.workedMs;
+      if (msg.stopReason !== undefined) stopReason = msg.stopReason;
+      if (msg.interruption) {
+        interruption = msg.interruption;
+        interruptedMsgId = msg.id;
+        if (msg.interruption.outcome === "failed") sawError = true;
+      }
       i += 1;
     }
     flushMarkers();
+    for (const row of delegated) {
+      row.firstInTurn = rows.length === rowStart;
+      rows.push(row);
+    }
 
     const turnIsLive = opts.streaming && i > lastIdx;
     if (turnIsLive) {
@@ -957,24 +1510,53 @@ export function projectRows(
         live: turnInProgress,
         startedAt: turnInProgress ? turnStartMs(messages, turnFirstIdx) : null,
         workedMs,
+        stopped: stopReason === "cancelled",
         expandedTurns: opts.expandedTurns,
       });
     }
 
     if (footerMsg?.turnSummary) {
-      const files = footerMsg.turnSummary.files;
+      // The response's footer goes at the end of the response, below the
+      // card, so it is the last thing the turn shows (see `ProseRow.footerBelow`).
+      // Only when the response is the row right above the footer row: hovering
+      // its text reveals the footer through a next-sibling selector
+      // (`globals.css`, `[data-footer-below]:hover + .atlas-row`), and a
+      // delegated subagent or a trailing tool call between the two would leave
+      // the footer unreachable from the text. Then the response keeps its own
+      // footer, and the footer row carries only the card.
+      const last = rows.length > rowStart ? rows[rows.length - 1] : null;
+      const response: ProseRow | null =
+        last?.kind === RowKind.Prose && !last.streaming ? last : null;
+      if (response) response.footerBelow = true;
       rows.push({
         kind: RowKind.TurnFooter,
         id: `f:${footerMsg.id}`,
         turnId,
         firstInTurn: false,
-        files: files.slice(0, 3),
-        allFiles: files,
-        overflow: Math.max(0, files.length - 3),
+        files: footerMsg.turnSummary.files,
+        turnKey: stableTurnKey(messages, { start: turnFirstIdx, end: i }) ?? turnId,
         repoAtTurn: footerMsg.turnSummary.repoAtTurn,
         messageId: footerMsg.id,
         hasSuggestions: (footerMsg.suggestions?.chips.length ?? 0) > 0,
         contextChip: !!footerMsg.contextUsage || !!footerMsg.usage,
+        ...(response && {
+          responseRowId: response.id,
+          responseText: response.text,
+          responseTimestamp: response.timestamp,
+          // No clock where the header has one, or where the time is a replay's.
+          responseShowTimestamp: !response.showHeader && !response.timestampApproximate,
+        }),
+      });
+    }
+
+    if (interruption) {
+      rows.push({
+        kind: RowKind.Interruption,
+        id: `x:${interruptedMsgId}`,
+        turnId,
+        firstInTurn: rows.length === rowStart,
+        interruption,
+        latest: i >= messages.length,
       });
     }
 
@@ -995,45 +1577,36 @@ export function projectRows(
     }
   }
 
-  // Mark the first row of each turn now that splices are done.
+  // Mark the first row of each turn now that splices are done, then place
+  // the turn in the whole projection.
   for (const t of turns) {
     if (rows[t.rowStart]) rows[t.rowStart].firstInTurn = true;
+    t.rowStart += offset;
+    t.rowEnd += offset;
   }
 
-  // Structural sharing — must run AFTER the firstInTurn pass above, or a reused
-  // (shared) object could be mutated in place and the change would be invisible
-  // to a memo comparing identities.
-  if (prev) {
-    const prevRows = new Map<string, Row>();
-    for (const r of prev.rows) prevRows.set(r.id, r);
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
-      const old = prevRows.get(row.id);
-      if (old?.kind === RowKind.MarkerGroup && row.kind === RowKind.MarkerGroup) {
-        const oldMarkers = new Map(old.markers.map((marker) => [marker.id, marker]));
-        row.markers = row.markers.map((marker) => {
-          const previous = oldMarkers.get(marker.id);
-          return previous && sameShallow(previous, marker) ? previous : marker;
-        });
-      }
-      if (old && sameShallow(old, row)) rows[i] = old;
-    }
-    const prevTurns = new Map<string, Turn>();
-    for (const t of prev.turns) prevTurns.set(t.id, t);
-    for (let i = 0; i < turns.length; i++) {
-      const old = prevTurns.get(turns[i].id);
-      if (old && sameShallow(old, turns[i])) turns[i] = old;
-    }
-  }
-
-  return { rows, turns };
+  return {
+    id: m.id,
+    messages: messages.slice(start, end),
+    before: messages[start - 1],
+    final: end === messages.length,
+    streaming: opts.streaming,
+    turnInProgress: opts.turnInProgress ?? opts.streaming,
+    expanded: opts.expanded,
+    expandedTurns: opts.expandedTurns,
+    subagents: opts.subagents,
+    offset,
+    start,
+    rows,
+    turns,
+  };
 }
 
 /**
  * One-level equality for row/turn records. Arrays compare element-by-identity —
- * `TurnFooterRow.files` is re-`slice`d every projection, but its ELEMENTS are
- * the stable `turnSummary.files` objects frozen at turn end, so identity per
- * element is exactly the right test.
+ * an array a projection rebuilds is still equal when its ELEMENTS are the same
+ * stable records. (`TurnFooterRow.files` is the frozen `turnSummary.files`
+ * itself, so it compares equal by identity before that.)
  */
 function sameShallow(a: object, b: object): boolean {
   const ka = Object.keys(a);
@@ -1083,22 +1656,54 @@ function foldWork(
     live: boolean;
     startedAt: number | null;
     workedMs: number | null;
+    stopped: boolean;
     expandedTurns: ReadonlySet<string>;
   },
 ): void {
+  // The trailing run that is NOT work: the answer, and the children the turn
+  // delegated to.
+  //
+  // Subagents survive the fold deliberately. A folded turn hides what it did
+  // because the answer is what remains worth reading — but a child is not
+  // something the turn did and finished with: it has its own state, it may
+  // still be running after the turn settles, and it is the one thing a
+  // delegating turn exists to report. Claude Desktop keeps them visible for
+  // the same reason, between the answer and the footer.
   let answerStart = rows.length;
-  while (answerStart > rowStart && rows[answerStart - 1].kind === RowKind.Prose) answerStart -= 1;
+  while (
+    answerStart > rowStart &&
+    (rows[answerStart - 1].kind === RowKind.Prose ||
+      rows[answerStart - 1].kind === RowKind.Subagent)
+  ) {
+    answerStart -= 1;
+  }
   const foldable = !o.live && answerStart > rowStart;
-  // A settled prose-only turn with no timing has nothing to say.
-  if (!o.live && !foldable && o.workedMs === null) return;
+  // A settled prose-only turn with no timing has nothing to say — unless the
+  // user stopped it, which the header says even without a figure.
+  if (!o.live && !foldable && o.workedMs === null && !o.stopped) return;
 
   const id = `wk:${o.turnId}`;
   const open = foldable && o.expandedTurns.has(id);
   if (foldable && !open) {
     const folded = rows.splice(rowStart, answerStart - rowStart);
+    // Failed calls stay in view: a turn that recovered from an error still
+    // has to say it hit one, and the fold is where that would otherwise be
+    // lost. They go between the header and the answer, in the order they
+    // happened, as plain lines.
+    const failed: MarkerRow[] = [];
+    for (const r of folded) {
+      if (r.kind === RowKind.Marker && r.state === "failed") failed.push(r);
+      else if (r.kind === RowKind.MarkerGroup) {
+        for (const m of r.markers) if (m.state === "failed") failed.push(m);
+      }
+    }
+    if (failed.length > 0) {
+      for (const m of failed) m.firstInTurn = false;
+      rows.splice(rowStart, 0, ...failed);
+    }
     // The model · time line rode on the turn's first prose row, which may have
     // just been folded. Hand it to the first row still showing.
-    const answer = rows[rowStart];
+    const answer = rows[rowStart + failed.length];
     if (
       answer?.kind === RowKind.Prose &&
       folded.some((r) => r.kind === RowKind.Prose && r.showHeader)
@@ -1114,6 +1719,7 @@ function foldWork(
     live: o.live,
     startedAt: o.startedAt,
     workedMs: o.workedMs,
+    stopped: o.stopped,
     foldable,
     open,
   });
@@ -1122,6 +1728,9 @@ function foldWork(
 /** Faint "N ago" divider marking a real pause between turns. */
 function maybeGapSeparator(rows: Row[], messages: ChatMessage[], i: number, turnId: string): void {
   if (i === 0) return;
+  // A replayed message's time is when Atlas replayed it, so a pause measured
+  // against it is no pause the conversation had.
+  if (messages[i].timestampApproximate || messages[i - 1].timestampApproximate) return;
   const gap =
     new Date(messages[i].timestamp).getTime() - new Date(messages[i - 1].timestamp).getTime();
   if (gap <= TURN_GAP_MS) return;

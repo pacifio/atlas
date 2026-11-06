@@ -4,6 +4,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
+/** One kind today: `embedding`, shared memory's model. The code-search kind
+ *  went with the code index; the field stays on the wire. */
 export type ModelKind = "embedding";
 
 export interface FileSpec {

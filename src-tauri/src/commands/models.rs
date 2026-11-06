@@ -9,8 +9,8 @@
 //! **BERT-family** sentence-transformers (`atlas_embed::Embedder`, varied dims).
 //! Other architectures are surfaced by HF search but flagged incompatible.
 //!
-//! On-device *generation* was removed on 2026-08-22 (see `codebase_index`): the
-//! only consumer was the code-index Tier-2 summary, which now runs on BYOK.
+//! On-device *generation* was removed on 2026-08-22: its only consumer was the
+//! code index's Tier-2 summary, and the code index itself is gone too.
 
 use std::path::{Path, PathBuf};
 
@@ -23,11 +23,12 @@ use crate::commands::memory_indexer::MemoryRegistry;
 /// source repo differs.
 pub const EMBED_FILES: [&str; 3] = ["config.json", "tokenizer.json", "model.safetensors"];
 
-/// Retained as a single-variant enum: it is part of the wire shape the frontend
-/// filters on, and keeping it leaves room for a second on-device model class
-/// without another migration.
+/// Part of the wire shape the frontend filters on. One kind today —
+/// `Embedding`, shared memory's (`embedding_model_id`). The code-search kind
+/// went with the code index; the enum stays because the `kind` field is on the
+/// wire and the frontend filters on it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum ModelKind {
     Embedding,
 }
@@ -178,22 +179,25 @@ pub fn find_entry(id: &str) -> Option<ModelEntry> {
 
 // ── Selection + path resolution (the chokepoints delegate here) ────────────────
 
-/// Root dir holding every downloaded model: `app_data/models/`.
+/// Root dir holding every downloaded model: `app_data/models/`. A pure path
+/// lookup: nothing is created until a download needs the directory.
 pub fn models_root(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app
+    Ok(app
         .path()
         .app_data_dir()
         .map_err(|e| format!("no app data dir: {e}"))?
-        .join("models");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("create models dir: {e}"))?;
-    Ok(dir)
+        .join("models"))
 }
 
-/// On-disk dir for a model id (created lazily).
+/// On-disk dir for a model id. A pure path lookup, like [`models_root`]: an
+/// empty directory left behind by a lookup would read as a broken install, so
+/// only a download ([`model_download`], [`download_files`]) creates it.
 pub fn model_dir_for(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
-    let dir = models_root(app)?.join(id);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("create model dir: {e}"))?;
-    Ok(dir)
+    Ok(model_dir_in(&models_root(app)?, id))
+}
+
+fn model_dir_in(root: &Path, id: &str) -> PathBuf {
+    root.join(id)
 }
 
 pub fn selected_embedding_id(app: &AppHandle) -> String {
@@ -202,13 +206,16 @@ pub fn selected_embedding_id(app: &AppHandle) -> String {
 
 /// Whether every file for `id` exists on disk. Uses the catalog's file list; for an
 /// unknown id (e.g. a legacy/manual dir) falls back to the embedding file triplet.
+/// The directory alone, or the spec written ahead of the weights, is not an install.
 pub fn is_downloaded(app: &AppHandle, id: &str) -> bool {
-    let Ok(dir) = model_dir_for(app, id) else {
-        return false;
-    };
+    model_dir_for(app, id).is_ok_and(|dir| files_present(&dir, id))
+}
+
+fn files_present(dir: &Path, id: &str) -> bool {
+    let present = |f: &str| dir.join(f).is_file();
     match find_entry(id) {
-        Some(e) => e.dest_files().iter().all(|f| dir.join(f).exists()),
-        None => EMBED_FILES.iter().all(|f| dir.join(f).exists()),
+        Some(e) => e.dest_files().into_iter().all(present),
+        None => EMBED_FILES.into_iter().all(present),
     }
 }
 
@@ -239,6 +246,11 @@ pub async fn download_files(
     use futures::StreamExt;
     use tokio::io::AsyncWriteExt;
 
+    // The one place a model's directory comes into being (plus `model_download`,
+    // which writes the spec first).
+    tokio::fs::create_dir_all(dir)
+        .await
+        .map_err(|e| format!("create model dir: {e}"))?;
     let client = reqwest::Client::builder()
         .user_agent("Atlas-IDE")
         .build()
@@ -336,14 +348,12 @@ pub struct ModelStatus {
 /// The curated catalog with downloaded/selected flags for the current machine.
 #[tauri::command]
 pub async fn models_list(app: AppHandle) -> Result<Vec<ModelStatus>, String> {
-    let sel_embed = selected_embedding_id(&app);
+    let sel_embed = crate::state::atlas_config::read(&app).embedding_model_id;
     Ok(builtin_catalog()
         .into_iter()
         .map(|entry| {
             let downloaded = is_downloaded(&app, &entry.id);
-            let selected = match entry.kind {
-                ModelKind::Embedding => entry.id == sel_embed,
-            };
+            let selected = entry.id == sel_embed;
             ModelStatus {
                 entry,
                 downloaded,
@@ -359,6 +369,9 @@ pub async fn models_list(app: AppHandle) -> Result<Vec<ModelStatus>, String> {
 pub async fn model_download(app: AppHandle, id: String) -> Result<(), String> {
     let entry = find_entry(&id).ok_or_else(|| format!("unknown model '{id}'"))?;
     let dir = model_dir_for(&app, &id)?;
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(|e| format!("create model dir: {e}"))?;
     tokio::spawn(async move {
         let result = download_files(
             &app,
@@ -389,7 +402,12 @@ pub async fn model_remove(app: AppHandle, id: String) -> Result<(), String> {
         return Err("Can't remove the model that's currently selected.".into());
     }
     let dir = model_dir_for(&app, &id)?;
-    std::fs::remove_dir_all(&dir).map_err(|e| format!("remove {id}: {e}"))?;
+    match std::fs::remove_dir_all(&dir) {
+        Ok(()) => {}
+        // Nothing on disk is already the state removal asks for.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(format!("remove {id}: {e}")),
+    }
     let _ = app.emit("atlas:models-changed", ());
     Ok(())
 }
@@ -412,42 +430,135 @@ pub async fn model_select(
     id: String,
     registry: State<'_, std::sync::Arc<MemoryRegistry>>,
 ) -> Result<SelectResult, String> {
-    let entry = find_entry(&id).ok_or_else(|| format!("unknown model '{id}'"))?;
+    // Known to the catalog, or a manual model dir the user put there themselves.
+    if find_entry(&id).is_none() && !is_downloaded(&app, &id) {
+        return Err(format!("unknown model '{id}'"));
+    }
     if !is_downloaded(&app, &id) {
         return Err("Download the model before selecting it.".into());
     }
 
     let mut needs_reindex = false;
-    match entry.kind {
-        ModelKind::Embedding => {
-            if crate::state::atlas_config::read(&app).embedding_model_id != id {
-                let patch = crate::state::SettingsPatch {
-                    embedding_model_id: Some(id.clone()),
-                    ..Default::default()
-                };
-                // Off the async runtime thread — this touches the filesystem.
-                let app_for_write = app.clone();
-                let snapshot = tokio::task::spawn_blocking(move || {
-                    crate::state::atlas_config::update(&app_for_write, patch)
-                })
-                .await
-                .map_err(|e| e.to_string())?
-                .map_err(|e| format!("save settings: {e}"))?;
-                crate::commands::atlas_config::notify_settings_changed(
-                    &app,
-                    &snapshot.settings,
-                    snapshot.generation,
-                );
-                needs_reindex = true;
-            }
-        }
+    if crate::state::atlas_config::read(&app).embedding_model_id != id {
+        let patch = crate::state::SettingsPatch {
+            embedding_model_id: Some(id.clone()),
+            ..Default::default()
+        };
+        // Off the async runtime thread — this touches the filesystem.
+        let app_for_write = app.clone();
+        let snapshot = tokio::task::spawn_blocking(move || {
+            crate::state::atlas_config::update(&app_for_write, patch)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("save settings: {e}"))?;
+        crate::commands::atlas_config::notify_settings_changed(
+            &app,
+            &snapshot.settings,
+            snapshot.generation,
+        );
+        needs_reindex = true;
     }
 
-    // Drop cached models so the next call loads the newly selected one.
-    match entry.kind {
-        ModelKind::Embedding => registry.invalidate_provider().await,
+    // Drop the cached model so the next call loads the newly selected one.
+    registry.invalidate_provider().await;
+    // A health pass per open project backfills the new model's vectors for
+    // every memory (VectorsMissing → sync_vectors).
+    for cwd in registry.open_cwds() {
+        let _ = registry.enqueue(crate::commands::memory_indexer::Job::Health { cwd });
     }
 
     let _ = app.emit("atlas:models-changed", ());
     Ok(SelectResult { needs_reindex })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_catalog_is_memory_embedding_models_only() {
+        // The code index is gone; nothing in the catalog may be a code model.
+        assert!(!builtin_catalog().is_empty());
+        for entry in builtin_catalog() {
+            assert_eq!(entry.kind, ModelKind::Embedding, "{}", entry.id);
+        }
+        let memory_default = crate::state::atlas_config::default_embedding_model();
+        assert_eq!(
+            find_entry(&memory_default).unwrap().kind,
+            ModelKind::Embedding
+        );
+        for gone in ["granite-embedding-small-r2", "coderankembed"] {
+            assert!(
+                find_entry(gone).is_none(),
+                "{gone} left with the code index"
+            );
+        }
+    }
+
+    #[test]
+    fn looking_up_a_model_dir_creates_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("models");
+        let dir = model_dir_in(&root, "bge-small-en-v1.5");
+        assert_eq!(dir, root.join("bge-small-en-v1.5"));
+        assert!(
+            !root.exists(),
+            "a path lookup must not create the models root"
+        );
+        // And asking whether it is installed must not create it either.
+        assert!(!files_present(&dir, "bge-small-en-v1.5"));
+        assert!(
+            !dir.exists(),
+            "an installed check must not create the model dir"
+        );
+    }
+
+    #[test]
+    fn an_empty_or_partial_model_dir_is_not_installed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "bge-small-en-v1.5";
+        let dir = model_dir_in(tmp.path(), id);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(!files_present(&dir, id), "an empty dir is not an install");
+
+        std::fs::write(dir.join("config.json"), "{}").unwrap();
+        std::fs::write(dir.join("model.safetensors.part"), "half").unwrap();
+        assert!(
+            !files_present(&dir, id),
+            "a half-finished download is not an install"
+        );
+
+        // A directory where a file belongs is not the file.
+        std::fs::create_dir(dir.join("tokenizer.json")).unwrap();
+        std::fs::write(dir.join("model.safetensors"), "weights").unwrap();
+        assert!(!files_present(&dir, id));
+
+        std::fs::remove_dir(dir.join("tokenizer.json")).unwrap();
+        std::fs::write(dir.join("tokenizer.json"), "{}").unwrap();
+        assert!(
+            files_present(&dir, id),
+            "every model file present is an install"
+        );
+    }
+
+    #[test]
+    fn an_unknown_model_dir_needs_the_embedding_triplet() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = model_dir_in(tmp.path(), "my-local-model");
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(!files_present(&dir, "my-local-model"));
+        for f in EMBED_FILES {
+            std::fs::write(dir.join(f), "x").unwrap();
+        }
+        assert!(files_present(&dir, "my-local-model"));
+    }
+
+    #[test]
+    fn the_wire_name_is_snake_case() {
+        assert_eq!(
+            serde_json::to_string(&ModelKind::Embedding).unwrap(),
+            "\"embedding\""
+        );
+    }
 }

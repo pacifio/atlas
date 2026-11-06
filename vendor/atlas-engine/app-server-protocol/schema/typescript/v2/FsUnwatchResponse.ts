@@ -5,4 +5,4 @@
 /**
  * Successful response for `fs/unwatch`.
  */
-export type FsUnwatchResponse = Record<string, never>;
+export type FsUnwatchResponse = Record<symbol, never>;

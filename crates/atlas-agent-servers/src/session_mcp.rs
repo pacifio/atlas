@@ -14,6 +14,12 @@
 //! sends a transport the agent did not advertise ([`admissible`]). ACP makes
 //! stdio mandatory for every agent and HTTP/SSE opt-in through
 //! `mcpCapabilities`, and that is the only gate: never the agent's identity.
+//!
+//! Nothing secret may ride an entry handed to an agent in another process
+//! ([`SessionMcpRequest::in_process`]): an ACP adapter is free to put its MCP
+//! configuration on a command line, where any local user's `ps` reads it (the
+//! Claude Agent SDK passes `--mcp-config <json>`, headers and `env` included).
+//! ADR-0020.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -42,6 +48,13 @@ pub struct SessionMcpRequest {
     /// binary is never handed the user's organisation — decided by the
     /// connection, never by which agent it is.
     pub org_access: bool,
+    /// Whether the agent runs **inside the Atlas process**, so an entry it is
+    /// handed never leaves Atlas's memory. An agent in another process (every
+    /// ACP agent) may write its MCP configuration anywhere — a command line,
+    /// a config file — so the host must not put a credential in any of an
+    /// entry's fields: not a header, not an argument, not `env` (ADR-0020).
+    /// A property of the connection, never of which agent it is.
+    pub in_process: bool,
     /// The directory the session runs in.
     pub cwd: PathBuf,
     /// The session being loaded or resumed; `None` for a new session, whose
@@ -360,6 +373,47 @@ pub fn offer_for(
     provider.map_or_else(SessionMcpOffer::none, |p| p.offer(request))
 }
 
+/// `_meta` for a session request, read by the Claude Code adapter and ignored
+/// by every other one: it passes `_meta.claudeCode.options` to the Agent SDK.
+///
+/// Two things ride it:
+///
+/// - **Pre-approved servers.** The SDK's `allowedTools` rule `mcp__<server>`
+///   runs that server's tools without a permission prompt: the standing the
+///   native agent's servers have (`default_tools_approval_mode = approve`).
+///   Only `servers` (the host's offer, never the user's own) are listed, and a
+///   server with any tool in `ask_first` ([`AskFirst`]) never is, so its tools
+///   keep Claude Code's own prompt.
+/// - **Thinking summaries.** Current Claude models default thinking `display`
+///   to `"omitted"`: the thinking blocks stream empty, and the transcript's
+///   live thought has nothing to show. `--thinking-display summarized` asks
+///   for the readable summary instead, and lets Claude Code apply it to
+///   whichever thinking mode the model supports (forcing `thinking:
+///   {type: "adaptive"}` here would fail on models that only take a budget).
+pub fn claude_code_meta(servers: &[acp::McpServer], ask_first: &AskFirst) -> acp::Meta {
+    let rules: Vec<serde_json::Value> = servers
+        .iter()
+        .filter_map(|server| match server {
+            acp::McpServer::Http(acp::McpServerHttp { name, .. })
+            | acp::McpServer::Stdio(acp::McpServerStdio { name, .. })
+                if ask_first.tools_on(name).next().is_none() =>
+            {
+                Some(format!("mcp__{name}").into())
+            }
+            _ => None,
+        })
+        .collect();
+    let mut options = serde_json::json!({
+        "extraArgs": { "thinking-display": "summarized" },
+        "settings": { "showThinkingSummaries": true },
+    });
+    if !rules.is_empty() {
+        options["allowedTools"] = rules.into();
+    }
+    let meta = serde_json::json!({ "claudeCode": { "options": options } });
+    meta.as_object().cloned().unwrap_or_default()
+}
+
 /// The servers an agent with `capabilities` may be sent: stdio always (ACP
 /// requires every agent to take it), HTTP and SSE only when advertised.
 pub fn admissible(
@@ -386,6 +440,42 @@ mod tests {
 
     fn http(name: &str) -> acp::McpServer {
         acp::McpServer::Http(acp::McpServerHttp::new(name, "http://127.0.0.1:1/mcp"))
+    }
+
+    /// Claude Code asked before every Atlas tool call (review of #354): the
+    /// offered servers ride the session request as pre-approved, whichever
+    /// transport carries them (an ACP agent gets the stdio bridge, ADR-0020).
+    #[test]
+    fn offered_servers_are_preapproved_for_claude_code() {
+        let stdio = acp::McpServer::Stdio(acp::McpServerStdio::new("atlas_code", "/bin/atlas"));
+        let servers = [http("atlas_memory"), stdio];
+        let meta = claude_code_meta(&servers, &AskFirst::none());
+        assert_eq!(
+            meta["claudeCode"]["options"]["allowedTools"],
+            serde_json::json!(["mcp__atlas_memory", "mcp__atlas_code"])
+        );
+        assert!(
+            claude_code_meta(&[], &AskFirst::none())["claudeCode"]["options"]
+                .get("allowedTools")
+                .is_none()
+        );
+        // A server with an outward action keeps Claude Code's own prompt.
+        let ask = AskFirst::none().on("atlas_memory", &["share"]);
+        let meta = claude_code_meta(&servers, &ask);
+        assert_eq!(
+            meta["claudeCode"]["options"]["allowedTools"],
+            serde_json::json!(["mcp__atlas_code"])
+        );
+    }
+
+    /// Current models stream empty thinking unless the summary is asked for;
+    /// every session asks, servers or not.
+    #[test]
+    fn every_session_asks_for_thinking_summaries() {
+        let meta = claude_code_meta(&[], &AskFirst::none());
+        let options = &meta["claudeCode"]["options"];
+        assert_eq!(options["extraArgs"]["thinking-display"], "summarized");
+        assert_eq!(options["settings"]["showThinkingSummaries"], true);
     }
 
     /// Every settle call the offer made: one entry each, `None` when the

@@ -1,8 +1,5 @@
 //! `session/list` and `session/delete` — the agent's own record of its sessions.
 //!
-//! Ported from Zed's `AcpSessionList` (`agent_servers/src/acp.rs:528-640`) and
-//! the place it is built (`:1051-1065`).
-//!
 //! The construction rule is the whole capability gate, and it is worth stating
 //! because everything downstream depends on it: **this object exists only if
 //! the agent advertised `sessionCapabilities.list` at `initialize`**. A
@@ -38,8 +35,8 @@ pub struct AcpSessionList {
     supports_delete: bool,
 }
 
-// Zed's version also carries an update channel, so its always-open archive view
-// can re-render when a session is deleted. Atlas's import is one-shot — it
+// There is deliberately no update channel for an always-open archive view to
+// re-render when a session is deleted. Atlas's import is one-shot — it
 // fetches, writes rows and closes — so the trait's do-nothing `watch` /
 // `notify_refresh` defaults are left in place rather than wiring a channel with
 // no listener.
@@ -129,8 +126,7 @@ impl AgentSessionList for AcpSessionList {
 /// One `SessionInfo` off the wire.
 ///
 /// `cwd` and the optional `additionalDirectories` become the thread's work
-/// dirs, deduped and cwd-first (Zed's `work_dirs_from_session_info`,
-/// `acp.rs:1494-1508`). `createdAt` has no wire field in schema v1, so it is
+/// dirs, deduped and cwd-first. `createdAt` has no wire field in schema v1, so it is
 /// always absent here — the store falls back to `updatedAt`.
 fn session_info(info: acp::SessionInfo) -> AgentSessionInfo {
     let mut work_dirs: Vec<PathBuf> = Vec::with_capacity(1 + info.additional_directories.len());

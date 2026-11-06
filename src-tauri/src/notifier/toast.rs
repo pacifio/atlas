@@ -127,7 +127,7 @@ impl NotifierBackend for ToastBackend {
             .map_err(|e| e.to_string())?;
 
         let sink = self.sink.clone();
-        let payload = notification.payload.clone();
+        let payload = notification.payload;
         let weak: Weak<Mutex<State>> = Arc::downgrade(&self.state);
         let handler_tag = tag.clone();
         let handler =

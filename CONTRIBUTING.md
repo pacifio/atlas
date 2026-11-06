@@ -6,19 +6,19 @@ If you're not sure where to begin, `#dev` on [Discord](https://discord.gg/GmnFgg
 
 ## Where to start
 
-[`good first issue`](https://github.com/pacifio/atlas/labels/good%20first%20issue) and [`help wanted`](https://github.com/pacifio/atlas/labels/help%20wanted) are labelled for exactly this.
+[`good first issue`](https://github.com/tryatlas/atlas/labels/good%20first%20issue) and [`help wanted`](https://github.com/tryatlas/atlas/labels/help%20wanted) are labeled for exactly this.
 
 Areas where help goes furthest right now:
 
-- **Linux and Windows testing** of the production bundle — terminal font, PATH resolution, general GUI behaviour.
+- **Linux and Windows testing** of the production bundle — terminal font, PATH resolution, general GUI behavior.
 - **More ACP agents.** `atlas-acp` already speaks the wire format, so adding Gemini CLI, OpenCode, or Kilo Code is mostly plugin discovery and auth.
 - **LSP support** for diagnostics and go-to-definition in the editor.
 - **MCP server integration** for tool-call extensibility.
-- **Themes** and additional colour palettes.
+- **Themes** and additional color palettes.
 
 ## Reporting a bug
 
-Check [open and closed issues](https://github.com/pacifio/atlas/issues?q=is%3Aissue) first. If one already covers it, a 👍 reaction is more useful than a duplicate.
+Check [open and closed issues](https://github.com/tryatlas/atlas/issues?q=is%3Aissue) first. If one already covers it, a 👍 reaction is more useful than a duplicate.
 
 The fastest way to report one is the **feedback button** in the app (status bar, or Settings) — its "Open a GitHub issue" link pre-fills the Bug Report form from whatever you typed. Filing directly on GitHub works the same way.
 
@@ -36,9 +36,11 @@ Open a PR directly. No issue needed for typos, clarifications, or filling in som
 
 Open an issue first, or bring it to `#feature-requests` on [Discord](https://discord.gg/GmnFggaPfP).
 
-Most Atlas features cross three layers — React UI, a Tauri command, and a workspace crate — so agreeing the approach first saves you from building something that has to be restructured. [ARCHITECTURE.md](ARCHITECTURE.md) covers how those layers fit together.
+Most Atlas features cross three layers — React UI, a Tauri command, and a workspace crate — so agreeing the approach first saves you from building something that has to be restructured. [docs/architecture.md](docs/architecture.md) covers how those layers fit together.
 
 Match the patterns already in the codebase: feature folder under `src/features/<feature>/`, Zustand store wrapped in `createSelectors`, Tailwind composed through `cn()`, IPC verbs grouped into a single `commands/<domain>.rs`. If your change doesn't fit any of them, propose the structure in the issue.
+
+Split a new surface into a container and views. The container (`components/<name>.tsx`) reads stores, calls the `*-api.ts` wrappers and handles `atlas:*` events; the views (`components/views/<name>-view.tsx`) render from props and callbacks alone. A view that needs an agent's name or mark calls `useAgentMeta(id)` or takes it as a prop, never `agentMeta()`, which reads a store. `tests/view-purity-contract.test.ts` enforces this, because nothing else can see a view that quietly imports a store. [Containers and views](docs/architecture.md#containers-and-views) has the full rule.
 
 New heavy dependencies need discussion first. The current list is deliberate.
 
@@ -48,9 +50,11 @@ Share the proposal in the issue before implementing anything that changes UI or 
 
 Atlas has a lot of surfaces — a change that looks right in one panel often reads wrong across the other twelve. A design pass up front is faster than a rewrite after review.
 
+Build UI from the `@tryatlas/design` primitives, scales and theme tokens ([design-system.md](docs/reference/design-system.md)). A change to a primitive, a shared scale or a theme key belongs in the [`tryatlas/design`](https://github.com/tryatlas/design) package, then a bump of desktop's pinned tag (ADR-0027); the few desktop-only scales (the titlebar height, the composer radius) stay in `src/styles/globals.css`. The design-system ratchet test fails on hand-written sizes and colours.
+
 ## Quickstart
 
-**macOS is the only currently-supported platform.** Linux and Windows build from the same Tauri codebase but are untested — a Windows build is planned, and reports from either OS are genuinely welcome in the meantime.
+**macOS and Linux are the supported platforms.** Linux support is what [docs/reference/linux-support.md](docs/reference/linux-support.md) says it is: glibc 2.35 or newer and WebKitGTK 4.1, shipped as deb, rpm, Arch, AppImage and tarball. Windows builds from the same Tauri codebase but is untested — a Windows build is planned, and reports are genuinely welcome in the meantime.
 
 You need:
 
@@ -63,29 +67,35 @@ We suggest using [mise](https://mise.jdx.dev/) to manage Bun and Node — the re
 **No API keys, no `.env` file, no account.** Atlas builds and runs from a clean clone:
 
 ```bash
-git clone git@github.com:pacifio/atlas.git
+git clone git@github.com:tryatlas/atlas.git
 cd atlas
+mise install     # optional, see above
 bun install
+bun run doctor   # checks your toolchain against the pins, with a fix hint for each miss
 bun run dev:app
 ```
+
+`bun run doctor` is quick and changes nothing: it compares Node, Bun and Rust with `mise.toml` and `rust-toolchain.toml`, checks the Xcode tools and git hooks, and warns about optional pieces (Docker, `cargo-sweep`) and an oversized `target/`. `dev:app` also runs `scripts/target-gc.sh` before it starts, so `target/` is tidied without `ci:local`; it only acts after a Rust upgrade or once a week, and a failure never blocks dev.
+
+The repo commits shared VS Code settings in `.vscode/` (oxc as the formatter with format on save, rust-analyzer on its own target dir so it does not fight `dev:app` for the build lock) and recommends the matching extensions; `.editorconfig` covers other editors.
 
 The first Rust compile takes a few minutes; after that, seconds. `bun run dev:app` hot-reloads the frontend on save — Rust changes need a restart.
 
 There are two ways to run a source build, and they differ in whose data they use:
 
-- **`bun run dev:app`: the dev profile.** This is the normal way to work. It runs as **Atlas Dev** (bundle identifier `dev.atlas.ide.dev`, from `src-tauri/tauri.dev.conf.json`), with its own app data dir, its own `<project>/.atlas-dev/` instead of `.atlas/`, `~/.atlas-dev/` instead of `~/.atlas/`, and `~/.config/atlas-dev/` instead of `~/.config/atlas/`. It never touches an installed Atlas's data, so it is safe beside one on the same projects. It keeps `.atlas-dev/` out of git through `.git/info/exclude` rather than your projects' `.gitignore`, and it never checks for or installs updates or refreshes the `atlas` CLI helper. A fresh dev profile starts empty: no history, settings, sign-in or knowledge notes. To start it over, `bun run clean:app:dev` wipes Atlas Dev's data only; `bun run clean:app` wipes the installed Atlas's. A bundled skill both builds ship under one name (`remember`) is installed by Atlas Dev only when it is missing, so it never overwrites the installed Atlas's copy: to try a change to one, delete it from `~/.agents/skills` first.
+- **`bun run dev:app`: the dev profile.** This is the normal way to work. It runs as **Atlas Dev** (bundle identifier `dev.atlas.ide.dev`, from `src-tauri/tauri.dev.conf.json`), with its own app data dir, its own `<project>/.atlas-dev/` instead of `.atlas/`, `~/.atlas-dev/` instead of `~/.atlas/`, and `~/.config/atlas-dev/` instead of `~/.config/atlas/`. It never touches an installed Atlas's data, so it is safe beside one on the same projects. It keeps `.atlas-dev/` out of git through `.git/info/exclude` rather than your projects' `.gitignore`, and it never checks for or installs updates. A fresh dev profile starts empty: no history, settings, sign-in or knowledge notes. To start it over, `bun run clean:app:dev` wipes Atlas Dev's data only; `bun run clean:app` wipes the installed Atlas's. A bundled skill both builds ship under one name (`remember`) is installed by Atlas Dev only when it is missing, so it never overwrites the installed Atlas's copy: to try a change to one, delete it from `~/.agents/skills` first.
 - **`bun run tauri dev` (or `cargo run`): no overlay, so the default profile, running against your real data** — the same thread history, settings and `.atlas/` directories as an installed Atlas. Use it on purpose, for example to reproduce a user's state, and not by accident.
 
 `crates/atlas-profile` derives every name from the bundle identifier the binary was built with. New code that needs Atlas's directory goes through `atlas_profile::dir_name()` / `dir_in(root)` (and `config_dir_name()` for `~/.config/atlas`), never a literal `".atlas"` or `"atlas"` (`tests/dev-profile.test.ts` checks). Switching between `cargo check` / rust-analyzer and `bun run dev:app` reruns `tauri-build` and recompiles the `atlas` crate each time, because the two pass a different `TAURI_CONFIG`; if that gets in your way, give rust-analyzer its own target dir (`rust-analyzer.cargo.targetDir`).
 
-That's enough to build and run Atlas. If you're planning to submit a change and don't have write access, clone your **fork** instead of `pacifio/atlas` directly — see "Fork, branch, PR" below.
+That's enough to build and run Atlas. If you're planning to submit a change and don't have write access, clone your **fork** instead of `tryatlas/atlas` directly — see "Fork, branch, PR" below.
 
 Other commands you'll use:
 
 ```bash
 bun run dev             # Vite only, in your browser, on a fake backend — see "UI work in the browser"
-bun run format          # oxfmt --write on src/
-bun run lint            # oxlint on src/
+bun run format          # oxfmt --write on src/, tests/, scripts/
+bun run lint            # oxlint on src/, tests/, scripts/
 ```
 
 A husky pre-commit hook runs `lint-staged` (oxfmt + oxlint on staged files) plus `bun run typecheck`, so most formatting/lint issues are caught before they ever reach CI (see Verification below).
@@ -107,79 +117,194 @@ If you're working on the **Claude Code** agent specifically, you also need the `
 
 ## Fork, branch, PR
 
-Every change comes in through a pull request. Maintainers branch directly on `pacifio/atlas`; everyone else forks first. The rest of the flow is identical either way.
+Every change comes in through a pull request. Maintainers branch directly on `tryatlas/atlas`; everyone else forks first. The rest of the flow is identical either way.
 
 ```bash
-# 1. Fork pacifio/atlas on GitHub, then clone your fork
+# 1. Fork tryatlas/atlas on GitHub, then clone your fork
 git clone git@github.com:<you>/atlas.git
 cd atlas
 
 # 2. Point `upstream` at the canonical repo
-git remote add upstream git@github.com:pacifio/atlas.git
+git remote add upstream git@github.com:tryatlas/atlas.git
 git fetch upstream
 ```
 
-Next, find the current version branch — check the [branch list on GitHub](https://github.com/pacifio/atlas/branches) and look for the highest-numbered one (e.g. `0.2.5`). Ask in `#dev` on Discord if it's not obvious.
-
 ```bash
-# 3. Branch from it, not from main
-git checkout -b <you>/short-slug upstream/0.2.5
+# 3. Branch from main
+git checkout -b <you>/short-slug upstream/main
 
-# 4. Push to your fork, then open the PR against that same version branch
+# 4. Push to your fork, then open the PR against main
 git push -u origin <you>/short-slug
 ```
 
-Name your branch `<you>/<short-slug>` — a few words describing the change, e.g. `alex/fix-sidebar-collapse`. If there's a GitHub issue for it, lead with the number: `alex/42-fix-sidebar-collapse`.
+Name your branch `<you>/<short-slug>`: a few words describing the change, e.g. `alex/fix-sidebar-collapse`. If there's a GitHub issue for it, lead with the number: `alex/42-fix-sidebar-collapse`. Title the PR as a Conventional Commit (see "Branching model" below).
 
 To pick up changes made while you were working:
 
 ```bash
 git fetch upstream
-git rebase upstream/0.2.5
+git rebase upstream/main
 ```
 
 Leave **Allow edits from maintainers** checked when you open the PR. It lets small fixes land without another round trip.
 
 ## Branching model
 
-Most open-source projects merge every PR straight into `main`, because `main` is deployed continuously — there's no fixed "next release," just a constantly moving target. Atlas doesn't work that way: it ships as a numbered, installable build with an auto-updater, so `main` has to always equal exactly what's been released, nothing ahead of it. That means work needs somewhere to collect _before_ it becomes a release, instead of landing on `main` directly.
+Atlas is **trunk-based**. There is one shared branch, `main`, and every pull request targets it. A release is not a branch: it is a **tag**, a fixed bookmark on one commit of `main`.
 
-That somewhere is a version branch — one per upcoming release (`0.2.5`, `0.2.6`, …). PRs target the version branch, not `main`. Once the version branch is ready to ship, it gets merged into `main` in a single PR, and that merge _is_ the release.
+Two words this section leans on:
+
+- A **branch** is a name that points at the newest commit in a line of work, and moves forward as commits are added.
+- A **tag** is a name for one commit that never moves. `alpha-0.5.0` will always mean the same snapshot.
+
+### The life of a pull request
 
 ```
-you/fix-sidebar-collapse ──┐
-you/add-vim-keybindings ───┼──►  0.2.5  ──►  main     (this merge = the 0.2.5 release)
-someone/fix-x ──────────────┘
+  1. branch off main          2. work, push, open a PR      3. squash-merge
+                                                              (branch is deleted)
+  main ──●──●                     you/fix-sidebar
+            └──► you/fix-sidebar   ●──●──●──●  ──► PR ──►  main ──●──●──●──■
+                                   wip  typo  …                       ▲
+                                                                      │
+                                              one commit on main, titled with
+                                              the PR title: "fix(sidebar): …"
 ```
 
-| Branch               | Purpose                                         | Merges into                           |
-| -------------------- | ----------------------------------------------- | ------------------------------------- |
-| `main`               | Always equals the latest release, nothing more  | —                                     |
-| `0.2.4`, `0.2.5`, …  | Collects everything going into the next release | `main`, and that merge is the release |
-| `<you>/<short-slug>` | One issue's worth of work                       | The current version branch            |
+1. Branch from `main`: `<you>/<short-slug>`, or the name Linear's **copy git branch name** gives you.
+2. Push and open a PR against `main`. Keep it to days, not weeks: a long-lived branch drifts away from everyone else's work.
+3. When CI passes and it's reviewed, it is **squash-merged**: the whole PR becomes one commit on `main`, and GitHub deletes the branch.
 
-PR straight into `main` only when the change has no version-branch dependency and doesn't need to wait for the next release — a doc fix or a one-line hotfix, say. When in doubt, target the version branch.
+**Squash-merging means the PR title is the commit message**, so the title follows [Conventional Commits](https://www.conventionalcommits.org/). The commits inside your branch can say anything, since they never reach `main`. A check on every PR holds the title to this shape:
 
-**An issue is closed when its fix merges into the version branch**, not when it reaches `main`. GitHub only auto-closes `Fixes #N` on merges into the default branch, and releases go out when they're ready rather than on a schedule, so waiting for `main` would leave fixed issues looking open for weeks — and invite a second PR for the same fix. The maintainer who merges closes the issue by hand, with a comment naming the PR and the branch. If an open issue looks unclaimed, check the version branch's open and merged PRs before starting on it.
+```
+  type(scope): what changed, in the present tense
+  ────  ─────  ──────────────────────────────────
+   │      │      └─ what a user or a teammate would notice
+   │      └──────── optional: the area (chat, terminal, settings, …)
+   └─────────────── feat · fix · perf · refactor · docs · style · test · build · ci · chore · revert
+```
 
-Releases are tagged `alpha-X.Y.Z`, with occasional `exp-X.Y.Z-X.Y.Z` snapshots.
+| Title                                                       | Shows up in the changelog as | Next version |
+| ----------------------------------------------------------- | ---------------------------- | ------------ |
+| `feat(chat): paste images into the composer`                | Features                     | minor bump   |
+| `fix(terminal): keep the close button clickable`            | Fixes                        | patch bump   |
+| `perf(timeline): virtualise long sessions`                  | Performance                  | patch bump   |
+| `revert: …`                                                 | Reverts                      | patch bump   |
+| `refactor`, `docs`, `style`, `test`, `build`, `ci`, `chore` | (not listed)                 | no bump      |
+
+**`main` must stay shippable.** Anything merged can go out in the next release. Unfinished work either waits on its branch or lands switched off behind a setting until it's ready.
+
+**Issues close themselves.** `main` is the default branch, so `Fixes #N` in the PR body closes the issue when the PR merges.
+
+### How a release happens
+
+Nobody bumps versions or writes the changelog by hand. A bot, [release-please](https://github.com/googleapis/release-please), reads the PR titles that land on `main` and keeps one pull request open called **`chore: release X.Y.Z`**:
+
+```
+  main ──■──────■──────■──────■──────────────────■───────────────────►
+         │      │      │      │                  ▲
+       feat:  fix:   fix:   feat:                │ merge the release PR
+         │      │      │      │                  │
+         ▼      ▼      ▼      ▼                  │
+     ┌─────────────────────────────────────────┐ │
+     │ PR: chore: release 0.6.0                │─┘
+     │  • version → 0.6.0 in all four files    │
+     │  • CHANGELOG.md: Features / Fixes       │       tag alpha-0.6.0
+     │  updated on every merge to main         │ ───►  GitHub release
+     └─────────────────────────────────────────┘       installers built and attached
+```
+
+1. Every merge to `main` updates the release PR: the next version number (from the titles, see the table above) and the changelog.
+2. When you want to ship, review the release PR and merge it. That is the whole decision.
+3. Merging it tags `alpha-X.Y.Z`, publishes the GitHub release with the changelog as its notes, and `.github/workflows/release.yml` builds the installers and attaches them.
+4. One step is still by hand: point the PostHog remote-config keys at the new installers (see **Releasing** below). That is what makes installed apps offer the update, so it happens only after someone has tried the build.
+
+**Every release gets a new number.** The auto-updater only offers a version strictly newer than the installed one, so two builds shipped as the same number can't update into each other.
+
+### Semantic versioning
+
+Atlas is pre-1.0, so the version is `0.MINOR.PATCH`:
+
+```
+  0 . 6 . 2
+  │   │   └─ PATCH: a release with only fixes          0.6.1 → 0.6.2
+  │   └───── MINOR: a release with any new feature     0.6.2 → 0.7.0
+  └───────── stays 0 until 1.0
+```
+
+At 1.0 the first number starts meaning "breaking change", as in [semver](https://semver.org/).
+
+### Hotfixes
+
+Sometimes a shipped version needs a fix while `main` already holds work that isn't ready to ship. Then, and only then, a `release/X.Y` branch is made from that release's tag:
+
+```
+  main ──●──────●──────●──────●(fix)──────●──────►
+         │                     │
+    alpha-0.6.0                │ cherry-pick: copy just that one commit
+         │                     ▼
+         └──► release/0.6 ──────●──► tag alpha-0.6.1
+```
+
+1. Fix it on `main` first, as a normal PR.
+2. `git checkout -b release/0.6 alpha-0.6.0`, then `git cherry-pick <the fix's commit>`. A cherry-pick copies one commit onto another branch.
+3. `bun run bump 0.6.1`, commit, open a PR into `release/0.6` and merge it.
+4. Tag that commit `alpha-0.6.1` and push the tag. A tag pushed by a person starts `release-linux.yml`, which builds Linux and creates the GitHub release; build macOS and Windows by hand (see **Releasing**).
+5. Tell the release PR on `main` that 0.6.1 is taken: the next PR merged into `main` carries a line `Release-As: 0.6.2` (or `0.7.0`) in its description. Squash-merging keeps the description in the commit, and release-please reads it. Without this it would propose 0.6.1 again, and the updater ignores a number it has already seen.
+
+The `release/X.Y` branch is never merged back. `main` already has the fix.
+
+### What lives where
+
+| Name                 | What it is                                         | Lives for              |
+| -------------------- | -------------------------------------------------- | ---------------------- |
+| `main`               | The trunk. Always builds, passes CI and could ship | forever                |
+| `<you>/<short-slug>` | One issue's worth of work                          | days; deleted on merge |
+| `release-please--…`  | The bot's release PR branch; don't push to it      | until the release      |
+| `release/X.Y`        | Hotfixes for a shipped version only                | as long as needed      |
+| `alpha-X.Y.Z` (tag)  | A release                                          | forever                |
+
+## Releasing
+
+`.github/workflows/release.yml` runs on every push to `main`. The release PR it keeps open is described above; merging it starts the builds:
+
+```
+  merge "chore: release 0.6.0"
+              │
+              ▼
+  tag alpha-0.6.0 + GitHub release (notes = changelog)
+              │
+     ┌────────┼──────────────────────┬──────────────────────┐
+     ▼        ▼                      ▼                      ▼
+   Linux    macOS DMGs             Windows MSI             (by hand, after a try-out)
+   always   when MACOS_RELEASE     when WINDOWS_RELEASE    PostHog remote config:
+            = true                 = true                  version + installer URLs
+```
+
+- **Linux** (`release-linux.yml`): x86-64 and aarch64 on Ubuntu 22.04 (the glibc floor). It packages a tarball, AppImage, deb, rpm and, on x86-64, an Arch package. It then **verifies** them with `scripts/verify-linux-release.sh`: the binary loads within the floor, every package installs and starts on clean Debian, Ubuntu, Fedora and Arch containers, and the GUI comes up under Xvfb. Only then does it attest, sign and attach them. A pull request that touches a release input runs the same build and verification without publishing.
+- **macOS**: `scripts/release-macos.sh` on a GitHub macOS runner, signed with the Developer ID certificate and notarized. It runs once the signing secrets are in the `release` environment and the repository variable `MACOS_RELEASE` is `true`. Until then, run the script on a Mac that holds the certificate and upload the DMGs to the release.
+- **Windows**: the x64 MSI from `bun run build:app:win`, unsigned for now, once `WINDOWS_RELEASE` is `true`.
+- Every build needs the `POSTHOG_KEY` secret. Without it the app has no telemetry key, and so no update checks.
+
+Then, by hand, after trying the build: set the PostHog remote-config payloads `version`, `uri_mac_arm`, `uri_mac_intel`, `uri_win_intel` (direct installer URLs), and `uri_linux_x86_64` and `uri_linux_aarch64` (the release page). Run the by-hand matrix in `docs/qa/linux-smoke-matrix.md`. Supported distros, what each package needs and how signing works are in `docs/reference/linux-support.md`.
 
 ### Versioning
 
-The version lives in four places: `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, and the Settings "About" label in `src/features/settings/components/settings-panel.tsx`. The scripts change all four together, and refresh `Cargo.lock`'s entry for the app so CI's `--locked` builds still run.
+The version is written in four places: `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, and the app's entry in `Cargo.lock` (left stale, CI's `--locked` builds refuse to run). Everything else reads it from one of those: Rust through `CARGO_PKG_VERSION`, the About screen through `getVersion()`, the DMG scripts from `tauri.conf.json`.
+
+The release PR sets all four (release-please moves `package.json`, and the workflow runs `scripts/bump.sh` for the rest). Run the script yourself only for a hotfix:
 
 ```bash
-bun run bump          # patch bump: 0.2.3 -> 0.2.4
-bun run bump 0.3.0    # explicit version
-bun run debump        # inverse of bump
+bun run bump 0.6.1    # set every version file to 0.6.1
+bun run bump          # or: patch bump from the current version
 ```
 
-Run `bun run bump` (`scripts/bump.sh`) once per release, on the version branch, before opening the PR into `main`. Never edit the four files by hand.
+Never edit the four by hand.
 
 ## Verification
 
 ```bash
-bun run lint                       # oxlint on src/
+bun run lint                       # oxlint on src/, tests/, scripts/
 bun run format:check               # oxfmt --check on src/
 bun run typecheck                  # frontend typecheck (app + test code)
 bun run test                       # frontend and cross-cutting tests
@@ -271,6 +396,14 @@ container's cache volume:
 - **Once a week**, it removes artifacts cargo hasn't used in 30 days: mostly
   old dependency versions left behind by lockfile bumps. Getting one wrong
   costs a rebuild, never a broken build.
+- **Over a size cap**, only when `ATLAS_GC_MAX_MB` is set: it removes the
+  least recently used artifacts until the dir fits. For a target dir shared
+  by several worktrees, which churns through dependency versions faster than
+  30 days can age them out. `ATLAS_GC_UNUSED_DAYS` and `ATLAS_GC_EVERY_DAYS`
+  shorten the two windows above for the same case. The main checkout's
+  `target/` sets none of them. A `target/` that is a symlink (the shared dir)
+  is only collected by the worktree wrapper, under its build lock, since
+  cargo-sweep takes no lock of its own.
 
 Both use [`cargo-sweep`](https://github.com/holmgr/cargo-sweep), which the
 container image ships with. On your machine, install it once with
@@ -332,7 +465,7 @@ every PR and are worth knowing about:
   that script's `EXTRA_INPUTS`, or an edit to that file would skip the crate's
   tests. This suite finds such reads and tells you when one is undeclared.
   To see what CI would run for your branch:
-  `node scripts/ci-affected.mjs --base origin/<version-branch>`.
+  `node scripts/ci-affected.mjs --base origin/main`.
 
 For a new IPC module, copy the pattern in
 `src/features/settings/lib/byok-api.test.ts`: mock `invoke` and assert the

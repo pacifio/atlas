@@ -1,10 +1,12 @@
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useId, useRef } from "react";
 import { Dialog } from "@base-ui/react/dialog";
 import { toast } from "sonner";
 import { Check, Search, Loader2, GitMerge, AlertTriangle, Ban } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useGitStore, type MergePreview } from "../../stores/git-store";
 import { handleGitError } from "../../lib/git-errors";
+import { inProgressLabel } from "../../lib/in-progress";
+import { Badge, Button, Callout } from "@tryatlas/design";
 
 /**
  * GitHub-Desktop-style "Choose a branch to merge into <current>" dialog.
@@ -21,8 +23,12 @@ export function MergeBranchDialog({
 }) {
   const branch = useGitStore.use.branch();
   const branchesFull = useGitStore.use.branchesFull();
+  const detached = useGitStore.use.detached();
+  const opInProgress = inProgressLabel(useGitStore.use.inProgress());
   const actions = useGitStore.use.actions();
 
+  const listId = useId();
+  const listRef = useRef<HTMLDivElement>(null);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [preview, setPreview] = useState<MergePreview | null>(null);
@@ -75,7 +81,7 @@ export function MergeBranchDialog({
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   // Recompute the preview whenever the chosen branch changes.
@@ -117,10 +123,19 @@ export function MergeBranchDialog({
       ? { upstream: selectedInfo.upstream, behind: selectedInfo.behind }
       : null;
 
+  // With HEAD detached there is no branch to merge into, and with an
+  // operation under way git would refuse: say why instead of failing.
+  const blockedReason = detached
+    ? "Check out a branch before merging."
+    : opInProgress
+      ? `Finish the ${opInProgress} in progress first.`
+      : null;
+
   const canMerge =
     !!selected &&
     !merging &&
     !previewing &&
+    !blockedReason &&
     preview != null &&
     preview.kind !== "uptodate" &&
     preview.kind !== "invalid";
@@ -176,16 +191,16 @@ export function MergeBranchDialog({
       <Dialog.Portal>
         <Dialog.Backdrop className="fixed inset-0 scrim z-overlay" />
         <Dialog.Popup
-          className="fixed left-1/2 top-[22%] -translate-x-1/2 z-modal w-[420px] rounded-xl overflow-hidden bg-[var(--card)] border border-border shadow-md flex flex-col"
+          className="fixed left-1/2 top-[22%] -translate-x-1/2 z-modal w-[420px] rounded-xl overflow-hidden bg-card border border-border shadow-lg flex flex-col outline-none"
           // Keep focus on the filter input (rendered below), not the list.
           // `false` is Base UI's spelling of Radix's preventDefault() here.
           initialFocus={false}
         >
-          <div className="px-4 pt-3.5 pb-3 border-b border-border">
-            <Dialog.Title className="text-base font-semibold text-foreground flex items-center gap-1.5">
-              <GitMerge size={13} className="text-secondary-foreground shrink-0" />
+          <div className="px-4 pt-4 pb-3 border-b border-border-subtle">
+            <Dialog.Title className="heading flex items-center gap-2">
+              <GitMerge size={14} className="text-muted-foreground shrink-0" />
               <span>
-                Merge into <span className="font-mono text-primary">{branch || "—"}</span>
+                Merge into <span className="font-mono">{branch || "—"}</span>
               </span>
             </Dialog.Title>
             <Dialog.Description className="text-xs text-muted-foreground mt-1">
@@ -195,11 +210,39 @@ export function MergeBranchDialog({
           </div>
 
           {/* Filter */}
-          <div className="flex items-center gap-1.5 px-3 h-control-lg border-b border-border shrink-0">
-            <Search size={11} className="text-muted-foreground shrink-0" />
+          <div className="flex items-center gap-1.5 px-4 h-control-lg border-b border-border-subtle shrink-0">
+            <Search size={12} className="text-muted-foreground shrink-0" />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                // ↑/↓ walk the list (wrapping); the highlighted row is the pick.
+                if (e.nativeEvent.isComposing || filtered.length === 0) return;
+                if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+                e.preventDefault();
+                const at = filtered.findIndex((b) => b.name === selected);
+                const step = e.key === "ArrowDown" ? 1 : -1;
+                const next =
+                  at < 0
+                    ? step > 0
+                      ? 0
+                      : filtered.length - 1
+                    : (at + step + filtered.length) % filtered.length;
+                const name = filtered[next]!.name;
+                setSelected(name);
+                listRef.current
+                  ?.querySelector(`[data-branch="${CSS.escape(name)}"]`)
+                  ?.scrollIntoView({ block: "nearest" });
+              }}
+              role="combobox"
+              aria-expanded
+              aria-controls={listId}
+              aria-autocomplete="list"
+              aria-activedescendant={
+                selected && filtered.some((b) => b.name === selected)
+                  ? `${listId}-${filtered.findIndex((b) => b.name === selected)}`
+                  : undefined
+              }
               placeholder="Filter branches…"
               autoFocus
               className="flex-1 bg-transparent outline-none text-xs text-foreground placeholder:text-muted-foreground min-w-0"
@@ -207,17 +250,25 @@ export function MergeBranchDialog({
           </div>
 
           {/* Branch list */}
-          <div className="max-h-[260px] overflow-y-auto hide-scrollbar py-1">
-            {filtered.map((b) => {
+          <div
+            ref={listRef}
+            id={listId}
+            role="listbox"
+            aria-label="Branches"
+            className="max-h-[260px] overflow-y-auto hide-scrollbar p-1.5"
+          >
+            {filtered.map((b, i) => {
               const isSel = b.name === selected;
               return (
                 <div
                   key={b.name}
+                  id={`${listId}-${i}`}
+                  data-branch={b.name}
                   role="option"
                   aria-selected={isSel}
                   onClick={() => setSelected(b.name)}
                   className={cn(
-                    "group flex items-center gap-2 px-3 h-[28px] text-xs cursor-pointer",
+                    "group flex items-center gap-2 px-2.5 h-control-md rounded-md text-xs cursor-pointer transition-colors duration-fast",
                     isSel
                       ? "bg-element-selected text-foreground"
                       : "text-secondary-foreground hover:bg-element-hover hover:text-foreground",
@@ -227,11 +278,13 @@ export function MergeBranchDialog({
                     size={12}
                     className={cn("shrink-0", isSel ? "text-primary" : "opacity-0")}
                   />
-                  <span className="truncate flex-1 font-mono">{b.name}</span>
+                  <span className="truncate flex-1 font-mono" title={b.name}>
+                    {b.name}
+                  </span>
                   {b.isRemote && (
-                    <span className="shrink-0 text-3xs font-mono uppercase tracking-wide text-muted-foreground border border-border rounded px-1">
+                    <Badge variant="outline" size="sm">
                       remote
-                    </span>
+                    </Badge>
                   )}
                 </div>
               );
@@ -244,7 +297,7 @@ export function MergeBranchDialog({
           </div>
 
           {/* Preview + actions */}
-          <div className="border-t border-border px-3 py-2.5 flex flex-col gap-2.5">
+          <div className="border-t border-border-subtle px-4 py-3 flex flex-col gap-2.5">
             {fetching && (
               <p className="text-2xs text-muted-foreground flex items-center gap-1.5">
                 <Loader2 size={10} className="animate-spin shrink-0" />
@@ -252,7 +305,7 @@ export function MergeBranchDialog({
               </p>
             )}
             {staleUpstream && (
-              <p className="text-xs text-[var(--atlas-status-warning-foreground)] flex items-start gap-1.5">
+              <p className="text-xs text-warning flex items-start gap-1.5">
                 <AlertTriangle size={11} className="shrink-0 mt-0.5" />
                 <span>
                   <span className="font-mono">{selected}</span> is behind{" "}
@@ -275,41 +328,31 @@ export function MergeBranchDialog({
               previewing={previewing}
               preview={preview}
             />
-            <div className="flex items-center justify-end gap-2">
-              <button
-                onClick={() => onOpenChange(false)}
-                className="px-3 h-7 rounded text-xs text-secondary-foreground hover:bg-element-hover transition-colors"
-              >
+            {blockedReason && (
+              <Callout tone="warning" icon={false}>
+                {blockedReason}
+              </Callout>
+            )}
+            <div className="flex items-center justify-end gap-1.5">
+              <Button variant="ghost" onClick={() => onOpenChange(false)}>
                 Cancel
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="outline"
                 onClick={() => void doRebase()}
                 disabled={!canMerge}
                 title={selected ? `Rebase ${branch} onto ${selected}` : "Rebase"}
-                className={cn(
-                  "px-3 h-7 rounded text-xs font-medium transition-colors",
-                  canMerge
-                    ? "text-foreground border border-border hover:bg-element-hover"
-                    : "text-muted-foreground bg-element-hover cursor-not-allowed",
-                )}
               >
                 Rebase
-              </button>
-              <button
+              </Button>
+              <Button
                 onClick={() => void doMerge()}
                 disabled={!canMerge}
-                // `text-primary-foreground` on the accent fill, never the white literal —
-                // see the note in `git-error-dialog`.
-                className={cn(
-                  "flex items-center gap-1.5 px-3 h-7 rounded text-xs font-medium transition-colors",
-                  canMerge
-                    ? "text-primary-foreground bg-primary hover:opacity-90"
-                    : "text-muted-foreground bg-element-hover cursor-not-allowed",
-                )}
+                className="min-w-0 shrink"
               >
-                {merging ? <Loader2 size={11} className="animate-spin" /> : <GitMerge size={11} />}
-                {selected ? `Merge ${selected}` : "Merge"}
-              </button>
+                {merging ? <Loader2 size={12} className="animate-spin" /> : <GitMerge size={12} />}
+                <span className="truncate">{selected ? `Merge ${selected}` : "Merge"}</span>
+              </Button>
             </div>
           </div>
         </Dialog.Popup>
@@ -359,14 +402,14 @@ function MergePreviewLine({
       );
     case "invalid":
       return (
-        <p className="text-xs text-[var(--atlas-status-error-foreground)] flex items-center gap-1.5">
+        <p className="text-xs text-error flex items-center gap-1.5">
           <Ban size={11} className="shrink-0" />
           Unable to merge unrelated histories.
         </p>
       );
     case "conflicts":
       return (
-        <p className="text-xs text-[var(--atlas-status-warning-foreground)] flex items-center gap-1.5">
+        <p className="text-xs text-warning flex items-center gap-1.5">
           <AlertTriangle size={11} className="shrink-0" />
           <span>
             {plural(preview.conflictedFiles, "file")} will conflict when merging {src} into {dst}.

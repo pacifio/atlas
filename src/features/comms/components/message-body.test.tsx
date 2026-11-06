@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 
 import { MessageBody } from "./message-body";
@@ -39,6 +39,13 @@ async function show(body: string, me = "u_ada") {
   return view;
 }
 
+// Load the lazy impl once, up front. Otherwise the first test pays for the
+// cold import (the whole remark/rehype pipeline) inside `show`'s 1 s
+// `waitFor`, which a full parallel run can overshoot.
+beforeAll(async () => {
+  await import("./message-body-impl");
+}, 30_000);
+
 afterEach(() => {
   cleanup();
   openUrl.mockClear();
@@ -51,7 +58,7 @@ describe("MessageBody", () => {
     expect(chip.closest("[data-mention-pill]")?.getAttribute("title")).toBe("grace@x.test");
     expect(screen.queryByText(/u_grace/)).toBe(null);
     // The face is part of the pill, not just the name.
-    expect(container.querySelector("[data-mention-pill] span[style*='background']")).not.toBe(null);
+    expect(container.querySelector("[data-mention-pill] .bg-muted")).not.toBe(null);
   });
 
   it("styles a mention of you differently from a mention of someone else", async () => {

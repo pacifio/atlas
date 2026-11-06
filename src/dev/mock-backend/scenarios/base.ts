@@ -5,16 +5,18 @@
 // `bun run typecheck` flags a fake that no longer matches what Rust returns.
 
 import type { UpdaterSnapshot } from "@/features/updater/lib/updater-api";
-import type { FileEntry } from "@/features/explorer/stores/explorer-store";
-import type { Theme, ThemeCatalogSummary } from "@/features/theme/lib/theme-api";
+import type { SavedTheme, ThemeCatalogSummary } from "@/features/theme/lib/theme-api";
+import { themeIdSlug } from "@/features/theme/lib/theme-import-api";
 import type { MockHandlers } from "../types";
 import { DEFAULT_APP_PROFILE, type AppProfile } from "@/lib/app-profile";
-import builtinThemesJson from "../fixtures/builtin-themes.json";
+import { BUILTIN_THEMES } from "../fixtures/builtin-themes";
 import { agentHandlers } from "../fake-agent";
 import { artifactsHandlers } from "../fixtures/artifacts";
 import { captureHandlers } from "../fixtures/capture";
 import { commsHandlers } from "../fixtures/comms";
-import { fsHandlers, listDir } from "../fixtures/files";
+import { externalEditorHandlers } from "../fixtures/external-editor";
+import { fsHandlers } from "../fixtures/files";
+import { fontHandlers } from "../fixtures/fonts";
 import { gitHandlers } from "../fixtures/git";
 import { iconThemeHandlers } from "../fixtures/icon-themes";
 import { integrationsHandlers } from "../fixtures/integrations";
@@ -22,18 +24,25 @@ import { knowledgeHandlers } from "../fixtures/knowledge";
 import { logHandlers } from "../fixtures/log";
 import { memoryHandlers } from "../fixtures/memory";
 import { miscHandlers } from "../fixtures/misc";
+import { projectSourcesHandlers } from "../fixtures/project-sources";
+import { pullRequestsHandlers } from "../fixtures/pull-requests";
+import { inboxHandlers } from "../fixtures/inbox";
+import { orgAgentHandlers } from "../fixtures/org-agent";
+import { rcHandlers } from "../fixtures/rc";
+import { securityHandlers } from "../fixtures/security";
 import { settingsHandlers } from "../fixtures/settings";
 import { skillsHandlers } from "../fixtures/skills";
 import { spacesHandlers } from "../fixtures/spaces";
 import { terminalHandlers } from "../fixtures/terminal";
 import { importedUserThemes, themeImportHandlers } from "../fixtures/theme-import";
-import { appState, MOCK_PROJECT } from "../project";
+import { appState } from "../project";
+import type { Theme } from "@tryatlas/design/theme";
 
 const nothing = () => null;
 
 // Generated from the TOML themes by the atlas-theme crate; `cargo test -p
 // atlas-theme` fails when this snapshot is stale.
-const builtinThemes = builtinThemesJson as Theme[];
+const builtinThemes = BUILTIN_THEMES;
 
 /**
  * Every fixture map spread into `baseHandlers`, by name. Exported so
@@ -50,6 +59,8 @@ export const baseFixtureMaps: Readonly<Record<string, MockHandlers>> = {
   "fixtures/git": gitHandlers,
   "fake-agent": agentHandlers,
   "fixtures/files": fsHandlers,
+  "fixtures/external-editor": externalEditorHandlers,
+  "fixtures/fonts": fontHandlers,
   "fixtures/settings": settingsHandlers,
   "fixtures/log": logHandlers,
   "fixtures/artifacts": artifactsHandlers,
@@ -57,6 +68,11 @@ export const baseFixtureMaps: Readonly<Record<string, MockHandlers>> = {
   "fixtures/comms": commsHandlers,
   "fixtures/integrations": integrationsHandlers,
   "fixtures/memory": memoryHandlers,
+  "fixtures/pull-requests": pullRequestsHandlers,
+  "fixtures/inbox": inboxHandlers,
+  "fixtures/org-agent": orgAgentHandlers,
+  "fixtures/rc": rcHandlers,
+  "fixtures/security": securityHandlers,
   "fixtures/skills": skillsHandlers,
   "fixtures/spaces": spacesHandlers,
   "fixtures/terminal": terminalHandlers,
@@ -95,6 +111,24 @@ export const baseHandlers: MockHandlers = {
     if (!theme) throw new Error(`theme '${String(a.id)}' was not found`);
     return theme;
   },
+  // The theme editor's save, into the same session-only list an import
+  // lands in, under the rules Rust applies: the id slugged, and never a
+  // built-in's (which a user theme would shadow).
+  save_theme: (a): SavedTheme => {
+    const theme = a.theme as Theme;
+    // As Rust does: an id the writer accepts is kept, so an edit of
+    // `my_theme` saves over `my_theme` rather than beside it as `my-theme`.
+    const id = /^[A-Za-z0-9_-]+$/.test(theme.id) ? theme.id : themeIdSlug(theme.id);
+    if (!id) throw new Error("a theme name needs at least one letter or digit");
+    if (builtinThemes.some((builtIn) => builtIn.id === id)) {
+      throw new Error(`"${id}" is a built-in theme; pick another name`);
+    }
+    const saved = { ...theme, id };
+    const existing = importedUserThemes.findIndex((candidate) => candidate.id === id);
+    if (existing >= 0) importedUserThemes[existing] = saved;
+    else importedUserThemes.push(saved);
+    return { id, path: `~/.config/atlas/themes/${id}.toml` };
+  },
   ...themeImportHandlers,
 
   // ── icon theme ──────────────────────────────────────────────────────────
@@ -127,13 +161,6 @@ export const baseHandlers: MockHandlers = {
   load_editor_state: () => "{}",
   save_editor_state: nothing,
   load_project_session: () => "{}",
-  read_directory: ({ path }): FileEntry[] => listDir(path),
-  // The demo project reads as indexed, so the composer pill shows "N indexed";
-  // the other projects keep the unbuilt "Index memory" label.
-  codebase_index_status: ({ projectPath }) =>
-    projectPath === MOCK_PROJECT.path
-      ? { indexed: true, fileCount: 1284, summaryCount: 312, builtAtMs: Date.now() - 42 * 60_000 }
-      : { indexed: false, fileCount: 0, summaryCount: 0, builtAtMs: 0 },
   log_interaction: nothing,
 
   // ── knowledge ───────────────────────────────────────────────────────────
@@ -159,6 +186,8 @@ export const baseHandlers: MockHandlers = {
   // rather than by an import's position. (`misc`, the catch-all, is spread at
   // the very top so everything outranks it.)
   ...fsHandlers,
+  ...externalEditorHandlers,
+  ...fontHandlers,
   ...settingsHandlers,
   ...logHandlers,
   ...artifactsHandlers,
@@ -166,12 +195,17 @@ export const baseHandlers: MockHandlers = {
   ...commsHandlers,
   ...integrationsHandlers,
   ...memoryHandlers,
+  ...projectSourcesHandlers,
+  ...pullRequestsHandlers,
+  ...inboxHandlers,
+  ...orgAgentHandlers,
+  ...rcHandlers,
+  ...securityHandlers,
   ...skillsHandlers,
   ...spacesHandlers,
   ...terminalHandlers,
 
   // ── fire-and-forget housekeeping ────────────────────────────────────────
-  comms_ready: nothing,
   fileindex_close_project: nothing,
   // Mirrored instructions: Rust writes AGENTS.md; nothing to fake in a browser.
   instruction_sync_start: nothing,

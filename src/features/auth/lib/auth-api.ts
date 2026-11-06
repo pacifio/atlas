@@ -12,6 +12,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
+import type { Role } from "./roles";
+
 /** No credential stored. */
 export interface SignedOut {
   status: "signed-out";
@@ -47,19 +49,11 @@ export interface AccountUser {
 /**
  * A role in an organisation (API doc §6), highest privilege first.
  *
- * A union rather than `string` so `ROLE_LABELS` cannot silently lose a case:
- * the only thing the desktop does with a role is render its label, and a value
- * with no label renders as nothing at all.
+ * A union rather than `string` so `ROLE_LABELS` (`roles.ts`) cannot silently
+ * lose a case: the only thing the desktop does with a role is render its
+ * label, and a value with no label renders as nothing at all.
  */
-export type Role = "admin" | "product_owner" | "developer" | "member";
-
-/** What each role is called on screen. Matches the web dashboard's wording. */
-export const ROLE_LABELS: Record<Role, string> = {
-  admin: "Admin",
-  product_owner: "Product Owner",
-  developer: "Developer",
-  member: "Member",
-};
+export type { Role };
 
 /** One organisation the account belongs to (ATL-51). Read-only — see ATL-36. */
 export interface AccountOrg {
@@ -186,9 +180,9 @@ export const auth = {
    *  caller should render an empty invitations tab rather than an error. */
   listInvitations: (orgId: string) => invoke<OrgInvitation[]>("auth_list_invitations", { orgId }),
   /**
-   * Invite by email. Email delivery is deferred server-side, so the resolved
-   * `acceptUrl` is the ONLY way the invitee learns of the invite — surface it
-   * for the inviter to copy.
+   * Invite by email. The server emails the invitee their accept link; the
+   * resolved `acceptUrl` is that same link, surfaced so the inviter can also
+   * copy and share it directly.
    */
   inviteMember: (orgId: string, email: string, role: Role) =>
     invoke<OrgInvitation>("auth_invite_member", { orgId, email, role }),
@@ -200,6 +194,12 @@ export const auth = {
   /** Remove a member. Re-broadcasts the snapshot — this can remove YOU. */
   removeMember: (orgId: string, memberIdOrEmail: string) =>
     invoke<void>("auth_remove_member", { orgId, memberIdOrEmail }),
+  /**
+   * Leave an org yourself. Any member but the Owner; the server also refuses
+   * the last admin. Re-broadcasts the snapshot without the org. Callers go
+   * through `leaveOrgAndData`, which also moves the desktop off the org.
+   */
+  leaveOrg: (orgId: string) => invoke<void>("auth_leave_org", { orgId }),
 };
 
 /**
@@ -224,6 +224,10 @@ export interface OrgMember {
   /** Absolute path to the cached photo, or `null` (no photo / fetch failed).
    *  Both render as initials. Feed it through `convertFileSrc`. */
   avatarPath: string | null;
+  /** The Organisation's Owner — the person who created it. Not a role: the
+   *  Owner also holds one (normally admin). The server refuses to remove the
+   *  Owner or let them leave. `false` when the server couldn't say. */
+  isOwner: boolean;
 }
 
 /** A pending/past invitation. Mirrors Rust `OrgInvitation`. */

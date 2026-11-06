@@ -1,7 +1,7 @@
 /**
  * Where UI actions arrive. Mounted once at app level, beside the elicitation
  * host — never inside a chat tab, because a request must be answered whether
- * or not the calling session's tab is visible (ARCHITECTURE.md, "streams are
+ * or not the calling session's tab is visible (docs/architecture.md, "streams are
  * tab-independent").
  *
  * Every request this window owns gets exactly one answer, and the answer

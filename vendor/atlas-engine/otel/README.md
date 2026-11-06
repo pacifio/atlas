@@ -105,7 +105,7 @@ Modes:
 - OTLP: exports metrics via the OpenTelemetry OTLP exporter (HTTP or gRPC).
 - In-memory: records via `opentelemetry_sdk::metrics::InMemoryMetricExporter` for tests/assertions; call `shutdown()` to flush.
 
-> **Modified from upstream.** `OtelExporter::Statsig` — a shorthand exporting to a
+> **Modified from the original.** `OtelExporter::Statsig` — a shorthand exporting to a
 > hardcoded ingestion endpoint with a hardcoded client key, and the default for
 > metrics — was removed in this fork (#43, spec D2). Metrics export nowhere unless
 > you configure an endpoint yourself.

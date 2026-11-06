@@ -29,6 +29,7 @@ pub mod conn;
 pub mod error;
 pub mod events;
 pub mod manager;
+pub mod org_agent;
 pub mod rest;
 pub mod spaces;
 pub mod state;
@@ -100,4 +101,30 @@ pub fn socket_url(org_id: &str) -> String {
 /// socket per open Space — the chat socket stays one-per-org.
 pub fn spaces_socket_url(org_id: &str, conv_id: &str) -> String {
     format!("{}/spaces/ws?org={org_id}&conv={conv_id}", ws_base())
+}
+
+/// Atlas, the Organisation's agent. It has no public host of its own: every
+/// client reaches it through the web's proxy, a native one with its own token
+/// (`docs/api/atlas-agent-api.md` §1 in the server repo). Not overridable from
+/// disk, for `DEFAULT_CHAT_BASE`'s reason.
+pub const DEFAULT_AGENT_BASE: &str = "https://app.tryatlas.cc/api/agent";
+
+pub fn agent_base() -> String {
+    std::env::var("ATLAS_AGENT_URL")
+        .ok()
+        .or_else(|| option_env!("ATLAS_AGENT_URL").map(str::to_string))
+        .unwrap_or_else(|| DEFAULT_AGENT_BASE.to_string())
+        .trim_end_matches('/')
+        .to_string()
+}
+
+/// `base` with its scheme rewritten for a WebSocket dial.
+pub(crate) fn ws_scheme(base: &str) -> String {
+    if let Some(rest) = base.strip_prefix("https://") {
+        format!("wss://{rest}")
+    } else if let Some(rest) = base.strip_prefix("http://") {
+        format!("ws://{rest}")
+    } else {
+        base.to_string()
+    }
 }
