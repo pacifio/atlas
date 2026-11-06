@@ -216,7 +216,7 @@ pub async fn recent_files_push(
         w.clone()
     };
 
-    let items_for_disk = items_lock.clone();
+    let items_for_disk = items_lock;
     let root_for_disk = root.clone();
     tokio::task::spawn_blocking(move || persist(&root_for_disk, &items_for_disk));
 
@@ -260,7 +260,7 @@ pub async fn recent_files_rename(
         w.clone()
     };
 
-    let items_for_disk = items_lock.clone();
+    let items_for_disk = items_lock;
     let root_for_disk = root.clone();
     tokio::task::spawn_blocking(move || persist(&root_for_disk, &items_for_disk));
     emit_changed(&app, &workspace_id, &root, &updated);
@@ -277,7 +277,7 @@ pub async fn recent_files_clear(
         return Ok(());
     };
     items_lock.write().clear();
-    let items_for_disk = items_lock.clone();
+    let items_for_disk = items_lock;
     let root_for_disk = root.clone();
     tokio::task::spawn_blocking(move || persist(&root_for_disk, &items_for_disk));
     emit_changed(&app, &workspace_id, &root, &[]);
