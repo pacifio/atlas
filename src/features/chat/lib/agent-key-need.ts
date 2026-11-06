@@ -74,6 +74,13 @@ const NEEDS: ProviderNeed[] = [
     phrases: ["cheaper inference api key", "cheaperinference api key"],
   },
   {
+    provider: "opper",
+    label: "Opper",
+    consoleHint: "platform.opper.ai",
+    envVars: ["OPPER_API_KEY"],
+    phrases: ["opper api key"],
+  },
+  {
     provider: "xai",
     label: "xAI",
     consoleHint: "console.x.ai",
