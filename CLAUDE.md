@@ -9,23 +9,24 @@ workspace, and the agent engine under `vendor/atlas-engine/` (its crates are
 This file is deliberately short. It carries the commands, and the invariants that fail
 **silently** — where nothing errors, every gate is green, and the symptom is in the
 shipped binary. Everything else is a pointer, because a second copy of it here would
-drift out of date without anything noticing.
+drift out of date without anything noticing. A rule stays inline when the pointer
+wouldn't surface it: a ban with no exit, or a decision whose rule isn't in its title.
 
 ## Where the answers live
 
-| question                                                        | read                                                                                                             |
-| --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| how a feature crosses the stack; a subsystem's file paths       | `docs/architecture.md`                                                                                           |
-| verification gates, branching, PR checklist, telemetry rules    | `CONTRIBUTING.md`                                                                                                |
-| what a term means                                               | `CONTEXT.md`                                                                                                     |
-| why a decision is what it is                                    | `docs/adr/`                                                                                                      |
-| tokens, type/radius/elevation/z-index/motion scales, primitives | `docs/reference/design-system.md`                                                                                |
-| theme keys, theme import, icon themes, config, keybindings      | `docs/reference/`                                                                                                |
-| Linux packages, supported distros, release signing              | `docs/reference/linux-support.md`                                                                                |
-| the browser mock backend                                        | `src/dev/mock-backend/README.md`                                                                                 |
-| what a contract suite guards, and why nothing else can          | that suite's docblock in `tests/`                                                                                |
-| what the web app, the org agent (Atlas), ROI or RC do; their wire contracts | `../server/docs/api/` (pull first)                                                                      |
-| what CI actually runs                                           | `.github/workflows/ci.yml` (commented throughout); for a given diff, `node scripts/ci-affected.mjs --base <rev>` |
+| question                                                                    | read                                                                                                             |
+| --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| how a feature crosses the stack; a subsystem's file paths                   | `docs/architecture.md`                                                                                           |
+| verification gates, branching, PR checklist, telemetry rules                | `CONTRIBUTING.md`                                                                                                |
+| what a term means                                                           | `CONTEXT.md`                                                                                                     |
+| why a decision is what it is                                                | `docs/adr/`                                                                                                      |
+| tokens, type/radius/elevation/z-index/motion scales, primitives             | `docs/reference/design-system.md`                                                                                |
+| theme keys, theme import, icon themes, config, keybindings                  | `docs/reference/`                                                                                                |
+| Linux packages, supported distros, release signing                          | `docs/reference/linux-support.md`                                                                                |
+| the browser mock backend                                                    | `src/dev/mock-backend/README.md`                                                                                 |
+| what a contract suite guards, and why nothing else can                      | that suite's docblock in `tests/`                                                                                |
+| what the web app, the org agent (Atlas), ROI or RC do; their wire contracts | `../server/docs/api/` (pull first)                                                                               |
+| what CI actually runs                                                       | `.github/workflows/ci.yml` (commented throughout); for a given diff, `node scripts/ci-affected.mjs --base <rev>` |
 
 **Count things, don't quote counts.** Commands, crates, tab types and test suites all
 move weekly — `ls src-tauri/src/commands/*.rs`, `ls tests/*.test.ts`,
@@ -39,7 +40,8 @@ bun run dev:app      # full Tauri dev; required for anything that hits invoke()
 bun run build:app    # release .app  (build:app:dmg → +DMG, build:app:win → MSI)
 ```
 
-Gates, all of them, before calling work done:
+The gates. Which of them a piece of work needs depends on where it is; see the two
+tiers below the block.
 
 ```bash
 bun run lint            # oxlint
@@ -51,18 +53,19 @@ cargo check --workspace
 bun run test:rust       # a SUBSET of CI; the script's header lists what it omits
 bun run ci:local        # what CI would run for this branch, as CI runs it (clippy included)
                         # — the jobs that need Linux (the engine sandbox, the app's
-                        #   GTK build) go to a Docker container (OrbStack here)
-                        #   when the plan includes them; --native skips it
+                        #   GTK build) go to a Docker container (any Docker-compatible
+                        #   runtime; CONTRIBUTING.md) when the plan includes them;
+                        #   --native skips it
 ```
 
 **How hard to test depends on where the work is:**
 
-- **While committing — light.** Lint, format, typecheck, the vitest files for what
-  changed (`bun run test <paths>`), and `cargo test -p <crate>` for the crates touched,
-  natively on this Mac. The pre-commit hook already adds `test:contracts`. Never
-  `--workspace`, never the container.
-- **Before submitting a PR — heavy.** `bun run ci:local`: every job CI would
-  plan for the branch, natively on this Mac, plus Linux-target clippy for the
+- **While committing — light. This is "done" for a commit.** Lint, format, typecheck,
+  the vitest files for what changed (`bun run test <paths>`), and `cargo test -p <crate>`
+  for the crates touched, natively. The pre-commit hook already adds `test:contracts`.
+  Never `--workspace`, never the container.
+- **Before submitting a PR — heavy. This is "done" for a PR.** `bun run ci:local`: every job CI would
+  plan for the branch, natively, plus Linux-target clippy for the
   crates flagged `cross`. Only the jobs that need Linux itself (the sandbox
   crate's suites, the app's GTK compile) go to the container, and only when the
   plan includes them. A red job here is a red job in CI; fix it before opening
@@ -115,19 +118,15 @@ inside its directory.
 
 Each has a suite in `tests/`. Read that suite's docblock before changing what it guards.
 
-**The design-system ratchet is closed at zero** (`design-system-ratchet.test.ts`: the
-package's `runRatchet` and rules, from `@tryatlas/design/ratchet`, on desktop's roots).
-Across `src/features`, `src/components` and `src/dev` it bans: arbitrary
-`text-[…]` / `z-[…]` / `shadow-[…]` / `rounded-[…]`; colour literals (`#hex`, `rgb()`,
-`hsl()`); `*-white` and `*-black` utilities; Tailwind's stock ramps (`bg-amber-500` —
-no theme can restate them); bare `z-` at 50 or above; and inline numeric `zIndex` /
-`fontSize` / `boxShadow`. Across all of `src/` and `index.html` it also bans
-`transition-all` and, with no exit at all, the retired `--atlas-` spelling of a theme
-key. Use the scale and the tokens. Otherwise the only exits are
-`EXEMPT_FILES` or an inline `ratchet-allow: <reason>` comment — on the line or anywhere
-in the comment block above it — and the reason must be a real argument of 20+
-characters, which the suite also checks. A violation type-checks, lints and renders
-perfectly; this suite is the only thing in the toolchain that can see it.
+**The design-system ratchet is closed at zero** (`design-system-ratchet.test.ts`; the
+rules are `@tryatlas/design/ratchet`). Arbitrary `text-[…]`/`z-[…]`-style values, colour
+literals, Tailwind's stock ramps, inline numeric styles and `transition-all` all fail it;
+use the scale and the tokens. A failure lists every site and what to write instead.
+The only exits are `EXEMPT_FILES` or an inline `ratchet-allow: <reason>` comment with a
+real 20+ character argument (the suite's docblock has the rules for both). One ban has
+no exit at all: the retired `--atlas-` spelling of a theme key, anywhere in `src/` or
+`index.html` (it resolves to nothing and paints transparent). A violation
+type-checks, lints and renders perfectly; this suite is the only thing that sees it.
 
 **`bun run lint` also runs `@shadcn/lint`**, whose rules are errors. `no-unknown-classes`
 catches a class Tailwind can't generate — a typo, or a plugin utility Atlas doesn't ship —
@@ -169,16 +168,12 @@ only_. `@tryatlas/design`, `@base-ui/react` and `motion` are in the `dedupe` lis
 each rule encodes a production incident, documented inline.
 
 **Four build-config facts that look like cruft.** Each is argued at its own site; don't
-undo one without reading that comment. `lto = "thin"` in the root `Cargo.toml` (fat
-LTO's final link is a single-threaded whole-program merge on every rebuild);
-`crate-type = ["rlib"]` in `src-tauri/Cargo.toml` (the mobile template's
-`staticlib`/`cdylib` makes every dependency compile object code _and_ bitcode, and
-nothing consumes either); `.cargo/config.toml`'s `MACOSX_DEPLOYMENT_TARGET`, which must
-equal `bundle.macOS.minimumSystemVersion` and must **never** be joined by
-`REMOVE_UNUSED_COMMANDS` (the CLI doesn't set it, and `tauri-utils` reads its mere
+undo one without reading that comment. `lto = "thin"` in the root `Cargo.toml`;
+`crate-type = ["rlib"]` in `src-tauri/Cargo.toml`; `.cargo/config.toml`'s
+`MACOSX_DEPLOYMENT_TARGET`, which must equal `bundle.macOS.minimumSystemVersion` and
+must **never** be joined by `REMOVE_UNUSED_COMMANDS` (`tauri-utils` reads its mere
 presence as "prune every command no capability allows"); and
-`scripts/build-frontend.mjs` as `beforeBuildCommand`, which copies only changed bytes
-because `tauri-build` declares `rerun-if-changed` on all of `dist/`. Also:
+`scripts/build-frontend.mjs` as `beforeBuildCommand`. Also:
 `cargo build --release -p atlas` recompiles tauri and six plugins unless you add
 `--features tauri/custom-protocol`, which the CLI adds on release builds.
 
@@ -252,13 +247,12 @@ treatment: capability is discovered over the wire, never hardcoded by agent id. 
 is `pub trait AgentConnection` in `crates/atlas-acp-thread/src/connection.rs`.
 `docs/architecture.md` maps the crates around it.
 
-Recent decisions that change the shape of this area, in `docs/adr/`: session identity is
-an Atlas-minted `threadId` and Atlas never scrapes another program's storage (0001); the
-engine is driven in-process through the app-server client, with an Atlas-owned
-engine home, `EngineHome` (0004); the model catalogue is the gateway's, fetched and
-cached, with no Atlas-authored fallback list (0007); every hop of the start path is
-bounded by a timeout (0008); `~/.agents/skills` is the canonical skill store and the
-slash picker is sourced purely from ACP advertisement (0005).
+Decisions that shape this area, in `docs/adr/`: session identity is an Atlas-minted
+`threadId` and Atlas never scrapes another program's storage (0001); the engine runs
+in-process with an Atlas-owned `EngineHome` (0004); `~/.agents/skills` is the skill
+store and the slash picker comes purely from ACP advertisement (0005); the model
+catalogue is the gateway's, with no Atlas-authored fallback (0007); every hop of the
+start path has a timeout (0008).
 
 The session-delta wire is **additive-only**. Adding an optional field or a new variant
 is ordinary work, done in the same change as its consumers plus
@@ -268,7 +262,7 @@ change: update every consumer (chat store / UI, capture recorder, analytics /
 transcript / memory) in the same change. The contract tests are the authority;
 `docs/agents/delta-wire-contract.md` does not exist in the repo.
 
-**Linux-only paths cannot be answered from this Mac.** The engine sandboxes commands
+**Linux-only paths cannot be answered from macOS.** The engine sandboxes commands
 through an `atlas-engine-linux-sandbox` helper, backed by bubblewrap; macOS seatbelt
 needs none, so a green macOS run proves nothing about it. On Linux the app binary _is_
 that helper: `run_engine_helper_if_asked` dispatches the arg0 alias that
@@ -276,7 +270,7 @@ that helper: `run_engine_helper_if_asked` dispatches the arg0 alias that
 sandboxed command is refused before it runs, with the turn ending normally. `bun run
 ci:local atlas-native-agent` runs that job in a container; CI's Linux jobs are the
 authority, and `release-linux.yml`'s `Verify` is the authority on the shipped packages.
-Two more cost nothing on a Mac and most of a core on Linux: inotify reports _reads_ as
+Two more cost nothing on macOS and most of a core on Linux: inotify reports _reads_ as
 events, so every watcher drops `EventKind::Access` first (`src-tauri/src/fs_events.rs`,
 `watcher-access-filter.test.ts`); and WebKitGTK presents a frame per animation tick, so
 infinite animations are stepped under `html.platform-linux`
