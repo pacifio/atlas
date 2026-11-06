@@ -1,9 +1,9 @@
 import { CAPTION, Card, EstTag, VALUE } from "@/components/usage-primitives";
-import { TickMeter } from "@/features/chat/components/usage-meter";
+import { useAgentMetaResolver } from "@/features/agents/lib/agent-meta-context";
 import { fmtCost, fmtPct, fmtTokens } from "@/features/monitor/lib/usage-format";
 import type { DailyBucket, GroupBy, SessionRow, UsageDashboard } from "../types";
 import { deltaPct, efficiency, keyOf, rankBy, type Efficiency } from "../lib/derive";
-import { DeltaChip } from "./delta-chip";
+import { DeltaChip, SegmentMeter } from "@tryatlas/design";
 
 const fmtRatio = (r: number) =>
   r >= 1 ? `${r.toFixed(1)}×` : `1:${Math.max(1, Math.round(1 / r))}`;
@@ -29,6 +29,7 @@ export function EfficiencyCard({
   groupBy: GroupBy;
   data: UsageDashboard | null;
 }) {
+  const resolveAgent = useAgentMetaResolver();
   const tiles: Array<{
     key: keyof Efficiency;
     label: React.ReactNode;
@@ -44,7 +45,7 @@ export function EfficiencyCard({
   ];
 
   // Per-key efficiency: sessions grouped by the same axis give the distinct-session count.
-  const ranked = rankBy(rows, groupBy, "tokens", data).slice(0, 8);
+  const ranked = rankBy(rows, groupBy, "tokens", data, resolveAgent).slice(0, 8);
   const sessionsByKey = new Map<string, number>();
   for (const s of sessions) {
     const k = keyOf(s, groupBy);
@@ -61,15 +62,22 @@ export function EfficiencyCard({
           const p = prevEff?.[t.key] ?? null;
           return (
             <div key={t.key} className="min-w-0">
-              <div className="text-2xs text-[var(--muted-foreground)]">{t.label}</div>
+              <div className="text-2xs text-muted-foreground">{t.label}</div>
               <div className="mt-0.5 flex items-baseline gap-1.5">
-                <span className="truncate text-xl leading-none font-semibold tabular-nums text-[var(--foreground)]">
+                <span className="truncate text-xl leading-none font-semibold tabular-nums text-foreground">
                   {v === null ? "—" : t.fmt(v)}
                 </span>
                 <DeltaChip delta={v === null ? null : deltaPct(v, p)} />
               </div>
               {t.meter && v !== null && (
-                <TickMeter value={v * 100} warnAt={101} ticks={32} className="mt-1.5" />
+                <SegmentMeter
+                  variant="gauge"
+                  value={v}
+                  warnAt={1.01}
+                  segments={32}
+                  label={typeof t.label === "string" ? t.label : undefined}
+                  className="mt-1.5"
+                />
               )}
             </div>
           );
@@ -77,8 +85,8 @@ export function EfficiencyCard({
       </div>
 
       {ranked.length > 1 && (
-        <div className="mt-3 border-t border-[var(--atlas-element-selected)] pt-2">
-          <div className="flex h-5 items-center text-3xs font-medium uppercase tracking-wider text-[var(--muted-foreground)]">
+        <div className="mt-3 border-t border-element-selected pt-2">
+          <div className="flex h-5 items-center text-3xs font-medium uppercase tracking-wider text-muted-foreground">
             <span className="min-w-0 flex-1">By {groupBy}</span>
             <span className="w-[64px] text-right">Cache hit</span>
             <span className="w-[64px] text-right">Out : in</span>
@@ -89,10 +97,7 @@ export function EfficiencyCard({
             const e = efficiency(r.metrics, sessionsByKey.get(r.key) ?? 0);
             return (
               <div key={r.key} className="flex h-6 items-center text-xs">
-                <span
-                  className="min-w-0 flex-1 truncate text-[var(--secondary-foreground)]"
-                  title={r.label}
-                >
+                <span className="min-w-0 flex-1 truncate text-secondary-foreground" title={r.label}>
                   {r.label}
                 </span>
                 <span className={`w-[64px] text-right ${VALUE}`}>
@@ -104,7 +109,7 @@ export function EfficiencyCard({
                 <span className={`w-[80px] text-right ${VALUE}`}>
                   {e.costPerSession === null ? "—" : fmtCostFine(e.costPerSession)}
                 </span>
-                <span className="w-[56px] text-right text-2xs tabular-nums text-[var(--muted-foreground)]">
+                <span className="w-[56px] text-right text-2xs tabular-nums text-muted-foreground">
                   {total > 0 ? fmtPct(r.value / total) : "—"}
                 </span>
               </div>

@@ -52,3 +52,29 @@ export function updateClonedRepo(projectPath: string, repoName: string): Promise
 export function deleteClonedRepo(projectPath: string, repoName: string): Promise<void> {
   return invoke<void>("delete_cloned_repo", { projectPath, repoName });
 }
+
+/** Open a page in the system browser; `window.open` where the opener plugin
+ *  is unavailable (the browser dev build). */
+export async function openExternal(url: string): Promise<void> {
+  try {
+    const { openUrl } = await import("@tauri-apps/plugin-opener");
+    await openUrl(url);
+  } catch {
+    window.open(url, "_blank");
+  }
+}
+
+/** The sentence `search_github` leads a rate-limit refusal with. */
+export const RATE_LIMIT_PREFIX = "GitHub rate limit reached";
+
+export type SearchErrorKind = "rate-limited" | "failed";
+
+/** A failed search: a rate limit is a wait, shown as a warning; anything else
+ *  is a failure. */
+export function classifySearchError(e: unknown): { kind: SearchErrorKind; message: string } {
+  const message = e instanceof Error ? e.message : String(e);
+  return {
+    kind: message.startsWith(RATE_LIMIT_PREFIX) ? "rate-limited" : "failed",
+    message,
+  };
+}

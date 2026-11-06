@@ -39,14 +39,6 @@ import { openPullRequest } from "@/features/git/lib/git-pr-api";
 import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 import { isBusyAgentStatus } from "@/types/agent";
-import { Button } from "@/ui/button";
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuTrigger,
-} from "@/ui/context-menu";
 
 import { pullRequestListTabId } from "../lib/open-pull-request-list-tab";
 import { openPullRequestTab } from "../lib/open-pull-request-tab";
@@ -103,6 +95,14 @@ import {
   type QuickActionResult,
 } from "./pull-request-quick-actions";
 import { PullRequestListGhost, PullRequestsUnavailableState } from "./pull-request-states";
+import {
+  Button,
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@tryatlas/design";
 
 /** Rows the host is asked for per page. */
 const PAGE = 50;

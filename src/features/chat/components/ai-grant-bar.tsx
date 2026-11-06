@@ -2,12 +2,10 @@ import { useCallback, useState } from "react";
 import { Cloud, CreditCard, RotateCw } from "lucide-react";
 import { toast } from "sonner";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/features/auth/stores/auth-store";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
 import { isLocalOrg, useActiveOrganisation, useAiGrantStore } from "../stores/ai-grant-store";
-import { COMPOSER_STRIP, COMPOSER_STRIP_ACTION } from "./composer-strip";
-import { ComposerStripClose } from "./composer-strip-close";
+import { ChatNoticeView } from "./views/chat-notice-view";
 
 /**
  * The native agent's no-grant setup state (spec D15a, acceptance bar item 14).
@@ -31,10 +29,8 @@ import { ComposerStripClose } from "./composer-strip-close";
  * The org NAME is right there in the auth snapshot.
  */
 
-// The strip itself lives in `composer-strip.ts`, shared with every other
-// notice that tucks into the composer (`removed-agent-bar.tsx`).
-const STRIP = COMPOSER_STRIP;
-const ACTION = COMPOSER_STRIP_ACTION;
+// Drawn as a tucked `ChatNoticeView`, the strip every composer notice shares
+// (`removed-agent-bar.tsx`, `mode-restore-bar.tsx`…).
 
 /** Where "Purchase" goes: the account's billing page, where credits are
  *  bought. A Free account has none to spend. */
@@ -116,75 +112,57 @@ export function AiGrantBar({ turnRunning = false }: { turnRunning?: boolean }) {
   // org switcher, not here.
   if (entitlement?.state === "localOrg" && local) {
     return (
-      <div
+      <ChatNoticeView
+        placement="tucked"
+        tone="neutral"
         data-testid="ai-grant-bar"
-        className={STRIP}
         title="Atlas Agent works with organizations synced to your account"
+        action={{
+          label: syncing ? "Syncing…" : "Turn on sync",
+          icon: Cloud,
+          title: account
+            ? "Create this organization in your Atlas account"
+            : "Sign in to sync this organization",
+          busy: syncing,
+          onClick: () => void onTurnOnSync(),
+        }}
+        onDismiss={() => dismiss()}
+        dismissLabel="Dismiss"
       >
-        <span className="min-w-0 truncate">
-          <span className="font-semibold text-[var(--foreground)]">
-            {orgName ?? "This organization"}
-          </span>
-          <span className="text-[var(--muted-foreground)]">
-            {" "}
-            is local — sync it to use Atlas Agent
-          </span>
-        </span>
-
-        <div className="flex shrink-0 items-center gap-0.5">
-          <button
-            type="button"
-            onClick={() => void onTurnOnSync()}
-            disabled={syncing}
-            title={
-              account
-                ? "Create this organization in your Atlas account"
-                : "Sign in to sync this organization"
-            }
-            className={cn(ACTION, syncing ? "cursor-default" : "cursor-pointer")}
-          >
-            <Cloud size={11} className={cn(syncing && "animate-pulse")} />
-            {syncing ? "Syncing…" : "Turn on sync"}
-          </button>
-          <ComposerStripClose label="Dismiss" onClick={() => dismiss()} />
-        </div>
-      </div>
+        <span className="font-semibold text-foreground">{orgName ?? "This organization"}</span> is
+        local — sync it to use Atlas Agent
+      </ChatNoticeView>
     );
   }
 
   if (entitlement?.state !== "noGrant") return null;
 
   return (
-    <div data-testid="ai-grant-bar" className={STRIP} title={entitlement.message}>
-      <span className="min-w-0 truncate">
-        <span className="font-semibold text-[var(--foreground)]">Atlas Credits</span>
-        <span className="text-[var(--muted-foreground)]"> are not available for Free accounts</span>
-      </span>
-
-      <div className="flex shrink-0 items-center gap-0.5">
-        <button
-          type="button"
-          onClick={() => void onRefresh()}
-          disabled={checking}
-          title="Check again"
-          className={cn(ACTION, checking ? "cursor-default" : "cursor-pointer")}
-        >
-          <RotateCw size={11} className={cn(checking && "animate-spin")} />
-          Refresh
-        </button>
-
-        <button
-          type="button"
-          onClick={onPurchase}
-          title="Buy Atlas Credits on your account's billing page"
-          className={cn(ACTION, "cursor-pointer")}
-        >
-          <CreditCard size={11} />
-          Purchase
-        </button>
-
-        <ComposerStripClose label="Dismiss" onClick={() => dismiss()} />
-      </div>
-    </div>
+    <ChatNoticeView
+      placement="tucked"
+      tone="neutral"
+      data-testid="ai-grant-bar"
+      title={entitlement.message}
+      action={{
+        label: "Refresh",
+        icon: RotateCw,
+        title: "Check again",
+        busy: checking,
+        onClick: () => void onRefresh(),
+      }}
+      extraActions={[
+        {
+          label: "Purchase",
+          icon: CreditCard,
+          title: "Buy Atlas Credits on your account's billing page",
+          onClick: onPurchase,
+        },
+      ]}
+      onDismiss={() => dismiss()}
+      dismissLabel="Dismiss"
+    >
+      <span className="font-semibold text-foreground">Atlas Credits</span> are not available for
+      Free accounts
+    </ChatNoticeView>
   );
 }

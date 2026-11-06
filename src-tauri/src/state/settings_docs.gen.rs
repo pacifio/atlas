@@ -18,6 +18,10 @@ const SETTINGS_DOCS: &[(&str, &str)] = &[
         "# Show dotfiles and dot-directories in the explorer file tree. (default: true)",
     ),
     (
+        "showTips",
+        "# Show a short tip the first time you meet a feature. Which tips you have\n# already seen is kept in tips.json beside this file; Replay all tips in\n# Settings clears it. (default: true)",
+    ),
+    (
         "preferredEditor",
         "# The external editor that \"Open in <editor>\" uses for a file or the project:\n# an id such as \"vscode\", \"cursor\", \"zed\", \"windsurf\", \"sublime\", \"xcode\" or a\n# JetBrains IDE (\"idea\", \"webstorm\", \"pycharm\"…), or \"system\" for the app your\n# system opens the file with. Empty uses the first editor Atlas finds\n# installed. An id that isn't installed falls back to that same choice. Files\n# outside the project open in the system's app unless this names an editor.\n# (default: \"\")",
     ),
@@ -227,11 +231,11 @@ const SETTINGS_DOCS: &[(&str, &str)] = &[
     ),
     (
         "uiFontFamily",
-        "# The font for Atlas's interface and chats, as a CSS font-family list such as\n# \"Inter, sans-serif\". Empty uses the theme's font-sans if it sets one, else\n# the system font. A font that isn't installed falls through to the next one\n# in the list. (default: \"\")",
+        "# The font for Atlas's interface and chats, as a CSS font-family list such as\n# \"Inter, sans-serif\". Empty uses the theme's font-sans if it sets one, else\n# Geist, which Atlas bundles. A font that isn't installed falls through to the\n# next one in the list. (default: \"\")",
     ),
     (
         "codeFontFamily",
-        "# The font for the editor, diffs and code in chats, as a CSS font-family list\n# such as \"JetBrains Mono, monospace\". Empty uses the theme's font-mono if it\n# sets one, else the platform's monospace font. The terminal uses it too\n# unless terminalFontFamily is set. (default: \"\")",
+        "# The font for the editor, diffs and code in chats, as a CSS font-family list\n# such as \"JetBrains Mono, monospace\". Empty uses the theme's font-mono if it\n# sets one, else Geist Mono, which Atlas bundles. The terminal uses it too\n# unless terminalFontFamily is set. (default: \"\")",
     ),
     (
         "composerFontFamily",

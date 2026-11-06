@@ -3,7 +3,7 @@
 // clicking it jumps there. The ticks whose prompt is on screen are lit.
 //
 // Layout. The transcript is capped at the reading column's width (its parent in
-// `chat-panel.tsx` centres it), so the gutter is OUTSIDE the transcript box. The
+// `views/chat-panel-layout.tsx` centres it), so the gutter is OUTSIDE the transcript box. The
 // rail hangs left into it, absolutely positioned and anchored to the left edge
 // of the row the column is centred in. It takes no space: nothing about the
 // column's width or position depends on whether the rail is showing. A gutter
@@ -29,8 +29,6 @@ import {
 } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { IconButton } from "@/ui/icon-button";
-import { Hint } from "@/ui/tooltip";
 import { useSettingsStore } from "@/features/settings/stores/settings-store";
 import {
   resolveTurnRailCurrentIndex,
@@ -48,6 +46,7 @@ import {
   type TurnRailPreview,
 } from "../lib/turn-rail";
 import { forwardWheelToScroller } from "../lib/turn-rail-wheel";
+import { IconButton, Hint } from "@tryatlas/design";
 
 export interface TurnRailProps {
   items: readonly TurnRailItem[];

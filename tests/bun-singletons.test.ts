@@ -68,6 +68,9 @@ const EXPECTED_DEDUPE = [
   "@lezer/highlight",
   "@lezer/lr",
   "pdfjs-dist",
+  "@tryatlas/design",
+  "@base-ui/react",
+  "motion",
 ];
 
 /**
@@ -87,6 +90,10 @@ const EXTRA_SINGLETONS = [
   "@tiptap/core",
   "@tiptap/pm",
   "immer",
+  // The package's `ResizableSplit` renders its own copy's `Group`, and desktop's
+  // `usePanelRef` / `useDefaultLayout` come from desktop's: two copies don't
+  // share context, and nothing errors.
+  "react-resizable-panels",
 ];
 
 /** The `resolve.dedupe: [...]` array in `vite.config.ts`. */

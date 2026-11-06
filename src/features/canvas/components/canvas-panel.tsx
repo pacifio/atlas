@@ -16,18 +16,37 @@ import {
 import "@xyflow/react/dist/style.css";
 import { Dialog } from "@base-ui/react/dialog";
 import { StickyNote } from "lucide-react";
+import {
+  CANVAS_EXPORT_FORMATS,
+  CanvasActionPill,
+  CanvasDraftBox,
+  CanvasHeaderPill,
+  CanvasStatusChip,
+  CanvasToolbar,
+  EmptyState,
+  LOCAL_CANVAS_TOOL_GROUPS,
+} from "@tryatlas/design";
+import { EDGE_INK } from "../lib/edge-ink";
 import { useAppStore } from "@/features/app/stores/app-store";
-import { useCanvasStore, type CanvasNode, type ShapeType } from "../stores/canvas-store";
+import {
+  useCanvasStore,
+  type CanvasNode,
+  type CanvasTool,
+  type ShapeType,
+} from "../stores/canvas-store";
 import { canvasMediaUpload } from "../lib/canvas-api";
+import { useCanvasExport } from "../lib/use-canvas-export";
 import { NoteNode } from "./note-node";
 import { TextNode } from "./text-node";
 import { MediaNode } from "./media-node";
 import { ShapeNode } from "./shape-node";
-import { CanvasToolbar } from "./canvas-toolbar";
-import { CanvasHeader } from "./canvas-header";
-import { CanvasExportToolbar } from "./canvas-export-toolbar";
-import { PagesPanel } from "./pages-panel";
+import { DEFAULT_PAGE_ICON, PagesPanel } from "./pages-panel";
 import { NoteEditorPanel } from "./note-editor-panel";
+
+/** The package's local dock, with this board's own name for the ellipse. */
+const TOOL_GROUPS = LOCAL_CANVAS_TOOL_GROUPS.map((group) =>
+  group.map((t) => (t.id === "shape:ellipse" ? { ...t, label: "Ellipse / circle" } : t)),
+);
 
 const nodeTypes = {
   note: NoteNode,
@@ -60,7 +79,7 @@ export function CanvasPanel() {
         <Dialog.Backdrop className="fixed inset-0 z-overlay scrim" />
         <Dialog.Popup
           aria-describedby={undefined}
-          className="fixed top-12 left-6 right-6 bottom-6 z-modal rounded-xl border border-[var(--border)] bg-[var(--background)] overflow-hidden flex flex-col shadow-md focus:outline-none"
+          className="fixed top-12 left-6 right-6 bottom-6 z-modal rounded-xl border border-border bg-background overflow-hidden flex flex-col shadow-md focus:outline-none"
         >
           <Dialog.Title className="sr-only">Spaces</Dialog.Title>
           {surface}
@@ -133,7 +152,7 @@ function CanvasSurface({
       return next;
     });
   const activeEntry = tree.find((e) => e.id === activePageId);
-  const pageName = activeEntry?.name ?? "Spaces";
+  const pageName = activeEntry?.name || "Spaces";
   const pageIcon = activeEntry?.icon ?? null;
 
   // Load when the project changes.
@@ -146,6 +165,7 @@ function CanvasSurface({
 
   const rf = useReactFlow();
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const { exporting, onExport } = useCanvasExport(wrapperRef);
 
   // Project store data → xyflow shape. Node `type` = kind so xyflow routes to the
   // right renderer; `data` carries only what that renderer needs.
@@ -184,7 +204,7 @@ function CanvasSurface({
         sourceHandle: e.sourceHandle ?? undefined,
         targetHandle: e.targetHandle ?? undefined,
         type: "smoothstep",
-        style: { stroke: "var(--atlas-border-strong)", strokeWidth: 1.5 },
+        // No inline stroke, so a selected edge can turn primary (`EDGE_INK`).
       })),
     [edges],
   );
@@ -404,11 +424,12 @@ function CanvasSurface({
 
   if (!projectPath) {
     return (
-      <div className="h-full flex flex-col items-center justify-center text-sm text-muted-foreground gap-2 px-6 text-center">
-        <StickyNote size={18} className="opacity-60" />
-        <div>No project open.</div>
-        <div className="text-2xs">Spaces are per-project. Open a folder to start a board.</div>
-      </div>
+      <EmptyState
+        className="h-full"
+        icon={StickyNote}
+        title="No project open."
+        description="Spaces are per-project. Open a folder to start a board."
+      />
     );
   }
 
@@ -428,6 +449,7 @@ function CanvasSurface({
         <ReactFlow
           nodes={allNodes}
           edges={rfEdges}
+          style={EDGE_INK}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
@@ -459,9 +481,14 @@ function CanvasSurface({
             // structural ramp's top rung — the same weight the dots had as a
             // fixed 18%-white, and the only one still legible on a light
             // variant.
-            color="var(--atlas-border-strong)"
+            color="var(--border-strong)"
           />
         </ReactFlow>
+
+        {/* An empty page says how to start; the dot grid alone says nothing. */}
+        {loaded && nodes.length === 0 && !armed && (
+          <CanvasStatusChip>Click a tool, then the canvas</CanvasStatusChip>
+        )}
 
         {/* Drag-to-create overlay — only mounted while a create-tool is armed. */}
         {armed && (
@@ -472,38 +499,44 @@ function CanvasSurface({
             onPointerUp={overlayUp}
           >
             {preview && (
-              <div
-                className="absolute rounded border border-[var(--primary)] bg-[var(--primary)]/10 pointer-events-none"
-                style={{
-                  left: preview.left,
-                  top: preview.top,
-                  width: preview.w,
-                  height: preview.h,
-                }}
+              <CanvasDraftBox
+                bounds={{ x: preview.left, y: preview.top, w: preview.w, h: preview.h }}
               />
             )}
           </div>
         )}
 
-        {/* Floating overlays (Miro-style) */}
-        <CanvasHeader
+        {/* Floating chrome: no page switcher, sync dot or zoom readout here —
+            the local board has none of them. */}
+        <CanvasHeaderPill
           pageName={pageName}
-          pageIcon={pageIcon}
+          pageIcon={pageIcon || DEFAULT_PAGE_ICON}
           pagesOpen={pagesOpen}
           onTogglePages={togglePages}
-          fullscreen={fullscreen}
           onFit={handleFit}
+          fullscreen={fullscreen}
           onToggleFullscreen={onToggleFullscreen}
         />
-        <CanvasExportToolbar containerRef={wrapperRef} />
+        <CanvasActionPill
+          exportFormats={CANVAS_EXPORT_FORMATS}
+          onExport={onExport}
+          exportLabel="Export"
+          exporting={exporting !== null}
+        />
         <CanvasToolbar
-          activeTool={activeTool}
-          onTool={setTool}
-          onInsertMedia={handleInsertMedia}
-          canUndo={canUndo}
-          canRedo={canRedo}
-          onUndo={undo}
-          onRedo={redo}
+          groups={TOOL_GROUPS}
+          // Only an armed create-tool reads as pressed; "select" is no button.
+          activeTool={armed ? activeTool : null}
+          // Clicking the armed tool sends null; it stays armed, as it always
+          // has. Esc is what disarms.
+          onTool={(id) => {
+            if (id !== null) setTool(id as CanvasTool);
+          }}
+          onAction={(id) => {
+            if (id === "image") void handleInsertMedia();
+          }}
+          history={{ canUndo, canRedo, onUndo: undo, onRedo: redo }}
+          dock="left"
         />
 
         {editingId && (

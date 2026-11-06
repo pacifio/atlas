@@ -6,9 +6,7 @@ import { lazy, Suspense, useState } from "react";
 import { Pencil } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { Button } from "@/ui/button";
-import { IconButton } from "@/ui/icon-button";
-import { Segmented } from "@/ui/segmented";
+import { Button, IconButton, Segmented } from "@tryatlas/design";
 
 const PullRequestMarkdownImpl = lazy(() => import("./pull-request-markdown-impl"));
 

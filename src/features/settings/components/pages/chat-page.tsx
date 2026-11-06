@@ -1,4 +1,3 @@
-import { Switch } from "@/ui/switch";
 import { useSettingsStore } from "../../stores/settings-store";
 import {
   SettingsGroup,
@@ -6,11 +5,11 @@ import {
   SettingsRow,
   SettingsSection,
 } from "../layout/settings-layout";
-import { Select } from "@/ui/select";
 import { NATIVE_AGENT_ID } from "@/types/agent";
 import { useAgentRegistryStore } from "@/features/agents/stores/agent-registry-store";
 import { SettingSelect, SettingStepper, SettingSwitch } from "../layout/setting-controls";
 import { useScopedSetting } from "../../lib/use-scoped-setting";
+import { Switch, Select } from "@tryatlas/design";
 import { ModelPriceOverridesSection } from "./model-price-overrides";
 
 const SIDEBAR_SORTS = [

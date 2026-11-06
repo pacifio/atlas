@@ -22,9 +22,6 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { Layers, Undo2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Icon } from "@/ui/icon";
-import { IconButton } from "@/ui/icon-button";
-import { Hint } from "@/ui/tooltip";
 import type { SettingKey } from "../../lib/app-settings";
 import { settingMeta } from "../../lib/settings-sections";
 import { useSettingsNav } from "../../stores/settings-nav-store";
@@ -35,6 +32,7 @@ import {
   type ScopedSetting,
 } from "../../lib/use-scoped-setting";
 import { ScopeSentence } from "./scope-sentence";
+import { Icon, IconButton, Hint } from "@tryatlas/design";
 
 export function SettingsPage({
   title,

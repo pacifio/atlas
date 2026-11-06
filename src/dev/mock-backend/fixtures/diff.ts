@@ -224,7 +224,7 @@ export function binaryFileDiff(file: string): FileDiff {
 
 /**
  * The same change as a unified-diff STRING, for the commands that ship raw
- * `git diff` output (`git_diff_all`, `git_diff_file`, `CommitDetail.diff`)
+ * `git diff` output (`git_diff_file`, `CommitDetail.diff`)
  * rather than the structured model.
  */
 export function unifiedDiff(oldText: string, newText: string, file: string, context = 3): string {

@@ -1,10 +1,9 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { MessageSquareCode, Trash2 } from "lucide-react";
 
-import { Button } from "@/ui/button";
-import { IconButton } from "@/ui/icon-button";
 import { isMac } from "@/lib/platform";
 import { isCommentSubmitShortcut } from "../../lib/comment-submit-shortcut";
+import { Button, IconButton } from "@tryatlas/design";
 
 /**
  * A comment drawn under the lines it is on, in the diff or the file view: the
@@ -24,6 +23,7 @@ const TEXTAREA_CLASS =
 
 export function DiffCommentAnnotation({
   kind,
+  destination = "prompt",
   rangeLabel,
   text,
   onTextChange,
@@ -32,6 +32,9 @@ export function DiffCommentAnnotation({
   onDelete,
 }: {
   kind: "draft" | "comment";
+  /** Where a comment goes: the session's next prompt, or the tab's review,
+   *  sent with "Send review to agent". */
+  destination?: "prompt" | "review";
   /** `+12 to +14`, `L3`: for the box's name. */
   rangeLabel: string;
   /** The comment's text, or the draft's as it was left. */
@@ -70,7 +73,7 @@ export function DiffCommentAnnotation({
         <div className="min-w-0 flex-1">
           <p className="text-sm leading-relaxed whitespace-pre-wrap">{text}</p>
           <p className="mt-0.5 text-2xs text-muted-foreground">
-            {rangeLabel} · in your next prompt
+            {rangeLabel} · {destination === "review" ? "in your review" : "in your next prompt"}
           </p>
         </div>
         {onDelete ? (
@@ -129,7 +132,8 @@ export function DiffCommentAnnotation({
       />
       <div className="mt-1.5 flex items-center gap-1">
         <span className="mr-auto text-2xs text-muted-foreground">
-          {isMac ? "⌘↵" : "Ctrl+↵"} adds it to the session's prompt
+          {isMac ? "⌘↵" : "Ctrl+↵"}{" "}
+          {destination === "review" ? "adds it to your review" : "adds it to the session's prompt"}
         </span>
         <Button size="xs" variant="ghost" onClick={onCancel}>
           Cancel

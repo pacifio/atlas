@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const copyText = vi.fn(async (_text: string) => true);
 vi.mock("@/lib/clipboard", () => ({ copyText: (text: string) => copyText(text) }));
 
+import { useAskAgentStore } from "@/features/ask-agent/stores/ask-agent-store";
 import { TOAST_ICONS, toastCopyText } from "./toast-icons";
 
 // `globals: false` in vitest.config.ts — auto-cleanup is not registered.
@@ -58,6 +59,35 @@ describe("the copy button in a live toast", () => {
 
     expect(copyText).toHaveBeenCalledWith("Action failed\nFailed to spawn Codex CLI process");
     expect(await screen.findByRole("button", { name: "Copied" })).toBeTruthy();
+  });
+
+  it("offers Fix with agent on an error with a cause, with its text as the error", async () => {
+    render(<Toaster closeButton icons={TOAST_ICONS} />);
+    act(() => {
+      toast.error("Couldn't refresh the model list", { description: "gateway answered 502" });
+    });
+    const fix = await screen.findByRole("button", { name: /Fix with agent/ });
+    fireEvent.click(fix);
+    expect(useAskAgentStore.getState().request).toMatchObject({
+      prompt: "Fix this: ",
+      context: [
+        {
+          kind: "error",
+          source: "Atlas",
+          message: "Couldn't refresh the model list\ngateway answered 502",
+        },
+      ],
+    });
+    useAskAgentStore.setState({ request: null });
+  });
+
+  it("leaves Fix with agent off an error with nothing to fix", async () => {
+    render(<Toaster closeButton icons={TOAST_ICONS} />);
+    act(() => {
+      toast.error("Couldn't copy");
+    });
+    await screen.findByRole("button", { name: "Copy message" });
+    expect(screen.queryByRole("button", { name: /Fix with agent/ })).toBeNull();
   });
 
   it("renders sonner's close button alongside", async () => {

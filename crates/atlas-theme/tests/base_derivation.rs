@@ -1,8 +1,10 @@
 //! Rust's half of the base-derivation contract (ADR-0022).
 //!
-//! `base-derivation.json` is written by TypeScript's `resolveBase` (see the
-//! fixture test in `src/features/theme/resolve-theme.test.ts`), and this test
-//! demands that `atlas_theme::derive` reproduce every value in it exactly.
+//! `base-derivation.json` is written by TypeScript's `resolveBase`, in
+//! `@tryatlas/design`, and copied here by `bun run theme:keys`
+//! (`src/features/theme/resolve-theme.test.ts` checks the installed package
+//! still agrees with it). This test demands that `atlas_theme::derive`
+//! reproduce every value in it exactly.
 //! What fails silently without it: a rule or an operation edited in one
 //! interpreter and not the other. Import and export would then write one set
 //! of colours and the app would paint another, with nothing to say so.

@@ -1,23 +1,18 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useVirtualizer } from "@tanstack/react-virtual";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Dialog } from "@base-ui/react/dialog";
-import { RefreshCw, GitBranch, Maximize2, Minimize2 } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { HintGroup, HintItem } from "@/ui/hint-group";
+import { Dialog, DialogContent, DialogTitle } from "@tryatlas/design";
 import { useAppStore } from "@/features/app/stores/app-store";
 import { useGitStore } from "@/features/git/stores/git-store";
-import { CommitRowView } from "./commit-node";
 import { openCommit } from "../lib/open-commit";
-import { ROW_HEIGHT, commitCountLabel, type BuiltGraph } from "../lib/git-graph";
+import type { BuiltGraph } from "../lib/git-graph";
+import { GitGraphView } from "./views/git-graph-view";
 
 const DEFAULT_LIMIT = 1000;
 
-// Persist scroll position per repo path across mount/unmount + fullscreen toggle.
-const scrollPositionCache = new Map<string, number>();
-
+/** The commit graph's container: reads the repo, runs the graph queries, and
+ *  hands `GitGraphView` plain props. */
 export function GitGraphPanel() {
   const project = useAppStore.use.currentProject();
   const isRepo = useGitStore.use.isRepo();
@@ -44,8 +39,7 @@ export function GitGraphPanel() {
 
   // Single invoke: Rust runs `git log` + `git for-each-ref` in
   // parallel, lays out the lanes/segments, and ships the finished
-  // BuiltGraph. React just renders. The 300-LOC JS layout algorithm
-  // that used to live in `lib/git-graph.ts::buildGraph` is gone.
+  // BuiltGraph. React just renders.
   const graphQuery = useQuery<BuiltGraph>({
     queryKey: ["git-graph", path, signature, limit],
     queryFn: () => invoke<BuiltGraph>("git_graph_build", { path, limit, all: true }),
@@ -85,215 +79,47 @@ export function GitGraphPanel() {
     [path],
   );
 
-  if (!path || !isRepo) {
-    return (
-      <div className="h-full flex flex-col items-center justify-center text-sm text-muted-foreground gap-2 px-6 text-center">
-        <GitBranch size={18} className="opacity-60" />
-        <div>Not a git repository.</div>
-        <div className="text-2xs">
-          Open a project that contains a `.git` folder to see its history.
-        </div>
-      </div>
-    );
-  }
-
-  const refreshing = sigQuery.isFetching || graphQuery.isFetching;
-
-  const inner = (
-    <GraphView
-      path={path}
+  const notARepo = !path || !isRepo;
+  const totalCommits = graphQuery.data?.totalCommits ?? rows.length;
+  // Offered only while the page is full (so not mid-load) AND commits remain,
+  // naming how many the next page actually holds.
+  const remaining = totalCommits - rows.length;
+  const showMoreCount =
+    rows.length >= limit && remaining > 0 ? Math.min(DEFAULT_LIMIT, remaining) : null;
+  const view = (
+    <GitGraphView
+      state={
+        notARepo ? "not-a-repo" : graphQuery.isLoading && !graphQuery.data ? "loading" : "ready"
+      }
+      repoPath={path}
       rows={rows}
-      totalCommits={graphQuery.data?.totalCommits ?? rows.length}
-      isLoading={graphQuery.isLoading && !graphQuery.data}
+      totalCommits={totalCommits}
       compact={!fullscreen}
       selectedSha={selectedSha}
       onSelect={onSelect}
-      limit={limit}
+      showMoreCount={showMoreCount}
       onShowMore={() => setLimit((l) => l + DEFAULT_LIMIT)}
-      refreshing={refreshing}
+      refreshing={sigQuery.isFetching || graphQuery.isFetching}
       onRefresh={() => sigQuery.refetch()}
       fullscreen={fullscreen}
       onToggleFullscreen={() => setFullscreen((f) => !f)}
     />
   );
 
-  if (!fullscreen) return inner;
+  if (notARepo || !fullscreen) return view;
 
-  // Fullscreen: same component, just inside a centered Radix Dialog covering the viewport.
+  // Fullscreen: the same view in the house dialog, stretched to the window
+  // below the titlebar.
   return (
-    <Dialog.Root open onOpenChange={(open) => !open && setFullscreen(false)}>
-      <Dialog.Portal>
-        <Dialog.Backdrop className="fixed inset-0 z-overlay scrim" />
-        <Dialog.Popup
-          aria-describedby={undefined}
-          className="fixed top-8.5 left-4 right-4 bottom-6 z-modal rounded-xl border border-[var(--border)] bg-[var(--sidebar)] overflow-hidden flex flex-col shadow-md focus:outline-none"
-        >
-          <Dialog.Title className="sr-only">Git Graph</Dialog.Title>
-          {inner}
-        </Dialog.Popup>
-      </Dialog.Portal>
-    </Dialog.Root>
-  );
-}
-
-interface GraphViewProps {
-  path: string;
-  rows: BuiltGraph["rows"];
-  totalCommits: number;
-  isLoading: boolean;
-  compact: boolean;
-  selectedSha: string | null;
-  onSelect: (sha: string) => void;
-  limit: number;
-  onShowMore: () => void;
-  refreshing: boolean;
-  onRefresh: () => void;
-  fullscreen: boolean;
-  onToggleFullscreen: () => void;
-}
-
-function GraphView({
-  path,
-  rows,
-  totalCommits,
-  isLoading,
-  compact,
-  selectedSha,
-  onSelect,
-  limit,
-  onShowMore,
-  refreshing,
-  onRefresh,
-  fullscreen,
-  onToggleFullscreen,
-}: GraphViewProps) {
-  const parentRef = useRef<HTMLDivElement>(null);
-  const virtualizer = useVirtualizer({
-    count: rows.length,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => ROW_HEIGHT,
-    overscan: 12,
-    getItemKey: (i) => rows[i]?.sha ?? i,
-  });
-
-  // Scroll cache — keyed by repo path, shared between inline + fullscreen mounts.
-  useLayoutEffect(() => {
-    const el = parentRef.current;
-    if (!el) return;
-    const cached = scrollPositionCache.get(path);
-    if (cached !== undefined) el.scrollTop = cached;
-  }, [path]);
-
-  useEffect(() => {
-    const el = parentRef.current;
-    if (!el) return;
-    const onScroll = () => {
-      scrollPositionCache.set(path, el.scrollTop);
-    };
-    el.addEventListener("scroll", onScroll, { passive: true });
-    return () => {
-      scrollPositionCache.set(path, el.scrollTop);
-      el.removeEventListener("scroll", onScroll);
-    };
-  }, [path]);
-
-  const items = virtualizer.getVirtualItems();
-  const totalSize = virtualizer.getTotalSize();
-  const showMore = useMemo(() => rows.length >= limit, [rows.length, limit]);
-
-  return (
-    <div className="h-full flex flex-col bg-sidebar">
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 h-control-lg shrink-0 border-b border-border-subtle">
-        <div className="flex items-center gap-1.5">
-          {rows.length > 0 && (
-            <span className="text-2xs font-semibold text-muted-foreground uppercase tracking-wide">
-              {commitCountLabel(rows.length, totalCommits)}
-            </span>
-          )}
-        </div>
-        <HintGroup>
-          <div className="flex items-center gap-0.5">
-            <HintItem label={fullscreen ? "Exit fullscreen" : "Fullscreen"}>
-              <button
-                onClick={onToggleFullscreen}
-                className="p-1 rounded hover:bg-element-hover text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-              >
-                {fullscreen ? <Minimize2 size={11} /> : <Maximize2 size={11} />}
-              </button>
-            </HintItem>
-            <HintItem label="Refresh">
-              <button
-                onClick={onRefresh}
-                className={cn(
-                  "p-1 rounded hover:bg-element-hover text-muted-foreground hover:text-foreground transition-colors cursor-pointer",
-                  refreshing && "animate-spin",
-                )}
-              >
-                <RefreshCw size={11} />
-              </button>
-            </HintItem>
-          </div>
-        </HintGroup>
-      </div>
-
-      {/* Virtualized commit list */}
-      <div className="flex-1 min-h-0 relative">
-        <div ref={parentRef} className="absolute inset-0 overflow-auto hide-scrollbar">
-          {isLoading && <div className="px-3 py-3 text-xs text-muted-foreground">Loading…</div>}
-          {rows.length === 0 && !isLoading && (
-            <div className="px-3 py-3 text-xs text-muted-foreground">No commits.</div>
-          )}
-          {rows.length > 0 && (
-            <div style={{ height: totalSize, width: "100%", position: "relative" }}>
-              {items.map((v) => {
-                const row = rows[v.index];
-                return (
-                  <div
-                    key={row.sha}
-                    data-index={v.index}
-                    style={{
-                      position: "absolute",
-                      top: 0,
-                      left: 0,
-                      width: "100%",
-                      transform: `translateY(${v.start}px)`,
-                    }}
-                  >
-                    <CommitRowView
-                      row={row}
-                      repoPath={path}
-                      selected={row.sha === selectedSha}
-                      compact={compact}
-                      onSelect={onSelect}
-                    />
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        {showMore && (
-          <>
-            <div
-              aria-hidden
-              className="pointer-events-none absolute left-0 right-0 bottom-0 h-16 z-panel"
-              style={{
-                background: "linear-gradient(to bottom, transparent, var(--sidebar))",
-              }}
-            />
-            <button
-              onClick={onShowMore}
-              className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 px-3 h-7 rounded-full border border-[var(--border)] bg-[var(--card)] text-xs text-[var(--secondary-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--card)] shadow-md transition-colors cursor-pointer"
-              style={{ backdropFilter: "blur(4px)" }}
-              title={`Show ${DEFAULT_LIMIT} more commits`}
-            >
-              Show {DEFAULT_LIMIT} more
-            </button>
-          </>
-        )}
-      </div>
-    </div>
+    <Dialog open onOpenChange={(open) => !open && setFullscreen(false)}>
+      <DialogContent
+        showCloseButton={false}
+        aria-describedby={undefined}
+        className="top-8.5 right-4 bottom-6 left-4 w-auto max-w-none translate-x-0 translate-y-0 gap-0 overflow-hidden p-0"
+      >
+        <DialogTitle className="sr-only">Git Graph</DialogTitle>
+        {view}
+      </DialogContent>
+    </Dialog>
   );
 }

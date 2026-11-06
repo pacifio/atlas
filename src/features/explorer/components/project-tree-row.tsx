@@ -1,5 +1,12 @@
 import { Fragment, memo, useEffect, useRef } from "react";
-import { AlertCircle, ChevronRight, GitCompare, Link2, LoaderCircle } from "lucide-react";
+import {
+  AlertCircle,
+  ChevronRight,
+  GitCompare,
+  Link2,
+  LoaderCircle,
+  MessageSquarePlus,
+} from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { FileIcon } from "@/features/icon-theme/components/file-icon";
@@ -98,8 +105,7 @@ export const ProjectTreeRow = memo(function ProjectTreeRow({
         // arrow keys move from.
         focused &&
           "group-focus-visible/tree:ring-1 group-focus-visible/tree:ring-border-strong group-focus-visible/tree:ring-inset",
-        dropTarget &&
-          "bg-[var(--atlas-primary-muted)] text-foreground ring-1 ring-primary/40 ring-inset",
+        dropTarget && "bg-primary-muted text-foreground ring-1 ring-primary/40 ring-inset",
         dragging && "opacity-40",
         cut && "opacity-50",
       )}
@@ -172,6 +178,18 @@ export const ProjectTreeRow = memo(function ProjectTreeRow({
             />
           )}
           {error && <AlertCircle size={11} className="text-error" aria-label={error} />}
+          {row.kind === "file" && (
+            <button
+              type="button"
+              tabIndex={-1}
+              data-tree-action="ask"
+              aria-label={`Ask agent about ${row.name}`}
+              title="Ask agent about this file"
+              className="hidden size-4 items-center justify-center rounded text-muted-foreground group-hover:flex hover:bg-element-hover hover:text-foreground"
+            >
+              <MessageSquarePlus size={11} />
+            </button>
+          )}
           {changed && (
             <button
               type="button"
@@ -185,12 +203,12 @@ export const ProjectTreeRow = memo(function ProjectTreeRow({
             </button>
           )}
           {additions !== null && additions > 0 && (
-            <span className="font-mono text-2xs text-[var(--atlas-diff-added-text)] tabular-nums">
+            <span className="font-mono text-2xs text-[var(--diff-added-text)] tabular-nums">
               +{additions}
             </span>
           )}
           {deletions !== null && deletions > 0 && (
-            <span className="font-mono text-2xs text-[var(--atlas-diff-removed-text)] tabular-nums">
+            <span className="font-mono text-2xs text-[var(--diff-removed-text)] tabular-nums">
               −{deletions}
             </span>
           )}
@@ -231,7 +249,7 @@ function ChainLabel({
         {i > 0 && <span className="px-1 text-muted-foreground">/</span>}
         <span
           data-tree-drop-path={outer ? abs : undefined}
-          className={cn(dropSegment === abs && "rounded-sm bg-[var(--atlas-primary-muted)]")}
+          className={cn(dropSegment === abs && "rounded-sm bg-primary-muted")}
         >
           {nameOf(path)}
         </span>

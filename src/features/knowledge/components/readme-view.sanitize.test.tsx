@@ -5,14 +5,57 @@
 // (a <meta> refresh navigating the window, a <style> restyling the app, a
 // script, an iframe, an inline style pinning an overlay).
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
-vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(), revealItemInDir: vi.fn() }));
+vi.mock("@tauri-apps/plugin-opener", () => ({
+  openUrl: vi.fn(async () => {}),
+  revealItemInDir: vi.fn(),
+}));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(async () => null) }));
 
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { ReadmeView } from "./readme-view";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.mocked(openUrl).mockClear();
+});
+
+describe("ReadmeView links and images", () => {
+  it("opens web and mail links in the system browser, and nothing else", () => {
+    render(
+      <ReadmeView
+        source={[
+          "[site](https://acme.dev) [mail](mailto:hi@acme.dev)",
+          "[docs](docs/setup.md) [up](#install)",
+        ].join("\n\n")}
+      />,
+    );
+    fireEvent.click(screen.getByText("site"));
+    fireEvent.click(screen.getByText("mail"));
+    expect(vi.mocked(openUrl).mock.calls).toEqual([["https://acme.dev"], ["mailto:hi@acme.dev"]]);
+
+    fireEvent.click(screen.getByText("docs"));
+    fireEvent.click(screen.getByText("up"));
+    expect(openUrl).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("docs").getAttribute("title")).toBe("docs/setup.md");
+    expect(screen.getByText("up").getAttribute("title")).toBe("#install");
+  });
+
+  it("shows an image as its alt text, never an <img>", () => {
+    const { container } = render(
+      <ReadmeView
+        source={[
+          "![Build status](https://ci.example/badge.svg)",
+          '<img src="assets/logo.png">',
+        ].join("\n\n")}
+      />,
+    );
+    expect(container.querySelector("img")).toBeNull();
+    expect(screen.getByText("Build status")).toBeTruthy();
+    expect(screen.getByText("logo.png")).toBeTruthy();
+  });
+});
 
 describe("ReadmeView raw HTML", () => {
   it("keeps layout HTML and drops what could reach the app", () => {

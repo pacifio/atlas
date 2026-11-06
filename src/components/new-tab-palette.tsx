@@ -14,8 +14,7 @@ import {
 import type { ActionId } from "@/features/keybindings/lib/actions";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { openNewAgentChat } from "@/features/chat/lib/open-agent-session";
-import { AtlasIcon } from "@/components/atlas-icon";
-import { CommandDialog, CommandDialogPopup } from "@/ui/command";
+import { AtlasIcon } from "@/components/brand-marks";
 import { CommandPaletteContent } from "@/features/command-palette/components/command-palette-content";
 import { filterCommandPaletteGroups } from "@/features/command-palette/lib/command-palette-logic";
 import type {
@@ -23,6 +22,7 @@ import type {
   CommandPaletteEntry,
 } from "@/features/command-palette/lib/command-palette-logic";
 import type { TabType } from "@/lib/constants";
+import { CommandDialog, CommandDialogPopup } from "@tryatlas/design";
 
 interface ModuleEntry {
   id: string;

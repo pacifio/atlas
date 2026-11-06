@@ -27,7 +27,7 @@ export function InsightsCard({ insights }: { insights: Insight[] }) {
   return (
     <Card index={3} section="insights" className="flex min-h-[172px] flex-col">
       <div className="flex items-center gap-1.5">
-        <Lightbulb size={11} className="text-[var(--muted-foreground)]" />
+        <Lightbulb size={11} className="text-muted-foreground" />
         <span className={CAPTION}>Insight</span>
       </div>
       <div
@@ -37,18 +37,18 @@ export function InsightsCard({ insights }: { insights: Insight[] }) {
         {cur ? (
           <>
             <div
-              className="truncate text-2xl leading-none font-semibold tabular-nums text-[var(--foreground)]"
+              className="truncate text-2xl leading-none font-semibold tabular-nums text-foreground"
               title={cur.stat}
             >
               {cur.stat}
             </div>
             <p className="mt-2 text-sm leading-snug">
-              <span className="text-[var(--foreground)]">{cur.lead}</span>{" "}
-              <span className="text-[var(--muted-foreground)]">{cur.rest}</span>
+              <span className="text-foreground">{cur.lead}</span>{" "}
+              <span className="text-muted-foreground">{cur.rest}</span>
             </p>
           </>
         ) : (
-          <p className="text-xs text-[var(--muted-foreground)]">
+          <p className="text-xs text-muted-foreground">
             Not enough in this window to say anything yet.
           </p>
         )}
@@ -59,7 +59,7 @@ export function InsightsCard({ insights }: { insights: Insight[] }) {
             type="button"
             aria-label="Previous insight"
             onClick={() => go(i - 1)}
-            className="flex size-5 items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]"
+            className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-element-hover hover:text-foreground"
           >
             <ChevronLeft size={12} />
           </button>
@@ -71,10 +71,10 @@ export function InsightsCard({ insights }: { insights: Insight[] }) {
                 aria-label={`Insight ${k + 1}`}
                 onClick={() => go(k)}
                 className={cn(
-                  "h-[3px] rounded-full transition-all duration-200",
-                  k === i
-                    ? "w-5 bg-[var(--atlas-status-success-foreground)]"
-                    : "w-3 bg-[var(--atlas-element-active)] hover:bg-[var(--muted-foreground)]",
+                  // Width, not scaleX: a 3px capsule squashed sideways loses
+                  // its round ends, and three tiny buttons reflowing is cheap.
+                  "h-[3px] rounded-full transition-[width,background-color] duration-200",
+                  k === i ? "w-5 bg-success" : "w-3 bg-element-active hover:bg-muted-foreground",
                 )}
               />
             ))}
@@ -83,7 +83,7 @@ export function InsightsCard({ insights }: { insights: Insight[] }) {
             type="button"
             aria-label="Next insight"
             onClick={() => go(i + 1)}
-            className="flex size-5 items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]"
+            className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-element-hover hover:text-foreground"
           >
             <ChevronRight size={12} />
           </button>

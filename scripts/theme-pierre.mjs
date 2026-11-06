@@ -6,27 +6,39 @@
  * importer (the `syntax_from_vscode` example in `crates/atlas-theme`), so the
  * scopes map onto Atlas's fifteen syntax roles exactly as they would for a
  * theme a user imports. The result replaces the marked block in each variant
- * of `crates/atlas-theme/themes/atlas.toml`, and becomes the last-resort
- * `dark`/`light` default of each `syntax.*` key in `keys.toml` — what a theme
- * that sets neither the key nor its palette or base source gets. The files
- * derived from those two (the mock's built-in snapshot, the `tokens.css`
- * floor, and everything `theme:keys` writes) are regenerated, and Pierre's
- * LICENSE and NOTICE are copied beside them.
+ * of `themes/atlas.toml`, and becomes the last-resort `dark`/`light` default
+ * of each `syntax.*` key in `keys.toml` — what a theme that sets neither the
+ * key nor its palette or base source gets. Pierre's LICENSE and NOTICE are
+ * copied beside desktop's copy of the theme.
  *
- * To take a new Pierre release: `bun update @pierre/theme`, then
- * `bun run theme:pierre`. `tests/pierre-syntax.test.ts` fails while the
- * installed version and the one the block names differ.
+ * Both files belong to `@tryatlas/design` (ADR-0027), and desktop only holds
+ * copies, so this writes into a checkout of the package. The importer is Rust
+ * and lives here, which is why the script does too. To take a new Pierre
+ * release:
+ *
+ *   bun update @pierre/theme
+ *   bun run theme:pierre <path to a tryatlas/design checkout>
+ *   (in the checkout) bun run theme, commit, release a tag
+ *   (here) bump the pin, bun install, bun run theme:keys
+ *
+ * `tests/pierre-syntax.test.ts` fails while the installed version and the one
+ * the block names differ.
  */
 
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const pierre = join(root, "node_modules", "@pierre", "theme");
-const target = join(root, "crates", "atlas-theme", "themes", "atlas.toml");
-const keysToml = join(root, "crates", "atlas-theme", "keys.toml");
+const design = process.argv[2] ? resolve(process.argv[2]) : null;
+if (!design || !existsSync(join(design, "keys.toml"))) {
+  console.error("usage: bun run theme:pierre <path to a tryatlas/design checkout>");
+  process.exit(1);
+}
+const target = join(design, "themes", "atlas.toml");
+const keysToml = join(design, "keys.toml");
 const thirdParty = join(root, "crates", "atlas-theme", "third-party", "pierre-theme");
 
 const { version } = JSON.parse(readFileSync(join(pierre, "package.json"), "utf8"));
@@ -74,26 +86,11 @@ for (const variant of ["dark", "light"]) {
 }
 writeFileSync(target, toml);
 writeFileSync(keysToml, keys);
-execFileSync("node", [join(root, "scripts", "generate-theme-keys.mjs")], {
-  cwd: root,
-  stdio: "inherit",
-});
-
-// The two copies derived from atlas.toml: the browser mock's snapshot of the
-// built-in themes, and the Atlas-dark floor in `tokens.css`.
-const builtins = execFileSync(
-  "cargo",
-  ["run", "-q", "-p", "atlas-theme", "--example", "generate_builtins"],
-  { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] },
-);
-writeFileSync(join(root, "src/dev/mock-backend/fixtures/builtin-themes.json"), builtins);
-execFileSync("bunx", ["vitest", "run", "src/features/theme/tokens-fallback.test.ts"], {
-  cwd: root,
-  stdio: "inherit",
-  env: { ...process.env, ATLAS_WRITE_TOKENS: "1" },
-});
 
 mkdirSync(thirdParty, { recursive: true });
 for (const file of ["LICENSE", "NOTICE.md"])
   copyFileSync(join(pierre, file), join(thirdParty, file));
-console.log(`atlas.toml syntax now from @pierre/theme ${version}.`);
+console.log(
+  `${target} syntax now from @pierre/theme ${version}. Run \`bun run theme\` there, release, ` +
+    "then bump the pin here and run `bun run theme:keys`.",
+);

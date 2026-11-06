@@ -4,6 +4,7 @@
 // opens it in this app (`org-agent-navigate.ts`); a truncated result says so,
 // because "these are all of them" is a claim the reader will act on.
 
+import { DiffStat } from "@tryatlas/design";
 import {
   BookMarked,
   FileText,
@@ -21,7 +22,6 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
-import { DiffStat } from "@/features/artifacts/components/session-row";
 import { AgentGlyph } from "@/features/artifacts/components/agent-glyph";
 import { timeAgo } from "@/lib/time-ago";
 import { cn } from "@/lib/utils";
@@ -106,7 +106,7 @@ function partsOf(card: Card): RowParts | null {
         title: card.branch || "Checkpoint",
         mono: card.commit_sha.slice(0, 7),
         detail: `${card.files} ${card.files === 1 ? "file" : "files"}`,
-        trailing: <DiffStat added={card.plus} removed={card.minus} />,
+        trailing: <DiffStat added={card.plus} removed={card.minus} className="shrink-0" />,
       };
     case "person":
       return {

@@ -14,7 +14,7 @@
 #      incremental state. `cargo sweep --toolchains` removes exactly what the
 #      pinned toolchain did not build. Not a wipe: `dev:app` may already have
 #      rebuilt everything with the new compiler before this runs. Only an
-#      upgrade triggers it: a worktree on an older version branch can share
+#      upgrade triggers it: a worktree on an older branch can share
 #      this target dir, and alternating with it must not throw builds away.
 #   2. Dependency bumps, which leave the old version's artifacts behind for
 #      good. Once a week, `cargo sweep --time 30` removes what cargo has not

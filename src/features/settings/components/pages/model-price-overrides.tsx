@@ -1,6 +1,5 @@
 import { useState } from "react";
-import { Button } from "@/ui/button";
-import { Input } from "@/ui/input";
+import { Button, Input } from "@tryatlas/design";
 import { useScopedSetting } from "../../lib/use-scoped-setting";
 import { type ModelPriceOverrides } from "../../stores/model-pricing-store";
 import { SettingsGroup, SettingsRow, SettingsSection } from "../layout/settings-layout";

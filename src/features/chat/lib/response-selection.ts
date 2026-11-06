@@ -63,15 +63,18 @@ export function actionPosition(
   };
 }
 
-/** A targeted insert carries a complete draft; an untargeted one appends to
- * the active session's. (Cite used to append quoted text through here; it now
- * drops a `cited_text` chip instead — `cited-text.ts`.) */
+/** A targeted insert carries a complete draft, unless it says `append`; an
+ * untargeted one appends to the active session's. (Cite used to append quoted
+ * text through here; it now drops a `cited_text` chip instead —
+ * `cited-text.ts`.) */
 export interface ChatInsertDetail {
   text: string;
   tabId?: string;
+  /** Append to the targeted composer's live text (`askAgent`'s draft). */
+  append?: boolean;
 }
 
 export function insertedDraft(current: string, detail: ChatInsertDetail): string {
-  if (detail.tabId) return detail.text;
+  if (detail.tabId && !detail.append) return detail.text;
   return current.trim() ? `${current}\n\n${detail.text}` : detail.text;
 }

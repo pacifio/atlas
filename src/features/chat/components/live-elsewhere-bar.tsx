@@ -1,9 +1,8 @@
 import { TerminalSquare } from "lucide-react";
-import { cn } from "@/lib/utils";
 import { useChatStore } from "../stores/chat-store";
 import { useLiveElsewhereStore, useSendHeldForTerminal } from "../stores/live-elsewhere-store";
-import { COMPOSER_STRIP, COMPOSER_STRIP_ACTION } from "./composer-strip";
-import { ComposerStripClose, useStripHidden } from "./composer-strip-close";
+import { useStripHidden } from "./composer-strip-close";
+import { ChatNoticeView } from "./views/chat-notice-view";
 
 /**
  * This session is still being written by another process, usually `claude` in a
@@ -23,26 +22,16 @@ export function LiveElsewhereBar({ tabId }: { tabId: string }) {
   if (!held || !sessionId || hidden) return null;
 
   return (
-    <div data-testid="live-elsewhere-bar" role="status" className={COMPOSER_STRIP}>
-      <span className="flex min-w-0 items-center gap-1.5">
-        <TerminalSquare
-          size={11}
-          className="shrink-0 text-[var(--atlas-status-warning-foreground)]"
-        />
-        <span className="min-w-0 truncate text-[var(--muted-foreground)]">
-          This session is active in another process (likely a terminal). Sending here will fork it.
-        </span>
-      </span>
-      <span className="flex shrink-0 items-center gap-0.5">
-        <button
-          type="button"
-          onClick={() => sendAnyway(sessionId)}
-          className={cn(COMPOSER_STRIP_ACTION, "cursor-pointer")}
-        >
-          Send anyway
-        </button>
-        <ComposerStripClose onClick={hide} />
-      </span>
-    </div>
+    <ChatNoticeView
+      placement="tucked"
+      tone="warning"
+      icon={TerminalSquare}
+      data-testid="live-elsewhere-bar"
+      live
+      action={{ label: "Send anyway", onClick: () => sendAnyway(sessionId) }}
+      onDismiss={hide}
+    >
+      This session is active in another process (likely a terminal). Sending here will fork it.
+    </ChatNoticeView>
   );
 }

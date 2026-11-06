@@ -16,10 +16,6 @@ import { Pause, Play, Plus, Repeat, Trash2 } from "lucide-react";
 import { useCommsStore } from "@/features/comms/stores/comms-store";
 import { useOrgDirectory } from "@/features/organisations/lib/use-org-directory";
 import { timeAgo } from "@/lib/time-ago";
-import { Badge } from "@/ui/badge";
-import { Button } from "@/ui/button";
-import { Input } from "@/ui/input";
-import { Select } from "@/ui/select";
 
 import { OrgAgentError } from "../lib/org-agent-api";
 import {
@@ -34,6 +30,7 @@ import {
 } from "../lib/org-agent-types";
 import { useOrgAgentStore } from "../stores/org-agent-store";
 import { Notice } from "./org-agent-turn";
+import { Badge, Button, Input, Select } from "@tryatlas/design";
 
 /** Where a Loop posts, in the member's words. */
 export function outputLabel(

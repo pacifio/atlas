@@ -14,10 +14,10 @@ vi.mock("@/features/comms/lib/team-chat-access", () => ({
   unlockHint: () => undefined,
 }));
 
-import { HintGroup } from "@/ui/hint-group";
 import { useCommsStore } from "@/features/comms/stores/comms-store";
 import type { ChatConversation } from "@/features/comms/types";
 import { TeamChatButton } from "./sidebar-destinations";
+import { HintGroup } from "@tryatlas/design";
 
 const conv = { id: "c1" } as ChatConversation;
 const read = (unread: number, mentions = 0) => ({

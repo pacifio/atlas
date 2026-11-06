@@ -2,11 +2,16 @@ import { useState } from "react";
 import { MoreHorizontal } from "lucide-react";
 import { toast } from "sonner";
 import { copyText } from "@/lib/clipboard";
-import { Button } from "@/ui/button";
-import { IconButton } from "@/ui/icon-button";
-import { Input } from "@/ui/input";
-import { Select } from "@/ui/select";
+import { PRESETS, type PresetId } from "../lib/presets";
+import { exportProfile } from "../lib/profile-transfer";
+import { useKeybindingsStore } from "../stores/keybindings-store";
+import { ImportProfileDialog } from "./import-profile-dialog";
+import { PresetIcon } from "./preset-icon";
 import {
+  Button,
+  IconButton,
+  Input,
+  Select,
   Dialog,
   DialogClose,
   DialogContent,
@@ -14,19 +19,12 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/ui/dialog";
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/ui/dropdown-menu";
-import { PRESETS, type PresetId } from "../lib/presets";
-import { exportProfile } from "../lib/profile-transfer";
-import { useKeybindingsStore } from "../stores/keybindings-store";
-import { ImportProfileDialog } from "./import-profile-dialog";
-import { PresetIcon } from "./preset-icon";
+} from "@tryatlas/design";
 
 const ATLAS_KEYS = "atlas";
 

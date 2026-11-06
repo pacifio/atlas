@@ -15,10 +15,6 @@ import {
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { Button } from "@/ui/button";
-import { IconButton } from "@/ui/icon-button";
-import { Popover, PopoverClose, PopoverContent, PopoverTitle, PopoverTrigger } from "@/ui/popover";
-import { Segmented } from "@/ui/segmented";
 
 import { classifyPrError } from "../lib/pr-errors";
 import { offDiffPendingComments, positionAnchor, prDiffFiles } from "../lib/pull-request-diff";
@@ -43,6 +39,16 @@ import {
 } from "../stores/pull-request-tab-draft-store";
 import { readableFailure } from "../lib/use-pull-request-actions";
 import { TEXTAREA_CLASS } from "./pull-request-markdown";
+import {
+  Button,
+  IconButton,
+  Popover,
+  PopoverClose,
+  PopoverContent,
+  PopoverTitle,
+  PopoverTrigger,
+  Segmented,
+} from "@tryatlas/design";
 
 const VERDICTS: readonly {
   value: PrReviewVerdict;

@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Kbd } from "@/ui/kbd";
 import { useHintStore } from "../stores/hint-store";
 import { scanTargets, HINT_OVERLAY_ATTR, type HintTarget } from "../lib/scan-targets";
 import { generateLabels } from "../lib/generate-labels";
 import { activate } from "../lib/activate-target";
 
-import { HUD } from "@/ui/hud";
 import { matchesAction } from "@/features/keybindings/lib/use-scoped-hotkeys";
+import { Kbd, HUD } from "@tryatlas/design";
 
 /**
  * The trigger (⌘⌥Space by default) — rebindable via Settings → Keybindings.
@@ -187,7 +186,7 @@ export function HintOverlay() {
               transform: "translate(-2px, -2px)",
             }}
           >
-            {typed && <span style={{ opacity: 0.4 }}>{label.slice(0, typed.length)}</span>}
+            {typed && <span className="opacity-40">{label.slice(0, typed.length)}</span>}
             <span>{label.slice(typed.length)}</span>
           </span>
         );
@@ -199,16 +198,16 @@ export function HintOverlay() {
           // Matches the hint keycaps above — the same `glass-hud` recipe.
           className={`flex items-center gap-3 rounded-2xl px-3.5 py-2.5 ${HUD}`}
         >
-          <span className="font-mono text-sm text-[var(--foreground)]">
+          <span className="font-mono text-sm text-foreground">
             {typed ? (
               <span className="tracking-widest">{typed.toUpperCase()}</span>
             ) : (
-              <span className="text-[var(--muted-foreground)]">
+              <span className="text-muted-foreground">
                 {targets.length} targets — type the letters
               </span>
             )}
           </span>
-          <span className="flex items-center gap-1.5 text-2xs text-[var(--muted-foreground)]">
+          <span className="flex items-center gap-1.5 text-2xs text-muted-foreground">
             <Kbd>⌥</Kbd> focus
             <Kbd>esc</Kbd> close
           </span>

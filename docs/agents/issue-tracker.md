@@ -32,9 +32,9 @@ The two trackers split by **audience**: Linear (workspace `tryatlas`) is where t
 ## Finishing
 
 - Put the issue ID in the PR title or body (`ATL-123`).
-- Opening the PR → **In Review**. Merged into the current version branch (e.g. `0.4.1`) → **Done**. That merge is "done" here; the version branch reaching `main` is the release.
+- Opening the PR → **In Review**. Merged into `main` → **Done**. A release is a later tag on `main`, not a separate merge.
 - Until the GitHub integration is connected (ATL-940), move the status by hand.
-- A GitHub issue the PR fixes is closed by hand at the same merge, with a comment naming the PR and branch (`Fixes #N` only fires on merges into `main`).
+- A GitHub issue the PR fixes closes itself on merge through `Fixes #N` in the PR body.
 
 ## Filing an issue
 

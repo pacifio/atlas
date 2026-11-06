@@ -1,8 +1,8 @@
 import { useCallback, useState } from "react";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
 import { COMPOSER_STRIP_ACTION } from "./composer-strip";
+import { Hint } from "@tryatlas/design";
 
 /**
  * The ✕ every strip tucked into the composer carries (`composer-strip.ts`).

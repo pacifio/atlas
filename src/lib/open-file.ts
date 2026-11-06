@@ -18,6 +18,11 @@ export interface OpenFileOptions {
   /** Where to put the cursor once the file is open. Editor tabs only; other
    *  kinds of file ignore it. */
   reveal?: RevealTarget;
+  /** Open a text file for editing rather than reading: one the user opened
+   *  to change by hand (a merge conflict, a settings file, a file they just
+   *  created). Any other open is read-only until the tab's Edit toggle.
+   *  Editor tabs only. */
+  edit?: boolean;
 }
 
 /** The one tab id a text file opens under. Every opener must use it, or the
@@ -62,6 +67,10 @@ export function openFileAs(path: string, kind: FileKind, opts?: OpenFileOptions)
     dirty: false,
     data: { filePath: path, fileKind: kind },
   });
+  // After `addTab`, which leaves an already-open tab's data as it was.
+  if (opts?.edit && tabType === "editor") {
+    useLayoutStore.getState().actions.setTabData(id, { editing: true });
+  }
   return id;
 }
 

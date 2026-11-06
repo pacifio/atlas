@@ -50,9 +50,9 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 // failure they showed: `EndTurn` instead of `Cancelled`, and a command that
 // "ran 0 times".
 //
-// The app dispatches only the `argv[1]` helpers (`run_engine_helper_if_asked`),
-// not this arg0 alias, so it has no Linux helper to offer (see
-// `EngineSettings::linux_sandbox_exe`). The tests do: the engine's own
+// The app is its own helper (`run_engine_helper_if_asked` dispatches this
+// alias, see `EngineSettings::linux_sandbox_exe`), but the helper has to be
+// the binary that is running, which here is the test binary. The engine's own
 // suites make the *test binary* the helper, and this is that same construction
 // — `vendor/atlas-engine/core/tests/suite/mod.rs`. The `#[ctor]` runs before any test
 // thread exists, which is what makes the `set_var`/PATH work inside it sound.
@@ -319,7 +319,7 @@ async fn harness_full(
         Some("test-model".to_string()),
         home.path().to_path_buf(),
     );
-    // Production leaves this `None`. Without it every sandboxed command in this
+    // `new` leaves this `None`. Without it every sandboxed command in this
     // file is refused before it spawns on Linux — see the module header.
     settings.linux_sandbox_exe = test_linux_sandbox_exe();
     let settings = tune(settings);

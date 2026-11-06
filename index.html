@@ -38,19 +38,22 @@
          Reproduce without a build: serve `dist/` behind a CSP whose style-src
          carries any nonce alongside 'unsafe-inline'. -->
     <!-- The last theme, replayed BEFORE first paint.
-         `tokens.css` has not loaded here and neither has any module, so the
+         The design package's stylesheet has not loaded here and neither has any module, so the
          only thing fast enough is localStorage, written by `applyTheme` on
          every switch (`src/features/theme/apply-theme.ts`). Two things come
          back from it: the seven `--atlas-boot-*` colours the skeleton below
          paints with, and the WHOLE resolved variable map, written into the
          same `<style id="atlas-resolved-theme">` applyTheme later rewrites —
          so React's first render, which lands before the first applyTheme,
-         already has every `--atlas-*` key in the right theme. The block's text
+         already has every theme key in the right theme. The block's text
          must stay byte-identical to `resolvedThemeCss()` there;
          `apply-theme.test.ts` runs this script to check. A first run, a
-         cleared profile or a private window finds nothing and every rule
-         falls back to `tokens.css` and the literals below, so this can only
-         ever improve the flash — never cause one. -->
+         cleared profile or a private window finds nothing: the skeleton falls
+         back to the literals below, and React's first render takes the theme
+         keys from the package's `styles-core.css` floor: the Atlas theme at
+         `:root`, dark unless the OS prefers light, until the first applyTheme
+         writes the chosen theme over it at `html:root`. This script only
+         replays the last choice sooner — it never decides one. -->
     <script>
       (function () {
         try {

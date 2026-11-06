@@ -27,6 +27,11 @@ enableAtlasLogs = true
 # Show dotfiles and dot-directories in the explorer file tree. (default: true)
 showHiddenFiles = true
 
+# Show a short tip the first time you meet a feature. Which tips you have
+# already seen is kept in tips.json beside this file; Replay all tips in
+# Settings clears it. (default: true)
+showTips = true
+
 # The external editor that "Open in <editor>" uses for a file or the project:
 # an id such as "vscode", "cursor", "zed", "windsurf", "sublime", "xcode" or a
 # JetBrains IDE ("idea", "webstorm", "pycharm"…), or "system" for the app your
@@ -286,13 +291,13 @@ timeFormat = "system"
 
 # The font for Atlas's interface and chats, as a CSS font-family list such as
 # "Inter, sans-serif". Empty uses the theme's font-sans if it sets one, else
-# the system font. A font that isn't installed falls through to the next one
-# in the list. (default: "")
+# Geist, which Atlas bundles. A font that isn't installed falls through to the
+# next one in the list. (default: "")
 uiFontFamily = ""
 
 # The font for the editor, diffs and code in chats, as a CSS font-family list
 # such as "JetBrains Mono, monospace". Empty uses the theme's font-mono if it
-# sets one, else the platform's monospace font. The terminal uses it too
+# sets one, else Geist Mono, which Atlas bundles. The terminal uses it too
 # unless terminalFontFamily is set. (default: "")
 codeFontFamily = ""
 

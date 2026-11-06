@@ -37,10 +37,12 @@ import { EditorContent, useEditor, type UseEditorOptions } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { Fragment, Slice } from "@tiptap/pm/model";
 import { Selection, TextSelection, type Transaction } from "@tiptap/pm/state";
+import type { EditorView } from "@tiptap/pm/view";
 import { invoke } from "@tauri-apps/api/core";
 
 import { cn } from "@/lib/utils";
 import { markInputActivity } from "@/lib/input-activity";
+import { isLinux } from "@/lib/platform";
 import { filesFromClipboard, hasFiles } from "@/lib/scratch-file";
 import {
   docToText,
@@ -135,6 +137,10 @@ export interface ComposerEditorProps {
   onPasteLargeText?: (text: string) => boolean;
 }
 
+/** Linux: what GTK's clipboard holds that the paste event did not carry —
+ *  copied files, else an image spooled to a scratch file. */
+const linuxClipboardPaths = () => invoke<string[]>("clipboard_paste_paths");
+
 /** Wrap a path in double quotes if it holds whitespace, so a reader takes it
  *  as one token. */
 function quotePath(p: string): string {
@@ -201,6 +207,24 @@ export const ComposerEditor = memo(
 
     const [emptyFlag] = useState(() => createFlag(initialValue.length === 0));
     const blankRef = useRef(initialValue.trim().length === 0);
+
+    // Paths Rust read off the native clipboard: handed to the feature, or
+    // pasted as quoted text when it has no handler for them.
+    const pasteNativePaths = async (view: EditorView, read: () => Promise<string[]>) => {
+      try {
+        const paths = await read();
+        if (!paths || paths.length === 0) return;
+        markInputActivity();
+        if (live.current.onPastePaths) {
+          live.current.onPastePaths(paths);
+          return;
+        }
+        view.dispatch(view.state.tr.insertText(paths.map(quotePath).join(" ") + " "));
+        view.focus();
+      } catch (err) {
+        console.warn("clipboard file paste failed:", err);
+      }
+    };
 
     // The options object is built once and kept. `useEditor` compares it with
     // the editor's on every render, and a fresh one (new extension instances,
@@ -291,25 +315,26 @@ export const ComposerEditor = memo(
           // ask Rust for the native pasteboard's file URLs.
           if (hasFiles(dt)) {
             event.preventDefault();
-            void (async () => {
-              try {
-                const paths = await invoke<string[]>("clipboard_file_paths");
-                if (!paths || paths.length === 0) return;
-                markInputActivity();
-                if (live.current.onPastePaths) {
-                  live.current.onPastePaths(paths);
-                  return;
-                }
-                view.dispatch(view.state.tr.insertText(paths.map(quotePath).join(" ") + " "));
-                view.focus();
-              } catch (err) {
-                console.warn("clipboard file paste failed:", err);
-              }
-            })();
+            void pasteNativePaths(view, () => invoke<string[]>("clipboard_file_paths"));
             return true;
           }
           const text = dt.getData("text/plain").replace(/\r\n?/g, "\n");
-          if (!text) return false;
+          if (!text) {
+            // WebKitGTK hands over a blank DataTransfer for a clipboard
+            // image (no `File`, no `items`, no types at all) and lists a
+            // copied file's `text/uri-list` with no data behind it, so on
+            // Linux a blank paste is what a screenshot or a copied file
+            // looks like. Ask GTK's clipboard instead — only for a feature
+            // that attaches paths, since pasting them as text would be
+            // wrong in a message. An empty clipboard answers with nothing,
+            // and nothing is inserted, as before.
+            if (isLinux && live.current.onPastePaths) {
+              event.preventDefault();
+              void pasteNativePaths(view, linuxClipboardPaths);
+              return true;
+            }
+            return false;
+          }
           if (isLargePaste(text) && p.onPasteLargeText?.(text)) {
             event.preventDefault();
             markInputActivity();

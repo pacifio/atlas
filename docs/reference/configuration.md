@@ -155,6 +155,7 @@ bookkeeping).
 | `autoAddAtlasGitignore` | boolean | `true` | General › Files › Keep .atlas out of git | — |
 | `enableAtlasLogs` | boolean | `true` | Privacy › Diagnostics › Atlas logs | — |
 | `showHiddenFiles` | boolean | `true` | General › Files › Show hidden files | — |
+| `showTips` | boolean | `true` | General › Tips › Show tips | — |
 | `preferredEditor` | string | `""` | General › Files › Preferred editor | an editor id; one that isn't installed falls back to the first one found |
 | `uiScale` | number | `1.0` | Appearance › Interface › Interface zoom | finite, `0.5`–`2.0` inclusive |
 | `shareTelemetry` | boolean | `true` | Privacy › Usage data › Share usage data | — |
@@ -207,7 +208,7 @@ bookkeeping).
 | `sidebarSort` | `"recent"` \| `"created"` | `"recent"` | Sessions › Layout › Sort sessions by | exactly one of these two strings |
 | `autoSettleAfterDays` | integer | `3` | Sessions › Layout › Settle idle sessions after | 0 ≤ n ≤ 90 |
 | `timeFormat` | `"system"` \| `"12h"` \| `"24h"` | `"system"` | General › System › Time format | exactly one of these three strings |
-| `uiFontFamily` | string | `""` | Appearance › Typography › Interface font | a CSS font-family list, at most 200 characters, with no `{`, `}`, `;`, `<` or `>`; empty uses the system font |
+| `uiFontFamily` | string | `""` | Appearance › Typography › Interface font | a CSS font-family list, at most 200 characters, with no `{`, `}`, `;`, `<` or `>`; empty uses the theme's font, else Geist |
 | `codeFontFamily` | string | `""` | Appearance › Typography › Code font | a CSS font-family list, at most 200 characters, with no `{`, `}`, `;`, `<` or `>`; empty uses the default |
 | `composerFontFamily` | string | `""` | Appearance › Typography › Composer font | a CSS font-family list, at most 200 characters, with no `{`, `}`, `;`, `<` or `>`; empty uses the interface font |
 | `terminalFontFamily` | string | `""` | Appearance › Typography › Terminal font | a CSS font-family list, at most 200 characters, with no `{`, `}`, `;`, `<` or `>`; empty uses the code font |

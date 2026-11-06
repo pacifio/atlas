@@ -109,6 +109,7 @@ const MENTION_PREFIX_KIND: Record<string, string> = {
   "@paste": "pasted_text",
   "@cite": "cited_text",
   "@review": "review_comment",
+  "@ctx": "agent_context",
   "#skill": "skill",
   "#command": "command",
   "#agent": "agent",
@@ -121,7 +122,7 @@ const MENTION_PREFIX_KIND: Record<string, string> = {
 // to the next whitespace, and its trailing punctuation is peeled back off into
 // plain text.
 const MENTION_TOKEN_RE =
-  /(?<![\w/])([@#](?:file|folder|symbol|note|repo|branch|msg|session|member|conversation|recorded-session|comment|paste|cite|review|skill|command|agent|rule)):(?:"([^"\n]+)"|(?!")(\S+))/g;
+  /(?<![\w/])([@#](?:file|folder|symbol|note|repo|branch|msg|session|member|conversation|recorded-session|comment|paste|cite|review|ctx|skill|command|agent|rule)):(?:"([^"\n]+)"|(?!")(\S+))/g;
 
 // Tokens are lifted out of the source BEFORE remark parses it, and parked
 // behind private-use placeholders. Left in, GFM gets to them first: a Retina
@@ -197,6 +198,15 @@ const MENTION_GLYPH: Record<string, [string, Record<string, string | number>][]>
     ],
     ["path", { d: "m10 8-3 3 3 3" }],
     ["path", { d: "m14 14 3-3-3-3" }],
+  ],
+  // Paperclip: what a surface attached (`ask-agent/lib/agent-context.ts`).
+  agent_context: [
+    [
+      "path",
+      {
+        d: "m16 6-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551",
+      },
+    ],
   ],
   skill: [
     [
@@ -353,6 +363,7 @@ const FIXED_LABEL: Record<string, string> = {
   pasted_text: "Pasted text",
   cited_text: "Cited passage",
   review_comment: "Review comment",
+  agent_context: "Context",
 };
 
 function chipNode(prefix: string, value: string, data: RenderData): Hast {

@@ -12,7 +12,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(async () => {}) }));
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
 import { SessionElicitation } from "./session-elicitation";
 import { ElicitationModal, type PendingElicitation } from "./elicitation-modal";
@@ -63,5 +63,27 @@ describe("ElicitationModal under a remote driver", () => {
       true,
     );
     expect(vi.mocked(invoke)).not.toHaveBeenCalled();
+  });
+});
+
+describe("SessionElicitation, one form directly replacing another", () => {
+  const form = (requestId: string): PendingElicitation => ({
+    agentId: "agent-1",
+    requestId,
+    mode: "form",
+    message: "Name the branch",
+    requestedSchema: {
+      type: "object",
+      properties: { name: { type: "string", title: "Branch name" } },
+    },
+  });
+
+  it("opens the second with none of the first's answers", () => {
+    const { rerender } = render(<SessionElicitation pending={form("req-a")} onClose={() => {}} />);
+    const first = screen.getByRole("textbox") as HTMLInputElement;
+    fireEvent.change(first, { target: { value: "feature/a" } });
+    expect(first.value).toBe("feature/a");
+    rerender(<SessionElicitation pending={form("req-b")} onClose={() => {}} />);
+    expect((screen.getByRole("textbox") as HTMLInputElement).value).toBe("");
   });
 });

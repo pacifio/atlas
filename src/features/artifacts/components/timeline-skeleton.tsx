@@ -15,7 +15,7 @@
 import { cn } from "@/lib/utils";
 
 /** The bars. Faint enough to read as absence rather than as content. */
-const BAR = "rounded bg-[var(--atlas-element-selected)]";
+const BAR = "rounded bg-element-selected";
 
 /**
  * Deterministic, not random, widths.
@@ -110,7 +110,7 @@ export function DetailSkeleton() {
       </div>
 
       {/* The metric strip: four cells, each a label over a figure. */}
-      <div className="mt-8 grid grid-cols-4 gap-px overflow-hidden rounded-lg border border-[var(--atlas-element-selected)]">
+      <div className="mt-8 grid grid-cols-4 gap-px overflow-hidden rounded-lg border border-element-selected">
         {Array.from({ length: 4 }).map((_, i) => (
           <div key={i} className="flex flex-col gap-2.5 p-3.5">
             <span className={cn(BAR, "h-2 w-16")} />

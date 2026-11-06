@@ -204,7 +204,7 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle, TiptapEditorProps>(fu
   );
 
   return (
-    <div className={cn("atlas-tiptap", className)} style={{ position: "relative" }}>
+    <div className={cn("atlas-tiptap relative", className)}>
       <EditorContent editor={editor} />
       {editable && editor && viewReady && <AtlasBubbleMenu editor={editor} />}
     </div>

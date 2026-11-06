@@ -33,9 +33,6 @@ import { useAuthStore } from "@/features/auth/stores/auth-store";
 import { useComposerFold } from "@/features/chat/hooks/use-composer-fold";
 import { useSettingsStore } from "@/features/settings/stores/settings-store";
 import { cn } from "@/lib/utils";
-import { Button } from "@/ui/button";
-import { HintGroup, HintItem } from "@/ui/hint-group";
-import { Hint } from "@/ui/tooltip";
 
 import { handleIndex, type OrgAgentTarget } from "../lib/org-agent-links";
 import { durationWords, foldAsk, lastOf } from "../lib/org-agent-log";
@@ -50,6 +47,7 @@ import {
 } from "../stores/org-agent-store";
 import { OrgAgentInput, type OrgAgentInputHandle } from "./org-agent-input";
 import { Notice, PendingTurn, TurnView } from "./org-agent-turn";
+import { Button, HintGroup, HintItem, Hint } from "@tryatlas/design";
 
 /** The starters: the web's three, and the one a team lead asks first. */
 const STARTERS: { text: string; Icon: LucideIcon }[] = [
@@ -283,7 +281,7 @@ function Welcome({ onPick }: { onPick: (question: string) => void }) {
               type="button"
               disabled={!ready}
               onClick={() => onPick(text)}
-              className="group flex cursor-pointer items-center gap-3 rounded-xl border border-border bg-card p-2.5 text-left transition-all duration-150 hover:border-border-strong hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+              className="group flex cursor-pointer items-center gap-3 rounded-xl border border-border bg-card p-2.5 text-left transition-[color,background-color,border-color,opacity] duration-150 hover:border-border-strong hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
             >
               <span className="grid size-7 shrink-0 place-items-center rounded-lg border border-border-subtle bg-card text-muted-foreground transition-colors group-hover:text-foreground">
                 <Icon size={13} />
@@ -293,7 +291,7 @@ function Welcome({ onPick }: { onPick: (question: string) => void }) {
               </span>
               <ArrowRight
                 size={12}
-                className="shrink-0 -translate-x-1 text-muted-foreground opacity-0 transition-all group-hover:translate-x-0 group-hover:opacity-100"
+                className="shrink-0 -translate-x-1 text-muted-foreground opacity-0 transition-[translate,opacity] group-hover:translate-x-0 group-hover:opacity-100"
               />
             </button>
           ))}
@@ -314,8 +312,8 @@ function pill(on: boolean): string {
     "flex h-6.5 cursor-pointer items-center gap-1 rounded-full border px-2 text-2xs leading-none font-medium transition-colors",
     "disabled:cursor-not-allowed disabled:opacity-50",
     on
-      ? "border-[var(--atlas-border-strong)] bg-[var(--atlas-element-selected)] text-[var(--foreground)]"
-      : "border-[var(--border)] bg-[var(--card)] text-[var(--secondary-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]",
+      ? "border-border-strong bg-element-selected text-[var(--foreground)]"
+      : "border-[var(--border)] bg-[var(--card)] text-[var(--secondary-foreground)] hover:bg-element-hover hover:text-[var(--foreground)]",
   );
 }
 
@@ -427,7 +425,7 @@ function Composer({
               "relative min-h-[44px] border border-[var(--border)] bg-[var(--background)] shadow-sm",
               collapsed ? "rounded-composer" : "rounded-xl",
               "transition-[border-radius,border-color,box-shadow] duration-base ease-out-strong motion-reduce:transition-none",
-              "focus-within:border-[color-mix(in_srgb,var(--atlas-border-strong)_50%,var(--border))]",
+              "focus-within:border-[color-mix(in_srgb,var(--border-strong)_50%,var(--border))]",
               "focus-within:ring-1 focus-within:ring-[var(--primary)]/10",
             )}
           >
@@ -453,7 +451,7 @@ function Composer({
                   "absolute top-[8px] right-[8px] flex h-[28px] w-[28px] items-center justify-center rounded-lg border transition-colors",
                   !stopping && (empty || !connected)
                     ? "cursor-not-allowed border-transparent text-[var(--muted-foreground)]"
-                    : "cursor-pointer border-transparent text-[var(--foreground)] hover:border-[var(--border)] hover:bg-[var(--atlas-element-hover)]",
+                    : "cursor-pointer border-transparent text-[var(--foreground)] hover:border-[var(--border)] hover:bg-element-hover",
                 )}
               >
                 {stopping ? (
@@ -471,7 +469,7 @@ function Composer({
       <div ref={tray} hidden={!trayShown}>
         <div
           inert={collapsed}
-          className="mx-5 flex items-center justify-between gap-2 rounded-b-xl border border-t-0 border-[var(--border)] bg-[var(--atlas-panel-input-background)] px-2 pt-2 pb-1.5"
+          className="mx-5 flex items-center justify-between gap-2 rounded-b-xl border border-t-0 border-[var(--border)] bg-panel-input px-2 pt-2 pb-1.5"
         >
           <Tray compact={compact} onMention={() => input.current?.insertText("@")} />
         </div>

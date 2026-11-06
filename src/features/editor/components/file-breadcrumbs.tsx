@@ -1,18 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ArrowLeft, ChevronRight, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
-import { IconButton } from "@/ui/icon-button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/ui/dropdown-menu";
 import { FileIcon } from "@/features/icon-theme/components/file-icon";
 import { readDirectory, type ProjectEntry } from "@/features/explorer/lib/fs-api";
 import {
@@ -24,6 +12,18 @@ import {
   isHostPath,
   isListableHostFolder,
 } from "../lib/file-path";
+import {
+  Hint,
+  IconButton,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@tryatlas/design";
 
 /**
  * The file view's second row: the path to the file as crumbs, under the tab

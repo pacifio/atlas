@@ -51,6 +51,8 @@ function sizeOf(mention: MentionData): number {
       return (mention.text.length + mention.note.length) * 2 + ENTRY_BYTES;
     case "review_comment":
       return (mention.text.length + mention.diff.length) * 2 + ENTRY_BYTES;
+    case "agent_context":
+      return JSON.stringify(mention.context).length * 2 + ENTRY_BYTES;
     default:
       return ENTRY_BYTES;
   }
@@ -100,12 +102,13 @@ export function knownMention(raw: string, projectPath: string | null): MentionDa
 }
 
 /** Whether a mention carries its whole text (a paste, a cite, a review
- *  comment). */
+ *  comment, a surface's context). */
 function carriesText(mention: MentionData): boolean {
   return (
     mention.kind === "pasted_text" ||
     mention.kind === "cited_text" ||
-    mention.kind === "review_comment"
+    mention.kind === "review_comment" ||
+    mention.kind === "agent_context"
   );
 }
 

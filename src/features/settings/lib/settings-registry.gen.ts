@@ -1,6 +1,6 @@
 // Generated from src-tauri/settings-registry.toml — do not edit. Run `bun run settings:gen` after editing that file.
 
-import type { ThemeOverride } from "@/features/theme/resolve-theme";
+import type { ThemeOverride } from "@tryatlas/design/theme";
 import type { ModelPriceOverrides } from "@/features/settings/stores/model-pricing-store";
 
 /**
@@ -22,6 +22,11 @@ export interface AppSettings {
   enableAtlasLogs: boolean;
   /** Show dotfiles and dot-directories in the explorer file tree. */
   showHiddenFiles: boolean;
+  /**
+   * Show a short tip the first time you meet a feature. Which tips you have already seen is
+   * kept in tips.json beside this file; Replay all tips in Settings clears it.
+   */
+  showTips: boolean;
   /**
    * The external editor that "Open in <editor>" uses for a file or the project: an id such as
    * "vscode", "cursor", "zed", "windsurf", "sublime", "xcode" or a JetBrains IDE ("idea",
@@ -289,14 +294,14 @@ export interface AppSettings {
   timeFormat: "system" | "12h" | "24h";
   /**
    * The font for Atlas's interface and chats, as a CSS font-family list such as "Inter,
-   * sans-serif". Empty uses the theme's font-sans if it sets one, else the system font. A font
-   * that isn't installed falls through to the next one in the list.
+   * sans-serif". Empty uses the theme's font-sans if it sets one, else Geist, which Atlas
+   * bundles. A font that isn't installed falls through to the next one in the list.
    */
   uiFontFamily: string;
   /**
    * The font for the editor, diffs and code in chats, as a CSS font-family list such as
-   * "JetBrains Mono, monospace". Empty uses the theme's font-mono if it sets one, else the
-   * platform's monospace font. The terminal uses it too unless terminalFontFamily is set.
+   * "JetBrains Mono, monospace". Empty uses the theme's font-mono if it sets one, else Geist
+   * Mono, which Atlas bundles. The terminal uses it too unless terminalFontFamily is set.
    */
   codeFontFamily: string;
   /** The font for the chat composer, as a CSS font-family list. Empty uses the interface font. */
@@ -444,6 +449,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoAddAtlasGitignore: true,
   enableAtlasLogs: true,
   showHiddenFiles: true,
+  showTips: true,
   preferredEditor: "",
   uiScale: 1,
   shareTelemetry: true,
@@ -645,6 +651,15 @@ export const SETTINGS_REGISTRY: readonly SettingMeta[] = [
     section: "Files",
     title: "Show hidden files",
     summary: "Show dotfiles and dot-directories in the explorer file tree.",
+  },
+  {
+    key: "showTips",
+    type: "boolean",
+    status: "live",
+    page: "general",
+    section: "Tips",
+    title: "Show tips",
+    summary: "Show a short tip the first time you meet a feature.",
   },
   {
     key: "preferredEditor",
@@ -1165,7 +1180,7 @@ export const SETTINGS_REGISTRY: readonly SettingMeta[] = [
     section: "Typography",
     title: "Interface font",
     summary:
-      "The font for everything outside code and the terminal. Empty follows the theme, else the system font.",
+      "The font for everything outside code and the terminal. Empty follows the theme, else Geist.",
   },
   {
     key: "codeFontFamily",
@@ -1175,7 +1190,7 @@ export const SETTINGS_REGISTRY: readonly SettingMeta[] = [
     section: "Typography",
     title: "Code font",
     summary:
-      "The font for the editor, diffs and code in chats. Empty follows the theme, else the default.",
+      "The font for the editor, diffs and code in chats. Empty follows the theme, else Geist Mono.",
   },
   {
     key: "composerFontFamily",

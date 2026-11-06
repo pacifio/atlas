@@ -31,8 +31,7 @@ import {
   RefreshCw,
   type LucideIcon,
 } from "lucide-react";
-import { Icon } from "@/ui/icon";
-import { GithubIcon } from "@/components/github-icon";
+import { GithubIcon } from "@/components/brand-marks";
 import { cn } from "@/lib/utils";
 import { isMac } from "@/lib/platform";
 import { useProjectStore } from "@/features/projects/stores/project-store";
@@ -48,6 +47,7 @@ import type {
   CommandPaletteGroup,
   CommandPaletteView,
 } from "./command-palette-logic";
+import { Icon } from "@tryatlas/design";
 
 export const ADD_PROJECT_VIEW = "add-project";
 export const NEW_PROJECT_VIEW = "add-project:new";

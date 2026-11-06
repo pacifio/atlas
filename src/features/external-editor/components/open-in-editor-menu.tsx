@@ -4,18 +4,19 @@
 
 import { AppWindow, SquareArrowOutUpRight } from "lucide-react";
 import {
-  ContextMenuItem,
-  ContextMenuSub,
-  ContextMenuSubContent,
-  ContextMenuSubTrigger,
-} from "@/ui/context-menu";
-import { DropdownMenuItem, DropdownMenuSeparator } from "@/ui/dropdown-menu";
-import {
   SYSTEM_EDITOR_ID,
   type EditorPosition,
   type ExternalEditor,
 } from "../lib/external-editor-api";
 import { openInEditor, openInLabel, usePreferredEditor } from "../lib/preferred-editor";
+import {
+  ContextMenuItem,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from "@tryatlas/design";
 
 /** The preferred editor, and every other installed one (the system default
  *  among them), in detection order. Empty until detection answers. */

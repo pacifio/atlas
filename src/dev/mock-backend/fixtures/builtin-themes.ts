@@ -7,7 +7,7 @@
  * on the rest, which no `Record<string, …>` accepts. So the cast goes through
  * `unknown` here, and every reader imports this instead of the JSON.
  */
-import type { Theme } from "@/features/theme/lib/theme-api";
 import json from "./builtin-themes.json";
+import type { Theme } from "@tryatlas/design/theme";
 
 export const BUILTIN_THEMES = json as unknown as Theme[];

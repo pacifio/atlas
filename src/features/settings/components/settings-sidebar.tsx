@@ -15,10 +15,6 @@ import { DevBadge, useWindowDrag } from "@/components/titlebar";
 import { useFullscreen } from "@/hooks/use-fullscreen";
 import { isMac } from "@/lib/platform";
 import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
-import { Hint } from "@/ui/tooltip";
-import { Icon } from "@/ui/icon";
-import { IconButton } from "@/ui/icon-button";
-import { Kbd } from "@/ui/kbd";
 import {
   SIDEBAR,
   searchSettings,
@@ -26,6 +22,7 @@ import {
   type SidebarEntry,
 } from "../lib/settings-sections";
 import type { SettingsSection } from "../stores/settings-nav-store";
+import { Hint, Icon, IconButton, Kbd } from "@tryatlas/design";
 
 export function SettingsSidebar({
   active,

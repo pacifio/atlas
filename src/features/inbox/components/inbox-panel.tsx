@@ -25,10 +25,7 @@ import {
 import { CommenterAvatar, type Commenter } from "@/components/commenter-avatar";
 import { useArtifactsStore } from "@/features/artifacts/stores/artifacts-store";
 import { ProjectMark } from "@/features/artifacts/components/session-row";
-import {
-  TimelineCalendar,
-  type CalendarItem,
-} from "@/features/artifacts/components/timeline-calendar";
+import { TimelineCalendar, type CalendarItem } from "@tryatlas/design/timeline-calendar";
 import { dayHeading, startOfDay } from "@/features/artifacts/lib/board";
 import { DestinationActions } from "@/features/layout/components/destination-actions";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
@@ -38,13 +35,11 @@ import { errInfo } from "@/features/chat/lib/agent-signin";
 import { formatFullTimestamp } from "@/lib/format-time";
 import { timeAgo } from "@/lib/time-ago";
 import { cn } from "@/lib/utils";
-import { Button } from "@/ui/button";
-import { HintGroup, HintItem } from "@/ui/hint-group";
-import { Segmented } from "@/ui/segmented";
 import { GlassIconButton } from "@/features/sidebar/components/glass-icon-button";
 
 import { inbox, type InboxEntry, type InboxFilter, type InboxKind } from "../lib/inbox-api";
 import { useInboxStore } from "../stores/inbox-store";
+import { Button, HintGroup, HintItem, Segmented } from "@tryatlas/design";
 
 const KIND_ICON: Record<InboxKind, LucideIcon> = {
   artifact_mention: AtSign,
@@ -297,6 +292,14 @@ export function InboxPanel() {
                   items={items}
                   renderRow={renderRow}
                   root={scroller as RefObject<HTMLElement | null>}
+                  // Measured, as on the board, but only at the real end. The
+                  // column's own `pb-32` follows the list, so the end space
+                  // leaves room only for what that doesn't already give.
+                  // While another page is pending it stays off: the end space
+                  // would push the load-more sentinel out of its 400px
+                  // margin, so a short first page would stop fetching the
+                  // next one until the user scrolled.
+                  endSpace={load.cursor ? false : "measure"}
                 />
                 {load.cursor && <MoreSentinel state={more} onReach={loadMore} />}
               </>

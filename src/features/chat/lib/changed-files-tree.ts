@@ -226,16 +226,6 @@ export function visibleRows(
   return rows;
 }
 
-/** A count for a narrow gutter: `999`, `1.2k`, `12k`, `3.4m`. */
-export function formatDiffCount(value: number): string {
-  const scaled = (n: number, unit: string) =>
-    `${n < 10 ? n.toFixed(1).replace(/\.0$/, "") : Math.round(n)}${unit}`;
-  if (value < 1000) return String(value);
-  // 999,600 rounds to 1000k; it reads as 1m.
-  if (value < 999_500) return scaled(value / 1000, "k");
-  return scaled(value / 1_000_000, "m");
-}
-
 const MIDDLE_TAIL = 10;
 
 /**

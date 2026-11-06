@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
-import { Code2, Eye, RefreshCw, Table2, WrapText } from "lucide-react";
+import { Code2, Eye, Pencil, RefreshCw, Table2, WrapText } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useEditorStore } from "../stores/editor-store";
 import { useAppStore } from "@/features/app/stores/app-store";
@@ -11,7 +11,6 @@ import { gitDiffLineStatus } from "@/features/git/lib/git-diff-api";
 import { gitBlameFile } from "@/features/git/lib/git-blame-api";
 import { MarkdownFile } from "@/lib/markdown-fileviewer";
 import { openFileAs } from "@/lib/open-file";
-import { Button } from "@/ui/button";
 import { useProjectSetting } from "@/features/settings/lib/use-scoped-setting";
 import { useWordWrap } from "@/features/settings/lib/use-word-wrap";
 import { OpenInEditorButton } from "@/features/external-editor/components/open-in-editor-button";
@@ -20,6 +19,11 @@ import { useScopedHotkeys } from "@/features/keybindings/lib/use-scoped-hotkeys"
 import { useFileTabFrame } from "@/features/explorer/lib/file-tab-frame-context";
 import { openInProject } from "@/features/explorer/lib/open-in-project";
 import { revealFiles } from "@/features/layout/lib/files-surface";
+import { openAskAgent } from "@/features/ask-agent/lib/ask-agent";
+import { useAskAgentContext } from "@/features/ask-agent/lib/focused-context";
+import { FixWithAgentButton } from "@/features/ask-agent/components/ask-agent-button";
+import type { AgentContext, ErrorContext } from "@/features/ask-agent/lib/agent-context";
+import type { AskHandler } from "../lib/ask-gutter";
 import { registerEditorView } from "../lib/editor-views";
 import { filePreviewDelimiter } from "../lib/delimited-preview";
 import { relativeToRoot, retainedBreadcrumbTrail } from "../lib/file-path";
@@ -52,6 +56,7 @@ import {
   FileTreeToggle,
 } from "./file-surface-chrome";
 import { FILE_DOCK_RESERVE } from "@/features/explorer/lib/file-tabs";
+import { Button } from "@tryatlas/design";
 
 /**
  * A file tab: the file's text in the code editor (`codemirror-file-view.tsx`),
@@ -85,6 +90,21 @@ function saveFailureMessage(err: unknown): string {
   return text.length > 300 ? `${text.slice(0, 300)}…` : text;
 }
 
+/** A failed save: the toast, with "Fix with agent" carrying the error. */
+function toastSaveFailure(title: string, err: unknown, path: string): void {
+  const message = saveFailureMessage(err);
+  const error: ErrorContext = {
+    kind: "error",
+    source: "Saving a file",
+    message: `${title}: ${message}`,
+    command: `write ${path}`,
+  };
+  const id = toast.error(title, {
+    description: message,
+    action: <FixWithAgentButton size="xs" error={error} dismiss={() => toast.dismiss(id)} />,
+  });
+}
+
 export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelProps) {
   const path = filePath ?? "";
   const isUntitled = path.startsWith("untitled:");
@@ -111,6 +131,19 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
 
   const relPath = relativeTo(path, projectPath);
   const { wrap: wordWrap, toggle: toggleWordWrap } = useWordWrap();
+
+  // ── Read or edit ──
+  // A file opens to be read and asked about; editing it by hand is a choice,
+  // kept on the tab (`data.editing`, persisted with the layout). An untitled
+  // buffer exists only to be written, so it is always editable.
+  const editingChosen = useLayoutStore((s) => isEditingTab(s.tabs, tabId));
+  const editing = isUntitled || editingChosen;
+  const toggleEditing = () => {
+    if (isUntitled) return;
+    layoutActions.setTabData(tabId, { editing: !editingChosen });
+    // Straight into the text, so the next key types (or, leaving, reads).
+    requestAnimationFrame(() => viewRef.current?.focus());
+  };
 
   // ── Breadcrumbs ──
   // Rooted at the tab's own project (the frame's), then the active one; a
@@ -152,6 +185,26 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
     revealFiles(crumbPath ? `${crumbTarget.root}/${crumbPath}` : crumbTarget.root);
   };
   const gitBlameInline = useProjectSetting(projectPath, "gitBlameInline");
+
+  // ── Ask the agent ──
+  // The path as the breadcrumbs show it: from the tab's project root.
+  const askPath = isUntitled
+    ? (path.split("/").pop() ?? path)
+    : relativeTo(path, frame?.root ?? projectPath) || path;
+  const fileRange = (lines: { from: number; to: number }, excerpt: string): AgentContext => ({
+    kind: "file_range",
+    path: askPath,
+    startLine: lines.from,
+    endLine: lines.to,
+    excerpt,
+  });
+  const onAsk: AskHandler = (lines, excerpt, anchor) =>
+    openAskAgent({ context: [fileRange(lines, excerpt)], anchor });
+  // ⌘K "Ask agent about…" with the focus in the text: the same lines.
+  const askContextRef = useAskAgentContext<HTMLDivElement>(() => {
+    const at = viewRef.current?.askLines();
+    return at ? [fileRange(at.lines, at.excerpt)] : [];
+  });
 
   // ── Load ──
   useEffect(() => {
@@ -218,9 +271,7 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
         persistedMtime.current = await fileMtimeMs(path);
         return true;
       } catch (err) {
-        toast.error(`Couldn't save ${path.split(/[\\/]/).pop() || path}`, {
-          description: saveFailureMessage(err),
-        });
+        toastSaveFailure(`Couldn't save ${path.split(/[\\/]/).pop() || path}`, err, path);
         return false;
       }
     },
@@ -233,14 +284,13 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
         summary: path.split("/").pop() ?? path,
         payload: { path, bytes: content.length },
       });
-      // A save mutates the working tree: refresh git status and the diff now
+      // A save mutates the working tree: refresh git status now
       // instead of waiting for the watcher. Lazy, to keep the editor
       // decoupled from the git store.
       void import("@/features/git/stores/git-store").then(({ useGitStore }) => {
         const git = useGitStore.getState();
         if (git.repoPath) {
           void git.actions.refreshStatusNow(git.repoPath);
-          void git.actions.loadDiff();
         }
       });
       refreshDiffGutter();
@@ -267,7 +317,8 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
       openBuffer(newPath, content, mtime);
       markSaved(newPath, content, mtime);
       layoutActions.closeTab(tabId);
-      openFileAs(newPath, "text");
+      // Still being written: the new tab opens for editing, as this one was.
+      openFileAs(newPath, "text", { edit: true });
       logEvent({
         source: "editor",
         kind: "save",
@@ -276,7 +327,7 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
       });
       return true;
     } catch (err) {
-      toast.error("Couldn't save the file", { description: saveFailureMessage(err) });
+      toastSaveFailure("Couldn't save the file", err, path);
       return false;
     }
   }, [projectPath, openBuffer, markSaved, layoutActions, tabId]);
@@ -423,6 +474,8 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
     setRenderedText(null);
   }, [docVersion]);
 
+  const large = !!buffer && buffer.originalContent.length > LARGE_FILE_CHARS;
+
   // ── Keys, position, layout ──
   const [plainFind, setPlainFind] = useState({ open: false, focus: 0 });
   useScopedHotkeys({
@@ -430,6 +483,11 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
     handlers: {
       "editor.save": () => {
         void handleSave();
+      },
+      "editor.toggleEdit": () => {
+        if (rendered || isUntitled || !buffer || large) return false;
+        toggleEditing();
+        return true;
       },
       "editor.find": () => {
         if (rendered) return false;
@@ -514,6 +572,14 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
             onPress={toggleRendered}
           />
         )}
+        {buffer && !rendered && !isUntitled && !large && (
+          <FileSurfaceAction
+            label={editing ? "Stop editing" : "Edit file"}
+            icon={Pencil}
+            pressed={editing}
+            onPress={toggleEditing}
+          />
+        )}
         {buffer && !rendered && (
           <FileSurfaceAction
             label={wordWrap ? "Disable word wrap" : "Enable word wrap"}
@@ -556,28 +622,43 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
         message="This file can't be shown as text. It may be binary, or it couldn't be read."
         detail={path}
         action={
-          <Button variant="outline" size="xs" onClick={() => setLoadError(null)}>
-            Try again
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="xs" onClick={() => setLoadError(null)}>
+              Try again
+            </Button>
+            <FixWithAgentButton
+              size="xs"
+              error={{
+                kind: "error",
+                source: "Opening a file",
+                message: `Couldn't open ${askPath}: ${loadError}`,
+                command: `read ${path}`,
+              }}
+            />
+          </div>
         }
       />,
     );
   }
   if (!buffer) return shell(<FileSurfaceLoading />);
 
-  const large = buffer.originalContent.length > LARGE_FILE_CHARS;
   const delimiter = renderedMode === "table" ? filePreviewDelimiter({ name: path }) : null;
   const shownText = renderedText ?? buffer.originalContent;
 
   return shell(
     <>
+      {buffer.externallyChanged && (
+        <FileSurfaceNotice>
+          This file changed on disk. Reload discards your unsaved edits.
+        </FileSurfaceNotice>
+      )}
       {large && !rendered && (
         <FileSurfaceNotice>
           {`Large file (${formatMegabytes(buffer.originalContent.length)}): shown read-only, without highlighting.`}
         </FileSurfaceNotice>
       )}
       {sourceMounted && (
-        <div className={rendered ? "hidden" : "relative flex min-h-0 flex-1"}>
+        <div ref={askContextRef} className={rendered ? "hidden" : "relative flex min-h-0 flex-1"}>
           {plainFind.open && !rendered && (
             <FileFindBar
               focusRequest={plainFind.focus}
@@ -602,6 +683,8 @@ export function EditorPanel({ tabId, filePath, containerHeight }: EditorPanelPro
             version={docVersion}
             wordWrap={wordWrap}
             readOnly={large}
+            editable={editing}
+            onAsk={onAsk}
             blame={gitBlameInline}
             reveal={pendingReveal}
             onRevealed={(nonce) => consumeReveal(path, nonce)}
@@ -659,4 +742,12 @@ function UntitledName({
 
 function formatMegabytes(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/** Whether the tab `tabId` was put into editing. */
+function isEditingTab(
+  tabs: readonly { id: string; data: Record<string, unknown> }[],
+  tabId: string,
+): boolean {
+  return tabs.find((t) => t.id === tabId)?.data.editing === true;
 }

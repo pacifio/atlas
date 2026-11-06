@@ -67,11 +67,7 @@ export const ICON_STROKE = 1.5;
 export function ToolGlyph({ tool, failed }: { tool: MarkerTool; failed: boolean }) {
   const Icon = TOOL_ICON[tool];
   return (
-    <Icon
-      size={ICON_PX}
-      strokeWidth={ICON_STROKE}
-      className={failed ? "text-[var(--atlas-status-error-foreground)]" : undefined}
-    />
+    <Icon size={ICON_PX} strokeWidth={ICON_STROKE} className={failed ? "text-error" : undefined} />
   );
 }
 

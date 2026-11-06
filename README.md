@@ -16,19 +16,19 @@ The agentic visibility & control layer your SDLC was missing.
 
 <br />
 
-<a href="https://github.com/pacifio/atlas/stargazers"><img src="https://img.shields.io/github/stars/pacifio/atlas?style=social" alt="GitHub stars"></a>
-<a href="https://github.com/pacifio/atlas/forks"><img src="https://img.shields.io/github/forks/pacifio/atlas?style=social" alt="GitHub forks"></a>
-<a href="https://github.com/pacifio/atlas/graphs/contributors"><img src="https://img.shields.io/github/contributors/pacifio/atlas?label=contributors&color=blue" alt="Contributors"></a>
+<a href="https://github.com/tryatlas/atlas/stargazers"><img src="https://img.shields.io/github/stars/tryatlas/atlas?style=social" alt="GitHub stars"></a>
+<a href="https://github.com/tryatlas/atlas/forks"><img src="https://img.shields.io/github/forks/tryatlas/atlas?style=social" alt="GitHub forks"></a>
+<a href="https://github.com/tryatlas/atlas/graphs/contributors"><img src="https://img.shields.io/github/contributors/tryatlas/atlas?label=contributors&color=blue" alt="Contributors"></a>
 
-[![CI](https://img.shields.io/github/actions/workflow/status/pacifio/atlas/ci.yml?branch=main&label=CI)](https://github.com/pacifio/atlas/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/pacifio/atlas?include_prereleases&label=release)](https://github.com/pacifio/atlas/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/tryatlas/atlas/ci.yml?branch=main&label=CI)](https://github.com/tryatlas/atlas/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/tryatlas/atlas?include_prereleases&label=release)](https://github.com/tryatlas/atlas/releases)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-black)](#download)
 [![Discord](https://img.shields.io/badge/Discord-join%20chat-5865F2?logo=discord&logoColor=white)](https://discord.gg/GmnFggaPfP)
 [![Atlas CLI](https://img.shields.io/badge/Atlas%20CLI-install-black?logo=gnubash&logoColor=white)](https://github.com/tryatlas/cli)
 [![Learn](https://img.shields.io/badge/Learn-YouTube%20playlist-FF0000?logo=youtube&logoColor=white)](https://youtube.com/playlist?list=PLWa1N2LyiGv0)
 
-<sub>[Download](#download) · [Docs](https://docs.tryatlas.cc/) · [Learn](https://youtube.com/playlist?list=PLWa1N2LyiGv0) · [Website](https://www.tryatlas.cc/) · [Contributing](CONTRIBUTING.md) · [Issues](https://github.com/pacifio/atlas/issues)</sub>
+<sub>[Download](#download) · [Docs](https://docs.tryatlas.cc/) · [Learn](https://youtube.com/playlist?list=PLWa1N2LyiGv0) · [Website](https://www.tryatlas.cc/) · [Contributing](CONTRIBUTING.md) · [Issues](https://github.com/tryatlas/atlas/issues)</sub>
 
 <br />
 
@@ -65,7 +65,7 @@ Atlas is a "control-surface IDE" built around managing your agents' context.
 - **Context follows you between agents.** `@` a file, repo, branch or past session. Your `CLAUDE.md`, `AGENTS.md` and knowledge notes reach every agent, and a new session is briefed on where the last one stopped.
 - **Conversations are context too.** Team chat, shared prompts and Spaces, right next to your agents.
 - **Steer a live session from anywhere.** Start remote control on a desktop session and drive it from a browser, on another computer or your phone. Invite teammates to watch, and hand one of them the controls.
-- **The rest of the IDE is there too.** Editor, block terminal, source control and pull requests, in the same window.
+- **The rest of the IDE is there too.** Editor, terminal, source control and pull requests, in the same window.
 
 <img src=".github/assets/readme/session.webp" alt="A session in the Atlas desktop app: the agent's answer about the repository's git status, a details panel with the branch, changes, Commit, push &amp; PR, attached projects and Remote control marked Live, and a toast confirming remote control is on" width="900" />
 
@@ -162,16 +162,16 @@ Works with no account and no network.
 
 ### The project
 
-| Capability         | Description                                                                                                                                             | Link                                                                   |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| **Editor**         | CodeMirror editing surface, with per-project editor state restored across restarts                                                                      | [Editor](https://docs.tryatlas.cc/docs/product/editor)                 |
-| **Git**            | Real commit graph with lane assignment, stage/unstage/commit, branch operations, and file-level diffs                                                   | [Git & Diff](https://docs.tryatlas.cc/docs/source-control/git)         |
-| **Terminal**       | Block terminal where each command carries its own output, exit code, and duration, plus a full interactive surface for `vim`, `htop`, and friends       | [Terminal](https://docs.tryatlas.cc/docs/product/terminal)             |
-| **Knowledge base** | Plain markdown notes in `.atlas/knowledge/`, versioned next to the code, with backlinks, a link graph, and export to HTML or a standalone server binary | [Knowledge base](https://docs.tryatlas.cc/docs/context/knowledge-base) |
-| **Browser**        | Native WebKit webview in a tab, with real logins, cookies, and a reader mode                                                                            | [Explorer](https://docs.tryatlas.cc/docs/product/explorer)             |
-| **Canvas**         | Spatial board for notes and their connections, persisted as JSON in the project                                                                         |                                                                        |
-| **Split view**     | Up to three resizable columns, each with its own tabs                                                                                                   | [Editor](https://docs.tryatlas.cc/docs/product/editor)                 |
-| **Activity log**   | Every significant event in the project, filterable, with rows you can pin across restarts                                                               |                                                                        |
+| Capability         | Description                                                                                                                                                                            | Link                                                                   |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| **Editor**         | CodeMirror editing surface, with per-project editor state restored across restarts                                                                                                     | [Editor](https://docs.tryatlas.cc/docs/product/editor)                 |
+| **Git**            | Real commit graph with lane assignment, stage/unstage/commit, branch operations, and file-level diffs                                                                                  | [Git & Diff](https://docs.tryatlas.cc/docs/source-control/git)         |
+| **Terminal**       | Your own shell in a tab, themed with the app, so `vim`, `htop` and friends work as they do anywhere else                                                                               | [Terminal](https://docs.tryatlas.cc/docs/product/terminal)             |
+| **Knowledge base** | Plain markdown notes in `.atlas/knowledge/`, kept on your machine (`.atlas/` is gitignored by default), with backlinks, a link graph, and export to HTML or a standalone server binary | [Knowledge base](https://docs.tryatlas.cc/docs/context/knowledge-base) |
+| **Browser**        | Native WebKit webview in a tab, with real logins, cookies, and a reader mode                                                                                                           | [Explorer](https://docs.tryatlas.cc/docs/product/explorer)             |
+| **Canvas**         | Spatial board for notes and their connections, persisted as JSON in the project                                                                                                        |                                                                        |
+| **Split view**     | Up to three resizable columns, each with its own tabs                                                                                                                                  | [Editor](https://docs.tryatlas.cc/docs/product/editor)                 |
+| **Activity log**   | Every significant event in the project, filterable, with rows you can pin across restarts                                                                                              |                                                                        |
 
 </details>
 
@@ -179,7 +179,7 @@ Works with no account and no network.
 
 ## Download
 
-Grab the latest build from [tryatlas.cc](https://www.tryatlas.cc/) or the [releases page](https://github.com/pacifio/atlas/releases) — a `.dmg` for macOS (Apple Silicon or Intel), an `.msi` for Windows, and `.deb`, `.rpm` or AppImage for Linux.
+Grab the latest build from [tryatlas.cc](https://www.tryatlas.cc/) or the [releases page](https://github.com/tryatlas/atlas/releases) — a `.dmg` for macOS (Apple Silicon or Intel), an `.msi` for Windows, and `.deb`, `.rpm` or AppImage for Linux.
 
 > [!NOTE]
 > Atlas runs on macOS 11+, Windows 10+ (x64), and x86-64 Linux with WebKitGTK 4.1. See the [install guide](https://docs.tryatlas.cc/docs/getting-started/install).
@@ -216,7 +216,7 @@ Requires **[Bun](https://bun.sh/)** and **Rust** (stable, via [rustup](https://r
 </details>
 
 ```bash
-git clone https://github.com/pacifio/atlas
+git clone https://github.com/tryatlas/atlas
 cd atlas
 bun install
 bun run dev:app
@@ -236,7 +236,7 @@ bun run build:app:win   # Windows .msi installer
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). One thing catches people out:
 
-- **Feature work targets the current version branch**, not `main`. `main` only receives a finished version branch, and that merge is the release.
+- **Every PR targets `main`** (hotfixes for a shipped version excepted; see CONTRIBUTING.md) and is squash-merged, so write its title as a Conventional Commit (`fix(scope): …`). Releases are tags on `main`.
 
 [docs/architecture.md](docs/architecture.md) covers how Atlas is built. [SECURITY.md](.github/SECURITY.md) covers reporting vulnerabilities.
 
@@ -244,8 +244,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). One thing catches people out:
 
 ## Contributors
 
-<a href="https://github.com/pacifio/atlas/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=pacifio/atlas" />
+<a href="https://github.com/tryatlas/atlas/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=tryatlas/atlas" />
 </a>
 
 ## License

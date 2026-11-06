@@ -43,10 +43,12 @@ skills-lock.json
 # pointed at.
 *.md
 !README.md
-!CLAUDE.md
-# A symlink to CLAUDE.md, for the agents that read AGENTS.md instead.
-# Atlas's instruction sync leaves a linked AGENTS.md alone.
+# The agent instructions. AGENTS.md holds the text; CLAUDE.md is a symlink to it,
+# for Claude Code. Atlas's instruction sync leaves a linked pair alone.
 !AGENTS.md
+!CLAUDE.md
+# Written by release-please on each release PR (.github/workflows/release.yml).
+!CHANGELOG.md
 !TELEMETRY.md
 !CONTRIBUTING.md
 !.github/SECURITY.md
@@ -96,10 +98,9 @@ vendor/atlas-engine/**/target/
 # design-sync (claude.ai/design)
 .ds-sync/
 ds-bundle/
-.design-sync/.cache/
-.design-sync/learnings/
-.design-sync/node_modules
-.design-sync/ds.css
 
 # Python bytecode from the one-off scripts.
 __pycache__/
+
+# Built by scripts/linux/build-bwrap.sh for the AppImage; never committed.
+src-tauri/binaries/

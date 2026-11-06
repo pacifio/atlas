@@ -14,10 +14,12 @@ import {
   GitCompare,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { HintGroup, HintItem } from "@/ui/hint-group";
 import { parseDiff, buildRows, type DiffFile, type DiffHunk } from "../lib/diff";
 import { useCollapsedFiles } from "../lib/use-collapsed-files";
 import { highlightDiffLine } from "../lib/diff-highlight";
+import { HintGroup, HintItem } from "@tryatlas/design";
+import { AskAgentButton, ASK_ROW } from "@/features/ask-agent/components/ask-agent-button";
+import type { AgentContext } from "@/features/ask-agent/lib/agent-context";
 
 type SortMode = "default" | "most-changes";
 
@@ -41,6 +43,8 @@ export function DiffView({
   className,
   hunkActions,
   onHunkAction,
+  askHunk,
+  askSuggestions,
 }: {
   diff: string;
   onOpenFile?: (path: string) => void;
@@ -54,6 +58,10 @@ export function DiffView({
   hunkActions?: HunkAction[];
   /** Invoked with the DISPLAYED hunk (+ selected line indices, if any). */
   onHunkAction?: (action: HunkAction, file: string, hunk: DiffHunk, selected?: number[]) => void;
+  /** A hunk as the agent gets it; with it, every hunk header offers "Ask". */
+  askHunk?: (file: string, hunk: DiffHunk) => AgentContext;
+  /** The quick prompts that "Ask" offers. */
+  askSuggestions?: readonly string[];
 }) {
   const [query, setQuery] = useState("");
   const [sortMode, setSortMode] = useState<SortMode>("default");
@@ -301,12 +309,22 @@ export function DiffView({
                     key={vr.index}
                     data-index={vr.index}
                     ref={virtualizer.measureElement}
-                    style={{ ...base, backgroundColor: "var(--atlas-diff-context-background)" }}
-                    className="group/hunk flex items-center gap-2 px-2 h-[22px] border-x border-border text-2xs font-mono text-muted-foreground"
+                    style={{ ...base, backgroundColor: "var(--diff-context-background)" }}
+                    className={cn(
+                      "group/hunk flex items-center gap-2 px-2 h-[22px] border-x border-border text-2xs font-mono text-muted-foreground",
+                      askHunk && ASK_ROW,
+                    )}
                   >
-                    <span className="truncate flex-1 text-[var(--atlas-status-info-foreground)]/70 select-text">
+                    <span className="truncate flex-1 text-info/70 select-text">
                       {row.hunk.header}
                     </span>
+                    {askHunk && (
+                      <AskAgentButton
+                        context={[askHunk(row.file.path, row.hunk)]}
+                        suggestions={askSuggestions}
+                        label="Ask agent about this hunk"
+                      />
+                    )}
                     {selectable && hunkActions && (
                       <span className="flex items-center gap-1 opacity-0 group-hover/hunk:opacity-100 shrink-0">
                         {hunkActions.includes("stage") && (
@@ -352,7 +370,7 @@ export function DiffView({
                                 row.hunkIndex,
                               )
                             }
-                            className="px-1.5 h-[16px] rounded border border-border text-3xs text-secondary-foreground hover:text-[var(--atlas-status-error-foreground)] hover:bg-element-hover"
+                            className="px-1.5 h-[16px] rounded border border-border text-3xs text-secondary-foreground hover:text-error hover:bg-element-hover"
                           >
                             {label("Discard")}
                           </button>
@@ -373,7 +391,7 @@ export function DiffView({
                     style={{
                       ...base,
                       height: 8,
-                      backgroundColor: "var(--atlas-diff-context-background)",
+                      backgroundColor: "var(--diff-context-background)",
                     }}
                     className="border-x border-b border-border rounded-b-md"
                   />
@@ -408,10 +426,10 @@ export function DiffView({
                     outlineOffset: isSelected ? -1 : undefined,
                     backgroundColor:
                       line.type === "add"
-                        ? "var(--atlas-diff-added-background)"
+                        ? "var(--diff-added-background)"
                         : line.type === "remove"
-                          ? "var(--atlas-diff-removed-background)"
-                          : "var(--atlas-diff-context-background)",
+                          ? "var(--diff-removed-background)"
+                          : "var(--diff-context-background)",
                   }}
                   className="flex text-xs font-mono leading-[20px] select-text border-x border-border"
                 >

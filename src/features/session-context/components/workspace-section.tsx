@@ -24,18 +24,19 @@ import {
 import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
 import { useSettingsStore } from "@/features/settings/stores/settings-store";
 import { isMac, isWindows } from "@/lib/platform";
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuTrigger,
-} from "@/ui/context-menu";
-import { DropdownMenuItem, DropdownMenuShortcut } from "@/ui/dropdown-menu";
 
 import { sessionEnvironment } from "../lib/session-context-api";
 import { copyProjectPath, revealProject } from "../lib/workspace-actions";
 import { DetailsRow, DetailsSection, DetailsSplit, RowIcon, RowLabel } from "./details-rows";
 import { ProjectScriptsRow } from "./project-scripts-row";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+  DropdownMenuItem,
+  DropdownMenuShortcut,
+} from "@tryatlas/design";
 
 export const FILE_MANAGER = isMac ? "Finder" : isWindows ? "Explorer" : "File Manager";
 

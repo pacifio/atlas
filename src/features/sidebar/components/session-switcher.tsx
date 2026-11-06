@@ -18,7 +18,6 @@ import { openNewAgentChat } from "@/features/chat/lib/open-agent-session";
 import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
 import { useProjectStore } from "@/features/projects/stores/project-store";
 import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
 
 import {
   useActiveSessionId,
@@ -38,6 +37,7 @@ import {
   MENU_SURFACE,
 } from "../lib/menu-surface";
 import { RelativeTime, SessionAgentIcon, WorkingRing } from "./session-row-parts";
+import { Hint } from "@tryatlas/design";
 
 /** The rows a query keeps: by title, case-insensitively. */
 function matches(session: SidebarSession, needle: string): boolean {

@@ -1,20 +1,6 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Download, Trash2 } from "lucide-react";
-import { Badge } from "@/ui/badge";
-import { Button } from "@/ui/button";
-import { Icon } from "@/ui/icon";
-import { IconButton } from "@/ui/icon-button";
-import { Hint } from "@/ui/tooltip";
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/ui/dialog";
 import { AtlasLoader } from "@/components/atlas-loader";
 import { useAppStore } from "@/features/app/stores/app-store";
 import { useModelsStore } from "../../stores/models-store";
@@ -25,6 +11,20 @@ import {
   SettingsRow,
   SettingsSection,
 } from "../layout/settings-layout";
+import {
+  Badge,
+  Button,
+  Icon,
+  IconButton,
+  Hint,
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@tryatlas/design";
 
 /**
  * Settings → Memory → Embedding model: the on-device models memory search can
@@ -148,11 +148,28 @@ function ModelRow({
   if (progress) {
     control = <ProgressBar progress={progress} />;
   } else if (!m.downloaded) {
+    // A disabled button takes no pointer events, so the reason sits on a
+    // wrapper where its `title` can still show, and is read out with the
+    // button through `aria-describedby`.
+    const reason = m.compatible ? undefined : INCOMPATIBLE_REASON;
     control = (
-      <Button variant="outline" size="sm" onClick={onDownload}>
-        <Icon icon={Download} size="xs" />
-        Download
-      </Button>
+      <span title={reason}>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={!m.compatible}
+          aria-describedby={reason ? `model-${m.id}-reason` : undefined}
+          onClick={onDownload}
+        >
+          <Icon icon={Download} size="xs" />
+          Download
+        </Button>
+        {reason && (
+          <span id={`model-${m.id}-reason`} className="sr-only">
+            {reason}
+          </span>
+        )}
+      </span>
     );
   } else if (!m.selected) {
     control = (
@@ -189,6 +206,8 @@ function ModelRow({
     />
   );
 }
+
+const INCOMPATIBLE_REASON = "Atlas's on-device embedding loader can't load this model";
 
 function ProgressBar({ progress: p }: { progress: DownloadProgress }) {
   const pct = Math.min(

@@ -6,14 +6,10 @@
 
 import { useEffect, useState } from "react";
 import { Minus, Plus } from "lucide-react";
-import { Switch } from "@/ui/switch";
-import { Select, type SelectOption } from "@/ui/select";
-import { IconButton } from "@/ui/icon-button";
-import { Input } from "@/ui/input";
-import { Slider } from "@/ui/slider";
 import type { AppSettings, BooleanSettingKey } from "../../lib/app-settings";
 import { settingMeta } from "../../lib/settings-sections";
 import { useScopedSetting } from "../../lib/use-scoped-setting";
+import { Switch, Select, type SelectOption, IconButton, Input, Slider } from "@tryatlas/design";
 
 /** "Needs you: System notification", not just "System notification": one page
  *  can hold several rows with the same title, one per section, and a screen

@@ -16,7 +16,7 @@ import {
   listenAgentElicitationResolved,
   type RequestElicitation,
 } from "../lib/agents-api";
-import { ElicitationModal } from "./elicitation-modal";
+import { ElicitationModal, elicitationKey } from "./elicitation-modal";
 
 /** Add a question to the queue, unless it is already in it.
  *
@@ -24,13 +24,15 @@ import { ElicitationModal } from "./elicitation-modal";
  *  the user is never shown is one its agent waits on forever. Oldest is
  *  answered first — the one that has been blocking longest.
  *
- *  Deduped by request id because the backend refuses to announce the same
- *  entry twice, and a remount must not double it either. */
+ *  Deduped by agent and request id (`elicitationKey`: ids are per
+ *  connection, so two agents can both send a `1`) because the backend refuses
+ *  to announce the same entry twice, and a remount must not double it either. */
 export function enqueueElicitation(
   queue: RequestElicitation[],
   next: RequestElicitation,
 ): RequestElicitation[] {
-  return queue.some((q) => q.requestId === next.requestId) ? queue : [...queue, next];
+  const key = elicitationKey(next);
+  return queue.some((q) => elicitationKey(q) === key) ? queue : [...queue, next];
 }
 
 export function AgentElicitationHost() {
@@ -61,9 +63,11 @@ export function AgentElicitationHost() {
   if (!current) return null;
   return (
     <ElicitationModal
-      key={current.requestId}
+      key={elicitationKey(current)}
       pending={current}
-      onClose={() => setPending((queue) => queue.filter((q) => q.requestId !== current.requestId))}
+      onClose={() =>
+        setPending((queue) => queue.filter((q) => elicitationKey(q) !== elicitationKey(current)))
+      }
     />
   );
 }

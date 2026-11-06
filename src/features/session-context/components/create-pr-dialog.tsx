@@ -8,20 +8,20 @@ import { GitBranch } from "lucide-react";
 import { toast } from "sonner";
 
 import { prErrorMessage, classifyPrError } from "@/features/pull-requests/lib/pr-errors";
-import { Button } from "@/ui/button";
+
+import { submitCreatePr } from "../lib/create-pr";
+import { useSessionDetailsStore, type CreatePrRequest } from "../stores/session-details-store";
 import {
+  Button,
   Dialog,
   DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/ui/dialog";
-import { Input } from "@/ui/input";
-import { Switch } from "@/ui/switch";
-
-import { submitCreatePr } from "../lib/create-pr";
-import { useSessionDetailsStore, type CreatePrRequest } from "../stores/session-details-store";
+  Input,
+  Switch,
+} from "@tryatlas/design";
 
 export function CreatePrDialogHost() {
   const request = useSessionDetailsStore.use.createPr();

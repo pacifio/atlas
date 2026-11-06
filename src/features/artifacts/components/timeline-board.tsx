@@ -24,7 +24,7 @@ import { dayHeading, startOfDay } from "../lib/board";
 import type { AuthorDirectory } from "../lib/author-directory";
 import { DayMeta, SessionRow } from "./session-row";
 import { BoardSkeleton } from "./timeline-skeleton";
-import { TimelineCalendar, type CalendarItem } from "./timeline-calendar";
+import { TimelineCalendar, type CalendarItem } from "@tryatlas/design/timeline-calendar";
 
 export function TimelineBoard({
   sessions,
@@ -113,6 +113,12 @@ export function TimelineBoard({
                 items={items}
                 renderRow={renderRow}
                 root={scroller as RefObject<HTMLElement | null>}
+                // Measured: this column's `pb-32` (room under the search bar)
+                // and the note follow the list in the scroller, and a plain
+                // `endSpace` would add its room on top of theirs, so the last
+                // day overshot the sticky date. `"measure"` subtracts them, so
+                // the end stops with the last day under the date.
+                endSpace="measure"
               />
             ) : loading ? (
               // Geometry-matched rows rather than a spinner: the shape of what
@@ -159,7 +165,7 @@ export function TimelineBoard({
             aria-label="Search sessions"
             spellCheck={false}
             maxLength={256}
-            className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-[var(--atlas-text-disabled)]"
+            className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-disabled"
           />
           {query && (
             <button

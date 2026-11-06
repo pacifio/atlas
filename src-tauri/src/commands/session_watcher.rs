@@ -279,13 +279,16 @@ impl SessionWatcher {
             DEBOUNCE,
             None,
             move |result: notify_debouncer_full::DebounceEventResult| match result {
-                Ok(_events) => on_batch(
+                // Reading the sessions dir is an event on Linux (`fs_events`);
+                // only a change is a batch.
+                Ok(events) if crate::fs_events::any_change(&events) => on_batch(
                     &weak,
                     generation_for_cb,
                     &cwd_for_cb,
                     &dir_for_cb,
                     in_parent,
                 ),
+                Ok(_) => {}
                 Err(errors) => {
                     for e in errors {
                         tracing::warn!("session watch error: {e}");
