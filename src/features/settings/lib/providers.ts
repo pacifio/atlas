@@ -186,8 +186,7 @@ export const PROVIDERS: ProviderDef[] = [
     name: "Runcrate",
     env: "RUNCRATE_API_KEY",
     category: "Inference",
-    docsUrl:
-      "https://www.runcrate.ai/dashboard/api-keys?utm_source=atlas&utm_medium=directory&utm_campaign=gpu_pricing",
+    docsUrl: "https://www.runcrate.ai/dashboard/api-keys",
     placeholder: "rc_live_...",
     chat: true,
   },
