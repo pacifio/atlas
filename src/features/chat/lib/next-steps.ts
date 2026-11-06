@@ -31,9 +31,12 @@ const NEXT_STEPS_DIRECTIVE =
   // costs nothing to reject.
   "Ignore it when naming or titling this session — title from the conversation.";
 
+/** A leading `/name` token, not a path like `/Users/me/x`. */
+const SLASH_COMMAND = /^\s*\/[\w:-]+(\s|$)/;
+
 /** Append the directive to prose, keeping slash commands and their arguments intact. */
 export function appendNextStepsDirective(wire: string): string {
-  if (wire.trimStart().startsWith("/")) return wire;
+  if (SLASH_COMMAND.test(wire)) return wire;
   return wire + NEXT_STEPS_DIRECTIVE;
 }
 

@@ -71,10 +71,12 @@ describe("appendNextStepsDirective", () => {
     expect(appendNextStepsDirective(command)).toBe(command);
   });
 
-  it("still requests suggestions for ordinary messages mentioning a command", () => {
-    const prompt = "Explain what /mcp does";
-    const wire = appendNextStepsDirective(prompt);
-    expect(wire).toContain(`${prompt}\n\n═══ Atlas next-steps ═══`);
-    expect(wire).toContain("<next_steps>");
-  });
+  it.each(["Explain what /mcp does", "/Users/me/app.ts is broken, fix it", "/ is the root"])(
+    "still requests suggestions for prose %j",
+    (prompt) => {
+      const wire = appendNextStepsDirective(prompt);
+      expect(wire).toContain(`${prompt}\n\n═══ Atlas next-steps ═══`);
+      expect(wire).toContain("<next_steps>");
+    },
+  );
 });
