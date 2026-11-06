@@ -202,7 +202,7 @@ export function ProjectTreeEmptyMenu({
       {clipboard && <ContextMenuItem onClick={() => paste("")}>Paste</ContextMenuItem>}
       <ContextMenuSeparator />
       <ContextMenuItem onClick={() => void revealInFinder(root)}>
-        Reveal Project in Finder
+        {revealInFileManagerLabel}
       </ContextMenuItem>
       <ContextMenuItem onClick={() => terminalAt(root)}>Open in Terminal</ContextMenuItem>
       <OpenInEditorContextItems path={root} />

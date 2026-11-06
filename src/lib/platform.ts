@@ -10,6 +10,13 @@ export const isMac: boolean = ua.includes("Macintosh");
 export const isWindows: boolean = ua.includes("Windows");
 export const isLinux: boolean = ua.includes("Linux");
 
+/** The host's file manager, as a sentence names it ("Couldn't show it in …"). */
+export const fileManagerName: string = isMac
+  ? "Finder"
+  : isWindows
+    ? "File Explorer"
+    : "the file manager";
+
 /** The menu item that shows a file in the host's file manager, in that
  *  platform's own words. */
 export const revealInFileManagerLabel: string = isMac

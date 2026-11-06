@@ -1,14 +1,7 @@
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
-import { isMac, isWindows } from "@/lib/platform";
+import { fileManagerName, revealInFileManagerLabel } from "@/lib/platform";
 import { UnsupportedView } from "./views/unsupported-view";
-
-/** What the platform's file manager is called where a reveal opens it. */
-const REVEAL = isMac
-  ? { label: "Open in Finder", place: "Finder" }
-  : isWindows
-    ? { label: "Show in Explorer", place: "Explorer" }
-    : { label: "Open containing folder", place: "the file manager" };
 
 /**
  * Fallback tab for files Atlas can't open inline. The reveal button uses
@@ -22,7 +15,7 @@ export function UnsupportedFile({ filePath }: { filePath: string }) {
       await revealItemInDir(filePath);
     } catch (err) {
       toast.error(
-        `Couldn't reveal in ${REVEAL.place}: ${err instanceof Error ? err.message : String(err)}`,
+        `Couldn't reveal in ${fileManagerName}: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   };
@@ -30,7 +23,7 @@ export function UnsupportedFile({ filePath }: { filePath: string }) {
   return (
     <UnsupportedView
       filePath={filePath}
-      revealLabel={REVEAL.label}
+      revealLabel={revealInFileManagerLabel}
       onReveal={() => void reveal()}
     />
   );

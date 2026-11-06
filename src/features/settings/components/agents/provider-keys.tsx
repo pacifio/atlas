@@ -20,6 +20,7 @@ import {
   SettingsSection,
 } from "../layout/settings-layout";
 import { SettingsSearch } from "../layout/settings-search";
+import { fileManagerName, revealInFileManagerLabel } from "@/lib/platform";
 import {
   Badge,
   Button,
@@ -125,7 +126,7 @@ export function ProviderKeysSection() {
             control={
               target && (
                 <Button variant="outline" size="sm" onClick={() => void showInFinder(target)}>
-                  Show in Finder
+                  {revealInFileManagerLabel}
                 </Button>
               )
             }
@@ -185,7 +186,9 @@ async function showInFinder(file: string) {
   try {
     await revealItemInDir(file);
   } catch (e) {
-    toast.error(`Couldn't show it in Finder: ${e instanceof Error ? e.message : String(e)}`);
+    toast.error(
+      `Couldn't show it in ${fileManagerName}: ${e instanceof Error ? e.message : String(e)}`,
+    );
   }
 }
 
@@ -357,7 +360,7 @@ function ProviderKeyRow({
                   <DropdownMenuItem onClick={() => void copy()}>Copy key</DropdownMenuItem>
                   {entry.file && (
                     <DropdownMenuItem onClick={() => void showInFinder(entry.file!)}>
-                      Show in Finder
+                      {revealInFileManagerLabel}
                     </DropdownMenuItem>
                   )}
                 </DropdownMenuContent>
